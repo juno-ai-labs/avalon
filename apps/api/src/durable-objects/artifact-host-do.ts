@@ -50,6 +50,7 @@ import {
   FACET_HOST_CLASS,
   FACET_HOST_MODULE,
   FACET_HOST_MODULE_SOURCE,
+  FACET_HOST_REVISION,
   FACET_NAME,
 } from "../artifacts/facet-host";
 import { ASSET_SHIM_MODULE, ASSET_SHIM_SOURCE } from "../artifacts/asset-shim";
@@ -771,7 +772,9 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       if (!loader) throw new Error("artifact_loader_binding_missing");
       const module = await env.PAYLOADS.get(artifactAssetKey(artifactId, version, "index.js"));
       if (!module) throw new Error("artifact_server_module_missing");
-      const worker = loader.get(artifactIsolateId(artifactId, version), async () => ({
+      // The host revision keeps an isolate cached before a deploy, with an
+      // older host module, from answering for the new one.
+      const worker = loader.get(`${artifactIsolateId(artifactId, version)}:${FACET_HOST_REVISION}`, async () => ({
         compatibilityDate: ARTIFACT_COMPATIBILITY_DATE,
         // Rally's own module is the main one and imports the model's, so the
         // facet never loads the model's class directly.

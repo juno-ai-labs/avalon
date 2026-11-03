@@ -159,6 +159,16 @@ describe("which tables are private to a viewer", () => {
     expect(tables.hidden).toEqual([]);
   });
 
+  it("hides a search index over a private table, and only real backing tables", () => {
+    const tables = viewerTables({ views: [], tables: [
+      { name: "journal_entries", sql: "CREATE TABLE journal_entries (id INTEGER PRIMARY KEY, private_to_viewer TEXT, body TEXT)", columns: ["id", "private_to_viewer", "body"] },
+      { name: "entries_fts", sql: "CREATE VIRTUAL TABLE entries_fts USING fts5(body, content='journal_entries', content_rowid='id')", columns: ["body"] },
+      { name: "entries_fts_data", sql: "CREATE TABLE 'entries_fts_data'(id INTEGER PRIMARY KEY, block BLOB)", columns: ["id", "block"] },
+      { name: "entries_fts_prompts", sql: "CREATE TABLE entries_fts_prompts (body TEXT)", columns: ["body"] },
+    ] });
+    expect(tables.hidden).toEqual(["entries_fts", "entries_fts_data"]);
+  });
+
   it("hides a private search index's backing tables", () => {
     const tables = viewerTables({ views: [], tables: [
       { name: "notes_fts", sql: "CREATE VIRTUAL TABLE notes_fts USING fts5(body, private_to_viewer)", columns: ["body", "private_to_viewer"] },

@@ -204,3 +204,19 @@ export class ${FACET_HOST_CLASS} extends DurableObject {
 /** Thrown to force the rollback; never surfaced to a caller. */
 class RallyRollback extends Error {}
 `;
+
+/**
+ * A short fingerprint of Rally's host module, for the loader id.
+ *
+ * The Worker Loader caches an isolate by its id, and the id names the
+ * artifact's version but not Rally's host code. Without this, an isolate
+ * cached before a deploy could answer with the old host, which lacks any
+ * method added since, such as `rallySchema`.
+ */
+export const FACET_HOST_REVISION = (() => {
+  let hash = 5381;
+  for (let index = 0; index < FACET_HOST_MODULE_SOURCE.length; index += 1) {
+    hash = ((hash * 33) ^ FACET_HOST_MODULE_SOURCE.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
+})();
