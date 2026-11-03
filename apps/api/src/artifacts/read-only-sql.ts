@@ -223,33 +223,42 @@ export interface ArtifactSchema {
 
 /** What scoping does to each table a scoped reader might name. */
 export interface ViewerTables {
-  /** Private tables, filtered to the viewer. `rowid` says whether to carry it. */
-  filtered: readonly { name: string; rowid: boolean }[];
+  /** Private tables: a scoped reader sees only their own rows. */
+  filtered: readonly { name: string }[];
   /**
-   * Tables a scoped reader sees as empty: the backing tables SQLite keeps for
-   * a private virtual table (an FTS5 index's `<name>_content` and kin), which
-   * hold the private text with no viewer column to filter on.
+   * Tables a scoped reader sees as empty, because they hold private text with
+   * no viewer column to filter on: a search index built over a private table
+   * (`content='journal_entries'`, `fts5vocab`), and the backing tables SQLite
+   * keeps for any private virtual table.
    */
   hidden: readonly string[];
 }
 
-/** Which tables are private, which carry a rowid, and which are hidden. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+/** The backing tables FTS5 creates for a virtual table `<name>`. */
+const FTS5_BACKING_SUFFIXES = ["_data", "_idx", "_content", "_docsize", "_config"];
+
+/** Which tables are private, and which a scoped reader sees as empty. */
 export function viewerTables(schema: ArtifactSchema): ViewerTables {
   const isPrivate = (table: ArtifactSchema["tables"][number]) =>
     table.columns.some((column) => column.toLowerCase() === VIEWER_COLUMN);
-  const privateVirtual = schema.tables
-    .filter((table) => /^\s*create\s+virtual\s+table\b/iu.test(table.sql) && isPrivate(table))
-    .map((table) => `${table.name.toLowerCase()}_`);
-  const filtered = schema.tables.filter(isPrivate).map((table) => ({
-    name: table.name,
-    // Only an ordinary rowid table is sure to have one; a virtual table may
-    // not, and a reference to a missing rowid would fail every scoped read.
-    rowid: /^\s*create\s+table\b/iu.test(table.sql)
-      && !/\bwithout\s+rowid\b/iu.test(table.sql)
-      && !table.columns.some((column) => ["rowid", "oid", "_rowid_"].includes(column.toLowerCase())),
-  }));
+  const privateNames = schema.tables.filter(isPrivate).map((table) => table.name.toLowerCase());
+  const virtual = schema.tables.filter((table) => /^\s*create\s+virtual\s+table\b/iu.test(table.sql));
+  // A virtual table over a private table reads its rows from that table, so
+  // it holds private text even with no viewer column of its own.
+  const namesPrivateTable = (sql: string) => {
+    const lower = sql.toLowerCase();
+    return privateNames.some((name) => new RegExp(`(^|[^\\p{L}\\p{N}_$])${escapeRegExp(name)}($|[^\\p{L}\\p{N}_$])`, "u").test(lower));
+  };
+  const overPrivate = virtual.filter((table) => !isPrivate(table) && namesPrivateTable(table.sql));
+  const backing = new Set([...virtual.filter(isPrivate), ...overPrivate]
+    .flatMap((table) => FTS5_BACKING_SUFFIXES.map((suffix) => `${table.name.toLowerCase()}${suffix}`)));
   const hidden = schema.tables
-    .filter((table) => !isPrivate(table) && privateVirtual.some((prefix) => table.name.toLowerCase().startsWith(prefix)))
+    .filter((table) => !isPrivate(table)
+      && (overPrivate.includes(table) || backing.has(table.name.toLowerCase())))
     .map((table) => table.name);
-  return { filtered, hidden };
+  return { filtered: schema.tables.filter(isPrivate).map((table) => ({ name: table.name })), hidden };
 }

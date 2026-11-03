@@ -51,6 +51,7 @@ export class SiteData extends DurableObject {
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS "डायरी" (private_to_viewer TEXT, body TEXT)');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS "\u00a0spaced" (private_to_viewer TEXT, body TEXT)');
     ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(body, private_to_viewer)");
+    ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS entries_search USING fts5(body, content='entries')");
   }
   async fetch(request) {
     const url = new URL(request.url);
@@ -278,6 +279,9 @@ describe("a stateful artifact's facet", () => {
       .toMatchObject({ ok: true, rows: [{ body: "mine" }] });
     // A private search index's backing table reads as empty.
     expect(await host.pageData("notes_fts_content", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [] });
+    // So does a search index over a private table, which the author reads in full.
+    expect(await host.pageData("entries_search", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [] });
+    expect((await host.pageData("entries_search", 0, 10, ALL_ROWS) as { rows: unknown[] }).rows).toHaveLength(2);
     // A shared table pages in full.
     expect(await host.pageData("prompts", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [{ body: "shared" }] });
     const described = await host.describeData(VIEWER_ROWS);

@@ -206,6 +206,7 @@ describe("artifact conventions", () => {
 describe("a site's sign-in return path", () => {
   it("keeps a path and query on the site", () => {
     expect(artifactReturnPath("/rsvp?week=2")).toBe("/rsvp?week=2");
+    expect(artifactReturnPath("/__rally/v3/report")).toBe("/__rally/v3/report");
   });
 
   it("turns anything that could leave the site, or loop back into Rally's routes, into /", () => {
