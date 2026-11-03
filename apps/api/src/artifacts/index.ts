@@ -253,12 +253,24 @@ const artifactServer = {
     // anonymous reads are allowed from anywhere, but unsafe requests still
     // require exact same-origin browser metadata.
     const verdict = classifyFetchMetadata(request, origin);
+    let admitted: Admitted | null = null;
     if (verdict === "refused") {
-      return html(neutralPage(), 403);
+      // An unsafe request from another origin never carries identity. A site
+      // that accepts anonymous submissions still receives it, as an anonymous
+      // one; every other site refuses it, as before.
+      const state = await artifact.currentState();
+      if (!state?.manifest.anonymousSubmissions) return html(neutralPage(), 403);
+      admitted = {
+        viewerId: null,
+        viewerName: null,
+        version: state.version,
+        mode: state.mode,
+        stateful: state.stateful,
+        manifest: state.manifest,
+      };
     }
 
-    let admitted: Admitted | null = null;
-    if (verdict !== "anonymous_read") {
+    if (!admitted && verdict !== "anonymous_read") {
       const session = readCookie(request, SESSION_COOKIE);
       // Identity is an optional enhancement to a public response. If the
       // visibility hop fails, degrade to anonymous rather than making a viewer
@@ -313,7 +325,13 @@ const artifactServer = {
     // browser CSRF signal rather than caller authentication, and a non-browser
     // client can spell those headers itself. Preserve the former session gate
     // for every method that may mutate model-owned state.
-    if (!admitted.viewerId && request.method !== "GET" && request.method !== "HEAD") {
+    //
+    // A site whose current version declares `acceptAnonymousSubmissions` has
+    // chosen otherwise: a public anonymous poll is the case. Its handler gets
+    // the request with no viewer identity, which is all an anonymous
+    // submission can honestly carry.
+    if (!admitted.viewerId && request.method !== "GET" && request.method !== "HEAD"
+      && !admitted.manifest.anonymousSubmissions) {
       return html(neutralPage(), 401);
     }
 

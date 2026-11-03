@@ -223,7 +223,9 @@ can `GET` or `HEAD` the stable URL without a Rally session. The Worker reads the
 current manifest from `ArtifactHostDO`, strips any inbound cookie and viewer
 header before model code runs, and injects no identity. Static sites therefore
 cannot be private. Anonymous unsafe methods are refused before model code runs:
-public means readable, not anonymously writable. That rule is about methods,
+public means readable, not anonymously writable, unless the site opted in to
+anonymous submissions (see [Invariants](#invariants)), as a public anonymous
+poll does. That rule is about methods,
 not effects: an active site's own `index.js` runs on an anonymous `GET` and
 may write its storage, which is why Trusted-only Terminal sandboxes can send
 data to a Rally site
@@ -319,6 +321,14 @@ what the page shows is the page's job.
   and runs) or a run carrying `automationRun` or `automationDelegation`. A
   Sidekick works on the whole data set (a tally, a digest, a refresh) for the
   Sidekick rather than for one viewer.
+- **No person** is a third scope, `none`: an Organization-principal run that
+  is not a Sidekick, such as one for an unlinked Slack or connector sender,
+  sees shared tables and no private rows.
+- **What counts as private** is read from a schema-only facet call,
+  `rallySchema`, using `pragma_table_xinfo` so a generated `private_to_viewer`
+  column counts, and counting no rows. A private FTS5 table's backing tables
+  (`<name>_content` and kin) hold its text with no viewer column, so scoped
+  readers see them as empty.
 - **How a scoped read works.** `scopeStatementToViewer`
   (`apps/api/src/artifacts/read-only-sql.ts`) prefixes the reader's statement
   with one CTE per per-viewer table, named after the table and filtered to the
@@ -327,8 +337,12 @@ what the page shows is the page's job.
   `main.` or `temp.` qualifier on a shadowed name is dropped, since a
   qualified name skips CTEs, and every view is re-declared as a CTE from its
   own `CREATE VIEW` text, since a view's body was compiled against the schema.
-  **No query shape is refused for scoping**; only the existing read-only
-  admission applies. Page and count reads filter on the column directly.
+  The shadow carries `rowid` for an ordinary rowid table. Single-quoted names
+  (`main.'entries'`) and identifiers with any character at or above U+0080 are
+  tokenized as SQLite does. **One query shape is refused**: a statement that
+  also uses `main` or `temp` as an alias, where dropping a qualifier could
+  change a column's meaning. Page and count reads filter on the column
+  directly.
 
 Requests to a stateful artifact route *through* the supervisor rather than being
 served in the loader's own isolate. That is a platform constraint rather than a
@@ -382,7 +396,12 @@ is the only place that can forward into it.
   can spell those headers itself. `GET` and `HEAD` may fall back to the public
   representation, while every unsafe method still requires a valid Rally
   viewer session. Rally refuses the method, not the effect: a site's own code
-  may still write its storage on a `GET`.
+  may still write its storage on a `GET`. The one exception is a site whose current version
+  declares `export const acceptAnonymousSubmissions = true` in `index.js`
+  (recorded as `anonymousSubmissions` in its manifest): its handler receives
+  unsafe requests without a session, from any origin, always with identity
+  stripped. A cross-origin unsafe request still never carries a session, so the
+  sibling-artifact CSRF rule above holds for every site.
 - **The desktop renderer never embeds, fetches, or parses artifact content.** An
   `<iframe>` would widen the renderer's CSP to a wildcard artifact host and graft
   remote model-authored content into the application DOM as a navigable,
@@ -707,6 +726,13 @@ someone who opened it from inside Rally; a visitor who followed the link got
 "Open this site from Rally" and no way in. Making the 401 redirect a platform
 behavior means no site has to write sign-in code, and limiting it to page
 loads leaves a script's fetch its own 401 to show a sign-in prompt for.
+
+Review found four leaks in the first scoping: single-quoted and non-ASCII
+names, generated columns, and FTS5 backing tables, plus every row for any
+Organization-principal run. All are closed and each has a workerd test that
+fails without its fix. Sites may also opt in to anonymous submissions, for a
+public anonymous poll, by a literal export in `index.js`, detected at publish
+like the storage class so changing it changes the content digest.
 
 **Consequences:** The column name is the contract; renaming it in a site makes
 its rows shared. A view that cannot be read back from `sqlite_master` throws

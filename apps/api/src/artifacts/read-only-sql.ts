@@ -207,21 +207,89 @@ export function admitTableName(
  */
 export const VIEWER_COLUMN = "private_to_viewer";
 
-/** Whose rows a read may return: every row, or one viewer's in per-viewer tables. */
-export type ArtifactRowScope = { rows: "all" } | { rows: "viewer"; viewerId: string };
+/**
+ * Whose rows a read may return.
+ *
+ * - `all`: every row (the site's author, a Sidekick).
+ * - `viewer`: in private tables, only rows whose `VIEWER_COLUMN` is this id.
+ * - `none`: in private tables, no rows. For a reader with no person behind it,
+ *   such as an Organization-principal run for an unlinked sender, which has no
+ *   id to match and is not the author.
+ */
+export type ArtifactRowScope =
+  | { rows: "all" }
+  | { rows: "viewer"; viewerId: string }
+  | { rows: "none" };
+
+/** A site's schema as scoping needs it: names, definitions and every column. */
+export interface ArtifactSchema {
+  /**
+   * Every table, ordinary or virtual, with the SQL that created it and every
+   * column, generated ones included (`pragma_table_xinfo`, not `table_info`,
+   * which leaves them out and would let a generated private column pass).
+   */
+  tables: readonly { name: string; sql: string; columns: readonly string[] }[];
+  views: readonly { name: string; sql: string }[];
+}
+
+/** What scoping does to each table a scoped reader might name. */
+export interface ViewerTables {
+  /** Private tables, filtered to the viewer. `rowid` says whether to carry it. */
+  filtered: readonly { name: string; rowid: boolean }[];
+  /**
+   * Tables a scoped reader sees as empty: the backing tables SQLite keeps for
+   * a private virtual table (an FTS5 index's `<name>_content` and kin), which
+   * hold the private text with no viewer column to filter on.
+   */
+  hidden: readonly string[];
+}
+
+/** Which tables are private, which carry a rowid, and which are hidden. */
+export function viewerTables(schema: ArtifactSchema): ViewerTables {
+  const isPrivate = (table: ArtifactSchema["tables"][number]) =>
+    table.columns.some((column) => column.toLowerCase() === VIEWER_COLUMN);
+  const privateVirtual = schema.tables
+    .filter((table) => /^\s*create\s+virtual\s+table\b/iu.test(table.sql) && isPrivate(table))
+    .map((table) => `${table.name.toLowerCase()}_`);
+  const filtered = schema.tables.filter(isPrivate).map((table) => ({
+    name: table.name,
+    // Only an ordinary rowid table is sure to have one; a virtual table may
+    // not, and a reference to a missing rowid would fail every scoped read.
+    rowid: /^\s*create\s+table\b/iu.test(table.sql)
+      && !/\bwithout\s+rowid\b/iu.test(table.sql)
+      && !table.columns.some((column) => ["rowid", "oid", "_rowid_"].includes(column.toLowerCase())),
+  }));
+  const hidden = schema.tables
+    .filter((table) => !isPrivate(table) && privateVirtual.some((prefix) => table.name.toLowerCase().startsWith(prefix)))
+    .map((table) => table.name);
+  return { filtered, hidden };
+}
 
 interface SqlToken {
   /**
    * A bare word, a quoted identifier, a single-quoted string, or a single
    * punctuation character. Strings are kept because SQLite also reads a
    * single-quoted string as an identifier where only an identifier fits:
-   * \`main.'entries'\` and \`'main'.entries\` both name the real table.
+   * `main.'entries'` and `'main'.entries` both name the real table.
    */
   kind: "word" | "quoted" | "string" | "punct";
   /** The identifier as SQLite reads it: unquoted, escapes undone. */
   value: string;
   start: number;
   end: number;
+}
+
+/**
+ * SQLite's own rule for a bare identifier: a letter, `_`, or any character at
+ * or above U+0080 to start; those, digits and `$` after. Narrower than this,
+ * a name like `डायरी` or one with an emoji splits into pieces and its
+ * qualifier is never recognized.
+ */
+function identifierStart(character: string): boolean {
+  return /[A-Za-z_]/u.test(character) || character.codePointAt(0)! >= 0x80;
+}
+function identifierPart(character: string): boolean {
+  return /[A-Za-z0-9_$]/u.test(character) || character.codePointAt(0)! >= 0x80;
 }
 
 /**
@@ -235,18 +303,25 @@ interface SqlToken {
  */
 function identifierTokens(sql: string): SqlToken[] {
   const tokens: SqlToken[] = [];
+  const characters = [...sql];
+  // Offsets are in UTF-16 units, so slices of `sql` line up with them.
+  const offsets: number[] = [];
+  let unit = 0;
+  for (const character of characters) { offsets.push(unit); unit += character.length; }
+  offsets.push(unit);
   let index = 0;
-  while (index < sql.length) {
-    const character = sql[index]!;
-    const next = sql[index + 1];
+  while (index < characters.length) {
+    const character = characters[index]!;
+    const next = characters[index + 1];
     if (/\s/u.test(character)) { index += 1; continue; }
     if (character === "-" && next === "-") {
-      while (index < sql.length && sql[index] !== "\n") index += 1;
+      while (index < characters.length && characters[index] !== "\n") index += 1;
       continue;
     }
     if (character === "/" && next === "*") {
-      const close = sql.indexOf("*/", index + 2);
-      index = close === -1 ? sql.length : close + 2;
+      index += 2;
+      while (index < characters.length && !(characters[index] === "*" && characters[index + 1] === "/")) index += 1;
+      index = Math.min(characters.length, index + 2);
       continue;
     }
     const closer = character === "'" ? "'" : character === '"' ? '"' : character === "`" ? "`" : character === "[" ? "]" : null;
@@ -254,22 +329,22 @@ function identifierTokens(sql: string): SqlToken[] {
       const start = index;
       let value = "";
       index += 1;
-      while (index < sql.length) {
-        if (sql[index] === closer && closer !== "]" && sql[index + 1] === closer) { value += closer; index += 2; continue; }
-        if (sql[index] === closer) { index += 1; break; }
-        value += sql[index];
+      while (index < characters.length) {
+        if (characters[index] === closer && closer !== "]" && characters[index + 1] === closer) { value += closer; index += 2; continue; }
+        if (characters[index] === closer) { index += 1; break; }
+        value += characters[index];
         index += 1;
       }
-      tokens.push({ kind: closer === "'" ? "string" : "quoted", value, start, end: index });
+      tokens.push({ kind: closer === "'" ? "string" : "quoted", value, start: offsets[start]!, end: offsets[index]! });
       continue;
     }
-    const word = /^[\p{L}_][\p{L}\p{N}_$]*/u.exec(sql.slice(index));
-    if (word) {
-      tokens.push({ kind: "word", value: word[0], start: index, end: index + word[0].length });
-      index += word[0].length;
+    if (identifierStart(character)) {
+      const start = index;
+      while (index < characters.length && identifierPart(characters[index]!)) index += 1;
+      tokens.push({ kind: "word", value: characters.slice(start, index).join(""), start: offsets[start]!, end: offsets[index]! });
       continue;
     }
-    tokens.push({ kind: "punct", value: character, start: index, end: index + 1 });
+    tokens.push({ kind: "punct", value: character, start: offsets[index]!, end: offsets[index + 1]! });
     index += 1;
   }
   return tokens;
@@ -279,6 +354,8 @@ function identifierTokens(sql: string): SqlToken[] {
 function sqlString(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
+
+const SCHEMA_NAMES = new Set(["main", "temp"]);
 
 /**
  * Remove the `main.` or `temp.` qualifier in front of every shadowed name.
@@ -295,13 +372,34 @@ function unqualifyShadowed(sql: string, shadowed: ReadonlySet<string>): string {
   for (let index = 0; index + 2 < tokens.length; index += 1) {
     const [schema, dot, name] = [tokens[index]!, tokens[index + 1]!, tokens[index + 2]!];
     if (schema.kind === "punct" || name.kind === "punct" || dot.kind !== "punct" || dot.value !== ".") continue;
-    const qualifier = schema.value.toLowerCase();
-    if ((qualifier === "main" || qualifier === "temp") && shadowed.has(name.value.toLowerCase())) {
+    if (SCHEMA_NAMES.has(schema.value.toLowerCase()) && shadowed.has(name.value.toLowerCase())) {
       out += sql.slice(copied, schema.start);
       copied = name.start;
     }
   }
   return out + sql.slice(copied);
+}
+
+/**
+ * Whether a statement names `main` or `temp` as a table alias.
+ *
+ * Then `main.entries` may be a column of that alias rather than the schema's
+ * table, and dropping the qualifier would change what it means. The two
+ * cannot be told apart without a parser, so a scoped read that does this is
+ * refused with a one-line fix. Nothing else is refused.
+ */
+function aliasesSchemaName(sql: string): boolean {
+  const tokens = identifierTokens(sql);
+  return tokens.some((token, index) => {
+    if (token.kind === "punct" || !SCHEMA_NAMES.has(token.value.toLowerCase())) return false;
+    const before = tokens[index - 1];
+    const twoBefore = tokens[index - 2];
+    if (!before || (tokens[index + 1]?.kind === "punct" && tokens[index + 1]!.value === ".")) return false;
+    // `x AS main`, `(subquery) main`, or a bare `FROM x main` / `JOIN x main`.
+    if (before.kind === "word" && before.value.toLowerCase() === "as") return true;
+    if (before.kind === "punct") return before.value === ")";
+    return twoBefore !== undefined && (twoBefore.value === "," || ["from", "join"].includes(twoBefore.value.toLowerCase()));
+  });
 }
 
 /**
@@ -333,41 +431,52 @@ function viewAsCte(view: { name: string; sql: string }): string {
 }
 
 /**
- * Limit an already-admitted read to one viewer's rows in per-viewer tables.
+ * Limit an already-admitted read to one viewer's rows in private tables.
  *
- * **Each per-viewer table is shadowed by a common table expression of the same
+ * **Each private table is shadowed by a common table expression of the same
  * name**, filtered to the viewer. SQLite resolves an unqualified table name to
  * a CTE before the schema, through every subquery and every other CTE in the
  * statement, so the caller's query runs as written against a database that
- * holds only this viewer's rows. Nothing the caller may write is refused here:
- * the site's model designs its own schema and the reader designs its own
- * query, and neither should have to know scoping exists.
+ * holds only this viewer's rows. The shadow carries `rowid` where the table
+ * has one, so `ORDER BY rowid` still works.
  *
- * Two references would otherwise read past the shadow, and both are rewritten:
+ * Three references would otherwise read past the shadow, and all three are
+ * rewritten:
  *
- * - a **schema-qualified** name (`main.entries`) resolves against the schema,
- *   so its qualifier is dropped; and
+ * - a **schema-qualified** name (`main.entries`, `'main'.entries`) resolves
+ *   against the schema, so its qualifier is dropped;
  * - a **view** was compiled against the schema, so every view is shadowed too,
- *   by a CTE built from its own definition. Its body then reads the shadowed
- *   tables like any other reference.
+ *   by a CTE built from its own definition; and
+ * - a private **virtual table's backing tables** hold its text with no viewer
+ *   column, so they read as empty.
  *
- * A caller CTE that reuses a shadowed name is a SQLite error (`duplicate WITH
- * table name`), not a leak.
+ * The one statement refused is one that also uses `main` or `temp` as an
+ * alias, where dropping a qualifier could change a column's meaning. A caller
+ * CTE that reuses a shadowed name is a SQLite error, not a leak.
  */
 export function scopeStatementToViewer(
   sql: string,
-  input: {
-    viewerTables: readonly string[];
-    views: readonly { name: string; sql: string }[];
-    viewerId: string;
-  },
-): string {
-  if (input.viewerTables.length === 0) return sql;
-  const shadowed = new Set([...input.viewerTables, ...input.views.map((view) => view.name)].map((name) => name.toLowerCase()));
+  input: { schema: ArtifactSchema; viewerId: string | null },
+): SqlAdmission {
+  const tables = viewerTables(input.schema);
+  if (tables.filtered.length === 0) return { admitted: true, sql };
+  const views = input.schema.views;
+  const shadowed = new Set([...tables.filtered.map((table) => table.name), ...tables.hidden, ...views.map((view) => view.name)]
+    .map((name) => name.toLowerCase()));
+  if (aliasesSchemaName(sql)) {
+    return {
+      admitted: false,
+      reason: "This read is limited to your own rows. Use an alias other than main or temp, then send it again.",
+    };
+  }
+  const match = input.viewerId === null
+    ? "0"
+    : `${quoteIdentifier(VIEWER_COLUMN)} = ${sqlString(input.viewerId)}`;
   const shadows = [
-    ...input.viewerTables.map((table) =>
-      `${quoteIdentifier(table)} AS (SELECT * FROM main.${quoteIdentifier(table)} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ${sqlString(input.viewerId)})`),
-    ...input.views.map((view) => viewAsCte({ name: view.name, sql: unqualifyShadowed(view.sql, shadowed) })),
+    ...tables.filtered.map((table) =>
+      `${quoteIdentifier(table.name)} AS (SELECT ${table.rowid ? "rowid AS rowid, " : ""}* FROM main.${quoteIdentifier(table.name)} WHERE ${match})`),
+    ...tables.hidden.map((name) => `${quoteIdentifier(name)} AS (SELECT * FROM main.${quoteIdentifier(name)} WHERE 0)`),
+    ...views.map((view) => viewAsCte({ name: view.name, sql: unqualifyShadowed(view.sql, shadowed) })),
   ].join(", ");
   const statement = unqualifyShadowed(sql, shadowed);
   const [first, second] = identifierTokens(statement);
@@ -376,7 +485,7 @@ export function scopeStatementToViewer(
     // lead it. The shadows come first so the caller's CTEs can read them.
     const recursive = second?.kind === "word" && second.value.toLowerCase() === "recursive";
     const resume = recursive ? second.end : first.end;
-    return `${statement.slice(0, first.start)}WITH ${recursive ? "RECURSIVE " : ""}${shadows}, ${statement.slice(resume)}`;
+    return { admitted: true, sql: `${statement.slice(0, first.start)}WITH ${recursive ? "RECURSIVE " : ""}${shadows}, ${statement.slice(resume)}` };
   }
-  return `WITH ${shadows} ${statement}`;
+  return { admitted: true, sql: `WITH ${shadows} ${statement}` };
 }

@@ -59,7 +59,7 @@ export function SiteOpening({ region, hostnameStub, returnPath, openWorkspace, o
       <h1>{failure ? "Can't open this site" : "Opening the site…"}</h1>
       {failure ? <>
         <ErrorNotice>{failure}</ErrorNotice>
-        <a className="text-button onboarding-signout" href="/">Your organizations</a>
+        <button className="text-button onboarding-signout" type="button" onClick={() => location.assign("/")}>Your organizations</button>
         <button className="text-button onboarding-signout" type="button" onClick={onSignOut}>Sign out</button>
       </> : <p className="entry-lead" role="status">One moment.</p>}
     </section>

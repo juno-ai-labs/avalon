@@ -36,7 +36,7 @@ import type { Env } from "../../env";
 import { artifactHostDOName } from "../../durable-objects/names";
 import { sha256Hex } from "../../lib/crypto";
 import { durableObjectStubForArtifact, workspacePlacementAffinity } from "../../lib/durable-object-namespace";
-import { assetContentType } from "./site-publish";
+import { assetContentType, declaresAnonymousSubmissions } from "./site-publish";
 import { prepareSocialPreview } from "./site-social-preview";
 import { TerminalToolError } from "./tools";
 
@@ -106,6 +106,12 @@ export async function writeArtifactVersion(
       { field: "filePath", reason: "Remove at least one served file, then publish the directory again." },
     );
   }
+  // Read from the module like the storage class: the setting lives in the code
+  // the model wrote, so changing it changes the content and republishes.
+  const serverModule = serverEntry ? input.files.find((file) => file.path === serverEntry) : undefined;
+  const anonymousSubmissions = serverModule
+    ? declaresAnonymousSubmissions(new TextDecoder().decode(serverModule.bytes))
+    : false;
   const manifest: ArtifactManifest = {
     version: 1,
     artifactId: asArtifactId(artifactId),
@@ -115,6 +121,7 @@ export async function writeArtifactVersion(
     serverModuleSha256: input.serverModuleSha256,
     assets,
     socialPreview: preparedPreview.socialPreview,
+    ...(anonymousSubmissions ? { anonymousSubmissions: true as const } : {}),
     totalBytes: storedFiles.reduce((total, file) => total + file.bytes.byteLength, 0),
     publishedAt: nowIso(),
   };

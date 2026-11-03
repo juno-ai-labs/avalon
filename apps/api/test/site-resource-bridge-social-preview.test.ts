@@ -68,4 +68,27 @@ describe("site artifact social-preview storage", () => {
     })).rejects.toMatchObject({ code: "resource_publish_failed" });
     expect(put).not.toHaveBeenCalled();
   });
+
+  it("records anonymous submissions in the manifest only when index.js declares them", async () => {
+    const env = { PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: vi.fn(async () => undefined) }) } satisfies Pick<Env, "PAYLOADS">;
+    const html = new TextEncoder().encode("<html><head><title>Poll</title></head><body></body></html>");
+    const publish = (source: string) => writeArtifactVersion(env, {
+      workspaceId: "00000000-0000-7000-8000-0000000000c1",
+      workstreamId: "00000000-0000-7000-8000-0000000000d1",
+      region: "global",
+      artifactId: ARTIFACT,
+      resourceId: "00000000-0000-7000-8000-0000000000e1",
+      version: 1,
+      mode: "active",
+      stateful: true,
+      files: [
+        { path: "index.html", bytes: html, sha256: "1".repeat(64) },
+        { path: "index.js", bytes: new TextEncoder().encode(source), sha256: "2".repeat(64) },
+      ],
+      fallbackTitle: "Poll",
+      serverModuleSha256: "2".repeat(64),
+    });
+    expect((await publish("export const acceptAnonymousSubmissions = true;\nexport class SiteData {}")).manifest.anonymousSubmissions).toBe(true);
+    expect((await publish("export class SiteData {}")).manifest).not.toHaveProperty("anonymousSubmissions");
+  });
 });

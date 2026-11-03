@@ -59,7 +59,9 @@ import {
   quoteIdentifier,
   scopeStatementToViewer,
   VIEWER_COLUMN,
+  viewerTables,
   type ArtifactRowScope,
+  type ArtifactSchema,
 } from "../artifacts/read-only-sql";
 
 export type { ArtifactRowScope };
@@ -210,6 +212,7 @@ interface ArtifactFacetHost extends Rpc.DurableObjectBranded {
     tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
   }>;
   rallyTableNames(): Promise<string[]>;
+  rallySchema(): Promise<ArtifactSchema>;
   rallyQuery(sql: string, params: (string | number | null)[], maxRows: number): Promise<{
     columns: string[];
     rows: ArtifactRow[];
@@ -643,15 +646,23 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     const host = await this.facetFor(state);
     const described = await host.rallyDescribe();
     if (scope.rows === "all") return described;
+    const scoped = viewerTables(await host.rallySchema());
+    const filtered = new Set(scoped.filtered.map((table) => table.name));
+    const hidden = new Set(scoped.hidden);
     const tables = [];
     for (const table of described.tables) {
-      if (!isViewerTable(table)) { tables.push(table); continue; }
-      const counted = await host.rallyQuery(
-        `SELECT COUNT(*) AS n FROM ${quoteIdentifier(table.name)} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ?`,
-        [scope.viewerId],
-        1,
-      );
-      tables.push({ ...table, rowCount: Number(counted.rows[0]?.n ?? 0) });
+      if (hidden.has(table.name) || (filtered.has(table.name) && scope.rows === "none")) {
+        tables.push({ ...table, rowCount: 0 });
+      } else if (filtered.has(table.name) && scope.rows === "viewer") {
+        const counted = await host.rallyQuery(
+          `SELECT COUNT(*) AS n FROM ${quoteIdentifier(table.name)} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ?`,
+          [scope.viewerId],
+          1,
+        );
+        tables.push({ ...table, rowCount: Number(counted.rows[0]?.n ?? 0) });
+      } else {
+        tables.push(table);
+      }
     }
     return { tables };
   }
@@ -683,16 +694,13 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     if (!admission.admitted) return { ok: false, reason: "sql_refused", detail: admission.reason };
     const host = await this.facetFor(state);
     let statement = admission.sql;
-    if (scope.rows === "viewer") {
-      const [described, views] = await Promise.all([
-        host.rallyDescribe(),
-        host.rallyQuery("SELECT name, sql FROM sqlite_master WHERE type = 'view'", [], Number.MAX_SAFE_INTEGER),
-      ]);
-      statement = scopeStatementToViewer(statement, {
-        viewerTables: described.tables.filter(isViewerTable).map((table) => table.name),
-        views: views.rows.map((row) => ({ name: String(row.name), sql: String(row.sql) })),
-        viewerId: scope.viewerId,
+    if (scope.rows !== "all") {
+      const scoped = scopeStatementToViewer(statement, {
+        schema: await host.rallySchema(),
+        viewerId: scope.rows === "viewer" ? scope.viewerId : null,
       });
+      if (!scoped.admitted) return { ok: false, reason: "sql_refused", detail: scoped.reason };
+      statement = scoped.sql;
     }
     const read = await host.rallyQuery(statement, params, maxRows);
     return { ok: true, columns: read.columns, rows: read.rows, rowCount: read.rowCount, truncated: read.truncated };
@@ -708,9 +716,12 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     // real table in this facet never reaches SQL at all.
     const admitted = admitTableName(table, await host.rallyTableNames());
     if (!admitted.admitted) return { ok: false, reason: "table_refused", detail: admitted.reason };
-    if (scope.rows === "viewer") {
-      const described = await host.rallyDescribe();
-      if (described.tables.some((candidate) => candidate.name === table && isViewerTable(candidate))) {
+    if (scope.rows !== "all") {
+      const scoped = viewerTables(await host.rallySchema());
+      if (scoped.hidden.includes(table) || (scope.rows === "none" && scoped.filtered.some((candidate) => candidate.name === table))) {
+        return { ok: true, rows: [] };
+      }
+      if (scope.rows === "viewer" && scoped.filtered.some((candidate) => candidate.name === table)) {
         const page = await host.rallyQuery(
           `SELECT * FROM ${admitted.quoted} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ? LIMIT ? OFFSET ?`,
           [scope.viewerId, limit, Math.max(0, offset)],
@@ -821,9 +832,4 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     this.state.storage.sql.exec(`DELETE FROM viewer_sessions WHERE expires_at <= ?`, now);
   }
 
-}
-
-/** A table is per-viewer when it has the viewer column; see `VIEWER_COLUMN`. */
-function isViewerTable(table: { columns: readonly { name: string }[] }): boolean {
-  return table.columns.some((column) => column.name.toLowerCase() === VIEWER_COLUMN);
 }
