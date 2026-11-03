@@ -628,7 +628,7 @@ function environment(database: IngressDatabase, send: (body: unknown) => Promise
   });
   return createTestEnv({
     DB: sqliteD1(database.regional),
-    ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send }),
+    INTERACTIVE_QUEUE: createCloudflareTestBinding<Queue>({ send }),
     WORKSPACE_DOS: workspaceNamespace,
     AVALON_REGION: "global",
     SLACK_APP_ID: "A1",
