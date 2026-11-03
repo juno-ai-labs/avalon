@@ -341,11 +341,11 @@ what the page shows is the page's job.
   own `CREATE VIEW` text, since a view's body was compiled against the schema.
   The shadow carries `rowid` for an ordinary rowid table. Single-quoted names
   (`main.'entries'`) and identifiers with any character at or above U+0080 are
-  tokenized as SQLite does. No query is refused. Two results differ from the
-  author's: a viewer's `SELECT *` on a private rowid table includes a `rowid`
-  column, and FTS5 `MATCH`, `rank`, `bm25()` and `highlight()` do not work on a
-  private FTS5 table, because the shadow is a CTE rather than the table. Page
-  and count reads filter on the column directly.
+  tokenized as SQLite does, with SQLite's own whitespace. No query is refused,
+  and a viewer sees the same columns as the author. Because the shadow is a
+  CTE rather than the table, `rowid`/`oid`/`_rowid_` and FTS5 `MATCH`, `rank`,
+  `bm25()` and `highlight()` fail with an error on a private table. Page and
+  count reads filter on the column directly.
 
 Requests to a stateful artifact route *through* the supervisor rather than being
 served in the loader's own isolate. That is a platform constraint rather than a
