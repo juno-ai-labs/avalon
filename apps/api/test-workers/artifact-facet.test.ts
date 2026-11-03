@@ -46,6 +46,7 @@ export class SiteData extends DurableObject {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS entries (private_to_viewer TEXT NOT NULL, body TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS prompts (body TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE VIEW IF NOT EXISTS all_entries AS SELECT body FROM entries");
+    ctx.storage.sql.exec("CREATE VIEW IF NOT EXISTS summary(summary) AS SELECT body FROM entries");
   }
   async fetch(request) {
     const url = new URL(request.url);
@@ -288,8 +289,16 @@ describe("a stateful artifact's facet", () => {
     const host = hostStub();
     await host.fetchThroughFacet(viewerRequest("/write?body=mine"));
     await host.fetchThroughFacet(viewerRequest("/write?body=theirs", OTHER_VIEWER));
-    for (const sql of ["SELECT body FROM main.entries", 'SELECT body FROM "main"."entries"', "SELECT body FROM all_entries"]) {
-      expect(await host.queryData(sql, [], 10, VIEWER_ROWS), sql).toMatchObject({ ok: true, rows: [{ body: "mine" }] });
+    for (const sql of [
+      "SELECT body FROM main.entries",
+      'SELECT body FROM "main"."entries"',
+      "SELECT body FROM main.'entries'",
+      "SELECT body FROM 'main'.entries",
+      "SELECT body FROM all_entries",
+      "SELECT summary FROM summary",
+    ]) {
+      const read = await host.queryData(sql, [], 10, VIEWER_ROWS);
+      expect(read.ok && read.rows.map((row) => Object.values(row)[0]), sql).toEqual(["mine"]);
     }
   });
 

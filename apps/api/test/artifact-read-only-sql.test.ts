@@ -174,6 +174,17 @@ describe("limiting a read to one viewer's rows", () => {
       .toBe(`WITH ${shadow} SELECT * FROM entries, "entries", entries, main.prompts`);
   });
 
+  it("drops a qualifier SQLite reads from single quotes, which it accepts as an identifier there", () => {
+    expect(scopeStatementToViewer("SELECT * FROM main.'entries', 'main'.entries, 'main'.'entries'", scope))
+      .toBe(`WITH ${shadow} SELECT * FROM 'entries', entries, 'entries'`);
+  });
+
+  it("finds a view's name by position, even when a column repeats it", () => {
+    const views = [{ name: "summary", sql: "CREATE VIEW summary(summary) AS SELECT body FROM entries" }];
+    expect(scopeStatementToViewer("SELECT * FROM summary", { ...scope, views }))
+      .toBe(`WITH ${shadow}, "summary"(summary) AS (SELECT body FROM entries) SELECT * FROM summary`);
+  });
+
   it("leaves a schema name inside a string or a comment alone", () => {
     expect(scopeStatementToViewer("SELECT 'main.entries' -- main.entries\nFROM entries", scope))
       .toBe(`WITH ${shadow} SELECT 'main.entries' -- main.entries\nFROM entries`);

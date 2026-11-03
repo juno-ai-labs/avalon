@@ -211,8 +211,13 @@ export const VIEWER_COLUMN = "private_to_viewer";
 export type ArtifactRowScope = { rows: "all" } | { rows: "viewer"; viewerId: string };
 
 interface SqlToken {
-  /** A bare word, a quoted identifier, or a single punctuation character. */
-  kind: "word" | "quoted" | "punct";
+  /**
+   * A bare word, a quoted identifier, a single-quoted string, or a single
+   * punctuation character. Strings are kept because SQLite also reads a
+   * single-quoted string as an identifier where only an identifier fits:
+   * \`main.'entries'\` and \`'main'.entries\` both name the real table.
+   */
+  kind: "word" | "quoted" | "string" | "punct";
   /** The identifier as SQLite reads it: unquoted, escapes undone. */
   value: string;
   start: number;
@@ -222,10 +227,11 @@ interface SqlToken {
 /**
  * Split a statement into the tokens that can name something.
  *
- * Comments and string literals are skipped, since neither can name a table.
- * Quoted identifiers are **kept** and unquoted, which is the difference from
- * `blankLiteralsAndComments`: `"main"."notes"` names the real table exactly as
- * `main.notes` does, and a scanner that blanked it would miss the bypass.
+ * Comments are skipped. Quoted identifiers and single-quoted strings are
+ * **kept** and unquoted, which is the difference from
+ * `blankLiteralsAndComments`: `"main"."notes"` and `main.'notes'` name the
+ * real table exactly as `main.notes` does, and a scanner that blanked them
+ * would miss the bypass.
  */
 function identifierTokens(sql: string): SqlToken[] {
   const tokens: SqlToken[] = [];
@@ -243,16 +249,7 @@ function identifierTokens(sql: string): SqlToken[] {
       index = close === -1 ? sql.length : close + 2;
       continue;
     }
-    if (character === "'") {
-      index += 1;
-      while (index < sql.length) {
-        if (sql[index] === "'" && sql[index + 1] === "'") { index += 2; continue; }
-        if (sql[index] === "'") { index += 1; break; }
-        index += 1;
-      }
-      continue;
-    }
-    const closer = character === '"' ? '"' : character === "`" ? "`" : character === "[" ? "]" : null;
+    const closer = character === "'" ? "'" : character === '"' ? '"' : character === "`" ? "`" : character === "[" ? "]" : null;
     if (closer) {
       const start = index;
       let value = "";
@@ -263,7 +260,7 @@ function identifierTokens(sql: string): SqlToken[] {
         value += sql[index];
         index += 1;
       }
-      tokens.push({ kind: "quoted", value, start, end: index });
+      tokens.push({ kind: closer === "'" ? "string" : "quoted", value, start, end: index });
       continue;
     }
     const word = /^[\p{L}_][\p{L}\p{N}_$]*/u.exec(sql.slice(index));
@@ -297,7 +294,7 @@ function unqualifyShadowed(sql: string, shadowed: ReadonlySet<string>): string {
   let copied = 0;
   for (let index = 0; index + 2 < tokens.length; index += 1) {
     const [schema, dot, name] = [tokens[index]!, tokens[index + 1]!, tokens[index + 2]!];
-    if (schema.kind === "punct" || name.kind === "punct" || dot.value !== ".") continue;
+    if (schema.kind === "punct" || name.kind === "punct" || dot.kind !== "punct" || dot.value !== ".") continue;
     const qualifier = schema.value.toLowerCase();
     if ((qualifier === "main" || qualifier === "temp") && shadowed.has(name.value.toLowerCase())) {
       out += sql.slice(copied, schema.start);
@@ -317,14 +314,19 @@ function unqualifyShadowed(sql: string, shadowed: ReadonlySet<string>): string {
  * read past the shadow would return every viewer's rows.
  */
 function viewAsCte(view: { name: string; sql: string }): string {
+  // CREATE [TEMP | TEMPORARY] VIEW [IF NOT EXISTS] [schema .] name [(columns)] AS select.
+  // The name is found by position: a column may repeat it, so the last match
+  // before AS can be a column.
   const tokens = identifierTokens(view.sql);
-  const as = tokens.findIndex((token, index) => index > 0 && token.kind === "word" && token.value.toLowerCase() === "as");
-  let nameEnd = -1;
-  for (let index = 0; index < as; index += 1) {
-    const token = tokens[index]!;
-    if (token.kind !== "punct" && token.value.toLowerCase() === view.name.toLowerCase()) nameEnd = index;
+  const keyword = (index: number, word: string) =>
+    tokens[index]?.kind === "word" && tokens[index]!.value.toLowerCase() === word;
+  let nameEnd = tokens.findIndex((_token, index) => keyword(index, "view")) + 1;
+  if (keyword(nameEnd, "if")) nameEnd += 3;
+  if (tokens[nameEnd + 1]?.kind === "punct" && tokens[nameEnd + 1]!.value === ".") nameEnd += 2;
+  const as = tokens.findIndex((_token, index) => index > nameEnd && keyword(index, "as"));
+  if (nameEnd === 0 || as === -1 || tokens[nameEnd]?.value.toLowerCase() !== view.name.toLowerCase()) {
+    throw new Error("artifact_view_definition_unreadable");
   }
-  if (nameEnd === -1) throw new Error("artifact_view_definition_unreadable");
   const columns = view.sql.slice(tokens[nameEnd]!.end, tokens[as]!.start).trim();
   const body = view.sql.slice(tokens[as]!.end).trim().replace(/;\s*$/u, "");
   return `${quoteIdentifier(view.name)}${columns ? columns : ""} AS (${body})`;
