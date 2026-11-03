@@ -504,6 +504,23 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
   protected abstract onScheduledAlarmStalled(alarm: ScheduledAlarm, attempt: number): void;
 
   /**
+   * Report an alarm pass that changed nothing and asked to run again at once.
+   * The base has already held the alarm, so like the hooks above this is
+   * observability only, implemented per object for its own identity fields.
+   */
+  protected abstract onIdleAlarmHeld(attempt: number, heldUntil: number): void;
+
+  /**
+   * Consecutive idle passes, counted in memory. See {@link holdIdleAlarm}.
+   *
+   * Not persisted, because writing it would make the pass that counts it look
+   * like progress. An object in the loop this catches never sleeps, so its
+   * instance is never evicted; one that is evicted starts again at the first
+   * step, which costs one short wake.
+   */
+  private idleAlarmAttempt = 0;
+
+  /**
    * Add or move one entry, then point the alarm at whatever is now earliest.
    *
    * Every mutation of the list re-arms, in both directions. An entry scheduled
@@ -693,6 +710,52 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
   }
 
   /**
+   * Hold back an alarm whose pass wrote nothing and that re-armed for the next
+   * millisecond anyway.
+   *
+   * `gateStalledScheduledAlarms` catches this shape for stored entries. Derived
+   * lanes had no such gate: a lane that reports work at `now` which its pass
+   * then declines leaves the same answer in place, and `armNextAlarm` floors it
+   * at `now + 1`. From at least 2026-10-27 to 2026-11-03 one stopped background
+   * agent with a message queued did this about five times a second, about 1.7M
+   * of the account's 1.9M log and trace events an hour, with nothing logged.
+   *
+   * "Wrote nothing" is SQLite's `total_changes()`, sampled around the drain and
+   * the due work, which is the whole of what a pass can durably move. A pass
+   * that drained a stored entry wrote its settle, a bounded drain wrote the rows
+   * it took, and a request that wrote while the pass awaited counts too. So the
+   * test errs toward not holding. The re-arms on either side are outside the
+   * sample: `setAlarm` is itself a change.
+   *
+   * The hold is the backoff a thrown entry earns, never later than the next
+   * future candidate, and anything that schedules or admits work re-arms past
+   * it through the ordinary paths. A pass that writes, or arms anywhere but the
+   * next millisecond, ends the episode.
+   */
+  private async holdIdleAlarm(changesBefore: number, changesAfter: number): Promise<void> {
+    const now = Date.now();
+    const armed = await this.ctx.storage.getAlarm();
+    if (changesAfter !== changesBefore || armed === null || armed > now + 1) {
+      this.idleAlarmAttempt = 0;
+      return;
+    }
+    this.idleAlarmAttempt += 1;
+    const future = [
+      this.scheduledAlarms.nextDueAtAfter(now),
+      ...this.nextDerivedAlarmCandidates(now),
+    ].filter((candidate): candidate is number => candidate !== null && candidate > now);
+    const heldUntil = Math.min(now + scheduledAlarmRetryDelay(this.idleAlarmAttempt), ...future);
+    await this.ctx.storage.setAlarm(heldUntil);
+    this.onIdleAlarmHeld(this.idleAlarmAttempt, heldUntil);
+  }
+
+  private sqlTotalChanges(): number {
+    return this.ctx.storage.sql.exec<{ changes: number }>(
+      "SELECT total_changes() AS changes",
+    ).one().changes;
+  }
+
+  /**
    * Close this object permanently.
    *
    * Every class that can belong to a workspace extends this base, which is
@@ -764,9 +827,12 @@ export abstract class ScheduledDurableObject<TEnv extends Env = Env>
       await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, deferral));
       return;
     }
+    const changesBefore = this.sqlTotalChanges();
     const ran = await this.drainDueScheduledAlarms(now);
     await this.runDueAlarmWork(now);
     this.gateStalledScheduledAlarms(ran, Date.now());
+    const changesAfter = this.sqlTotalChanges();
     await this.armAlarmAfterDueWork();
+    await this.holdIdleAlarm(changesBefore, changesAfter);
   }
 }

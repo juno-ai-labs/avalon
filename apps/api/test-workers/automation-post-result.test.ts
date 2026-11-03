@@ -1104,6 +1104,11 @@ describe("a room Sidekick's run and the room's agents", () => {
     expect(await runInDurableObject(ownerConversation, (_instance, state) => state.storage.sql.exec<{ n: number }>(
       "SELECT COUNT(*) AS n FROM pending_loop_input_mailbox",
     ).one().n)).toBe(1);
+    // The stop holds that notice until the owner is resumed, so it is not a
+    // reason to wake. Reporting it at `now` ran this object's alarm about five
+    // times a second in production, for as long as the agent stayed stopped.
+    expect(await runInDurableObject(ownerConversation, (instance) =>
+      (instance as unknown as { nextLoopWorkAt(now: number): number | null }).nextLoopWorkAt(Date.now()))).toBeNull();
     await service.send({ agentId: owner.agentId, message: "Continue your work.", attachmentIds: [] },
       { ...context, effectIntentId: crypto.randomUUID() });
     await settledRun(ownerConversation, 3);
