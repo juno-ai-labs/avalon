@@ -96,8 +96,8 @@ export interface Env {
   CODE_LOADER?: WorkerLoader;
   ACTIVITY_QUEUE: Queue;
   /**
-   * Inbound work a person is waiting on Rally to answer (Slack ingress), kept
-   * apart from the activity backlog. See docs/interactive-queue.md.
+   * Inbound work a person is waiting on Rally to answer, kept apart from the
+   * activity backlog. Send with `sendInteractive`. See docs/interactive-queue.md.
    */
   INTERACTIVE_QUEUE: Queue;
   /** Regional durable hand-off from inference capture to Pipeline ingestion. */

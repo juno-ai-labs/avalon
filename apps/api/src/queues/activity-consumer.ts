@@ -29,7 +29,6 @@ import { ConnectorError, connectorOriginUrl } from "@rally/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
-  SlackIngressQueueMessageSchema,
   WorkspaceExternalEventDeliveryQueueMessageSchema,
   asSubstreamId,
   asWorkspaceId,
@@ -58,7 +57,8 @@ import {
   type WorkspaceConnectorEvent,
 } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
-import { consumeSlackIngressMessage } from "./interactive-consumer";
+import { runInteractiveMessage } from "./interactive-consumer";
+import { InteractiveQueueMessageSchema } from "../services/interactive-queue";
 import { runtimeDeferral } from "../lib/defer";
 import { admitExternalEventWithSemanticGate } from "../services/semantic-trigger-admission";
 import type { AuthContext } from "../env";
@@ -1020,11 +1020,11 @@ async function consumeOne(message: Message<unknown>, env: Env,
     return;
   }
 
-  // Slack ingress now rides the interactive queue; this drains jobs that were
-  // queued here before it moved, and recovery re-sends any it misses there.
-  const slackIngress = SlackIngressQueueMessageSchema.safeParse(message.body);
-  if (slackIngress.success) {
-    await consumeSlackIngressMessage(message, slackIngress.data, env);
+  // Interactive work rides its own queue; any kind of it that still arrives
+  // here, such as a job queued before its kind moved, runs the same handler.
+  const interactive = InteractiveQueueMessageSchema.safeParse(message.body);
+  if (interactive.success) {
+    await runInteractiveMessage(message, interactive.data, env);
     return;
   }
 
