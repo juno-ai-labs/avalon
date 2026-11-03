@@ -57,7 +57,6 @@ import {
   admitReadOnlyStatement,
   admitTableName,
   quoteIdentifier,
-  scopeStatementToViewer,
   VIEWER_COLUMN,
   viewerTables,
   type ArtifactRowScope,
@@ -673,8 +672,8 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    * The statement is admitted *before* it reaches the facet, by the supervisor
    * rather than by the code that runs it: an always-rollback transaction is not
    * an authorization boundary, and the rollback inside the facet is the second
-   * line of defence rather than the first. A viewer-scoped read is then
-   * rewritten so per-viewer tables hold only that viewer's rows.
+   * line of defence rather than the first. A viewer-scoped read is refused on
+   * a site that keeps private rows.
    */
   async queryData(
     sql: string,
@@ -693,11 +692,19 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     const admission = admitReadOnlyStatement(sql);
     if (!admission.admitted) return { ok: false, reason: "sql_refused", detail: admission.reason };
     const host = await this.facetFor(state);
-    let statement = admission.sql;
+    const statement = admission.sql;
     if (scope.rows === "viewer") {
-      const scoped = scopeStatementToViewer(statement, { schema: await host.rallySchema(), viewerId: scope.viewerId });
-      if (!scoped.admitted) return { ok: false, reason: "sql_refused", detail: scoped.reason };
-      statement = scoped.sql;
+      // Free SQL cannot be limited to one viewer's rows without rewriting it,
+      // so a member runs it only on a site that keeps no private rows. Paging a
+      // table is filtered on the column and stays available.
+      const scoped = viewerTables(await host.rallySchema());
+      if (scoped.filtered.length > 0 || scoped.hidden.length > 0) {
+        return {
+          ok: false,
+          reason: "sql_refused",
+          detail: "This site keeps private rows, so only its author and Sidekicks can run free-form queries. Read a table with read_artifact_table instead, which returns your own rows.",
+        };
+      }
     }
     const read = await host.rallyQuery(statement, params, maxRows);
     return { ok: true, columns: read.columns, rows: read.rows, rowCount: read.rowCount, truncated: read.truncated };
