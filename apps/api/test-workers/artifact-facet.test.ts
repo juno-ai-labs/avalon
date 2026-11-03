@@ -265,63 +265,28 @@ describe("a stateful artifact's facet", () => {
       .toMatchObject({ ok: true, rows: [{ choice: "maybe" }] });
   });
 
-  it("limits a viewer-scoped read to that viewer's rows in a per-viewer table", async () => {
+  it("pages a private table as one viewer's rows, and refuses that viewer free SQL on the site", async () => {
     await publish(JOURNAL_MODULE);
     const host = hostStub();
     await host.fetchThroughFacet(viewerRequest("/write?body=mine"));
     await host.fetchThroughFacet(viewerRequest("/write?body=theirs", OTHER_VIEWER));
     await host.fetchThroughFacet(viewerRequest("/prompt?body=shared"));
-    // Every path a person or the agent reads by: the query tool, including a
-    // subquery and a caller's own WITH, the Data view's page, and its counts.
-    expect(await host.queryData("SELECT body FROM entries", [], 10, VIEWER_ROWS))
-      .toMatchObject({ ok: true, rows: [{ body: "mine" }] });
-    expect(await host.queryData(
-      "WITH mine AS (SELECT body FROM (SELECT * FROM entries)) SELECT body FROM mine", [], 10, VIEWER_ROWS,
-    )).toMatchObject({ ok: true, rows: [{ body: "mine" }] });
     expect(await host.pageData("entries", 0, 10, VIEWER_ROWS))
       .toMatchObject({ ok: true, rows: [{ private_to_viewer: VIEWER, body: "mine" }] });
+    // A generated private column counts too.
+    expect(await host.pageData("generated_notes", 0, 10, VIEWER_ROWS))
+      .toMatchObject({ ok: true, rows: [{ body: "mine" }] });
+    // A private search index's backing table reads as empty.
+    expect(await host.pageData("notes_fts_content", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [] });
+    // A shared table pages in full.
+    expect(await host.pageData("prompts", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [{ body: "shared" }] });
     const described = await host.describeData(VIEWER_ROWS);
     expect(described.tables.find((table) => table.name === "entries")?.rowCount).toBe(1);
-    // A table without the viewer column is shared, and the author reads all.
+    // Free SQL is the author's and Sidekicks' on a site that keeps private rows.
     expect(await host.queryData("SELECT body FROM prompts", [], 10, VIEWER_ROWS))
-      .toMatchObject({ ok: true, rows: [{ body: "shared" }] });
+      .toMatchObject({ ok: false, reason: "sql_refused" });
     expect(await host.queryData("SELECT body FROM entries ORDER BY body", [], 10, ALL_ROWS))
       .toMatchObject({ ok: true, rows: [{ body: "mine" }, { body: "theirs" }] });
-  });
-
-  it("answers any query a reader writes, including a view and a qualified name, with only their rows", async () => {
-    // A schema-qualified name resolves against the schema, and a view's body
-    // was compiled against it, so both are rewritten onto the shadow rather
-    // than refused: nothing a reader may write is off limits.
-    await publish(JOURNAL_MODULE);
-    const host = hostStub();
-    await host.fetchThroughFacet(viewerRequest("/write?body=mine"));
-    await host.fetchThroughFacet(viewerRequest("/write?body=theirs", OTHER_VIEWER));
-    for (const sql of [
-      "SELECT body FROM main.entries",
-      'SELECT body FROM "main"."entries"',
-      "SELECT body FROM main.'entries'",
-      "SELECT body FROM 'main'.entries",
-      "SELECT body FROM all_entries",
-      "SELECT summary FROM summary",
-      "SELECT body FROM generated_notes",
-      "SELECT body FROM main.डायरी",
-      "SELECT body FROM main.\u00a0spaced",
-      "SELECT body FROM (SELECT * FROM entries UNION ALL SELECT 'x', 'y' WHERE 0)",
-      "SELECT body FROM notes_fts",
-    ]) {
-      const read = await host.queryData(sql, [], 10, VIEWER_ROWS);
-      expect(read.ok && read.rows.map((row) => Object.values(row)[0]), sql).toEqual(["mine"]);
-    }
-  });
-
-  it("hides a private search index's backing tables", async () => {
-    await publish(JOURNAL_MODULE);
-    const host = hostStub();
-    await host.fetchThroughFacet(viewerRequest("/write?body=theirs", OTHER_VIEWER));
-    expect(await host.queryData("SELECT c0 FROM notes_fts_content", [], 10, VIEWER_ROWS))
-      .toMatchObject({ ok: true, rows: [] });
-    expect(await host.pageData("notes_fts_content", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [] });
   });
 
   it("keeps one warm instance across requests rather than reconstructing per request", async () => {

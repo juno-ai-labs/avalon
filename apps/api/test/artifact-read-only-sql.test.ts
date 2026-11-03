@@ -4,7 +4,7 @@ import {
   admitReadOnlyStatement,
   admitTableName,
   quoteIdentifier,
-  scopeStatementToViewer,
+  viewerTables,
 } from "../src/artifacts/read-only-sql";
 
 function admitted(sql: string): boolean {
@@ -148,78 +148,22 @@ describe("dynamic table names", () => {
   });
 });
 
-describe("limiting a read to one viewer's rows", () => {
-  const entries = { name: "entries", sql: "CREATE TABLE entries (private_to_viewer TEXT, body TEXT)", columns: ["private_to_viewer", "body"] };
-  const prompts = { name: "prompts", sql: "CREATE TABLE prompts (body TEXT)", columns: ["body"] };
-  const schema = { tables: [entries, prompts], views: [] };
-  const scope = { schema, viewerId: "v-1" };
-  const shadow = `"entries" AS (SELECT * FROM main."entries" WHERE "private_to_viewer" = 'v-1')`;
-  const scoped = (sql: string, input: Parameters<typeof scopeStatementToViewer>[1] = scope) => {
-    const result = scopeStatementToViewer(sql, input);
-    return result.admitted ? result.sql : `REFUSED: ${result.reason}`;
-  };
-
-  it("shadows each private table with a CTE of the same name and the same columns", () => {
-    expect(scoped("SELECT body FROM entries")).toBe(`WITH ${shadow} SELECT body FROM entries`);
-  });
-
-  it("merges into the caller's own WITH, keeping RECURSIVE first", () => {
-    expect(scoped("WITH x AS (SELECT 1) SELECT * FROM x")).toBe(`WITH ${shadow},  x AS (SELECT 1) SELECT * FROM x`);
-    expect(scoped("with recursive r(n) AS (SELECT 1) SELECT * FROM r")).toBe(`WITH RECURSIVE ${shadow},  r(n) AS (SELECT 1) SELECT * FROM r`);
-  });
-
-  it("quotes the viewer id, so it can only ever be a value", () => {
-    expect(scoped("SELECT 1", { schema, viewerId: "x' OR '1'='1" })).toContain(`"private_to_viewer" = 'x'' OR ''1''=''1')`);
-  });
-
-  it("drops a schema qualifier in any quoting from a shadowed name, and only from one", () => {
-    expect(scoped(`SELECT * FROM main.entries, "main"."entries", [temp] . entries, main.'entries', 'main'.entries, main.prompts`))
-      .toBe(`WITH ${shadow} SELECT * FROM entries, "entries", entries, 'entries', entries, main.prompts`);
-  });
-
-  it("reads a non-ASCII table name whole, as SQLite does", () => {
-    const diary = { name: "डायरी", sql: "CREATE TABLE डायरी (private_to_viewer TEXT)", columns: ["private_to_viewer"] };
-    const emoji = { name: "notes📓", sql: "CREATE TABLE notes📓 (private_to_viewer TEXT)", columns: ["private_to_viewer"] };
-    const result = scoped("SELECT * FROM main.डायरी, main.notes📓", { schema: { tables: [diary, emoji], views: [] }, viewerId: "v-1" });
-    expect(result.endsWith("SELECT * FROM डायरी, notes📓")).toBe(true);
-  });
-
-  it("treats a generated column as private", () => {
-    const generated = { name: "g", sql: "CREATE TABLE g (owner TEXT, private_to_viewer TEXT GENERATED ALWAYS AS (owner)) WITHOUT ROWID", columns: ["owner", "private_to_viewer"] };
-    expect(scoped("SELECT * FROM g", { schema: { tables: [generated], views: [] }, viewerId: "v-1" }))
-      .toBe(`WITH "g" AS (SELECT * FROM main."g" WHERE "private_to_viewer" = 'v-1') SELECT * FROM g`);
+describe("which tables are private to a viewer", () => {
+  it("counts a table private by its column, generated or not, and shared otherwise", () => {
+    const tables = viewerTables({ views: [], tables: [
+      { name: "entries", sql: "CREATE TABLE entries (private_to_viewer TEXT, body TEXT)", columns: ["private_to_viewer", "body"] },
+      { name: "g", sql: "CREATE TABLE g (owner TEXT, private_to_viewer TEXT GENERATED ALWAYS AS (owner))", columns: ["owner", "private_to_viewer"] },
+      { name: "prompts", sql: "CREATE TABLE prompts (body TEXT)", columns: ["body"] },
+    ] });
+    expect(tables.filtered.map((table) => table.name)).toEqual(["entries", "g"]);
+    expect(tables.hidden).toEqual([]);
   });
 
   it("hides a private search index's backing tables", () => {
-    const index = { name: "notes_fts", sql: "CREATE VIRTUAL TABLE notes_fts USING fts5(body, private_to_viewer)", columns: ["body", "private_to_viewer"] };
-    const content = { name: "notes_fts_content", sql: "CREATE TABLE 'notes_fts_content'(id INTEGER PRIMARY KEY, c0, c1)", columns: ["id", "c0", "c1"] };
-    expect(scoped("SELECT * FROM notes_fts_content", { schema: { tables: [index, content], views: [] }, viewerId: "v-1" }))
-      .toContain(`"notes_fts_content" AS (SELECT * FROM main."notes_fts_content" WHERE 0)`);
-  });
-
-  it("keeps a name that starts with a non-breaking space whole, as SQLite does", () => {
-    const spaced = { name: "\u00a0entries", sql: "CREATE TABLE \u00a0entries (private_to_viewer TEXT)", columns: ["private_to_viewer"] };
-    expect(scoped("SELECT * FROM main.\u00a0entries", { schema: { tables: [spaced], views: [] }, viewerId: "v-1" }).endsWith("SELECT * FROM \u00a0entries"))
-      .toBe(true);
-  });
-
-  it("leaves a schema name inside a string or a comment alone", () => {
-    expect(scoped("SELECT 'main.entries' -- main.entries\nFROM entries"))
-      .toBe(`WITH ${shadow} SELECT 'main.entries' -- main.entries\nFROM entries`);
-  });
-
-  it("shadows a view with its own definition, found by position even when a column repeats its name", () => {
-    const views = [
-      { name: "recent", sql: "CREATE VIEW recent AS SELECT body FROM main.entries" },
-      { name: "summary", sql: "CREATE VIEW IF NOT EXISTS summary(summary) AS SELECT body FROM recent" },
-    ];
-    expect(scoped("SELECT * FROM summary", { schema: { tables: [entries], views }, viewerId: "v-1" })).toBe(
-      `WITH ${shadow}, "recent" AS (SELECT body FROM entries), "summary"(summary) AS (SELECT body FROM recent) SELECT * FROM summary`,
-    );
-  });
-
-  it("leaves a statement alone when the site has no private table", () => {
-    expect(scoped("SELECT * FROM main.prompts", { schema: { tables: [prompts], views: [] }, viewerId: "v-1" }))
-      .toBe("SELECT * FROM main.prompts");
+    const tables = viewerTables({ views: [], tables: [
+      { name: "notes_fts", sql: "CREATE VIRTUAL TABLE notes_fts USING fts5(body, private_to_viewer)", columns: ["body", "private_to_viewer"] },
+      { name: "notes_fts_content", sql: "CREATE TABLE 'notes_fts_content'(id INTEGER PRIMARY KEY, c0, c1)", columns: ["id", "c0", "c1"] },
+    ] });
+    expect(tables.hidden).toEqual(["notes_fts_content"]);
   });
 });
