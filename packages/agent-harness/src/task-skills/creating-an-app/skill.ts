@@ -27,36 +27,40 @@ stable link. Settle what kind of app and who it is for, then build it with
   which opens on any phone's browser, and wait for their answer before
   building. Do not start native code or a project scaffold.
 
-## 2. Ask who signs in, before you build
+## 2. Ask who uses it and who sees what, before you build
 
 Unless the request already makes it clear, ask the person one single-choice
-question right away, before writing any files:
+question right away, before writing any files. Signing in and privacy are
+separate: a signed-in site can still show everyone's data, as a vote does.
+Offer these three:
 
-- **One shared site**: everyone who opens the link sees the same site, with no
-  sign-in.
-- **Signed-in viewers**: people sign in with Rally, so the site can tell
-  viewers apart and save what each one does, or keep out anyone not signed in.
-  Each person sees only their own saved data; the person who asked for the
-  site, and Sidekicks, can see everyone's.
+- **Open site**: anyone with the link can use it, with no sign-in, and
+  everyone sees the same thing.
+- **Signed in, shared**: people sign in with Rally, so the site knows who did
+  what, and everyone sees everyone's entries (votes, RSVPs, sign-ups).
+- **Signed in, private**: people sign in with Rally, and each person sees only
+  their own entries (a journal, a personal tracker, saved settings). You and
+  any Sidekick can still see everyone's.
 
-Treat the request as already clear when it names per-person data ("my own
-list", "each person's votes", "members only") or says it is for anyone to view.
+Skip the question when the request already answers it: "for anyone to view"
+is open, "everyone sees the results" is signed in and shared, "only their own"
+or "personal" is signed in and private.
 
-If signed-in viewers should each see **only their own data** (a journal, a
-personal tracker, saved settings), every table that holds one person's data
-gets a \`private_to_viewer\` column holding their viewer id. Rally then keeps
-those rows private to that person everywhere it shows the site's data. Data
-the group should see together, such as RSVPs or votes, uses any other column
-name, for example \`member_id\`.
+For **signed in, private**, every table that holds one person's data gets a
+\`private_to_viewer\` column holding their viewer id. Rally then keeps those
+rows private to that person everywhere it shows the site's data. Shared data,
+such as RSVPs or votes, uses any other column name, for example
+\`member_id\`. A site can mix both: private notes beside a shared board.
+
 Rally provides sign-in; never build a signup form, password or login page of
 your own.
 
-If no one can answer, as in a Sidekick run, build one shared site and say in
-your reply that sign-in can be added.
+If no one can answer, as in a Sidekick run, build an open site and say in
+your reply that sign-in and private entries can be added.
 
 ## 3. Build it
 
-Load Terminal and \`building-live-sites\`, and follow it. A shared site with no
+Load Terminal and \`building-live-sites\`, and follow it. An open site with no
 saved data is static or active; a site that remembers what visitors do, or a
 signed-in site, follows its stateful and viewer-identity sections. Loading this
 skill does not give you Terminal; if Terminal is not available, say the app
@@ -64,8 +68,11 @@ needs it.
 
 ## Anti-patterns
 
-- **Building first, asking later.** Changing a shared site into a signed-in
-  one means rewriting its storage. Ask before the first file.
+- **Building first, asking later.** Changing an open site into a signed-in
+  one, or shared entries into private ones, means rewriting its storage. Ask
+  before the first file.
+- **Treating sign-in as privacy.** Signing in tells the site who acted; it
+  does not hide anyone's entries. Only a \`private_to_viewer\` column does.
 - **Asking when the answer is given.** If the request already says who uses
   it, build without the question.
 - **Saying yes to a native app.** Rally cannot ship to an app store. Offer the
@@ -74,7 +81,7 @@ needs it.
 export const CREATING_AN_APP_SKILL: HarnessSkill = {
   name: "creating-an-app",
   description:
-    "What \"create an app\" means in Rally: a live web site, never a native iOS or Android app, and whether it needs signed-in viewers or is one shared site, settled before building.",
+    "What \"create an app\" means in Rally: a live web site, never a native iOS or Android app, and whether it is open, signed in and shared, or signed in and private, settled before building.",
   whenToUse:
     "When someone asks to create, make or build an app, tool or small program for people to use.",
   body: CREATING_AN_APP_BODY,
