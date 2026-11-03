@@ -209,7 +209,7 @@ describe("a site's sign-in return path", () => {
   });
 
   it("turns anything that could leave the site, or loop back into Rally's routes, into /", () => {
-    for (const raw of [null, "", "rsvp", "//evil.example/x", "/a/..//evil.example", "/\\evil.example", "https://evil.example/", "/__rally/sign-in", "/__rally", "/a\nb"]) {
+    for (const raw of [null, "", "rsvp", "//evil.example/x", "/a/..//evil.example", "/.//evil.example", "/%2e//evil.example", "/\\evil.example", "https://evil.example/", "/__rally/sign-in", "/__rally", "/a\nb"]) {
       expect(artifactReturnPath(raw), String(raw)).toBe("/");
     }
   });
