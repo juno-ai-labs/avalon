@@ -20,6 +20,8 @@
  *
  * See `docs/live-web-artifacts.md`.
  */
+import { artifactIsolateId } from "@rally/contracts";
+
 export const ASSET_SHIM_MODULE = "__rally_assets.js";
 
 export const ASSET_SHIM_SOURCE = `
@@ -60,3 +62,38 @@ export default {
   },
 };
 `;
+
+/**
+ * The compatibility date model-authored artifact code runs under.
+ *
+ * Pinned rather than tracking the platform's newest, because an artifact is
+ * published once and served for as long as anyone opens it: a date that moved
+ * underneath it would change the runtime semantics of code nobody is going to
+ * revisit. Advancing it is a deliberate change with its own reason.
+ */
+export const ARTIFACT_COMPATIBILITY_DATE = "2026-08-01";
+
+/**
+ * A short fingerprint of the Rally code an isolate runs, for its loader id.
+ *
+ * The Worker Loader caches an isolate by its id, and the artifact's version
+ * names only the model's code. Without this, an isolate cached before a
+ * deploy could answer with Rally's old modules or compatibility date: a host
+ * missing a method added since, such as `rallySchema`. Pass every Rally-written
+ * module the isolate loads, and the compatibility date.
+ */
+export function rallyCodeRevision(...parts: string[]): string {
+  let hash = 5381;
+  const text = parts.join("\0");
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash * 33) ^ text.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+/** The loader id of a stateless active site's isolate. */
+export function statelessLoaderId(artifactId: string, version: number): string {
+  return `${artifactIsolateId(artifactId, version)}:${STATELESS_REVISION}`;
+}
+
+const STATELESS_REVISION = rallyCodeRevision(LOADER_ENTRY_SOURCE, ASSET_SHIM_SOURCE, ARTIFACT_COMPATIBILITY_DATE);

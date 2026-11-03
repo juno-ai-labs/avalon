@@ -1,3 +1,4 @@
+import { ARTIFACT_VIEWER_COLUMN } from "@rally/contracts";
 import type { HarnessSkill } from "./index";
 
 /**
@@ -89,6 +90,9 @@ Report these outcomes separately:
   the files, and confirmed publication. Setup alone does not establish this.
 
 ## Build and verify the site
+
+For a request to create an app or tool, load \`creating-an-app\` first if you
+have not, and settle its question before the first file.
 
 1. **Decide the site's kind by what the request needs, and express it
    only in files.** There is no mode setting anywhere — the layout is
@@ -184,9 +188,9 @@ Report these outcomes separately:
 
    **Sites are public by default.** Rally adds trusted viewer headers
    only when the request has a valid Rally viewer session; a direct
-   public visit or crawler has neither header. Anonymous visitors may
-   make only \`GET\` and \`HEAD\` requests; Rally refuses unsafe methods
-   before they reach the handler. If this site must be protected, put
+   public visit or crawler has neither header. Someone who is not signed in
+   reaches your handler with no viewer headers, for reads and submissions
+   alike; your code decides what they may do. If this site must be protected, put
    this guard at the very start of the handler, before
    API routing and before \`env.ASSETS.fetch\`, so it protects the HTML
    and every asset as well as computed routes:
@@ -194,7 +198,7 @@ Report these outcomes separately:
    \`\`\`js
    const viewerId = request.headers.get("x-rally-viewer-id");
    if (!viewerId) {
-     return new Response("Open this site from Rally.", {
+     return new Response("Sign in to view this site.", {
        status: 401,
        headers: { "content-type": "text/plain; charset=utf-8" },
      });
@@ -205,6 +209,15 @@ Report these outcomes separately:
    because its URL is hard to guess, and do not build a login or accept
    an identity header from client JavaScript; only Rally injects these
    headers after validating its own session.
+
+   **Signing in is Rally's.** When this guard answers 401 to someone
+   loading a page, Rally sends them to sign in and back to the same
+   page, so a protected site's link works for anyone who can see it.
+   On a public site, link a visitor who wants to add something to
+   sign-in, for example as "Sign in to vote". \`/__rally/\` is Rally's own
+   route, and the one root-absolute path a page uses:
+   \`"/__rally/sign-in?return=" + encodeURIComponent(location.pathname + location.search)\`.
+   They come back signed in.
 
 4. **Treat every request as the first request.** The runtime starts and
    stops instances whenever it likes; two requests may or may not share
@@ -366,7 +379,7 @@ shape of \`index.js\`.
        // start, so guard with IF NOT EXISTS, never DROP.
        this.ctx.storage.sql.exec(
          \`CREATE TABLE IF NOT EXISTS rsvps (
-            viewer_id TEXT PRIMARY KEY,
+            member_id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             answer TEXT NOT NULL CHECK (answer IN ('yes','no','maybe')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -400,9 +413,9 @@ shape of \`index.js\`.
          }
          // One RSVP per person: answering again updates your answer.
          this.ctx.storage.sql.exec(
-           \`INSERT INTO rsvps (viewer_id, name, answer)
+           \`INSERT INTO rsvps (member_id, name, answer)
               VALUES (?, ?, ?)
-              ON CONFLICT (viewer_id) DO UPDATE
+              ON CONFLICT (member_id) DO UPDATE
                 SET answer = excluded.answer,
                     name = excluded.name,
                     updated_at = datetime('now')\`,
@@ -461,6 +474,56 @@ shape of \`index.js\`.
    display name where the page's purpose needs to know who acted, and
    store neither where it does not.
 
+   **A \`${ARTIFACT_VIEWER_COLUMN}\` column makes a table private.** Each row
+   belongs to the person whose viewer id is in that column. In the data
+   view, its exports and the agent's reads, members see only their own
+   rows; the site's author and Sidekicks see all of them. Every other table is shared, whatever its
+   columns are called, so an RSVP list keyed on \`member_id\` stays
+   visible to the group. The column changes nothing about the SQL your
+   class may run.
+
+   **When each person should see only their own data** (a journal, a
+   personal checklist, saved preferences), make the site protected (item
+   3's guard), give every personal table a \`${ARTIFACT_VIEWER_COLUMN}\` column
+   filled from \`x-rally-viewer-id\`, never from the request body, and
+   filter every read the page serves by it. Rally scopes its own views
+   of the data; the page's handler is what scopes the page. Beside the
+   shared RSVP list in item 1, a private journal looks like this:
+
+   \`\`\`js
+   // In the constructor: one personal table, private by its column.
+   this.ctx.storage.sql.exec(
+     \`CREATE TABLE IF NOT EXISTS journal_entries (
+        id INTEGER PRIMARY KEY,
+        ${ARTIFACT_VIEWER_COLUMN} TEXT NOT NULL,
+        body TEXT NOT NULL,
+        written_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )\`,
+   );
+
+   // In fetch, after the all-routes guard; viewerId is the one it read.
+   if (url.pathname === "/api/entries" && request.method === "POST") {
+     const body = await request.json().then((json) => json?.body, () => null);
+     if (typeof body !== "string" || body.trim() === "")
+       return Response.json({ error: "body must be text" }, { status: 400 });
+     this.ctx.storage.sql.exec(
+       "INSERT INTO journal_entries (${ARTIFACT_VIEWER_COLUMN}, body) VALUES (?, ?)",
+       viewerId, body,
+     );
+     return Response.json({ ok: true });
+   }
+   if (url.pathname === "/api/entries") {
+     const entries = this.ctx.storage.sql
+       .exec(
+         \`SELECT id, body, written_at FROM journal_entries
+           WHERE ${ARTIFACT_VIEWER_COLUMN} = ? ORDER BY written_at DESC\`,
+         viewerId,
+       )
+       .toArray();
+     return Response.json({ entries });
+   }
+   \`\`\`
+
 5. **Old versions of a stateful site do not run.** When someone views
    a prior version, they see its *source*, not a live page — only the
    current version's code ever runs against the database. So never
@@ -502,8 +565,8 @@ shape of \`index.js\`.
      paused — so if you listen for it at all, treat it as a final stop,
      never as half of the visibility pair.)
    - Stop permanently on an auth failure (401/403): the viewer's
-     session has ended; show the page's "reopen this from Rally" state
-     and make no further requests. Never retry past an auth failure.
+     session has ended; show the "Sign in" link from item 3 of the
+     build steps and make no further requests. Never retry past an auth failure.
    - Back off on transient errors with jitter rather than retrying at
      the same interval, and never poll faster because a request failed.
    The page may only fetch its own origin; there is nowhere else to
@@ -521,15 +584,29 @@ shape of \`index.js\`.
   clears them is data loss, not a fresh start. Do instead: additive
   schema changes, and ask in chat before any deliberate reset.
 - **Recording presence nobody asked for.** For an identified Rally viewer the
-  headers tell you who is viewing, and everything you store is visible to the
-  whole work stream in the rail's data view — a page that quietly logs
+  headers tell you who is viewing, and everyone who can open the site sees
+  every row of a shared table in the rail's data view (its author and
+  Sidekicks see private rows too) — a page that quietly logs
   who opened it reads as surveillance the moment anyone looks. Do
   instead: record identity with *acts* (an RSVP, a vote, a sign-up),
   and record views only when the page's stated purpose is attendance.
 - **Attribution theater on an anonymous page.** If the request was for
-  anonymous feedback, storing the viewer id anyway breaks the promise
-  in a way the data view exposes. Do instead: ignore the headers
-  entirely there, and say in the page that responses are anonymous.
+  anonymous answers, storing the viewer id with them breaks the promise
+  in a way the data view exposes. Do instead: follow **Anonymous
+  answers** below, and say in the page that responses are anonymous.
+
+### Anonymous answers
+
+For an anonymous poll, survey or feedback box, store the answers without
+who sent them; how is up to you, and counts per choice are the simplest.
+
+A request from someone who is not signed in reaches your handler with no
+viewer headers, and your class can write it to its database like any other.
+When the request opens answers to people outside Rally (the public,
+customers, guests, anyone, the internet), accept those requests and tell the
+person anyone with the link can answer. Otherwise return 401 when
+\`x-rally-viewer-id\` is missing, with the sign-in link from item 3 of the
+build steps; the answers still store no id.
 `;
 
 const WORKED_EXAMPLES = `Two complete, minimal examples the body's rules produce — read this

@@ -26,6 +26,8 @@ interface Fixture {
   profileError?: Error;
   placementError?: Error;
   page?: { rows?: Record<string, unknown>[]; ok?: boolean };
+  /** Who the publishing run ran as: `resources.uploaded_by_user_id`. */
+  author?: string | null;
 }
 
 /**
@@ -36,7 +38,7 @@ interface Fixture {
 function fixture(input: Fixture = {}) {
   const readProfile = vi.fn();
   const openForViewer = vi.fn(async () => ({ code: "c".repeat(64) }));
-  const metadata: ResourceReadMetadata = { resource: {}, placementAffinity: input.placementError ? null : 'wnam', artifact: input.registryRow === undefined
+  const metadata: ResourceReadMetadata = { resource: { uploaded_by_user_id: input.author ?? null }, placementAffinity: input.placementError ? null : 'wnam', artifact: input.registryRow === undefined
     ? { artifact_id: ARTIFACT, workstream_id: WORKSTREAM, mode: "active", stateful: 1, hostname_stub: HOSTNAME_STUB }
     : input.registryRow };
   const checkAccess = vi.spyOn(AuthorizationService.prototype, "readResource").mockImplementation(async () => {
@@ -65,10 +67,10 @@ function fixture(input: Fixture = {}) {
   const hostStub = {
     openForViewer,
     readErrors: async () => [],
-    describeData: async () => ({ tables: [] }),
-    pageData: async () => (input.page?.ok === false
+    describeData: vi.fn(async () => ({ tables: [] })),
+    pageData: vi.fn(async () => (input.page?.ok === false
       ? { ok: false as const, reason: "table_refused" as const, detail: "no such table" }
-      : { ok: true as const, rows: input.page?.rows ?? [] }),
+      : { ok: true as const, rows: input.page?.rows ?? [] })),
   };
   const hosts: Env["ARTIFACT_HOSTS"] = createCloudflareTestBinding<Env["ARTIFACT_HOSTS"]>({
     idFromName: (name: string) => createTestDurableObjectId(name),
@@ -90,7 +92,7 @@ function fixture(input: Fixture = {}) {
     role: "member",
     analyticsWorkspaceId: null,
   };
-  return { service: new ArtifactOpenService(env, auth), openForViewer, checkAccess, readProfile, metadata };
+  return { service: new ArtifactOpenService(env, auth), openForViewer, checkAccess, readProfile, metadata, hostStub };
 }
 
 async function refusal(run: () => Promise<unknown>): Promise<ApiError> {
@@ -268,6 +270,26 @@ describe("the CSV an export hands somebody", () => {
     } });
     expect(await service.describeData(RESOURCE)).toEqual({ tables: [] });
     expect(await service.pageData(RESOURCE, "rsvps", 0)).toEqual({ rows: [], csv: "" });
+  });
+});
+
+describe("whose rows the Data view shows", () => {
+  it("shows the site's author every row", async () => {
+    const { service, hostStub } = fixture({ author: USER });
+    await service.describeData(RESOURCE);
+    await service.pageData(RESOURCE, "entries", 0);
+    expect(hostStub.describeData).toHaveBeenCalledWith({ rows: "all" });
+    expect(hostStub.pageData).toHaveBeenCalledWith("entries", 0, 200, { rows: "all" });
+  });
+
+  it("shows anyone else only their own rows, including when no author was recorded", async () => {
+    for (const author of ["3f2504e0-4f89-41d3-9a0c-0305e82c3399", null]) {
+      const { service, hostStub } = fixture({ author });
+      await service.describeData(RESOURCE);
+      await service.pageData(RESOURCE, "entries", 0);
+      expect(hostStub.describeData).toHaveBeenCalledWith({ rows: "viewer", viewerId: USER });
+      expect(hostStub.pageData).toHaveBeenCalledWith("entries", 0, 200, { rows: "viewer", viewerId: USER });
+    }
   });
 });
 

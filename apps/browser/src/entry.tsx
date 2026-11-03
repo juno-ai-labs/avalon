@@ -15,7 +15,8 @@ import { scheduleSessionDeadline } from "./session-timer";
 import { parseSidekickLinkPathTarget, parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
 
 import { UuidV7Schema } from "@rally/contracts/telemetry";
-import { OrganizationNameSuggestionSchema, WorkspaceIdSchema } from "@rally/contracts";
+import { OrganizationNameSuggestionSchema, WorkspaceIdSchema, parseArtifactSiteOpenPath } from "@rally/contracts";
+import { SiteOpening } from "./site-open";
 
 const initialRegion = configuredRegions[0]!;
 
@@ -104,6 +105,11 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     }
   }, []);
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
+  // A protected site sent the person here to sign in and come back to it.
+  const [siteTarget] = useState(() => {
+    const target = parseArtifactSiteOpenPath(location.pathname);
+    return target && ConfiguredRegionSchema.safeParse(target.region).success ? target : null;
+  });
   // What the restore path opens: the address the page loaded with, or an
   // organization opened in place since, which a later focus then restores.
   const destinationRef = useRef<{ region: string; workspaceId: string } | null>(null);
@@ -446,6 +452,10 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
   }
 
   if (checking && !session && !proof) return <BrowserBoot />;
+  if (!proof && siteTarget && session) {
+    return <SiteOpening key={session.user.id} region={siteTarget.region} hostnameStub={siteTarget.hostnameStub} returnPath={siteTarget.returnPath}
+      openWorkspace={openWorkspace} onSignOut={signOutStable} />;
+  }
   // A signed-in link to an organization is still opening it; the signed-in
   // card would show an empty organization list until it does. `busy` is an
   // action on that card, such as sign-out, which also clears `error`. A
@@ -481,7 +491,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         <button className="text-button onboarding-signout" disabled={busy} onClick={() => { void signOut(); }} type="button">Sign out</button>
       </> : <>
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
-        <p>{proof ? "Continue to your shared conversations." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : destination ? "Sign in with the email address the link was sent to." : "Your team, your work, and Rally. All in one place."}</p>
+        <p>{proof ? "Continue to your shared conversations." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : destination ? "Sign in with the email address the link was sent to." : siteTarget ? "Sign in to open this site." : "Your team, your work, and Rally. All in one place."}</p>
         {!proof && !challenge && !emailChosen ? <>
           <Button className="button-primary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>
           <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => setEmailChosen(true)}><Mail aria-hidden="true" size={16} />Continue with email</Button>

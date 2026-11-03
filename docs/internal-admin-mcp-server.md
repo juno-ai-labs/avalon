@@ -178,7 +178,8 @@ For a live web artifact, start from `list_artifacts` with the `workspaceId`.
 current version), `viewer_sessions`, and `error_log` — the last being what a
 broken artifact page is usually diagnosed from. A stateful artifact's *own*
 tables are in a separate facet database this tool does not reach; use the
-product's Data view for those.
+product's Data view for those, which shows an operator who is not the site's
+author only their own rows of a `private_to_viewer` table.
 
 For a Sidekick, start from `list_sidekicks` with the `workspaceId` instead. Its
 definition revisions, schedules and run history are in the Organization
