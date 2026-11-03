@@ -1,86 +1,98 @@
-import { SlackIngressQueueMessageSchema, type SlackIngressQueueMessage } from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { connectorRetryAfterMs } from "@rally/connectors";
 
 import type { Env } from "../env";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
+import {
+  InteractiveQueueMessageSchema,
+  type InteractiveKind,
+  type InteractiveQueueMessage,
+} from "../services/interactive-queue";
 import { SlackAgentService } from "../services/slack-agent-service";
 
 /**
- * The interactive queue: inbound work a person is waiting on Rally to answer.
- *
- * It is its own resource so that this work never waits behind the activity
- * queue's backlog of projections, backfills and search indexing. Today it
- * carries Slack ingress; anything else a person addresses to Rally and
- * waits on belongs here too, and nothing else does. See
- * docs/interactive-queue.md.
+ * What one kind of interactive work does. `run` does the work and throws to
+ * have it retried; everything every kind shares (the region check, ack,
+ * retry and backoff, the dead-letter path, the log lines) is the consumer's.
  */
-export function isInteractiveQueue(queue: string): boolean {
-  return queue.endsWith("-interactive");
+interface InteractiveHandler<K extends InteractiveKind> {
+  /** Identifiers that name this message in its log lines; never content. */
+  fields(message: Extract<InteractiveQueueMessage, { kind: K }>): Record<string, string>;
+  run(env: Env, message: Extract<InteractiveQueueMessage, { kind: K }>): Promise<void>;
 }
 
-/** Each message is handled and settled on its own, so one failure retries alone. */
+/** One handler per kind; a kind added to the contract without one does not compile. */
+const HANDLERS: { [K in InteractiveKind]: InteractiveHandler<K> } = {
+  slack_ingress: {
+    fields: (message) => ({ job_id: message.jobId }),
+    run: (env, message) => new SlackAgentService(env).processQueuedIngress(message.workspaceId, message.jobId),
+  },
+};
+
+/**
+ * The interactive queue: inbound work a person is waiting on Rally to answer,
+ * on its own resource so it never waits behind the activity queue's backlog.
+ * See docs/interactive-queue.md.
+ */
 export async function consumeInteractiveQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
-  await Promise.all(batch.messages.map((message) => consumeInteractiveMessage(message, env)));
-}
-
-async function consumeInteractiveMessage(message: Message<unknown>, env: Env): Promise<void> {
-  const slackIngress = SlackIngressQueueMessageSchema.safeParse(message.body);
-  if (slackIngress.success) {
-    await consumeSlackIngressMessage(message, slackIngress.data, env);
-    return;
-  }
-  // Nothing reads this body here: a producer sent work to the wrong queue, or
-  // shipped ahead of this consumer. Retried rather than acked, so it ends in
-  // the dead-letter queue, where it is kept and seen, instead of vanishing.
-  logWarn(env, "interactive_queue_message_unrecognized", {
-    code: zodDiagnosticCode(slackIngress.error, "interactive_queue_message") ?? "interactive_queue_message_unrecognized",
-    queue_attempts: message.attempts,
-  });
-  message.retry();
+  await Promise.all(batch.messages.map(async (message) => {
+    const parsed = InteractiveQueueMessageSchema.safeParse(message.body);
+    if (parsed.success) {
+      await runInteractiveMessage(message, parsed.data, env);
+      return;
+    }
+    // Nothing reads this body here: a producer bypassed `sendInteractive`, or
+    // shipped ahead of this consumer. Retried rather than acked, so it ends
+    // in the dead-letter queue, where it is kept and seen.
+    logWarn(env, "interactive_queue_message_unrecognized", {
+      code: zodDiagnosticCode(parsed.error, "interactive_queue_message") ?? "interactive_queue_message_unrecognized",
+      queue_attempts: message.attempts,
+    });
+    message.retry();
+  }));
 }
 
 /**
- * One Slack ingress job: the event, interaction or command WorkspaceDO
- * admitted at the edge, run now. Shared with the activity consumer, which
- * still drains jobs queued there before Slack ingress moved here.
+ * Run one interactive message and settle it. Exported for the activity
+ * consumer, which hands over any interactive kind it still receives, such as
+ * one queued there before its kind moved to this queue.
  */
-export async function consumeSlackIngressMessage(
+export async function runInteractiveMessage(
   message: Message<unknown>,
-  job: SlackIngressQueueMessage,
+  body: InteractiveQueueMessage,
   env: Env,
 ): Promise<void> {
-  if (job.region !== env.AVALON_REGION) {
-    logInfo(env, "slack_ingress_queue_terminal", {
-      workspace_id: job.workspaceId,
-      job_id: job.jobId,
-      outcome: "skipped",
-      reason: "region_mismatch",
-      queue_attempts: message.attempts,
-    });
+  const handler = HANDLERS[body.kind] as InteractiveHandler<InteractiveKind>;
+  const fields = {
+    workspace_id: body.workspaceId,
+    ...handler.fields(body),
+    queue_attempts: message.attempts,
+  };
+  if (body.region !== env.AVALON_REGION) {
+    logInfo(env, `${body.kind}_queue_terminal`, { ...fields, outcome: "skipped", reason: "region_mismatch" });
     message.ack();
     return;
   }
   try {
-    await new SlackAgentService(env).processQueuedIngress(job.workspaceId, job.jobId);
-    logInfo(env, "slack_ingress_queue_terminal", {
-      workspace_id: job.workspaceId,
-      job_id: job.jobId,
-      outcome: "processed",
-      reason: "ingress_job_completed",
-      queue_attempts: message.attempts,
-    });
+    await handler.run(env, body);
+    logInfo(env, `${body.kind}_queue_terminal`, { ...fields, outcome: "processed", reason: "completed" });
     message.ack();
   } catch (error) {
-    logWarn(env, "slack_ingress_queue_processing_failed", {
-      workspace_id: job.workspaceId,
-      job_id: job.jobId,
-      queue_attempts: message.attempts,
-      reason: diagnosticErrorCode(error, "slack_ingress_queue_processing_failed"),
+    logWarn(env, `${body.kind}_queue_processing_failed`, {
+      ...fields,
+      reason: diagnosticErrorCode(error, `${body.kind}_queue_processing_failed`),
     });
-    const attempts = Math.max(1, message.attempts);
-    const exponentialDelay = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
-    const providerDelay = Math.ceil((connectorRetryAfterMs(error) ?? 0) / 1_000);
-    message.retry({ delaySeconds: Math.min(43_200, Math.max(exponentialDelay, providerDelay)) });
+    message.retry({ delaySeconds: interactiveRetryDelaySeconds(message.attempts, error) });
   }
+}
+
+/**
+ * Exponential from 5 s, capped at 300 s, unless a provider asked for longer
+ * (capped at 12 hours, the Queue's own ceiling). Carried over unchanged from
+ * Slack ingress, whose retry this was.
+ */
+function interactiveRetryDelaySeconds(attempts: number, error: unknown): number {
+  const exponential = Math.min(300, 5 * 2 ** Math.min(Math.max(1, attempts) - 1, 6));
+  const provider = Math.ceil((connectorRetryAfterMs(error) ?? 0) / 1_000);
+  return Math.min(43_200, Math.max(exponential, provider));
 }

@@ -23,7 +23,8 @@ import {
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { dispatchWorkspaceRelationshipChanges } from "./services/workspace-relationship-delivery";
 import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
-import { consumeInteractiveQueue, isInteractiveQueue } from "./queues/interactive-consumer";
+import { consumeInteractiveQueue } from "./queues/interactive-consumer";
+import { isInteractiveQueue } from "./services/interactive-queue";
 import {
   isAnalyticsLakehouseQueue,
   recoverUndeliveredAnalyticsLakehouseEvents,
