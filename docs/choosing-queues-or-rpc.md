@@ -138,10 +138,12 @@ check. Those are worth naming precisely, because naming them is what stops the
 requirement from spreading to everything nearby.
 
 And when a Queue is right but the default window is too slow, **tune the window
-before you abandon the mechanism.** Rally's activity queue runs at
+before you abandon the mechanism.** Rally's activity queue was set to
 `max_batch_timeout: 1` for exactly this reason: at five seconds a Slack unfurl
 appeared six seconds after the message, which was a real complaint with a real
-user story behind it. The fix was one second, not a service binding.
+user story behind it. The fix was one second, not a service binding. Slack
+ingress, unfurls included, now rides the [interactive queue](interactive-queue.md),
+which keeps the same one-second window.
 
 ### Deciding without measurement
 
