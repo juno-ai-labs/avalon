@@ -7808,6 +7808,21 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
   }
 
+  protected override onIdleAlarmHeld(attempt: number, heldUntil: number): void {
+    const identity = this.objectStore.identity();
+    reportScheduledAlarmAttempt(this.env, (promise) => this.ctx.waitUntil(promise), {
+      event: "substream_alarm_idle_held",
+      summary: "An agent object's alarm keeps asking to run again at once while its passes change nothing: one of its derived wake reasons, in the conversation `substream_id` names, reports work at now that the pass then declines. Find which.",
+      attempt,
+      fields: {
+        workspace_id: identity?.workspaceId ?? null,
+        workstream_id: identity?.parentId ?? null,
+        substream_id: this.externalSubstreamId(),
+        held_until: new Date(heldUntil).toISOString(),
+      },
+    });
+  }
+
   private hasDueAlarmWork(now: number): boolean {
     return this.objectStore.nextRegionalEffectDueAt() !== null
       || nextExternalBindingDueAt(this.state.storage.sql) !== null
@@ -8710,12 +8725,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // it would re-arm at `now` on every alarm, for as long as the question
     // stays open. Admitting the answer arms its own wake.
     if (loop) {
-      if (this.transcript.nextActivationInput(loop.loop_id) !== undefined
-        || this.transcript.hasLeadingInputWithoutRun()) return now;
-      // The room then goes quiet with messages still queued only if an open
-      // question is waiting for its answer. A newly admitted ordinary message
-      // cancels that question and supplies the tool result during promotion.
-      const queued = this.loop.pendingInputs();
+      if (this.transcript.hasLeadingInputWithoutRun()) return now;
+      // A stopped background agent holds every new execution (see
+      // `claimPersistentLoopExecution`), so its queued activation input is no
+      // more work than a parked room's. Waking on it re-armed at `now` on every
+      // alarm, several times a second, for as long as the agent stayed
+      // stopped. Messages that start no run still land while stopped, so the
+      // branch above still wakes for them. Resuming clears `stopped_at` in the
+      // same admission that queues the resuming message, and that admission
+      // arms its own wake.
+      const stopped = this.backgroundAgentStopped();
+      if (!stopped && this.transcript.nextActivationInput(loop.loop_id) !== undefined) return now;
+      // The room then goes quiet with messages still queued only if the agent
+      // is stopped or an open question is waiting for its answer. A newly
+      // admitted ordinary message cancels that question and supplies the tool
+      // result during promotion.
+      const queued = stopped ? [] : this.loop.pendingInputs();
       if (queued.length > 0) {
         logWarn(this.env, "substream_loop_parked_with_queued_input", {
           loop_id: loop.loop_id,
@@ -8742,6 +8767,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           AND status IN ('admitted', 'running')`,
     ).toArray()[0]?.due_at ?? null;
     return receipt === null ? null : Math.max(now, Number(receipt));
+  }
+
+  /** Whether this object is a background agent its owner has stopped. */
+  private backgroundAgentStopped(): boolean {
+    return this.state.storage.sql.exec<{ stopped_at: number | null }>(
+      "SELECT stopped_at FROM background_agent WHERE id = 1",
+    ).toArray()[0]?.stopped_at != null;
   }
 
   /** Oldest post-run receipt, ordered independently from executable work. */
