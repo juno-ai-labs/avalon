@@ -294,6 +294,12 @@ describe("a stateful artifact's facet", () => {
     const described = await host.describeData(VIEWER_ROWS);
     expect(described.tables.find((table) => table.name === "entries")?.rowCount).toBe(1);
     expect(described.tables.find((table) => table.name === "entries_search")?.rowCount).toBe(0);
+    // Every reader is told which tables are private, a generated column included.
+    const authorView = await host.describeData(ALL_ROWS);
+    expect(Object.fromEntries(authorView.tables
+      .filter((table) => ["entries", "generated_notes", "prompts"].includes(table.name))
+      .map((table) => [table.name, table.private])))
+      .toEqual({ entries: true, generated_notes: true, prompts: false });
     // Free SQL is the author's and Sidekicks' on a site that keeps private rows.
     expect(await host.queryData("SELECT body FROM prompts", [], 10, VIEWER_ROWS))
       .toMatchObject({ ok: false, reason: "private_rows" });

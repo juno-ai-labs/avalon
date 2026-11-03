@@ -864,7 +864,7 @@ that built the page.
 
 | Tool | Strict input | Successful `output` |
 | --- | --- | --- |
-| `describe_artifact_data` | `{ resource: string }` — a site resource's slug or id | `{ resource, slug, mode, tables: [{ name, columns: [{ name, type }], rowCount }] }`. Discovery first: the schema is a model-designed one this run may never have seen. |
+| `describe_artifact_data` | `{ resource: string }` — a site resource's slug or id | `{ resource, slug, mode, tables: [{ name, columns: [{ name, type }], rowCount, private }] }`; `private` marks a table that shows each person only their own rows. Discovery first: the schema is a model-designed one this run may never have seen. |
 | `query_artifact_data` | `{ resource: string, sql: string, params?: (string \| number \| null)[] }` | `{ resource, columns, rows, rowCount, truncated }`; at most 200 rows, with `truncated` rather than a silent cut. A stored blob is replaced by `<n bytes>`. |
 | `read_artifact_table` | `{ resource: string, table: string, offset?: number }` | `{ resource, table, rows, nextOffset?, rowsShown? }`; one page of at most 200 rows, with `nextOffset` when a full page came back. `table_refused` names a table the site does not have. |
 

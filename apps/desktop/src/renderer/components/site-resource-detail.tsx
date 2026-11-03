@@ -11,7 +11,7 @@ import type { DetailHeaderAction } from './detail-header-actions';
 import { useCopy } from '../lib/use-copy';
 import { useDetailHeaderActions } from './detail-header-actions';
 import { CopyButton, CopyStatus, copyStateLabel } from './copy-button';
-import { EmptyState, InsetSurface, SegmentedControl } from './primitives';
+import { Badge, EmptyState, InsetSurface, SegmentedControl, Tip } from './primitives';
 
 /**
  * The rail's detail for a **live artifact**: a published site Rally serves.
@@ -41,7 +41,13 @@ export interface SiteArtifactTable {
   name: string;
   columns: { name: string; type: string }[];
   rowCount: number;
+  /** Each person sees only their own rows; the author and Sidekicks see all. */
+  private?: boolean;
 }
+
+/** What the Private pill means, said once for every table that wears it. */
+export const PRIVATE_TABLE_EXPLANATION =
+  'Each person sees only their own rows in this table. The site’s author and its Sidekicks see every row.';
 
 export interface SiteResourceDetailProps {
   editable?: boolean;
@@ -612,7 +618,8 @@ function SiteDataPanel({
     return <EmptyState description="Nothing has been submitted yet." title="No data yet" />;
   }
 
-  const columns = tables.find((table) => table.name === selected)?.columns ?? [];
+  const current = tables.find((table) => table.name === selected);
+  const columns = current?.columns ?? [];
   return (
     <div className="site-data">
       <div className="site-data-toolbar">
@@ -624,16 +631,23 @@ function SiteDataPanel({
             label: table.name,
             // The count is what a person picks a table by, and the control takes
             // plain text labels, so it rides along as the segment's own tooltip.
-            title: `${table.rowCount} rows`,
+            title: table.private ? `${table.rowCount} rows, private` : `${table.rowCount} rows`,
           }))}
           value={selected ?? ''}
         />
-        <CopyButton
-          copyText={surface.copyText}
-          disabled={!selected}
-          label="Copy as CSV"
-          value={() => loadTable(resourceId, selected ?? '').then(({ csv }) => csv)}
-        />
+        <div className="site-data-actions">
+          {current?.private
+            ? <Tip label={PRIVATE_TABLE_EXPLANATION} side="top">
+                <Badge className="site-data-private" tabIndex={0}>Private</Badge>
+              </Tip>
+            : null}
+          <CopyButton
+            copyText={surface.copyText}
+            disabled={!selected}
+            label="Copy as CSV"
+            value={() => loadTable(resourceId, selected ?? '').then(({ csv }) => csv)}
+          />
+        </div>
       </div>
       <InsetSurface className="site-data-scroll">
         <table>

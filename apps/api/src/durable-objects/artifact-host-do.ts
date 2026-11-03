@@ -277,6 +277,15 @@ export const ArtifactOpenRequestSchema = z.strictObject({
  */
 export type ArtifactRow = Record<string, string | number | boolean | null | ArrayBuffer>;
 
+/** One table as the Data view and the describe tool show it. */
+export interface ArtifactDescribedTable {
+  name: string;
+  columns: { name: string; type: string }[];
+  rowCount: number;
+  /** Each person sees only their own rows; the author and Sidekicks see all. */
+  private: boolean;
+}
+
 export type ArtifactQueryResult =
   | { ok: true; columns: string[]; rows: ArtifactRow[]; rowCount: number; truncated: boolean }
   | { ok: false; reason: "no_artifact_data" }
@@ -626,25 +635,28 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    *
    * Row counts follow `scope`: a viewer limited to their own rows sees how
    * many of a per-viewer table's rows are theirs, not how many exist.
+   * `private` marks a table that shows each person only their own rows.
    */
   async describeData(scope: ArtifactRowScope): Promise<{
-    tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
+    tables: ArtifactDescribedTable[];
   }> {
     await this.initialized;
     const state = this.stateRow();
     if (!state || state.stateful !== 1) return { tables: [] };
     const host = await this.facetFor(state);
-    const described = await host.rallyDescribe();
+    const described = (await host.rallyDescribe()).tables.map((table) => ({
+      ...table,
+      private: table.columns.some((column) => column.name.toLowerCase() === VIEWER_COLUMN),
+    }));
     const viewerId = viewerOf(scope);
-    if (viewerId === null) return described;
+    if (viewerId === null) return { tables: described };
     const scoped = viewerTables(await host.rallySchema());
-    const filtered = new Set(scoped.filtered.map((table) => table.name));
     const hidden = new Set(scoped.hidden);
     const tables = [];
-    for (const table of described.tables) {
+    for (const table of described) {
       if (hidden.has(table.name)) {
         tables.push({ ...table, rowCount: 0 });
-      } else if (filtered.has(table.name)) {
+      } else if (table.private) {
         const counted = await host.rallyQuery(
           `SELECT COUNT(*) AS n FROM ${quoteIdentifier(table.name)} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ?`,
           [viewerId],

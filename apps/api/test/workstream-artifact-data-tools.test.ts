@@ -38,6 +38,7 @@ function fixture(overrides: {
         name: "votes",
         columns: [{ name: "member", type: "TEXT" }, { name: "choice", type: "TEXT" }],
         rowCount: 2,
+        private: false,
       }],
     })),
     pageData: vi.fn(async () => ({ ok: true as const, rows: [{ choice: "yes" }] })),

@@ -26,17 +26,15 @@ import type {
 } from "./workstream-artifact-data-tools";
 
 /**
- * Who a run reads a site's data as: the member sending the input that
- * continues a Sidekick run, `null` for an unattended Sidekick run or a
- * background agent one started, and otherwise the user the run runs as.
+ * Who a run reads a site's data as: `null` (every row) for a Sidekick run or
+ * a background agent one started, and otherwise the user the run runs as.
+ * People do not type into Sidekick runs, so every one is unattended.
  */
 export function artifactDataReader(input: {
   executionPrincipal: { type: string; userId?: string | undefined };
   automationRun?: unknown;
   automationDelegation?: unknown;
-  automationContinuation?: { senderUserId?: string | undefined } | undefined;
 }): string | null {
-  if (input.automationContinuation) return input.automationContinuation.senderUserId ?? null;
   if (input.automationRun || input.automationDelegation) return null;
   return input.executionPrincipal.type === "user" ? input.executionPrincipal.userId ?? null : null;
 }
@@ -46,11 +44,10 @@ export interface ArtifactDataWiringInput {
   workstreamId: string;
   principal: ExecutionPrincipal;
   /**
-   * The person this run reads as, or `null` for an unattended run (a Sidekick
-   * run nobody is typing into, a background agent one started, an
-   * Organization principal), which reads every row because its job is
-   * usually the whole data set: a digest, a tally, a refresh. A member typing
-   * into a Sidekick's wizard or run reads as that member.
+   * The person this run reads as, or `null` for a Sidekick run, a background
+   * agent one started, or an Organization principal, which reads every row
+   * because its job is usually the whole data set: a digest, a tally, a
+   * refresh. A member typing into a Sidekick's wizard reads as that member.
    */
   reader: string | null;
 }

@@ -20,7 +20,7 @@ import type { HarnessTool } from "@rally/agent-harness";
 import { z } from "zod";
 
 import { VIEWER_COLUMN, type ArtifactRowScope } from "../artifacts/read-only-sql";
-import type { ArtifactPageResult, ArtifactQueryResult, ArtifactRow } from "../durable-objects/artifact-host-do";
+import type { ArtifactDescribedTable, ArtifactPageResult, ArtifactQueryResult, ArtifactRow } from "../durable-objects/artifact-host-do";
 
 /**
  * How many rows one query may return.
@@ -77,9 +77,7 @@ const QueryArgumentsSchema = z.strictObject({
  * has no method that could write.
  */
 export interface ArtifactDataHost {
-  describeData(scope: ArtifactRowScope): Promise<{
-    tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
-  }>;
+  describeData(scope: ArtifactRowScope): Promise<{ tables: ArtifactDescribedTable[] }>;
   queryData(
     sql: string,
     params: (string | number | null)[],

@@ -5045,6 +5045,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    gutter the full-bleed preview gives up. */
 .site-data { display: flex; flex-direction: column; gap: 8px; min-height: 0; padding: 16px; }
 .site-data-toolbar { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
+.site-data-actions { align-items: center; display: flex; flex: 0 0 auto; gap: 8px; }
 /* Its own scroller: a model-designed schema can be any width, and a table that
    widened the rail would push the transcript around. The edge and the corner
    are `.inset-surface`'s; only the scrolling is this rule's. */

@@ -711,6 +711,26 @@ describe('the data a stateful site collected', () => {
     expect(props.loadTable).toHaveBeenCalledWith(RESOURCE, 'comments');
   });
 
+  it('marks a private table, and only that one, with a Private pill', async () => {
+    const { props } = setup({
+      describeData: vi.fn(async () => ({
+        tables: [
+          { name: 'rsvps', columns: [{ name: 'name', type: 'TEXT' }], rowCount: 2, private: false },
+          { name: 'journal', columns: [{ name: 'body', type: 'TEXT' }], rowCount: 1, private: true },
+        ],
+      })),
+      loadTable: vi.fn(async () => ({ rows: [{ name: 'Ada', body: 'Dear diary' }], csv: '' })),
+    });
+    await waitFor(() => expect(props.surface.present).toHaveBeenCalled());
+    fireEvent.click(storedDataToggle());
+    await screen.findByText('Ada');
+    expect(screen.queryByText('Private')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'journal' }));
+
+    expect(await screen.findByText('Private')).toBeInTheDocument();
+  });
+
   it('shows an empty stored table as such rather than as a broken panel', async () => {
     const { props } = setup({ describeData: vi.fn(async () => ({ tables: [] })) });
     await waitFor(() => expect(props.surface.present).toHaveBeenCalled());

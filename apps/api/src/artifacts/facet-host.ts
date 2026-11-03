@@ -108,8 +108,10 @@ export class ${FACET_HOST_CLASS} extends DurableObject {
     )) {
       if (INTERNAL_TABLE.test(row.name)) continue;
       const columns = [];
+      // xinfo so a generated column shows, and counts toward privacy; minus a
+      // virtual table's hidden columns, which are SQLite's, not the site's.
       for (const column of this.ctx.storage.sql.exec(
-        "SELECT name, type FROM pragma_table_info(?)",
+        "SELECT name, type FROM pragma_table_xinfo(?) WHERE hidden != 1",
         row.name,
       )) {
         columns.push({ name: column.name, type: column.type || "ANY" });

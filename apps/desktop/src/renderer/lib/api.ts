@@ -2203,7 +2203,7 @@ export class RallyApi {
 
   /** The tables a stateful artifact keeps, for the rail's Data view. */
   async describeArtifactData(resourceId: string): Promise<{
-    tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
+    tables: { name: string; columns: { name: string; type: string }[]; rowCount: number; private?: boolean }[];
   }> {
     const response = await this.execute(
       `/resources/${encodeURIComponent(resourceId)}/artifact/data`,

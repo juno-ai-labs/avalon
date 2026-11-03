@@ -317,12 +317,12 @@ what the page shows is the page's job.
 - **Author** is `resources.uploaded_by_user_id`, whoever the publishing run ran
   as. A site published under an Organization principal has none, so in the
   Data view every member reads only their own rows.
-- **Sidekick** means an unattended run, one carrying `automationRun` or
-  `automationDelegation` with no member typing into it. It works on the whole
-  data set (a tally, a digest, a refresh). A member typing into a Sidekick's
-  wizard or one of its runs (`automationContinuation.senderUserId`) reads as
-  that member, not as the run's coordinator. `artifactDataReader` decides
-  this, and `artifactRowScope` turns the reader and the author into a scope.
+- **Sidekick** means a Sidekick run, one carrying `automationRun` or
+  `automationDelegation`. People do not type into runs, so each is
+  unattended and works on the whole data set (a tally, a digest, a refresh).
+  A Sidekick's wizard is a member typing, so it reads as that member.
+  `artifactDataReader` decides this, and `artifactRowScope` turns the reader
+  and the author into a scope.
 - **Organization-principal runs** read every row, like Sidekick runs. That
   includes runs for an unlinked Slack or connector sender, and a reply in a
   Sidekick's provider thread from someone with no Rally account.
@@ -341,6 +341,10 @@ what the page shows is the page's job.
   trigger, a view, a vocabulary table over another index), so hiding only
   indexes that name a private table leaked; hiding them all is the rule. A
   site with no private table hides nothing.
+- **Every reader is told which tables are private.** `describeData` marks
+  each table `private` from its columns, which the Data view shows as a
+  Private pill and the describe tool returns, so an author knows which rows
+  people believe are theirs.
 - **How a scoped read works.** The Data view's pages, its export, the agent's
   `read_artifact_table` and the row counts filter a private table on its
   column. A member's free-form `query_artifact_data` runs only on a site with
@@ -725,6 +729,25 @@ The selector and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-03 — A Private pill, and Sidekick runs read every row again
+
+**What changed:** `describeData` marks each table `private`, and the Data
+view shows a Private pill on such a table. Describing now lists generated
+columns too. A member's message continuing a Sidekick run no longer narrows
+that run to the member's rows.
+
+**Why:** An author could not tell which tables people believe are theirs, so
+nothing warned them before repeating private entries in a shared thread.
+People do not type into Sidekick runs, so the narrowing guarded a path nobody
+uses and added a rule to explain.
+
+**Considered and rejected:** Marking private tables with a second facet call
+to read the schema: the columns `rallyDescribe` already returns say it, so
+the flag costs no extra call.
+
+**Consequences:** If people can ever type into a Sidekick run, that run
+reads every row for them; narrow it in `artifactDataReader` then.
 
 ### 2026-11-03 — Per-viewer rows, sign-in from a site's link, public submissions
 

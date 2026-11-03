@@ -19,14 +19,6 @@ describe("who a run reads a site's data as", () => {
     })).toBeNull();
   });
 
-  it("reads as the member typing into a Sidekick run, not as the run's coordinator", () => {
-    expect(artifactDataReader({
-      executionPrincipal: coordinator,
-      automationRun: run,
-      automationContinuation: { senderUserId: "member" },
-    })).toBe("member");
-  });
-
   it("reads every row for an Organization principal", () => {
     expect(artifactDataReader({ executionPrincipal: { type: "workspace" } })).toBeNull();
   });

@@ -24,6 +24,7 @@ import {
 
 import { artifactRowScope } from "../artifacts/read-only-sql";
 import { artifactHostDOName } from "../durable-objects/names";
+import type { ArtifactDescribedTable } from "../durable-objects/artifact-host-do";
 import type { AuthContext, Env, RequestMembershipObservation } from "../env";
 import { AuthorizationService } from "./authorization-service";
 import { ApiError } from "../lib/api-error";
@@ -186,9 +187,7 @@ export class ArtifactOpenService {
    * Behind the same visibility as opening, because these rows are work-stream
    * content: they were written by the page's visitors.
    */
-  async describeData(resourceId: string): Promise<{
-    tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
-  }> {
+  async describeData(resourceId: string): Promise<{ tables: ArtifactDescribedTable[] }> {
     const { row, host, scope } = await this.resolveAuthorized(resourceId);
     if (row.stateful !== 1) return { tables: [] };
     return await host.describeData(scope);
