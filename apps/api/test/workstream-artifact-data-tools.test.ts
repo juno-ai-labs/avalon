@@ -150,7 +150,7 @@ describe("querying a site's data", () => {
     expect(host.describeData).toHaveBeenCalledWith(scope);
     expect(host.queryData).toHaveBeenCalledWith("SELECT choice FROM votes", [], 200, scope);
     expect(described.output).toMatchObject({
-      rowsShown: "Tables with a viewer_id column show only the requesting person's rows; other tables show every row.",
+      rowsShown: "Tables with a private_to_viewer column show only the requesting person's rows; other tables show every row.",
     });
     expect(read.output).toMatchObject({ rowsShown: expect.stringContaining("requesting person's rows") });
   });

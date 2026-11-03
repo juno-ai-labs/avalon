@@ -461,22 +461,19 @@ shape of \`index.js\`.
    display name where the page's purpose needs to know who acted, and
    store neither where it does not.
 
-   **The column name decides who else can read a row.** Rally treats a
-   table with a \`viewer_id\` column as **private per person**: in the
-   data view, its exports and the agent's reads, the site's author and
-   any Sidekick see every row, and everyone else sees only the rows whose
-   \`viewer_id\` is their own. Any other table is shared and everyone
-   who can see the site sees all of it. So store the viewer id as
-   \`member_id\` when the group should see who acted (an RSVP list, a
-   vote, a sign-up sheet), and as \`viewer_id\` only when each person's
-   rows are theirs alone. Neither changes the SQL your class may run:
-   query, join, aggregate and create views as the page needs.
+   **A \`private_to_viewer\` column makes a table private.** Each row
+   belongs to the person whose viewer id is in that column. In the data
+   view, its exports and the agent's reads, members see only their own
+   rows; the site's author and Sidekicks see all of them. Every other table is shared, whatever its
+   columns are called, so an RSVP list keyed on \`member_id\` stays
+   visible to the group. The column changes nothing about the SQL your
+   class may run.
 
    **When each person should see only their own data** (a journal, a
    personal checklist, saved preferences), make the site protected (item
-   3's guard), give every personal table a \`viewer_id\` column filled
-   from the header, never from the request body, and filter every read
-   the page serves by it. Rally scopes its own views of the data; the
+   3's guard), give every personal table a \`private_to_viewer\` column
+   filled from \`x-rally-viewer-id\`, never from the request body, and
+   filter every read the page serves by it. Rally scopes its own views of the data; the
    page's handler is what scopes the page.
 
 5. **Old versions of a stateful site do not run.** When someone views
