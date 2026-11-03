@@ -104,7 +104,10 @@ export function artifactReturnPath(raw: string | null | undefined): string {
   // Checked again after parsing: `/a/..//evil.example` normalizes to a path
   // that starts with `//`, which a browser follows to another host.
   if (parsed.origin !== "https://artifact.invalid" || parsed.pathname.startsWith("//")) return "/";
-  if (parsed.pathname === ARTIFACT_RESERVED_PREFIX || parsed.pathname.startsWith(`${ARTIFACT_RESERVED_PREFIX}/`)) return "/";
+  // A prior version's mount is a page of the site; every other reserved path
+  // is Rally's own and would loop back into sign-in.
+  const priorVersion = new RegExp(`^${ARTIFACT_RESERVED_PREFIX}/v[0-9]+/`, "u").test(parsed.pathname);
+  if (!priorVersion && (parsed.pathname === ARTIFACT_RESERVED_PREFIX || parsed.pathname.startsWith(`${ARTIFACT_RESERVED_PREFIX}/`))) return "/";
   return `${parsed.pathname}${parsed.search}`;
 }
 
