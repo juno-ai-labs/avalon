@@ -43,7 +43,7 @@ import { DurableObject } from "cloudflare:workers";
 export class SiteData extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS entries (viewer_id TEXT NOT NULL, body TEXT NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS entries (private_to_viewer TEXT NOT NULL, body TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS prompts (body TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE VIEW IF NOT EXISTS all_entries AS SELECT body FROM entries");
   }
@@ -51,7 +51,7 @@ export class SiteData extends DurableObject {
     const url = new URL(request.url);
     const viewer = request.headers.get("x-rally-viewer-id");
     if (url.pathname === "/write" && viewer) {
-      this.ctx.storage.sql.exec("INSERT INTO entries (viewer_id, body) VALUES (?, ?)", viewer, url.searchParams.get("body"));
+      this.ctx.storage.sql.exec("INSERT INTO entries (private_to_viewer, body) VALUES (?, ?)", viewer, url.searchParams.get("body"));
       return Response.json({ ok: true });
     }
     if (url.pathname === "/prompt") {
@@ -270,7 +270,7 @@ describe("a stateful artifact's facet", () => {
       "WITH mine AS (SELECT body FROM (SELECT * FROM entries)) SELECT body FROM mine", [], 10, VIEWER_ROWS,
     )).toMatchObject({ ok: true, rows: [{ body: "mine" }] });
     expect(await host.pageData("entries", 0, 10, VIEWER_ROWS))
-      .toMatchObject({ ok: true, rows: [{ viewer_id: VIEWER, body: "mine" }] });
+      .toMatchObject({ ok: true, rows: [{ private_to_viewer: VIEWER, body: "mine" }] });
     const described = await host.describeData(VIEWER_ROWS);
     expect(described.tables.find((table) => table.name === "entries")?.rowCount).toBe(1);
     // A table without the viewer column is shared, and the author reads all.

@@ -287,10 +287,10 @@ over the same rows the page reads and writes.
 
 #### Per-viewer rows
 
-A table with a `viewer_id` column is **per-viewer**. Rally's three read paths,
+A table with a `private_to_viewer` column is **per-viewer**. Rally's three read paths,
 the Data view, its CSV export, and the agent's describe and query tools, show
 the site's **author** and any **Sidekick** every row, and show anyone else only
-the rows whose `viewer_id` is their own user id, the same id Rally injects as
+the rows whose `private_to_viewer` is their own user id, the same id Rally injects as
 `x-rally-viewer-id`. A table without the column is shared. The site's own code
 is untouched: its handler runs whatever SQL it was written with, and scoping
 what the page shows is the page's job.
@@ -658,13 +658,13 @@ The selector and trust boundaries are owned by
 
 ### 2026-11-03 — Per-viewer rows in Rally's views of a site's data
 
-**What changed:** A table with a `viewer_id` column is per-viewer. The Data
+**What changed:** A table with a `private_to_viewer` column is per-viewer. The Data
 view, CSV export and agent data tools show the site's author and any Sidekick
 every row, and anyone else only their own rows. `ArtifactHostDO`'s
 `describeData`, `pageData` and `queryData` take a required `ArtifactRowScope`;
 the caller decides it, since only the caller knows who is asking. Agent results
 read with a viewer scope carry a `rowsShown` note. The site-building skill now
-uses `member_id` for attribution the group should see and `viewer_id` only for
+uses `member_id` for attribution the group should see and `private_to_viewer` only for
 private rows.
 
 **Why:** A site could already show each signed-in person only their own data,
@@ -672,7 +672,11 @@ but every member could read everyone's rows in the Data view, the export, or by
 asking the agent. That made a personal journal or checklist site private on the
 page and public one click away.
 
-**Considered and rejected:** Refusing queries that name a view or use a `main.`
+**Considered and rejected:** Naming the column `viewer_id`. It describes the
+content rather than the effect, which invites two mistakes: copying it from
+the `x-rally-viewer-id` header and making a shared list private, or naming a
+private table's column something else and leaving it readable by every member.
+Refusing queries that name a view or use a `main.`
 qualifier while scoped. It was the first version, and it limited the SQL a site
 and its readers can use; rewriting both onto the shadow keeps every query shape
 working. A manifest field declaring per-viewer tables, which the publish path

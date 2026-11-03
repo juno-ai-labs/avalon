@@ -150,7 +150,7 @@ describe("dynamic table names", () => {
 
 describe("limiting a read to one viewer's rows", () => {
   const scope = { viewerTables: ["entries"], views: [], viewerId: "v-1" };
-  const shadow = `"entries" AS (SELECT * FROM main."entries" WHERE "viewer_id" = 'v-1')`;
+  const shadow = `"entries" AS (SELECT * FROM main."entries" WHERE "private_to_viewer" = 'v-1')`;
 
   it("shadows each per-viewer table with a CTE of the same name", () => {
     expect(scopeStatementToViewer("SELECT body FROM entries", scope))
@@ -166,7 +166,7 @@ describe("limiting a read to one viewer's rows", () => {
 
   it("quotes the viewer id, so it can only ever be a value", () => {
     expect(scopeStatementToViewer("SELECT 1", { ...scope, viewerId: "x' OR '1'='1" }))
-      .toContain(`"viewer_id" = 'x'' OR ''1''=''1')`);
+      .toContain(`"private_to_viewer" = 'x'' OR ''1''=''1')`);
   });
 
   it("drops a schema qualifier in any quoting from a shadowed name, and only from one", () => {
