@@ -194,7 +194,8 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
   /**
    * The organization and resource behind a site's hostname, for the
    * site-opening page a protected site sends people to. Answered only to
-   * someone who can read the site; anyone else gets the same 404.
+   * someone who can read the site: 404 when there is no such site, 403 when
+   * this account cannot read it.
    */
   routes.post("/sites/resolve",zValidator("json",BrowserSiteResolveSchema),async (c) => {
     const auth = await new BrowserSessionService(c.env).read(credential(c));

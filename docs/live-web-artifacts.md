@@ -224,9 +224,8 @@ current manifest from `ArtifactHostDO`, strips any inbound cookie and viewer
 header before model code runs, and injects no identity. Static sites therefore
 cannot be private. A request without a session, a submission included, reaches
 model code with no identity, and the site's own code decides what to accept: a
-public poll takes it, a protected site answers 401. That rule is about methods,
-not effects: an active site's own `index.js` runs on an anonymous `GET` and
-may write its storage, which is why Trusted-only Terminal sandboxes can send
+public poll takes it, a protected site answers 401. Because any request may
+write a site's storage this way, Trusted-only Terminal sandboxes can send
 data to a Rally site
 ([`terminal-workspaces.md`](terminal-workspaces.md#invariants)).
 
@@ -342,10 +341,11 @@ what the page shows is the page's job.
   own `CREATE VIEW` text, since a view's body was compiled against the schema.
   The shadow carries `rowid` for an ordinary rowid table. Single-quoted names
   (`main.'entries'`) and identifiers with any character at or above U+0080 are
-  tokenized as SQLite does. **One query shape is refused**: a statement that
-  also uses `main` or `temp` as an alias, where dropping a qualifier could
-  change a column's meaning. Page and count reads filter on the column
-  directly.
+  tokenized as SQLite does. No query is refused. Two results differ from the
+  author's: a viewer's `SELECT *` on a private rowid table includes a `rowid`
+  column, and FTS5 `MATCH`, `rank`, `bm25()` and `highlight()` do not work on a
+  private FTS5 table, because the shadow is a CTE rather than the table. Page
+  and count reads filter on the column directly.
 
 Requests to a stateful artifact route *through* the supervisor rather than being
 served in the loader's own isolate. That is a platform constraint rather than a
@@ -690,56 +690,30 @@ The selector and trust boundaries are owned by
 
 ## Changelog
 
-### 2026-11-03 — Per-viewer rows, and signing in from a site's own link
+### 2026-11-03 — Per-viewer rows, sign-in from a site's link, public submissions
 
-**What changed:** A table with a `private_to_viewer` column is per-viewer. The Data
-view, CSV export and agent data tools show the site's author and any Sidekick
-every row, and anyone else only their own rows. `ArtifactHostDO`'s
-`describeData`, `pageData` and `queryData` take a required `ArtifactRowScope`;
-the caller decides it, since only the caller knows who is asking. Agent results
-read with a viewer scope carry a `rowsShown` note. The site-building skill now
-uses `member_id` for attribution the group should see and `private_to_viewer` only for
-private rows.
+**What changed:** A table with a `private_to_viewer` column is private: the
+Data view, CSV export and agent data tools show a member who is not the
+site's author only their own rows. `ArtifactHostDO`'s read methods take a
+required `ArtifactRowScope`. A page-load 401 now redirects to sign-in, and
+any request without a session reaches the handler with no identity.
 
-**Why:** A site could already show each signed-in person only their own data,
-but every member could read everyone's rows in the Data view, the export, or by
-asking the agent. That made a personal journal or checklist site private on the
-page and public one click away.
+**Why:** A personal journal site was private on the page and readable by
+every member one click away. A protected site's link was a dead end for
+anyone who did not open it from inside Rally. And sites could not take
+submissions from the public, which polls and forms need.
 
-**Considered and rejected:** Naming the column `viewer_id`. It describes the
-content rather than the effect, which invites two mistakes: copying it from
-the `x-rally-viewer-id` header and making a shared list private, or naming a
-private table's column something else and leaving it readable by every member.
-Refusing queries that name a view or use a `main.`
-qualifier while scoped. It was the first version, and it limited the SQL a site
-and its readers can use; rewriting both onto the shadow keeps every query shape
-working. A manifest field declaring per-viewer tables, which the publish path
-cannot produce because the schema lives in the site's own class. Making the
-author see only their own rows too, which would leave nobody but a Sidekick
-able to read a whole private data set.
-
-**Also:** `/__rally/sign-in`, a return path through redeem, and a page-load
-401 turned into a sign-in redirect. A protected site's link only worked for
-someone who opened it from inside Rally; a visitor who followed the link got
-"Open this site from Rally" and no way in. Making the 401 redirect a platform
-behavior means no site has to write sign-in code, and limiting it to page
-loads leaves a script's fetch its own 401 to show a sign-in prompt for.
-
-Review found four leaks in the first scoping: single-quoted and non-ASCII
-names, generated columns, and FTS5 backing tables, plus every row for any
-Organization-principal run. All are closed and each has a workerd test that
-fails without its fix. Anonymous submissions now reach every site's handler, with no identity;
-the site's code decides what to accept, so a public poll needs no Rally
-setting. An earlier per-site opt-in was removed as friction for the model.
+**Considered and rejected:** Naming the column `viewer_id`, which invites
+copying it from the header and making shared lists private. Refusing scoped
+queries that use qualifiers or views, which limits the SQL a model can write.
+A per-site opt-in for public submissions, removed as friction for the model.
 
 **Consequences:** Sites published before this change were written while
-Rally refused anonymous unsafe requests, so any that never check for a viewer
-now accept anonymous writes from any origin; that cannot be undone for data
-already written. The column name is the contract; renaming it in a site makes
-its rows shared. A view that cannot be read back from `sqlite_master` throws
-rather than going unshadowed. A caller CTE reusing a per-viewer table's name is
-a SQLite error, not a leak. Anyone adding a fourth read path must pass a scope
-too, which the required parameter enforces.
+Rally refused anonymous unsafe requests, so any that never check for a
+viewer now accept anonymous writes from any origin; that cannot be undone for
+data already written. `private_to_viewer` does not hide rows from Sidekick or
+Organization-principal runs. The column name is the contract. Anyone adding a
+read path must pass a scope, which the required parameter enforces.
 
 ### 2026-10-22 — Preserve raw source data before building a site
 
