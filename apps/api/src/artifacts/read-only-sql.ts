@@ -403,9 +403,11 @@ function viewAsCte(view: { name: string; sql: string }): string {
  * **Each private table is shadowed by a common table expression of the same
  * name**, filtered to the viewer. SQLite resolves an unqualified table name to
  * a CTE before the schema, through every subquery and every other CTE in the
- * statement, so the caller's query runs as written against a database that
- * holds only this viewer's rows. The shadow carries `rowid` where the table
- * has one, so `ORDER BY rowid` still works.
+ * statement, so the caller's query runs against a database that holds only
+ * this viewer's rows. The shadow carries `rowid` where the table has one, so
+ * `ORDER BY rowid` works, at the cost of an extra `rowid` column in a viewer's
+ * `SELECT *`. FTS5's `MATCH`, `rank` and `bm25()` need the real table and do
+ * not work against the shadow.
  *
  * Three references would otherwise read past the shadow, and all three are
  * rewritten:
