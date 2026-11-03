@@ -14,6 +14,13 @@ export const BrowserWorkspaceAttentionSchema = z.object({
   attention: z.array(z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema, attention: WorkspaceAttentionSchema })),
 });
 export type BrowserWorkspaceAttention = z.infer<typeof BrowserWorkspaceAttentionSchema>;
+/** A site's hostname stub, sent by the browser client's site-opening page. */
+export const BrowserSiteResolveSchema = z.strictObject({ hostnameStub: z.string().min(1).max(200) });
+/**
+ * The organization and resource behind a site, answered only to someone who can
+ * read it, so the page can open that organization and then the site.
+ */
+export const BrowserSiteResolutionSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, resourceId: IdSchema });
 /** Asks Global to open a workspace in another deployment for this browser. */
 export const BrowserWorkspaceActivateSchema = z.strictObject({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema });
 /**

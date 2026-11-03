@@ -76,6 +76,63 @@ export const ARTIFACT_STORAGE_CLASS_NAME = "SiteData";
 export const ARTIFACT_RESERVED_PREFIX = "/__rally";
 
 /**
+ * The site's own sign-in entry: `/__rally/sign-in?return=<path>`.
+ *
+ * Served by the artifact Worker before any hostname lookup, so it is the same
+ * answer for every host and says nothing about what exists. It sends the
+ * person to the browser client's site-opening page, which signs them in if
+ * needed and opens the site back at `return`.
+ */
+export const ARTIFACT_SIGN_IN_PATH = `${ARTIFACT_RESERVED_PREFIX}/sign-in`;
+
+/**
+ * Reduce a caller-supplied return target to a path on this site.
+ *
+ * Anything that is not a plain same-origin path, or that points back into
+ * Rally's reserved prefix, becomes `/`: the value arrives in a URL anyone can
+ * craft, and following it anywhere else would make every artifact host an
+ * open redirect.
+ */
+export function artifactReturnPath(raw: string | null | undefined): string {
+  // A backslash reads as a slash to a browser, and a control character can
+  // split a header; neither belongs in a path worth returning to.
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")
+    || [...raw].some((character) => character === "\\" || character.charCodeAt(0) < 0x20)) return "/";
+  let parsed: URL;
+  try { parsed = new URL(raw, "https://artifact.invalid"); } catch { return "/"; }
+  if (parsed.origin !== "https://artifact.invalid") return "/";
+  if (parsed.pathname === ARTIFACT_RESERVED_PREFIX || parsed.pathname.startsWith(`${ARTIFACT_RESERVED_PREFIX}/`)) return "/";
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+/**
+ * The browser client's page that signs a person in and opens a site:
+ * `/app/sites/<region>/<hostname stub>/<return path, encoded as one segment>`.
+ *
+ * Under `/app/` because the browser client's sign-in carries an `/app/` path
+ * through email and Google and lands back on it; it carries only the path,
+ * which is why the return path, query included, is one encoded segment.
+ */
+export function artifactSiteOpenPath(region: string, hostnameStub: string, returnPath: string): string {
+  return `/app/sites/${encodeURIComponent(region)}/${encodeURIComponent(hostnameStub)}/${encodeURIComponent(artifactReturnPath(returnPath))}`;
+}
+
+/** The parts of an `artifactSiteOpenPath`, or `null` for any other path. */
+export function parseArtifactSiteOpenPath(pathname: string): { region: string; hostnameStub: string; returnPath: string } | null {
+  const match = /^\/app\/sites\/([^/]+)\/([^/]+)(?:\/([^/]*))?$/u.exec(pathname);
+  if (!match) return null;
+  try {
+    return {
+      region: decodeURIComponent(match[1]!),
+      hostnameStub: decodeURIComponent(match[2]!),
+      returnPath: artifactReturnPath(match[3] ? decodeURIComponent(match[3]) : "/"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The viewer identity an authenticated Rally request carries into artifact code.
  *
  * Product headers are minted `x-rally-*` and read through `readRallyHeader`

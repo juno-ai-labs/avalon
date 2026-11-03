@@ -206,6 +206,14 @@ Report these outcomes separately:
    an identity header from client JavaScript; only Rally injects these
    headers after validating its own session.
 
+   **Signing in is Rally's.** When this guard answers 401 to someone
+   loading a page, Rally sends them to sign in and back to the same
+   page, so a protected site's link works for anyone who can see it.
+   On a public site, send a visitor who wants to add something to
+   \`/__rally/sign-in?return=\` plus the current path and query,
+   encoded: for example a "Sign in to vote" link built from
+   \`location.pathname + location.search\`. They come back signed in.
+
 4. **Treat every request as the first request.** The runtime starts and
    stops instances whenever it likes; two requests may or may not share
    one. So: no module-level variables as state, no counters, no caches
@@ -553,7 +561,8 @@ shape of \`index.js\`.
      paused — so if you listen for it at all, treat it as a final stop,
      never as half of the visibility pair.)
    - Stop permanently on an auth failure (401/403): the viewer's
-     session has ended; show the page's "reopen this from Rally" state
+     session has ended; show a "Sign in" link to
+     \`/__rally/sign-in?return=\` with the current path
      and make no further requests. Never retry past an auth failure.
    - Back off on transient errors with jitter rather than retrying at
      the same interval, and never poll faster because a request failed.
@@ -584,9 +593,9 @@ shape of \`index.js\`.
 
 ### Anonymous answers
 
-An anonymous poll, survey or feedback box still needs a Rally viewer to
-submit, because anonymous visitors cannot write; what makes it anonymous
-is what you store. The author and Sidekicks read every row, so the rows
+An anonymous poll, survey or feedback box still needs a signed-in Rally
+viewer to submit, because anonymous visitors cannot write; give the page a
+sign-in link for them. What makes it anonymous is what you store. The author and Sidekicks read every row, so the rows
 themselves must not link a person to an answer.
 
 1. **Store answers without identity.** For choices, keep a count per

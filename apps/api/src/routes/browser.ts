@@ -18,9 +18,10 @@ import { telemetryOperationId } from "../telemetry/api-emitter";
 import { deferOnboardingOutcome, onboardingFailureResult } from "./onboarding";
 import { PlatformOnboardingService } from "../services/platform-onboarding-service";
 import { membershipAttention } from "../services/workspace-attention-service";
+import { resolveSiteForViewer } from "../services/artifact-site-resolution";
 import { IDENTITY_REGION, configuredRegions, type Region } from "@rally/contracts/regions";
 import { BrowserSessionService, BrowserSessionSchema, BrowserWorkspacesSchema } from "../services/browser-session-service";
-import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserWorkspaceActivateSchema, BrowserWorkspaceAttentionSchema,
+import { BrowserGoogleStartSchema, BrowserGoogleStartedSchema, BrowserSiteResolutionSchema, BrowserSiteResolveSchema, BrowserWorkspaceActivateSchema, BrowserWorkspaceAttentionSchema,
   BrowserWorkspaceCreateSchema, BrowserWorkspaceCreatedSchema } from "@rally/contracts/browser-session";
 import { startEmailLogin, deliverEmailLogin, redeemEmailLogin, EmailLoginStartSchema,
   EmailLoginRedeemSchema, EmailLoginStartedSchema } from "../services/email-login-service";
@@ -189,6 +190,16 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
       .map((item) => [item.region,item.workspaceId,item.code].filter(Boolean).join(":"));
     if (failed.length > 0) logEvent(c,"warn","browser_workspace_attention_failed",{ failed:failed.join(",") });
     return c.json(BrowserWorkspaceAttentionSchema.parse({ attention:[...local.attention,...remote.attention] }));
+  });
+  /**
+   * The organization and resource behind a site's hostname, for the
+   * site-opening page a protected site sends people to. Answered only to
+   * someone who can read the site; anyone else gets the same 404.
+   */
+  routes.post("/sites/resolve",zValidator("json",BrowserSiteResolveSchema),async (c) => {
+    const auth = await new BrowserSessionService(c.env).read(credential(c));
+    const resolved = await resolveSiteForViewer(c.env,auth.userId,c.req.valid("json").hostnameStub);
+    return c.json(BrowserSiteResolutionSchema.parse(resolved));
   });
   /**
    * Opens a workspace in another deployment for this browser. Global admits it

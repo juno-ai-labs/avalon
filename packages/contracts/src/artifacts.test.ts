@@ -2,6 +2,9 @@ import "../../../tests/isolated-region";
 import { describe, expect, it } from "vitest";
 
 import {
+  artifactReturnPath,
+  artifactSiteOpenPath,
+  parseArtifactSiteOpenPath,
   ARTIFACT_RESERVED_PREFIX,
   ARTIFACT_VIEWER_ID_HEADER,
   ARTIFACT_VIEWER_NAME_HEADER,
@@ -197,5 +200,30 @@ describe("artifact conventions", () => {
     expect(ARTIFACT_RESERVED_PREFIX).toBe("/__rally");
     expect(ARTIFACT_RESERVED_PREFIX.startsWith("/")).toBe(true);
     expect(ARTIFACT_RESERVED_PREFIX.endsWith("/")).toBe(false);
+  });
+});
+
+describe("a site's sign-in return path", () => {
+  it("keeps a path and query on the site", () => {
+    expect(artifactReturnPath("/rsvp?week=2")).toBe("/rsvp?week=2");
+  });
+
+  it("turns anything that could leave the site, or loop back into Rally's routes, into /", () => {
+    for (const raw of [null, "", "rsvp", "//evil.example/x", "/\\evil.example", "https://evil.example/", "/__rally/sign-in", "/__rally", "/a\nb"]) {
+      expect(artifactReturnPath(raw), String(raw)).toBe("/");
+    }
+  });
+
+  it("round-trips through the browser client's site-opening path, query included", () => {
+    const path = artifactSiteOpenPath("global", "level-luminous-sequential-schrodinger", "/rsvp?week=2");
+    expect(path).toBe("/app/sites/global/level-luminous-sequential-schrodinger/%2Frsvp%3Fweek%3D2");
+    expect(parseArtifactSiteOpenPath(path)).toEqual({
+      region: "global", hostnameStub: "level-luminous-sequential-schrodinger", returnPath: "/rsvp?week=2",
+    });
+  });
+
+  it("reads no site from any other browser path, and a bad return path as /", () => {
+    expect(parseArtifactSiteOpenPath("/app/workspaces/global/x")).toBeNull();
+    expect(parseArtifactSiteOpenPath("/app/sites/global/stub/%2F%2Fevil.example")?.returnPath).toBe("/");
   });
 });
