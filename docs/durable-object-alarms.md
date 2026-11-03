@@ -155,6 +155,17 @@ before a full re-arm.
 6. Gate whatever ran and **came back due at the same instant** — the stall
    check described below the settle rules.
 7. Re-arm through `armAlarmAfterDueWork()`.
+8. **Hold an idle pass.** If steps 4 to 6 wrote nothing (SQLite's
+   `total_changes()` moved only by the object's own re-arms) and step 7 still
+   armed the next millisecond, a derived lane is reporting work that its pass
+   declines. The alarm is moved out by the backoff a thrown entry earns, never
+   past the next future candidate, and `onIdleAlarmHeld` reports it. Work that
+   came due after step 4's instant was never offered to the pass, so it keeps
+   its immediate wake and the pass is not counted. The attempt is kept in the
+   object's KV storage under `_internal_idle_alarm_attempt`, written after the
+   sample so it survives eviction. A pass that wrote but still asked to run at
+   once is not held and keeps the attempt, since the looping lane is still
+   due; the first pass that arms later, or arms nothing, clears it.
 
 The first arm defaults to the bounded recovery re-derivation and the second to
 the exact post-work answer. Both are hooks for one case: an object whose alarm
@@ -162,7 +173,9 @@ the exact post-work answer. Both are hooks for one case: an object whose alarm
 execution lane is derived from the persistent-loop singleton, the pending input
 the loop can actually take (`nextActivationInput`, not merely the oldest one:
 a room parked on an open question has input it may not hand Bind, and waking on
-that re-arms at `now` for as long as the question stays open), and subordinate
+that re-arms at `now` for as long as the question stays open, and a stopped
+background agent's queued input is not offered at all, because the claim holds
+every new execution while `stopped_at` is set), and subordinate
 execution receipts, while its external-settlement lane
 is derived independently from the oldest terminal receipt whose
 `external_settled_at` is null. While the alarm is servicing either lane,
@@ -327,7 +340,9 @@ other entries.
   set to a past instant fires immediately and re-derives the same past instant:
   that is the shape every hot-alarm loop in this codebase has had. The floor is
   not a backoff and must not become one — the overflow and slow-handler cases
-  under *Failure modes* depend on the immediate re-wake. The pre-work arm is
+  under *Failure modes* depend on the immediate re-wake. The idle hold in step
+  8 of *Firing* does not touch them: a drain settles what it ran and a bounded
+  pass writes the rows it took, so neither pass is idle. The pre-work arm is
   deliberately different: it maps only already-due reasons to the recovery
   horizon and leaves earlier future deadlines untouched. What stops a source
   loop after work runs is the stall gate: **an entry that ran and is due again
@@ -427,6 +442,18 @@ time moved, go reconcile" entry points.
   expiry, and one workspace's alarm fired about 1.5 times a second for hours.
   The gate bounds the damage; the fix is always in the source — a reap must
   remove everything the due-time expression counts.
+- **A derived lane reports work its pass declines.** There is no entry to gate,
+  so before 2026-11-03 nothing stopped it: a `SubstreamAgent` whose background
+  agent was stopped with a message queued reported loop work at `now`, the
+  claim refused it, and the alarm fired about five times a second for at least
+  a week, with nothing logged. The idle hold catches the shape for every lane:
+  a pass that wrote nothing and re-armed for the next millisecond is held
+  behind the same backoff, and `onIdleAlarmHeld` reports it through
+  `reportScheduledAlarmAttempt` with the same warn, error and notify policy.
+  The attempt is stored, so a hold long enough to be evicted through still
+  climbs to the ceiling and the alert. Anything that schedules or admits work
+  re-arms past the hold through its own path. As with a stall, the fix is in the lane: a due-time read must
+  count only work its pass will take.
 - **A handler legitimately cannot act yet.** It answers `{ waitMs }` and the
   entry is held that long with no attempt counted; the first reconcile after
   its source moves clears the hold. A Terminal deadline does this while a live
@@ -496,8 +523,12 @@ a failing target a free immediate attempt.
   is claimed from the Breakout's own object, never read through Main. For
   `WorkspaceDO` it also
   pins the phase order with every derived lane due, proves a wake runs only the
-  lane that is due and arms for the one it skipped, and that
-  `registerAuthorizationChildren` re-arms only when it queued a delivery.
+  lane that is due and arms for the one it skipped, that
+  `registerAuthorizationChildren` re-arms only when it queued a delivery, and
+  that an idle pass is held through the workspace's real due work, grows its
+  delay across a lost instance, never passes a future candidate, keeps its
+  immediate wake once a pass writes, and is not held for a derived or stored
+  deadline that came due while the pass awaited.
 - `apps/api/test-workers/workspace-authorization-delivery-index-migration.test.ts`
   upgrades a populated v82 object through migration 83 and counts the
   `authorization_delivery` due read's `rowsRead`.
@@ -561,7 +592,10 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 A `SubstreamAgent`'s `substream_scheduled_alarm_failed` and `_stalled` rows
-name the conversation in `substream_id` beside `workstream_id`. Read an
+name the conversation in `substream_id` beside `workstream_id`.
+`substream_alarm_idle_held` and `workspace_alarm_idle_held` name the object
+and the instant it was held to; they cannot name the lane, so read each
+derived due-time query in that object and find the one at or before now. Read an
 `agent_timer` entry's row in that conversation: a Breakout or a Sidekick run
 child holds its own `workstream_wakeups`, and Main's table says nothing about
 it.
@@ -585,6 +619,33 @@ row to its own grant directory right after the write, and the outbox lane of the
 alarm retries a failed apply. See [scope grant directory](scope-grant-directory.md).
 
 ## Changelog
+
+### 2026-11-03 — A stopped agent's queue is not a wake reason, and an idle pass is held
+
+**What changed:** `SubstreamAgent.nextLoopWorkAt` no longer reports a stopped
+background agent's queued activation input as work; messages that start no run
+still wake it. The base now holds any alarm whose pass wrote nothing and that
+re-armed for the next millisecond, behind the backoff a thrown entry earns,
+reported through the new `onIdleAlarmHeld` hook.
+
+**Why:** One stopped agent with a failure notice queued ran its alarm about
+five times a second from at least 2026-10-27 (the start of log retention) to
+2026-11-03: 97.5% of the account's alarms and about 1.7M of its 1.9M log and
+trace events an hour, every pass a read-only no-op. The stall gate covers only
+stored entries, so a derived lane had no guard.
+
+**Considered and rejected:** Comparing the overdue derived instants before and
+after a pass would also hold a bounded drain whose rows share one instant,
+which is progress. `total_changes()` tells the two apart. `setAlarm` counts as
+a change, so the sample sits inside the two re-arms and subtracts the object's
+own arming inside it. Keeping the attempt in memory would restart it at the
+first step after every eviction, so it would never reach the alert; it is
+written after the sample instead. A threshold of idle
+passes before holding would add a defensive number; the hold starts at the
+first idle pass, as the stall gate does, and reuses the existing delay steps.
+
+**Consequences:** No new limit. A lane whose state moves without a local write
+and without re-arming waits up to the current hold before it is read again.
 
 ### 2026-10-22 — Reconcile Sidekick source accounts through the existing alarm
 

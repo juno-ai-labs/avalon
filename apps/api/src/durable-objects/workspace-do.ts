@@ -8506,6 +8506,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  protected override onIdleAlarmHeld(attempt: number, heldUntil: number): void {
+    reportScheduledAlarmAttempt(this.env, (promise) => this.state.waitUntil(promise), {
+      event: "workspace_alarm_idle_held",
+      summary: "A workspace alarm keeps asking to run again at once while its passes change nothing: one of its derived lanes reports work at now that the pass then declines. Find which.",
+      attempt,
+      fields: {
+        workspace_id: this.workspaceId(),
+        held_until: new Date(heldUntil).toISOString(),
+      },
+    });
+  }
+
   /**
    * Reconcile every workspace-wide target into the alarm index.
    *

@@ -751,6 +751,110 @@ describe("a workspace's derived alarm lanes", () => {
     expect(armed).not.toBeNull();
     expect(armed!).toBeLessThan(deliveryDueAt);
   });
+
+  it("holds an alarm whose pass changed nothing and asked to run again at once", async () => {
+    await seedOpenAuthority();
+    const stub = await initializedWorkspace();
+
+    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
+      const held: number[] = [];
+      const hooks = instance as unknown as {
+        nextDerivedAlarmCandidates(now: number): readonly number[];
+        runDueAlarmWork(now: number): Promise<void>;
+        scheduledAlarmDeferral(now: number): Promise<number | null>;
+        onIdleAlarmHeld(attempt: number, heldUntil: number): void;
+        idleAlarmAttempt: number | null;
+      };
+      const workspaceWork = hooks.runDueAlarmWork;
+      const workspaceDeferral = hooks.scheduledAlarmDeferral;
+      // A lane that reports work at `now` and a pass that declines it, the
+      // shape a stopped agent with a queued message had. Before the hold the
+      // re-arm floored `now` at the next millisecond on every pass. The
+      // workspace's own due work still runs, schedule reconcile and its
+      // re-arm included: an alarm write the object makes is not progress.
+      let futureCandidate: number | null = null;
+      hooks.nextDerivedAlarmCandidates = (now) => futureCandidate === null ? [now] : [now, futureCandidate];
+      hooks.onIdleAlarmHeld = (attempt) => { held.push(attempt); };
+
+      const first = Date.now();
+      await instance.alarm();
+      const firstHold = await state.storage.getAlarm();
+      expect(held).toEqual([1]);
+      expect(firstHold!).toBeGreaterThanOrEqual(first + scheduledAlarmRetryDelay(1, () => 0));
+      expect(firstHold!).toBeLessThanOrEqual(Date.now() + scheduledAlarmRetryDelay(1, () => 1));
+
+      // The attempt grows across passes, so the delay climbs toward the
+      // ceiling a thrown entry's would.
+      const second = Date.now();
+      await instance.alarm();
+      expect(held).toEqual([1, 2]);
+      expect(await state.storage.getAlarm()).toBeGreaterThanOrEqual(second + scheduledAlarmRetryDelay(2, () => 0));
+
+      // The attempt outlives the instance: a hold long enough to be evicted
+      // through must not restart the episode at its first step.
+      hooks.idleAlarmAttempt = null;
+      // And the hold is never later than a real future reason to wake.
+      futureCandidate = Date.now() + 5_000;
+      await instance.alarm();
+      expect(held).toEqual([1, 2, 3]);
+      expect(await state.storage.getAlarm()).toBe(futureCandidate);
+      futureCandidate = null;
+
+      // A pass that wrote is progress: it keeps its immediate wake. While it
+      // still asks to run at once the looping lane is still due, so the
+      // attempt carries over. A hold capped at another wake reason lands on
+      // that reason's pass, which writes, and must not restart the episode.
+      state.storage.sql.exec("CREATE TABLE IF NOT EXISTS idle_hold_probe (n INTEGER)");
+      hooks.runDueAlarmWork = () => {
+        state.storage.sql.exec("INSERT INTO idle_hold_probe (n) VALUES (1)");
+        return Promise.resolve();
+      };
+      const writing = Date.now();
+      await instance.alarm();
+      expect(held).toEqual([1, 2, 3]);
+      expect(await state.storage.getAlarm()).toBeLessThanOrEqual(Math.max(writing, Date.now()) + 1);
+
+      hooks.runDueAlarmWork = workspaceWork;
+      await instance.alarm();
+      expect(held).toEqual([1, 2, 3, 4]);
+
+      // A pass that arms later ends the episode: the next idle pass starts
+      // again at the first step.
+      const quiet = Date.now() + 600_000;
+      hooks.nextDerivedAlarmCandidates = () => [quiet];
+      await instance.alarm();
+      expect(held).toEqual([1, 2, 3, 4]);
+      expect(await state.storage.getAlarm()).toBe(quiet);
+      hooks.nextDerivedAlarmCandidates = (now) => futureCandidate === null ? [now] : [now, futureCandidate];
+      await instance.alarm();
+      expect(held).toEqual([1, 2, 3, 4, 1]);
+
+      // Work that came due after the pass took its instant, here while the
+      // authority check awaited, was never offered to that pass, so it keeps
+      // its immediate wake and the pass is not counted. A derived lane first,
+      // then a stored entry, with the schedule reconcile left out so it cannot
+      // take the entry back.
+      hooks.runDueAlarmWork = () => Promise.resolve();
+      hooks.scheduledAlarmDeferral = () => new Promise((resolve) => setTimeout(() => resolve(null), 20));
+      const derivedDue = Date.now() + 5;
+      futureCandidate = derivedDue;
+      await instance.alarm();
+      expect(Date.now()).toBeGreaterThan(derivedDue);
+      expect(held).toEqual([1, 2, 3, 4, 1]);
+      expect(await state.storage.getAlarm()).toBeLessThanOrEqual(Date.now() + 1);
+      futureCandidate = null;
+
+      const store = new ScheduledAlarmStore(state.storage.sql);
+      const storedDue = Date.now() + 5;
+      store.schedule({ kind: "schedule", key: "comes-due", dueAt: storedDue }, Date.now());
+      await instance.alarm();
+      expect(Date.now()).toBeGreaterThan(storedDue);
+      expect(held).toEqual([1, 2, 3, 4, 1]);
+      expect(await state.storage.getAlarm()).toBeLessThanOrEqual(Date.now() + 1);
+      expect(store.get("schedule", "comes-due")?.attempt).toBe(0);
+      hooks.scheduledAlarmDeferral = workspaceDeferral;
+    });
+  });
 });
 
 describe("a workspace's schedule", () => {
