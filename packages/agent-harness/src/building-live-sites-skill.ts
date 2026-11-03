@@ -593,9 +593,26 @@ shape of \`index.js\`.
 
 ### Anonymous answers
 
-An anonymous poll, survey or feedback box still needs a signed-in Rally
-viewer to submit, because anonymous visitors cannot write; give the page a
-sign-in link for them. What makes it anonymous is what you store. The author and Sidekicks read every row, so the rows
+An anonymous poll, survey or feedback box for a team needs a signed-in
+Rally viewer to submit, which is what lets you limit each person to one
+answer; give the page a sign-in link for them. What makes it anonymous is
+what you store.
+
+**Open to anyone with the link.** When the request says anyone, the
+public, customers or the internet should answer without signing in, add
+this line to \`index.js\`:
+
+\`\`\`js
+export const acceptAnonymousSubmissions = true;
+\`\`\`
+
+Rally then lets submissions through from people who are not signed in,
+with no viewer headers. Such a site cannot limit anyone to one answer:
+remember in the browser's \`localStorage\` that this browser answered and
+say so on the page, which stops honest repeats only. Never record an IP
+address or any other way to tell visitors apart. Tell the person that
+anyone with the link can answer, as often as they like. Leave the line out
+of every other site; without it, only signed-in viewers can submit. The author and Sidekicks read every row, so the rows
 themselves must not link a person to an answer.
 
 1. **Store answers without identity.** For choices, keep a count per

@@ -942,6 +942,12 @@ describe("Sidekick resource reads by ID", () => {
     await projectResourceAccess();
     expect(await scopeFor(false)).toEqual({ rows: "viewer", viewerId: AUTHOR_ID });
     expect(await scopeFor(true)).toEqual({ rows: "all" });
+    // An Organization-principal run that is not a Sidekick acts for nobody, so
+    // it sees no private rows rather than all of them.
+    const organization = await createArtifactDataToolContext(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID), {
+      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, principal: { type: "workspace", workspaceId: WORKSPACE_ID }, sidekick: false,
+    }).resolveArtifact(resourceId);
+    expect(organization?.scope).toEqual({ rows: "none" });
   });
 
   it("finds a site's organization from its hostname only for someone who can read it", async () => {

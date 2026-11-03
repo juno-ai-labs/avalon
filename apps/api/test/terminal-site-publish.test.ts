@@ -5,6 +5,7 @@ import {
   assertKindTransitionAllowed,
   assetContentType,
   bundleArchive,
+  declaresAnonymousSubmissions,
   declaresStorageClass,
   resolveDirectoryPublish,
   type DirectoryEntry,
@@ -160,5 +161,15 @@ describe("kind transitions across republishes of one path", () => {
       expect(() => assertKindTransitionAllowed(previous, "site")).not.toThrow();
     }
     expect(() => assertKindTransitionAllowed("site", "site")).not.toThrow();
+  });
+});
+
+describe("a site that accepts anonymous submissions", () => {
+  it("says so only with the literal export set to true", () => {
+    expect(declaresAnonymousSubmissions("export const acceptAnonymousSubmissions = true;")).toBe(true);
+    expect(declaresAnonymousSubmissions("export  const acceptAnonymousSubmissions=true")).toBe(true);
+    expect(declaresAnonymousSubmissions("export const acceptAnonymousSubmissions = false;")).toBe(false);
+    expect(declaresAnonymousSubmissions("export const acceptAnonymousSubmissions = trueish;")).toBe(false);
+    expect(declaresAnonymousSubmissions("const acceptAnonymousSubmissions = true;")).toBe(false);
   });
 });

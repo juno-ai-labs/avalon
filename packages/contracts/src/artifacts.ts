@@ -64,6 +64,17 @@ export const ARTIFACT_STATIC_ENTRY = "index.html";
 export const ARTIFACT_STORAGE_CLASS_NAME = "SiteData";
 
 /**
+ * The export by which a site's `index.js` accepts submissions from people who
+ * are not signed in: `export const acceptAnonymousSubmissions = true;`.
+ *
+ * Every other site refuses an unsafe request without a Rally viewer session.
+ * A site that declares this, such as a public anonymous poll, receives those
+ * requests with no viewer identity at all. Detected from the source at publish,
+ * like the storage class, and recorded in the version's manifest.
+ */
+export const ARTIFACT_ANONYMOUS_SUBMISSIONS_EXPORT = "acceptAnonymousSubmissions";
+
+/**
  * The path prefix the server module never sees.
  *
  * Everything Rally serves on an artifact's own origin that is *not* artifact
@@ -212,6 +223,11 @@ export const ArtifactManifestSchema = z.strictObject({
   assets: z.array(ArtifactManifestEntrySchema).max(ARTIFACT_MAX_ASSET_COUNT),
   /** Present on versions published after automatic social previews shipped. */
   socialPreview: ArtifactSocialPreviewSchema.optional(),
+  /**
+   * Present when `index.js` declares `ARTIFACT_ANONYMOUS_SUBMISSIONS_EXPORT`:
+   * unsafe requests without a viewer session reach the site, without identity.
+   */
+  anonymousSubmissions: z.literal(true).optional(),
   totalBytes: z.number().int().nonnegative(),
   publishedAt: z.string().datetime({ offset: true }),
 });
