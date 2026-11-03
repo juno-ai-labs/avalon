@@ -46,21 +46,16 @@ does. Pick the first of these that fits:
 3. **Signed in, private.** The app saves what people add and each person sees
    only their own: a journal, a personal tracker, saved settings. You and any
    Sidekick can still see everyone's.
-4. **Signed in, anonymous.** The app collects what people add but must never
-   record who added what: an anonymous poll, anonymous feedback, an anonymous
-   survey. People sign in with Rally to answer, so each person can be
-   limited to one answer, but the stored answers carry no identity. Results
-   are shared.
-5. **Open to anonymous answers.** An anonymous poll, survey or feedback box
-   that anyone with the link should answer without signing in, because the
-   request says the public, customers, anyone or the internet. Nobody can be
-   limited to one answer.
+4. **Anonymous.** An anonymous poll, survey or feedback box: answers are
+   stored without who sent them. If the request says the public, customers,
+   anyone or the internet should answer, open it to everyone; otherwise
+   people sign in with Rally to answer.
 
-Apart from that last kind, an app that saves what people add needs sign-in:
-Rally lets anyone view a site, but only people signed in with Rally can add
-or change anything. Someone who follows the site's link signs in from the site and
-comes straight back, so sign-in costs them one step. Never offer an open
-site for an app that saves what people add, unless it is kind 5.
+An app that saves what people add uses Rally sign-in by default, so it
+knows who added what; someone who follows the site's link signs in from the
+site and comes straight back. When the request opens it to the public, let
+anyone submit instead, as the "Anonymous answers" section of
+\`building-live-sites\` shows.
 
 **Ask only when the app saves what people add and the request does not say
 who sees it.** Then ask one question, right away and before writing any
@@ -70,17 +65,8 @@ see only their own (private)? Skip it when the request answers it:
 "private" is private; "anonymous" is anonymous. A poll or survey whose
 request does not mention anonymity is shared.
 
-For **signed in, anonymous**, follow the anonymous section of
-\`building-live-sites\`: store answers as counts or as rows with no viewer
-id, and, for one answer each, record who has answered in a separate table
-that holds no answers. Tell the person in your reply that people sign in with
-Rally to answer, and that nobody, the site's author included, can see who
-chose what.
-
-For **open to anonymous answers**, follow that section's "Open to anyone with
-the link" part, and tell the person anyone with the link can answer, as often
-as they like. An anonymous poll whose request does not say who answers is
-signed in and anonymous, so each person answers once.
+For **anonymous**, follow the "Anonymous answers" section of
+\`building-live-sites\`.
 
 For **signed in, private**, every table that holds one person's data gets a
 \`private_to_viewer\` column holding their viewer id. Rally then keeps those
