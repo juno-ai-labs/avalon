@@ -199,10 +199,13 @@ export function admitTableName(
  *
  * A convention rather than a declaration because a stateful site has no
  * manifest field for its schema: the model writes `CREATE TABLE` in its own
- * class, and the skill already teaches this exact column for the id Rally
- * injects. A table without it is shared, and every reader sees all its rows.
+ * class. The name states its effect rather than its content, so a model
+ * choosing it knows it is making rows private, and a model that never read
+ * the rule does not type it by accident; a generic name like `viewer_id`
+ * failed both ways. A table without it is shared, and every reader sees all
+ * its rows.
  */
-export const VIEWER_COLUMN = "viewer_id";
+export const VIEWER_COLUMN = "private_to_viewer";
 
 /** Whose rows a read may return: every row, or one viewer's in per-viewer tables. */
 export type ArtifactRowScope = { rows: "all" } | { rows: "viewer"; viewerId: string };
