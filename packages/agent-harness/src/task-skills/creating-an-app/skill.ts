@@ -1,4 +1,4 @@
-import type { HarnessSkill } from "../index";
+import type { HarnessSkill } from "../../index";
 
 /**
  * What "create an app" means in Rally, and the one question to settle before
