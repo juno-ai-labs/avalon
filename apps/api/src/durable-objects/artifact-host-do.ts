@@ -53,7 +53,16 @@ import {
   FACET_NAME,
 } from "../artifacts/facet-host";
 import { ASSET_SHIM_MODULE, ASSET_SHIM_SOURCE } from "../artifacts/asset-shim";
-import { admitReadOnlyStatement, admitTableName } from "../artifacts/read-only-sql";
+import {
+  admitReadOnlyStatement,
+  admitTableName,
+  quoteIdentifier,
+  scopeStatementToViewer,
+  VIEWER_COLUMN,
+  type ArtifactRowScope,
+} from "../artifacts/read-only-sql";
+
+export type { ArtifactRowScope };
 import {
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
@@ -619,14 +628,32 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     return await facet.fetch(request);
   }
 
-  /** The artifact's stored shape, for the rail and the describe tool. */
-  async describeData(): Promise<{
+  /**
+   * The artifact's stored shape, for the rail and the describe tool.
+   *
+   * Row counts follow `scope`: a viewer limited to their own rows sees how
+   * many of a per-viewer table's rows are theirs, not how many exist.
+   */
+  async describeData(scope: ArtifactRowScope): Promise<{
     tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
   }> {
     await this.initialized;
     const state = this.stateRow();
     if (!state || state.stateful !== 1) return { tables: [] };
-    return await (await this.facetFor(state)).rallyDescribe();
+    const host = await this.facetFor(state);
+    const described = await host.rallyDescribe();
+    if (scope.rows === "all") return described;
+    const tables = [];
+    for (const table of described.tables) {
+      if (!isViewerTable(table)) { tables.push(table); continue; }
+      const counted = await host.rallyQuery(
+        `SELECT COUNT(*) AS n FROM ${quoteIdentifier(table.name)} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ?`,
+        [scope.viewerId],
+        1,
+      );
+      tables.push({ ...table, rowCount: Number(counted.rows[0]?.n ?? 0) });
+    }
+    return { tables };
   }
 
   /**
@@ -635,12 +662,14 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
    * The statement is admitted *before* it reaches the facet, by the supervisor
    * rather than by the code that runs it: an always-rollback transaction is not
    * an authorization boundary, and the rollback inside the facet is the second
-   * line of defence rather than the first.
+   * line of defence rather than the first. A viewer-scoped read is then
+   * rewritten so per-viewer tables hold only that viewer's rows.
    */
   async queryData(
     sql: string,
     params: (string | number | null)[],
     maxRows: number,
+    scope: ArtifactRowScope,
   ): Promise<ArtifactQueryResult> {
     await this.initialized;
     const state = this.stateRow();
@@ -653,12 +682,24 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     const admission = admitReadOnlyStatement(sql);
     if (!admission.admitted) return { ok: false, reason: "sql_refused", detail: admission.reason };
     const host = await this.facetFor(state);
-    const read = await host.rallyQuery(admission.sql, params, maxRows);
+    let statement = admission.sql;
+    if (scope.rows === "viewer") {
+      const [described, views] = await Promise.all([
+        host.rallyDescribe(),
+        host.rallyQuery("SELECT name, sql FROM sqlite_master WHERE type = 'view'", [], Number.MAX_SAFE_INTEGER),
+      ]);
+      statement = scopeStatementToViewer(statement, {
+        viewerTables: described.tables.filter(isViewerTable).map((table) => table.name),
+        views: views.rows.map((row) => ({ name: String(row.name), sql: String(row.sql) })),
+        viewerId: scope.viewerId,
+      });
+    }
+    const read = await host.rallyQuery(statement, params, maxRows);
     return { ok: true, columns: read.columns, rows: read.rows, rowCount: read.rowCount, truncated: read.truncated };
   }
 
   /** One page of one table, for the Data view and the CSV export. */
-  async pageData(table: string, offset: number, limit: number): Promise<ArtifactPageResult> {
+  async pageData(table: string, offset: number, limit: number, scope: ArtifactRowScope): Promise<ArtifactPageResult> {
     await this.initialized;
     const state = this.stateRow();
     if (!state || state.stateful !== 1) return { ok: false, reason: "no_artifact_data" };
@@ -667,6 +708,17 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     // real table in this facet never reaches SQL at all.
     const admitted = admitTableName(table, await host.rallyTableNames());
     if (!admitted.admitted) return { ok: false, reason: "table_refused", detail: admitted.reason };
+    if (scope.rows === "viewer") {
+      const described = await host.rallyDescribe();
+      if (described.tables.some((candidate) => candidate.name === table && isViewerTable(candidate))) {
+        const page = await host.rallyQuery(
+          `SELECT * FROM ${admitted.quoted} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ? LIMIT ? OFFSET ?`,
+          [scope.viewerId, limit, Math.max(0, offset)],
+          limit,
+        );
+        return { ok: true, rows: page.rows };
+      }
+    }
     const page = await host.rallyPage(admitted.quoted, offset, limit);
     return { ok: true, rows: page.rows };
   }
@@ -769,4 +821,9 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     this.state.storage.sql.exec(`DELETE FROM viewer_sessions WHERE expires_at <= ?`, now);
   }
 
+}
+
+/** A table is per-viewer when it has the viewer column; see `VIEWER_COLUMN`. */
+function isViewerTable(table: { columns: readonly { name: string }[] }): boolean {
+  return table.columns.some((column) => column.name.toLowerCase() === VIEWER_COLUMN);
 }

@@ -19,7 +19,8 @@
 import type { HarnessTool } from "@rally/agent-harness";
 import { z } from "zod";
 
-import type { ArtifactQueryResult, ArtifactRow } from "../durable-objects/artifact-host-do";
+import { VIEWER_COLUMN } from "../artifacts/read-only-sql";
+import type { ArtifactQueryResult, ArtifactRow, ArtifactRowScope } from "../durable-objects/artifact-host-do";
 
 /**
  * How many rows one query may return.
@@ -29,6 +30,13 @@ import type { ArtifactQueryResult, ArtifactRow } from "../durable-objects/artifa
  * marker instead so the model narrows rather than being cut off silently.
  */
 const MAXIMUM_QUERY_ROWS = 200;
+
+/**
+ * Said beside a viewer-scoped result, so a count of one is read as "your one
+ * row", not as "one person has answered".
+ */
+const ONLY_OWN_ROWS =
+  `Tables with a ${VIEWER_COLUMN} column show only the requesting person's rows; other tables show every row.`;
 
 export class ArtifactDataToolError extends Error {
   constructor(readonly code: string, message: string, readonly details?: Record<string, unknown>) {
@@ -63,13 +71,14 @@ const QueryArgumentsSchema = z.strictObject({
  * has no method that could write.
  */
 export interface ArtifactDataHost {
-  describeData(): Promise<{
+  describeData(scope: ArtifactRowScope): Promise<{
     tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
   }>;
   queryData(
     sql: string,
     params: (string | number | null)[],
     maxRows: number,
+    scope: ArtifactRowScope,
   ): Promise<ArtifactQueryResult>;
 }
 
@@ -78,6 +87,11 @@ export interface ResolvedArtifact {
   slug: string | null;
   mode: "static" | "active";
   stateful: boolean;
+  /**
+   * Whose rows this run may read. Decided by the resolver, which knows who the
+   * run is and who published the site; see `docs/live-web-artifacts.md`.
+   */
+  scope: ArtifactRowScope;
 }
 
 /** What the caller needs to resolve a site resource and reach its artifact. */
@@ -146,12 +160,13 @@ export function createWorkstreamArtifactDataTools(
         const args = DescribeArgumentsSchema.parse(raw);
         const artifact = await requireArtifact(args.resource);
         const host = await context.hostFor(artifact.artifactId);
-        const described = await host.describeData();
+        const described = await host.describeData(artifact.scope);
         return {
           output: {
             resource: args.resource,
             slug: artifact.slug,
             mode: artifact.mode,
+            ...(artifact.scope.rows === "viewer" ? { rowsShown: ONLY_OWN_ROWS } : {}),
             tables: described.tables,
           },
           summary: described.tables.length === 0
@@ -180,7 +195,7 @@ export function createWorkstreamArtifactDataTools(
         const args = QueryArgumentsSchema.parse(raw);
         const artifact = await requireArtifact(args.resource);
         const host = await context.hostFor(artifact.artifactId);
-        const result = await host.queryData(args.sql, args.params ?? [], MAXIMUM_QUERY_ROWS);
+        const result = await host.queryData(args.sql, args.params ?? [], MAXIMUM_QUERY_ROWS, artifact.scope);
         if (!result.ok) {
           if (result.reason === "no_artifact_data") {
             throw new ArtifactDataToolError(
@@ -196,6 +211,7 @@ export function createWorkstreamArtifactDataTools(
         return {
           output: {
             resource: args.resource,
+            ...(artifact.scope.rows === "viewer" ? { rowsShown: ONLY_OWN_ROWS } : {}),
             columns: result.columns,
             rows: result.rows.map(redactBinary),
             rowCount: result.rowCount,
