@@ -11,7 +11,7 @@ import { newId } from '@rally/db';
 import { TelemetryEnvelopeSchema } from '@rally/contracts/telemetry';
 import { AuthService } from '../src/services/auth-service';
 import { openEmailLoginSecret, redeemEmailLogin, startEmailLogin } from '../src/services/email-login-service';
-import { observeSignup, observeSignupProgress } from '../src/telemetry/signup';
+import { observeSignup, observeSignupProgress, queueSignupIdentityTransition } from '../src/telemetry/signup';
 import { createTestD1Database, createTestEnv } from './helpers/cloudflare-test';
 import { drainWaitUntil } from './helpers/cloudflare-workers';
 import { migratedObservabilityFixture, sqliteD1 } from './helpers/sqlite-d1';
@@ -74,6 +74,35 @@ describe('complete signup analytics', () => {
       properties: { flowId, clientPlatform: 'browser', entryPlatform: 'browser', accountStatus: 'new', signupPath, result: 'success' } });
     expect(JSON.stringify(events())).not.toContain('new@example.test');
     expect(JSON.stringify(events())).not.toContain(input.credential);
+  });
+
+  it('merges a new account\'s signup flow into its analytics person once, carrying its email', async () => {
+    const { env, flowId, session, input } = await emailSignup();
+    await new AuthService(env).resumeEmailLogin(await redeemEmailLogin(env, input, 'browser'), 'browser');
+    await drainWaitUntil();
+    const person = db.prepare('SELECT analytics_person_id FROM users WHERE id=?').get(session.user.id)!.analytics_person_id;
+    expect(person).toEqual(expect.any(String));
+    expect(db.prepare(`SELECT subject_user_id, destination_analytics_id, anonymous_epoch_id, properties_json, state
+      FROM telemetry_profile_jobs WHERE job_kind='epoch_transition'`).all()).toEqual([{
+      subject_user_id: session.user.id, destination_analytics_id: person, anonymous_epoch_id: flowId,
+      properties_json: JSON.stringify({ email: 'new@example.test', name: 'new@example.test' }), state: 'pending',
+    }]);
+  });
+
+  it('keeps a signup flow reused by a second new account on the first account only', async () => {
+    const env = bindings();
+    const flow = { flowId: newId(), clientPlatform: 'browser' as const };
+    const first = (await resolveVerifiedEmailIdentity(env.DB, 'first@example.test', flow)).id;
+    const second = (await resolveVerifiedEmailIdentity(env.DB, 'second@example.test', flow)).id;
+    await queueSignupIdentityTransition(env, first);
+    await queueSignupIdentityTransition(env, second);
+    observeSignupProgress(env, second, 'signup_organization_ready', 'new_organization', 'browser');
+    await drainWaitUntil();
+    expect(db.prepare('SELECT id, signup_flow_id FROM users WHERE id IN (?, ?) ORDER BY email').all(first, second))
+      .toEqual([{ id: first, signup_flow_id: flow.flowId }, { id: second, signup_flow_id: null }]);
+    expect(db.prepare(`SELECT subject_user_id, anonymous_epoch_id FROM telemetry_profile_jobs
+      WHERE job_kind='epoch_transition'`).all()).toEqual([{ subject_user_id: first, anonymous_epoch_id: flow.flowId }]);
+    expect(events()).toEqual([]);
   });
 
   it('records browser verification and authentication for a desktop-issued magic link', async () => {
@@ -204,6 +233,7 @@ describe('complete signup analytics', () => {
       'signup_verification_requested', 'signup_verification_completed', 'authentication_completed']);
     expect(events().at(-1)).toMatchObject({ properties: { flowId, accountStatus: 'existing' } });
     expect(db.prepare('SELECT signup_flow_id FROM users WHERE id=?').get(existingId)).toEqual({ signup_flow_id: null });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM telemetry_profile_jobs WHERE job_kind='epoch_transition'").get()).toEqual({ count: 0 });
   });
 
   it('records rejected verification and excludes returning accounts from signup completion', async () => {

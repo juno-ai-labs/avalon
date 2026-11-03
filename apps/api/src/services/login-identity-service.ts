@@ -20,12 +20,14 @@ export async function persistVerifiedGoogleIdentity(db: D1Database, input: {
         AND id = (SELECT user_id FROM user_verified_emails WHERE email = ?)
         AND NOT EXISTS (SELECT 1 FROM users WHERE google_subject = ?)`)
       .bind(input.subject, email, email, input.subject),
+    // The flow ID is client-supplied: a flow already recorded on another
+    // account is not recorded again, so one flow never follows two people.
     db.prepare(`INSERT INTO users (id, google_subject, email, name, avatar_url, created_at, updated_at, signup_flow_id, signup_client_platform)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT ? WHERE NOT EXISTS (SELECT 1 FROM users WHERE signup_flow_id = ?)), ?)
       ON CONFLICT(google_subject) DO UPDATE SET
         email = excluded.email, name = COALESCE(json_extract(users.presentation_json, '$.displayName'), excluded.name),
         avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`)
-      .bind(candidateId, input.subject, email, input.name, input.avatarUrl, at, at, signup?.flowId ?? null, signup?.clientPlatform ?? null),
+      .bind(candidateId, input.subject, email, input.name, input.avatarUrl, at, at, signup?.flowId ?? null, signup?.flowId ?? null, signup?.clientPlatform ?? null),
     db.prepare(`INSERT INTO user_login_identities (provider, subject, user_id, verified_at)
       SELECT 'google', google_subject, id, ? FROM users WHERE google_subject = ?
       ON CONFLICT(provider, subject) DO UPDATE SET verified_at = excluded.verified_at`)
@@ -62,8 +64,9 @@ export async function resolveVerifiedEmailIdentity(db: D1Database, verifiedEmail
   await db.batch([
     db.prepare(`INSERT INTO users
       (id, email, name, platform_user_id, onboarding_eligible, created_at, updated_at, signup_flow_id, signup_client_platform)
-      SELECT ?, ?, ?, ?, 0, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = ?)`)
-      .bind(id, email, email, id, at, at, signup?.flowId ?? null, signup?.clientPlatform ?? null, email),
+      SELECT ?, ?, ?, ?, 0, ?, ?, (SELECT ? WHERE NOT EXISTS (SELECT 1 FROM users WHERE signup_flow_id = ?)), ?
+      WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = ?)`)
+      .bind(id, email, email, id, at, at, signup?.flowId ?? null, signup?.flowId ?? null, signup?.clientPlatform ?? null, email),
     db.prepare(`INSERT INTO user_verified_emails (email, user_id, verified_at)
       SELECT email, id, ? FROM users WHERE id = ?`)
       .bind(at, id),
