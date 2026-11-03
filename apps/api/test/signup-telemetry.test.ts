@@ -11,7 +11,7 @@ import { newId } from '@rally/db';
 import { TelemetryEnvelopeSchema } from '@rally/contracts/telemetry';
 import { AuthService } from '../src/services/auth-service';
 import { openEmailLoginSecret, redeemEmailLogin, startEmailLogin } from '../src/services/email-login-service';
-import { observeSignup, observeSignupProgress } from '../src/telemetry/signup';
+import { observeSignup, observeSignupProgress, queueSignupIdentityTransition } from '../src/telemetry/signup';
 import { createTestD1Database, createTestEnv } from './helpers/cloudflare-test';
 import { drainWaitUntil } from './helpers/cloudflare-workers';
 import { migratedObservabilityFixture, sqliteD1 } from './helpers/sqlite-d1';
@@ -87,6 +87,17 @@ describe('complete signup analytics', () => {
       subject_user_id: session.user.id, destination_analytics_id: person, anonymous_epoch_id: flowId,
       properties_json: JSON.stringify({ email: 'new@example.test', name: 'new@example.test' }), state: 'pending',
     }]);
+  });
+
+  it('merges a signup flow shared by two new accounts into the first account only', async () => {
+    const env = bindings();
+    const flow = { flowId: newId(), clientPlatform: 'browser' as const };
+    const first = (await resolveVerifiedEmailIdentity(env.DB, 'first@example.test', flow)).id;
+    const second = (await resolveVerifiedEmailIdentity(env.DB, 'second@example.test', flow)).id;
+    await queueSignupIdentityTransition(env, first);
+    await queueSignupIdentityTransition(env, second);
+    expect(db.prepare(`SELECT subject_user_id, anonymous_epoch_id FROM telemetry_profile_jobs
+      WHERE job_kind='epoch_transition'`).all()).toEqual([{ subject_user_id: first, anonymous_epoch_id: flow.flowId }]);
   });
 
   it('records browser verification and authentication for a desktop-issued magic link', async () => {

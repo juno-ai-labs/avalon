@@ -74,16 +74,18 @@ export async function queueSignupIdentityTransition(env: Env, userId: string): P
   const personAnalyticsId = await ensurePersonAnalyticsId(env, userId);
   const now = new Date();
   const deleteAt = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1_000).toISOString();
-  // Authentication can report the same new account more than once (a replayed
-  // redemption); one transition per flow is enough.
+  // The flow ID is client-supplied, so two new accounts can store the same one,
+  // and authentication can report one new account more than once (a replayed
+  // redemption). The first account to queue a flow owns it; any other queues
+  // nothing, so one flow's history is never claimed for two people.
   await env.DB.prepare(`INSERT INTO telemetry_profile_jobs
       (id, subject_user_id, workspace_id, job_kind, destination_analytics_id,
        anonymous_epoch_id, properties_json, version, state, created_at, delete_at)
      SELECT ?, ?, NULL, 'epoch_transition', ?, ?, ?, 1, 'pending', ?, ?
      WHERE NOT EXISTS (SELECT 1 FROM telemetry_profile_jobs
-       WHERE subject_user_id = ? AND job_kind = 'epoch_transition' AND anonymous_epoch_id = ?)`)
+       WHERE job_kind = 'epoch_transition' AND anonymous_epoch_id = ?)`)
     .bind(newId(now.getTime()), userId, personAnalyticsId, user.signup_flow_id,
-      JSON.stringify({ email: user.email, name: user.name }), now.toISOString(), deleteAt, userId, user.signup_flow_id)
+      JSON.stringify({ email: user.email, name: user.name }), now.toISOString(), deleteAt, user.signup_flow_id)
     .run();
 }
 
