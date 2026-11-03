@@ -1,4 +1,4 @@
-import type { HarnessSkill } from "../index";
+import type { HarnessSkill } from "../../index";
 
 /**
  * How to answer a request for a data report: find every source that holds part

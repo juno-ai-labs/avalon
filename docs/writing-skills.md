@@ -29,7 +29,7 @@ to runs that hold the Terminal plugin, because the whole procedure ends in
 publishing a directory from a sandbox.
 
 Skills named for an **outcome** a person asks for ("a report", "an app"),
-rather than a capability, are **task skills** and live one per file in
+rather than a capability, are **task skills** and live one folder per skill in
 [`packages/agent-harness/src/task-skills/`](../packages/agent-harness/src/task-skills/index.ts).
 A task skill reads the request, settles what must be decided before work
 starts, and names the procedure skills that do the work; it does not repeat
