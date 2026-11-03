@@ -892,12 +892,14 @@ describe("Sidekick resource reads by ID", () => {
     } });
     const observed = new Proxy(runtime, { get: (target, key) => key === "DB" ? database : Reflect.get(target, key) });
     const context = createArtifactDataToolContext(observed, {
-      workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal: { type: "user", userId: AUTHOR_ID },
+      workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal: { type: "user", userId: AUTHOR_ID }, sidekick: true,
     });
     for (const reference of [resourceId, "calendar"]) {
       calls.length = 0;
       statements.length = 0;
-      await expect(context.resolveArtifact(reference)).resolves.toEqual({ artifactId, slug: "calendar", mode: "active", stateful: true });
+      await expect(context.resolveArtifact(reference)).resolves.toEqual({
+        artifactId, slug: "calendar", mode: "active", stateful: true, scope: { rows: "all" },
+      });
       expect(calls.filter((call) => call === "authorizationResourceFacts")).toEqual(["authorizationResourceFacts"]);
       expect(statements.filter((sql) => /FROM (resources|artifact_registry)\b/u.test(sql))).toHaveLength(reference === "calendar" ? 1 : 0);
     }
@@ -907,6 +909,36 @@ describe("Sidekick resource reads by ID", () => {
         COLLEAGUE_ID, resourceId);
     });
     await expect(context.resolveArtifact("calendar")).resolves.toBeNull();
+  });
+
+  it("limits a member who did not publish a site to their own rows, and nobody else", async () => {
+    // The author and a Sidekick read every row; a colleague who can see the
+    // site reads only their own rows in its per-viewer tables. The author is
+    // whoever the publishing run ran as, `uploaded_by_user_id`.
+    await seedSidekick("0");
+    const resourceId = await source();
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId, attachedByUserId: AUTHOR_ID });
+    const artifactId = crypto.randomUUID();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET resource_type = 'generated_site', slug = 'journal' WHERE id = ?", resourceId);
+      state.storage.sql.exec(`INSERT INTO artifact_registry
+        (artifact_id, workspace_id, resource_id, workstream_id, mode, stateful, current_version, manifest_ref, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'active', 1, 1, 'test-manifest', ?, ?)`,
+      artifactId, WORKSPACE_ID, resourceId, ROOM_ID, Date.parse(NOW), Date.parse(NOW));
+    });
+    await projectResourceAccess();
+    const scopeFor = async (sidekick: boolean) => (await createArtifactDataToolContext(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID), {
+      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, principal: { type: "user", userId: AUTHOR_ID }, sidekick,
+    }).resolveArtifact(resourceId))?.scope;
+    expect(await scopeFor(false)).toEqual({ rows: "all" });
+    // The same reader, once someone else published the site.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET uploaded_by_user_id = ? WHERE id = ?", COLLEAGUE_ID, resourceId);
+    });
+    await projectResourceAccess();
+    expect(await scopeFor(false)).toEqual({ rows: "viewer", viewerId: AUTHOR_ID });
+    expect(await scopeFor(true)).toEqual({ rows: "all" });
   });
 
   it("does not turn read access to an unattached resource into permission to forward it", async () => {

@@ -265,6 +265,10 @@ become unreachable from later opens. Artifacts currently use Rally's server-side
 data surface for durable state, so preserving that browser-local state was not
 worth retaining UUID origins for newly opened sessions.
 
+Data-table inspection returns every row to the site's author and to Sidekicks,
+and only their own rows in per-viewer tables to anyone else; see
+[Per-viewer rows](#per-viewer-rows).
+
 Data-table and error-log inspection use the same registry and canonical resource
 admission as navigation, but do not load a viewer profile or mint a
 browser bootstrap code. Only actual navigation calls `openForViewer`. Inspection
@@ -280,6 +284,34 @@ class that **instantiates it and holds it as a field**, passing the same `ctx`.
 Both objects address one database while living on separate prototype chains, so
 the host answers RPCs the model's code never defined — describe, query, page —
 over the same rows the page reads and writes.
+
+#### Per-viewer rows
+
+A table with a `viewer_id` column is **per-viewer**. Rally's three read paths,
+the Data view, its CSV export, and the agent's describe and query tools, show
+the site's **author** and any **Sidekick** every row, and show anyone else only
+the rows whose `viewer_id` is their own user id, the same id Rally injects as
+`x-rally-viewer-id`. A table without the column is shared. The site's own code
+is untouched: its handler runs whatever SQL it was written with, and scoping
+what the page shows is the page's job.
+
+- **Author** is `resources.uploaded_by_user_id`, whoever the publishing run ran
+  as. A site published under an Organization principal has none, so in the
+  Data view every member reads only their own rows.
+- **Sidekick** is any conversation whose parent is an automation (its wizard
+  and runs) or a run carrying `automationRun` or `automationDelegation`. A
+  Sidekick works on the whole data set (a tally, a digest, a refresh) for the
+  Sidekick rather than for one viewer.
+- **How a scoped read works.** `scopeStatementToViewer`
+  (`apps/api/src/artifacts/read-only-sql.ts`) prefixes the reader's statement
+  with one CTE per per-viewer table, named after the table and filtered to the
+  viewer. SQLite resolves an unqualified name to a CTE before the schema,
+  through every subquery and CTE, so the reader's SQL runs as written. A
+  `main.` or `temp.` qualifier on a shadowed name is dropped, since a
+  qualified name skips CTEs, and every view is re-declared as a CTE from its
+  own `CREATE VIEW` text, since a view's body was compiled against the schema.
+  **No query shape is refused for scoping**; only the existing read-only
+  admission applies. Page and count reads filter on the column directly.
 
 Requests to a stateful artifact route *through* the supervisor rather than being
 served in the loader's own isolate. That is a platform constraint rather than a
@@ -623,6 +655,36 @@ The selector and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
+
+### 2026-11-03 — Per-viewer rows in Rally's views of a site's data
+
+**What changed:** A table with a `viewer_id` column is per-viewer. The Data
+view, CSV export and agent data tools show the site's author and any Sidekick
+every row, and anyone else only their own rows. `ArtifactHostDO`'s
+`describeData`, `pageData` and `queryData` take a required `ArtifactRowScope`;
+the caller decides it, since only the caller knows who is asking. Agent results
+read with a viewer scope carry a `rowsShown` note. The site-building skill now
+uses `member_id` for attribution the group should see and `viewer_id` only for
+private rows.
+
+**Why:** A site could already show each signed-in person only their own data,
+but every member could read everyone's rows in the Data view, the export, or by
+asking the agent. That made a personal journal or checklist site private on the
+page and public one click away.
+
+**Considered and rejected:** Refusing queries that name a view or use a `main.`
+qualifier while scoped. It was the first version, and it limited the SQL a site
+and its readers can use; rewriting both onto the shadow keeps every query shape
+working. A manifest field declaring per-viewer tables, which the publish path
+cannot produce because the schema lives in the site's own class. Making the
+author see only their own rows too, which would leave nobody but a Sidekick
+able to read a whole private data set.
+
+**Consequences:** The column name is the contract; renaming it in a site makes
+its rows shared. A view that cannot be read back from `sqlite_master` throws
+rather than going unshadowed. A caller CTE reusing a per-viewer table's name is
+a SQLite error, not a leak. Anyone adding a fourth read path must pass a scope
+too, which the required parameter enforces.
 
 ### 2026-10-22 — Preserve raw source data before building a site
 

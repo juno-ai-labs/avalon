@@ -27,6 +27,41 @@ const WORKSTREAM = "00000000-0000-7000-8000-0000000000e2";
 const RESOURCE = "00000000-0000-7000-8000-0000000000e3";
 const ARTIFACT = "00000000-0000-7000-8000-0000000000e4";
 const VIEWER = "00000000-0000-7000-8000-0000000000e5";
+const OTHER_VIEWER = "00000000-0000-7000-8000-0000000000e6";
+
+/** Every row, as the site's author and a Sidekick read. */
+const ALL_ROWS = { rows: "all" } as const;
+/** One viewer's rows in per-viewer tables, as any other member reads. */
+const VIEWER_ROWS = { rows: "viewer", viewerId: VIEWER } as const;
+
+/**
+ * A site with one per-viewer table, one shared table, and a view over the
+ * per-viewer one: the shape whose isolation the scoped reads must hold.
+ */
+const JOURNAL_MODULE = `
+import { DurableObject } from "cloudflare:workers";
+export class SiteData extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS entries (viewer_id TEXT NOT NULL, body TEXT NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS prompts (body TEXT NOT NULL)");
+    ctx.storage.sql.exec("CREATE VIEW IF NOT EXISTS all_entries AS SELECT body FROM entries");
+  }
+  async fetch(request) {
+    const url = new URL(request.url);
+    const viewer = request.headers.get("x-rally-viewer-id");
+    if (url.pathname === "/write" && viewer) {
+      this.ctx.storage.sql.exec("INSERT INTO entries (viewer_id, body) VALUES (?, ?)", viewer, url.searchParams.get("body"));
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/prompt") {
+      this.ctx.storage.sql.exec("INSERT INTO prompts (body) VALUES (?)", url.searchParams.get("body"));
+      return Response.json({ ok: true });
+    }
+    return this.env.ASSETS.fetch(request);
+  }
+}
+`;
 
 /** The site's own published page, reached through the facet's ASSETS binding. */
 const PAGE_HTML = "<!doctype html><title>Votes</title><p>Cast your vote.";
@@ -213,12 +248,49 @@ describe("a stateful artifact's facet", () => {
     await publish(VOTING_MODULE);
     const host = hostStub();
     await host.fetchThroughFacet(viewerRequest("/vote?choice=maybe"));
-    const described = await host.describeData();
+    const described = await host.describeData(ALL_ROWS);
     const votes = described.tables.find((table) => table.name === "votes");
     expect(votes?.rowCount).toBe(1);
     expect(votes?.columns.map((column) => column.name).sort()).toEqual(["choice", "member"]);
-    expect(await host.queryData("SELECT choice FROM votes", [], 10))
+    expect(await host.queryData("SELECT choice FROM votes", [], 10, ALL_ROWS))
       .toMatchObject({ ok: true, rows: [{ choice: "maybe" }] });
+  });
+
+  it("limits a viewer-scoped read to that viewer's rows in a per-viewer table", async () => {
+    await publish(JOURNAL_MODULE);
+    const host = hostStub();
+    await host.fetchThroughFacet(viewerRequest("/write?body=mine"));
+    await host.fetchThroughFacet(viewerRequest("/write?body=theirs", OTHER_VIEWER));
+    await host.fetchThroughFacet(viewerRequest("/prompt?body=shared"));
+    // Every path a person or the agent reads by: the query tool, including a
+    // subquery and a caller's own WITH, the Data view's page, and its counts.
+    expect(await host.queryData("SELECT body FROM entries", [], 10, VIEWER_ROWS))
+      .toMatchObject({ ok: true, rows: [{ body: "mine" }] });
+    expect(await host.queryData(
+      "WITH mine AS (SELECT body FROM (SELECT * FROM entries)) SELECT body FROM mine", [], 10, VIEWER_ROWS,
+    )).toMatchObject({ ok: true, rows: [{ body: "mine" }] });
+    expect(await host.pageData("entries", 0, 10, VIEWER_ROWS))
+      .toMatchObject({ ok: true, rows: [{ viewer_id: VIEWER, body: "mine" }] });
+    const described = await host.describeData(VIEWER_ROWS);
+    expect(described.tables.find((table) => table.name === "entries")?.rowCount).toBe(1);
+    // A table without the viewer column is shared, and the author reads all.
+    expect(await host.queryData("SELECT body FROM prompts", [], 10, VIEWER_ROWS))
+      .toMatchObject({ ok: true, rows: [{ body: "shared" }] });
+    expect(await host.queryData("SELECT body FROM entries ORDER BY body", [], 10, ALL_ROWS))
+      .toMatchObject({ ok: true, rows: [{ body: "mine" }, { body: "theirs" }] });
+  });
+
+  it("answers any query a reader writes, including a view and a qualified name, with only their rows", async () => {
+    // A schema-qualified name resolves against the schema, and a view's body
+    // was compiled against it, so both are rewritten onto the shadow rather
+    // than refused: nothing a reader may write is off limits.
+    await publish(JOURNAL_MODULE);
+    const host = hostStub();
+    await host.fetchThroughFacet(viewerRequest("/write?body=mine"));
+    await host.fetchThroughFacet(viewerRequest("/write?body=theirs", OTHER_VIEWER));
+    for (const sql of ["SELECT body FROM main.entries", 'SELECT body FROM "main"."entries"', "SELECT body FROM all_entries"]) {
+      expect(await host.queryData(sql, [], 10, VIEWER_ROWS), sql).toMatchObject({ ok: true, rows: [{ body: "mine" }] });
+    }
   });
 
   it("keeps one warm instance across requests rather than reconstructing per request", async () => {
@@ -263,11 +335,11 @@ describe("a stateful artifact's facet", () => {
     await host.fetchThroughFacet(viewerRequest("/vote?choice=yes"));
     // A refusal is a result the model repairs from, not an exception: throwing
     // would log an uncaught rejection inside the object on every wrong query.
-    expect(await host.queryData("DELETE FROM votes", [], 10))
+    expect(await host.queryData("DELETE FROM votes", [], 10, ALL_ROWS))
       .toMatchObject({ ok: false, reason: "sql_refused" });
-    expect(await host.queryData("SELECT 1; DELETE FROM votes", [], 10))
+    expect(await host.queryData("SELECT 1; DELETE FROM votes", [], 10, ALL_ROWS))
       .toMatchObject({ ok: false, reason: "sql_refused" });
-    const survived = await host.queryData("SELECT choice FROM votes", [], 10);
+    const survived = await host.queryData("SELECT choice FROM votes", [], 10, ALL_ROWS);
     expect(survived).toMatchObject({ ok: true, rows: [{ choice: "yes" }] });
   });
 
@@ -277,8 +349,8 @@ describe("a stateful artifact's facet", () => {
     // got past it.
     await publish(VOTING_MODULE);
     const host = hostStub();
-    await host.queryData("SELECT count(*) AS n FROM votes", [], 10);
-    const described = await host.describeData();
+    await host.queryData("SELECT count(*) AS n FROM votes", [], 10, ALL_ROWS);
+    const described = await host.describeData(ALL_ROWS);
     expect(described.tables.find((table) => table.name === "votes")?.rowCount).toBe(0);
   });
 
@@ -286,17 +358,17 @@ describe("a stateful artifact's facet", () => {
     await publish(VOTING_MODULE);
     const host = hostStub();
     await host.fetchThroughFacet(viewerRequest("/vote?choice=yes"));
-    expect(await host.pageData("votes", 0, 10))
+    expect(await host.pageData("votes", 0, 10, ALL_ROWS))
       .toMatchObject({ ok: true, rows: [{ member: VIEWER, choice: "yes" }] });
-    expect(await host.pageData("sqlite_master", 0, 10))
+    expect(await host.pageData("sqlite_master", 0, 10, ALL_ROWS))
       .toMatchObject({ ok: false, reason: "table_refused" });
-    expect(await host.pageData('votes"; DROP TABLE votes; --', 0, 10))
+    expect(await host.pageData('votes"; DROP TABLE votes; --', 0, 10, ALL_ROWS))
       .toMatchObject({ ok: false, reason: "table_refused" });
   });
 
   it("hides SQLite's own bookkeeping from what a participant sees", async () => {
     await publish(VOTING_MODULE);
-    const described = await hostStub().describeData();
+    const described = await hostStub().describeData(ALL_ROWS);
     expect(described.tables.every((table) => !table.name.startsWith("sqlite_"))).toBe(true);
   });
 
@@ -306,7 +378,7 @@ describe("a stateful artifact's facet", () => {
     await host.fetchThroughFacet(viewerRequest("/vote?choice=yes"));
     await host.purge();
     await publish(VOTING_MODULE);
-    const described = await host.describeData();
+    const described = await host.describeData(ALL_ROWS);
     expect(described.tables.find((table) => table.name === "votes")?.rowCount ?? 0).toBe(0);
   });
 
@@ -320,7 +392,7 @@ describe("a stateful artifact's facet", () => {
     );
     await publish(shadowing);
     const host = hostStub();
-    expect(await host.queryData("SELECT 1 AS n", [], 10))
+    expect(await host.queryData("SELECT 1 AS n", [], 10, ALL_ROWS))
       .toMatchObject({ ok: true, rows: [{ n: 1 }] });
   });
 
@@ -354,7 +426,7 @@ describe("a stateful artifact's facet", () => {
       region: "global",
       manifest: { ...manifest(1), artifactId: asArtifactId(other) },
     });
-    const described = await otherHost.describeData();
+    const described = await otherHost.describeData(ALL_ROWS);
     expect(described.tables.find((table) => table.name === "votes")?.rowCount ?? 0).toBe(0);
   });
 

@@ -366,7 +366,7 @@ shape of \`index.js\`.
        // start, so guard with IF NOT EXISTS, never DROP.
        this.ctx.storage.sql.exec(
          \`CREATE TABLE IF NOT EXISTS rsvps (
-            viewer_id TEXT PRIMARY KEY,
+            member_id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             answer TEXT NOT NULL CHECK (answer IN ('yes','no','maybe')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -400,9 +400,9 @@ shape of \`index.js\`.
          }
          // One RSVP per person: answering again updates your answer.
          this.ctx.storage.sql.exec(
-           \`INSERT INTO rsvps (viewer_id, name, answer)
+           \`INSERT INTO rsvps (member_id, name, answer)
               VALUES (?, ?, ?)
-              ON CONFLICT (viewer_id) DO UPDATE
+              ON CONFLICT (member_id) DO UPDATE
                 SET answer = excluded.answer,
                     name = excluded.name,
                     updated_at = datetime('now')\`,
@@ -460,6 +460,24 @@ shape of \`index.js\`.
    asking people to type their own names: store the viewer id and
    display name where the page's purpose needs to know who acted, and
    store neither where it does not.
+
+   **The column name decides who else can read a row.** Rally treats a
+   table with a \`viewer_id\` column as **private per person**: in the
+   data view, its exports and the agent's reads, the site's author and
+   any Sidekick see every row, and everyone else sees only the rows whose
+   \`viewer_id\` is their own. Any other table is shared and everyone
+   who can see the site sees all of it. So store the viewer id as
+   \`member_id\` when the group should see who acted (an RSVP list, a
+   vote, a sign-up sheet), and as \`viewer_id\` only when each person's
+   rows are theirs alone. Neither changes the SQL your class may run:
+   query, join, aggregate and create views as the page needs.
+
+   **When each person should see only their own data** (a journal, a
+   personal checklist, saved preferences), make the site protected (item
+   3's guard), give every personal table a \`viewer_id\` column filled
+   from the header, never from the request body, and filter every read
+   the page serves by it. Rally scopes its own views of the data; the
+   page's handler is what scopes the page.
 
 5. **Old versions of a stateful site do not run.** When someone views
    a prior version, they see its *source*, not a live page — only the
@@ -521,8 +539,8 @@ shape of \`index.js\`.
   clears them is data loss, not a fresh start. Do instead: additive
   schema changes, and ask in chat before any deliberate reset.
 - **Recording presence nobody asked for.** For an identified Rally viewer the
-  headers tell you who is viewing, and everything you store is visible to the
-  whole work stream in the rail's data view — a page that quietly logs
+  headers tell you who is viewing, and the site's author sees every row you
+  store in the rail's data view — a page that quietly logs
   who opened it reads as surveillance the moment anyone looks. Do
   instead: record identity with *acts* (an RSVP, a vote, a sign-up),
   and record views only when the page's stated purpose is attendance.
