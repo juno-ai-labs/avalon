@@ -8516,7 +8516,9 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput, resourceAcc
       workspaceId: input.workspaceId,
       workstreamId: input.parentId,
       principal: input.executionPrincipal,
-      sidekick: input.parentKind === "automation" || Boolean(input.automationRun || input.automationDelegation),
+      // Unattended Sidekick runs, and background agents they start, read every
+      // row. The wizard is a member typing, so it reads as that member.
+      sidekick: Boolean(input.automationRun || input.automationDelegation),
     })),
     {
       definition: AVALON_CURRENT_TIME_TOOL_DEFINITION,
