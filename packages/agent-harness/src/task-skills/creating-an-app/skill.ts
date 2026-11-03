@@ -48,13 +48,15 @@ does. Pick the first of these that fits:
    Sidekick can still see everyone's.
 4. **Signed in, anonymous.** The app collects what people add but must never
    record who added what: an anonymous poll, anonymous feedback, an anonymous
-   survey. People still open it from Rally to answer, so each person can be
+   survey. People sign in with Rally to answer, so each person can be
    limited to one answer, but the stored answers carry no identity. Results
    are shared.
 
 An app that saves what people add always needs sign-in: Rally lets anyone
-view a site, but only people who open it from Rally can add or change
-anything. So never offer an open site for one.
+view a site, but only people signed in with Rally can add or change
+anything. Someone who follows the site's link signs in from the site and
+comes straight back, so sign-in costs them one step. Never offer an open
+site for an app that saves what people add.
 
 **Ask only when the app saves what people add and the request does not say
 who sees it.** Then ask one question, right away and before writing any
@@ -67,8 +69,9 @@ request does not mention anonymity is shared.
 For **signed in, anonymous**, follow the anonymous section of
 \`building-live-sites\`: store answers as counts or as rows with no viewer
 id, and, for one answer each, record who has answered in a separate table
-that holds no answers. Tell the person in your reply that people answer from
-Rally, and that nobody, the site's author included, can see who chose what.
+that holds no answers. Tell the person in your reply that people sign in with
+Rally to answer, and that nobody, the site's author included, can see who
+chose what.
 
 For **signed in, private**, every table that holds one person's data gets a
 \`private_to_viewer\` column holding their viewer id. Rally then keeps those

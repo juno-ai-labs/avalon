@@ -31,6 +31,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   artifactAssetKey,
+  asArtifactId,
   agentIdForAddress,
   asAutomationId,
   asSubstreamId,
@@ -53,6 +54,8 @@ import { AuthorizationService } from "../src/services/authorization-service";
 import { projectAuthorization } from "../src/services/authorization-projection-service";
 import { validateAttachmentToolReceiptReplay } from "../src/services/attachment-tool-receipts";
 import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
+import { resolveSiteForViewer } from "../src/services/artifact-site-resolution";
+import { artifactHostDOName } from "../src/durable-objects/names";
 import { ConversationMergeService } from "../src/services/conversation-merge-service";
 import { createAutomation } from "../src/services/automation-service";
 import {
@@ -939,6 +942,38 @@ describe("Sidekick resource reads by ID", () => {
     await projectResourceAccess();
     expect(await scopeFor(false)).toEqual({ rows: "viewer", viewerId: AUTHOR_ID });
     expect(await scopeFor(true)).toEqual({ rows: "all" });
+  });
+
+  it("finds a site's organization from its hostname only for someone who can read it", async () => {
+    // A protected site sends a signed-out visitor to sign in; the browser then
+    // knows only the hostname. The answer names the organization and resource
+    // for a reader, and is the same 404 for a stranger and for no such site.
+    await seedSidekick("0");
+    const resourceId = await source();
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId, attachedByUserId: AUTHOR_ID });
+    await projectResourceAccess();
+    const artifactId = crypto.randomUUID();
+    const stub = "level-luminous-sequential-schrodinger";
+    await TEST_ENV.PLATFORM_DB.prepare(`CREATE TABLE IF NOT EXISTS artifact_hostname_routes (
+      hostname_stub TEXT PRIMARY KEY, region TEXT NOT NULL, artifact_id TEXT NOT NULL, created_at TEXT NOT NULL,
+      UNIQUE(region, artifact_id))`).run();
+    await TEST_ENV.PLATFORM_DB.prepare("INSERT INTO artifact_hostname_routes VALUES (?, ?, ?, ?)")
+      .bind(stub, TEST_ENV.AVALON_REGION, artifactId, NOW).run();
+    await TEST_ENV.ARTIFACT_HOSTS.get(TEST_ENV.ARTIFACT_HOSTS.idFromName(
+      artifactHostDOName(TEST_ENV.AVALON_REGION, asArtifactId(artifactId)),
+    )).recordPublish({
+      artifactId, workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, resourceId, region: TEST_ENV.AVALON_REGION,
+      manifest: {
+        version: 1, artifactId: asArtifactId(artifactId), artifactVersion: 1, mode: "static", stateful: false,
+        serverModuleSha256: null, totalBytes: 1, publishedAt: NOW,
+        assets: [{ path: "index.html", contentType: "text/html; charset=utf-8", sizeBytes: 1, sha256: "0".repeat(64) }],
+      },
+    });
+
+    await expect(resolveSiteForViewer(TEST_ENV, AUTHOR_ID, stub)).resolves.toEqual({ workspaceId: WORKSPACE_ID, resourceId });
+    await expect(resolveSiteForViewer(TEST_ENV, OUTSIDER_ID, stub)).rejects.toMatchObject({ status: 404, code: "site_not_found" });
+    await expect(resolveSiteForViewer(TEST_ENV, AUTHOR_ID, "no-such-site-anywhere-here")).rejects.toMatchObject({ status: 404, code: "site_not_found" });
   });
 
   it("does not turn read access to an unattached resource into permission to forward it", async () => {

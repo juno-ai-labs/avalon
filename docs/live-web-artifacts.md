@@ -241,6 +241,23 @@ only after the session flow below succeeds; inbound copies are stripped first.
 This makes the handler's check an authorization boundary rather than a
 guessable-URL convention. The site-building skill teaches this shape explicitly.
 
+**Signing in from the site itself.** Someone who follows a site's link
+directly has no viewer session. `/__rally/sign-in?return=<path>` sends them to
+the browser client's site-opening page
+(`artifactSiteOpenPath`, owned by [`browser-client.md`](browser-client.md#shared-site-resources)),
+which signs them in, opens the site's organization and mints an access code
+as below, with the return path riding the bootstrap's query. The redeem
+endpoint reduces that value with `artifactReturnPath` to a path on this site
+outside `/__rally`, so a crafted link cannot turn an artifact host into an open
+redirect. The route is answered before the hostname lookup, so it is the same
+for every host. And so that a protected site needs no sign-in code of its own,
+the serving Worker turns its handler's **401** into that redirect when the
+request is a page load (`GET`, `Sec-Fetch-Mode: navigate`,
+`Sec-Fetch-Dest: document`) with no viewer session. A script's fetch, a
+crawler and an unfurler still get the handler's 401. The handler decided the
+refusal; only its page is replaced. Prior versions, which already require a
+session, redirect the same way.
+
 `POST /resources/:id/artifact/open` mints a single-use code against current
 canonical resource access — current membership plus an accessible conversation
 attachment, including a child-only grant. Legacy parent visibility is insufficient. A resource that does not exist and one the
@@ -656,7 +673,7 @@ The selector and trust boundaries are owned by
 
 ## Changelog
 
-### 2026-11-03 — Per-viewer rows in Rally's views of a site's data
+### 2026-11-03 — Per-viewer rows, and signing in from a site's own link
 
 **What changed:** A table with a `private_to_viewer` column is per-viewer. The Data
 view, CSV export and agent data tools show the site's author and any Sidekick
@@ -683,6 +700,13 @@ working. A manifest field declaring per-viewer tables, which the publish path
 cannot produce because the schema lives in the site's own class. Making the
 author see only their own rows too, which would leave nobody but a Sidekick
 able to read a whole private data set.
+
+**Also:** `/__rally/sign-in`, a return path through redeem, and a page-load
+401 turned into a sign-in redirect. A protected site's link only worked for
+someone who opened it from inside Rally; a visitor who followed the link got
+"Open this site from Rally" and no way in. Making the 401 redirect a platform
+behavior means no site has to write sign-in code, and limiting it to page
+loads leaves a script's fetch its own 401 to show a sign-in prompt for.
 
 **Consequences:** The column name is the contract; renaming it in a site makes
 its rows shared. A view that cannot be read back from `sqlite_master` throws

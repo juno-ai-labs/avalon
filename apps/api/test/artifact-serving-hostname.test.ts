@@ -642,3 +642,77 @@ describe("artifact serving hostname routes", () => {
     expect(redeemCode).toHaveBeenCalledWith("one-shot");
   });
 });
+
+describe("signing in from a site's own URL", () => {
+  const BROWSER = "https://app.rally.test";
+  const origin = `https://${STUB}-g.rallyusercontent.test`;
+  const route = { hostname_stub: STUB, artifact_id: ARTIFACT, region: "global" };
+  const signedOutState = {
+    artifactId: ARTIFACT,
+    workspaceId: "00000000-0000-7000-8000-0000000000c1",
+    workstreamId: "00000000-0000-7000-8000-0000000000d1",
+    resourceId: "00000000-0000-7000-8000-0000000000e1",
+    version: 1,
+    mode: "active",
+    stateful: false,
+    manifest: ACTIVE_MANIFEST,
+  };
+  /** A protected site's handler, as the skill teaches it: 401 with no viewer. */
+  const protectedHandler = async (request: Request) => request.headers.get("x-rally-viewer-id")
+    ? new Response("hello")
+    : new Response("Open this site from Rally.", { status: 401 });
+  const pageLoad = (path: string) => new Request(`${origin}${path}`, {
+    headers: { "sec-fetch-mode": "navigate", "sec-fetch-dest": "document", "sec-fetch-site": "none" },
+  });
+
+  it("sends the sign-in route to the browser client's site page without reading the route", async () => {
+    const { env, readRoute } = fixture(route);
+    const response = await artifactWorker.fetch(
+      new Request(`${origin}/__rally/sign-in?return=${encodeURIComponent("/rsvp?week=2")}`),
+      { ...env, BROWSER_APP_ORIGIN: BROWSER },
+      context(),
+    );
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location"))
+      .toBe(`${BROWSER}/app/sites/global/${STUB}/%2Frsvp%3Fweek%3D2`);
+    expect(readRoute).not.toHaveBeenCalled();
+  });
+
+  it("turns a protected site's 401 into sign-in for a page load, and only for one", async () => {
+    const { env } = fixture(route, { currentStateResult: signedOutState, loaderFetch: protectedHandler });
+    const withBrowser = { ...env, BROWSER_APP_ORIGIN: BROWSER };
+
+    const page = await artifactWorker.fetch(pageLoad("/journal?day=3"), withBrowser, context());
+    expect(page.status).toBe(303);
+    expect(page.headers.get("location")).toBe(`${BROWSER}/app/sites/global/${STUB}/%2Fjournal%3Fday%3D3`);
+
+    // A script's fetch keeps the handler's own 401, so the page can show its
+    // own sign-in prompt rather than receiving a redirect it cannot follow.
+    const script = await artifactWorker.fetch(new Request(`${origin}/api/entries`, {
+      headers: { "sec-fetch-mode": "cors", "sec-fetch-dest": "empty", "sec-fetch-site": "same-origin" },
+    }), withBrowser, context());
+    expect(script.status).toBe(401);
+
+    // With no browser client configured there is nowhere to send them.
+    expect((await artifactWorker.fetch(pageLoad("/"), env, context())).status).toBe(401);
+  });
+
+  it("returns a redeemed viewer to the path they asked for, and never off the site", async () => {
+    const { env, redeemCode } = fixture(route);
+    redeemCode.mockResolvedValue({ session: "s".repeat(43), expiresAt: Date.now() + 60_000 });
+    const redeemWith = (back: string) => artifactWorker.fetch(new Request(`${origin}/__rally/redeem`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "same-origin",
+      },
+      body: new URLSearchParams({ code: "one-shot", return: back }).toString(),
+    }), env, context());
+
+    expect((await redeemWith("/journal?day=3")).headers.get("location")).toBe("/journal?day=3");
+    expect((await redeemWith("https://evil.example/")).headers.get("location")).toBe("/");
+    expect((await redeemWith("//evil.example/")).headers.get("location")).toBe("/");
+  });
+});

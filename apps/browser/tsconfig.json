@@ -20,6 +20,7 @@
     "src/client.tsx",
     "src/connection-complete.tsx",
     "src/entry.tsx",
-    "src/shell.tsx"
+    "src/shell.tsx",
+    "src/site-open.tsx"
   ]
 }
