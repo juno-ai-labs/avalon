@@ -191,6 +191,7 @@ describe("plugin wire names", () => {
       "publish_branch_and_pr",
       "publish_resource",
       "query_artifact_data",
+      "read_artifact_table",
       "read_file",
       "read_resource",
       "read_resource_next",
