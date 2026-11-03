@@ -473,8 +473,44 @@ shape of \`index.js\`.
    personal checklist, saved preferences), make the site protected (item
    3's guard), give every personal table a \`private_to_viewer\` column
    filled from \`x-rally-viewer-id\`, never from the request body, and
-   filter every read the page serves by it. Rally scopes its own views of the data; the
-   page's handler is what scopes the page.
+   filter every read the page serves by it. Rally scopes its own views
+   of the data; the page's handler is what scopes the page. Beside the
+   shared RSVP list in item 1, a private journal looks like this:
+
+   \`\`\`js
+   // In the constructor: one personal table, private by its column.
+   this.ctx.storage.sql.exec(
+     \`CREATE TABLE IF NOT EXISTS journal_entries (
+        id INTEGER PRIMARY KEY,
+        private_to_viewer TEXT NOT NULL,
+        body TEXT NOT NULL,
+        written_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )\`,
+   );
+
+   // In fetch, after the all-routes guard has rejected anonymous requests:
+   const viewerId = request.headers.get("x-rally-viewer-id");
+   if (url.pathname === "/api/entries" && request.method === "POST") {
+     const body = await request.json().then((json) => json?.body, () => null);
+     if (typeof body !== "string" || body.trim() === "")
+       return Response.json({ error: "body must be text" }, { status: 400 });
+     this.ctx.storage.sql.exec(
+       "INSERT INTO journal_entries (private_to_viewer, body) VALUES (?, ?)",
+       viewerId, body,
+     );
+     return Response.json({ ok: true });
+   }
+   if (url.pathname === "/api/entries") {
+     const entries = this.ctx.storage.sql
+       .exec(
+         \`SELECT id, body, written_at FROM journal_entries
+           WHERE private_to_viewer = ? ORDER BY written_at DESC\`,
+         viewerId,
+       )
+       .toArray();
+     return Response.json({ entries });
+   }
+   \`\`\`
 
 5. **Old versions of a stateful site do not run.** When someone views
    a prior version, they see its *source*, not a live page — only the
