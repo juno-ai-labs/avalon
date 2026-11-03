@@ -1883,7 +1883,7 @@ The first two are `reporting-on-data`, with a section for Sidekick wizards, and
 build a site). Requests arrive as outcomes ("a report on our deals", "make me an
 app"), and nothing told the model which capabilities to combine or what to
 settle first: that a report should join every related source, that an app here
-means a live web site, and that shared versus signed-in has to be asked before
+means a live web site, and that shared versus private has to be asked before
 storage is written.
 
 **Considered and rejected:** Folding the app question into `building-live-sites`,

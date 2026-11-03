@@ -23,6 +23,7 @@
  *
  * See `docs/live-web-artifacts.md`.
  */
+import { ARTIFACT_VIEWER_COLUMN } from "@rally/contracts";
 
 export type SqlAdmission =
   | { admitted: true; sql: string }
@@ -194,23 +195,34 @@ export function admitTableName(
   return { admitted: true, quoted: quoteIdentifier(requested) };
 }
 
-/**
- * The column that makes a table **per-viewer**.
- *
- * A convention rather than a declaration because a stateful site has no
- * manifest field for its schema: the model writes `CREATE TABLE` in its own
- * class. The name states its effect rather than its content, so a model
- * choosing it knows it is making rows private, and a model that never read
- * the rule does not type it by accident; a generic name like `viewer_id`
- * failed both ways. A table without it is shared, and every reader sees all
- * its rows.
- */
-export const VIEWER_COLUMN = "private_to_viewer";
+/** The column that makes a table private to each viewer; see the contract. */
+export const VIEWER_COLUMN = ARTIFACT_VIEWER_COLUMN;
 
 /** Whose rows a read may return: every row, or one viewer's in private tables. */
 export type ArtifactRowScope = { rows: "all" } | { rows: "viewer"; viewerId: string };
 
-/** A site's schema as scoping needs it: names, definitions and every column. */
+/**
+ * The viewer a scope limits a read to, or `null` for every row.
+ *
+ * Anything but an explicit `all` reads as a viewer: the scope crosses a
+ * Durable Object call from whichever deployment sent it, and a value this
+ * code does not know must narrow a read, never widen it.
+ */
+export function viewerOf(scope: ArtifactRowScope): string | null {
+  return scope.rows === "all" ? null : scope.viewerId;
+}
+
+/**
+ * Whose rows a reader sees on a site. `reader` is the person reading, or
+ * `null` for an unattended run (a Sidekick, an Organization principal), which
+ * reads every row. The site's author reads every row too; anyone else reads
+ * only their own rows in private tables.
+ */
+export function artifactRowScope(reader: string | null, author: string | null): ArtifactRowScope {
+  return reader === null || reader === author ? { rows: "all" } : { rows: "viewer", viewerId: reader };
+}
+
+/** A site's schema as scoping needs it: every table and its columns. */
 export interface ArtifactSchema {
   /**
    * Every table, ordinary or virtual, with the SQL that created it and every
@@ -218,7 +230,6 @@ export interface ArtifactSchema {
    * which leaves them out and would let a generated private column pass).
    */
   tables: readonly { name: string; sql: string; columns: readonly string[] }[];
-  views: readonly { name: string; sql: string }[];
 }
 
 /** What scoping does to each table a scoped reader might name. */
@@ -226,39 +237,38 @@ export interface ViewerTables {
   /** Private tables: a scoped reader sees only their own rows. */
   filtered: readonly { name: string }[];
   /**
-   * Tables a scoped reader sees as empty, because they hold private text with
-   * no viewer column to filter on: a search index built over a private table
-   * (`content='journal_entries'`, `fts5vocab`), and the backing tables SQLite
-   * keeps for any private virtual table.
+   * Tables a scoped reader sees as empty: on a site with any private table,
+   * every virtual table without the viewer column, and the backing tables
+   * SQLite keeps for each virtual table.
    */
   hidden: readonly string[];
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 /** The backing tables FTS5 creates for a virtual table `<name>`. */
 const FTS5_BACKING_SUFFIXES = ["_data", "_idx", "_content", "_docsize", "_config"];
 
-/** Which tables are private, and which a scoped reader sees as empty. */
+/**
+ * Which tables are private, and which a scoped reader sees as empty.
+ *
+ * A search index can hold private text with no viewer column to filter on,
+ * and it can be fed from a private table in ways its own SQL never names: an
+ * external-content index over a view, an index filled by triggers, a
+ * vocabulary table over another index. Tracing each is a parser nobody can
+ * finish, so on a site with any private table every virtual table without
+ * the column, and every backing table, reads as empty. A site with no
+ * private table hides nothing.
+ */
 export function viewerTables(schema: ArtifactSchema): ViewerTables {
   const isPrivate = (table: ArtifactSchema["tables"][number]) =>
     table.columns.some((column) => column.toLowerCase() === VIEWER_COLUMN);
-  const privateNames = schema.tables.filter(isPrivate).map((table) => table.name.toLowerCase());
+  const filtered = schema.tables.filter(isPrivate);
+  if (filtered.length === 0) return { filtered: [], hidden: [] };
   const virtual = schema.tables.filter((table) => /^\s*create\s+virtual\s+table\b/iu.test(table.sql));
-  // A virtual table over a private table reads its rows from that table, so
-  // it holds private text even with no viewer column of its own.
-  const namesPrivateTable = (sql: string) => {
-    const lower = sql.toLowerCase();
-    return privateNames.some((name) => new RegExp(`(^|[^\\p{L}\\p{N}_$])${escapeRegExp(name)}($|[^\\p{L}\\p{N}_$])`, "u").test(lower));
-  };
-  const overPrivate = virtual.filter((table) => !isPrivate(table) && namesPrivateTable(table.sql));
-  const backing = new Set([...virtual.filter(isPrivate), ...overPrivate]
+  const backing = new Set(virtual
     .flatMap((table) => FTS5_BACKING_SUFFIXES.map((suffix) => `${table.name.toLowerCase()}${suffix}`)));
   const hidden = schema.tables
     .filter((table) => !isPrivate(table)
-      && (overPrivate.includes(table) || backing.has(table.name.toLowerCase())))
+      && (virtual.includes(table) || backing.has(table.name.toLowerCase())))
     .map((table) => table.name);
-  return { filtered: schema.tables.filter(isPrivate).map((table) => ({ name: table.name })), hidden };
+  return { filtered: filtered.map((table) => ({ name: table.name })), hidden };
 }

@@ -746,7 +746,7 @@ personless; it is not duplicated into these product events.
 - **Trusted only limits which hosts a sandbox reaches; it does not stop data
   leaving through them.** The baseline admits every Rally site in both regions
   (`*.rallyusercontent.com`) so an agent can screenshot the active site it
-  published. A site's own `index.js` runs on an anonymous `GET` and may store
+  published. A site's own `index.js` runs on any anonymous request, writes included, and may store
   what the request carries, so a prompt-injected agent can send data to a site
   another Rally user owns, who can then read it in that site's Data view.
   This was accepted on 2026-10-16 so the building-live-sites skill can check a

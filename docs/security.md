@@ -931,9 +931,12 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   artifacts are same-*site*: `SameSite` does not stop script in one sending a
   **credentialed** request to another, and a simple `POST` needs no preflight, so
   the victim's model-written handler would still run even though CORS hid the
-  response. Admission is by fetch metadata — `same-origin`, or `none` for a
-  genuine top-level `GET` — refused before untrusted code runs, and refused for
-  GETs too, because artifact code may treat any method as a write.
+  response. So the serving Worker never carries a viewer identity on a
+  cross-origin request: fetch metadata (`same-origin`, or a genuine top-level
+  `GET` navigation) decides whether a request may carry one, and every other
+  request, any method, reaches the handler anonymously with its cookie ignored
+  and its viewer headers stripped. The site's own code decides what an
+  anonymous request may do. See `docs/live-web-artifacts.md`.
 
 - **A new ticket audience never issues a ticket in a URL.** Cloudflare records
   whole URLs into the invocation log, Logpush, and traces, and no redaction here
@@ -1196,6 +1199,25 @@ actions against the current native view. Edit/remove actions require trusted
 clicks; artifact scripts receive no application bridge.
 
 ## Changelog
+
+### 2026-11-03 — Cross-origin requests reach a site anonymously, not refused
+
+**What changed:** The artifact serving Worker no longer refuses a
+cross-origin unsafe request. It lets it reach the site's handler with no
+identity, the same as a cross-origin read.
+
+**Why:** Sites need to take submissions from people outside Rally (an
+anonymous poll, a contact form), and the product decided a site's own code,
+not a per-site switch, decides what an anonymous request may do.
+
+**Considered and rejected:** A per-site opt-in for anonymous writes, removed
+as friction. Refusing cross-origin writes while admitting same-origin
+anonymous ones, which still blocked public forms embedded or posted from
+elsewhere.
+
+**Consequences:** The boundary that remains is identity: a sibling artifact
+can send a request but never with a viewer's identity. A site that never
+checks for a viewer accepts anonymous writes from any origin.
 
 ### 2026-10-31 — Model-authored code runs in a second, smaller boundary
 

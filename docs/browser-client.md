@@ -377,8 +377,12 @@ only the path survives that trip. Signed in, it asks the site's deployment
 that organization with the same `openWorkspace` a workspace link uses, mints the
 site's single-use access code, and replaces itself with the site's `openUrl`
 plus `?return=`. A 404 means no such site, and a 403 means the site exists but
-this account cannot read it; the page says which, so the person knows whether
-to fix the link or ask for access.
+this account cannot read it, including a member of the Organization who is not
+in the site's Channel; the page says which, so the person knows whether to fix
+the link or ask for access. A failure that trying again could fix (Rally
+unreachable, a 503) offers Try again. Its decisions live in
+`apps/browser/src/site-open-decisions.ts`, apart from React, and the page is
+keyed by the signed-in user, so switching accounts starts the open over.
 
 A deployment other than Global sets its cookie only when one of its
 organizations is opened, and the lookup is what finds the organization, so a
@@ -472,6 +476,10 @@ the clicked conversation and shows only email input and submission feedback.
   `state` query.
 - Browser and desktop Google states do not mix: each callback claims only rows
   of its own `purpose`.
+- `/browser/sites/resolve` is a deliberate exception to "not an existence
+  oracle": it tells a **signed-in** account whether a site exists (404 versus
+  403), and returns the organization and resource ids only to someone who can
+  read the site.
 
 ## Boundary
 
@@ -526,7 +534,10 @@ policy before testing real authentication. Development does not send emails.
 
 ## Failure modes and limits
 
-Missing built HTML returns 503. Unknown regional/API paths return 404. API errors
+Missing built HTML returns 503. Unknown regional/API paths return 404.
+`POST /browser/sites/resolve` answers 404 `site_not_found`, 403
+`site_access_denied`, or 503 `authorization_unavailable` when access cannot be
+checked. API errors
 remain visible in the form and retries preserve the active operation. This module
 introduces no new authentication TTL or attempt count; those remain explicit
 policy in [email-login.md](email-login.md). Google sign-in reuses the desktop
@@ -564,7 +575,9 @@ open in Safari, not in the app.
 ## Testing
 
 `pnpm --filter @rally/browser test` builds assets and exercises the host in real
-workerd. A separate real Worker reflects forwarded requests, proving transport
+workerd. `test/site-open.test.ts` covers the site-opening page's decisions:
+the code stays in the fragment, and which failure each answer shows. The page's
+React wiring has no automated test. A separate real Worker reflects forwarded requests, proving transport
 without pretending to test product authorization. Its real WebSocketPair proves
 upgrade, subprotocol and frame continuity through the service binding, along with
 same-origin enforcement and stripping unrelated credentials. Shared API adapter
@@ -631,9 +644,9 @@ for someone who can read it.
 than from inside Rally, with "Open this site from Rally", and nothing there
 could get them in. Sites are shared by link, so that was the common case.
 
-**Not found versus no access:** the lookup answers 404 and 403 separately,
-at the PR author's direction, so a person knows whether to fix the link or ask
-for access. It tells a signed-in person that a site exists, nothing more.
+**Not found versus no access:** the lookup answers 404 and 403 separately, so
+a person knows whether to fix the link or ask for access. It tells a
+signed-in person that a site exists, nothing more.
 
 **Considered and rejected:** Putting the organization id in the site's
 redirect. The site Worker does read it, but it would hand the id to anyone
