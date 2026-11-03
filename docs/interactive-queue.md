@@ -81,30 +81,21 @@ directly.
 
 ## Failure modes and limits
 
-- **The consumer settings are the activity queue's**, which Slack ingress
-  already ran under: one message per invocation, a one-second window, five
-  retries, then `avalon-global-interactive-dead-letter`. Moving the jobs
-  changed which backlog they wait behind and nothing else. Retuning them is
-  the team's call.
-- **A non-empty interactive dead-letter queue** means a Slack job, or a
+- **Settings:** one message per invocation, a one-second window, five
+  retries, then `avalon-global-interactive-dead-letter`. These are the
+  activity queue's; the changelog says why, and retuning them is the team's
+  call.
+- **A non-empty interactive dead-letter queue** means interactive work, or a
   misrouted message, failed every retry.
-- **A long Slack backlog would still delay Slack replies.** Slack's volume is a
-  few messages a second at most, against 5,000 per second per queue.
+- **A backlog of interactive work itself still delays it.** Slack sends a few
+  messages a second at most, against 5,000 per second per queue.
 
 ## Testing
 
-- `apps/api/test/interactive-queue.test.ts`: `sendInteractive` carries a
-  registered kind with its delay and refuses an unregistered one before
-  sending.
-- `apps/api/test-workers/queue-dispatch.test.ts` (real workerd): the
-  interactive queue waits behind maintenance, reaches its own consumer once
-  the gate is open, and retries a body it does not read, where the activity
-  consumer acks it.
-- `apps/api/test/slack-agent-ingress.test.ts`,
-  `slack-workspace-assignment.test.ts`, `slack-thread-audience.test.ts` and
-  `slack-account-link.test.ts`: their environments carry only
-  `INTERACTIVE_QUEUE` for Slack ingress, so a Slack producer that sends to the
-  activity queue fails them.
+`test/interactive-queue.test.ts` covers the send helper and failure reasons;
+`test-workers/queue-dispatch.test.ts` covers dispatch on real workerd. The
+Slack ingress tests give Slack only `INTERACTIVE_QUEUE`, so a Slack producer
+sending anywhere else fails them.
 
 ## Changelog
 

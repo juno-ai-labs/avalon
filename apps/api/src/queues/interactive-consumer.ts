@@ -1,5 +1,5 @@
-import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
-import { connectorRetryAfterMs } from "@rally/connectors";
+import { codeShaped, isCodeShaped, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import { ConnectorError, connectorDiagnosticCode, connectorRetryAfterMs } from "@rally/connectors";
 
 import type { Env } from "../env";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
@@ -80,10 +80,28 @@ export async function runInteractiveMessage(
   } catch (error) {
     logWarn(env, `${body.kind}_queue_processing_failed`, {
       ...fields,
-      reason: diagnosticErrorCode(error, `${body.kind}_queue_processing_failed`),
+      reason: interactiveFailureReason(body.kind, error),
     });
     message.retry({ delaySeconds: interactiveRetryDelaySeconds(message.attempts, error) });
   }
+}
+
+/**
+ * Why a handler failed, as a code. A connector failure keeps its code, the
+ * provider's HTTP status or rate limit, and the adapter's `responseIssues`
+ * (the failing paths of a malformed body); never the provider's message.
+ * Anything else names itself through `diagnosticErrorCode`.
+ */
+export function interactiveFailureReason(kind: InteractiveKind, error: unknown): string {
+  if (error instanceof ConnectorError) {
+    const code = connectorDiagnosticCode(error);
+    const details = error.details;
+    const issues = details && typeof details === "object"
+      ? (details as { responseIssues?: unknown }).responseIssues
+      : undefined;
+    return typeof issues === "string" && isCodeShaped(issues) ? codeShaped(`${code}:${issues}`) : code;
+  }
+  return diagnosticErrorCode(error, `${kind}_queue_processing_failed`);
 }
 
 /**

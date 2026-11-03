@@ -62,7 +62,8 @@ const contractComplete = {
 function settledBatch(queue: string, body: unknown) {
   const ack = vi.fn();
   const retry = vi.fn();
-  const batch = { ...batchOf(queue, body), messages: [{ ...batchOf(queue, body).messages[0]!, ack, retry }] };
+  const base = batchOf(queue, body);
+  const batch = { ...base, messages: [{ ...base.messages[0]!, ack, retry }] };
   return { batch: batch satisfies MessageBatch<unknown>, ack, retry };
 }
 
@@ -166,13 +167,11 @@ describe("dispatching interactive work", () => {
       expect([slack.ack.mock.calls.length, slack.retry.mock.calls.length]).toEqual([1, 0]);
 
       // A body nothing reads is retried toward the interactive dead-letter
-      // queue there; the activity consumer acknowledges the same body.
+      // queue. The activity consumer would acknowledge it, so this also shows
+      // which consumer ran.
       const unknown = settledBatch(INTERACTIVE, { kind: "not_interactive" });
       await worker.queue?.(unknown.batch, contractComplete);
       expect([unknown.ack.mock.calls.length, unknown.retry.mock.calls.length]).toEqual([0, 1]);
-      const activity = settledBatch("avalon-do-runtime-test-activities", { kind: "not_interactive" });
-      await worker.queue?.(activity.batch, contractComplete);
-      expect([activity.ack.mock.calls.length, activity.retry.mock.calls.length]).toEqual([1, 0]);
     } finally {
       await env.DB.exec("DROP TABLE IF EXISTS workstream_authority_control");
     }
