@@ -161,7 +161,7 @@ function service(
     // facade statements route to the same real object, so one workspace's
     // Slack state lives in one store.
     WORKSPACE_DOS: testWorkspaceObjectBinding(instance, SLACK_WORKSPACE_OBJECT_METHODS),
-    ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({
+    INTERACTIVE_QUEUE: createCloudflareTestBinding<Queue>({
       send: vi.fn(async () => undefined),
     }),
     AVALON_REGION: "global",

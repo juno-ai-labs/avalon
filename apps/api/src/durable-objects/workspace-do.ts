@@ -162,6 +162,7 @@ import {
 } from "./conversation-access-request-storage";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { listedResourceVisibilitySql } from "../services/resource-listing";
+import { sendInteractive } from "../services/interactive-queue";
 import { z } from "zod";
 import {
   RevokeImpersonationRelationshipsRequestSchema,
@@ -9878,7 +9879,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (jobs.length > 0) this.refreshScheduleAfterSlackWrite(workspaceId);
     for (const job of jobs) {
       try {
-        await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
+        await sendInteractive(this.env, SlackIngressQueueMessageSchema.parse({
           kind: "slack_ingress",
           region: this.env.AVALON_REGION,
           workspaceId,

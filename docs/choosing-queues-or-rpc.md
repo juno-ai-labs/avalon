@@ -138,10 +138,12 @@ check. Those are worth naming precisely, because naming them is what stops the
 requirement from spreading to everything nearby.
 
 And when a Queue is right but the default window is too slow, **tune the window
-before you abandon the mechanism.** Rally's activity queue runs at
+before you abandon the mechanism.** Rally's activity queue was set to
 `max_batch_timeout: 1` for exactly this reason: at five seconds a Slack unfurl
 appeared six seconds after the message, which was a real complaint with a real
-user story behind it. The fix was one second, not a service binding.
+user story behind it. The fix was one second, not a service binding. Slack
+ingress, unfurls included, now rides the [interactive queue](interactive-queue.md),
+which keeps the same one-second window.
 
 ### Deciding without measurement
 
@@ -473,6 +475,7 @@ it.
 
 | Hop | Mechanism | Regional shape | Why |
 | --- | --- | --- | --- |
+| A Slack event, interaction or command into its regional job (`INTERACTIVE_QUEUE`, `slack_ingress`) | Queue, then typed WorkspaceDO RPC | Split | **A person is waiting on the answer**, so it does not share the activity queue's backlog, which once held Slack replies for 15 minutes. Still a Queue, not RPC: Slack's three-second acknowledgement must not wait on a cold object, and the job needs the Queue's retry and dead-letter queue. See [`interactive-queue.md`](interactive-queue.md). |
 | Connector activity into the regional consumer (`ACTIVITY_QUEUE`) | Queue, then typed WorkspaceDO RPC | One shared Queue per region | Fan-in from webhooks and polls; nothing waits on the outcome. After authoritative ingress, an ID-only process pointer returns to the same Queue for native retry, and each delivery claims/settles its named WorkspaceDO by RPC. Product flows intentionally share the regional Queue at Rally's current scale. |
 | A verified GitHub delivery into its routing (`ACTIVITY_QUEUE`, `github_webhook_delivery_v1`) | Queue, then in-process call or the regional bridge's RPC | Global's Queue | **Nothing the webhook answers depends on the outcome**, and GitHub gives up after 10 s. The receiver verifies the signature and enqueues; the consumer looks up the installation's regions and hands each the verified bytes. A body over the message limit is staged in `PAYLOADS`. The bridge call is RPC because the consumer must see a region's failure to retry the message. See [`connectors.md`](connectors.md#github-app). |
 | A model call's cost into the usage ledger (`USAGE_QUEUE`, `avalon-<region>-usage`) | Queue | Split | Nothing the call site does depends on the outcome, and metering must never slow or fail the call it measures, so the call site sends in `waitUntil` and walks away. Batches of 100 make one D1 transaction cover many events, and one consumer at a time keeps the dedupe and the totals from racing. Split because each event names a workspace whose ledger lives in that region's D1. See [`usage-metering.md`](usage-metering.md). |
