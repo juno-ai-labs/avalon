@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { createExecutionContext } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import worker from "../src/index";
 import { AccessRevocationMessageSchema } from "../src/services/access-revocation";
@@ -57,6 +57,28 @@ const contractComplete = {
   MAX_ATTACHMENT_BYTES: "25000000",
   WEBHOOK_REPLAY_WINDOW_SECONDS: "300",
 } as unknown as typeof env;
+
+/** A one-message batch whose ack and retry can be observed. */
+function settledBatch(queue: string, body: unknown) {
+  const ack = vi.fn();
+  const retry = vi.fn();
+  const base = batchOf(queue, body);
+  const batch = { ...base, messages: [{ ...base.messages[0]!, ack, retry }] };
+  return { batch: batch satisfies MessageBatch<unknown>, ack, retry };
+}
+
+/** Open the work-stream authority, so batches pass the maintenance gate. */
+async function openAuthority(): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
+      id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
+      required_serving_contract_version INTEGER NOT NULL, serving_contract_version INTEGER NOT NULL
+    )`),
+    env.DB.prepare(`INSERT OR REPLACE INTO workstream_authority_control
+      (id, phase, generation, required_serving_contract_version, serving_contract_version)
+      VALUES (1, 'durable_object_open', 1, 1, 1)`),
+  ]);
+}
 
 const revocation = AccessRevocationMessageSchema.parse({
   kind: "access_revoked",
@@ -123,5 +145,35 @@ describe("dispatching a queue batch", () => {
       batchOf("avalon-global-product-feature-flags", { invalid: true }),
       contractComplete,
     )).resolves.toBeUndefined();
+  });
+});
+
+describe("dispatching interactive work", () => {
+  const INTERACTIVE = "avalon-do-runtime-test-interactive";
+
+  it("holds interactive work behind the maintenance gate, as new work-stream work", async () => {
+    await expect(worker.queue?.(batchOf(INTERACTIVE, {}), contractComplete))
+      .rejects.toThrow(/workstream_maintenance/);
+  });
+
+  it("hands the interactive queue to its own consumer once the gate is open", async () => {
+    await openAuthority();
+    try {
+      // A Slack job named for another region is settled and acknowledged.
+      const slack = settledBatch(INTERACTIVE, {
+        kind: "slack_ingress", region: "eu", workspaceId: WORKSPACE, jobId: "event:Ev1",
+      });
+      await worker.queue?.(slack.batch, contractComplete);
+      expect([slack.ack.mock.calls.length, slack.retry.mock.calls.length]).toEqual([1, 0]);
+
+      // A body nothing reads is retried toward the interactive dead-letter
+      // queue. The activity consumer would acknowledge it, so this also shows
+      // which consumer ran.
+      const unknown = settledBatch(INTERACTIVE, { kind: "not_interactive" });
+      await worker.queue?.(unknown.batch, contractComplete);
+      expect([unknown.ack.mock.calls.length, unknown.retry.mock.calls.length]).toEqual([0, 1]);
+    } finally {
+      await env.DB.exec("DROP TABLE IF EXISTS workstream_authority_control");
+    }
   });
 });

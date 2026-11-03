@@ -270,6 +270,10 @@
   "queues": {
     "producers": [
       { "binding": "ACTIVITY_QUEUE", "queue": "avalon-global-activities" },
+      // Work a person is waiting on, kept off the activity backlog. Split per
+      // region: a job names a workspace whose objects live there. See
+      // docs/interactive-queue.md.
+      { "binding": "INTERACTIVE_QUEUE", "queue": "avalon-global-interactive" },
       // Every inference request and terminal attempt is staged in the regional
       // payload bucket, then this queue carries only its content-addressed
       // pointer to the regional Pipeline consumer. The queue keeps provider
@@ -317,6 +321,15 @@
         "max_batch_timeout": 1,
         "max_retries": 5,
         "dead_letter_queue": "avalon-global-activities-dead-letter"
+      },
+      {
+        "queue": "avalon-global-interactive",
+        // The activity queue's settings, which Slack ingress already ran
+        // under. See docs/interactive-queue.md.
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "avalon-global-interactive-dead-letter"
       },
       {
         "queue": "avalon-global-inference-lakehouse",

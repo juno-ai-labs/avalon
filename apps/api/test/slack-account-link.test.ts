@@ -470,7 +470,7 @@ function environment(
 ): Env {
   return createTestEnv({
     DB: sqliteD1(database),
-    ACTIVITY_QUEUE: { send: async () => {} },
+    INTERACTIVE_QUEUE: { send: async () => {} },
     AVALON_REGION: "global",
     CONNECTOR_CREDENTIALS_KEY: credentialsKey,
     CONNECTOR_CREDENTIALS_KEY_VERSION: "1",

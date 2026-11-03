@@ -25,11 +25,10 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
 import { projectAuthorization } from '../services/authorization-projection-service';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
 import { projectConversationDisplay } from '../services/search-conversation-display';
-import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@rally/connectors";
+import { ConnectorError, connectorOriginUrl } from "@rally/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
-  SlackIngressQueueMessageSchema,
   WorkspaceExternalEventDeliveryQueueMessageSchema,
   asSubstreamId,
   asWorkspaceId,
@@ -58,11 +57,12 @@ import {
   type WorkspaceConnectorEvent,
 } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
+import { runInteractiveMessage } from "./interactive-consumer";
+import { InteractiveQueueMessageSchema } from "../services/interactive-queue";
 import { runtimeDeferral } from "../lib/defer";
 import { admitExternalEventWithSemanticGate } from "../services/semantic-trigger-admission";
 import type { AuthContext } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { SlackAgentService } from "../services/slack-agent-service";
 import { consumeGitHubDeliveryMessage, isGitHubDeliveryQueueMessage } from "../services/github-routing-service";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
@@ -1020,44 +1020,11 @@ async function consumeOne(message: Message<unknown>, env: Env,
     return;
   }
 
-  const slackIngress = SlackIngressQueueMessageSchema.safeParse(message.body);
-  if (slackIngress.success) {
-    if (slackIngress.data.region !== env.AVALON_REGION) {
-      logInfo(env, "slack_ingress_queue_terminal", {
-        workspace_id: slackIngress.data.workspaceId,
-        job_id: slackIngress.data.jobId,
-        outcome: "skipped",
-        reason: "region_mismatch",
-        queue_attempts: message.attempts,
-      });
-      message.ack();
-      return;
-    }
-    try {
-      await new SlackAgentService(env).processQueuedIngress(
-        slackIngress.data.workspaceId,
-        slackIngress.data.jobId,
-      );
-      logInfo(env, "slack_ingress_queue_terminal", {
-        workspace_id: slackIngress.data.workspaceId,
-        job_id: slackIngress.data.jobId,
-        outcome: "processed",
-        reason: "ingress_job_completed",
-        queue_attempts: message.attempts,
-      });
-      message.ack();
-    } catch (error) {
-      logWarn(env, "slack_ingress_queue_processing_failed", {
-        workspace_id: slackIngress.data.workspaceId,
-        job_id: slackIngress.data.jobId,
-        queue_attempts: message.attempts,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-      const attempts = Math.max(1, message.attempts);
-      const exponentialDelay = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
-      const providerDelay = Math.ceil((connectorRetryAfterMs(error) ?? 0) / 1_000);
-      message.retry({ delaySeconds: Math.min(43_200, Math.max(exponentialDelay, providerDelay)) });
-    }
+  // Interactive work rides its own queue; any kind of it that still arrives
+  // here, such as a job queued before its kind moved, runs the same handler.
+  const interactive = InteractiveQueueMessageSchema.safeParse(message.body);
+  if (interactive.success) {
+    await runInteractiveMessage(message, interactive.data, env);
     return;
   }
 

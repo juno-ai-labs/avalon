@@ -80,12 +80,12 @@ export async function publishSpaceDefaultTargets(input: SpacePublicationInput): 
  * size is three to four orders of magnitude under the ceiling, and being wrong
  * about the fleet by a hundredfold still leaves it under.
  *
- * That matters because this shares `ACTIVITY_QUEUE` with the Slack unfurl leg,
- * whose `max_batch_timeout: 1` was tuned after a real latency complaint. The
- * burst it sees from a cutover is a per-Organization trickle paced by round
- * trips, not a per-Channel flood — which is why no second queue is declared
- * here, and what a future change has to keep true if it ever claims more than
- * one page per alarm.
+ * That matters because this shares `ACTIVITY_QUEUE` with every other
+ * projection and backfill. The burst it sees from a cutover is a
+ * per-Organization trickle paced by round trips, not a per-Channel flood,
+ * which is why no second queue is declared here, and what a future change has
+ * to keep true if it ever claims more than one page per alarm. Work a person
+ * is waiting on rides the interactive queue instead (docs/interactive-queue.md).
  */
 export async function publishSpaceBootstrapWork(input: {
   storage: SpaceDefaultPublicationStorage;

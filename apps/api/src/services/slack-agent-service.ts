@@ -136,6 +136,7 @@ import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { SLACK_THREAD_CLAIM_LEASE_MS } from "../durable-objects/workspace-slack-storage";
 import type { AdmitExternalMessageInput } from "../durable-objects/workstream-external-message-protocol";
 import { hostedParentStub } from "./conversation-parent-client";
+import { sendInteractive } from "./interactive-queue";
 
 interface SlackConnectionRow extends Record<string, unknown> {
   id: string;
@@ -393,7 +394,7 @@ export class SlackAgentService {
     );
     for (const jobId of recoverable.jobIds) {
       try {
-        await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
+        await sendInteractive(this.env, SlackIngressQueueMessageSchema.parse({
           kind: "slack_ingress",
           region: this.env.AVALON_REGION,
           workspaceId,
@@ -494,7 +495,7 @@ export class SlackAgentService {
     ).all<{ id: string; workspace_id: string }>();
     for (const job of redriven.results ?? []) {
       try {
-        await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
+        await sendInteractive(this.env, SlackIngressQueueMessageSchema.parse({
           kind: "slack_ingress",
           region: this.env.AVALON_REGION,
           workspaceId: job.workspace_id,
@@ -865,11 +866,8 @@ export class SlackAgentService {
       jobId: input.id,
     });
     try {
-      if (input.queueDelaySeconds != null) {
-        await this.env.ACTIVITY_QUEUE.send(message, { delaySeconds: input.queueDelaySeconds });
-      } else {
-        await this.env.ACTIVITY_QUEUE.send(message);
-      }
+      await sendInteractive(this.env, message,
+        input.queueDelaySeconds == null ? {} : { delaySeconds: input.queueDelaySeconds });
     } catch (error) {
       if (!input.recoverQueueSendFailure) throw error;
       logWarn(this.env, "slack_ingress_publish_deferred", {
