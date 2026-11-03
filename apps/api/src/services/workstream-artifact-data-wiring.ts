@@ -78,15 +78,11 @@ export function createArtifactDataToolContext(
       // published the site. The resource row records who the publishing run
       // ran as.
       const author = typeof match.uploaded_by_user_id === "string" ? match.uploaded_by_user_id : null;
-      // A run under the Organization principal that is not a Sidekick acts for
-      // nobody in particular (an unlinked Slack or connector sender), so it is
-      // not the author and has no rows of its own: it sees shared tables only.
-      const scope: ArtifactRowScope = input.sidekick
-        || (input.principal.type === "user" && author === input.principal.userId)
-        ? { rows: "all" }
-        : input.principal.type === "user"
-          ? { rows: "viewer", viewerId: input.principal.userId }
-          : { rows: "none" };
+      // Anyone but a member reading another person's site reads every row:
+      // Sidekick runs, Organization-principal runs, and the site's author.
+      const scope: ArtifactRowScope = input.principal.type === "user" && !input.sidekick && author !== input.principal.userId
+        ? { rows: "viewer", viewerId: input.principal.userId }
+        : { rows: "all" };
       return {
         artifactId: row.artifact_id,
         slug: match.slug,

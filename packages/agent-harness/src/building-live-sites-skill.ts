@@ -184,9 +184,9 @@ Report these outcomes separately:
 
    **Sites are public by default.** Rally adds trusted viewer headers
    only when the request has a valid Rally viewer session; a direct
-   public visit or crawler has neither header. Anonymous visitors may
-   make only \`GET\` and \`HEAD\` requests; Rally refuses unsafe methods
-   before they reach the handler. If this site must be protected, put
+   public visit or crawler has neither header. Someone who is not signed in
+   reaches your handler with no viewer headers, for reads and submissions
+   alike; your code decides what they may do. If this site must be protected, put
    this guard at the very start of the handler, before
    API routing and before \`env.ASSETS.fetch\`, so it protects the HTML
    and every asset as well as computed routes:
@@ -596,18 +596,12 @@ shape of \`index.js\`.
 For an anonymous poll, survey or feedback box, store the answers without
 who sent them; how is up to you, and counts per choice are the simplest.
 
-To let anyone on the internet submit without signing in (an anonymous
-poll, a public guestbook, a contact form, anything the request opens to
-the public), add this line to \`index.js\`:
-
-\`\`\`js
-export const acceptAnonymousSubmissions = true;
-\`\`\`
-
-Rally then passes submissions from people who are not signed in to your
-handler, with no viewer headers, and your class writes them to its
-database like any other. Tell the person anyone with the link can answer.
-Without the line, only signed-in viewers can submit.
+Anyone on the internet can submit to a site: a request from someone who
+is not signed in reaches your handler with no viewer headers, and your
+class writes it to its database like any other. So for an anonymous poll,
+a public guestbook or a contact form, accept those requests. To require
+sign-in for adding something, return 401 when \`x-rally-viewer-id\` is
+missing. Tell the person anyone with the link can answer.
 `;
 
 const WORKED_EXAMPLES = `Two complete, minimal examples the body's rules produce — read this
