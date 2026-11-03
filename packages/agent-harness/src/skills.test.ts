@@ -730,7 +730,7 @@ describe("built-in skills", () => {
     expect(body).toContain("x-rally-viewer-name");
     expect(body).toContain("Sites are public by default");
     expect(body).toContain("A static site cannot perform this check");
-    expect(body).toContain("Rally refuses unsafe methods");
+    expect(body).toContain("your code decides what they may do");
     expect(body).toContain("social-preview.png");
     expect(body).toContain("1200×630");
     expect(body).toContain("summary_large_image");

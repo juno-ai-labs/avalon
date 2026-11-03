@@ -38,10 +38,6 @@ const MAXIMUM_QUERY_ROWS = 200;
 const ONLY_OWN_ROWS =
   `Tables with a ${VIEWER_COLUMN} column show only the requesting person's rows; other tables show every row.`;
 
-/** Said beside a result read with no person behind it. */
-const NO_PRIVATE_ROWS =
-  `Tables with a ${VIEWER_COLUMN} column show no rows here, because this conversation is not acting for a signed-in person; other tables show every row.`;
-
 export class ArtifactDataToolError extends Error {
   constructor(readonly code: string, message: string, readonly details?: Record<string, unknown>) {
     super(message);
@@ -170,7 +166,7 @@ export function createWorkstreamArtifactDataTools(
             resource: args.resource,
             slug: artifact.slug,
             mode: artifact.mode,
-            ...(artifact.scope.rows === "viewer" ? { rowsShown: ONLY_OWN_ROWS } : artifact.scope.rows === "none" ? { rowsShown: NO_PRIVATE_ROWS } : {}),
+            ...(artifact.scope.rows === "viewer" ? { rowsShown: ONLY_OWN_ROWS } : {}),
             tables: described.tables,
           },
           summary: described.tables.length === 0
@@ -215,7 +211,7 @@ export function createWorkstreamArtifactDataTools(
         return {
           output: {
             resource: args.resource,
-            ...(artifact.scope.rows === "viewer" ? { rowsShown: ONLY_OWN_ROWS } : artifact.scope.rows === "none" ? { rowsShown: NO_PRIVATE_ROWS } : {}),
+            ...(artifact.scope.rows === "viewer" ? { rowsShown: ONLY_OWN_ROWS } : {}),
             columns: result.columns,
             rows: result.rows.map(redactBinary),
             rowCount: result.rowCount,

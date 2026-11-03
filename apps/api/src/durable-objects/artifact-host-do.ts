@@ -651,9 +651,9 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     const hidden = new Set(scoped.hidden);
     const tables = [];
     for (const table of described.tables) {
-      if (hidden.has(table.name) || (filtered.has(table.name) && scope.rows === "none")) {
+      if (hidden.has(table.name)) {
         tables.push({ ...table, rowCount: 0 });
-      } else if (filtered.has(table.name) && scope.rows === "viewer") {
+      } else if (filtered.has(table.name)) {
         const counted = await host.rallyQuery(
           `SELECT COUNT(*) AS n FROM ${quoteIdentifier(table.name)} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ?`,
           [scope.viewerId],
@@ -694,11 +694,8 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     if (!admission.admitted) return { ok: false, reason: "sql_refused", detail: admission.reason };
     const host = await this.facetFor(state);
     let statement = admission.sql;
-    if (scope.rows !== "all") {
-      const scoped = scopeStatementToViewer(statement, {
-        schema: await host.rallySchema(),
-        viewerId: scope.rows === "viewer" ? scope.viewerId : null,
-      });
+    if (scope.rows === "viewer") {
+      const scoped = scopeStatementToViewer(statement, { schema: await host.rallySchema(), viewerId: scope.viewerId });
       if (!scoped.admitted) return { ok: false, reason: "sql_refused", detail: scoped.reason };
       statement = scoped.sql;
     }
@@ -716,12 +713,10 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     // real table in this facet never reaches SQL at all.
     const admitted = admitTableName(table, await host.rallyTableNames());
     if (!admitted.admitted) return { ok: false, reason: "table_refused", detail: admitted.reason };
-    if (scope.rows !== "all") {
+    if (scope.rows === "viewer") {
       const scoped = viewerTables(await host.rallySchema());
-      if (scoped.hidden.includes(table) || (scope.rows === "none" && scoped.filtered.some((candidate) => candidate.name === table))) {
-        return { ok: true, rows: [] };
-      }
-      if (scope.rows === "viewer" && scoped.filtered.some((candidate) => candidate.name === table)) {
+      if (scoped.hidden.includes(table)) return { ok: true, rows: [] };
+      if (scoped.filtered.some((candidate) => candidate.name === table)) {
         const page = await host.rallyQuery(
           `SELECT * FROM ${admitted.quoted} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ? LIMIT ? OFFSET ?`,
           [scope.viewerId, limit, Math.max(0, offset)],

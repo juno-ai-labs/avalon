@@ -312,16 +312,13 @@ describe("a stateful artifact's facet", () => {
     }
   });
 
-  it("hides a private search index's backing tables, and shows a reader with no viewer id no private rows", async () => {
+  it("hides a private search index's backing tables", async () => {
     await publish(JOURNAL_MODULE);
     const host = hostStub();
     await host.fetchThroughFacet(viewerRequest("/write?body=theirs", OTHER_VIEWER));
     expect(await host.queryData("SELECT c0 FROM notes_fts_content", [], 10, VIEWER_ROWS))
       .toMatchObject({ ok: true, rows: [] });
     expect(await host.pageData("notes_fts_content", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [] });
-    expect(await host.queryData("SELECT body FROM entries", [], 10, { rows: "none" }))
-      .toMatchObject({ ok: true, rows: [] });
-    expect(await host.pageData("entries", 0, 10, { rows: "none" })).toMatchObject({ ok: true, rows: [] });
   });
 
   it("keeps one warm instance across requests rather than reconstructing per request", async () => {

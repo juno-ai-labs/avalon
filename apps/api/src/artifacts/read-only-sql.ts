@@ -207,19 +207,8 @@ export function admitTableName(
  */
 export const VIEWER_COLUMN = "private_to_viewer";
 
-/**
- * Whose rows a read may return.
- *
- * - `all`: every row (the site's author, a Sidekick).
- * - `viewer`: in private tables, only rows whose `VIEWER_COLUMN` is this id.
- * - `none`: in private tables, no rows. For a reader with no person behind it,
- *   such as an Organization-principal run for an unlinked sender, which has no
- *   id to match and is not the author.
- */
-export type ArtifactRowScope =
-  | { rows: "all" }
-  | { rows: "viewer"; viewerId: string }
-  | { rows: "none" };
+/** Whose rows a read may return: every row, or one viewer's in private tables. */
+export type ArtifactRowScope = { rows: "all" } | { rows: "viewer"; viewerId: string };
 
 /** A site's schema as scoping needs it: names, definitions and every column. */
 export interface ArtifactSchema {
@@ -381,28 +370,6 @@ function unqualifyShadowed(sql: string, shadowed: ReadonlySet<string>): string {
 }
 
 /**
- * Whether a statement names `main` or `temp` as a table alias.
- *
- * Then `main.entries` may be a column of that alias rather than the schema's
- * table, and dropping the qualifier would change what it means. The two
- * cannot be told apart without a parser, so a scoped read that does this is
- * refused with a one-line fix. Nothing else is refused.
- */
-function aliasesSchemaName(sql: string): boolean {
-  const tokens = identifierTokens(sql);
-  return tokens.some((token, index) => {
-    if (token.kind === "punct" || !SCHEMA_NAMES.has(token.value.toLowerCase())) return false;
-    const before = tokens[index - 1];
-    const twoBefore = tokens[index - 2];
-    if (!before || (tokens[index + 1]?.kind === "punct" && tokens[index + 1]!.value === ".")) return false;
-    // `x AS main`, `(subquery) main`, or a bare `FROM x main` / `JOIN x main`.
-    if (before.kind === "word" && before.value.toLowerCase() === "as") return true;
-    if (before.kind === "punct") return before.value === ")";
-    return twoBefore !== undefined && (twoBefore.value === "," || ["from", "join"].includes(twoBefore.value.toLowerCase()));
-  });
-}
-
-/**
  * A view's definition as a CTE: `name(columns) AS (select)`.
  *
  * Read from the `CREATE VIEW` text SQLite keeps in `sqlite_master`. The select
@@ -450,28 +417,21 @@ function viewAsCte(view: { name: string; sql: string }): string {
  * - a private **virtual table's backing tables** hold its text with no viewer
  *   column, so they read as empty.
  *
- * The one statement refused is one that also uses `main` or `temp` as an
- * alias, where dropping a qualifier could change a column's meaning. A caller
- * CTE that reuses a shadowed name is a SQLite error, not a leak.
+ * A statement that also uses `main` or `temp` as a table alias may read a
+ * column through the dropped qualifier differently; that rare shape is left
+ * to fail or answer loosely rather than refused. A caller CTE that reuses a
+ * shadowed name is a SQLite error, not a leak.
  */
 export function scopeStatementToViewer(
   sql: string,
-  input: { schema: ArtifactSchema; viewerId: string | null },
+  input: { schema: ArtifactSchema; viewerId: string },
 ): SqlAdmission {
   const tables = viewerTables(input.schema);
   if (tables.filtered.length === 0) return { admitted: true, sql };
   const views = input.schema.views;
   const shadowed = new Set([...tables.filtered.map((table) => table.name), ...tables.hidden, ...views.map((view) => view.name)]
     .map((name) => name.toLowerCase()));
-  if (aliasesSchemaName(sql)) {
-    return {
-      admitted: false,
-      reason: "This read is limited to your own rows. Use an alias other than main or temp, then send it again.",
-    };
-  }
-  const match = input.viewerId === null
-    ? "0"
-    : `${quoteIdentifier(VIEWER_COLUMN)} = ${sqlString(input.viewerId)}`;
+  const match = `${quoteIdentifier(VIEWER_COLUMN)} = ${sqlString(input.viewerId)}`;
   const shadows = [
     ...tables.filtered.map((table) =>
       `${quoteIdentifier(table.name)} AS (SELECT ${table.rowid ? "rowid AS rowid, " : ""}* FROM main.${quoteIdentifier(table.name)} WHERE ${match})`),

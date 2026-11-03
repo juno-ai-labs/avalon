@@ -384,41 +384,6 @@ describe("artifact serving hostname routes", () => {
     expect(currentState).toHaveBeenCalledOnce();
   });
 
-  it("keeps unsafe methods behind a valid Rally viewer session", async () => {
-    const forwarded = vi.fn(async () => Response.json({ ok: true }));
-    const { env, checkSession, currentState } = fixture({
-      hostname_stub: STUB,
-      artifact_id: ARTIFACT,
-      region: "global",
-    }, {
-      currentStateResult: {
-        artifactId: ARTIFACT,
-        workspaceId: "00000000-0000-7000-8000-0000000000c1",
-        workstreamId: "00000000-0000-7000-8000-0000000000d1",
-        resourceId: "00000000-0000-7000-8000-0000000000e1",
-        version: 1,
-        mode: "active",
-        stateful: false,
-        manifest: ACTIVE_MANIFEST,
-      },
-      loaderFetch: forwarded,
-    });
-    const origin = `https://${STUB}-g.rallyusercontent.test`;
-
-    const response = await artifactWorker.fetch(new Request(`${origin}/api/vote`, {
-      method: "POST",
-      headers: {
-        origin,
-        "sec-fetch-site": "same-origin",
-      },
-    }), env, context());
-
-    expect(response.status).toBe(401);
-    expect(checkSession).not.toHaveBeenCalled();
-    expect(currentState).toHaveBeenCalledOnce();
-    expect(forwarded).not.toHaveBeenCalled();
-  });
-
   it("keeps prior versions behind a valid Rally viewer session", async () => {
     const { env, checkSession } = fixture({
       hostname_stub: STUB,
@@ -717,10 +682,10 @@ describe("signing in from a site's own URL", () => {
   });
 });
 
-describe("a site that accepts anonymous submissions", () => {
+describe("submissions from people who are not signed in", () => {
   const origin = `https://${STUB}-g.rallyusercontent.test`;
   const route = { hostname_stub: STUB, artifact_id: ARTIFACT, region: "global" };
-  const state = (anonymousSubmissions: boolean) => ({
+  const state = {
     artifactId: ARTIFACT,
     workspaceId: "00000000-0000-7000-8000-0000000000c1",
     workstreamId: "00000000-0000-7000-8000-0000000000d1",
@@ -728,38 +693,27 @@ describe("a site that accepts anonymous submissions", () => {
     version: 1,
     mode: "active",
     stateful: false,
-    manifest: { ...ACTIVE_MANIFEST, ...(anonymousSubmissions ? { anonymousSubmissions: true } : {}) },
-  });
+    manifest: ACTIVE_MANIFEST,
+  };
   const vote = (headers: Record<string, string>) => new Request(`${origin}/api/vote`, {
     method: "POST",
-    headers: { "cookie": "rally_artifact_session=stolen", "x-rally-viewer-id": "forged", ...headers },
+    headers: { "x-rally-viewer-id": "forged", ...headers },
     body: "choice=yes",
   });
 
-  it("receives a submission with no session, from its own page or another site, with no identity", async () => {
+  it("reach every site's handler, from its own page or another site, with no identity", async () => {
     const seen: (string | null)[] = [];
     const forwarded = vi.fn(async (request: Request) => {
       seen.push(request.headers.get("x-rally-viewer-id"));
       return Response.json({ ok: true });
     });
-    const { env } = fixture(route, { currentStateResult: state(true), loaderFetch: forwarded });
+    const { env } = fixture(route, { currentStateResult: state, loaderFetch: forwarded });
 
     const own = await artifactWorker.fetch(vote({ origin, "sec-fetch-site": "same-origin" }), env, context());
     const elsewhere = await artifactWorker.fetch(vote({ origin: "https://elsewhere.example", "sec-fetch-site": "cross-site" }), env, context());
 
     expect([own.status, elsewhere.status]).toEqual([200, 200]);
-    // A forged viewer header is stripped, so the handler sees no identity.
+    // A forged viewer header is stripped, so the handler decides with no identity.
     expect(seen).toEqual([null, null]);
-  });
-
-  it("is the only kind of site that does", async () => {
-    const forwarded = vi.fn(async () => Response.json({ ok: true }));
-    const { env } = fixture(route, { currentStateResult: state(false), loaderFetch: forwarded });
-
-    const own = await artifactWorker.fetch(vote({ origin, "sec-fetch-site": "same-origin" }), env, context());
-    const elsewhere = await artifactWorker.fetch(vote({ origin: "https://elsewhere.example", "sec-fetch-site": "cross-site" }), env, context());
-
-    expect([own.status, elsewhere.status]).toEqual([401, 403]);
-    expect(forwarded).not.toHaveBeenCalled();
   });
 });

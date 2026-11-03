@@ -24,7 +24,6 @@
 import {
   ARTIFACT_SERVER_ENTRY,
   ARTIFACT_STATIC_ENTRY,
-  ARTIFACT_ANONYMOUS_SUBMISSIONS_EXPORT,
   ARTIFACT_STORAGE_CLASS_NAME,
   type ArtifactMode,
 } from "@rally/contracts";
@@ -119,21 +118,6 @@ export function declaresStorageClass(source: string): boolean {
     "u",
   );
   return declaration.test(source) || named.test(source);
-}
-
-/**
- * Whether a server module accepts submissions from people who are not signed
- * in, by declaring `export const acceptAnonymousSubmissions = true`.
- *
- * A source-text check for the reason `declaresStorageClass` is one: publish
- * never runs artifact code. It must be the literal `true`, so a site opts in
- * only by saying so; anything else leaves the default, which refuses them.
- */
-export function declaresAnonymousSubmissions(source: string): boolean {
-  return new RegExp(
-    String.raw`\bexport\s+const\s+${ARTIFACT_ANONYMOUS_SUBMISSIONS_EXPORT}\s*=\s*true\b`,
-    "u",
-  ).test(source);
 }
 
 /**

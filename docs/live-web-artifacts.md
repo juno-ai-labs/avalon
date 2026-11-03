@@ -222,10 +222,9 @@ Artifact content is public by default. A direct browser, crawler, or unfurler
 can `GET` or `HEAD` the stable URL without a Rally session. The Worker reads the
 current manifest from `ArtifactHostDO`, strips any inbound cookie and viewer
 header before model code runs, and injects no identity. Static sites therefore
-cannot be private. Anonymous unsafe methods are refused before model code runs:
-public means readable, not anonymously writable, unless the site opted in to
-anonymous submissions (see [Invariants](#invariants)), as a public anonymous
-poll does. That rule is about methods,
+cannot be private. A request without a session, a submission included, reaches
+model code with no identity, and the site's own code decides what to accept: a
+public poll takes it, a protected site answers 401. That rule is about methods,
 not effects: an active site's own `index.js` runs on an anonymous `GET` and
 may write its storage, which is why Trusted-only Terminal sandboxes can send
 data to a Rally site
@@ -391,17 +390,12 @@ is the only place that can forward into it.
   superseded spellings alike. That strip is the entire anti-spoof mechanism; a
   header family whose readers widen to a legacy prefix and whose stripper does
   not has a forgeable back door.
-- **Anonymous access is read-only.** Fetch metadata protects browsers from
-  sibling-artifact CSRF; it does not authenticate a non-browser caller, which
-  can spell those headers itself. `GET` and `HEAD` may fall back to the public
-  representation, while every unsafe method still requires a valid Rally
-  viewer session. Rally refuses the method, not the effect: a site's own code
-  may still write its storage on a `GET`. The one exception is a site whose current version
-  declares `export const acceptAnonymousSubmissions = true` in `index.js`
-  (recorded as `anonymousSubmissions` in its manifest): its handler receives
-  unsafe requests without a session, from any origin, always with identity
-  stripped. A cross-origin unsafe request still never carries a session, so the
-  sibling-artifact CSRF rule above holds for every site.
+- **A request without a session carries no identity.** Any method may reach
+  the handler without a session, from any origin; viewer headers are added
+  only for a valid session on a same-origin request or a top-level navigation,
+  and inbound copies are always stripped. So a sibling artifact can send a
+  request but never with a viewer's identity, and each site's own code decides
+  what an anonymous request may do.
 - **The desktop renderer never embeds, fetches, or parses artifact content.** An
   `<iframe>` would widen the renderer's CSP to a wildcard artifact host and graft
   remote model-authored content into the application DOM as a navigable,
@@ -730,9 +724,9 @@ loads leaves a script's fetch its own 401 to show a sign-in prompt for.
 Review found four leaks in the first scoping: single-quoted and non-ASCII
 names, generated columns, and FTS5 backing tables, plus every row for any
 Organization-principal run. All are closed and each has a workerd test that
-fails without its fix. Sites may also opt in to anonymous submissions, for a
-public anonymous poll, by a literal export in `index.js`, detected at publish
-like the storage class so changing it changes the content digest.
+fails without its fix. Anonymous submissions now reach every site's handler, with no identity;
+the site's code decides what to accept, so a public poll needs no Rally
+setting. An earlier per-site opt-in was removed as friction for the model.
 
 **Consequences:** The column name is the contract; renaming it in a site makes
 its rows shared. A view that cannot be read back from `sqlite_master` throws

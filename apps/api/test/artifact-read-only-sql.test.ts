@@ -172,11 +172,6 @@ describe("limiting a read to one viewer's rows", () => {
     expect(scoped("SELECT 1", { schema, viewerId: "x' OR '1'='1" })).toContain(`"private_to_viewer" = 'x'' OR ''1''=''1')`);
   });
 
-  it("matches nothing in private tables for a reader with no viewer id", () => {
-    expect(scoped("SELECT body FROM entries", { schema, viewerId: null }))
-      .toBe(`WITH "entries" AS (SELECT rowid AS rowid, * FROM main."entries" WHERE 0) SELECT body FROM entries`);
-  });
-
   it("drops a schema qualifier in any quoting from a shadowed name, and only from one", () => {
     expect(scoped(`SELECT * FROM main.entries, "main"."entries", [temp] . entries, main.'entries', 'main'.entries, main.prompts`))
       .toBe(`WITH ${shadow} SELECT * FROM entries, "entries", entries, 'entries', entries, main.prompts`);
@@ -200,12 +195,6 @@ describe("limiting a read to one viewer's rows", () => {
     const content = { name: "notes_fts_content", sql: "CREATE TABLE 'notes_fts_content'(id INTEGER PRIMARY KEY, c0, c1)", columns: ["id", "c0", "c1"] };
     expect(scoped("SELECT * FROM notes_fts_content", { schema: { tables: [index, content], views: [] }, viewerId: "v-1" }))
       .toContain(`"notes_fts_content" AS (SELECT * FROM main."notes_fts_content" WHERE 0)`);
-  });
-
-  it("refuses only a statement that also uses main or temp as an alias", () => {
-    expect(scoped("SELECT main.entries FROM prompts AS main")).toMatch(/^REFUSED: .*alias other than main or temp/u);
-    expect(scoped("SELECT x.body FROM prompts main JOIN entries x ON 1")).toMatch(/^REFUSED/u);
-    expect(scoped("SELECT temp FROM entries")).not.toMatch(/^REFUSED/u);
   });
 
   it("leaves a schema name inside a string or a comment alone", () => {
