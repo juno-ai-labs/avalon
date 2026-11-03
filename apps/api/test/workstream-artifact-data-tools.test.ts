@@ -15,6 +15,7 @@ const ARTIFACT = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 type HostDouble = ArtifactDataHost & {
   describeData: ReturnType<typeof vi.fn>;
   queryData: ReturnType<typeof vi.fn>;
+  pageData: ReturnType<typeof vi.fn>;
 };
 
 /**
@@ -39,6 +40,7 @@ function fixture(overrides: {
         rowCount: 2,
       }],
     })),
+    pageData: vi.fn(async () => ({ ok: true as const, rows: [{ choice: "yes" }] })),
     queryData: vi.fn(async () => ({
       ok: true as const,
       columns: ["choice"],
@@ -153,6 +155,17 @@ describe("querying a site's data", () => {
       rowsShown: "Tables with a private_to_viewer column show only the requesting person's rows; other tables show every row.",
     });
     expect(read.output).toMatchObject({ rowsShown: expect.stringContaining("requesting person's rows") });
+  });
+
+  it("reads one page of a table with the resolved scope", async () => {
+    const scope = { rows: "viewer" as const, viewerId: "00000000-0000-7000-8000-0000000000a9" };
+    const { context, host } = fixture({
+      artifact: { artifactId: ARTIFACT, slug: "journal", mode: "active", stateful: true, scope },
+    });
+    const read = createWorkstreamArtifactDataTools(context).find((tool) => tool.definition.name === "read_artifact_table")!;
+    const result = await read.execute({ resource: "journal", table: "entries" }, {} as never);
+    expect(host.pageData).toHaveBeenCalledWith("entries", 0, 200, scope);
+    expect(result.output).toMatchObject({ table: "entries", rows: [{ choice: "yes" }], rowsShown: expect.any(String) });
   });
 
   it("surfaces a refused statement as a repairable failure carrying the repair", async () => {

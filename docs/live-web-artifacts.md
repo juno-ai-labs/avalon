@@ -331,21 +331,14 @@ what the page shows is the page's job.
   column counts, and counting no rows. A private FTS5 table's backing tables
   (`<name>_content` and kin) hold its text with no viewer column, so scoped
   readers see them as empty.
-- **How a scoped read works.** `scopeStatementToViewer`
-  (`apps/api/src/artifacts/read-only-sql.ts`) prefixes the reader's statement
-  with one CTE per per-viewer table, named after the table and filtered to the
-  viewer. SQLite resolves an unqualified name to a CTE before the schema,
-  through every subquery and CTE, so the reader's SQL runs as written. A
-  `main.` or `temp.` qualifier on a shadowed name is dropped, since a
-  qualified name skips CTEs, and every view is re-declared as a CTE from its
-  own `CREATE VIEW` text, since a view's body was compiled against the schema.
-  The shadow carries `rowid` for an ordinary rowid table. Single-quoted names
-  (`main.'entries'`) and identifiers with any character at or above U+0080 are
-  tokenized as SQLite does, with SQLite's own whitespace. No query is refused,
-  and a viewer sees the same columns as the author. Because the shadow is a
-  CTE rather than the table, `rowid`/`oid`/`_rowid_` and FTS5 `MATCH`, `rank`,
-  `bm25()` and `highlight()` fail with an error on a private table. Page and
-  count reads filter on the column directly.
+- **How a scoped read works.** The Data view's pages, its export, the agent's
+  `read_artifact_table` and the row counts filter a private table on its
+  column. A member's free-form `query_artifact_data` runs only on a site with
+  no private tables; on one that has them it is refused and points at
+  `read_artifact_table`. Free SQL cannot be limited to one viewer's rows
+  without rewriting it, and a hand-written rewriter leaked each time review
+  found a new SQLite spelling, so it was removed. The author, Sidekick runs and
+  Organization-principal runs query freely.
 
 Requests to a stateful artifact route *through* the supervisor rather than being
 served in the loader's own isolate. That is a platform constraint rather than a
@@ -704,8 +697,11 @@ anyone who did not open it from inside Rally. And sites could not take
 submissions from the public, which polls and forms need.
 
 **Considered and rejected:** Naming the column `viewer_id`, which invites
-copying it from the header and making shared lists private. Refusing scoped
-queries that use qualifiers or views, which limits the SQL a model can write.
+copying it from the header and making shared lists private. Rewriting a
+member's free SQL onto filtered copies of private tables: it worked, but each
+new SQLite spelling (quoted names, non-ASCII, generated columns, FTS5 tables,
+Unicode spaces) was another leak to patch, so members page private tables
+instead.
 A per-site opt-in for public submissions, removed as friction for the model.
 
 **Consequences:** Sites published before this change were written while
