@@ -33,7 +33,8 @@ export function SiteOpening({ region, hostnameStub, returnPath, openWorkspace, o
     (async () => {
       const site = await browserRequest(region, "/sites/resolve", BrowserSiteResolutionSchema, { hostnameStub });
       await openWorkspace(region, site.workspaceId);
-      const opened = await browserRequest(region, `/resources/${site.resourceId}/artifact/open`, SiteOpenedSchema, {});
+      // Workspace routes cross the browser adapter under the organization's id.
+      const opened = await browserRequest(region, `/api/${site.workspaceId}/resources/${site.resourceId}/artifact/open`, SiteOpenedSchema, {});
       const target = new URL(opened.openUrl);
       // The code stays in the fragment; the return path is only a path.
       target.searchParams.set("return", returnPath);

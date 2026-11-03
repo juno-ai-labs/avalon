@@ -101,7 +101,9 @@ export function artifactReturnPath(raw: string | null | undefined): string {
     || [...raw].some((character) => character === "\\" || character.charCodeAt(0) < 0x20)) return "/";
   let parsed: URL;
   try { parsed = new URL(raw, "https://artifact.invalid"); } catch { return "/"; }
-  if (parsed.origin !== "https://artifact.invalid") return "/";
+  // Checked again after parsing: `/a/..//evil.example` normalizes to a path
+  // that starts with `//`, which a browser follows to another host.
+  if (parsed.origin !== "https://artifact.invalid" || parsed.pathname.startsWith("//")) return "/";
   if (parsed.pathname === ARTIFACT_RESERVED_PREFIX || parsed.pathname.startsWith(`${ARTIFACT_RESERVED_PREFIX}/`)) return "/";
   return `${parsed.pathname}${parsed.search}`;
 }
