@@ -1,3 +1,4 @@
+import { ARTIFACT_VIEWER_COLUMN } from "@rally/contracts";
 import type { HarnessSkill } from "../../index";
 
 /**
@@ -20,6 +21,8 @@ stable link. Settle what kind of app and who it is for, then build it with
 
 - **Default to a live web site.** Treat "make an app", "build me a tool", "a
   tracker", "a dashboard" and similar as a web site.
+- **Not an app here.** A script, a command-line tool, a spreadsheet formula or
+  code for the person's own repository is not a site. Do that task directly.
 - **Native mobile app.** Only when the request clearly asks for an iOS or
   Android app (it names the App Store, Google Play, Swift, Kotlin, an iPhone or
   Android build, or installing on a phone), tell the person Rally does not
@@ -31,55 +34,57 @@ stable link. Settle what kind of app and who it is for, then build it with
 
 Signing in and privacy are separate: signing in tells the site who did
 something, and a signed-in site can still show everyone's entries, as a vote
-does. Pick the first of these that fits:
+does. The request's own words decide, in this order:
 
-1. **Open site, the default.** Use it whenever the app saves nothing people
-   add: it works on what the person types or pastes, or shows content you
-   publish with it. A character counter for pasted text, a word or reading-time
-   counter, a unit or currency converter, a tip or loan calculator, a JSON or
-   CSV formatter, a countdown timer, a color picker, a reference page or a
-   dashboard of data you publish. Anyone with the link can use it. **Build it
-   without asking.** It may keep one person's preferences in their own browser,
-   which needs no sign-in.
-2. **Signed in, shared.** The app saves what people add and everyone sees it
-   all: a vote, an RSVP list, a sign-up sheet, a kudos wall, a shared board.
-3. **Signed in, private.** The app saves what people add and each person sees
-   only their own: a journal, a personal tracker, saved settings. You and any
-   Sidekick can still see everyone's.
-4. **Anonymous.** An anonymous poll, survey or feedback box: answers are
-   stored without who sent them. If the request says the public, customers,
-   anyone or the internet should answer, open it to everyone; otherwise
-   people sign in with Rally to answer.
+1. **Open site.** The app saves nothing people add: it works on what the
+   person types or pastes, or shows content you publish with it. A character
+   counter for pasted text, a word or reading-time counter, a unit or currency
+   converter, a tip or loan calculator, a JSON or CSV formatter, a countdown
+   timer, a color picker, a reference page or a dashboard of data you publish.
+   Anyone with the link can use it. **Build it without asking.** It may keep
+   one person's preferences in their own browser, which needs no sign-in.
+2. **Anonymous.** The request says "anonymous", or answers should not record
+   who sent them: an anonymous poll, survey or feedback box.
+3. **Private.** The request says "only their own", "personal", "just mine" or
+   "each person sees their own": a journal, a personal tracker, saved
+   settings.
+4. **Shared.** Any other app that saves what people add: a vote, an RSVP list,
+   a sign-up sheet, a kudos wall, a shared board.
 
-An app that saves what people add uses Rally sign-in by default, so it
-knows who added what; someone who follows the site's link signs in from the
-site and comes straight back. When the request opens it to the public, let
-anyone submit instead, as the "Anonymous answers" section of
-\`building-live-sites\` shows.
+"Private", "members-only" or "team-only" describing the **site** means only
+signed-in people may open it (the protected site in \`building-live-sites\`).
+It does not by itself make each person's entries hidden from the others.
+
+**Who can answer.** When the request names people outside Rally (the public,
+customers, guests, clients, parents, anyone, the internet), anyone with the
+link can submit, as the "Anonymous answers" section of \`building-live-sites\`
+shows. Otherwise people sign in with Rally to add entries; someone who follows
+the site's link signs in from the site and comes straight back. Reading stays
+open to anyone with the link unless the request makes the site private.
 
 **Ask only when the app saves what people add and the request does not say
 who sees it.** Then ask one question, right away and before writing any
 files: should everyone see everyone's entries (shared), or should each person
-see only their own (private)? Skip it when the request answers it:
-"everyone sees the results" is shared; "only their own", "personal" or
-"private" is private; "anonymous" is anonymous. A poll or survey whose
-request does not mention anonymity is shared.
+see only their own (private)? A poll or survey whose request does not mention
+anonymity is shared.
 
 For **anonymous**, follow the "Anonymous answers" section of
 \`building-live-sites\`.
 
-For **signed in, private**, every table that holds one person's data gets a
-\`private_to_viewer\` column holding their viewer id. Rally then keeps those
-rows private to that person everywhere it shows the site's data. Shared data,
-such as RSVPs or votes, uses any other column name, for example
-\`member_id\`. A site can mix both: private notes beside a shared board.
+For **private**, every table that holds one person's data gets a
+\`${ARTIFACT_VIEWER_COLUMN}\` column holding their viewer id. Rally then shows each
+person only their own rows. The person who publishes the site and its
+Sidekicks still see every entry, so never tell people their entries are
+visible only to them. Shared data, such as RSVPs or votes, uses any other
+column name, for example \`member_id\`. A site can mix both, but on a site with
+any private table, members' questions about its data are answered a table at a
+time rather than with free-form queries.
 
 Rally provides sign-in; never build a signup form, password or login page of
 your own.
 
 If no one can answer, as in a Sidekick run, build an app that saves what
-people add as signed in and shared, and say in your reply that entries can be
-made private.
+people add as shared, and say in your reply that entries can be made private.
 
 ## 3. Build it
 
@@ -97,7 +102,7 @@ needs it.
   means rewriting the site's storage. When you must ask, ask before the first
   file.
 - **Treating sign-in as privacy.** Signing in tells the site who acted; it
-  does not hide anyone's entries. Only a \`private_to_viewer\` column does.
+  does not hide anyone's entries. Only a \`${ARTIFACT_VIEWER_COLUMN}\` column does.
 - **Asking when the answer is given.** If the request already says who uses
   it, build without the question.
 - **Saying yes to a native app.** Rally cannot ship to an app store. Offer the
@@ -106,8 +111,8 @@ needs it.
 export const CREATING_AN_APP_SKILL: HarnessSkill = {
   name: "creating-an-app",
   description:
-    "What \"create an app\" means in Rally: a live web site, never a native iOS or Android app, open by default, with sign-in only when it saves what people add, and whether those entries are shared, private or anonymous, or open to anyone.",
+    "What \"create an app\" means in Rally: a live web site, never a native iOS or Android app, open by default, with sign-in only when it saves what people add, and whether its entries are shared, private or anonymous.",
   whenToUse:
-    "When someone asks to create, make or build an app, tool or small program for people to use.",
+    "When someone asks to create, make or build an app or tool that people will open and use in a browser or on a phone. Load it before building-live-sites.",
   body: CREATING_AN_APP_BODY,
 };

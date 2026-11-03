@@ -70,6 +70,8 @@ import {
   ASSET_SHIM_SOURCE,
   LOADER_ENTRY_MODULE,
   LOADER_ENTRY_SOURCE,
+  ARTIFACT_COMPATIBILITY_DATE,
+  statelessLoaderId,
 } from "./asset-shim";
 import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
 import {
@@ -86,8 +88,10 @@ export interface ArtifactServingEnv {
   AVALON_REGION: Region;
   ARTIFACT_SERVING_DOMAIN: string;
   /**
-   * The browser client's origin, the one page allowed to frame an artifact for
-   * its inline preview. Unset, nothing may frame one.
+   * The browser client's origin: the one page allowed to frame an artifact for
+   * its inline preview, and where a site sends a person to sign in. Unset,
+   * nothing may frame one, `/__rally/sign-in` answers the neutral 404, and a
+   * protected site's 401 is shown as it is.
    */
   BROWSER_APP_ORIGIN?: string;
   ARTIFACT_HOSTS: DurableObjectNamespace<ArtifactHostDO>;
@@ -248,16 +252,19 @@ const artifactServer = {
       return withSecurityHeaders(new Response(null, { status: 303, headers }));
     }
 
-    // Every remaining path is public artifact content. Fetch metadata decides
-    // whether the request is eligible to carry a trusted Rally viewer identity:
-    // anonymous reads are allowed from anywhere, but unsafe requests still
-    // require exact same-origin browser metadata.
+    // Every remaining path is artifact content, and any request may reach it.
+    // Fetch metadata decides only whether it may carry a viewer identity:
+    // same-origin requests and top-level navigations may; everything else,
+    // any method from any origin, arrives anonymous. So a sibling artifact can
+    // never act with a viewer's identity, and the site's code decides what an
+    // anonymous request may do.
     const verdict = classifyFetchMetadata(request, origin);
     let admitted: Admitted | null = null;
-    // An unsafe request from another origin is let through as an anonymous
-    // one: it never carries a session, so a sibling artifact cannot act with
-    // a viewer's identity, and the site's own code decides what it accepts.
-    if (verdict !== "anonymous_read" && verdict !== "refused") {
+    // Whether sending this person to sign in could help. Not when their
+    // session could not be checked: signing in again would only come back to
+    // the same failed check, round and round.
+    let signInCanHelp = true;
+    if (verdict === "same_origin" || verdict === "top_level") {
       const session = readCookie(request, SESSION_COOKIE);
       // Identity is an optional enhancement to a public response. If the
       // visibility hop fails, degrade to anonymous rather than making a viewer
@@ -267,6 +274,7 @@ const artifactServer = {
         try {
           checked = await artifact.checkSession(session);
         } catch (error) {
+          signInCanHelp = false;
           logWarn({
             LOG_LEVEL: "info",
             AVALON_REGION: env.AVALON_REGION,
@@ -319,7 +327,9 @@ const artifactServer = {
       // historical static version has no guard at all. Keep version browsing
       // behind the Rally session even though the current site is public.
       if (!admitted.viewerId) {
-        const target = isDocumentNavigation(request) ? signInUrl(env, host, url.pathname + url.search) : null;
+        const target = signInCanHelp && isDocumentNavigation(request)
+          ? signInUrl(env, host, url.pathname + url.search)
+          : null;
         return target ? redirect(target) : html(neutralPage(), 401);
       }
       const refusal = refuseUnsafeVersionRequest(request);
@@ -332,7 +342,7 @@ const artifactServer = {
     // is loading a page, send them to sign in and back here instead, so a
     // direct link to a protected site works. The handler still decided the
     // refusal; only its page is replaced, and only for a page load.
-    if (response.status === 401 && !admitted.viewerId && isDocumentNavigation(request)) {
+    if (response.status === 401 && !admitted.viewerId && signInCanHelp && isDocumentNavigation(request)) {
       const target = signInUrl(env, host, url.pathname + url.search);
       if (target) return redirect(target);
     }
@@ -343,15 +353,17 @@ const artifactServer = {
 /**
  * The browser client's page that signs a person in and opens this site at
  * `returnTo`, or `null` where there is none to send them to: no browser
- * client is configured, or a legacy UUID host has no hostname to name.
+ * client is configured (or the setting is not a URL), or a legacy UUID host
+ * has no hostname to name.
  */
 function signInUrl(
   env: ArtifactServingEnv,
   host: NonNullable<ReturnType<typeof parseArtifactHost>>,
   returnTo: string | null,
 ): string | null {
-  if (!env.BROWSER_APP_ORIGIN || !host.hostnameStub) return null;
-  return new URL(artifactSiteOpenPath(host.region, host.hostnameStub, returnTo ?? "/"), env.BROWSER_APP_ORIGIN).toString();
+  const browserOrigin = browserFrameAncestor(env.BROWSER_APP_ORIGIN);
+  if (!browserOrigin || !host.hostnameStub) return null;
+  return new URL(artifactSiteOpenPath(host.region, host.hostnameStub, returnTo ?? "/"), browserOrigin).toString();
 }
 
 /** A person loading a page, as opposed to a script, an image or a crawler. */
@@ -520,11 +532,11 @@ async function runArtifactModule(
     return await artifact.fetchThroughFacet(forwardable(request, admitted));
   }
   const loader = env.ARTIFACT_LOADER!;
-  const worker = loader.get(`artifact:${artifactId}:v${manifest.artifactVersion}`, async () => {
+  const worker = loader.get(statelessLoaderId(artifactId, manifest.artifactVersion), async () => {
     const module = await env.PAYLOADS.get(`artifact/${artifactId}/v${manifest.artifactVersion}/assets/index.js`);
     if (!module) throw new Error("artifact_server_module_missing");
     return {
-      compatibilityDate: "2026-08-01",
+      compatibilityDate: ARTIFACT_COMPATIBILITY_DATE,
       // Rally's module is the main one and imports the site's, so `env.ASSETS`
       // is the wrapped reader by the time the site's handler runs — the same
       // shape the facet gives a stateful site, so one contract covers both.

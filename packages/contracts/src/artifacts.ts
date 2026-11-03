@@ -63,6 +63,19 @@ export const ARTIFACT_STATIC_ENTRY = "index.html";
  */
 export const ARTIFACT_STORAGE_CLASS_NAME = "SiteData";
 
+/**
+ * The column that makes a stateful site's table **private to each viewer**.
+ *
+ * A convention rather than a declaration because a stateful site has no
+ * manifest field for its schema: the model writes `CREATE TABLE` in its own
+ * class. The name states its effect rather than its content, so a model
+ * choosing it knows it is making rows private, and a model that never read
+ * the rule does not type it by accident; a generic name like `viewer_id`
+ * failed both ways. A table without it is shared, and every reader sees all
+ * its rows. Shared here so the skills that teach it and the reads that filter
+ * on it cannot drift apart.
+ */
+export const ARTIFACT_VIEWER_COLUMN = "private_to_viewer";
 
 /**
  * The path prefix the server module never sees.
@@ -106,7 +119,7 @@ export function artifactReturnPath(raw: string | null | undefined): string {
   if (parsed.origin !== "https://artifact.invalid" || parsed.pathname.startsWith("//")) return "/";
   // A prior version's mount is a page of the site; every other reserved path
   // is Rally's own and would loop back into sign-in.
-  const priorVersion = new RegExp(`^${ARTIFACT_RESERVED_PREFIX}/v[0-9]+/`, "u").test(parsed.pathname);
+  const priorVersion = new RegExp(`^${ARTIFACT_RESERVED_PREFIX}/v[0-9]+(/|$)`, "u").test(parsed.pathname);
   if (!priorVersion && (parsed.pathname === ARTIFACT_RESERVED_PREFIX || parsed.pathname.startsWith(`${ARTIFACT_RESERVED_PREFIX}/`))) return "/";
   return `${parsed.pathname}${parsed.search}`;
 }
@@ -128,9 +141,11 @@ export function parseArtifactSiteOpenPath(pathname: string): { region: string; h
   const match = /^\/app\/sites\/([^/]+)\/([^/]+)(?:\/([^/]*))?$/u.exec(pathname);
   if (!match) return null;
   try {
+    const hostnameStub = decodeURIComponent(match[2]!);
+    if (!ArtifactHostnameStubSchema.safeParse(hostnameStub).success) return null;
     return {
       region: decodeURIComponent(match[1]!),
-      hostnameStub: decodeURIComponent(match[2]!),
+      hostnameStub,
       returnPath: artifactReturnPath(match[3] ? decodeURIComponent(match[3]) : "/"),
     };
   } catch {

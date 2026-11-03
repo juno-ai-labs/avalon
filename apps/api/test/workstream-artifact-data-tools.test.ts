@@ -142,7 +142,7 @@ describe("querying a site's data", () => {
     expect(host.queryData).toHaveBeenCalledWith("SELECT * FROM votes WHERE choice = ?", ["yes"], 200, { rows: "all" });
   });
 
-  it("reads with the resolved scope and says when rows are only the requester's own", async () => {
+  it("reads with the resolved scope and says in describe when rows are only the requester's own", async () => {
     const scope = { rows: "viewer" as const, viewerId: "00000000-0000-7000-8000-0000000000a9" };
     const { describe: describeTool, query, host } = fixture({
       artifact: { artifactId: ARTIFACT, slug: "journal", mode: "active", stateful: true, scope },
@@ -154,7 +154,8 @@ describe("querying a site's data", () => {
     expect(described.output).toMatchObject({
       rowsShown: "Tables with a private_to_viewer column show only the requesting person's rows; other tables show every row.",
     });
-    expect(read.output).toMatchObject({ rowsShown: expect.stringContaining("requesting person's rows") });
+    // A query that ran found no private table, so every row it returned is shared.
+    expect(read.output).not.toHaveProperty("rowsShown");
   });
 
   it("reads one page of a table with the resolved scope", async () => {
@@ -181,6 +182,35 @@ describe("querying a site's data", () => {
     const error = await refusal(() => query.execute({ resource: "p", sql: "DELETE FROM votes" }, {} as never));
     expect(error.code).toBe("sql_error");
     expect(error.message).toContain("Describe the data first");
+  });
+
+  it("names a private-rows refusal apart from bad SQL, so the model switches tools", async () => {
+    const { query } = fixture({
+      host: {
+        queryData: vi.fn(async () => ({
+          ok: false as const,
+          reason: "private_rows" as const,
+          detail: "Read a table with read_artifact_table instead.",
+        })),
+      },
+    });
+    const error = await refusal(() => query.execute({ resource: "p", sql: "SELECT * FROM entries" }, {} as never));
+    expect(error.code).toBe("private_rows");
+    expect(error.message).toContain("read_artifact_table");
+  });
+
+  it("offers the next page only when a full page came back", async () => {
+    const full = Array.from({ length: 200 }, (_, index) => ({ n: index }));
+    const { context, host } = fixture({
+      host: { pageData: vi.fn(async () => ({ ok: true as const, rows: full })) },
+    });
+    const read = createWorkstreamArtifactDataTools(context).find((tool) => tool.definition.name === "read_artifact_table")!;
+    const first = await read.execute({ resource: "p", table: "votes", offset: 200 }, {} as never);
+    expect(host.pageData).toHaveBeenCalledWith("votes", 200, 200, { rows: "all" });
+    expect(first.output).toMatchObject({ nextOffset: 400 });
+    expect(first.output).not.toHaveProperty("rowsShown");
+    host.pageData.mockResolvedValueOnce({ ok: true, rows: [{ n: 1 }] });
+    expect((await read.execute({ resource: "p", table: "votes" }, {} as never)).output).not.toHaveProperty("nextOffset");
   });
 
   it("replaces a stored blob with its size rather than spending context on it", async () => {

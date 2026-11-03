@@ -29,6 +29,8 @@
  * See `docs/live-web-artifacts.md`.
  */
 
+import { ARTIFACT_COMPATIBILITY_DATE, ASSET_SHIM_SOURCE, rallyCodeRevision } from "./asset-shim";
+
 /** The module name Rally's host class is loaded under, beside the model's. */
 export const FACET_HOST_MODULE = "__rally_host.js";
 
@@ -127,19 +129,17 @@ export class ${FACET_HOST_CLASS} extends DurableObject {
    */
   rallySchema() {
     const tables = [];
-    const views = [];
     for (const row of this.ctx.storage.sql.exec(
-      "SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name",
+      "SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name",
     )) {
       if (INTERNAL_TABLE.test(row.name)) continue;
-      if (row.type === "view") { views.push({ name: row.name, sql: row.sql ?? "" }); continue; }
       const columns = [];
       for (const column of this.ctx.storage.sql.exec("SELECT name FROM pragma_table_xinfo(?)", row.name)) {
         columns.push(column.name);
       }
       tables.push({ name: row.name, sql: row.sql ?? "", columns });
     }
-    return { tables, views };
+    return { tables };
   }
 
   /** The table names the live schema actually has, for identifier admission. */
@@ -205,18 +205,5 @@ export class ${FACET_HOST_CLASS} extends DurableObject {
 class RallyRollback extends Error {}
 `;
 
-/**
- * A short fingerprint of Rally's host module, for the loader id.
- *
- * The Worker Loader caches an isolate by its id, and the id names the
- * artifact's version but not Rally's host code. Without this, an isolate
- * cached before a deploy could answer with the old host, which lacks any
- * method added since, such as `rallySchema`.
- */
-export const FACET_HOST_REVISION = (() => {
-  let hash = 5381;
-  for (let index = 0; index < FACET_HOST_MODULE_SOURCE.length; index += 1) {
-    hash = ((hash * 33) ^ FACET_HOST_MODULE_SOURCE.charCodeAt(index)) >>> 0;
-  }
-  return hash.toString(36);
-})();
+/** The fingerprint of the Rally code a stateful site's isolate runs; see `rallyCodeRevision`. */
+export const FACET_HOST_REVISION = rallyCodeRevision(FACET_HOST_MODULE_SOURCE, ASSET_SHIM_SOURCE, ARTIFACT_COMPATIBILITY_DATE);

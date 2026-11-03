@@ -29,10 +29,15 @@ tickets. Note the time window and any filter the person named. If the person
 asked for breadth ("everything we know about…"), the grain is the entity and
 the columns come from every source you can connect.
 
+In a Sidekick run whose instructions already name the sources, joins and
+output, follow them and skip steps 2 and 3.
+
 ## 2. Find every related source
 
-Search all connected sources, not just the first one that answers. A single
-entity usually has records in several places: a CRM, a spreadsheet, a ticket
+If the person named the sources, start with those, and widen only when the
+questions need an entity's records from somewhere else. Otherwise search the
+connected sources, not just the first one that answers. A single entity
+usually has records in several places: a CRM, a spreadsheet, a ticket
 system, email, calendar, chat, product analytics, documents. For each candidate
 source, record:
 
@@ -85,8 +90,10 @@ thirty days, or customers whose ticket volume rose before they churned.
 
 Lead with the answer, then the table or views, then a short **Sources** note:
 which sources you joined, on which keys, how many rows matched, and what you
-could not connect. For a report people will open again, load
-\`building-live-sites\`; for a chart, follow the charting guidance you have.
+could not connect. Deliver it as your Documents instructions say. Build a live
+site with \`building-live-sites\` only when the person asks for an
+interactive dashboard or a page that refreshes; if that skill is not
+available, publish a document.
 
 ## In a Sidekick wizard: map the data, then plan
 
@@ -110,8 +117,9 @@ repeat discovery.
 
 ## Anti-patterns
 
-- **Stopping at the first source.** One source answers part of the question.
-  Search every connection before you decide the scope.
+- **Stopping at the first source when the question spans several.** If the
+  questions need records the first source lacks, look further before you
+  decide the scope.
 - **Joining on a guess.** A loose name match or an assumed id silently mixes
   records. Join only on a key you can name, and report the match rate.
 - **Dropping what did not match.** Unmatched rows are evidence. Show them
@@ -126,6 +134,6 @@ export const REPORTING_ON_DATA_SKILL: HarnessSkill = {
   description:
     "How to build a data report that connects several sources: find every related source, name the keys that join them, merge and slice the records, and say what could not be linked.",
   whenToUse:
-    "When asked for a report, breakdown, analysis or combined view of data, or when setting up a Sidekick that will produce one.",
+    "When asked for a report or combined view that draws on records from connected tools, especially more than one, or when setting up a Sidekick that will produce one.",
   body: REPORTING_ON_DATA_BODY,
 };

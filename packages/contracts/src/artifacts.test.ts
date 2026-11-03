@@ -207,6 +207,7 @@ describe("a site's sign-in return path", () => {
   it("keeps a path and query on the site", () => {
     expect(artifactReturnPath("/rsvp?week=2")).toBe("/rsvp?week=2");
     expect(artifactReturnPath("/__rally/v3/report")).toBe("/__rally/v3/report");
+    expect(artifactReturnPath("/__rally/v3")).toBe("/__rally/v3");
   });
 
   it("turns anything that could leave the site, or loop back into Rally's routes, into /", () => {
@@ -225,6 +226,13 @@ describe("a site's sign-in return path", () => {
 
   it("reads no site from any other browser path, and a bad return path as /", () => {
     expect(parseArtifactSiteOpenPath("/app/workspaces/global/x")).toBeNull();
-    expect(parseArtifactSiteOpenPath("/app/sites/global/stub/%2F%2Fevil.example")?.returnPath).toBe("/");
+    const stub = "level-luminous-sequential-schrodinger";
+    expect(parseArtifactSiteOpenPath(`/app/sites/global/${stub}/%2F%2Fevil.example`)?.returnPath).toBe("/");
+    expect(parseArtifactSiteOpenPath(`/app/sites/global/${stub}/%E0%A4%A`)).toBeNull();
+  });
+
+  it("reads no site from a hostname that is not a site's", () => {
+    expect(parseArtifactSiteOpenPath("/app/sites/global/stub/%2F")).toBeNull();
+    expect(parseArtifactSiteOpenPath("/app/sites/global/Not-A-Real-Stub/%2F")).toBeNull();
   });
 });

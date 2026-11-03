@@ -27,12 +27,14 @@ exists.
 | `apps/api/src/durable-objects/artifact-host-do.ts` | One supervisor object per artifact: version pointer, viewer sessions, error log, and the facet that runs the model's storage class. |
 | `apps/api/src/artifacts/index.ts` | The artifact serving Worker's entry point — a second Worker, its own origin, its own bindings. |
 | `apps/api/src/artifacts/serving-policy.ts` | The three fences: the page CSP, the fetch-metadata admission, and the prior-version mount rules. |
-| `apps/api/src/artifacts/read-only-sql.ts` | What a data query may run, and how a dynamic table name is admitted. |
+| `apps/api/src/artifacts/read-only-sql.ts` | What a data query may run, how a dynamic table name is admitted, and which tables are private to a viewer (`viewerTables`, `artifactRowScope`). |
+| `apps/api/src/artifacts/hostname-routes.ts` | The stub-to-artifact lookup, shared by the serving Worker and the API. |
+| `apps/api/src/services/artifact-site-resolution.ts` | The hostname-to-organization lookup behind `/browser/sites/resolve`, for signing in from a site's link. |
 | `apps/api/src/artifacts/facet-host.ts` | The Rally-authored module source loaded into a stateful artifact's facet beside the model's own. |
 | `apps/api/src/artifacts/asset-loopback.ts` | `ArtifactAssetLoopback`: the `ASSETS` binding, as an exported entrypoint. The one thing that crosses into an artifact's isolate. |
 | `apps/api/src/artifacts/asset-shim.ts` | The two module sources that run inside the isolate: the wrapper that makes `fetch(string)` true, and the entry Rally puts in front of a stateless active site's own module. |
 | `apps/api/src/artifacts/pages.ts` | The neutral page, the plain error page, and the fragment-to-cookie bootstrap. |
-| `apps/api/src/services/workstream-artifact-data-tools.ts` | The two read-only data tools' contract: what a model sees, and which sites are unreachable. No `Env` — its wiring is next door. |
+| `apps/api/src/services/workstream-artifact-data-tools.ts` | The three read-only data tools' contract: what a model sees, and which sites are unreachable. No `Env` — its wiring is next door. |
 | `apps/api/src/services/workstream-artifact-data-wiring.ts` | Resolving a reference through the standard visibility loader, and reaching the supervisor through the one supported resolver. |
 | `packages/agent-harness/src/prompts/document-generation.ts` | The standing policy's `# Sites` section: the trigger and the manners, and nothing else. |
 | `packages/agent-harness/src/building-live-sites-skill.ts` | The loadable skill that carries the build craft, scoped to the Terminal plugin. |
@@ -168,10 +170,10 @@ Fences apply in this order, all before any model-authored code runs:
 
 1. **Host** — not an artifact host, or the wrong region's, answers the neutral
    page.
-2. **Fetch metadata** — unsafe requests require exact same-origin metadata.
-   `GET` and `HEAD` from anywhere are admitted as anonymous public reads; only
-   same-origin requests and genuine top-level navigations may carry Rally
-   viewer identity. See [Invariants](#invariants).
+2. **Fetch metadata** — decides only whether a request may carry identity:
+   same-origin requests and genuine top-level navigations may; everything
+   else, any method from any origin, proceeds anonymously. See
+   [Invariants](#invariants).
 3. **Optional viewer session** — when a request is eligible and carries the
    artifact cookie, it is checked against `ArtifactHostDO`. Admission already
    proved resource access; ordinary page and asset requests trust that durable
@@ -316,21 +318,29 @@ what the page shows is the page's job.
   as. A site published under an Organization principal has none, so in the
   Data view every member reads only their own rows.
 - **Sidekick** means an unattended run, one carrying `automationRun` or
-  `automationDelegation`. It works on the whole data set (a tally, a digest,
-  a refresh). A Sidekick's wizard is a member typing, so it reads as that
-  member.
-- **Organization-principal runs** read every row, like Sidekick runs, at the
-  PR author's direction. That includes runs for an unlinked Slack or connector
-  sender.
+  `automationDelegation` with no member typing into it. It works on the whole
+  data set (a tally, a digest, a refresh). A member typing into a Sidekick's
+  wizard or one of its runs (`automationContinuation.senderUserId`) reads as
+  that member, not as the run's coordinator. `artifactDataReader` decides
+  this, and `artifactRowScope` turns the reader and the author into a scope.
+- **Organization-principal runs** read every row, like Sidekick runs. That
+  includes runs for an unlinked Slack or connector sender, and a reply in a
+  Sidekick's provider thread from someone with no Rally account.
 - **What this does not guard.** `private_to_viewer` keeps rows out of the
   Data view, the export and a member's own agent reads. It is not a boundary
-  against Sidekick runs or Organization-principal runs, which read every row:
-  a member who can create a Sidekick can have it read every row.
+  against Sidekick runs or Organization-principal runs, which read every row,
+  nor against the site's own code, which reads every row: a member who can
+  create a Sidekick, or get the site republished with a route that lists
+  every row, can read them.
 - **What counts as private** is read from a schema-only facet call,
   `rallySchema`, using `pragma_table_xinfo` so a generated `private_to_viewer`
-  column counts, and counting no rows. A private FTS5 table's backing tables
-  (`<name>_content` and kin) hold its text with no viewer column, so scoped
-  readers see them as empty.
+  column counts, and counting no rows. On a site with any private table, every
+  virtual table without the column, and every FTS5 backing table
+  (`<name>_content` and kin), reads as empty to a scoped reader. A search
+  index can be fed from a private table in ways its own SQL never names (a
+  trigger, a view, a vocabulary table over another index), so hiding only
+  indexes that name a private table leaked; hiding them all is the rule. A
+  site with no private table hides nothing.
 - **How a scoped read works.** The Data view's pages, its export, the agent's
   `read_artifact_table` and the row counts filter a private table on its
   column. A member's free-form `query_artifact_data` runs only on a site with
@@ -361,8 +371,8 @@ is the only place that can forward into it.
   subdomain of one registrable domain, so two
   artifacts are same-*site*: `SameSite` does not stop script in artifact A
   sending a credentialed request to artifact B, and a simple `POST` needs no
-  preflight, so B's model-written handler would still run. Unsafe requests are
-  admitted only when fetch metadata says `same-origin`. A top-level document
+  preflight, so B's model-written handler would still run. Requests
+  carry identity only when fetch metadata says `same-origin`. A top-level document
   navigation — `Sec-Fetch-Mode: navigate` with `Sec-Fetch-Dest: document`, on a
   `GET` — may also use a valid viewer session. **`Sec-Fetch-Site: none` is the wrong
   test** and was the first thing written here: it covers an address bar and a
@@ -374,6 +384,8 @@ is the only place that can forward into it.
   only as anonymous public reads: their cookies are ignored and model code gets
   no viewer headers. That distinction is load-bearing; treating a cross-site
   read as an identified viewer would restore the sibling-artifact attack.
+  Unsafe requests from another origin reach the handler the same way, as
+  anonymous requests: cookies are ignored and no viewer headers are injected.
 - **The CSP's `script-src` and `style-src` must stay written out.** `'self'`
   does not permit inline code, so inheriting `default-src` would refuse the
   inline `<script>` and `<style>` model-authored pages are built from and break
@@ -416,7 +428,8 @@ is the only place that can forward into it.
   cookie `SameSite=None; Partitioned`, kept for this artifact under that one
   top-level site; a top-level navigation keeps `Lax`. A browser that refuses
   the partitioned cookie, such as Safari, which blocks third-party cookies,
-  shows the public representation, where writes answer 401. The shell's
+  shows the public representation, where the site's own code decides what an
+  anonymous request may do. The shell's
   `frame-src` admits the whole artifact domain, so the serving Worker refuses
   a framed navigation that arrives `same-site`
   (`isFramedHopFromAnotherArtifact`): that is one artifact moving its frame to
@@ -496,6 +509,25 @@ is the only place that can forward into it.
 - **A version's bytes are immutable.** The loader caches an isolate by a
   version-scoped id, so publishing different content at a version already used
   serves the cached module. A republish always advances the version.
+- **A loader id names Rally's code too.** Both loader ids end in a fingerprint
+  (`rallyCodeRevision`) of every Rally-written module the isolate loads and its
+  compatibility date, so an isolate cached before a deploy cannot answer with
+  older Rally code. Any change to those sources cold-starts every site's
+  isolate once; a module added to an isolate must be added to its fingerprint.
+- **The column name is the contract.** `ARTIFACT_VIEWER_COLUMN` in
+  `@rally/contracts` is what the skills teach and what every read filters on;
+  rename it in one place, or members' private rows become shared. Guard: the
+  skills interpolate the constant.
+- **Every read path takes an `ArtifactRowScope`, and anything but `all`
+  narrows.** `describeData`, `queryData` and `pageData` require one, and read a
+  scope they do not recognize as a viewer's (`viewerOf`). Guard: the
+  required parameter, and `artifact-facet` and `conversation-tools` on workerd.
+- **A free-form query never runs for a viewer-scoped reader on a site with a
+  private table.** SQL cannot be limited to one viewer's rows without
+  rewriting it. Guard: `artifact-facet`'s refusal case.
+- **A return path is reduced by `artifactReturnPath`**, at sign-in and at
+  redeem, or every artifact host becomes an open redirect. Guard:
+  `packages/contracts/src/artifacts.test.ts`.
 - **Assets, then manifest, then hostname reservation, then resource row, then
   pointer.** Each step depends only on ones that already committed, so a failure
   leaves the artifact serving its *previous* version rather than a version whose
@@ -559,7 +591,8 @@ facet that holds a stateful artifact's data. It does not own:
   back into chat.
 - **A viewer session is revoked or expires.** Its next eligible request receives
   the anonymous public representation. A protected active site's own early
-  header guard then returns 401; a public site continues serving it. Resource-
+  header guard then returns 401, which a page load turns into a redirect to
+  sign-in; a public site continues serving it. Resource-
   scope changes do not poll canonical authorization from every page asset: the
   admitted session assumes access until an explicit revocation removes it or
   its fixed 24-hour lifetime ends.
@@ -567,7 +600,12 @@ facet that holds a stateful artifact's data. It does not own:
   serving, so a failed supervisor hop falls back to the anonymous representation
   rather than making a browser with an old cookie less able to read than a
   crawler. The failure emits a structured warning; a protected active site's
-  header guard still refuses the anonymous request.
+  header guard still refuses the anonymous request, and its 401 is shown as it
+  is rather than sent to sign-in, which would only return to the same failed
+  check.
+- **`BROWSER_APP_ORIGIN` is unset or not a URL, or the host is a legacy UUID
+  host.** There is nowhere to sign in: `/__rally/sign-in` answers the neutral
+  404 and a protected site's 401 is shown as it is.
 - **An anonymous request makes the model handler throw.** It receives the same
   neutral 500 response, but cannot append to the participant-facing error ring:
   otherwise crafted public requests could evict every useful diagnosis and
@@ -601,8 +639,10 @@ facet that holds a stateful artifact's data. It does not own:
 
 | Suite | What it proves |
 | --- | --- |
-| `pnpm --filter @rally/api exec vitest run test/artifact-read-only-sql.test.ts` | The SQL admission, adversarially: statement sequences that commit mid-payload, CTEs wrapping writes, semicolons inside literals, writes behind comment markers, and identifier injection. |
-| `pnpm --filter @rally/api exec vitest run test/artifact-serving-policy.test.ts test/artifact-serving-hostname.test.ts` | The three fences: CSP directives, anonymous public reads, session identity only on eligible requests, refusal of credentialed cross-artifact writes, version-mount parsing, and asset resolution. |
+| `pnpm --filter @rally/api exec vitest run test/artifact-read-only-sql.test.ts` | The SQL admission, adversarially: statement sequences that commit mid-payload, CTEs wrapping writes, semicolons inside literals, writes behind comment markers, and identifier injection. Also `viewerTables` (private tables, and hiding every search index on a site with one) and `artifactRowScope`. |
+| `pnpm --filter @rally/api exec vitest run test/artifact-data-reader.test.ts` | Who a run reads a site's data as: unattended Sidekick runs read all, a member typing into one reads as that member. |
+| `pnpm --filter @rally/contracts exec vitest run src/artifacts.test.ts` | Return-path reduction against open-redirect spellings, and the site-opening path round trip. |
+| `pnpm --filter @rally/api exec vitest run test/artifact-serving-policy.test.ts test/artifact-serving-hostname.test.ts` | The three fences: CSP directives, anonymous public reads, session identity only on eligible requests, anonymous submissions reaching the handler with no identity even when a sibling sends the viewer's cookie, version-mount parsing, and asset resolution. Also sign-in: the route, the page-load 401 redirect and when it is withheld (a signed-in viewer, a failed session check, no browser origin), and the redeem return path. |
 | `pnpm --filter @rally/api exec vitest run test/site-social-preview.test.ts test/artifact-social-preview.test.ts` | Publish-time metadata extraction, authored local artwork, fallback PNG generation, absolute crawler metadata, escaping, and canonical URL cleanup. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-site-publish.test.ts` | Kind resolution, the one-file refusal, the storage-class check, content types, the zip, and the asymmetric transition. |
 | `pnpm --filter @rally/api exec vitest run test/terminal-runtime.test.ts` | Directory publish end to end through the runtime, against a simulated sandbox shell. |
@@ -614,13 +654,16 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-stateless-module.test.ts` | A **stateless active** site's isolate on real workerd: that the `ASSETS` stub crosses the loader's env at all, that it serves this artifact's files, that the relative-string read works, and that `fetch()` throws. Scope is the isolate contract, not admission — the fences in front of it are the policy suite's. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-social-preview-runtime.test.ts` | `HTMLRewriter` on real workerd: active HTML receives metadata without buffering, while protected errors and JSON remain exact. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-asset-uploads.test.ts` | Real-R2 asset upload overlap, the assets-before-manifest barrier, generated tail assets, and failure draining. |
-| `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. |
+| `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. Also scoped reads: a private table paged as one viewer's rows, search indexes however fed reading as empty, and free SQL refused on a site with a private table and allowed on one without. |
+| `pnpm --filter @rally/api test:workers` (`test-workers/conversation-tools.test.ts`) | Which scope the data tools resolve for the author, another member and an unattended run, and `/browser/sites/resolve`'s 200, 403 (outside the Organization, or outside the Channel) and 404. |
 
 Two traps:
 
 - **Never publish different source at a version another test used.** The loader
   caches by a version-scoped isolate id, so the second publish silently serves
-  the first's module and the failure reads as a missing route. `publish()` in the
+  the first's module and the failure reads as a missing route. The id also
+  carries a fingerprint of Rally's own modules, so a change to them does not
+  hit this trap. `publish()` in the
   facet suite allocates versions for exactly this reason.
 - **The supervisor's defensive `facets.abort` cannot be shown load-bearing
   locally.** Removing it leaves the workerd proofs passing, because the runtime
@@ -701,15 +744,25 @@ copying it from the header and making shared lists private. Rewriting a
 member's free SQL onto filtered copies of private tables: it worked, but each
 new SQLite spelling (quoted names, non-ASCII, generated columns, FTS5 tables,
 Unicode spaces) was another leak to patch, so members page private tables
-instead.
+instead. Hiding only the search indexes whose SQL names a private table: an
+index fed by a trigger, a view or another index leaked, so on a site with a
+private table every virtual table reads as empty to a member.
 A per-site opt-in for public submissions, removed as friction for the model.
 
 **Consequences:** Sites published before this change were written while
 Rally refused anonymous unsafe requests, so any that never check for a
 viewer now accept anonymous writes from any origin; that cannot be undone for
 data already written. `private_to_viewer` does not hide rows from Sidekick or
-Organization-principal runs. The column name is the contract. Anyone adding a
-read path must pass a scope, which the required parameter enforces.
+Organization-principal runs, or from a member typing into a Sidekick run,
+who reads as themselves. The column name is the contract, shared from
+`@rally/contracts`. Anyone adding a read path must pass a scope, which the
+required parameter enforces, and an unknown scope narrows. Loader ids now
+carry a fingerprint of Rally's own isolate code, so a deploy that changes it
+cold-starts each site's isolate once. A page-load redirect to sign-in is
+withheld when the session check itself failed, so a broken check cannot loop
+a person through sign-in. The desktop artifact view refuses that redirect,
+since it leaves the artifact origin; a desktop viewer whose session expired
+reopens the site from Rally.
 
 ### 2026-10-22 — Preserve raw source data before building a site
 
