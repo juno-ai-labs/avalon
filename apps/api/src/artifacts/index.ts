@@ -254,23 +254,10 @@ const artifactServer = {
     // require exact same-origin browser metadata.
     const verdict = classifyFetchMetadata(request, origin);
     let admitted: Admitted | null = null;
-    if (verdict === "refused") {
-      // An unsafe request from another origin never carries identity. A site
-      // that accepts anonymous submissions still receives it, as an anonymous
-      // one; every other site refuses it, as before.
-      const state = await artifact.currentState();
-      if (!state?.manifest.anonymousSubmissions) return html(neutralPage(), 403);
-      admitted = {
-        viewerId: null,
-        viewerName: null,
-        version: state.version,
-        mode: state.mode,
-        stateful: state.stateful,
-        manifest: state.manifest,
-      };
-    }
-
-    if (!admitted && verdict !== "anonymous_read") {
+    // An unsafe request from another origin is let through as an anonymous
+    // one: it never carries a session, so a sibling artifact cannot act with
+    // a viewer's identity, and the site's own code decides what it accepts.
+    if (verdict !== "anonymous_read" && verdict !== "refused") {
       const session = readCookie(request, SESSION_COOKIE);
       // Identity is an optional enhancement to a public response. If the
       // visibility hop fails, degrade to anonymous rather than making a viewer
@@ -321,19 +308,10 @@ const artifactServer = {
       };
     }
 
-    // Public means readable, not anonymously writable. Fetch metadata is a
-    // browser CSRF signal rather than caller authentication, and a non-browser
-    // client can spell those headers itself. Preserve the former session gate
-    // for every method that may mutate model-owned state.
-    //
-    // A site whose current version declares `acceptAnonymousSubmissions` has
-    // chosen otherwise: a public anonymous poll is the case. Its handler gets
-    // the request with no viewer identity, which is all an anonymous
-    // submission can honestly carry.
-    if (!admitted.viewerId && request.method !== "GET" && request.method !== "HEAD"
-      && !admitted.manifest.anonymousSubmissions) {
-      return html(neutralPage(), 401);
-    }
+    // Anyone may submit to a site. A request without a session reaches the
+    // handler with no viewer headers, and the site's own code decides whether
+    // to require them: a protected site answers 401, which a page load turns
+    // into sign-in below.
 
     const mount = splitVersionMount(url.pathname);
     if (mount.version !== null && mount.version !== admitted.version) {
