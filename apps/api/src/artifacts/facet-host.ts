@@ -120,6 +120,28 @@ export class ${FACET_HOST_CLASS} extends DurableObject {
     return { tables };
   }
 
+  /**
+   * The schema scoping reads: every table and view with its definition, and
+   * every column of each table, generated ones included. No rows are counted,
+   * so a scoped read pays for a schema lookup and nothing more.
+   */
+  rallySchema() {
+    const tables = [];
+    const views = [];
+    for (const row of this.ctx.storage.sql.exec(
+      "SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name",
+    )) {
+      if (INTERNAL_TABLE.test(row.name)) continue;
+      if (row.type === "view") { views.push({ name: row.name, sql: row.sql ?? "" }); continue; }
+      const columns = [];
+      for (const column of this.ctx.storage.sql.exec("SELECT name FROM pragma_table_xinfo(?)", row.name)) {
+        columns.push(column.name);
+      }
+      tables.push({ name: row.name, sql: row.sql ?? "", columns });
+    }
+    return { tables, views };
+  }
+
   /** The table names the live schema actually has, for identifier admission. */
   rallyTableNames() {
     const names = [];

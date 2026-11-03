@@ -47,12 +47,18 @@ export class SiteData extends DurableObject {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS prompts (body TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE VIEW IF NOT EXISTS all_entries AS SELECT body FROM entries");
     ctx.storage.sql.exec("CREATE VIEW IF NOT EXISTS summary(summary) AS SELECT body FROM entries");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS generated_notes (owner TEXT, body TEXT, private_to_viewer TEXT GENERATED ALWAYS AS (owner) VIRTUAL)");
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS "डायरी" (private_to_viewer TEXT, body TEXT)');
+    ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(body, private_to_viewer)");
   }
   async fetch(request) {
     const url = new URL(request.url);
     const viewer = request.headers.get("x-rally-viewer-id");
     if (url.pathname === "/write" && viewer) {
       this.ctx.storage.sql.exec("INSERT INTO entries (private_to_viewer, body) VALUES (?, ?)", viewer, url.searchParams.get("body"));
+      this.ctx.storage.sql.exec("INSERT INTO generated_notes (owner, body) VALUES (?, ?)", viewer, url.searchParams.get("body"));
+      this.ctx.storage.sql.exec('INSERT INTO "डायरी" (private_to_viewer, body) VALUES (?, ?)', viewer, url.searchParams.get("body"));
+      this.ctx.storage.sql.exec("INSERT INTO notes_fts (body, private_to_viewer) VALUES (?, ?)", url.searchParams.get("body"), viewer);
       return Response.json({ ok: true });
     }
     if (url.pathname === "/prompt") {
@@ -296,10 +302,26 @@ describe("a stateful artifact's facet", () => {
       "SELECT body FROM 'main'.entries",
       "SELECT body FROM all_entries",
       "SELECT summary FROM summary",
+      "SELECT body FROM generated_notes",
+      "SELECT body FROM main.डायरी",
+      "SELECT body FROM entries ORDER BY rowid",
+      "SELECT body FROM notes_fts",
     ]) {
       const read = await host.queryData(sql, [], 10, VIEWER_ROWS);
       expect(read.ok && read.rows.map((row) => Object.values(row)[0]), sql).toEqual(["mine"]);
     }
+  });
+
+  it("hides a private search index's backing tables, and shows a reader with no viewer id no private rows", async () => {
+    await publish(JOURNAL_MODULE);
+    const host = hostStub();
+    await host.fetchThroughFacet(viewerRequest("/write?body=theirs", OTHER_VIEWER));
+    expect(await host.queryData("SELECT c0 FROM notes_fts_content", [], 10, VIEWER_ROWS))
+      .toMatchObject({ ok: true, rows: [] });
+    expect(await host.pageData("notes_fts_content", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [] });
+    expect(await host.queryData("SELECT body FROM entries", [], 10, { rows: "none" }))
+      .toMatchObject({ ok: true, rows: [] });
+    expect(await host.pageData("entries", 0, 10, { rows: "none" })).toMatchObject({ ok: true, rows: [] });
   });
 
   it("keeps one warm instance across requests rather than reconstructing per request", async () => {
