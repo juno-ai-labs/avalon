@@ -156,11 +156,16 @@ before a full re-arm.
    check described below the settle rules.
 7. Re-arm through `armAlarmAfterDueWork()`.
 8. **Hold an idle pass.** If steps 4 to 6 wrote nothing (SQLite's
-   `total_changes()` is unchanged across them) and step 7 still armed the next
-   millisecond, a derived lane is reporting work that its pass declines. The
-   alarm is moved out by the backoff a thrown entry earns, never past the next
-   future candidate, and `onIdleAlarmHeld` reports it. The attempt counts in
-   memory and resets on the first pass that writes or arms later.
+   `total_changes()` moved only by the object's own re-arms) and step 7 still
+   armed the next millisecond, a derived lane is reporting work that its pass
+   declines. The alarm is moved out by the backoff a thrown entry earns, never
+   past the next future candidate, and `onIdleAlarmHeld` reports it. Work that
+   came due after step 4's instant was never offered to the pass, so it keeps
+   its immediate wake and the pass is not counted. The attempt is kept in the
+   object's KV storage under `_internal_idle_alarm_attempt`, written after the
+   sample so it survives eviction. A pass that wrote but still asked to run at
+   once is not held and keeps the attempt, since the looping lane is still
+   due; the first pass that arms later, or arms nothing, clears it.
 
 The first arm defaults to the bounded recovery re-derivation and the second to
 the exact post-work answer. Both are hooks for one case: an object whose alarm
@@ -445,9 +450,9 @@ time moved, go reconcile" entry points.
   a pass that wrote nothing and re-armed for the next millisecond is held
   behind the same backoff, and `onIdleAlarmHeld` reports it through
   `reportScheduledAlarmAttempt` with the same warn, error and notify policy.
-  The counter lives in memory, so an evicted instance starts again at the first
-  step. Anything that schedules or admits work re-arms past the hold through
-  its own path. As with a stall, the fix is in the lane: a due-time read must
+  The attempt is stored, so a hold long enough to be evicted through still
+  climbs to the ceiling and the alert. Anything that schedules or admits work
+  re-arms past the hold through its own path. As with a stall, the fix is in the lane: a due-time read must
   count only work its pass will take.
 - **A handler legitimately cannot act yet.** It answers `{ waitMs }` and the
   entry is held that long with no attempt counted; the first reconcile after
@@ -520,8 +525,10 @@ a failing target a free immediate attempt.
   pins the phase order with every derived lane due, proves a wake runs only the
   lane that is due and arms for the one it skipped, that
   `registerAuthorizationChildren` re-arms only when it queued a delivery, and
-  that an idle pass is held, grows its delay, never passes a future candidate,
-  and keeps its immediate wake once a pass writes.
+  that an idle pass is held through the workspace's real due work, grows its
+  delay across a lost instance, never passes a future candidate, keeps its
+  immediate wake once a pass writes, and is not held for a derived or stored
+  deadline that came due while the pass awaited.
 - `apps/api/test-workers/workspace-authorization-delivery-index-migration.test.ts`
   upgrades a populated v82 object through migration 83 and counts the
   `authorization_delivery` due read's `rowsRead`.
@@ -629,9 +636,11 @@ stored entries, so a derived lane had no guard.
 
 **Considered and rejected:** Comparing the overdue derived instants before and
 after a pass would also hold a bounded drain whose rows share one instant,
-which is progress. `total_changes()` tells the two apart, and `setAlarm` counts
-as a change, so the sample sits inside the two re-arms. Persisting the attempt
-would make the pass that counts it look like progress. A threshold of idle
+which is progress. `total_changes()` tells the two apart. `setAlarm` counts as
+a change, so the sample sits inside the two re-arms and subtracts the object's
+own arming inside it. Keeping the attempt in memory would restart it at the
+first step after every eviction, so it would never reach the alert; it is
+written after the sample instead. A threshold of idle
 passes before holding would add a defensive number; the hold starts at the
 first idle pass, as the stall gate does, and reuses the existing delay steps.
 
