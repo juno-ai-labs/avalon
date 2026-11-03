@@ -27,6 +27,50 @@ const WORKSTREAM = "00000000-0000-7000-8000-0000000000e2";
 const RESOURCE = "00000000-0000-7000-8000-0000000000e3";
 const ARTIFACT = "00000000-0000-7000-8000-0000000000e4";
 const VIEWER = "00000000-0000-7000-8000-0000000000e5";
+const OTHER_VIEWER = "00000000-0000-7000-8000-0000000000e6";
+
+/** Every row, as the site's author and a Sidekick read. */
+const ALL_ROWS = { rows: "all" } as const;
+/** One viewer's rows in per-viewer tables, as any other member reads. */
+const VIEWER_ROWS = { rows: "viewer", viewerId: VIEWER } as const;
+
+/**
+ * A site with one per-viewer table, one shared table, and a view over the
+ * per-viewer one: the shape whose isolation the scoped reads must hold.
+ */
+const JOURNAL_MODULE = `
+import { DurableObject } from "cloudflare:workers";
+export class SiteData extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS entries (private_to_viewer TEXT NOT NULL, body TEXT NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS prompts (body TEXT NOT NULL)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS generated_notes (owner TEXT, body TEXT, private_to_viewer TEXT GENERATED ALWAYS AS (owner) VIRTUAL)");
+    ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(body, private_to_viewer)");
+    ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS entries_search USING fts5(body, content='entries')");
+    // An index fed by a trigger, and a word list over it: neither names the
+    // private table, and both hold its text.
+    ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS idx USING fts5(body)");
+    ctx.storage.sql.exec("CREATE TRIGGER IF NOT EXISTS entries_to_idx AFTER INSERT ON entries BEGIN INSERT INTO idx (body) VALUES (new.body); END");
+    ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS terms USING fts5vocab('idx', 'row')");
+  }
+  async fetch(request) {
+    const url = new URL(request.url);
+    const viewer = request.headers.get("x-rally-viewer-id");
+    if (url.pathname === "/write" && viewer) {
+      this.ctx.storage.sql.exec("INSERT INTO entries (private_to_viewer, body) VALUES (?, ?)", viewer, url.searchParams.get("body"));
+      this.ctx.storage.sql.exec("INSERT INTO generated_notes (owner, body) VALUES (?, ?)", viewer, url.searchParams.get("body"));
+      this.ctx.storage.sql.exec("INSERT INTO notes_fts (body, private_to_viewer) VALUES (?, ?)", url.searchParams.get("body"), viewer);
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === "/prompt") {
+      this.ctx.storage.sql.exec("INSERT INTO prompts (body) VALUES (?)", url.searchParams.get("body"));
+      return Response.json({ ok: true });
+    }
+    return this.env.ASSETS.fetch(request);
+  }
+}
+`;
 
 /** The site's own published page, reached through the facet's ASSETS binding. */
 const PAGE_HTML = "<!doctype html><title>Votes</title><p>Cast your vote.";
@@ -213,12 +257,48 @@ describe("a stateful artifact's facet", () => {
     await publish(VOTING_MODULE);
     const host = hostStub();
     await host.fetchThroughFacet(viewerRequest("/vote?choice=maybe"));
-    const described = await host.describeData();
+    const described = await host.describeData(ALL_ROWS);
     const votes = described.tables.find((table) => table.name === "votes");
     expect(votes?.rowCount).toBe(1);
     expect(votes?.columns.map((column) => column.name).sort()).toEqual(["choice", "member"]);
-    expect(await host.queryData("SELECT choice FROM votes", [], 10))
+    expect(await host.queryData("SELECT choice FROM votes", [], 10, ALL_ROWS))
       .toMatchObject({ ok: true, rows: [{ choice: "maybe" }] });
+    // A site with no private table keeps free SQL open to every member.
+    expect(await host.queryData("SELECT choice FROM votes", [], 10, VIEWER_ROWS))
+      .toMatchObject({ ok: true, rows: [{ choice: "maybe" }] });
+  });
+
+  it("pages a private table as one viewer's rows, and refuses that viewer free SQL on the site", async () => {
+    await publish(JOURNAL_MODULE);
+    const host = hostStub();
+    await host.fetchThroughFacet(viewerRequest("/write?body=mine"));
+    await host.fetchThroughFacet(viewerRequest("/write?body=theirs", OTHER_VIEWER));
+    await host.fetchThroughFacet(viewerRequest("/prompt?body=shared"));
+    expect(await host.pageData("entries", 0, 10, VIEWER_ROWS))
+      .toMatchObject({ ok: true, rows: [{ private_to_viewer: VIEWER, body: "mine" }] });
+    // A generated private column counts too.
+    expect(await host.pageData("generated_notes", 0, 10, VIEWER_ROWS))
+      .toMatchObject({ ok: true, rows: [{ body: "mine" }] });
+    // A private search index's backing table reads as empty.
+    expect(await host.pageData("notes_fts_content", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [] });
+    // So does a search index over a private table, which the author reads in full.
+    expect(await host.pageData("entries_search", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [] });
+    expect((await host.pageData("entries_search", 0, 10, ALL_ROWS) as { rows: unknown[] }).rows).toHaveLength(2);
+    // However an index is fed, it reads as empty to a viewer on this site.
+    for (const index of ["idx", "idx_content", "terms"]) {
+      expect(await host.pageData(index, 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [] });
+    }
+    expect((await host.pageData("terms", 0, 10, ALL_ROWS) as { rows: unknown[] }).rows.length).toBeGreaterThan(0);
+    // A shared table pages in full.
+    expect(await host.pageData("prompts", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [{ body: "shared" }] });
+    const described = await host.describeData(VIEWER_ROWS);
+    expect(described.tables.find((table) => table.name === "entries")?.rowCount).toBe(1);
+    expect(described.tables.find((table) => table.name === "entries_search")?.rowCount).toBe(0);
+    // Free SQL is the author's and Sidekicks' on a site that keeps private rows.
+    expect(await host.queryData("SELECT body FROM prompts", [], 10, VIEWER_ROWS))
+      .toMatchObject({ ok: false, reason: "private_rows" });
+    expect(await host.queryData("SELECT body FROM entries ORDER BY body", [], 10, ALL_ROWS))
+      .toMatchObject({ ok: true, rows: [{ body: "mine" }, { body: "theirs" }] });
   });
 
   it("keeps one warm instance across requests rather than reconstructing per request", async () => {
@@ -263,11 +343,11 @@ describe("a stateful artifact's facet", () => {
     await host.fetchThroughFacet(viewerRequest("/vote?choice=yes"));
     // A refusal is a result the model repairs from, not an exception: throwing
     // would log an uncaught rejection inside the object on every wrong query.
-    expect(await host.queryData("DELETE FROM votes", [], 10))
+    expect(await host.queryData("DELETE FROM votes", [], 10, ALL_ROWS))
       .toMatchObject({ ok: false, reason: "sql_refused" });
-    expect(await host.queryData("SELECT 1; DELETE FROM votes", [], 10))
+    expect(await host.queryData("SELECT 1; DELETE FROM votes", [], 10, ALL_ROWS))
       .toMatchObject({ ok: false, reason: "sql_refused" });
-    const survived = await host.queryData("SELECT choice FROM votes", [], 10);
+    const survived = await host.queryData("SELECT choice FROM votes", [], 10, ALL_ROWS);
     expect(survived).toMatchObject({ ok: true, rows: [{ choice: "yes" }] });
   });
 
@@ -277,8 +357,8 @@ describe("a stateful artifact's facet", () => {
     // got past it.
     await publish(VOTING_MODULE);
     const host = hostStub();
-    await host.queryData("SELECT count(*) AS n FROM votes", [], 10);
-    const described = await host.describeData();
+    await host.queryData("SELECT count(*) AS n FROM votes", [], 10, ALL_ROWS);
+    const described = await host.describeData(ALL_ROWS);
     expect(described.tables.find((table) => table.name === "votes")?.rowCount).toBe(0);
   });
 
@@ -286,17 +366,17 @@ describe("a stateful artifact's facet", () => {
     await publish(VOTING_MODULE);
     const host = hostStub();
     await host.fetchThroughFacet(viewerRequest("/vote?choice=yes"));
-    expect(await host.pageData("votes", 0, 10))
+    expect(await host.pageData("votes", 0, 10, ALL_ROWS))
       .toMatchObject({ ok: true, rows: [{ member: VIEWER, choice: "yes" }] });
-    expect(await host.pageData("sqlite_master", 0, 10))
+    expect(await host.pageData("sqlite_master", 0, 10, ALL_ROWS))
       .toMatchObject({ ok: false, reason: "table_refused" });
-    expect(await host.pageData('votes"; DROP TABLE votes; --', 0, 10))
+    expect(await host.pageData('votes"; DROP TABLE votes; --', 0, 10, ALL_ROWS))
       .toMatchObject({ ok: false, reason: "table_refused" });
   });
 
   it("hides SQLite's own bookkeeping from what a participant sees", async () => {
     await publish(VOTING_MODULE);
-    const described = await hostStub().describeData();
+    const described = await hostStub().describeData(ALL_ROWS);
     expect(described.tables.every((table) => !table.name.startsWith("sqlite_"))).toBe(true);
   });
 
@@ -306,7 +386,7 @@ describe("a stateful artifact's facet", () => {
     await host.fetchThroughFacet(viewerRequest("/vote?choice=yes"));
     await host.purge();
     await publish(VOTING_MODULE);
-    const described = await host.describeData();
+    const described = await host.describeData(ALL_ROWS);
     expect(described.tables.find((table) => table.name === "votes")?.rowCount ?? 0).toBe(0);
   });
 
@@ -320,7 +400,7 @@ describe("a stateful artifact's facet", () => {
     );
     await publish(shadowing);
     const host = hostStub();
-    expect(await host.queryData("SELECT 1 AS n", [], 10))
+    expect(await host.queryData("SELECT 1 AS n", [], 10, ALL_ROWS))
       .toMatchObject({ ok: true, rows: [{ n: 1 }] });
   });
 
@@ -354,7 +434,7 @@ describe("a stateful artifact's facet", () => {
       region: "global",
       manifest: { ...manifest(1), artifactId: asArtifactId(other) },
     });
-    const described = await otherHost.describeData();
+    const described = await otherHost.describeData(ALL_ROWS);
     expect(described.tables.find((table) => table.name === "votes")?.rowCount ?? 0).toBe(0);
   });
 

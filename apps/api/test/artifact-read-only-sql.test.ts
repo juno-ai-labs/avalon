@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   admitReadOnlyStatement,
   admitTableName,
+  artifactRowScope,
   quoteIdentifier,
+  viewerOf,
+  viewerTables,
 } from "../src/artifacts/read-only-sql";
 
 function admitted(sql: string): boolean {
@@ -144,5 +147,79 @@ describe("dynamic table names", () => {
     const refused = admitTableName("nope", live);
     expect(refused.admitted).toBe(false);
     if (!refused.admitted) expect(refused.reason).toContain("Describe the data first");
+  });
+});
+
+describe("which tables are private to a viewer", () => {
+  it("counts a table private by its column, generated or not, and shared otherwise", () => {
+    const tables = viewerTables({ tables: [
+      { name: "entries", sql: "CREATE TABLE entries (private_to_viewer TEXT, body TEXT)", columns: ["private_to_viewer", "body"] },
+      { name: "g", sql: "CREATE TABLE g (owner TEXT, private_to_viewer TEXT GENERATED ALWAYS AS (owner))", columns: ["owner", "private_to_viewer"] },
+      { name: "prompts", sql: "CREATE TABLE prompts (body TEXT)", columns: ["body"] },
+    ] });
+    expect(tables.filtered.map((table) => table.name)).toEqual(["entries", "g"]);
+    expect(tables.hidden).toEqual([]);
+  });
+
+  it("counts the column whatever its case", () => {
+    const tables = viewerTables({ tables: [
+      { name: "Entries", sql: "CREATE TABLE Entries (PRIVATE_TO_VIEWER TEXT)", columns: ["PRIVATE_TO_VIEWER"] },
+    ] });
+    expect(tables.filtered).toEqual([{ name: "Entries" }]);
+  });
+
+  it("hides no search index on a site with no private table", () => {
+    const tables = viewerTables({ tables: [
+      { name: "posts", sql: "CREATE TABLE posts (body TEXT)", columns: ["body"] },
+      { name: "posts_fts", sql: "CREATE VIRTUAL TABLE posts_fts USING fts5(body, content='posts')", columns: ["body"] },
+      { name: "posts_fts_data", sql: "CREATE TABLE 'posts_fts_data'(id INTEGER PRIMARY KEY, block BLOB)", columns: ["id", "block"] },
+    ] });
+    expect(tables).toEqual({ filtered: [], hidden: [] });
+  });
+
+  it("hides every search index on a site with a private table, however it is fed", () => {
+    // Neither index names the private table: one is filled by triggers, one
+    // reads another index's words. Both can still hold private text.
+    const tables = viewerTables({ tables: [
+      { name: "journal", sql: "CREATE TABLE journal (private_to_viewer TEXT, body TEXT)", columns: ["private_to_viewer", "body"] },
+      { name: "idx", sql: "CREATE VIRTUAL TABLE idx USING fts5(body)", columns: ["body"] },
+      { name: "idx_content", sql: "CREATE TABLE 'idx_content'(id INTEGER PRIMARY KEY, c0)", columns: ["id", "c0"] },
+      { name: "terms", sql: "CREATE VIRTUAL TABLE terms USING fts5vocab('idx', 'row')", columns: ["term", "doc", "cnt"] },
+      { name: "prompts", sql: "CREATE TABLE prompts (body TEXT)", columns: ["body"] },
+    ] });
+    expect(tables.hidden).toEqual(["idx", "idx_content", "terms"]);
+  });
+
+  it("hides a search index over a private table, and only real backing tables", () => {
+    const tables = viewerTables({ tables: [
+      { name: "journal_entries", sql: "CREATE TABLE journal_entries (id INTEGER PRIMARY KEY, private_to_viewer TEXT, body TEXT)", columns: ["id", "private_to_viewer", "body"] },
+      { name: "entries_fts", sql: "CREATE VIRTUAL TABLE entries_fts USING fts5(body, content='journal_entries', content_rowid='id')", columns: ["body"] },
+      { name: "entries_fts_data", sql: "CREATE TABLE 'entries_fts_data'(id INTEGER PRIMARY KEY, block BLOB)", columns: ["id", "block"] },
+      { name: "entries_fts_prompts", sql: "CREATE TABLE entries_fts_prompts (body TEXT)", columns: ["body"] },
+    ] });
+    expect(tables.hidden).toEqual(["entries_fts", "entries_fts_data"]);
+  });
+
+  it("hides a private search index's backing tables", () => {
+    const tables = viewerTables({ tables: [
+      { name: "notes_fts", sql: "CREATE VIRTUAL TABLE notes_fts USING fts5(body, private_to_viewer)", columns: ["body", "private_to_viewer"] },
+      { name: "notes_fts_content", sql: "CREATE TABLE 'notes_fts_content'(id INTEGER PRIMARY KEY, c0, c1)", columns: ["id", "c0", "c1"] },
+    ] });
+    expect(tables.hidden).toEqual(["notes_fts_content"]);
+  });
+});
+
+describe("whose rows a reader sees", () => {
+  it("gives the author and unattended runs every row, and anyone else their own", () => {
+    expect(artifactRowScope("author", "author")).toEqual({ rows: "all" });
+    expect(artifactRowScope(null, "author")).toEqual({ rows: "all" });
+    expect(artifactRowScope("member", "author")).toEqual({ rows: "viewer", viewerId: "member" });
+    // A site whose publishing run recorded no author has nobody reading all.
+    expect(artifactRowScope("member", null)).toEqual({ rows: "viewer", viewerId: "member" });
+  });
+
+  it("names the viewer a scope limits a read to", () => {
+    expect(viewerOf({ rows: "all" })).toBeNull();
+    expect(viewerOf({ rows: "viewer", viewerId: "member" })).toBe("member");
   });
 });

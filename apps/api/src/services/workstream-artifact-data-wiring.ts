@@ -18,16 +18,41 @@ import type { Env } from "../env";
 import { createConversationResourceLinks } from "../runtime/resource-port";
 import { loadVisibleWorkstreamResourcesByIds } from "./workstream-resource-visibility";
 import { durableObjectStubForArtifact, workspacePlacementAffinity } from "../lib/durable-object-namespace";
+import { artifactRowScope } from "../artifacts/read-only-sql";
 import type {
   ArtifactDataHost,
   ArtifactDataToolContext,
   ResolvedArtifact,
 } from "./workstream-artifact-data-tools";
 
+/**
+ * Who a run reads a site's data as: the member sending the input that
+ * continues a Sidekick run, `null` for an unattended Sidekick run or a
+ * background agent one started, and otherwise the user the run runs as.
+ */
+export function artifactDataReader(input: {
+  executionPrincipal: { type: string; userId?: string | undefined };
+  automationRun?: unknown;
+  automationDelegation?: unknown;
+  automationContinuation?: { senderUserId?: string | undefined } | undefined;
+}): string | null {
+  if (input.automationContinuation) return input.automationContinuation.senderUserId ?? null;
+  if (input.automationRun || input.automationDelegation) return null;
+  return input.executionPrincipal.type === "user" ? input.executionPrincipal.userId ?? null : null;
+}
+
 export interface ArtifactDataWiringInput {
   workspaceId: string;
   workstreamId: string;
   principal: ExecutionPrincipal;
+  /**
+   * The person this run reads as, or `null` for an unattended run (a Sidekick
+   * run nobody is typing into, a background agent one started, an
+   * Organization principal), which reads every row because its job is
+   * usually the whole data set: a digest, a tally, a refresh. A member typing
+   * into a Sidekick's wizard or run reads as that member.
+   */
+  reader: string | null;
 }
 
 export function createArtifactDataToolContext(
@@ -66,11 +91,15 @@ export function createArtifactDataToolContext(
         stateful: number;
       }>();
       if (!row) return null;
+      // The resource row records who the publishing run ran as.
+      const author = typeof match.uploaded_by_user_id === "string" ? match.uploaded_by_user_id : null;
+      const scope = artifactRowScope(input.reader, author);
       return {
         artifactId: row.artifact_id,
         slug: match.slug,
         mode: row.mode === "active" ? "active" : "static",
         stateful: row.stateful === 1,
+        scope,
       };
     },
 

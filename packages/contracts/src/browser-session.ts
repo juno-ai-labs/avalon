@@ -4,6 +4,7 @@ import { SessionSchema, WorkspaceAttentionSchema, WorkspaceIdSchema, WorkspaceSc
 import { ConfiguredRegionSchema } from "./regions";
 import { IdSchema } from "./identifiers";
 import { HttpsUrlSchema } from "./url-schemas";
+import { ArtifactHostnameStubSchema } from "./artifacts";
 
 /** Browser metadata deliberately excludes bearer and refresh credentials. */
 export const BrowserSessionSchema = SessionSchema.pick({ user: true, workspace: true, impersonator: true, expiresAt: true });
@@ -14,6 +15,13 @@ export const BrowserWorkspaceAttentionSchema = z.object({
   attention: z.array(z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema, attention: WorkspaceAttentionSchema })),
 });
 export type BrowserWorkspaceAttention = z.infer<typeof BrowserWorkspaceAttentionSchema>;
+/** A site's hostname stub, sent by the browser client's site-opening page. */
+export const BrowserSiteResolveSchema = z.strictObject({ hostnameStub: ArtifactHostnameStubSchema });
+/**
+ * The organization and resource behind a site, answered only to someone who can
+ * read it, so the page can open that organization and then the site.
+ */
+export const BrowserSiteResolutionSchema = z.strictObject({ workspaceId: WorkspaceIdSchema, resourceId: IdSchema });
 /** Asks Global to open a workspace in another deployment for this browser. */
 export const BrowserWorkspaceActivateSchema = z.strictObject({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema });
 /**

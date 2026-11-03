@@ -162,6 +162,29 @@ describe("skills in a run", () => {
     expect(toolNames(bodies[1]!)).not.toContain("write_file");
   });
 
+  it("offers the task skills to a run with no plugins, and loads the wizard section with the report skill", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const responses = [
+      toolCallResponse("load_skill", { name: "reporting-on-data" }),
+      textResponse("Mapping the sources first."),
+    ];
+    const fetcher: typeof fetch = async (_request, init) => {
+      bodies.push(providerRequestView(JSON.parse(String(init?.body))) as Record<string, unknown>);
+      return responses.shift()!;
+    };
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      skills: [...BUILT_IN_SKILLS],
+      plugins: [],
+    })).resolves.toMatchObject({ status: "completed" });
+
+    expect(systemPrompt(bodies[0]!)).toContain("reporting-on-data:");
+    expect(systemPrompt(bodies[0]!)).toContain("creating-an-app:");
+    expect(systemPrompt(bodies[1]!)).toContain('<skill_content name="reporting-on-data">');
+    expect(systemPrompt(bodies[1]!)).toContain("## In a Sidekick wizard: map the data, then plan");
+  });
+
   it("offers seen-item tracking with Tables without requiring Sidekick authoring tools", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const responses = [
@@ -707,7 +730,7 @@ describe("built-in skills", () => {
     expect(body).toContain("x-rally-viewer-name");
     expect(body).toContain("Sites are public by default");
     expect(body).toContain("A static site cannot perform this check");
-    expect(body).toContain("Rally refuses unsafe methods");
+    expect(body).toContain("your code decides what they may do");
     expect(body).toContain("social-preview.png");
     expect(body).toContain("1200×630");
     expect(body).toContain("summary_large_image");

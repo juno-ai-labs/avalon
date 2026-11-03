@@ -64,6 +64,20 @@ export const ARTIFACT_STATIC_ENTRY = "index.html";
 export const ARTIFACT_STORAGE_CLASS_NAME = "SiteData";
 
 /**
+ * The column that makes a stateful site's table **private to each viewer**.
+ *
+ * A convention rather than a declaration because a stateful site has no
+ * manifest field for its schema: the model writes `CREATE TABLE` in its own
+ * class. The name states its effect rather than its content, so a model
+ * choosing it knows it is making rows private, and a model that never read
+ * the rule does not type it by accident; a generic name like `viewer_id`
+ * failed both ways. A table without it is shared, and every reader sees all
+ * its rows. Shared here so the skills that teach it and the reads that filter
+ * on it cannot drift apart.
+ */
+export const ARTIFACT_VIEWER_COLUMN = "private_to_viewer";
+
+/**
  * The path prefix the server module never sees.
  *
  * Everything Rally serves on an artifact's own origin that is *not* artifact
@@ -74,6 +88,70 @@ export const ARTIFACT_STORAGE_CLASS_NAME = "SiteData";
  * a frozen module routes on the paths it was written against.
  */
 export const ARTIFACT_RESERVED_PREFIX = "/__rally";
+
+/**
+ * The site's own sign-in entry: `/__rally/sign-in?return=<path>`.
+ *
+ * Served by the artifact Worker before any hostname lookup, so it is the same
+ * answer for every host and says nothing about what exists. It sends the
+ * person to the browser client's site-opening page, which signs them in if
+ * needed and opens the site back at `return`.
+ */
+export const ARTIFACT_SIGN_IN_PATH = `${ARTIFACT_RESERVED_PREFIX}/sign-in`;
+
+/**
+ * Reduce a caller-supplied return target to a path on this site.
+ *
+ * Anything that is not a plain same-origin path, or that points back into
+ * Rally's reserved prefix, becomes `/`: the value arrives in a URL anyone can
+ * craft, and following it anywhere else would make every artifact host an
+ * open redirect.
+ */
+export function artifactReturnPath(raw: string | null | undefined): string {
+  // A backslash reads as a slash to a browser, and a control character can
+  // split a header; neither belongs in a path worth returning to.
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")
+    || [...raw].some((character) => character === "\\" || character.charCodeAt(0) < 0x20)) return "/";
+  let parsed: URL;
+  try { parsed = new URL(raw, "https://artifact.invalid"); } catch { return "/"; }
+  // Checked again after parsing: `/a/..//evil.example` normalizes to a path
+  // that starts with `//`, which a browser follows to another host.
+  if (parsed.origin !== "https://artifact.invalid" || parsed.pathname.startsWith("//")) return "/";
+  // A prior version's mount is a page of the site; every other reserved path
+  // is Rally's own and would loop back into sign-in.
+  const priorVersion = new RegExp(`^${ARTIFACT_RESERVED_PREFIX}/v[0-9]+(/|$)`, "u").test(parsed.pathname);
+  if (!priorVersion && (parsed.pathname === ARTIFACT_RESERVED_PREFIX || parsed.pathname.startsWith(`${ARTIFACT_RESERVED_PREFIX}/`))) return "/";
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+/**
+ * The browser client's page that signs a person in and opens a site:
+ * `/app/sites/<region>/<hostname stub>/<return path, encoded as one segment>`.
+ *
+ * Under `/app/` because the browser client's sign-in carries an `/app/` path
+ * through email and Google and lands back on it; it carries only the path,
+ * which is why the return path, query included, is one encoded segment.
+ */
+export function artifactSiteOpenPath(region: string, hostnameStub: string, returnPath: string): string {
+  return `/app/sites/${encodeURIComponent(region)}/${encodeURIComponent(hostnameStub)}/${encodeURIComponent(artifactReturnPath(returnPath))}`;
+}
+
+/** The parts of an `artifactSiteOpenPath`, or `null` for any other path. */
+export function parseArtifactSiteOpenPath(pathname: string): { region: string; hostnameStub: string; returnPath: string } | null {
+  const match = /^\/app\/sites\/([^/]+)\/([^/]+)(?:\/([^/]*))?$/u.exec(pathname);
+  if (!match) return null;
+  try {
+    const hostnameStub = decodeURIComponent(match[2]!);
+    if (!ArtifactHostnameStubSchema.safeParse(hostnameStub).success) return null;
+    return {
+      region: decodeURIComponent(match[1]!),
+      hostnameStub,
+      returnPath: artifactReturnPath(match[3] ? decodeURIComponent(match[3]) : "/"),
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * The viewer identity an authenticated Rally request carries into artifact code.

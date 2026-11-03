@@ -22,6 +22,7 @@ import {
   asArtifactId,
 } from "@rally/contracts";
 
+import { artifactRowScope } from "../artifacts/read-only-sql";
 import { artifactHostDOName } from "../durable-objects/names";
 import type { AuthContext, Env, RequestMembershipObservation } from "../env";
 import { AuthorizationService } from "./authorization-service";
@@ -96,7 +97,12 @@ export class ArtifactOpenService {
       artifactHostDOName(this.env.AVALON_REGION, asArtifactId(row.artifact_id)),
       affinity,
     );
-    return { row, host };
+    // The author is whoever the publishing run ran as, which a Sidekick or
+    // Organization publish may leave unset, in which case nobody reads every
+    // row here.
+    const author = metadata.resource.uploaded_by_user_id;
+    const scope = artifactRowScope(this.auth.userId, typeof author === "string" ? author : null);
+    return { row, host, scope };
   }
 
   /**
@@ -183,9 +189,9 @@ export class ArtifactOpenService {
   async describeData(resourceId: string): Promise<{
     tables: { name: string; columns: { name: string; type: string }[]; rowCount: number }[];
   }> {
-    const { row, host } = await this.resolveAuthorized(resourceId);
+    const { row, host, scope } = await this.resolveAuthorized(resourceId);
     if (row.stateful !== 1) return { tables: [] };
-    return await host.describeData();
+    return await host.describeData(scope);
   }
 
   /**
@@ -199,9 +205,9 @@ export class ArtifactOpenService {
     rows: Record<string, unknown>[];
     csv: string;
   }> {
-    const { row, host } = await this.resolveAuthorized(resourceId);
+    const { row, host, scope } = await this.resolveAuthorized(resourceId);
     if (row.stateful !== 1) return { rows: [], csv: "" };
-    const page = await host.pageData(table, offset, DATA_PAGE_ROWS);
+    const page = await host.pageData(table, offset, DATA_PAGE_ROWS, scope);
     if (!page.ok) {
       throw new ApiError(404, "artifact_table_not_found", "That table is not part of this site's data.");
     }

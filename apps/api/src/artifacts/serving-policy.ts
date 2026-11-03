@@ -138,13 +138,13 @@ export type FetchMetadataVerdict = "same_origin" | "top_level" | "anonymous_read
  * place it can be closed once, for every artifact, without trusting
  * model-written handlers to defend themselves.
  *
- * Public viewing changes the read half of that rule, not the credential half.
- * A `GET` or `HEAD` from anywhere may reach the artifact, but only as
- * `anonymous_read`: the serving Worker ignores any cookie and injects no
- * viewer headers. Unsafe requests still require exact same-origin browser
- * metadata. This makes public pages and unfurl crawlers work without letting a
- * sibling artifact exercise another artifact's handler with the victim's
- * identity.
+ * Only `same_origin` and `top_level` may carry an identity. Every other
+ * request still reaches the artifact, but anonymous: the serving Worker
+ * ignores any cookie and injects no viewer headers, so public pages, unfurl
+ * crawlers and public submissions work without letting a sibling artifact
+ * exercise another artifact's handler with the victim's identity.
+ * `anonymous_read` and `refused` differ only at `/__rally/redeem`, which
+ * refuses the latter outright.
  */
 export function classifyFetchMetadata(
   request: Request,

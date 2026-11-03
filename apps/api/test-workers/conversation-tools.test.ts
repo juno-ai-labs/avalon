@@ -31,6 +31,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   artifactAssetKey,
+  asArtifactId,
   agentIdForAddress,
   asAutomationId,
   asSubstreamId,
@@ -53,6 +54,8 @@ import { AuthorizationService } from "../src/services/authorization-service";
 import { projectAuthorization } from "../src/services/authorization-projection-service";
 import { validateAttachmentToolReceiptReplay } from "../src/services/attachment-tool-receipts";
 import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
+import { resolveSiteForViewer } from "../src/services/artifact-site-resolution";
+import { artifactHostDOName } from "../src/durable-objects/names";
 import { ConversationMergeService } from "../src/services/conversation-merge-service";
 import { createAutomation } from "../src/services/automation-service";
 import {
@@ -892,12 +895,14 @@ describe("Sidekick resource reads by ID", () => {
     } });
     const observed = new Proxy(runtime, { get: (target, key) => key === "DB" ? database : Reflect.get(target, key) });
     const context = createArtifactDataToolContext(observed, {
-      workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal: { type: "user", userId: AUTHOR_ID },
+      workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal: { type: "user", userId: AUTHOR_ID }, reader: null,
     });
     for (const reference of [resourceId, "calendar"]) {
       calls.length = 0;
       statements.length = 0;
-      await expect(context.resolveArtifact(reference)).resolves.toEqual({ artifactId, slug: "calendar", mode: "active", stateful: true });
+      await expect(context.resolveArtifact(reference)).resolves.toEqual({
+        artifactId, slug: "calendar", mode: "active", stateful: true, scope: { rows: "all" },
+      });
       expect(calls.filter((call) => call === "authorizationResourceFacts")).toEqual(["authorizationResourceFacts"]);
       expect(statements.filter((sql) => /FROM (resources|artifact_registry)\b/u.test(sql))).toHaveLength(reference === "calendar" ? 1 : 0);
     }
@@ -907,6 +912,77 @@ describe("Sidekick resource reads by ID", () => {
         COLLEAGUE_ID, resourceId);
     });
     await expect(context.resolveArtifact("calendar")).resolves.toBeNull();
+  });
+
+  it("limits a member who did not publish a site to their own rows, and nobody else", async () => {
+    // The author and a Sidekick read every row; a colleague who can see the
+    // site reads only their own rows in its per-viewer tables. The author is
+    // whoever the publishing run ran as, `uploaded_by_user_id`.
+    await seedSidekick("0");
+    const resourceId = await source();
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId, attachedByUserId: AUTHOR_ID });
+    const artifactId = crypto.randomUUID();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET resource_type = 'generated_site', slug = 'journal' WHERE id = ?", resourceId);
+      state.storage.sql.exec(`INSERT INTO artifact_registry
+        (artifact_id, workspace_id, resource_id, workstream_id, mode, stateful, current_version, manifest_ref, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'active', 1, 1, 'test-manifest', ?, ?)`,
+      artifactId, WORKSPACE_ID, resourceId, ROOM_ID, Date.parse(NOW), Date.parse(NOW));
+    });
+    await projectResourceAccess();
+    const scopeFor = async (reader: string | null) => (await createArtifactDataToolContext(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID), {
+      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, principal: { type: "user", userId: AUTHOR_ID }, reader,
+    }).resolveArtifact(resourceId))?.scope;
+    expect(await scopeFor(AUTHOR_ID)).toEqual({ rows: "all" });
+    // The same reader, once someone else published the site.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("UPDATE resources SET uploaded_by_user_id = ? WHERE id = ?", COLLEAGUE_ID, resourceId);
+    });
+    await projectResourceAccess();
+    expect(await scopeFor(AUTHOR_ID)).toEqual({ rows: "viewer", viewerId: AUTHOR_ID });
+    // An unattended run reads every row.
+    expect(await scopeFor(null)).toEqual({ rows: "all" });
+  });
+
+  it("finds a site's organization from its hostname only for someone who can read it", async () => {
+    // A protected site sends a signed-out visitor to sign in; the browser then
+    // knows only the hostname. The answer names the organization and resource
+    // for a reader, is 403 for someone who cannot read it, and 404 for no site.
+    await seedSidekick("0");
+    const resourceId = await source();
+    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
+      resourceId, attachedByUserId: AUTHOR_ID });
+    await projectResourceAccess();
+    const artifactId = crypto.randomUUID();
+    const stub = "level-luminous-sequential-schrodinger";
+    await TEST_ENV.PLATFORM_DB.prepare(`CREATE TABLE IF NOT EXISTS artifact_hostname_routes (
+      hostname_stub TEXT PRIMARY KEY, region TEXT NOT NULL, artifact_id TEXT NOT NULL, created_at TEXT NOT NULL,
+      UNIQUE(region, artifact_id))`).run();
+    await TEST_ENV.PLATFORM_DB.prepare("INSERT INTO artifact_hostname_routes VALUES (?, ?, ?, ?)")
+      .bind(stub, TEST_ENV.AVALON_REGION, artifactId, NOW).run();
+    await TEST_ENV.ARTIFACT_HOSTS.get(TEST_ENV.ARTIFACT_HOSTS.idFromName(
+      artifactHostDOName(TEST_ENV.AVALON_REGION, asArtifactId(artifactId)),
+    )).recordPublish({
+      artifactId, workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, resourceId, region: TEST_ENV.AVALON_REGION,
+      manifest: {
+        version: 1, artifactId: asArtifactId(artifactId), artifactVersion: 1, mode: "static", stateful: false,
+        serverModuleSha256: null, totalBytes: 1, publishedAt: NOW,
+        assets: [{ path: "index.html", contentType: "text/html; charset=utf-8", sizeBytes: 1, sha256: "0".repeat(64) }],
+      },
+    });
+
+    await expect(resolveSiteForViewer(TEST_ENV, AUTHOR_ID, stub)).resolves.toEqual({ workspaceId: WORKSPACE_ID, resourceId });
+    // Someone outside the Organization.
+    await expect(resolveSiteForViewer(TEST_ENV, OUTSIDER_ID, stub)).rejects.toMatchObject({ status: 403, code: "site_access_denied" });
+    await expect(resolveSiteForViewer(TEST_ENV, AUTHOR_ID, "no-such-site-anywhere-here")).rejects.toMatchObject({ status: 404, code: "site_not_found" });
+    // A member of the Organization who is not in the site's Channel is told
+    // the site exists, not that it is missing.
+    await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
+      workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID, accessClass: "member", role: "member", status: "active",
+      incarnation: "outsider", revision: 1,
+    } });
+    await expect(resolveSiteForViewer(TEST_ENV, OUTSIDER_ID, stub)).rejects.toMatchObject({ status: 403, code: "site_access_denied" });
   });
 
   it("does not turn read access to an unattached resource into permission to forward it", async () => {

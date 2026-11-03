@@ -384,41 +384,6 @@ describe("artifact serving hostname routes", () => {
     expect(currentState).toHaveBeenCalledOnce();
   });
 
-  it("keeps unsafe methods behind a valid Rally viewer session", async () => {
-    const forwarded = vi.fn(async () => Response.json({ ok: true }));
-    const { env, checkSession, currentState } = fixture({
-      hostname_stub: STUB,
-      artifact_id: ARTIFACT,
-      region: "global",
-    }, {
-      currentStateResult: {
-        artifactId: ARTIFACT,
-        workspaceId: "00000000-0000-7000-8000-0000000000c1",
-        workstreamId: "00000000-0000-7000-8000-0000000000d1",
-        resourceId: "00000000-0000-7000-8000-0000000000e1",
-        version: 1,
-        mode: "active",
-        stateful: false,
-        manifest: ACTIVE_MANIFEST,
-      },
-      loaderFetch: forwarded,
-    });
-    const origin = `https://${STUB}-g.rallyusercontent.test`;
-
-    const response = await artifactWorker.fetch(new Request(`${origin}/api/vote`, {
-      method: "POST",
-      headers: {
-        origin,
-        "sec-fetch-site": "same-origin",
-      },
-    }), env, context());
-
-    expect(response.status).toBe(401);
-    expect(checkSession).not.toHaveBeenCalled();
-    expect(currentState).toHaveBeenCalledOnce();
-    expect(forwarded).not.toHaveBeenCalled();
-  });
-
   it("keeps prior versions behind a valid Rally viewer session", async () => {
     const { env, checkSession } = fixture({
       hostname_stub: STUB,
@@ -640,5 +605,207 @@ describe("artifact serving hostname routes", () => {
     await artifactWorker.fetch(redeem(`${ARTIFACT}-g`), env, context());
     expect(readRoute).not.toHaveBeenCalled();
     expect(redeemCode).toHaveBeenCalledWith("one-shot");
+  });
+});
+
+describe("signing in from a site's own URL", () => {
+  const BROWSER = "https://app.rally.test";
+  const origin = `https://${STUB}-g.rallyusercontent.test`;
+  const route = { hostname_stub: STUB, artifact_id: ARTIFACT, region: "global" };
+  const signedOutState = {
+    artifactId: ARTIFACT,
+    workspaceId: "00000000-0000-7000-8000-0000000000c1",
+    workstreamId: "00000000-0000-7000-8000-0000000000d1",
+    resourceId: "00000000-0000-7000-8000-0000000000e1",
+    version: 1,
+    mode: "active",
+    stateful: false,
+    manifest: ACTIVE_MANIFEST,
+  };
+  /** A protected site's handler, as the skill teaches it: 401 with no viewer. */
+  const protectedHandler = async (request: Request) => request.headers.get("x-rally-viewer-id")
+    ? new Response("hello")
+    : new Response("Open this site from Rally.", { status: 401 });
+  const pageLoad = (path: string) => new Request(`${origin}${path}`, {
+    headers: { "sec-fetch-mode": "navigate", "sec-fetch-dest": "document", "sec-fetch-site": "none" },
+  });
+
+  it("sends the sign-in route to the browser client's site page without reading the route", async () => {
+    const { env, readRoute } = fixture(route);
+    const response = await artifactWorker.fetch(
+      new Request(`${origin}/__rally/sign-in?return=${encodeURIComponent("/rsvp?week=2")}`),
+      { ...env, BROWSER_APP_ORIGIN: BROWSER },
+      context(),
+    );
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location"))
+      .toBe(`${BROWSER}/app/sites/global/${STUB}/%2Frsvp%3Fweek%3D2`);
+    expect(readRoute).not.toHaveBeenCalled();
+  });
+
+  it("turns a protected site's 401 into sign-in for a page load, and only for one", async () => {
+    const { env } = fixture(route, { currentStateResult: signedOutState, loaderFetch: protectedHandler });
+    const withBrowser = { ...env, BROWSER_APP_ORIGIN: BROWSER };
+
+    const page = await artifactWorker.fetch(pageLoad("/journal?day=3"), withBrowser, context());
+    expect(page.status).toBe(303);
+    expect(page.headers.get("location")).toBe(`${BROWSER}/app/sites/global/${STUB}/%2Fjournal%3Fday%3D3`);
+
+    // A script's fetch keeps the handler's own 401, so the page can show its
+    // own sign-in prompt rather than receiving a redirect it cannot follow.
+    const script = await artifactWorker.fetch(new Request(`${origin}/api/entries`, {
+      headers: { "sec-fetch-mode": "cors", "sec-fetch-dest": "empty", "sec-fetch-site": "same-origin" },
+    }), withBrowser, context());
+    expect(script.status).toBe(401);
+
+    // With no browser client configured there is nowhere to send them.
+    expect((await artifactWorker.fetch(pageLoad("/"), env, context())).status).toBe(401);
+  });
+
+  it("shows a signed-in viewer the handler's own 401, rather than sign-in again", async () => {
+    const refuseEveryone = async () => new Response("Not for you.", { status: 401 });
+    const { env } = fixture(route, {
+      checkSessionResult: {
+        ok: true,
+        viewerId: "user-1",
+        viewerName: "Ada",
+        version: 1,
+        mode: "active",
+        stateful: false,
+        manifest: ACTIVE_MANIFEST,
+      },
+      loaderFetch: refuseEveryone,
+    });
+    const signedIn = new Request(`${origin}/`, {
+      headers: {
+        cookie: "__rally_artifact_session=secret",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+        "sec-fetch-site": "none",
+      },
+    });
+
+    const response = await artifactWorker.fetch(signedIn, { ...env, BROWSER_APP_ORIGIN: BROWSER }, context());
+    expect(response.status).toBe(401);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("does not send a viewer to sign in when their session could not be checked", async () => {
+    // Signing in again would return to the same failed check, so the person
+    // would go round sign-in forever.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { env } = fixture(route, {
+      checkSessionError: new Error("supervisor unavailable"),
+      currentStateResult: signedOutState,
+      loaderFetch: protectedHandler,
+    });
+    const withCookie = new Request(`${origin}/`, {
+      headers: {
+        cookie: "__rally_artifact_session=secret",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+        "sec-fetch-site": "none",
+      },
+    });
+
+    const response = await artifactWorker.fetch(withCookie, { ...env, BROWSER_APP_ORIGIN: BROWSER }, context());
+    expect(response.status).toBe(401);
+    expect(response.headers.get("location")).toBeNull();
+    warn.mockRestore();
+  });
+
+  it("answers the sign-in route with the neutral 404 when the browser origin is not a URL", async () => {
+    const { env } = fixture(route);
+    const response = await artifactWorker.fetch(
+      new Request(`${origin}/__rally/sign-in`),
+      { ...env, BROWSER_APP_ORIGIN: "not a url" },
+      context(),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it("returns a redeemed viewer to the path they asked for, and never off the site", async () => {
+    const { env, redeemCode } = fixture(route);
+    redeemCode.mockResolvedValue({ session: "s".repeat(43), expiresAt: Date.now() + 60_000 });
+    const redeemWith = (back: string) => artifactWorker.fetch(new Request(`${origin}/__rally/redeem`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "same-origin",
+      },
+      body: new URLSearchParams({ code: "one-shot", return: back }).toString(),
+    }), env, context());
+
+    expect((await redeemWith("/journal?day=3")).headers.get("location")).toBe("/journal?day=3");
+    expect((await redeemWith("https://evil.example/")).headers.get("location")).toBe("/");
+    expect((await redeemWith("//evil.example/")).headers.get("location")).toBe("/");
+  });
+});
+
+describe("submissions from people who are not signed in", () => {
+  const origin = `https://${STUB}-g.rallyusercontent.test`;
+  const route = { hostname_stub: STUB, artifact_id: ARTIFACT, region: "global" };
+  const state = {
+    artifactId: ARTIFACT,
+    workspaceId: "00000000-0000-7000-8000-0000000000c1",
+    workstreamId: "00000000-0000-7000-8000-0000000000d1",
+    resourceId: "00000000-0000-7000-8000-0000000000e1",
+    version: 1,
+    mode: "active",
+    stateful: false,
+    manifest: ACTIVE_MANIFEST,
+  };
+  const vote = (headers: Record<string, string>) => new Request(`${origin}/api/vote`, {
+    method: "POST",
+    headers: { "x-rally-viewer-id": "forged", ...headers },
+    body: "choice=yes",
+  });
+
+  it("reach every site's handler, from its own page or another site, with no identity", async () => {
+    const seen: (string | null)[] = [];
+    const forwarded = vi.fn(async (request: Request) => {
+      seen.push(request.headers.get("x-rally-viewer-id"));
+      return Response.json({ ok: true });
+    });
+    const { env } = fixture(route, { currentStateResult: state, loaderFetch: forwarded });
+
+    const own = await artifactWorker.fetch(vote({ origin, "sec-fetch-site": "same-origin" }), env, context());
+    const elsewhere = await artifactWorker.fetch(vote({ origin: "https://elsewhere.example", "sec-fetch-site": "cross-site" }), env, context());
+
+    expect([own.status, elsewhere.status]).toEqual([200, 200]);
+    // A forged viewer header is stripped, so the handler decides with no identity.
+    expect(seen).toEqual([null, null]);
+  });
+  it("never carry a signed-in viewer's identity from a sibling artifact", async () => {
+    // A sibling artifact is same-site, so the viewer's Lax cookie rides along
+    // on its POST. The handler must still see an anonymous request.
+    const forwarded = vi.fn(async (request: Request) => Response.json({
+      viewerId: request.headers.get("x-rally-viewer-id"),
+      cookie: request.headers.get("cookie"),
+    }));
+    const { env, checkSession } = fixture(route, {
+      currentStateResult: state,
+      checkSessionResult: {
+        ok: true,
+        viewerId: "user-1",
+        viewerName: "Ada",
+        version: 1,
+        mode: "active",
+        stateful: false,
+        manifest: ACTIVE_MANIFEST,
+      },
+      loaderFetch: forwarded,
+    });
+
+    const response = await artifactWorker.fetch(vote({
+      cookie: "__rally_artifact_session=secret",
+      origin: "https://other-g.rallyusercontent.test",
+      "sec-fetch-site": "same-site",
+    }), env, context());
+
+    expect(await response.json()).toEqual({ viewerId: null, cookie: null });
+    expect(checkSession).not.toHaveBeenCalled();
   });
 });
