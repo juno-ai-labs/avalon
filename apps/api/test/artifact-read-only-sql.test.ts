@@ -153,13 +153,13 @@ describe("limiting a read to one viewer's rows", () => {
   const prompts = { name: "prompts", sql: "CREATE TABLE prompts (body TEXT)", columns: ["body"] };
   const schema = { tables: [entries, prompts], views: [] };
   const scope = { schema, viewerId: "v-1" };
-  const shadow = `"entries" AS (SELECT rowid AS rowid, * FROM main."entries" WHERE "private_to_viewer" = 'v-1')`;
+  const shadow = `"entries" AS (SELECT * FROM main."entries" WHERE "private_to_viewer" = 'v-1')`;
   const scoped = (sql: string, input: Parameters<typeof scopeStatementToViewer>[1] = scope) => {
     const result = scopeStatementToViewer(sql, input);
     return result.admitted ? result.sql : `REFUSED: ${result.reason}`;
   };
 
-  it("shadows each private table with a CTE of the same name that keeps its rowid", () => {
+  it("shadows each private table with a CTE of the same name and the same columns", () => {
     expect(scoped("SELECT body FROM entries")).toBe(`WITH ${shadow} SELECT body FROM entries`);
   });
 
@@ -184,7 +184,7 @@ describe("limiting a read to one viewer's rows", () => {
     expect(result.endsWith("SELECT * FROM डायरी, notes📓")).toBe(true);
   });
 
-  it("treats a generated column as private, and leaves rowid out where a table has none", () => {
+  it("treats a generated column as private", () => {
     const generated = { name: "g", sql: "CREATE TABLE g (owner TEXT, private_to_viewer TEXT GENERATED ALWAYS AS (owner)) WITHOUT ROWID", columns: ["owner", "private_to_viewer"] };
     expect(scoped("SELECT * FROM g", { schema: { tables: [generated], views: [] }, viewerId: "v-1" }))
       .toBe(`WITH "g" AS (SELECT * FROM main."g" WHERE "private_to_viewer" = 'v-1') SELECT * FROM g`);
@@ -195,6 +195,12 @@ describe("limiting a read to one viewer's rows", () => {
     const content = { name: "notes_fts_content", sql: "CREATE TABLE 'notes_fts_content'(id INTEGER PRIMARY KEY, c0, c1)", columns: ["id", "c0", "c1"] };
     expect(scoped("SELECT * FROM notes_fts_content", { schema: { tables: [index, content], views: [] }, viewerId: "v-1" }))
       .toContain(`"notes_fts_content" AS (SELECT * FROM main."notes_fts_content" WHERE 0)`);
+  });
+
+  it("keeps a name that starts with a non-breaking space whole, as SQLite does", () => {
+    const spaced = { name: "\u00a0entries", sql: "CREATE TABLE \u00a0entries (private_to_viewer TEXT)", columns: ["private_to_viewer"] };
+    expect(scoped("SELECT * FROM main.\u00a0entries", { schema: { tables: [spaced], views: [] }, viewerId: "v-1" }).endsWith("SELECT * FROM \u00a0entries"))
+      .toBe(true);
   });
 
   it("leaves a schema name inside a string or a comment alone", () => {

@@ -49,6 +49,7 @@ export class SiteData extends DurableObject {
     ctx.storage.sql.exec("CREATE VIEW IF NOT EXISTS summary(summary) AS SELECT body FROM entries");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS generated_notes (owner TEXT, body TEXT, private_to_viewer TEXT GENERATED ALWAYS AS (owner) VIRTUAL)");
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS "डायरी" (private_to_viewer TEXT, body TEXT)');
+    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS "\u00a0spaced" (private_to_viewer TEXT, body TEXT)');
     ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(body, private_to_viewer)");
   }
   async fetch(request) {
@@ -58,6 +59,7 @@ export class SiteData extends DurableObject {
       this.ctx.storage.sql.exec("INSERT INTO entries (private_to_viewer, body) VALUES (?, ?)", viewer, url.searchParams.get("body"));
       this.ctx.storage.sql.exec("INSERT INTO generated_notes (owner, body) VALUES (?, ?)", viewer, url.searchParams.get("body"));
       this.ctx.storage.sql.exec('INSERT INTO "डायरी" (private_to_viewer, body) VALUES (?, ?)', viewer, url.searchParams.get("body"));
+      this.ctx.storage.sql.exec('INSERT INTO "\u00a0spaced" (private_to_viewer, body) VALUES (?, ?)', viewer, url.searchParams.get("body"));
       this.ctx.storage.sql.exec("INSERT INTO notes_fts (body, private_to_viewer) VALUES (?, ?)", url.searchParams.get("body"), viewer);
       return Response.json({ ok: true });
     }
@@ -304,7 +306,8 @@ describe("a stateful artifact's facet", () => {
       "SELECT summary FROM summary",
       "SELECT body FROM generated_notes",
       "SELECT body FROM main.डायरी",
-      "SELECT body FROM entries ORDER BY rowid",
+      "SELECT body FROM main.\u00a0spaced",
+      "SELECT body FROM (SELECT * FROM entries UNION ALL SELECT 'x', 'y' WHERE 0)",
       "SELECT body FROM notes_fts",
     ]) {
       const read = await host.queryData(sql, [], 10, VIEWER_ROWS);
