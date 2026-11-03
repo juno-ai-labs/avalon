@@ -302,7 +302,10 @@ function identifierTokens(sql: string): SqlToken[] {
   while (index < characters.length) {
     const character = characters[index]!;
     const next = characters[index + 1];
-    if (/\s/u.test(character)) { index += 1; continue; }
+    // SQLite's whitespace only. JavaScript's `\s` also matches U+00A0 and
+    // other Unicode spaces, which SQLite reads as part of a name; skipping
+    // them would split `main.\u00a0entries` and keep its qualifier.
+    if (" \t\n\f\r".includes(character)) { index += 1; continue; }
     if (character === "-" && next === "-") {
       while (index < characters.length && characters[index] !== "\n") index += 1;
       continue;
@@ -404,10 +407,9 @@ function viewAsCte(view: { name: string; sql: string }): string {
  * name**, filtered to the viewer. SQLite resolves an unqualified table name to
  * a CTE before the schema, through every subquery and every other CTE in the
  * statement, so the caller's query runs against a database that holds only
- * this viewer's rows. The shadow carries `rowid` where the table has one, so
- * `ORDER BY rowid` works, at the cost of an extra `rowid` column in a viewer's
- * `SELECT *`. FTS5's `MATCH`, `rank` and `bm25()` need the real table and do
- * not work against the shadow.
+ * this viewer's rows, with the same columns the author sees. A CTE has no
+ * `rowid`, so `rowid`/`oid`/`_rowid_` and FTS5's `MATCH`, `rank` and `bm25()`
+ * fail with an error against the shadow rather than answer differently.
  *
  * Three references would otherwise read past the shadow, and all three are
  * rewritten:
@@ -436,7 +438,7 @@ export function scopeStatementToViewer(
   const match = `${quoteIdentifier(VIEWER_COLUMN)} = ${sqlString(input.viewerId)}`;
   const shadows = [
     ...tables.filtered.map((table) =>
-      `${quoteIdentifier(table.name)} AS (SELECT ${table.rowid ? "rowid AS rowid, " : ""}* FROM main.${quoteIdentifier(table.name)} WHERE ${match})`),
+      `${quoteIdentifier(table.name)} AS (SELECT * FROM main.${quoteIdentifier(table.name)} WHERE ${match})`),
     ...tables.hidden.map((name) => `${quoteIdentifier(name)} AS (SELECT * FROM main.${quoteIdentifier(name)} WHERE 0)`),
     ...views.map((view) => viewAsCte({ name: view.name, sql: unqualifyShadowed(view.sql, shadowed) })),
   ].join(", ");
