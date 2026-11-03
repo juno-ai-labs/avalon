@@ -6,8 +6,8 @@
  * from. The platform route table maps that to an artifact and deliberately
  * holds no workspace, so the artifact's own supervisor supplies the workspace
  * and resource it was published under. Ordinary resource authorization then
- * decides whether this person may read it, so the answer is the same 404 for
- * a site that does not exist and one they cannot see.
+ * decides whether this person may read it: 404 for a site that does not
+ * exist, 403 for one that does and they cannot read.
  *
  * See `docs/live-web-artifacts.md`.
  */
