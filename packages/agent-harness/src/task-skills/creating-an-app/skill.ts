@@ -46,6 +46,11 @@ does. Pick the first of these that fits:
 3. **Signed in, private.** The app saves what people add and each person sees
    only their own: a journal, a personal tracker, saved settings. You and any
    Sidekick can still see everyone's.
+4. **Signed in, anonymous.** The app collects what people add but must never
+   record who added what: an anonymous poll, anonymous feedback, an anonymous
+   survey. People still open it from Rally to answer, so each person can be
+   limited to one answer, but the stored answers carry no identity. Results
+   are shared.
 
 An app that saves what people add always needs sign-in: Rally lets anyone
 view a site, but only people who open it from Rally can add or change
@@ -56,7 +61,14 @@ who sees it.** Then ask one question, right away and before writing any
 files: should everyone see everyone's entries (shared), or should each person
 see only their own (private)? Skip it when the request answers it:
 "everyone sees the results" is shared; "only their own", "personal" or
-"private" is private.
+"private" is private; "anonymous" is anonymous. A poll or survey whose
+request does not mention anonymity is shared.
+
+For **signed in, anonymous**, follow the anonymous section of
+\`building-live-sites\`: store answers as counts or as rows with no viewer
+id, and, for one answer each, record who has answered in a separate table
+that holds no answers. Tell the person in your reply that people answer from
+Rally, and that nobody, the site's author included, can see who chose what.
 
 For **signed in, private**, every table that holds one person's data gets a
 \`private_to_viewer\` column holding their viewer id. Rally then keeps those
@@ -96,7 +108,7 @@ needs it.
 export const CREATING_AN_APP_SKILL: HarnessSkill = {
   name: "creating-an-app",
   description:
-    "What \"create an app\" means in Rally: a live web site, never a native iOS or Android app, open by default, with sign-in only when it saves what people add, and whether those entries are shared or private.",
+    "What \"create an app\" means in Rally: a live web site, never a native iOS or Android app, open by default, with sign-in only when it saves what people add, and whether those entries are shared, private or anonymous.",
   whenToUse:
     "When someone asks to create, make or build an app, tool or small program for people to use.",
   body: CREATING_AN_APP_BODY,
