@@ -662,6 +662,68 @@ describe("signing in from a site's own URL", () => {
     expect((await artifactWorker.fetch(pageLoad("/"), env, context())).status).toBe(401);
   });
 
+  it("shows a signed-in viewer the handler's own 401, rather than sign-in again", async () => {
+    const refuseEveryone = async () => new Response("Not for you.", { status: 401 });
+    const { env } = fixture(route, {
+      checkSessionResult: {
+        ok: true,
+        viewerId: "user-1",
+        viewerName: "Ada",
+        version: 1,
+        mode: "active",
+        stateful: false,
+        manifest: ACTIVE_MANIFEST,
+      },
+      loaderFetch: refuseEveryone,
+    });
+    const signedIn = new Request(`${origin}/`, {
+      headers: {
+        cookie: "__rally_artifact_session=secret",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+        "sec-fetch-site": "none",
+      },
+    });
+
+    const response = await artifactWorker.fetch(signedIn, { ...env, BROWSER_APP_ORIGIN: BROWSER }, context());
+    expect(response.status).toBe(401);
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("does not send a viewer to sign in when their session could not be checked", async () => {
+    // Signing in again would return to the same failed check, so the person
+    // would go round sign-in forever.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { env } = fixture(route, {
+      checkSessionError: new Error("supervisor unavailable"),
+      currentStateResult: signedOutState,
+      loaderFetch: protectedHandler,
+    });
+    const withCookie = new Request(`${origin}/`, {
+      headers: {
+        cookie: "__rally_artifact_session=secret",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+        "sec-fetch-site": "none",
+      },
+    });
+
+    const response = await artifactWorker.fetch(withCookie, { ...env, BROWSER_APP_ORIGIN: BROWSER }, context());
+    expect(response.status).toBe(401);
+    expect(response.headers.get("location")).toBeNull();
+    warn.mockRestore();
+  });
+
+  it("answers the sign-in route with the neutral 404 when the browser origin is not a URL", async () => {
+    const { env } = fixture(route);
+    const response = await artifactWorker.fetch(
+      new Request(`${origin}/__rally/sign-in`),
+      { ...env, BROWSER_APP_ORIGIN: "not a url" },
+      context(),
+    );
+    expect(response.status).toBe(404);
+  });
+
   it("returns a redeemed viewer to the path they asked for, and never off the site", async () => {
     const { env, redeemCode } = fixture(route);
     redeemCode.mockResolvedValue({ session: "s".repeat(43), expiresAt: Date.now() + 60_000 });
@@ -715,5 +777,35 @@ describe("submissions from people who are not signed in", () => {
     expect([own.status, elsewhere.status]).toEqual([200, 200]);
     // A forged viewer header is stripped, so the handler decides with no identity.
     expect(seen).toEqual([null, null]);
+  });
+  it("never carry a signed-in viewer's identity from a sibling artifact", async () => {
+    // A sibling artifact is same-site, so the viewer's Lax cookie rides along
+    // on its POST. The handler must still see an anonymous request.
+    const forwarded = vi.fn(async (request: Request) => Response.json({
+      viewerId: request.headers.get("x-rally-viewer-id"),
+      cookie: request.headers.get("cookie"),
+    }));
+    const { env, checkSession } = fixture(route, {
+      currentStateResult: state,
+      checkSessionResult: {
+        ok: true,
+        viewerId: "user-1",
+        viewerName: "Ada",
+        version: 1,
+        mode: "active",
+        stateful: false,
+        manifest: ACTIVE_MANIFEST,
+      },
+      loaderFetch: forwarded,
+    });
+
+    const response = await artifactWorker.fetch(vote({
+      cookie: "__rally_artifact_session=secret",
+      origin: "https://other-g.rallyusercontent.test",
+      "sec-fetch-site": "same-site",
+    }), env, context());
+
+    expect(await response.json()).toEqual({ viewerId: null, cookie: null });
+    expect(checkSession).not.toHaveBeenCalled();
   });
 });

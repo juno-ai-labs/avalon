@@ -857,7 +857,7 @@ prefix-aware, and a `sidekick`-prefixed run gets the same sentence with **no**
 `suggestedCall` — Sidekick runs hold no Terminal, so naming that tool would
 trade one dead end for a worse one.
 
-Two further work-stream tools read a **live artifact's stored data**, and are on
+Three further work-stream tools read a **live artifact's stored data**, and are on
 this plugin rather than Terminal's deliberately: reading a poll's tally must not
 require a sandbox, and the run answering a data question is usually not the run
 that built the page.
@@ -866,8 +866,17 @@ that built the page.
 | --- | --- | --- |
 | `describe_artifact_data` | `{ resource: string }` — a site resource's slug or id | `{ resource, slug, mode, tables: [{ name, columns: [{ name, type }], rowCount }] }`. Discovery first: the schema is a model-designed one this run may never have seen. |
 | `query_artifact_data` | `{ resource: string, sql: string, params?: (string \| number \| null)[] }` | `{ resource, columns, rows, rowCount, truncated }`; at most 200 rows, with `truncated` rather than a silent cut. A stored blob is replaced by `<n bytes>`. |
+| `read_artifact_table` | `{ resource: string, table: string, offset?: number }` | `{ resource, table, rows, nextOffset?, rowsShown? }`; one page of at most 200 rows, with `nextOffset` when a full page came back. `table_refused` names a table the site does not have. |
 
-Both are `mode: "read"`, `idempotency: "safe"`. **Read-only is enforced on the
+A member who did not publish the site reads only their own rows of a table
+with a `private_to_viewer` column, and `describe_artifact_data` and
+`read_artifact_table` say so in `rowsShown`. On a site with such a table, a
+member's `query_artifact_data` fails with `private_rows`, pointing at
+`read_artifact_table`, because free SQL cannot be limited to one person's
+rows. The site's author and unattended Sidekick runs read and query every
+row; `docs/live-web-artifacts.md` owns the rule.
+
+All three are `mode: "read"`, `idempotency: "safe"`. **Read-only is enforced on the
 statement, not by the transaction** — an always-rollback transaction is not an
 authorization boundary, because caller SQL can commit mid-payload — so admission
 is positive: exactly one statement, parsing as a `SELECT`, with a `WITH` clause's
@@ -1253,6 +1262,24 @@ future agent tool or plugin, not just this family.
   untrusted.
 
 ## Changelog
+
+### 2026-11-03 — `read_artifact_table`, and a member reads only their own private rows
+
+**What changed:** A third artifact data tool pages one table. A member who
+did not publish a site sees only their own rows of its private tables, and
+`query_artifact_data` refuses them free SQL on such a site with its own code,
+`private_rows`.
+
+**Why:** Sites now keep per-person rows (`private_to_viewer`), and free SQL
+cannot be limited to one person's rows without a rewriter, which leaked each
+time review found a new SQLite spelling.
+
+**Considered and rejected:** Reusing `sql_error` for the refusal: the SQL is
+fine, and a model branching on the code would rewrite the query instead of
+switching tools.
+
+**Consequences:** On a site with any private table, a member answers data
+questions a page at a time.
 
 ### 2026-10-31 — A model may author a tool's input schema, within the shape
 

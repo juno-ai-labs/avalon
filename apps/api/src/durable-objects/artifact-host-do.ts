@@ -53,18 +53,17 @@ import {
   FACET_HOST_REVISION,
   FACET_NAME,
 } from "../artifacts/facet-host";
-import { ASSET_SHIM_MODULE, ASSET_SHIM_SOURCE } from "../artifacts/asset-shim";
+import { ARTIFACT_COMPATIBILITY_DATE, ASSET_SHIM_MODULE, ASSET_SHIM_SOURCE } from "../artifacts/asset-shim";
 import {
   admitReadOnlyStatement,
   admitTableName,
   quoteIdentifier,
   VIEWER_COLUMN,
+  viewerOf,
   viewerTables,
   type ArtifactRowScope,
   type ArtifactSchema,
 } from "../artifacts/read-only-sql";
-
-export type { ArtifactRowScope };
 import {
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
@@ -186,15 +185,6 @@ export const ARTIFACT_OPEN_CODE_LIFETIME_MS = 60_000;
  */
 const ERROR_LOG_ENTRIES = 50;
 
-/**
- * The compatibility date model-authored artifact code runs under.
- *
- * Pinned rather than tracking the platform's newest, because an artifact is
- * published once and served for as long as anyone opens it: a date that moved
- * underneath it would change the runtime semantics of code nobody is going to
- * revisit. Advancing it is a deliberate change with its own reason.
- */
-const ARTIFACT_COMPATIBILITY_DATE = "2026-08-01";
 
 /**
  * The Rally-authored methods the facet answers, which the model's class never
@@ -290,7 +280,7 @@ export type ArtifactRow = Record<string, string | number | boolean | null | Arra
 export type ArtifactQueryResult =
   | { ok: true; columns: string[]; rows: ArtifactRow[]; rowCount: number; truncated: boolean }
   | { ok: false; reason: "no_artifact_data" }
-  | { ok: false; reason: "sql_refused"; detail: string };
+  | { ok: false; reason: "sql_refused" | "private_rows"; detail: string };
 
 export type ArtifactPageResult =
   | { ok: true; rows: ArtifactRow[] }
@@ -645,7 +635,8 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     if (!state || state.stateful !== 1) return { tables: [] };
     const host = await this.facetFor(state);
     const described = await host.rallyDescribe();
-    if (scope.rows === "all") return described;
+    const viewerId = viewerOf(scope);
+    if (viewerId === null) return described;
     const scoped = viewerTables(await host.rallySchema());
     const filtered = new Set(scoped.filtered.map((table) => table.name));
     const hidden = new Set(scoped.hidden);
@@ -656,7 +647,7 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       } else if (filtered.has(table.name)) {
         const counted = await host.rallyQuery(
           `SELECT COUNT(*) AS n FROM ${quoteIdentifier(table.name)} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ?`,
-          [scope.viewerId],
+          [viewerId],
           1,
         );
         tables.push({ ...table, rowCount: Number(counted.rows[0]?.n ?? 0) });
@@ -694,16 +685,16 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     if (!admission.admitted) return { ok: false, reason: "sql_refused", detail: admission.reason };
     const host = await this.facetFor(state);
     const statement = admission.sql;
-    if (scope.rows === "viewer") {
+    if (viewerOf(scope) !== null) {
       // Free SQL cannot be limited to one viewer's rows without rewriting it,
       // so a member runs it only on a site that keeps no private rows. Paging a
       // table is filtered on the column and stays available.
       const scoped = viewerTables(await host.rallySchema());
-      if (scoped.filtered.length > 0 || scoped.hidden.length > 0) {
+      if (scoped.filtered.length > 0) {
         return {
           ok: false,
-          reason: "sql_refused",
-          detail: "This site keeps private rows, so only its author and Sidekicks can run free-form queries. Read a table with read_artifact_table instead, which returns your own rows.",
+          reason: "private_rows",
+          detail: "This site keeps private rows, so free-form queries are not available here. Read a table with read_artifact_table instead: it returns every row of shared tables and only your own rows of private ones.",
         };
       }
     }
@@ -721,13 +712,14 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
     // real table in this facet never reaches SQL at all.
     const admitted = admitTableName(table, await host.rallyTableNames());
     if (!admitted.admitted) return { ok: false, reason: "table_refused", detail: admitted.reason };
-    if (scope.rows === "viewer") {
+    const viewerId = viewerOf(scope);
+    if (viewerId !== null) {
       const scoped = viewerTables(await host.rallySchema());
       if (scoped.hidden.includes(table)) return { ok: true, rows: [] };
       if (scoped.filtered.some((candidate) => candidate.name === table)) {
         const page = await host.rallyQuery(
           `SELECT * FROM ${admitted.quoted} WHERE ${quoteIdentifier(VIEWER_COLUMN)} = ? LIMIT ? OFFSET ?`,
-          [scope.viewerId, limit, Math.max(0, offset)],
+          [viewerId, limit, Math.max(0, offset)],
           limit,
         );
         return { ok: true, rows: page.rows };
@@ -772,8 +764,8 @@ export class ArtifactHostDO extends InternallyInspectableDurableObject<Env> {
       if (!loader) throw new Error("artifact_loader_binding_missing");
       const module = await env.PAYLOADS.get(artifactAssetKey(artifactId, version, "index.js"));
       if (!module) throw new Error("artifact_server_module_missing");
-      // The host revision keeps an isolate cached before a deploy, with an
-      // older host module, from answering for the new one.
+      // The revision keeps an isolate cached before a deploy, with older Rally
+      // code, from answering for the new one.
       const worker = loader.get(`${artifactIsolateId(artifactId, version)}:${FACET_HOST_REVISION}`, async () => ({
         compatibilityDate: ARTIFACT_COMPATIBILITY_DATE,
         // Rally's own module is the main one and imports the model's, so the

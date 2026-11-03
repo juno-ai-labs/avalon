@@ -22,7 +22,7 @@ import {
   asArtifactId,
 } from "@rally/contracts";
 
-import type { ArtifactRowScope } from "../artifacts/read-only-sql";
+import { artifactRowScope } from "../artifacts/read-only-sql";
 import { artifactHostDOName } from "../durable-objects/names";
 import type { AuthContext, Env, RequestMembershipObservation } from "../env";
 import { AuthorizationService } from "./authorization-service";
@@ -97,13 +97,11 @@ export class ArtifactOpenService {
       artifactHostDOName(this.env.AVALON_REGION, asArtifactId(row.artifact_id)),
       affinity,
     );
-    // The site's author reads every row; anyone else who can see the site reads
-    // only their own rows in its per-viewer tables. The author is whoever the
-    // publishing run ran as, which a Sidekick or Organization publish may leave
-    // unset, in which case nobody reads every row here.
-    const scope: ArtifactRowScope = metadata.resource.uploaded_by_user_id === this.auth.userId
-      ? { rows: "all" }
-      : { rows: "viewer", viewerId: this.auth.userId };
+    // The author is whoever the publishing run ran as, which a Sidekick or
+    // Organization publish may leave unset, in which case nobody reads every
+    // row here.
+    const author = metadata.resource.uploaded_by_user_id;
+    const scope = artifactRowScope(this.auth.userId, typeof author === "string" ? author : null);
     return { row, host, scope };
   }
 

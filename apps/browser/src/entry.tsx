@@ -453,7 +453,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
 
   if (checking && !session && !proof) return <BrowserBoot />;
   if (!proof && siteTarget && session) {
-    return <SiteOpening region={siteTarget.region} hostnameStub={siteTarget.hostnameStub} returnPath={siteTarget.returnPath}
+    return <SiteOpening key={session.user.id} region={siteTarget.region} hostnameStub={siteTarget.hostnameStub} returnPath={siteTarget.returnPath}
       openWorkspace={openWorkspace} onSignOut={signOutStable} />;
   }
   // A signed-in link to an organization is still opening it; the signed-in

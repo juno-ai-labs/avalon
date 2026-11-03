@@ -9,7 +9,7 @@
  * decides whether this person may read it: 404 for a site that does not
  * exist, 403 for one that does and they cannot read.
  *
- * See `docs/live-web-artifacts.md`.
+ * See `docs/browser-client.md#shared-site-resources`.
  */
 import { asArtifactId, asUserId, asWorkspaceId } from "@rally/contracts";
 

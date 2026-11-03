@@ -45,13 +45,14 @@ export class SiteData extends DurableObject {
     super(ctx, env);
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS entries (private_to_viewer TEXT NOT NULL, body TEXT NOT NULL)");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS prompts (body TEXT NOT NULL)");
-    ctx.storage.sql.exec("CREATE VIEW IF NOT EXISTS all_entries AS SELECT body FROM entries");
-    ctx.storage.sql.exec("CREATE VIEW IF NOT EXISTS summary(summary) AS SELECT body FROM entries");
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS generated_notes (owner TEXT, body TEXT, private_to_viewer TEXT GENERATED ALWAYS AS (owner) VIRTUAL)");
-    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS "डायरी" (private_to_viewer TEXT, body TEXT)');
-    ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS "\u00a0spaced" (private_to_viewer TEXT, body TEXT)');
     ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(body, private_to_viewer)");
     ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS entries_search USING fts5(body, content='entries')");
+    // An index fed by a trigger, and a word list over it: neither names the
+    // private table, and both hold its text.
+    ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS idx USING fts5(body)");
+    ctx.storage.sql.exec("CREATE TRIGGER IF NOT EXISTS entries_to_idx AFTER INSERT ON entries BEGIN INSERT INTO idx (body) VALUES (new.body); END");
+    ctx.storage.sql.exec("CREATE VIRTUAL TABLE IF NOT EXISTS terms USING fts5vocab('idx', 'row')");
   }
   async fetch(request) {
     const url = new URL(request.url);
@@ -59,8 +60,6 @@ export class SiteData extends DurableObject {
     if (url.pathname === "/write" && viewer) {
       this.ctx.storage.sql.exec("INSERT INTO entries (private_to_viewer, body) VALUES (?, ?)", viewer, url.searchParams.get("body"));
       this.ctx.storage.sql.exec("INSERT INTO generated_notes (owner, body) VALUES (?, ?)", viewer, url.searchParams.get("body"));
-      this.ctx.storage.sql.exec('INSERT INTO "डायरी" (private_to_viewer, body) VALUES (?, ?)', viewer, url.searchParams.get("body"));
-      this.ctx.storage.sql.exec('INSERT INTO "\u00a0spaced" (private_to_viewer, body) VALUES (?, ?)', viewer, url.searchParams.get("body"));
       this.ctx.storage.sql.exec("INSERT INTO notes_fts (body, private_to_viewer) VALUES (?, ?)", url.searchParams.get("body"), viewer);
       return Response.json({ ok: true });
     }
@@ -264,6 +263,9 @@ describe("a stateful artifact's facet", () => {
     expect(votes?.columns.map((column) => column.name).sort()).toEqual(["choice", "member"]);
     expect(await host.queryData("SELECT choice FROM votes", [], 10, ALL_ROWS))
       .toMatchObject({ ok: true, rows: [{ choice: "maybe" }] });
+    // A site with no private table keeps free SQL open to every member.
+    expect(await host.queryData("SELECT choice FROM votes", [], 10, VIEWER_ROWS))
+      .toMatchObject({ ok: true, rows: [{ choice: "maybe" }] });
   });
 
   it("pages a private table as one viewer's rows, and refuses that viewer free SQL on the site", async () => {
@@ -282,13 +284,19 @@ describe("a stateful artifact's facet", () => {
     // So does a search index over a private table, which the author reads in full.
     expect(await host.pageData("entries_search", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [] });
     expect((await host.pageData("entries_search", 0, 10, ALL_ROWS) as { rows: unknown[] }).rows).toHaveLength(2);
+    // However an index is fed, it reads as empty to a viewer on this site.
+    for (const index of ["idx", "idx_content", "terms"]) {
+      expect(await host.pageData(index, 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [] });
+    }
+    expect((await host.pageData("terms", 0, 10, ALL_ROWS) as { rows: unknown[] }).rows.length).toBeGreaterThan(0);
     // A shared table pages in full.
     expect(await host.pageData("prompts", 0, 10, VIEWER_ROWS)).toMatchObject({ ok: true, rows: [{ body: "shared" }] });
     const described = await host.describeData(VIEWER_ROWS);
     expect(described.tables.find((table) => table.name === "entries")?.rowCount).toBe(1);
+    expect(described.tables.find((table) => table.name === "entries_search")?.rowCount).toBe(0);
     // Free SQL is the author's and Sidekicks' on a site that keeps private rows.
     expect(await host.queryData("SELECT body FROM prompts", [], 10, VIEWER_ROWS))
-      .toMatchObject({ ok: false, reason: "sql_refused" });
+      .toMatchObject({ ok: false, reason: "private_rows" });
     expect(await host.queryData("SELECT body FROM entries ORDER BY body", [], 10, ALL_ROWS))
       .toMatchObject({ ok: true, rows: [{ body: "mine" }, { body: "theirs" }] });
   });
