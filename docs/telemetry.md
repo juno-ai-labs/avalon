@@ -830,9 +830,10 @@ signals, never by weakening policy or deadline tests.
 
 **What changed:** Account creation queues an `epoch_transition` profile job
 from the account's `signup_flow_id` to its `analytics_person_id`, carrying the
-verified email and name. One job per flow: the flow ID is client-supplied, so
-when two new accounts store the same one, the first to queue owns it and the
-other queues nothing. Replayed redemptions add none.
+verified email and name. One job per flow, and replayed redemptions add none.
+The flow ID is client-supplied, so account creation records it only when no
+other account already holds it: a second account that reuses a flow gets no
+lineage, no later signup stages and no merge.
 
 **Why:** The daily signup report could not name who signed up, and nobody
 could contact people who created an account but did not finish organization

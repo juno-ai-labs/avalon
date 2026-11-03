@@ -89,15 +89,20 @@ describe('complete signup analytics', () => {
     }]);
   });
 
-  it('merges a signup flow shared by two new accounts into the first account only', async () => {
+  it('keeps a signup flow reused by a second new account on the first account only', async () => {
     const env = bindings();
     const flow = { flowId: newId(), clientPlatform: 'browser' as const };
     const first = (await resolveVerifiedEmailIdentity(env.DB, 'first@example.test', flow)).id;
     const second = (await resolveVerifiedEmailIdentity(env.DB, 'second@example.test', flow)).id;
     await queueSignupIdentityTransition(env, first);
     await queueSignupIdentityTransition(env, second);
+    observeSignupProgress(env, second, 'signup_organization_ready', 'new_organization', 'browser');
+    await drainWaitUntil();
+    expect(db.prepare('SELECT id, signup_flow_id FROM users WHERE id IN (?, ?) ORDER BY email').all(first, second))
+      .toEqual([{ id: first, signup_flow_id: flow.flowId }, { id: second, signup_flow_id: null }]);
     expect(db.prepare(`SELECT subject_user_id, anonymous_epoch_id FROM telemetry_profile_jobs
       WHERE job_kind='epoch_transition'`).all()).toEqual([{ subject_user_id: first, anonymous_epoch_id: flow.flowId }]);
+    expect(events()).toEqual([]);
   });
 
   it('records browser verification and authentication for a desktop-issued magic link', async () => {
