@@ -218,7 +218,11 @@ additions, attachments, annotations and queue/steer mode. After resolving the
 Organization, the adapter uses ConversationService.writableClient and
 WorkstreamObjectClient.createMessage, the same boundary as the app's send route.
 There are no transcript inserts, forced run starts, or scripted replies. Normal
-addressing decides whether Rally responds. Reuse the message operation ID and
+addressing decides whether Rally responds, unless the caller passes
+`recordOnly: true`: the message is then admitted the same way but starts no run,
+the rule a Breakout merge already uses, so the Thread holds it as a record for
+its readers. In a one-person Thread addressing never runs and every ordinary
+message starts a run, so this flag is the only way to post there without one. Reuse the message operation ID and
 original arguments after an uncertain result; the ordinary receipt reports
 `pending` or `canonical`, not completion of the agent run.
 
@@ -606,6 +610,29 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-11-04 — Post a message that starts no run
+
+**What changed:** `send_message` and the bridge's `sendMessage` accept an
+optional `recordOnly: true`. The Thread's storage object treats it as it treats
+a Breakout merge: the message is admitted, written and delivered to readers, and
+no run starts.
+
+**Why:** Relay, an internal experiment outside this repository, records
+decisions from a person's Claude Code sessions as messages in a Rally Thread and
+asks Rally's agent to reconcile them only when more than one session is
+involved. Every such Thread has one participant, and in a one-person Thread
+admission starts a run on every message without asking the addressing
+classifier, so each recorded decision would have cost a run and a reply.
+
+**Considered and rejected:** Reusing the `merge` tag, which also renders a
+merged-result card and needs a Breakout source; adding a second participant so
+the addressing classifier would usually decline, which depends on a model's
+guess per message.
+
+**Consequences:** The flag reaches the object only through the bridge's RPC;
+the app's message route schema has no such field. Deploy the regional API before
+the MCP Worker so the bridge accepts the field before the tool offers it.
 
 ### 2026-10-23 — Inspect Oopsie reports through the D1 console
 
