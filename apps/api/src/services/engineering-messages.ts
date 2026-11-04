@@ -27,7 +27,7 @@ export async function sendEngineeringMessage(env: Env, input: SendEngineeringMes
   const message = CreateMessageRequestSchema.parse({ ...input, clientMessageId: input.operationId });
   const auth = await engineeringUserAuth(env, input.orgId, input.userId, input.operationId);
   const client = await new ConversationService(env, auth).writableClient(input.threadId, input.breakoutId ?? "0");
-  const receipt = await client.createMessage(message);
+  const receipt = await client.createMessage(input.recordOnly ? { ...message, recordOnly: true } : message);
   return { receipt };
 }
 
