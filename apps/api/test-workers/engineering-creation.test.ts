@@ -298,6 +298,31 @@ describe("engineering product creation", () => {
     await waitOnExecutionContext(context);
   });
 
+  it("posts a record-only message for the Thread's readers without starting a run, where the same message alone would", async () => {
+    const context = executionContext();
+    const bridge = new EngineeringInspectionBridge(context, creationEnv());
+    await createOrg(bridge);
+    await createChannel(bridge);
+    const created = await bridge.createThread({ operationId: THREAD_OPERATION, creatorUserId: CREATOR,
+      orgId: ORG, channelId: CHANNEL, prompt: PROMPT }, OPERATOR);
+    const client = await settledThread(created.threadId);
+    const streamedBefore = provider.calls.filter((call) => call.stream).length;
+
+    // Its creator is the Thread's only participant, so an ordinary message here starts a run.
+    const request = { orgId: ORG, userId: CREATOR, threadId: created.threadId, recordOnly: true as const,
+      operationId: "00000000-0000-7000-8000-00000000ee0b", text: "Decision: the export drops the legacy columns." };
+    const sent = await bridge.sendMessage(request, OPERATOR);
+    expect(sent.receipt.deliveryState).toBe("canonical");
+    await runDurableObjectAlarm(env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", ORG, created.threadId, asSubstreamId("0"))));
+    await waitOnExecutionContext(context);
+
+    const turns = (await client.boot()).transcript.ranges.flatMap((range) => range.turns);
+    expect(turns.map((turn) => [turn.actor, turn.clientMessageId === request.operationId])).toEqual([
+      ["human", false], ["assistant", false], ["human", true],
+    ]);
+    expect(provider.calls.filter((call) => call.stream).length).toBe(streamedBefore);
+  });
+
   it("returns twenty text turns by default and continues under the same sequence fence", async () => {
     const bridge = new EngineeringInspectionBridge(executionContext(), creationEnv());
     await createOrg(bridge);
