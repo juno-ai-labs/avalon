@@ -221,8 +221,7 @@ There are no transcript inserts, forced run starts, or scripted replies. Normal
 addressing decides whether Rally responds, unless the caller passes
 `recordOnly: true`: the message is then admitted the same way but starts no run,
 the rule a Breakout merge already uses, so the Thread holds it as a record for
-its readers. In a one-person Thread addressing never runs and every ordinary
-message starts a run, so this flag is the only way to post there without one. Reuse the message operation ID and
+its readers. Reuse the message operation ID and
 original arguments after an uncertain result; the ordinary receipt reports
 `pending` or `canonical`, not completion of the agent run.
 
@@ -631,8 +630,7 @@ the addressing classifier would usually decline, which depends on a model's
 guess per message.
 
 **Consequences:** The flag reaches the object only through the bridge's RPC;
-the app's message route schema has no such field. Deploy the regional API before
-the MCP Worker so the bridge accepts the field before the tool offers it.
+the app's message route schema has no such field.
 
 ### 2026-10-23 — Inspect Oopsie reports through the D1 console
 
