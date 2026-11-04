@@ -238,7 +238,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, async () => CreateEngineeringThreadResultSchema.parse(await (await organizationBinding(request.orgId)).createThread(request, principal))));
 
   server.registerTool("send_message", {
-    description: "Send a message as userId to a Thread's Main or the named Breakout, through the same composer admission as the app. The message is attributed to userId, as though that user sent it. Enforces that user's access, uses normal addressing, queue/steer behavior, notifications and agent execution. Reuse operationId and the same arguments to retry an uncertain send.",
+    description: "Send a message as userId to a Thread's Main or the named Breakout, through the same composer admission as the app. The message is attributed to userId, as though that user sent it. Enforces that user's access, uses normal addressing, queue/steer behavior, notifications and agent execution; recordOnly posts it for readers without starting a run. Reuse operationId and the same arguments to retry an uncertain send.",
     inputSchema: SendEngineeringMessageInputSchema.unwrap().shape,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "send_message", {

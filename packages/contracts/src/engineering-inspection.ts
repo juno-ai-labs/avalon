@@ -88,6 +88,7 @@ export const SendEngineeringMessageInputSchema = deferredZodSchema(() => z.stric
   operationId: IdSchema.describe("A fresh UUID for this message; reuse it after an uncertain outcome."),
   threadId: WorkstreamIdSchema,
   breakoutId: SubstreamIdSchema.optional().describe("Omit for the Thread's Main; a Breakout is authorized independently."),
+  recordOnly: z.boolean().optional().describe("true posts for the conversation's readers without starting a Rally run, whatever addressing would decide. false or omitted uses normal addressing."),
 }));
 export type SendEngineeringMessageInput = z.infer<typeof SendEngineeringMessageInputSchema>;
 export const SendEngineeringMessageResultSchema = deferredZodSchema(() => z.strictObject({

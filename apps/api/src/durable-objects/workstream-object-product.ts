@@ -196,6 +196,13 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
    * internal RPC: the message route's request schema has no such field.
    */
   merge: ConversationMergeV1Schema.optional(),
+  /**
+   * A message posted for the conversation's readers that starts no run,
+   * whatever addressing would decide. Sent only by the engineering bridge's
+   * `sendMessage`; like `seed` and `merge`, the message route's request schema
+   * has no such field.
+   */
+  recordOnly: z.literal(true).optional(),
 }).superRefine(validateAnnotationAttachments).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((a) => a.comment.trim()), {
   message: "A message must include text or an attachment",
 });
@@ -5030,9 +5037,10 @@ export class WorkstreamObjectProductService {
       `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
     ))?.count ?? 0) + missingParticipantUserIds.filter((userId) => !this.isParticipant(userId)).length;
     let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0 || Boolean(input.annotations?.some((a)=>a.comment.trim()));
-    if (input.merge) {
+    if (input.merge || input.recordOnly) {
       // A merge is a result posted for the thread's readers, never a request
-      // to Rally: it starts no run, whatever the room's size.
+      // to Rally, and a record-only message says so explicitly: neither starts
+      // a run, whatever the room's size.
       shouldInvoke = false;
     } else if (input.seed) {
       // A seed action states its addressing outcome instead of being classified.
