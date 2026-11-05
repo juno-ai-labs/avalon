@@ -24,6 +24,7 @@ import {
   conversationEffectHash,
   type ConversationEffect,
   type ConversationEffectEnvelope,
+  type SpaceId,
   type SubstreamId,
   type UserId,
   type WorkstreamId,
@@ -205,6 +206,14 @@ beforeEach(async () => {
   });
 });
 
+/** Seat `userId` in the Organization-wide Channel beside its owner. */
+async function joinChannel(channelId: SpaceId, userId: UserId): Promise<void> {
+  const result = await organization().noteSpaceAudience({
+    workspaceId, userId: owner, spaceId: channelId, audience: { scope: "workspace", participantUserIds: [owner, userId] },
+  });
+  if (!result.ok) throw new Error(`noteSpaceAudience refused: ${result.code}`);
+}
+
 describe("Activity rows pushed from the directory", () => {
   it("given an Organization-wide thread somebody starts, then each other member with a device is pushed its start, once", async () => {
     await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
@@ -266,10 +275,16 @@ describe("Activity rows pushed from the directory", () => {
     expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${thread}` }]);
   });
 
-  it("given an Organization-wide breakout somebody starts, then the members who may list it are pushed its start", async () => {
-    await publish(asSubstreamId("0"), [common("Q3 plan", { createdAt: new Date(Date.now() - 86_400_000).toISOString() }), viewer(owner)]);
+  it("given an Organization-wide breakout somebody starts, then the thread's participants are pushed its start", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan", { createdAt: new Date(Date.now() - 86_400_000).toISOString() }), viewer(owner), viewer(member)]);
     await publish(breakout, [common("Pricing"), viewer(owner)]);
     expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${breakout}` }]);
+  });
+
+  it("given an Organization-wide breakout somebody starts, then a member who may list the thread but is not in it is not pushed", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan", { createdAt: new Date(Date.now() - 86_400_000).toISOString() }), viewer(owner)]);
+    await publish(breakout, [common("Pricing"), viewer(owner)]);
+    expect(await pushed()).toEqual([]);
   });
 });
 
@@ -343,8 +358,8 @@ describe("a breakout merged into its thread", () => {
     } as ConversationEffect;
   }
 
-  it("given a merge message in an Organization-wide thread, then every other member with a device is pushed it once, worded as the sidebar row", async () => {
-    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+  it("given a merge message in a thread somebody else is in, then they are pushed it once, worded as the sidebar row", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
     const before = await pushed();
     await publish(asSubstreamId("0"), [mergeEvent()]);
     await publish(asSubstreamId("0"), [{ ...common("Q3 plan"), preview: "later traffic" }]);
@@ -361,6 +376,35 @@ describe("a breakout merged into its thread", () => {
     expect(apns.rally.url).toContain(`/workstreams/${thread}`);
     expect(apns.rally.url).not.toContain(breakout);
   });
+
+  it("given a merge message in an Organization-wide thread, then a member who may list it but is not in it is not pushed", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    const before = await pushed();
+    await publish(asSubstreamId("0"), [mergeEvent()]);
+
+    expect((await pushed()).filter((row) => !before.some((earlier) => earlier.item_id === row.item_id && earlier.user_id === row.user_id)))
+      .toEqual([]);
+  });
+});
+
+describe("news in an Organization-wide Channel", () => {
+  it("given a thread started in a Channel, then its participants are pushed the start and a member in neither the Channel nor the thread is not", async () => {
+    const reserved = await organization().reserveSpace({ workspaceId, userId: owner,
+      space: { name: "GTM", iconKey: "briefcase", colorKey: "blue", scope: "workspace" } });
+    if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
+    const channelId = asSpaceId(reserved.space.id);
+    await joinChannel(channelId, bystander);
+    await registerPushDevice(env, { userId: bystander, workspaceId, sessionId: `session-${bystander}`, region: "global", role: "member" },
+      `mac-${bystander}`, {
+        platform: "macos", transport: "apns", topic: "ai.rallywith.desktop", apnsEnvironment: "production",
+        token: "cc".repeat(32), appVersion: "1",
+      });
+    // Placed before its start is decided, as a thread born in a Channel is.
+    await placeMembership(organization(), { workspaceId, userId: owner, spaceId: channelId, workstreamId: thread });
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+
+    expect(await pushed()).toEqual([{ user_id: bystander, item_id: `started:${thread}` }]);
+  });
 });
 
 describe("a private thread merged into its Channel", () => {
@@ -372,6 +416,7 @@ describe("a private thread merged into its Channel", () => {
     if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
     const channelId = asSpaceId(reserved.space.id);
     await placeMembership(organization(), { workspaceId, userId: owner, spaceId: channelId, workstreamId: thread });
+    await joinChannel(channelId, member);
     const before = await pushed();
 
     const merged = await organization().mergeThreadIntoChannel({

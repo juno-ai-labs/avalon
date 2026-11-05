@@ -31,7 +31,9 @@ import {
   type SpaceSummary,
 } from "@rally/contracts";
 
+import { channelPostAudienceSql } from "./activity-audience";
 import { linkSpaceResources } from "./authorization-storage";
+import { MEMORY_DIGEST_SYNC_TRIGGERS } from "./memory-digest-sync";
 import { boundParameterChunks } from "./bound-parameters";
 import { stableUuidSync } from "../lib/stable-uuid";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -596,6 +598,44 @@ export const SPACE_INDIVIDUAL_SCOPE_MIGRATION: readonly string[] = [
 ];
 
 /**
+ * WorkspaceDO migration 134: `space_viewers.joined_at`, when each person last
+ * became a Channel participant (`docs/digests.md#who-is-told-about-channel-news`).
+ *
+ * `NOT NULL` with no default, which SQLite adds only by a rebuild; the rebuild
+ * restores the user index under its v70 name and the memory digest's
+ * participant triggers. Nobody recorded when existing participants joined, so
+ * each is dated at the Channel's earliest known creation: the smaller of the
+ * local `created_at` and `source_created_at`, because a Space that arrived
+ * through its projection has `created_at` set to when it was applied here. A
+ * row whose Space row is missing gets 0.
+ */
+export const SPACE_VIEWER_JOINED_AT_MIGRATION: readonly string[] = [
+  `CREATE TABLE space_viewers_next (
+    space_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    is_participant INTEGER NOT NULL CHECK (is_participant IN (0, 1)),
+    authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+    source_version INTEGER NOT NULL CHECK (source_version >= 0),
+    payload_hash TEXT NOT NULL,
+    joined_at INTEGER NOT NULL CHECK (joined_at >= 0),
+    PRIMARY KEY (space_id, user_id)
+  ) STRICT`,
+  `INSERT INTO space_viewers_next
+     (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+   SELECT viewer.space_id, viewer.user_id, viewer.is_participant, viewer.authority_generation,
+          viewer.source_version, viewer.payload_hash,
+          COALESCE((SELECT MIN(space.created_at, CASE WHEN space.source_created_at > 0
+                                                       THEN space.source_created_at ELSE space.created_at END)
+                      FROM spaces space WHERE space.space_id = viewer.space_id), 0)
+     FROM space_viewers viewer`,
+  `DROP TABLE space_viewers`,
+  `ALTER TABLE space_viewers_next RENAME TO space_viewers`,
+  // Its v70 name, which every object already carries and the rename tests hold.
+  `CREATE INDEX workspace_space_viewers_user_idx ON space_viewers(user_id, is_participant, space_id)`,
+  ...MEMORY_DIGEST_SYNC_TRIGGERS.space_viewers,
+];
+
+/**
  * WorkspaceDO migration 104: messages in a Channel itself, outside any
  * thread (`docs/spaces.md#channel-messages`). A building block beside a
  * Channel's placements: who said it (Rally, or a member), what, and when.
@@ -1140,10 +1180,11 @@ export class WorkspaceSpaceStorage {
       );
       this.storage.sql.exec(
         `INSERT INTO space_viewers
-           (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-         VALUES (?, ?, 1, 1, 0, '')`,
+           (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+         VALUES (?, ?, 1, 1, 0, '', ?)`,
         spaceId,
         request.userId,
+        createdAt,
       );
       this.appendOrder(request.workspaceId, request.userId, spaceId, createdAt);
       this.postStartingMessages(spaceId, messages);
@@ -1444,8 +1485,9 @@ export class WorkspaceSpaceStorage {
   /**
    * The Activity tab's `merged` rows for a thread's merges into Channels:
    * news merge messages in Channels this viewer may list, by somebody else,
-   * newest first after `after`, as the Channel feed shows them to every
-   * reader. `merged_thread_private` marks a thread this viewer may not open,
+   * newest first after `after`. In an Organization-wide Channel only its
+   * participants and the thread's are told (`activity-audience.ts`), though
+   * the Channel feed shows the post to every reader. `merged_thread_private` marks a thread this viewer may not open,
    * whose row must not name it. Shaped as the feed's keys. The id carries
    * `posted_at`, so a merge replaced later is a new row (and a new push)
    * rather than the old one moved.
@@ -1496,6 +1538,7 @@ export class WorkspaceSpaceStorage {
             AND m.attention_ordinal IS NOT NULL
             AND (m.author_user_id IS NULL OR m.author_user_id <> ?1)
             AND m.space_id IN (SELECT value FROM json_each(?2))
+            AND ${channelPostAudienceSql("space", "viewer", "m.posted_at")}
             AND directory.archived_at IS NULL)
         WHERE (?3 IS NULL OR occurred_at < ?3 OR (occurred_at = ?3 AND id < ?4))
         ORDER BY occurred_at DESC, id DESC
@@ -1999,20 +2042,25 @@ export class WorkspaceSpaceStorage {
         request.spaceId,
       ).toArray()) {
         this.storage.sql.exec(
-          `UPDATE space_viewers SET is_participant = ? WHERE space_id = ? AND user_id = ?`,
+          `UPDATE space_viewers
+              SET joined_at = CASE WHEN is_participant = 0 AND ?1 = 1 THEN ?4 ELSE joined_at END,
+                  is_participant = ?1
+            WHERE space_id = ?2 AND user_id = ?3`,
           requested.has(row.user_id) ? 1 : 0,
           request.spaceId,
           row.user_id,
+          now,
         );
         requested.delete(row.user_id);
       }
       for (const userId of requested) {
         this.storage.sql.exec(
           `INSERT INTO space_viewers
-             (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-           VALUES (?, ?, 1, 1, 0, '')`,
+             (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+           VALUES (?, ?, 1, 1, 0, '', ?)`,
           request.spaceId,
           userId,
+          now,
         );
       }
       if (request.audience.inviteeEmails !== undefined) {
@@ -2075,11 +2123,12 @@ export class WorkspaceSpaceStorage {
     if (!space) return false;
     this.storage.sql.exec(
       `INSERT INTO space_viewers
-         (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-       VALUES (?, ?, 1, 1, 0, '')
-       ON CONFLICT(space_id, user_id) DO UPDATE SET is_participant = 1`,
+         (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+       VALUES (?, ?, 1, 1, 0, '', ?)
+       ON CONFLICT(space_id, user_id) DO UPDATE SET is_participant = 1, joined_at = excluded.joined_at`,
       spaceId,
       userId,
+      now,
     );
     this.advanceWaterline(now);
     return true;
@@ -2206,9 +2255,11 @@ export class WorkspaceSpaceStorage {
     const changed = current?.is_participant !== (projection.isParticipant ? 1 : 0);
     this.storage.sql.exec(
       `INSERT INTO space_viewers
-         (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-       VALUES (?, ?, ?, ?, ?, ?)
+         (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(space_id, user_id) DO UPDATE SET
+         joined_at = CASE WHEN space_viewers.is_participant = 0 AND excluded.is_participant = 1
+                          THEN excluded.joined_at ELSE space_viewers.joined_at END,
          is_participant = excluded.is_participant,
          authority_generation = excluded.authority_generation,
          source_version = excluded.source_version,
@@ -2219,6 +2270,7 @@ export class WorkspaceSpaceStorage {
       projection.authorityGeneration,
       projection.sourceVersion,
       projection.payloadHash,
+      now,
     );
     if (changed) {
       this.storage.sql.exec(

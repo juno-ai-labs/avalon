@@ -332,8 +332,8 @@ describe("a Personal Channel", () => {
   it("is listed to nobody but its owner, even one given a participant row", async () => {
     await runInDurableObject(workspace(), (_instance, state) => {
       state.storage.sql.exec(`INSERT INTO space_viewers
-        (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-        VALUES (?, ?, 1, 1, 0, '')`, OWNER_PERSONAL, MEMBER);
+        (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+        VALUES (?, ?, 1, 1, 0, '', 0)`, OWNER_PERSONAL, MEMBER);
     });
     expect((await activeSpaces(MEMBER)).map((space) => space.id)).toEqual([GENERAL]);
     expect((await activeSpaces(OWNER)).map((space) => space.id)).toContain(OWNER_PERSONAL);
