@@ -10,7 +10,7 @@ import {
   type ActivityRowFacts,
   type ActivityWaterline,
 } from "./activity-clear-rules";
-import { threadChangeAudienceSql, threadStartAudienceSql } from "./activity-audience";
+import { threadStartAudienceSql } from "./activity-audience";
 import { boundParameterChunks } from "./bound-parameters";
 import { listedResourceVisibilitySql } from "../services/resource-listing";
 import { breakoutListedSql, channelListedSql, mainOpenableSql, type Viewer } from "./listing-rules";
@@ -237,14 +237,9 @@ export class WorkspaceActivityFeed {
     const threadListed = channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" });
     const breakoutListed = breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass);
     const mentionsOnly = only === "mentions";
-    // Listing says who may see a conversation; these say who is told of it
-    // (`activity-audience.ts`). An Organization-wide Channel's new threads
-    // reach its participants and the thread's, not every member, and a change
-    // inside a thread reaches the thread's participants alone.
     const threadStartTold = this.spaces.ready()
       ? threadStartAudienceSql("directory", "viewer", "directory.source_created_at")
       : "1";
-    const breakoutStartTold = threadChangeAudienceSql("viewer", "breakout_viewer.is_participant = 1");
     const relations = mentionsOnly ? "('mentioned')" : "('added', 'mentioned')";
     const keys = [
       ...arm(`SELECT event.event_id AS id,
@@ -303,7 +298,7 @@ export class WorkspaceActivityFeed {
                 ${CHANNEL_VIEWER}
                 ${BREAKOUT_VIEWER}
                WHERE ${threadListed} AND ${breakoutListed}
-                 AND ${breakoutStartTold}
+                 AND (viewer.is_participant = 1 OR breakout_viewer.is_participant = 1)
                  AND directory.archived_at IS NULL
                  AND breakout.created_by_user_id IS NOT NULL
                  AND breakout.created_by_user_id <> ?1
@@ -327,7 +322,7 @@ export class WorkspaceActivityFeed {
                  AND (event.actor_user_id IS NULL OR event.actor_user_id <> ?1)
                  AND directory.archived_at IS NULL
                  AND ${threadListed}
-                 AND ${threadChangeAudienceSql("viewer")}`)),
+                 AND viewer.is_participant = 1`)),
       ...(mentionsOnly ? [] : this.spaces.mergeActivityKeys(viewer, after, limit)),
       ...(mentionsOnly ? [] : arm(`SELECT 'finished:' || directory.workstream_id || ':' || directory.completed_at AS id,
                      'run_finished' AS kind,

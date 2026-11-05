@@ -13,6 +13,7 @@ const JOINED_AT_MIGRATION_VERSION = 134;
 const CHANNEL = "00000000-0000-7000-8000-000000134001";
 const OTHER_CHANNEL = "00000000-0000-7000-8000-000000134002";
 const ORPHAN_CHANNEL = "00000000-0000-7000-8000-000000134003";
+const PROJECTED_CHANNEL = "00000000-0000-7000-8000-000000134004";
 const OWNER = "00000000-0000-7000-8000-000000134011";
 const MEMBER = "00000000-0000-7000-8000-000000134012";
 
@@ -33,13 +34,14 @@ function apply(database: DatabaseSync, through: number, after = 0): void {
   }
 }
 
-function seedSpace(database: DatabaseSync, spaceId: string, createdAt: number): void {
+/** `sourceCreatedAt` 0 is a Space created here, which never had one projected. */
+function seedSpace(database: DatabaseSync, spaceId: string, createdAt: number, sourceCreatedAt = 0): void {
   database.prepare(
     `INSERT INTO spaces (
        space_id, title, scope, appearance_json, archived_at, created_by_user_id, system_role,
-       authority_generation, source_version, payload_hash, revision, created_at, updated_at
-     ) VALUES (?, 'Channel', 'workspace', NULL, NULL, ?, NULL, 1, 1, 'hash', 1, ?, ?)`,
-  ).run(spaceId, OWNER, createdAt, createdAt);
+       authority_generation, source_version, payload_hash, revision, created_at, updated_at, source_created_at
+     ) VALUES (?, 'Channel', 'workspace', NULL, NULL, ?, NULL, 1, 1, 'hash', 1, ?, ?, ?)`,
+  ).run(spaceId, OWNER, createdAt, createdAt, sourceCreatedAt);
 }
 
 function seedViewer(database: DatabaseSync, spaceId: string, userId: string, isParticipant: 0 | 1): void {
@@ -54,11 +56,14 @@ afterEach(() => {
 });
 
 describe("WorkspaceDO migration 134", () => {
-  it("dates every existing Channel participant at the Channel's creation, and 0 where the Channel row is missing", () => {
+  it("dates every existing Channel participant at the Channel's earliest known creation, and 0 where the Channel row is missing", () => {
     const database = openDatabase();
     apply(database, JOINED_AT_MIGRATION_VERSION - 1);
     seedSpace(database, CHANNEL, 1_700_000_000_000);
     seedSpace(database, OTHER_CHANNEL, 1_750_000_000_000);
+    // Arrived through its projection: applied here later than it was made.
+    seedSpace(database, PROJECTED_CHANNEL, 1_760_000_000_000, 1_720_000_000_000);
+    seedViewer(database, PROJECTED_CHANNEL, OWNER, 1);
     seedViewer(database, CHANNEL, OWNER, 1);
     seedViewer(database, CHANNEL, MEMBER, 0);
     seedViewer(database, OTHER_CHANNEL, MEMBER, 1);
@@ -73,6 +78,7 @@ describe("WorkspaceDO migration 134", () => {
       { space_id: CHANNEL, user_id: MEMBER, is_participant: 0, joined_at: 1_700_000_000_000 },
       { space_id: OTHER_CHANNEL, user_id: MEMBER, is_participant: 1, joined_at: 1_750_000_000_000 },
       { space_id: ORPHAN_CHANNEL, user_id: MEMBER, is_participant: 1, joined_at: 0 },
+      { space_id: PROJECTED_CHANNEL, user_id: OWNER, is_participant: 1, joined_at: 1_720_000_000_000 },
     ]);
   });
 
