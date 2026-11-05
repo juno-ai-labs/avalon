@@ -1769,7 +1769,7 @@ one `revision` that advances on every accepted change. A unique partial index on
 per-person half of the same projection and is where a Space's participants live.
 Its `joined_at` (migration 134, `NOT NULL`) is when the person last became a
 participant, stamped by WorkspaceDO's writers rather than projected; rows from
-before the migration are dated at their Channel's creation. It is what keeps a
+before the migration are dated at their Channel's earliest known creation. It is what keeps a
 Channel's history out of a new participant's Activity
 ([`digests.md`](digests.md#who-is-told-about-channel-news)).
 `workspace_container_order` is `(user_id, container_kind, container_id,

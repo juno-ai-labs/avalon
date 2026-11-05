@@ -239,7 +239,8 @@ for one person, newest first:
   a thread's into a Channel they may list, read from `space_messages`, whether
   or not they may open the thread. Both are `merged`; a thread's carries
   `mergedInto`. A thread's merge into an Organization-wide Channel is told only
-  to the Channel's participants and the thread's. A merge from a thread they may not open is the Channel's row:
+  to the Channel's participants and the thread's. A merge from a thread they
+  may not open is the Channel's row:
   `mergedInto.threadPrivate`, an empty `threadTitle`, and the Channel as its
   only `channelIds`. A build before client contract 7 is served the page
   without merges, and one before 9 without those rows.
@@ -276,10 +277,13 @@ own. A start is compared by `source_created_at`, a merge by `posted_at`. So
 joining a Channel brings none of its history into Activity, and someone who
 leaves and rejoins hears only what follows the rejoin. The column is
 `NOT NULL` with no default. Migration 134 rebuilt the table and dated every
-existing row at its Channel's creation (`spaces.created_at`, 0 for a row whose
-Space row is missing), since nobody had recorded when those people joined.
-Participation in the thread itself is not timed: being
-added to a thread still tells you it started, and of its merges. Because a Channel's participants and scope now decide
+existing row at its Channel's earliest known creation (the smaller of
+`created_at` and a nonzero `source_created_at`; 0 for a row whose Space row is
+missing), since nobody had recorded when those people joined. A participant
+added through the Space's own projection is stamped when the projection lands
+here, so a start in that delivery gap is not told to them. Participation in the
+thread itself is not timed: being added to a thread still tells you it started,
+and of its merges. Because a Channel's participants and scope now decide
 rows, a change to either publishes the `activity` sync topic to the whole
 Organization, from `noteSpaceAudience` and from a Space directory projection
 that moved a row, so open windows and the menu bar read Activity again.
@@ -787,30 +791,18 @@ changes to a thread they are not in notify nobody. Before, every
 member was told of every Organization-wide start and Channel merge, and a
 new member's Activity filled with history.
 
-**Considered and rejected:** Filtering in the push sweep alone: the Activity
-tab, the digest and the menu bar would still list the rows, and the feed is
-the one rule every surface reads. Narrowing listing itself: a member must
-still be able to find and open a public thread.
+**Considered and rejected:** Filtering only pushes: the Activity tab, digest
+and menu bar would still list the rows. Narrowing listing: a member must still
+find and open a public thread. Timing by placement rather than start: an old
+thread moved in would be news. A nullable `joined_at`: a writer that forgot it
+would silently tell a Channel's whole history, where `NOT NULL` fails the
+insert.
 
-**Considered and rejected for the join time:** Comparing with the thread's
-placement time rather than its start: the row is the start and is dated by
-it, and a Channel member would be told of an old thread moved in. Dating
-existing participants at the migration's time: rows they already see would
-vanish from Activity. A nullable column, NULL for those rows: a writer that
-forgot the column would then silently tell someone a Channel's whole history,
-where `NOT NULL` makes it fail. Its cost is a table rebuild, which has to put
-back the user index under its old name and the memory digest's participant
-triggers.
-
-**Consequences:** A thread placed only in private Channels, or in none, keeps
-its start's listing audience; its breakouts and breakout merges narrow to its
-participants like any other thread's. A start is dated by `source_created_at`, which the creating client
-supplies, so a skewed clock can put a start just before or after a join. Any
-new writer of `space_viewers` must give `joined_at` (the insert is refused
-without it) and move it when a row turns participant. A future rebuild of
-`space_viewers` must restore `MEMORY_DIGEST_SYNC_TRIGGERS.space_viewers`. A test
-that expects a member to hear about Channel news must seat them in the
-Channel before the news.
+**Consequences:** A new writer of `space_viewers` must give `joined_at` and
+move it when a row turns participant. A future rebuild of `space_viewers` must
+restore `MEMORY_DIGEST_SYNC_TRIGGERS.space_viewers`. A start is dated by the
+creating client's `source_created_at`, so a skewed clock can land it just either
+side of a join.
 
 ### 2026-10-20 — Human replies join Activity and conversations collapse into one row
 
