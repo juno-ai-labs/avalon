@@ -1190,11 +1190,16 @@ describe("Activity tab", () => {
             : column === "source_event_id" ? "source_event_id || ?2"
               : column
       ));
+      // Newer than the open thread's start, so they sort ahead of it: a
+      // filter after the LIMIT would fill the page with them.
+      const openStartedAt = sql.exec<{ source_created_at: number }>(
+        "SELECT source_created_at FROM channels WHERE workstream_id = ?", OPEN_THREAD,
+      ).one().source_created_at;
       for (let index = 0; index <= 250; index += 1) {
         sql.exec(
           `INSERT INTO channels (${columns.join(", ")}) SELECT ${source.join(", ")} FROM channels WHERE workstream_id = ?3`,
           `00000000-0000-7000-8000-${String(index + 1000).padStart(4, "0")}`,
-          Date.parse("2026-11-01T00:00:00.000Z") + index,
+          openStartedAt + 1 + index,
           PRIVATE_THREAD,
         );
       }
@@ -1264,6 +1269,17 @@ describe("Activity tab", () => {
       workspaceId: WORKSPACE_ID, userId: MEMBER, seenThrough: Date.parse("2026-10-06T00:00:00.000Z"),
     });
     expect((await finished()).map((item) => item.unread)).toEqual([false]);
+  });
+
+  it("given a Channel's participants change, then every window is told to read Activity again", async () => {
+    const channelId = await reserveChannel("Outbound");
+    const latest = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+      topics_json: string; audience_json: string | null;
+    }>("SELECT topics_json, audience_json FROM workspace_sync_events ORDER BY waterline DESC LIMIT 1").one());
+
+    await join(channelId, MEMBER);
+
+    expect(await latest()).toEqual({ topics_json: JSON.stringify(["activity"]), audience_json: null });
   });
 
   it("given a person marks Activity read, then their sockets alone are told to read Activity again", async () => {
