@@ -99,8 +99,8 @@ function seedChannel(
       VALUES (?, ?, 'active', 1, 200, 200)`).run(spaceId, OPEN_THREAD);
   }
   for (const userId of participants) {
-    objectDatabase.prepare(`INSERT INTO space_viewers (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-      VALUES (?, ?, 1, 1, 1, 'hash')`).run(spaceId, userId);
+    objectDatabase.prepare(`INSERT INTO space_viewers (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+      VALUES (?, ?, 1, 1, 1, 'hash', 200)`).run(spaceId, userId);
   }
 }
 
