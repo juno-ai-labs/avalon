@@ -279,7 +279,10 @@ leaves and rejoins hears only what follows the rejoin. The column is
 existing row at its Channel's creation (`spaces.created_at`, 0 for a row whose
 Space row is missing), since nobody had recorded when those people joined.
 Participation in the thread itself is not timed: being
-added to a thread still tells you it started, and of its merges.
+added to a thread still tells you it started, and of its merges. Because a Channel's participants and scope now decide
+rows, a change to either publishes the `activity` sync topic to the whole
+Organization, from `noteSpaceAudience` and from a Space directory projection
+that moved a row, so open windows and the menu bar read Activity again.
 
 **A change inside a thread reaches its participants alone.** A breakout started
 in a thread, or merged back into it, is told to the thread's participants (and,
