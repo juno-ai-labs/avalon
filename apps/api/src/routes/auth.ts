@@ -168,6 +168,20 @@ authRoutes.post("/desktop/exchange", zValidator("json", DesktopExchangeRequestSc
   return c.json(SessionSchema.parse(await new AuthService(c.env).exchangeDesktopTicket(body)));
 });
 
+// The service side of the identity handoff (docs/identity-handoff.md): who the
+// person is, never a Rally session.
+const IdentityExchangeRequestSchema = DesktopExchangeRequestSchema.omit({ timezone: true });
+const IdentityExchangeResponseSchema = z.object({
+  userId: z.string(),
+  email: z.string(),
+  name: z.string(),
+  signupCreated: z.boolean(),
+});
+authRoutes.post("/identity/exchange", authBodyLimit, zValidator("json", IdentityExchangeRequestSchema), async (c) => {
+  c.header("Cache-Control", "no-store");
+  return c.json(IdentityExchangeResponseSchema.parse(await new AuthService(c.env).exchangeIdentityTicket(c.req.valid("json"))));
+});
+
 authRoutes.post("/refresh", authBodyLimit, zValidator("json", RefreshRequestSchema), async (c) => {
   return c.json(SessionSchema.parse(await new AuthService(c.env).refresh(c.req.valid("json").refreshToken)));
 });

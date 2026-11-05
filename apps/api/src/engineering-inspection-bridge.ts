@@ -14,6 +14,12 @@ import {
   type SendEngineeringMessageResult,
   type EngineeringTextResult,
   CreateEngineeringOrgInputSchema,
+  AcceptEngineeringInvitationInputSchema,
+  AcceptEngineeringInvitationResultSchema,
+  type AcceptEngineeringInvitationResult,
+  ListEngineeringInvitationsInputSchema,
+  ListEngineeringInvitationsResultSchema,
+  type ListEngineeringInvitationsResult,
   CreateEngineeringOrgResultSchema,
   CreateEngineeringChannelInputSchema,
   CreateEngineeringChannelResultSchema,
@@ -87,7 +93,7 @@ import {
 import { parseRpcInput } from "./lib/rpc-contracts";
 import { ApiError } from "./lib/api-error";
 import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
-import { createEngineeringOrg, createEngineeringChannel, createEngineeringThread } from "./services/engineering-creation";
+import { createEngineeringOrg, createEngineeringChannel, createEngineeringThread, listEngineeringInvitations, acceptEngineeringInvitation, invitationOrgId } from "./services/engineering-creation";
 import { sendEngineeringMessage, readEngineeringChannel, readEngineeringConversation, listEngineeringUserChannels, listEngineeringUserConversations } from "./services/engineering-messages";
 import { auditedEngineeringWrite } from "./services/engineering-audit";
 
@@ -316,6 +322,23 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       }, async () => CreateEngineeringChannelResultSchema.parse(
         await createEngineeringChannel(this.env, request, (work) => this.ctx.waitUntil(work))),
       (result) => ({ channelId: result.channelId }));
+    });
+  }
+
+  async listInvitations(input: unknown): Promise<ListEngineeringInvitationsResult> {
+    return this.productOperation("listInvitations", async () =>
+      ListEngineeringInvitationsResultSchema.parse(
+        await listEngineeringInvitations(this.env, ListEngineeringInvitationsInputSchema.parse(input))));
+  }
+
+  async acceptInvitation(input: unknown, operator: unknown): Promise<AcceptEngineeringInvitationResult> {
+    return this.productOperation("acceptInvitation", async () => {
+      const request = AcceptEngineeringInvitationInputSchema.parse(input);
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: "accept_invitation", orgId: await invitationOrgId(this.env, request.invitationId),
+        representedUserId: request.userId, operationId: request.operationId,
+      }, async () => AcceptEngineeringInvitationResultSchema.parse(await acceptEngineeringInvitation(this.env, request)),
+      (result) => ({ orgId: result.orgId }));
     });
   }
 

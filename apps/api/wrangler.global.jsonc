@@ -43,6 +43,8 @@
     "FIREFLIES_CONNECTOR_ENABLED": "true",
     "ALLOWED_ORIGINS": "https://app.rallywith.ai,app://rallywithai,app://avalon,app://sideline,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
     "DESKTOP_DEEP_LINK_URI": "rallywithai://auth/complete",
+    // Relay signs its users in with their Rally identity; docs/identity-handoff.md.
+    "IDENTITY_HANDOFF_RETURN_URIS": "https://relay.internal.rallywith.ai/rally/callback",
     "OPENROUTER_PRIMARY_MODEL": "openai/gpt-6.1-sol",
     "OPENROUTER_FALLBACK_MODELS": "google/gemini-3.8-flash",
     "OPENROUTER_CLASSIFIER_MODEL": "openai/gpt-5.6-terra",

@@ -174,6 +174,15 @@ owner in the shared onboarding batch. Ordinary member seating gives each member
 General and their Personal Channel, including when a retry resumes seating.
 The MCP adapter writes no membership rows of its own.
 
+The bridge's `listInvitations` and `acceptInvitation` (RPC only, no MCP tool)
+are the app's invitation card for one user: the pending Organization
+invitations addressed to the user's email in this region, and accepting one as
+that user through `acceptInvitationForUser`, which still requires the
+invitation's address to be the user's. Acceptance is audited as
+`engineering.accept_invitation`. Relay uses them to let an invited person join
+the inviting Organization while signing in, since a person who only uses Relay
+never opens the Rally app where invitations are otherwise accepted.
+
 `create_channel` takes `orgId`, `name`, and `participantUserIds`, always including
 the creator. SpaceService creation applies those initial participants through
 the same audience update as
@@ -609,6 +618,23 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-11-05 — List and accept a user's Organization invitations
+
+**What changed:** The bridge gained `listInvitations` and `acceptInvitation`.
+
+**Why:** Relay now signs people in with their Rally identity and has each
+choose an Organization the first time. Someone an admin invited never opens the
+Rally app, which is the only place Organization invitations were accepted, so
+they could never join. The bridge could create an Organization but not add a
+member to one.
+
+**Considered and rejected:** Accepting every pending invitation automatically
+at sign-in, which would join someone to an Organization without them choosing
+it; an "add member" write, which would bypass the invitation an admin made.
+
+**Consequences:** Acceptance goes through the same function and email check as
+the app, so an invitation can only be accepted by the person it was sent to.
 
 ### 2026-11-04 — Post a message that starts no run
 

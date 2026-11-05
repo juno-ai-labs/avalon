@@ -5,6 +5,7 @@ import { createRemoteJWKSet, jwtVerify, SignJWT, type JWTPayload } from "jose";
 import { newId, nowIso } from "@rally/db";
 import { asUserId, asWorkspaceId, RefreshTokenSchema, IdSchema, WorkspaceSchema, type Region, type Session } from "@rally/contracts";
 import { isDesktopDeepLinkProtocol, SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
+import { isIdentityHandoffReturnUri } from "../lib/desktop-handoff";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { browserOrigin, browserReturnUrl } from "../lib/browser-origin";
@@ -189,6 +190,7 @@ function allowedReturnUri(env: Env, candidate: string | undefined): string {
   const expected = new URL(env.DESKTOP_DEEP_LINK_URI);
   const value = new URL(candidate ?? env.DESKTOP_DEEP_LINK_URI);
   if (value.toString() === SIDELINE_AUTH_CALLBACK_URI) return value.toString();
+  if (isIdentityHandoffReturnUri(env, value)) return value.toString();
   if (
     !isDesktopDeepLinkProtocol(value.protocol)
     || value.host !== expected.host
@@ -519,6 +521,54 @@ export class AuthService {
     codeVerifier: string;
     timezone?: string | undefined;
   }): Promise<Session> {
+    const claimed = await this.claimLoginTicket(input);
+    // Seeding, not overwriting. The machine's zone is the best guess Avalon has
+    // for an account that has never said, and it is worse than nothing for one
+    // that has: signing in from a laptop in another zone would silently move
+    // every automation and digest the person scheduled. A client that sends no
+    // zone leaves the account alone rather than being answered with a default.
+    if (input.timezone) {
+      await this.env.DB.prepare(
+        "UPDATE users SET timezone = ?, updated_at = ? WHERE id = ? AND timezone_source = 'client'",
+      )
+        .bind(input.timezone, nowIso(), claimed.user_id)
+        .run();
+    }
+    const identity = await this.loadIdentity(claimed.user_id, claimed.workspace_id);
+    const session = await this.createSession(identity);
+    observeAuthenticationCompleted(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, 'google', claimed.user_id, claimed.signup_created === 1);
+    return session;
+  }
+
+  /**
+   * Redeems a login ticket for who the person is, without opening a Rally
+   * session: the half of the handoff another of our services (Relay) calls
+   * after Rally sent its sign-in back to an `IDENTITY_HANDOFF_RETURN_URIS`
+   * address. The ticket, attempt and PKCE proof are checked exactly as for the
+   * desktop app.
+   */
+  async exchangeIdentityTicket(input: {
+    ticket: string;
+    region: Region;
+    attemptId: string;
+    codeVerifier: string;
+  }): Promise<{ userId: string; email: string; name: string; signupCreated: boolean }> {
+    const claimed = await this.claimLoginTicket(input);
+    const user = await this.env.DB.prepare("SELECT email, name FROM users WHERE id = ?")
+      .bind(claimed.user_id)
+      .first<{ email: string; name: string }>();
+    if (!user) throw new ApiError(401, "invalid_login_ticket", "The login ticket is invalid, expired, or already used");
+    observeAuthenticationCompleted(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, 'google', claimed.user_id, claimed.signup_created === 1);
+    return { userId: claimed.user_id, email: user.email, name: user.name, signupCreated: claimed.signup_created === 1 };
+  }
+
+  /** Consumes a login ticket once, burning it when the PKCE proof is wrong. */
+  private async claimLoginTicket(input: {
+    ticket: string;
+    region: Region;
+    attemptId: string;
+    codeVerifier: string;
+  }): Promise<{ user_id: string; workspace_id: string | null; telemetry_flow_id: string | null; signup_created: number }> {
     if (input.region !== this.env.AVALON_REGION) {
       throw new ApiError(409, "region_mismatch", "The login ticket belongs to another region");
     }
@@ -539,22 +589,7 @@ export class AuthService {
       // verifier, mirroring RFC 7636 authorization-code redemption semantics.
       throw new ApiError(401, "invalid_login_ticket", "The login ticket is invalid, expired, or already used");
     }
-    // Seeding, not overwriting. The machine's zone is the best guess Avalon has
-    // for an account that has never said, and it is worse than nothing for one
-    // that has: signing in from a laptop in another zone would silently move
-    // every automation and digest the person scheduled. A client that sends no
-    // zone leaves the account alone rather than being answered with a default.
-    if (input.timezone) {
-      await this.env.DB.prepare(
-        "UPDATE users SET timezone = ?, updated_at = ? WHERE id = ? AND timezone_source = 'client'",
-      )
-        .bind(input.timezone, nowIso(), claimed.user_id)
-        .run();
-    }
-    const identity = await this.loadIdentity(claimed.user_id, claimed.workspace_id);
-    const session = await this.createSession(identity);
-    observeAuthenticationCompleted(this.env, { flowId: claimed.telemetry_flow_id, clientPlatform: 'desktop' }, 'google', claimed.user_id, claimed.signup_created === 1);
-    return session;
+    return claimed;
   }
 
   async refresh(refreshToken: string): Promise<Session> {
