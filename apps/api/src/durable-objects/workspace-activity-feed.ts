@@ -10,6 +10,7 @@ import {
   type ActivityRowFacts,
   type ActivityWaterline,
 } from "./activity-clear-rules";
+import { threadStartAudienceSql } from "./activity-audience";
 import { boundParameterChunks } from "./bound-parameters";
 import { listedResourceVisibilitySql } from "../services/resource-listing";
 import { breakoutListedSql, channelListedSql, mainOpenableSql, type Viewer } from "./listing-rules";
@@ -27,7 +28,10 @@ import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace
  * - **added** and **mentioned** are events that name the viewer as a target
  *   with that relation;
  * - **thread_started** and **breakout_started** are a conversation the viewer
- *   may list, started by somebody else, read from its directory row;
+ *   may list, started by somebody else, read from its directory row; in an
+ *   Organization-wide Channel only its participants and the thread's are told
+ *   of a thread, and only the thread's participants of a breakout
+ *   (`activity-audience.ts`);
  * - **run_finished** is a thread or breakout the viewer takes part in whose
  *   run is `completed`, at its `completed_at`, so each conversation shows its
  *   latest finish once rather than one row per run.
@@ -233,6 +237,9 @@ export class WorkspaceActivityFeed {
     const threadListed = channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" });
     const breakoutListed = breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass);
     const mentionsOnly = only === "mentions";
+    const threadStartTold = this.spaces.ready()
+      ? threadStartAudienceSql("directory", "viewer", "directory.source_created_at")
+      : "1";
     const relations = mentionsOnly ? "('mentioned')" : "('added', 'mentioned')";
     const keys = [
       ...arm(`SELECT event.event_id AS id,
@@ -274,6 +281,7 @@ export class WorkspaceActivityFeed {
                 FROM channels directory
                 ${CHANNEL_VIEWER}
                WHERE ${threadListed}
+                 AND ${threadStartTold}
                  AND directory.created_by_user_id IS NOT NULL
                  AND directory.created_by_user_id <> ?1
                  AND directory.source_created_at IS NOT NULL
@@ -290,14 +298,15 @@ export class WorkspaceActivityFeed {
                 ${CHANNEL_VIEWER}
                 ${BREAKOUT_VIEWER}
                WHERE ${threadListed} AND ${breakoutListed}
+                 AND (viewer.is_participant = 1 OR breakout_viewer.is_participant = 1)
                  AND directory.archived_at IS NULL
                  AND breakout.created_by_user_id IS NOT NULL
                  AND breakout.created_by_user_id <> ?1
                  AND breakout.source_created_at IS NOT NULL
                  AND breakout.archived_at IS NULL`) : []),
       // A breakout's merge into its thread, read from the merge message's
-      // activity event through migration 109's partial index; anyone who may
-      // list the thread is told, as anyone who may read it sees the message.
+      // activity event through migration 109's partial index; the thread's
+      // participants are told, though anyone who may read it sees the message.
       ...(mentionsOnly ? [] : arm(`SELECT 'merged:' || event.event_id AS id, 'merged' AS kind,
                      event.occurred_at, event.actor_user_id, event.actor_label,
                      event.subject_id AS thread_id, '0' AS substream_id,
@@ -312,7 +321,8 @@ export class WorkspaceActivityFeed {
                  AND event.subject_type = 'workstream'
                  AND (event.actor_user_id IS NULL OR event.actor_user_id <> ?1)
                  AND directory.archived_at IS NULL
-                 AND ${threadListed}`)),
+                 AND ${threadListed}
+                 AND viewer.is_participant = 1`)),
       ...(mentionsOnly ? [] : this.spaces.mergeActivityKeys(viewer, after, limit)),
       ...(mentionsOnly ? [] : arm(`SELECT 'finished:' || directory.workstream_id || ':' || directory.completed_at AS id,
                      'run_finished' AS kind,

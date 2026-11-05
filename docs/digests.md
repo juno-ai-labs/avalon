@@ -27,6 +27,7 @@ mention, or changing what a connector can deliver to a person.
 | Settings → Notifications → Daily digest | `DailyDigestSettings` in `apps/desktop/src/renderer/components/notification-settings.tsx` |
 | The work-stream list every renderer surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts`, served by `WorkspaceDO` |
 | The Activity tab's read over the log and the directory, and its read mark | `apps/api/src/durable-objects/workspace-activity-feed.ts` |
+| Who is told about news in an Organization-wide Channel | `apps/api/src/durable-objects/activity-audience.ts` |
 | A breakout mention's emptied shape and its author-only audience | `apps/api/src/durable-objects/breakout-activity.ts` |
 | `GET /navigation/activity` and `PUT /navigation/activity/seen` | `apps/api/src/routes/navigation.ts` |
 
@@ -224,16 +225,22 @@ for one person, newest first:
   never becomes `new_message`. Builds before client contract 11 omit these rows;
 - every thread and breakout somebody else started, read from its own
   directory row (`channels` / `breakouts`: `created_by_user_id`,
-  `source_created_at`) rather than from an event; and
+  `source_created_at`) rather than from an event. An Organization-wide
+  thread placed in an Organization-wide Channel is told only to participants
+  of a Channel it is in and of the thread. A breakout is a change to its
+  thread, told only to the thread's participants and the breakout's; see
+  [Who is told about Channel news](#who-is-told-about-channel-news); and
 - the latest finished run (`exact_state = 'completed'`, `completed_at`) of
   each thread and breakout they take part in, read from the directory rather
   than from an event; and
 - every **merge** somebody else made ([`conversation-merge.md`](conversation-merge.md)):
-  a breakout's into a thread they may list, read from the merge message's own
+  a breakout's into a thread they take part in, read from the merge message's own
   event (its `metadata.mergedFrom`, through migration 109's partial index), and
   a thread's into a Channel they may list, read from `space_messages`, whether
   or not they may open the thread. Both are `merged`; a thread's carries
-  `mergedInto`. A merge from a thread they may not open is the Channel's row:
+  `mergedInto`. A thread's merge into an Organization-wide Channel is told only
+  to the Channel's participants and the thread's. A merge from a thread they
+  may not open is the Channel's row:
   `mergedInto.threadPrivate`, an empty `threadTitle`, and the Channel as its
   only `channelIds`. A build before client contract 7 is served the page
   without merges, and one before 9 without those rows.
@@ -250,6 +257,49 @@ conversation page's gates, so a row the person may not list now is never read
 at all. A page and its cursor therefore never carry a thread or breakout the
 viewer cannot list; filtering after the read would have let a page come back
 short, or empty with a cursor that names a hidden row.
+
+#### Who is told about Channel news
+
+Listing decides who may *see* a thread or a Channel post; `activity-audience.ts`
+decides who is *told*. Every member may list an Organization-wide thread in an
+Organization-wide Channel, but its start and its merge into the Channel reach
+only people taking part: participants of the Channel (`space_viewers`) and of
+the thread (`channel_viewers.is_participant`). A member who never joined the
+Channel can still find and open the thread; nothing about it lands in their
+Activity, digest, push, email or Slack.
+
+A Channel counts only for what happened after the person joined it.
+`space_viewers.joined_at` (migration 134) is stamped from WorkspaceDO's own
+clock each time a row turns participant, by every writer: Space creation, an
+audience change, seating (General, invitees, posting, starting a thread there)
+and the Space's `directory_user` projection, which carries no join time of its
+own. A start is compared by `source_created_at`, a merge by `posted_at`. So
+joining a Channel brings none of its history into Activity, and someone who
+leaves and rejoins hears only what follows the rejoin. The column is
+`NOT NULL` with no default. Migration 134 rebuilt the table and dated every
+existing row at its Channel's earliest known creation (the smaller of
+`created_at` and a nonzero `source_created_at`; 0 for a row whose Space row is
+missing), since nobody had recorded when those people joined. A participant
+added through the Space's own projection is stamped when the projection lands
+here, so a start in that delivery gap is not told to them. Participation in the
+thread itself is not timed: being added to a thread still tells you it started,
+and of its merges. Because a Channel's participants and scope now decide
+rows, a change to either publishes the `activity` sync topic to the whole
+Organization, from `noteSpaceAudience` and from a Space directory projection
+that moved a row, so open windows and the menu bar read Activity again.
+
+**A change inside a thread reaches its participants alone.** A breakout started
+in a thread, or merged back into it, is told to the thread's participants (and,
+for a start, the breakout's own), however widely the thread is listed and
+whatever Channel it is in. Replies and finished runs already were
+participants-only. A mention and an update to a pinned artifact still reach a
+non-participant: the first names them, the second is something they chose to
+follow.
+
+The Channel rule narrows only Organization-wide scope. A private thread or private
+Channel already lists to its people. A thread placed in no Organization-wide
+Channel keeps its listing audience. Every member is seated in General, so
+General's news still reaches everyone who has not left it.
 
 **`?only=mentions`** runs the first arm alone, narrowed to the `mentioned`
 relation, so the page and its cursor are cut from mentions and nothing else.
@@ -722,6 +772,37 @@ semantics. [Push notifications](push-notifications.md) owns the channels,
 device registration, provider delivery and retry receipts.
 
 ## Changelog
+
+### 2026-11-05 — News in an Organization-wide Channel reaches its participants only
+
+**What changed:** A thread start and a thread's merge into an
+Organization-wide Channel are Activity rows only for participants of the
+thread, or of that Channel when they had joined it before the event
+(`activity-audience.ts`, `space_viewers.joined_at`, migration 134). A
+breakout's start and its merge into its thread are rows only for the thread's
+participants (and the breakout's, for a start).
+Every notification channel reads this feed, so push, email, Slack and the
+digest narrow with it.
+
+**Why:** The product owner asked that people not be notified about new
+threads and posts in a public Channel they have not joined, then that
+nothing from before they joined a Channel become Activity, and then that
+changes to a thread they are not in notify nobody. Before, every
+member was told of every Organization-wide start and Channel merge, and a
+new member's Activity filled with history.
+
+**Considered and rejected:** Filtering only pushes: the Activity tab, digest
+and menu bar would still list the rows. Narrowing listing: a member must still
+find and open a public thread. Timing by placement rather than start: an old
+thread moved in would be news. A nullable `joined_at`: a writer that forgot it
+would silently tell a Channel's whole history, where `NOT NULL` fails the
+insert.
+
+**Consequences:** A new writer of `space_viewers` must give `joined_at` and
+move it when a row turns participant. A future rebuild of `space_viewers` must
+restore `MEMORY_DIGEST_SYNC_TRIGGERS.space_viewers`. A start is dated by the
+creating client's `source_created_at`, so a skewed clock can land it just either
+side of a join.
 
 ### 2026-10-20 — Human replies join Activity and conversations collapse into one row
 
