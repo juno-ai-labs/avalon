@@ -27,6 +27,7 @@ exists.
 | `apps/api/src/durable-objects/artifact-host-do.ts` | One supervisor object per artifact: version pointer, viewer sessions, error log, and the facet that runs the model's storage class. |
 | `apps/api/src/artifacts/index.ts` | The artifact serving Worker's entry point — a second Worker, its own origin, its own bindings. |
 | `apps/api/src/artifacts/serving-policy.ts` | The three fences: the page CSP, the fetch-metadata admission, and the prior-version mount rules. |
+| `apps/api/src/artifacts/annotation-script.ts` | Which responses carry Rally's annotation script (a viewer session, or the browser client's frame), the served file at `/__rally/picker-<hash>.js`, and its head-first injection. |
 | `apps/api/src/artifacts/read-only-sql.ts` | What a data query may run, how a dynamic table name is admitted, and which tables are private to a viewer (`viewerTables`, `artifactRowScope`). |
 | `apps/api/src/artifacts/hostname-routes.ts` | The stub-to-artifact lookup, shared by the serving Worker and the API. |
 | `apps/api/src/services/artifact-site-resolution.ts` | The hostname-to-organization lookup behind `/browser/sites/resolve`, for signing in from a site's link. |
@@ -436,7 +437,9 @@ is the only place that can forward into it.
   another, the hop the desktop's `confineToArtifactOrigin` refuses. What is
   accepted:
   model-authored content renders inside the app's window and can `postMessage`
-  its parent, which the app does not listen for.
+  its parent. The app listens for one thing: the annotation script's bridge,
+  and only from that frame's window at the artifact origin, in the shared
+  schema ([artifact annotations](artifact-annotations.md)).
 - **The pane distinguishes "not attempted" from "refused".** A boolean cannot,
   and the gap between access arriving and the main process answering is not a
   failure — a component that used one flashes an unavailable message on every
@@ -714,14 +717,30 @@ there reconstructs a live session, but an operator who can write the table can
 mint one; that is inside that console's stated authority rather than a boundary
 this module holds, and [`engineering-mcp.md`](engineering-mcp.md) owns it.
 
-### Native annotation picking
+### Annotation picking
 
-Comment mode in Rally's Mac preview installs the shared inspector into an
-isolated JavaScript world and captures the selected element as a PNG crop. No
-picker script is added to published site responses. Browser live-site previews
-remain view-only. The authorized `GET /resources/:id/versions/:version/site-preview` route reopens frozen HTML assets without running
-old site code; a missing or mismatched element shows its saved quote and image.
-The selector and trust boundaries are owned by
+A Rally viewer's HTML responses carry Rally's annotation script, prepended as
+the first child of `<head>` in `serveCurrent`, with `defer` so the page parses
+without waiting on it: a string edit on a static asset (skipping any `<head>`
+inside a comment), an `HTMLRewriter` on an active site's streamed response, in
+the same places the social preview is injected. The rule in `annotation-script.ts` is
+a valid viewer session (the desktop's view and pop-out, or a person who opened
+the site from Rally in their own browser, where it is inert) or a framed
+request when `BROWSER_APP_ORIGIN` is configured (the browser client, whose
+frame Safari views without the partitioned cookie), and only for a navigation:
+a page's own `fetch()` of a partial carries the same cookie and gets its bytes
+as published. A public read, a crawler and an unfurler get the page as
+published. The file itself is served at
+`/__rally/picker-<hash>.js` before the hostname lookup, like the bootstrap,
+and cached for a year only when the hash is the serving isolate's own; another
+build's path is answered but not cached, so a deploy cannot leave a browser
+holding the old script under the new name. The desktop calls the script's API
+through `executeJavaScript` and captures the selected element as a PNG crop;
+the browser client posts to the frame. Prior-version mounts carry no script:
+a saved spot reopens through the authorized
+`GET /resources/:id/versions/:version/site-preview` route, which serves frozen
+HTML assets without running old site code, and a missing or mismatched element
+shows its saved quote and image. The script and trust boundaries are owned by
 [artifact annotations](artifact-annotations.md).
 
 ## Changelog
@@ -763,6 +782,35 @@ withheld when the session check itself failed, so a broken check cannot loop
 a person through sign-in. The desktop artifact view refuses that redirect,
 since it leaves the artifact origin; a desktop viewer whose session expired
 reopens the site from Rally.
+
+### 2026-10-29 — The serving Worker gives Rally viewers the annotation script
+
+**What changed:** `serveCurrent` prepends `<script src="/__rally/picker-<hash>.js">`
+to successful HTML for a request with a valid viewer session or a framed
+browser-client load, and the Worker serves that file before the hostname
+lookup. Static assets are rewritten as text and active responses through
+`HTMLRewriter`, next to the social-preview injection.
+
+**Why:** The desktop and the browser client both needed Rally's picker inside
+the artifact's document. The browser's frame is another origin, which the app
+cannot reach; the desktop could, through an isolated world, and retiring that
+was a choice for one transport over two. The
+2026-10-19 design had refused injection for the forgery it allows; the
+requester judged that not a real threat for agent-authored pages.
+
+**Considered and rejected:** Injecting on a pick flag with a reload (loses page
+state and ends on navigation); injecting for every response (puts Rally code
+in public pages for no reader); keying only on the viewer session (excludes
+Safari's cookieless frame).
+
+**Consequences:** Public responses must stay byte-identical, which the hostname
+tests pin. The script path is reserved under `/__rally/`, and the artifact CSP's
+`script-src 'self'` is what admits it; a page's own `<meta>` policy cannot
+refuse a script that precedes it, which is why it goes first in `<head>`. The
+`building-live-sites` skill gained a "Recreating a person's view" step: a
+browser-client comment carries the viewer's window instead of a screenshot,
+and the agent rebuilds that window in its sandbox with the Playwright already
+in the snapshot before a visual edit.
 
 ### 2026-10-22 — Preserve raw source data before building a site
 

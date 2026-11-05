@@ -166,7 +166,7 @@ function ArtifactSiteWindow({preview}: {preview: Extract<DesktopArtifactWindowRe
       return z.object({ openUrl:z.string(), canonicalUrl:z.string(), artifactId:z.string(), mode:z.enum(['static','active']), stateful:z.boolean() }).parse(await command({ type:'open' }));
     }, describeData:async()=>z.object({tables:z.array(z.object({name:z.string(),columns:z.array(z.object({name:z.string(),type:z.string()})),rowCount:z.number()}))}).parse(await command({type:'data'})),
     loadTable:async(_resourceId:string,table:string)=>z.object({rows:z.array(z.record(z.string(),z.unknown())),csv:z.string()}).parse(await command({type:'table',table})),
-      surface:{present:bridge.presentArtifactPreview,setBounds:bridge.setArtifactPreviewBounds,snapshot:bridge.snapshotArtifactPreview,pick:bridge.pickArtifactPreview,stopPicking:bridge.stopPickingArtifactPreview,comments:bridge.showArtifactPreviewComments,close:bridge.closeArtifactPreview,popOut:async()=>false,copyText:bridge.copyText,openExternal:bridge.openExternal}};
+      surface:{present:bridge.presentArtifactPreview,setBounds:bridge.setArtifactPreviewBounds,snapshot:bridge.snapshotArtifactPreview,ready:bridge.artifactPreviewReady,pick:bridge.pickArtifactPreview,stopPicking:bridge.stopPickingArtifactPreview,comments:bridge.showArtifactPreviewComments,close:bridge.closeArtifactPreview,popOut:async()=>false,copyText:bridge.copyText,openExternal:bridge.openExternal}};
   },[preview]);
   return <SiteResourceDetail resourceId={preview.resourceId} version={preview.version} title={preview.title} {...options} />;
 }

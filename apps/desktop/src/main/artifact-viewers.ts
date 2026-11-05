@@ -1,4 +1,6 @@
-import type { AnnotationCommentPins, AnnotationCommentAction } from '@rally/contracts';
+import { AnnotationCommentActionSchema, ArtifactPickerPinSchema, type AnnotationCommentPins, type AnnotationCommentAction, type AnnotationSelection, type ArtifactPickerPin } from '@rally/contracts';
+import { zodDiagnosticCode } from '@rally/contracts/zod-diagnostics';
+import { z, type ZodType } from 'zod';
 /**
  * The two surfaces that show a live artifact, and the one isolation contract
  * both are built from.
@@ -66,10 +68,64 @@ export interface ArtifactViewHandle {
   load(url: string): Promise<boolean>;
   /** The page as painted now, as an image data URL, or `null` when nothing is painted. */
   capture(): Promise<string | null>;
+  /** Whether the page carries Rally's annotation API; see `artifactPageAnnotations`. */
+  ready?: () => Promise<boolean>;
   pick?: () => Promise<unknown>;
   stopPicking?: () => Promise<void>;
-  comments?: (pins: AnnotationCommentPins) => Promise<AnnotationCommentAction | null>;
+  /** Draw the confirmed cards and keep `selected` highlighted as the selection being edited, when it is on this page and unchanged. */
+  comments?: (pins: AnnotationCommentPins, selected: AnnotationSelection | null) => Promise<AnnotationCommentAction | null>;
   close(): void;
+}
+
+/** What `rallyAnnotations.rect(css)` answers: an element's rectangle and the viewport it is in. */
+export const ArtifactViewportRectSchema = z.object({
+  x: z.number().finite(),
+  y: z.number().finite(),
+  width: z.number().nonnegative(),
+  height: z.number().nonnegative(),
+  viewportWidth: z.number().positive(),
+  viewportHeight: z.number().positive(),
+}).nullable();
+export type ArtifactViewportRect = z.infer<typeof ArtifactViewportRectSchema>;
+
+/**
+ * The page's annotation API, reached through `executeJavaScript`.
+ *
+ * The serving Worker puts `globalThis.rallyAnnotations` into every page a
+ * Rally viewer loads (`docs/artifact-annotations.md`), and the desktop calls
+ * it where the browser client would post a message. Each call is one script
+ * that answers `null` where the API is absent, so a page the Worker did not
+ * serve (a protected site's refusal, an error page) reads as not ready rather
+ * than as a thrown reference error. Every answer is parsed: it comes from a
+ * document the page's own scripts share.
+ */
+export function artifactPageAnnotations(execute: (code: string) => Promise<unknown>) {
+  const call = (expression: string): Promise<unknown> =>
+    execute(`globalThis.rallyAnnotations ? globalThis.rallyAnnotations.${expression} : null`);
+  // The page's answer, or an error naming the field it failed on. The page
+  // shares the world the API runs in, so its keys and values stay out of it.
+  const parse = <T>(schema: ZodType<T>, raw: unknown, label: string): T => {
+    const parsed = schema.safeParse(raw);
+    if (parsed.success) return parsed.data;
+    throw new Error(zodDiagnosticCode(parsed.error, label) ?? `${label}_invalid`);
+  };
+  return {
+    ready: async (): Promise<boolean> =>
+      await execute('typeof globalThis.rallyAnnotations === "object" && globalThis.rallyAnnotations !== null') === true,
+    pick: async (): Promise<ArtifactPickerPin | null> => {
+      const raw = await call('pick()');
+      // Never the page's bytes: a pin's `screenshot` is main's own capture or
+      // nothing, so the field is not even read from the page's answer.
+      return raw === null || raw === undefined ? null : parse(ArtifactPickerPinSchema.omit({ screenshot: true }), raw, 'artifact_pin');
+    },
+    stopPicking: async (): Promise<void> => { await call('stopPicking()'); },
+    comments: async (pins: AnnotationCommentPins, selected: AnnotationSelection | null = null): Promise<AnnotationCommentAction | null> => {
+      const raw = await call(`comments(${JSON.stringify(pins)}, ${JSON.stringify(selected)})`);
+      return raw === null || raw === undefined ? null : parse(AnnotationCommentActionSchema, raw, 'annotation_comment_action');
+    },
+    rect: async (css: string): Promise<ArtifactViewportRect> =>
+      parse(ArtifactViewportRectSchema, await call(`rect(${JSON.stringify(css)})`) ?? null, 'artifact_element_rect'),
+  };
 }
 
 
@@ -639,16 +695,23 @@ export class ArtifactPreviewController {
     return await view.capture();
   }
 
+  /** Whether the shown page can take comments. False while nothing is shown or it is still loading. */
+  async ready(): Promise<boolean> {
+    const view = this.view;
+    if (!view || view.destroyed() || this.pendingLoad?.view === view) return false;
+    const result = await view.ready?.() ?? false;
+    return this.view === view && !view.destroyed() ? result : false;
+  }
   async pick(): Promise<unknown> {
     const view = this.view;
     if (!view || view.destroyed() || this.pendingLoad?.view === view) return null;
     const result = await view.pick?.() ?? null;
     return this.view === view && !view.destroyed() ? result : null;
   }
-  async comments(pins: AnnotationCommentPins): Promise<AnnotationCommentAction | null> {
+  async comments(pins: AnnotationCommentPins, selected: AnnotationSelection | null = null): Promise<AnnotationCommentAction | null> {
     const view=this.view;
     if (!view || view.destroyed() || this.pendingLoad?.view===view) return null;
-    const result=await view.comments?.(pins) ?? null;
+    const result=await view.comments?.(pins, selected) ?? null;
     return this.view===view && !view.destroyed() ? result : null;
   }
   async stopPicking(): Promise<void> { await this.view?.stopPicking?.(); }

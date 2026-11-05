@@ -1,5 +1,5 @@
 import type { ArtifactWindowAction } from './artifact-window-actions';
-import type { AnnotationCommentPins, AnnotationCommentAction, Annotation, ArtifactPickerPin } from "@rally/contracts";
+import type { AnnotationCommentPins, AnnotationCommentAction, AnnotationSelection, Annotation, ArtifactPickerPin } from "@rally/contracts";
 import type { ClientSession } from "@rally/contracts/client-session";
 import type { NetworkRecoveryState, NetworkTicketObservation } from './network-recovery';
 import type {
@@ -576,8 +576,11 @@ export interface RallyDesktopBridge {
    */
   setArtifactPreviewHidden: (hidden: boolean) => Promise<void>;
   /** A still of the live preview as an image data URL, or `null` when none is showing. */
+  /** Whether the shown page carries Rally's annotation API, so Comment mode can be offered. */
+  artifactPreviewReady?: () => Promise<boolean>;
   pickArtifactPreview?: () => Promise<ArtifactPickerPin | null>;
-  showArtifactPreviewComments?: (pins: AnnotationCommentPins) => Promise<AnnotationCommentAction | null>;
+  /** Draw confirmed cards in the page and keep `selected` highlighted while its comment is edited, when it is on this page and unchanged. */
+  showArtifactPreviewComments?: (pins: AnnotationCommentPins, selected?: AnnotationSelection | null) => Promise<AnnotationCommentAction | null>;
   stopPickingArtifactPreview?: () => Promise<void>;
   snapshotArtifactPreview: () => Promise<string | null>;
   /** Tear the preview down: the detail closed, or the work stream changed. */

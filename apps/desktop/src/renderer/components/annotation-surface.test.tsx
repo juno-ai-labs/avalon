@@ -1,11 +1,13 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AnnotationDraftProvider, AnnotationChips, MessageAnnotations, useAnnotationDraft } from './artifact-annotations';
 import { sourceSelectionPoint,annotationDomRange } from '../lib/annotation-source';
 import { AnnotationSurface } from './annotation-surface';
 const resourceId='00000000-0000-7000-8000-0000000000a1';
-function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><button onClick={()=>draft?.clearAccepted(draft.pins)}>Accept message</button><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output></>;}
+/** The per-document key the surface put in the frame's script URL. */
+const keyOf=(frame:HTMLIFrameElement):string=>/annotation-frame\.js\?key=([0-9a-f]+)/u.exec(frame.getAttribute('srcdoc')??'')?.[1]??'';
+function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><button onClick={()=>draft?.clearAccepted(draft.pins)}>Accept message</button><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output><output data-testid="pin-ids">{draft?.pins.map((p)=>p.id).join(',')}</output></>;}
 afterEach(cleanup);
 describe('annotation source picker',()=>{
   it('shows website words instead of markup in saved annotations',()=>{
@@ -19,12 +21,90 @@ describe('annotation source picker',()=>{
     expect(screen.queryByText('<img src="hero.png">')).toBeNull();
   });
 
-  it('keeps browser HTML comments discoverable without entering pick mode',()=>{
-    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text="<h1>Plans</h1>" /></AnnotationDraftProvider></Tooltip.Provider>);
+  it('offers HTML file comments on every host and gives the opaque frame only the app-origin script',()=>{
+    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text="<h1>Plans</h1><script>alert(1)</script>" /></AnnotationDraftProvider></Tooltip.Provider>);
+    const frame=screen.getByTitle('Preview of Pricing.html');
+    expect(frame).toHaveAttribute('sandbox','');
     const button=screen.getByRole('button',{name:'Comment mode'});
-    expect(button).toHaveAttribute('aria-disabled','true');
+    expect(button).not.toHaveAttribute('aria-disabled');
     fireEvent.click(button);
+    expect(button).toHaveAttribute('aria-pressed','true');
+    expect(frame).toHaveAttribute('sandbox','allow-scripts');
+    const document=frame.getAttribute('srcdoc')??'';
+    const nonce=/script-src 'nonce-([0-9a-f]+)'/u.exec(document)?.[1];
+    expect(nonce).toBeDefined();
+    expect(document).toContain(`<script nonce="${nonce}" src="http://localhost:3000/annotation-frame.js?key=${nonce}"></script>`);
+    expect(document).not.toContain('data-annotation-');
+    // The file's own script is in the document but carries no nonce.
+    expect(document).toContain('<script>alert(1)</script>');
+  });
+  it('tells a new opaque document what to do once it announces itself',()=>{
+    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text="<h1>Plans</h1>" saved={{target:{resourceId,version:1,locator:{type:'element',css:'h1',box:{x:0,y:0,w:1,h:1},visibleText:'Plans'}},content:{exact:'<h1>Plans</h1>',source:'rendered',before:'',after:'',truncated:false},comment:'Shorter'}} /></AnnotationDraftProvider></Tooltip.Provider>);
+    const frame=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    const posted=vi.spyOn(frame.contentWindow!,'postMessage');
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-ready',pagePath:'/',key:keyOf(frame)},source:frame.contentWindow,origin:'null'}));
+    expect(posted).toHaveBeenCalledWith({type:'rally-annotation-restore',locator:{type:'element',css:'h1',box:{x:0,y:0,w:1,h:1},visibleText:'Plans'},exact:'<h1>Plans</h1>'},'*');
+    expect(posted).toHaveBeenCalledWith({type:'rally-annotation-picking',on:false},'*');
+    // Each comment sync names the saved selection, so it stays highlighted
+    // after the restore; once it is known to be missing, nothing is.
+    expect(posted).toHaveBeenCalledWith({type:'rally-annotation-comments',pins:[],selected:{css:'h1',exact:'<h1>Plans</h1>'}},'*');
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-restored',resolved:false,key:keyOf(frame)},source:frame.contentWindow,origin:'null'}));
+    expect(screen.getByText('The original page cannot be shown again.')).toBeVisible();
+    expect(posted).toHaveBeenLastCalledWith({type:'rally-annotation-comments',pins:[],selected:null},'*');
+  });
+  it('takes a pin with its viewport from the opaque frame, drops it on a remove click, and hears no other window',async()=>{
+    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text="<h1>Plans</h1>" /><Observe /></AnnotationDraftProvider></Tooltip.Provider>);
+    fireEvent.click(screen.getByRole('button',{name:'Comment mode'}));
+    const frame=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    const viewport={width:416,height:500,scrollX:0,scrollY:40,devicePixelRatio:2,colorScheme:'light'};
+    const pin={css:'h1',box:{x:0,y:0,w:1,h:0.2},visibleText:'Plans',html:'<h1>Plans</h1>',pagePath:'/',replace:false,point:{x:10,y:10},viewport};
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-artifact-pin',pin,key:keyOf(frame)},source:window,origin:'null'}));
+    // The frame's window, but without the document's key: a document the file navigated to.
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-artifact-pin',pin},source:frame.contentWindow,origin:'null'}));
+    expect(screen.queryByRole('textbox',{name:'Comment on selection'})).toBeNull();
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-artifact-pin',pin,key:keyOf(frame)},source:frame.contentWindow,origin:'null'}));
+    expect(await screen.findByRole('textbox',{name:'Comment on selection'})).toBeVisible();
+    const pinned=JSON.parse(screen.getByTestId('pins').textContent??'[]');
+    expect(pinned[0].target.locator).toMatchObject({type:'element',css:'h1',viewport});
+    expect(pinned[0].target.locator.pagePath).toBeUndefined();
+    fireEvent.change(screen.getByRole('textbox',{name:'Comment on selection'}),{target:{value:'Shorter'}});
+    fireEvent.keyDown(screen.getByRole('textbox',{name:'Comment on selection'}),{key:'Enter'});
+    const commented=JSON.parse(screen.getByTestId('pins').textContent??'[]');
+    expect(commented[0].comment).toBe('Shorter');
+    const draftId=(screen.getByTestId('pin-ids').textContent??'').split(',')[0];
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-comment-action',action:{id:draftId,action:'remove'},key:keyOf(frame)},source:frame.contentWindow,origin:'null'}));
+    expect(screen.getByTestId('pins')).toHaveTextContent('[]');
+  });
+  it('stops talking to the opaque frame the moment its document says it is leaving',()=>{
+    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text='<a href="https://x-g.rallyusercontent.test/">Go</a><h1>Plans</h1>' /><Observe /></AnnotationDraftProvider></Tooltip.Provider>);
+    const button=screen.getByRole('button',{name:'Comment mode'});
+    fireEvent.click(button);
+    const frame=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    const posted=vi.spyOn(frame.contentWindow!,'postMessage');
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-left',key:keyOf(frame)},source:frame.contentWindow,origin:'null'}));
     expect(button).toHaveAttribute('aria-pressed','false');
+    const after=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    expect(after).toHaveAttribute('sandbox','');
+    // Nothing more is posted to the window the file navigated away from.
+    posted.mockClear();
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-annotation-ready',pagePath:'/',key:keyOf(frame)},source:after.contentWindow,origin:'null'}));
+    expect(posted).not.toHaveBeenCalled();
+  });
+  it('remounts the opaque frame without scripts once a document replaced the file, and stops listening',()=>{
+    render(<Tooltip.Provider><AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Pricing.html" mimeType="text/html" text='<meta http-equiv="refresh" content="0;url=https://x-g.rallyusercontent.test/"><h1>Plans</h1>' /><Observe /></AnnotationDraftProvider></Tooltip.Provider>);
+    const button=screen.getByRole('button',{name:'Comment mode'});
+    fireEvent.click(button);
+    const first=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    expect(first).toHaveAttribute('sandbox','allow-scripts');
+    fireEvent.load(first);
+    // A second load of the same srcdoc is a document the file navigated to.
+    fireEvent.load(first);
+    const second=screen.getByTitle('Preview of Pricing.html') as HTMLIFrameElement;
+    expect(second).toHaveAttribute('sandbox','');
+    expect(second.getAttribute('srcdoc')).not.toContain('annotation-frame.js');
+    expect(button).toHaveAttribute('aria-pressed','false');
+    fireEvent(window,new MessageEvent('message',{data:{type:'rally-artifact-pin',pin:{css:'h1',box:{x:0,y:0,w:1,h:0.2},visibleText:'Plans',html:'<h1>Plans</h1>',pagePath:'/',replace:false}},source:second.contentWindow,origin:'null'}));
+    expect(screen.queryByRole('textbox',{name:'Comment on selection'})).toBeNull();
   });
   it('pins rendered Markdown with exact list markup and keeps a removable commented chip',()=>{
     render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={4} name="Pricing.md" mimeType="text/markdown" text={'# Plans\n\n- **Starter**: $12 per seat.\n- Team: $24.\n'} /><Observe /></AnnotationDraftProvider>);

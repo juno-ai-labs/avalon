@@ -10,7 +10,11 @@ server annotation table or artifact comment thread. Unconfirmed selections are n
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/artifact-annotations.ts` | Shared locators, builder, admission rules and model projection. |
-| `packages/contracts/src/artifact-picker.ts` | HTML inspector, restoration and the Tabler pointer-collaboration cursor, shared by all HTML transports. |
+| `packages/contracts/src/artifact-annotation-script.ts` | The one annotation script: the inspector, the comment cards, restoration and the Tabler pointer-collaboration cursor, behind the in-page `rallyAnnotations` API and its `postMessage` bridge. A leaf module, because the Vite plugins import it. |
+| `packages/contracts/src/artifact-picker.ts` | The message schemas a host and a framed document exchange over that bridge. |
+| `apps/api/src/artifacts/annotation-script.ts` | Who gets the script (a viewer session, or the browser client's frame), the served file, and its head-first injection into static and streamed HTML. |
+| `apps/desktop/artifact-picker-plugin.ts` | Emits the same script as `/annotation-frame.js` on the desktop and browser app origins, for the opaque HTML-file frame. |
+| `apps/desktop/src/main/artifact-viewers.ts` | `artifactPageAnnotations`: the desktop's calls into the page API through `executeJavaScript`, and the preview controller's readiness. |
 | `apps/desktop/src/renderer/components/annotation-surface.tsx` | Text, converted document, image and opaque HTML selection. |
 | `apps/desktop/src/renderer/components/image-viewport.tsx` | Two-axis image scrolling, sizing and zoom shared by annotated and ordinary previews. |
 | `apps/desktop/src/renderer/lib/annotation-source.ts` | Parser source positions and reversible rendered/source range mapping. |
@@ -86,6 +90,17 @@ Composer chips provide a comment editor even after their original preview closes
 Annotation-bearing sends exclude another submission until the receipt returns;
 an open elicitation must be answered before artifact comments are sent.
 
+A pin made in a frame carries the window the person saw it in: the element
+locator's optional `viewport` (CSS-pixel width and height, the page's scroll
+offsets, the device pixel ratio and the color scheme), which the picker reads
+when it reports the pin. A rendered annotation with no screenshot (every
+browser-client website pin, since a browser cannot capture its frame) projects
+that window into the model's guidance, and the `building-live-sites` skill's
+"Recreating a person's view" step holds the Playwright recipe that rebuilds it
+in the Terminal sandbox from the imported site, so the agent sees what the
+person saw rather than the page at a width they never used. A desktop pin
+still carries its own crop and gets no such instruction.
+
 The canonical turn's existing `structuredContent` contains
 `{kind: 'artifact_annotations', annotations, names}`. Image annotations also
 retain server-built immutable image descriptors, version identity and model-image metadata for replay; clients cannot
@@ -95,24 +110,109 @@ version. Source ranges and cell tables must match the saved quote before they
 are highlighted. HTML restoration verifies the trimmed element and visible
 text. An unresolved spot shows the saved quote and available screenshot.
 
+### One script, one in-page API
+
+Every HTML surface runs the same script, which installs
+`globalThis.rallyAnnotations`: `pick()` starts the inspector and resolves with
+the next pin (or `null` on Escape, with early pins queued), `stopPicking()`
+removes it, `comments(pins, selected)` draws the confirmed cards, keeps
+`selected` highlighted, and resolves with an edit or remove click,
+`restore(locator, exact)` highlights a saved selection, `rect(css)` answers an
+element's viewport rectangle, and `watchAnchor(callback)` reports the
+selection's rectangle whenever it moves. `comments` and `restore` look their elements up
+once the document has parsed: the script runs from the head and announces
+itself at once, so a host may answer while the page is still streaming in, and
+a card asked for then must still appear. A host that keeps a restored
+selection names it as `selected` on every comment sync, since a sync with
+`null` clears it. The script does nothing until a host calls it. What differs
+per surface is how the script gets into the document and how the host reaches
+it:
+
+| Surface | How the script gets in | How the host calls it |
+| --- | --- | --- |
+| Live site, desktop rail and pop-out | The serving Worker prepends it to every HTML response for a request carrying a valid viewer session | `executeJavaScript` from the main process, parsed on return |
+| Live site, browser client | The same injection, also for any framed request when `BROWSER_APP_ORIGIN` is configured, since Safari views the frame without the partitioned cookie | `postMessage` to the frame at the artifact origin; replies accepted only from that frame's window at that origin |
+| HTML file, rail or lightbox, and a saved site spot | `/annotation-frame.js?key=<nonce>` from the app origin, under a fresh nonce, in an opaque `srcdoc` frame | `postMessage` to the frame; replies accepted only from that frame's window and carrying the document's key |
+
+The bridge is the same three host messages (`rally-annotation-picking`,
+`rally-annotation-comments`, `rally-annotation-restore`) and five replies
+(`rally-annotation-ready`, `rally-artifact-pin`,
+`rally-annotation-comment-action`, `rally-annotation-restored`,
+`rally-annotation-anchor`), all parsed with the shared schemas. A framed document announces itself with the ready message
+while it parses, so the host learns a new page after an in-site link and tells
+it what it is doing; the Comment control is enabled only once a page has said
+so, and a page without the script (the neutral page, a protected site's
+refusal, an error page) keeps it disabled with "This page cannot take comments
+here." The script accepts messages only from `window.parent`, and on an
+artifact origin only when that parent is the configured app origin.
+
+### What the script draws, and how it keeps up
+
+The inspector outlines the nearest block under the pointer and never the
+document or its body: a pointer over empty page shows nothing, and a click
+there pins nothing. Once a block is pinned it stays highlighted as the
+selection until its comment is confirmed or discarded; the host says which
+selection is open through `comments(pins, selected)`, as the pin's CSS path,
+page path and quoted markup, and the script highlights it only on that page
+and while the markup still matches, as it does a card's element; so the
+highlight survives a frame reload, never lights up a look-alike on another
+page, and clears when the editor closes. Confirmed cards use the app's
+own card look, sit to the right of their element with a connector when there is
+room and below it when there is not, and hide while the element is out of the
+viewport or scrolled out of an ancestor that clips it. Each card keeps an
+outline around the element it is about, so the comment's scope stays visible
+without hovering; hovering the card strengthens that outline. Cards are laid
+out together each frame, in document order, and a card slides down past any
+card or commented element already in its way, so no card covers another
+comment's card or element.
+
+Everything drawn is kept in place by one frame-synced tracker inside the
+script: it runs only while something is drawn, reads each tracked
+element's rectangle once per frame, and moves what changed. That is what makes
+an outline, a selection or a card follow a scroll in any container, a resize,
+a transition or a layout shift without a listener for each, and it is why the
+hover outline re-resolves what is under a still pointer after the page scrolls
+beneath it. A framed host gets the selection's rectangle as
+`rally-annotation-anchor` whenever it moves, and `placeAnnotationEditor` in
+`lib/annotation-anchor.ts` puts the comment editor beside the element, below it
+when the window has no room to the right, and parked at the frame's edge when
+the element has scrolled out of the frame. The desktop's editor opens over a
+still of the page, so nothing scrolls under it there.
+
 ### HTML trust boundaries
 
-Static HTML stays in an opaque iframe. Comment mode adds only `allow-scripts`,
-never `allow-same-origin`. A fresh nonce authorizes a bundled app-origin picker script. Using an external
-script satisfies the app CSP inherited by `srcdoc`; an inline nonce alone does
-not. The file's own scripts remain blocked. Parent messages are accepted only from that
-frame while picking, through the shared pin schema.
+A live artifact's page is written by the workspace's own agent through
+`publish_resource`; nobody edits it by hand and guests cannot publish. So the
+script shares the page's origin on every host, and the page's own scripts can
+see it, replace it, and post the same messages. That is accepted on purpose: a
+pin a page could forge quotes only what the page already shows, the person
+sees the chip before typing a comment, and the model already treats quoted
+content as untrusted. The desktop used an isolated world for this until
+2026-10-29 only because Electron made one free; it was not a boundary anything
+depended on. What is kept is cheap and structural: a host accepts a reply only
+from its own frame or view, at the expected origin, only in a shape the schema
+admits, only while Comment mode is on for a pin, and only for a pin it holds
+for a card action. A pin's `screenshot` never comes from the page: the desktop
+sets it from its own `capturePage`, and the framed schema omits the field.
 
-Desktop live views install the same picker in an isolated JavaScript world.
-Confirmed comment cards render in that world, with closed shadow roots and
-text-only content. The owner-window IPC synchronizes typed pins and returns only
-trusted edit/remove clicks; it fences results against the current native view.
-Opaque HTML previews use the same card renderer with source-checked messages.
-The main process captures the selected viewport rectangle; page scripts cannot
-supply screenshot bytes. The controller fences results against the current
-view. The site cannot access the picker world's callback or queue even if it creates
-identically named globals in its own world. Browser website previews keep the Comment icon visible and disabled, with the
-explanation “Website comments require the Rally Mac app.” on hover or keyboard focus. Other annotation kinds share the desktop/web renderer.
+An **uploaded** HTML file is not agent-authored, so it stays in an opaque
+`srcdoc` frame where its own scripts never run: Comment mode adds only
+`allow-scripts`, never `allow-same-origin`, and the fresh nonce admits only the
+app-origin script. Using an external script satisfies the app CSP inherited by
+`srcdoc`; an inline nonce alone does not. All annotation kinds share the
+desktop/web renderer, and website and HTML-file comments work in the browser
+client as on the desktop; only the browser pop-out, a plain tab with no Rally
+parent, has no Comment mode.
+`allow-scripts` also lets the file navigate its frame (a `<meta refresh>`, a
+link), and the document that replaces it would run its own scripts under the
+app's `frame-src`, from the same `contentWindow`. Two things keep it out: the
+script URL the surface wrote carries the document's nonce as a key, which the
+script echoes on every message and a replacement document never had, so its
+messages are refused from the first; and the script posts
+`rally-annotation-left` as its document unloads, before the next document
+runs, at which the surface stops sending to the window, turns Comment mode
+off and remounts the frame without scripts. A second load of the frame for the same
+document does the same, should the signal be missed.
 
 A pop-out has a real isolated app renderer, with narrow IPC for its own preview,
 picker and transfer. It does not receive the main app's general IPC authority.
@@ -211,7 +311,16 @@ alignment are verified in real Electron and browser windows; jsdom has no layout
 API Node tests cover live and overheard projections;
 `test-workers/artifact-annotations.test.ts` covers canonical resource/version
 reads and durable turn storage. The workerd target/version and canonical-storage tests have production mutation
-proofs. No serving-Worker injection is shipped.
+proofs. `annotation-script.test.ts` covers who gets the script and its head-first
+placement in static HTML; `artifact-serving-hostname.test.ts` covers the served
+file and a viewer's, a framed and a public page end to end;
+`test-workers/artifact-annotation-script-runtime.test.ts` covers the streamed
+`HTMLRewriter` path with a production-break proof. `annotation-script.test.ts`
+in the renderer evaluates the script inside a jsdom frame for the API's
+lifecycle and the bridge's source check; `artifact-viewers.test.ts` covers the
+desktop's calls over a fake `executeJavaScript`; the site-detail tests cover the
+framed branch's acceptance rules. Pins and card clicks need trusted events,
+which jsdom cannot dispatch, so those are verified in real windows.
 
 Run scoped files with the package's Vitest command, and run repository lint and
 typecheck. Visual checks use the real Electron app with local Workers and
@@ -220,6 +329,54 @@ ordinary uploaded fixtures. Prompt evaluations live under
 on the configured medium fallback model, separately from end-to-end tool edits.
 
 ## Changelog
+
+### 2026-10-29 — One annotation script on every host, injected by the serving Worker
+
+**What changed:** The picker, cards and restore became one script that installs
+`rallyAnnotations` in the page. The serving Worker prepends it, deferred, to
+every HTML response for a viewer session or a framed browser-client request;
+the desktop calls it through `executeJavaScript` instead of evaluating sources
+in an isolated world; the browser client's framed preview and the opaque
+HTML-file frame drive it over the same `postMessage` bridge; and the browser
+host serves `/annotation-frame.js`, so HTML files and saved site spots work
+there too. Website comments in the browser client went from disabled to
+working. One frame-synced tracker keeps everything the script draws beside its
+element, with clip-aware visibility and one card layout per frame. Website
+pins record the viewer's window, and a rendered pin without a screenshot tells
+the model to rebuild that window in its sandbox before a visual edit, with the
+recipe in the site skill.
+
+**Why:** The browser client had no way to put a script into a cross-origin
+artifact frame, and the opaque frame's script was built only for the desktop.
+The requester judged that isolating the picker from a page the workspace's own
+agent wrote defends against the page's author, and asked for a startup-scale
+design with one transport for both hosts rather than keeping a second one
+that happened to be free.
+
+**Considered and rejected:** A glass overlay in the app taking every input in
+Comment mode and driving a query-only page script; freezing the page into a
+Browser Run render and picking against a screenshot; a remote canvas display.
+Each was cost against a threat that is not real. See
+[the PRD](PRDs/2026-10-29_browser-website-comments/prd.md).
+
+**Consequences:** The script shares the page's origin everywhere; acceptance is
+source, origin, mode and schema, not isolation. A page without the script
+keeps Comment mode disabled, so the serving Worker's injection rule is what
+decides where comments are offered. Public, crawler and unfurled responses stay
+as published, which the hostname tests pin. The page sets a pin's `pagePath`
+and `css`, so the model projection quotes them only inside `<location>` and
+never copies either into its guidance. The served file is cached for a year
+only under the serving isolate's own content hash, so an older isolate asked
+for a newer path during a deploy cannot pin its script under that name. The
+element locator's `viewport` is a new key, and every reader shipped before
+this change parsed stored annotations with the strict admission schema, so a
+desktop build older than this change shows no chips for a message carrying
+a browser website pin until it updates; accepted over holding the window
+back. Reads now strip a key they do not know (`AnnotatedMessageContentSchema`
+is built from the same shapes as the strict `AnnotationSchema`, without the
+strictness), so this is the last field to cost an older reader a message's
+chips: admission still refuses an unknown key, since Rally's own client
+sending one is a bug.
 
 ### 2026-10-21 — Image previews own a scroll viewport
 

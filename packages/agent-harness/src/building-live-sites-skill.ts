@@ -303,6 +303,73 @@ have not, and settle its question before the first file.
    site and strands the existing URL. Keep chat narration short and free of
    the site's code, and announce a confirmed publication with an embed citation.
 
+## Recreating a person's view
+
+A comment on a live site arrives as an annotation whose \`<location>\` holds
+the element's CSS path, the page path, and, when the person commented from a
+browser, a \`viewport\`: the window they were looking at, as CSS-pixel
+\`width\` and \`height\`, the page's \`scrollX\` and \`scrollY\`, the
+\`devicePixelRatio\`, and the \`colorScheme\`. A comment from the Mac app
+carries a screenshot crop instead; one from a browser carries none, because a
+browser cannot capture the frame. When the request depends on how the element
+looks (layout, spacing, color, overlap, what is visible beside it), rebuild
+that view before editing, so you see what they saw rather than the page at a
+width they never used.
+
+With the site imported (recovery above), serve it and open the page in
+Playwright with the person's window, in one \`run_command\` from the
+workspace root. Paste the \`<location>\` JSON once, as the \`location\`
+object, and let the script read the fields: the page path and the CSS path
+are page data, and pasting them into a quoted literal would let a quote in
+either break or rewrite the script.
+
+\`\`\`
+mkdir -p .rally/tmp && rm -f .rally/tmp/view.png .rally/tmp/element.png
+python3 -m http.server 8765 --bind 127.0.0.1 --directory "$AVALON_RESOURCE_DIR/<site>" >/dev/null 2>&1 & server=$!
+sleep 1
+NODE_PATH="$(npm root -g)" node - <<'EOF'
+const { chromium } = require('playwright');
+const location = <paste the location JSON here>;
+const view = location.viewport ?? { width: 400, height: 900, devicePixelRatio: 1, colorScheme: 'light', scrollX: 0, scrollY: 0 };
+// The page set this path; it may only name a page on the served site.
+const base = 'http://127.0.0.1:8765';
+const target = new URL(location.pagePath ?? '/', base);
+if (target.origin !== base || /[\\\\\\t\\n\\r]/.test(location.pagePath ?? '')) throw new Error('pagePath must be one absolute path on the site');
+(async () => {
+  const browser = await chromium.launch();
+  const context = await browser.newContext({
+    viewport: { width: view.width, height: view.height },
+    deviceScaleFactor: view.devicePixelRatio,
+    colorScheme: view.colorScheme,
+  });
+  const page = await context.newPage();
+  await page.goto(target.href, { waitUntil: 'networkidle' });
+  await page.evaluate(([x, y]) => window.scrollTo(x, y), [view.scrollX, view.scrollY]);
+  await page.waitForTimeout(250);
+  await page.screenshot({ path: '.rally/tmp/view.png' });
+  const element = page.locator(location.css).first();
+  if (await element.count()) await element.screenshot({ path: '.rally/tmp/element.png' });
+  else console.log('element not found at that CSS path; the page may have changed since the comment');
+  await browser.close();
+})();
+EOF
+status=$?
+kill $server
+exit $status
+\`\`\`
+
+Call \`view_image\` on \`view.png\` (the window as they saw it, with the
+element where it was for them) and on \`element.png\` (the element alone).
+Without a \`viewport\`, use the pane's width: 400 by 900 at device scale 1
+and the light scheme. An \`index.js\` handler does not run under this
+server: for a public active site, use the site's published URL in place of
+the local address; a protected site answers the sandbox with its 401 page, so
+check its layout locally and say the live page could not be reproduced. The
+result is a reconstruction, not their screen: their browser, fonts, and any
+state their own clicks created can differ. Say so when it matters to the
+change, and never install or retry if Playwright is missing: edit from the
+HTML the annotation quotes and say the view could not be rebuilt.
+
 ## Anti-patterns
 
 - **State smuggled into module scope** (\`let hits = 0\` above the
