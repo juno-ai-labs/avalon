@@ -823,6 +823,7 @@ import {
   SPACE_INDIVIDUAL_SCOPE_MIGRATION,
   SPACE_MESSAGES_MIGRATION,
   SPACE_MESSAGE_MERGES_MIGRATION,
+  SPACE_VIEWER_JOINED_AT_MIGRATION,
   backfillRemovedThreadMerges,
   SPACE_INVITEES_MIGRATION,
   WorkspaceSpaceStorage,
@@ -4839,6 +4840,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 133,
   description: "resume a stopped thread backfill where it stopped, and bound each pass to the conversations it started with",
   statements: THREAD_BACKFILL_RESUME_MIGRATION,
+}, {
+  version: 134,
+  description: "record when a person became a Channel participant, so Activity tells them only what happened after",
+  // See SPACE_VIEWER_JOINED_AT_MIGRATION and docs/digests.md#who-is-told-about-channel-news.
+  statements: SPACE_VIEWER_JOINED_AT_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
