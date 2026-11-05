@@ -2099,7 +2099,7 @@ member is still unseated.
 
 ## Changelog
 
-### 2026-10-24 — A guest may be a Channel's participant, and works in it as a member does
+### 2026-11-05 — A guest may be a Channel's participant, and works in it as a member does
 
 **What changed:** `noteSpaceAudience` accepts a guest in `participantUserIds`;
 it used to ask every listed participant to be an active member, and now asks
