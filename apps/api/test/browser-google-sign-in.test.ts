@@ -19,7 +19,8 @@ function bindings() {
     ALLOWED_ORIGINS:origin,PUBLIC_API_BASE_URL:apiOrigin,PUBLIC_WEB_BASE_URL:webOrigin,LOG_LEVEL:"error",
     DESKTOP_DEEP_LINK_URI:"rallywithai://auth/complete",
     SESSION_SIGNING_KEY:"browser-test-signing-key",OAUTH_STATE_ENCRYPTION_KEY:encryptionKey,
-    BROWSER_APP_ORIGIN:origin,GOOGLE_OAUTH_CLIENT_ID:clientId,GOOGLE_OAUTH_CLIENT_SECRET:"browser-test-secret" });
+    BROWSER_APP_ORIGIN:origin,GOOGLE_OAUTH_CLIENT_ID:clientId,GOOGLE_OAUTH_CLIENT_SECRET:"browser-test-secret",
+    IDENTITY_HANDOFF_RETURN_URIS:"https://relay.example.test/rally/callback" });
 }
 function desktop(path:string, body?:unknown) {
   return createApp().request(`${apiOrigin}/auth/${path}`,{ method:body === undefined ? "GET" : "POST",
@@ -251,4 +252,47 @@ it('tracks desktop signup through verified ticket exchange, excluding OAuth-only
   expect(response.status,await response.clone().text()).toBe(200);
   await drainWaitUntil();
   expect(names()).toEqual(['signup_started','signup_verification_requested','signup_verification_completed','authentication_completed','signup_account_created']);
+});
+
+it("hands a sign-in to an allowed service, which swaps the ticket once for the person's identity",async () => {
+  const verifier = "h".repeat(43);
+  await googleIssuing({ sub:"handoff-subject",email:"handoff@example.test",name:"Hana Off",email_verified:true });
+  const started = await desktop("google/start",{ returnUri:"https://relay.example.test/rally/callback?state=relay-state",
+    desktopAttemptId:"r".repeat(43),desktopCodeChallenge:await sha256(verifier) });
+  expect(started.status,await started.clone().text()).toBe(200);
+  const authorize = new URL((await started.json() as { url:string }).url);
+  const callback = await desktop(`google/callback?code=handoff-code&state=${authorize.searchParams.get("state")}`);
+  expect(callback.status).toBe(302);
+  const target = new URL(callback.headers.get("location")!);
+  expect(`${target.origin}${target.pathname}`).toBe("https://relay.example.test/rally/callback");
+  expect(target.searchParams.get("state")).toBe("relay-state");
+  expect(target.searchParams.get("attempt")).toBe("r".repeat(43));
+  const redeem = { ticket:target.searchParams.get("ticket"),region:"global",attemptId:"r".repeat(43),codeVerifier:verifier };
+  const exchanged = await desktop("identity/exchange",redeem);
+  expect(exchanged.status,await exchanged.clone().text()).toBe(200);
+  expect(await exchanged.json()).toEqual({ userId:expect.any(String),email:"handoff@example.test",name:"Hana Off",signupCreated:true });
+  const replayed = await desktop("identity/exchange",redeem);
+  expect(replayed.status).toBe(401);
+  expect(await replayed.json()).toMatchObject({ error:{ code:"invalid_login_ticket" } });
+});
+
+it("refuses a handoff ticket redeemed without the starter's proof, and burns it",async () => {
+  await googleIssuing({ sub:"handoff-proof",email:"proof@example.test",email_verified:true });
+  const started = await desktop("google/start",{ returnUri:"https://relay.example.test/rally/callback",
+    desktopAttemptId:"p".repeat(43),desktopCodeChallenge:await sha256("q".repeat(43)) });
+  const authorize = new URL((await started.json() as { url:string }).url);
+  const callback = await desktop(`google/callback?code=proof-code&state=${authorize.searchParams.get("state")}`);
+  const ticket = new URL(callback.headers.get("location")!).searchParams.get("ticket");
+  const wrong = await desktop("identity/exchange",{ ticket,region:"global",attemptId:"p".repeat(43),codeVerifier:"w".repeat(43) });
+  expect(wrong.status).toBe(401);
+  const right = await desktop("identity/exchange",{ ticket,region:"global",attemptId:"p".repeat(43),codeVerifier:"q".repeat(43) });
+  expect(right.status).toBe(401);
+});
+
+it("will not send a sign-in to a web address that is not an allowed service",async () => {
+  for (const returnUri of ["https://evil.example.test/rally/callback","https://relay.example.test/other","http://relay.example.test/rally/callback"]) {
+    const started = await desktop("google/start",{ returnUri,desktopAttemptId:"e".repeat(43),desktopCodeChallenge:"c".repeat(43) });
+    expect(started.status,returnUri).toBe(422);
+    expect(await started.json()).toMatchObject({ error:{ code:"invalid_return_uri" } });
+  }
 });

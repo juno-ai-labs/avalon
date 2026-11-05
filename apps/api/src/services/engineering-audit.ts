@@ -4,7 +4,7 @@ import { diagnosticErrorCode } from "../observability/logger";
 
 /** Same independent audit authority as impersonation: an attempt precedes effects. */
 export async function auditedEngineeringWrite<T>(env: Env, operator: EngineeringOperator, entry: {
-  action: "create_org" | "create_channel" | "create_thread" | "send_message";
+  action: "create_org" | "create_channel" | "create_thread" | "send_message" | "accept_invitation";
   orgId: string;
   representedUserId: string;
   operationId: string;

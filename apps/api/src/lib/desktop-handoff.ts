@@ -27,6 +27,24 @@ export function compatibleDesktopDeepLink(
 }
 
 /**
+ * Whether `candidate` is one of the services allowed to receive a completed
+ * sign-in (`IDENTITY_HANDOFF_RETURN_URIS`). Origin and path must match an entry
+ * exactly; the query is the service's own, such as its OAuth state, and passes
+ * through. Only https addresses qualify.
+ */
+export function isIdentityHandoffReturnUri(
+  env: Pick<Env, "IDENTITY_HANDOFF_RETURN_URIS">,
+  candidate: URL,
+): boolean {
+  if (candidate.protocol !== "https:" || candidate.hash) return false;
+  const target = `${candidate.origin}${candidate.pathname}`;
+  return (env.IDENTITY_HANDOFF_RETURN_URIS ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .some((entry) => entry !== "" && entry === target);
+}
+
+/**
  * How a connector authorization returns to the client that started it: a
  * desktop deep link (version 1 or the workspace-addressed version 2), or the
  * browser's completion page.
@@ -40,15 +58,17 @@ export function browserConnectorCompletionUrl(env: Pick<Env, "BROWSER_APP_ORIGIN
 }
 
 export function desktopHandoffUrl(
-  env: Pick<Env, "PUBLIC_WEB_BASE_URL" | "BROWSER_APP_ORIGIN">,
+  env: Pick<Env, "PUBLIC_WEB_BASE_URL" | "BROWSER_APP_ORIGIN" | "IDENTITY_HANDOFF_RETURN_URIS">,
   target: string | URL,
 ): string {
-  // The browser's completion page is already on the browser host and goes
-  // straight there. Every other target is a desktop deep link, which needs the
-  // site's handoff page to open the app; no other web URL passes through.
+  // The browser's completion page and an allowed identity handoff service are
+  // web addresses and go straight there. Every other target is a desktop deep
+  // link, which needs the site's handoff page to open the app; no other web URL
+  // passes through.
   const parsed = new URL(target.toString());
   const completion = browserConnectorCompletionUrl(env);
   if (completion && `${parsed.origin}${parsed.pathname}` === completion) return parsed.toString();
+  if (isIdentityHandoffReturnUri(env, parsed)) return parsed.toString();
   const handoff = new URL("/auth/desktop/", env.PUBLIC_WEB_BASE_URL);
   handoff.hash = new URLSearchParams({ target: target.toString() }).toString();
   return handoff.toString();

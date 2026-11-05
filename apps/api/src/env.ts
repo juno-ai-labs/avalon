@@ -177,6 +177,13 @@ export interface Env {
   ARTIFACT_SERVING_DOMAIN: string;
   ALLOWED_ORIGINS: string;
   DESKTOP_DEEP_LINK_URI: string;
+  /**
+   * Comma-separated web addresses of our own other services, such as Relay,
+   * that may receive a completed Google sign-in and swap its ticket for the
+   * person's Rally identity. Matched on origin and path; unset, only Rally's
+   * own clients can. See docs/identity-handoff.md.
+   */
+  IDENTITY_HANDOFF_RETURN_URIS?: string;
   GITHUB_INGRESS_BASE_URL?: string;
   LINEAR_INGRESS_BASE_URL?: string;
   ASHBY_INGRESS_BASE_URL?: string;
@@ -495,6 +502,7 @@ const EnvContractSchema = z.object({
   ARTIFACT_SERVING_DOMAIN: z.string().min(1).regex(/^[a-z0-9.-]+$/u),
   ALLOWED_ORIGINS: z.string().min(1),
   DESKTOP_DEEP_LINK_URI: DesktopDeepLinkUrlSchema,
+  IDENTITY_HANDOFF_RETURN_URIS: z.string().optional(),
   TERMINAL_REGION_CAPABILITY: z.enum(["supported", "unsupported"]).optional(),
   TERMINAL_EMERGENCY_DISABLED: z.enum(["true", "false"]).optional(),
   DAYTONA_API_URL: z.string().optional(),

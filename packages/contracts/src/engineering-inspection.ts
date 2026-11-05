@@ -42,6 +42,35 @@ export const CreateEngineeringOrgResultSchema = deferredZodSchema(() => z.strict
 }));
 export type CreateEngineeringOrgResult = z.infer<typeof CreateEngineeringOrgResultSchema>;
 
+/** Pending Organization invitations addressed to a user's verified email, in this region. */
+export const ListEngineeringInvitationsInputSchema = deferredZodSchema(() => z.strictObject({
+  userId: UserIdSchema,
+}));
+export type ListEngineeringInvitationsInput = z.infer<typeof ListEngineeringInvitationsInputSchema>;
+export const ListEngineeringInvitationsResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  items: z.array(z.strictObject({
+    invitationId: IdSchema,
+    orgId: WorkspaceIdSchema,
+    orgName: z.string(),
+    invitedByName: z.string(),
+  })),
+}));
+export type ListEngineeringInvitationsResult = z.infer<typeof ListEngineeringInvitationsResultSchema>;
+
+/** Accepts one of those invitations as the user, exactly as the app's invitation card does. */
+export const AcceptEngineeringInvitationInputSchema = deferredZodSchema(() => z.strictObject({
+  operationId: IdSchema.describe("A fresh UUID for this acceptance. Reuse it after an uncertain outcome."),
+  userId: UserIdSchema,
+  invitationId: IdSchema,
+}));
+export type AcceptEngineeringInvitationInput = z.infer<typeof AcceptEngineeringInvitationInputSchema>;
+export const AcceptEngineeringInvitationResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+}));
+export type AcceptEngineeringInvitationResult = z.infer<typeof AcceptEngineeringInvitationResultSchema>;
+
 export const CreateEngineeringChannelInputSchema = deferredZodSchema(() => z.strictObject({
   ...creationIdentity,
   orgId: WorkspaceIdSchema,
@@ -523,6 +552,8 @@ export interface EngineeringInspectionRpcBinding {
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;
   createChannel(input: CreateEngineeringChannelInput, operator: EngineeringOperator): Promise<CreateEngineeringChannelResult>;
+  listInvitations(input: ListEngineeringInvitationsInput): Promise<ListEngineeringInvitationsResult>;
+  acceptInvitation(input: AcceptEngineeringInvitationInput, operator: EngineeringOperator): Promise<AcceptEngineeringInvitationResult>;
   createThread(input: CreateEngineeringThreadInput, operator: EngineeringOperator): Promise<CreateEngineeringThreadResult>;
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
   searchOrganizations(input: SearchEngineeringOrganizationsInput): Promise<SearchEngineeringOrganizationsResult>;

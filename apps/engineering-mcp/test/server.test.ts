@@ -20,6 +20,8 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
   return {
     createOrg: vi.fn<EngineeringInspectionRpcBinding["createOrg"]>(),
     createChannel: vi.fn<EngineeringInspectionRpcBinding["createChannel"]>(),
+    listInvitations: vi.fn<EngineeringInspectionRpcBinding["listInvitations"]>(),
+    acceptInvitation: vi.fn<EngineeringInspectionRpcBinding["acceptInvitation"]>(),
     createThread: vi.fn<EngineeringInspectionRpcBinding["createThread"]>(),
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     readChannel: vi.fn<EngineeringInspectionRpcBinding["readChannel"]>(),
