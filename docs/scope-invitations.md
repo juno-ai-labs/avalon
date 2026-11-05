@@ -528,7 +528,7 @@ nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
 
-### 2026-10-24 — A guest's run finishes its thread's handoff before refusing
+### 2026-11-05 — A guest's run finishes its thread's handoff before refusing
 
 **What changed:** A guest's run check (`readRunAuthority` in `integrations.ts`)
 that is refused asks the parent to finish the conversation's participant
