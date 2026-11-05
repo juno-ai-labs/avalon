@@ -29,6 +29,15 @@ it("serves the push service worker from the root and lets the shell register it"
   expect(shell.headers.get("content-security-policy")).toContain("frame-src https://*.rallyusercontent.com;");
 });
 
+it("serves the annotation script an HTML file's opaque preview frame loads", async () => {
+  const script = await exports.default.fetch("https://browser.example.test/annotation-frame.js");
+  expect(script.status).toBe(200);
+  expect(script.headers.get("content-type")).toContain("javascript");
+  expect(script.headers.get("cache-control")).toBe("no-cache");
+  expect(script.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(await script.text()).toContain("rallyAnnotations");
+});
+
 it("serves the install manifest the shell links, and every icon its manifest names", async () => {
   const shell = await (await exports.default.fetch("https://browser.example.test/")).text();
   const linked = (rel: string) => new RegExp(`<link rel="${rel}"[^>]*href="([^"]+)"`, "u").exec(shell)?.[1];

@@ -37,6 +37,7 @@ import type { Region } from "@rally/contracts/regions";
  * See `docs/live-web-artifacts.md`.
  */
 import {
+  ARTIFACT_ANNOTATION_SCRIPT_PATH_PATTERN,
   ARTIFACT_RESERVED_PREFIX,
   ARTIFACT_SIGN_IN_PATH,
   artifactReturnPath,
@@ -73,6 +74,12 @@ import {
   ARTIFACT_COMPATIBILITY_DATE,
   statelessLoaderId,
 } from "./asset-shim";
+import {
+  annotationScriptPathFor,
+  annotationScriptResponse,
+  injectAnnotationScriptIntoHtml,
+  injectAnnotationScriptResponse,
+} from "./annotation-script";
 import { neutralPage, plainErrorPage, redeemBootstrapPage } from "./pages";
 import {
   injectSocialPreviewIntoHtml,
@@ -204,6 +211,14 @@ const artifactServer = {
           referrerPolicy: "same-origin",
         },
       );
+    }
+
+    // Rally's annotation script, also served before the hostname lookup: it
+    // is the same file for every artifact and reads nothing about one. The
+    // hash in its path only busts caches, so any spelling serves the current
+    // script. See `annotation-script.ts`.
+    if (ARTIFACT_ANNOTATION_SCRIPT_PATH_PATTERN.test(url.pathname)) {
+      return annotationScriptResponse(browserFrameAncestor(env.BROWSER_APP_ORIGIN), url.pathname);
     }
 
     let artifactId = host.legacyArtifactId;
@@ -401,6 +416,7 @@ async function serveAsset(
   path: string,
   rewriteHtmlForVersion: number | null,
   socialPageUrl: URL | null,
+  annotationScriptPath: string | null,
 ): Promise<Response> {
   const assetPaths = new Set(manifest.assets.map((asset) => asset.path));
   const resolved = resolveAssetPath(path, assetPaths);
@@ -408,18 +424,21 @@ async function serveAsset(
   const asset = manifest.assets.find((entry) => entry.path === resolved)!;
   const object = await env.PAYLOADS.get(`artifact/${artifactId}/v${version}/assets/${resolved}`);
   if (!object) return html(plainErrorPage("This page is temporarily unavailable."), 503);
-  if (rewriteHtmlForVersion !== null && asset.contentType.startsWith("text/html")) {
-    const source = await object.text();
-    return withSecurityHeaders(new Response(injectVersionBase(source, rewriteHtmlForVersion), {
-      status: 200,
-      headers: { "content-type": asset.contentType },
-    }));
-  }
-  if (socialPageUrl && manifest.socialPreview && resolved === "index.html"
-    && asset.contentType.toLowerCase().startsWith("text/html")) {
-    const source = await object.text();
-    const markup = socialPreviewMarkup(manifest.socialPreview, socialPageUrl, manifest.artifactVersion);
-    return withSecurityHeaders(new Response(injectSocialPreviewIntoHtml(source, markup), {
+  const htmlAsset = asset.contentType.toLowerCase().startsWith("text/html");
+  const social = htmlAsset && socialPageUrl !== null && manifest.socialPreview !== undefined && resolved === "index.html";
+  if (htmlAsset && (rewriteHtmlForVersion !== null || social || annotationScriptPath !== null)) {
+    // Static HTML is bounded by the publish ceiling, so it is rewritten as
+    // text. The annotation script goes in last so it ends up first in `<head>`.
+    let source = await object.text();
+    if (rewriteHtmlForVersion !== null) source = injectVersionBase(source, rewriteHtmlForVersion);
+    if (social) {
+      source = injectSocialPreviewIntoHtml(
+        source,
+        socialPreviewMarkup(manifest.socialPreview!, socialPageUrl, manifest.artifactVersion),
+      );
+    }
+    if (annotationScriptPath !== null) source = injectAnnotationScriptIntoHtml(source, annotationScriptPath);
+    return withSecurityHeaders(new Response(source, {
       status: 200,
       headers: { "content-type": asset.contentType },
     }));
@@ -440,8 +459,15 @@ async function serveCurrent(
   admitted: Admitted,
 ): Promise<Response> {
   const manifest = admitted.manifest;
+  // Only a Rally viewer's page carries the annotation script; see
+  // `annotationScriptPathFor` for who counts as one.
+  const annotationScriptPath = annotationScriptPathFor({
+    viewerId: admitted.viewerId,
+    request,
+    parentOrigin: browserFrameAncestor(env.BROWSER_APP_ORIGIN),
+  });
   if (manifest.mode === "static") {
-    return serveAsset(env, artifactId, manifest.artifactVersion, manifest, url.pathname, null, url);
+    return serveAsset(env, artifactId, manifest.artifactVersion, manifest, url.pathname, null, url, annotationScriptPath);
   }
   // A stateful site runs through the supervisor's facet and needs no loader
   // binding here. A stateless active site cannot safely fall back to assets:
@@ -451,12 +477,15 @@ async function serveCurrent(
   }
   try {
     const response = await runArtifactModule(env, ctx, artifact, artifactId, request, admitted);
-    const rewritten = manifest.socialPreview
+    const withPreview = manifest.socialPreview
       ? injectSocialPreviewResponse(
           response,
           socialPreviewMarkup(manifest.socialPreview, url, manifest.artifactVersion),
         )
       : response;
+    const rewritten = annotationScriptPath !== null
+      ? injectAnnotationScriptResponse(withPreview, annotationScriptPath)
+      : withPreview;
     return withSecurityHeaders(rewritten);
   } catch (error) {
     // The viewer never sees a stack trace. For an identified participant it
@@ -496,7 +525,7 @@ async function servePriorVersion(
   // A prior *static* version serves its frozen assets exactly. A prior
   // stateless-active version would run its frozen module over its frozen
   // assets; until the loader binding exists, its assets are what render.
-  return serveAsset(env, artifactId, version, manifest, path, version, null);
+  return serveAsset(env, artifactId, version, manifest, path, version, null, null);
 }
 
 /**

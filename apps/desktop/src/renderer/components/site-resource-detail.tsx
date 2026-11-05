@@ -1,6 +1,7 @@
 import { ErrorNotice } from './primitives';
 import { isComposingKeyEvent } from '@rally/ui/lib/ime';
-import { buildAnnotation, type AnnotationCommentPins, type AnnotationCommentAction, type ArtifactPickerPin } from '@rally/contracts';
+import { AnnotationFrameMessageSchema, buildAnnotation, type AnnotationCommentPins, type AnnotationCommentAction, type AnnotationHostMessage, type AnnotationSelection, type ArtifactElementRect, type ArtifactPickerPin } from '@rally/contracts';
+import { placeAnnotationEditor } from '../lib/annotation-anchor';
 import { AnnotationComment, useAnnotationDraft } from './artifact-annotations';
 import { IconAlertCircle, IconCheck, IconCopy, IconDatabase, IconExternalLink, IconPointerCollaboration, IconWindowMaximize } from '@tabler/icons-react';
 import React from 'react';
@@ -70,8 +71,14 @@ export interface SiteResourceDetailProps {
     setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
     /** A still of the live view as an image data URL. */
     snapshot: () => Promise<string | null>;
+    /**
+     * Whether the shown page carries Rally's annotation API. Absent means
+     * yes: a host that cannot ask has nothing to refuse on. A framed host
+     * learns it from the frame instead.
+     */
+    ready?: (() => Promise<boolean>) | undefined;
     pick?: (() => Promise<ArtifactPickerPin | null>) | undefined;
-    comments?: ((pins: AnnotationCommentPins) => Promise<AnnotationCommentAction | null>) | undefined;
+    comments?: ((pins: AnnotationCommentPins, selected?: AnnotationSelection | null) => Promise<AnnotationCommentAction | null>) | undefined;
     stopPicking?: (() => Promise<void>) | undefined;
     close: () => Promise<void>;
     popOut: (request: DesktopSiteArtifactWindowRequest) => Promise<boolean>;
@@ -149,12 +156,32 @@ export function SiteResourceDetail({
 }: SiteResourceDetailProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const [picking, setPicking] = React.useState(false);
+  /**
+   * Whether the page on screen can take comments: it carries the annotation
+   * script the serving Worker gives a Rally viewer. The public neutral page, a
+   * protected site's refusal and an error page do not, and the control stays
+   * disabled with a reason rather than picking nothing.
+   */
+  const [commentReady, setCommentReady] = React.useState(false);
+  const frameRef = React.useRef<HTMLIFrameElement | null>(null);
+  // Counts the documents the frame has announced, so a new page after an
+  // in-site link is told what this detail is doing.
+  const [frameDocument, setFrameDocument] = React.useState(0);
+  const readySinceLoad = React.useRef(false);
   const retryAnnotations=annotationDraft?.retry;
   React.useEffect(()=>{retryAnnotations?.();},[resourceId,version,retryAnnotations]);
   React.useEffect(()=>{if(annotationDraft?.repairing&&annotationDraft.pins.some((pin)=>pin.id===annotationDraft.repairing&&pin.annotation.target.resourceId===resourceId))setPicking(true);},[annotationDraft?.repairing,resourceId]);
   const pickingRef = React.useRef(false);
   const [editingPin, setEditingPin] = React.useState<string | null>(null);
   const [commentAnchor,setCommentAnchor]=React.useState({x:12,y:60});
+  const editingRef = React.useRef<string | null>(null);
+  editingRef.current = editingPin;
+  /** The editor beside its element: from the element's rectangle in frame coordinates. */
+  const anchorEditor = React.useCallback((rect: ArtifactElementRect): void => {
+    const pane = paneRef.current?.getBoundingClientRect();
+    if (!pane) return;
+    setCommentAnchor(placeAnnotationEditor(rect, { x: pane.x, y: pane.y, width: pane.width, height: pane.height }, { width: window.innerWidth, height: window.innerHeight }));
+  }, []);
   const [pickError, setPickError] = React.useState<string | null>(null);
   const lastPin = React.useRef<string | undefined>(undefined);
   const paneRef = React.useRef<HTMLDivElement | null>(null);
@@ -187,6 +214,11 @@ export function SiteResourceDetail({
   // before the old effect's cleanup runs, and must not show the old page.
   const [frame, setFrame] = React.useState<{ resourceId: string; url: string } | null>(null);
   const frameUrl = frame?.resourceId === resourceId ? frame.url : null;
+  const artifactOrigin = React.useMemo(() => { try { return access ? new URL(access.canonicalUrl).origin : null; } catch { return null; } }, [access]);
+  /** Only the frame this detail wrote, at the artifact's own origin, is spoken to. */
+  const tellFrame = React.useCallback((message: AnnotationHostMessage): void => {
+    if (artifactOrigin) frameRef.current?.contentWindow?.postMessage(message, artifactOrigin);
+  }, [artifactOrigin]);
   // The page as it looked when a menu or dialog opened over it.
   const [snapshot, setSnapshot] = React.useState<{
     src: string;
@@ -424,12 +456,13 @@ export function SiteResourceDetail({
       imageAttachmentId = await annotationDraft.upload(new File([bytes], `Site annotation — ${title}.png`, { type: 'image/png' }));
     }
     if (!pickingRef.current) return;
-    const id = annotationDraft.add(buildAnnotation({ target: { resourceId, version, locator: { type: 'element', pagePath: pin.pagePath, css: pin.css, box: pin.box, visibleText: pin.visibleText } },
+    const id = annotationDraft.add(buildAnnotation({ target: { resourceId, version, locator: { type: 'element', pagePath: pin.pagePath, css: pin.css, box: pin.box, visibleText: pin.visibleText, ...(pin.viewport ? { viewport: pin.viewport } : {}) } },
       content: { exact: pin.html, source: 'rendered', before: pin.before??'', after: pin.after??'', truncated: false, ...(imageAttachmentId ? { imageAttachmentId } : {}) }, comment: '' }), title, () => {if(!paneRef.current?.isConnected)return false;paneRef.current.scrollIntoView({block:'center'});setEditingPin(id);return true;}, pin.replace ? lastPin.current : undefined, true);
     const pane=paneRef.current?.getBoundingClientRect();
-    if(pane)setCommentAnchor({x:Math.max(12,Math.min(pane.x+(pin.point?.x??12),window.innerWidth-320)),y:Math.max(12,Math.min(pane.y+(pin.point?.y??12)+12,window.innerHeight-190))});
+    if (pin.rect) anchorEditor(pin.rect);
+    else if(pane)setCommentAnchor({x:Math.max(12,Math.min(pane.x+(pin.point?.x??12),window.innerWidth-320)),y:Math.max(12,Math.min(pane.y+(pin.point?.y??12)+12,window.innerHeight-190))});
     lastPin.current = id; setEditingPin(id);
-  }, [annotationDraft, resourceId, title, version, surface.framed]);
+  }, [annotationDraft, resourceId, title, version, surface.framed, anchorEditor]);
   React.useEffect(()=>{
     if(!picking)return;
     const cancel=(event:KeyboardEvent):void=>{if(isComposingKeyEvent(event))return;if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(editingPin)annotationDraft?.discard(editingPin);setEditingPin(null);setPicking(false);}};
@@ -444,6 +477,10 @@ export function SiteResourceDetail({
     if (!surface.framed && surface.pick) {
       void (async () => {
         while (active) {
+          // The view follows the site's own links, so the page may have
+          // changed since readiness was asked; a page without the script
+          // turns Comment mode off with its reason rather than silently.
+          if (surface.ready && !(await surface.ready())) { if (active) { setCommentReady(false); setPicking(false); } return; }
           const pin = await surface.pick!();
           if (!active) return;
           if (!pin) { setPicking(false); return; }
@@ -453,6 +490,55 @@ export function SiteResourceDetail({
     }
     return () => { active = false; pickingRef.current = false; void surface.stopPicking?.(); };
   }, [picking, resourceId, version, surface]);
+
+  // The desktop asks its view once the site's document is shown; a browser
+  // host hears it from the frame instead, below.
+  React.useEffect(() => {
+    if (surface.framed) return undefined;
+    if (previewShown !== true) { setCommentReady(false); return undefined; }
+    if (!surface.ready) { setCommentReady(true); return undefined; }
+    let cancelled = false;
+    void surface.ready().then((ready) => { if (!cancelled) setCommentReady(ready); }).catch(() => { if (!cancelled) setCommentReady(false); });
+    return () => { cancelled = true; };
+  }, [previewShown, surface, resourceId, version]);
+
+  // The framed host's half of the annotation script's bridge: the frame
+  // announces each document it loads, reports pins while Comment mode is on,
+  // and reports card clicks. Only the preview frame's own window, at the
+  // artifact's origin, is heard, and only shapes the shared schema admits.
+  React.useEffect(() => {
+    if (!surface.framed || !frameUrl || !artifactOrigin) return undefined;
+    readySinceLoad.current = false;
+    const receive = (event: MessageEvent): void => {
+      if (event.source !== frameRef.current?.contentWindow || event.origin !== artifactOrigin) return;
+      const parsed = AnnotationFrameMessageSchema.safeParse(event.data);
+      if (!parsed.success) return;
+      const message = parsed.data;
+      if (message.type === 'rally-annotation-ready') {
+        readySinceLoad.current = true;
+        setCommentReady(true);
+        setFrameDocument((count) => count + 1);
+      } else if (message.type === 'rally-artifact-pin') {
+        if (!pickingRef.current) return;
+        // Escape inside the page: ends picking and drops the unfinished pin,
+        // as the app's own Escape handler does.
+        if (message.pin === null) { if (editingRef.current) annotationDraft?.discard(editingRef.current); setEditingPin(null); setPicking(false); return; }
+        void acceptPinRef.current(message.pin);
+      } else if (message.type === 'rally-annotation-comment-action') {
+        const action = message.action;
+        if (!annotationDraft?.pins.some((pin) => pin.id === action.id)) return;
+        if (action.action === 'remove') annotationDraft.remove(action.id);
+        else { const pane = paneRef.current?.getBoundingClientRect(); if (action.point && pane) setCommentAnchor({ x: Math.max(8, Math.min(pane.x + action.point.x, window.innerWidth - 308)), y: pane.y + action.point.y }); setEditingPin(action.id); }
+      } else if (message.type === 'rally-annotation-anchor') {
+        // The selection moved under its editor: a scroll, a resize, a layout
+        // shift. Only while an editor is open; the page cannot move it otherwise.
+        if (editingRef.current) anchorEditor(message.rect);
+      }
+    };
+    window.addEventListener('message', receive);
+    return () => window.removeEventListener('message', receive);
+  }, [surface.framed, frameUrl, artifactOrigin, annotationDraft, anchorEditor]);
+  React.useEffect(() => { if (surface.framed) tellFrame({ type: 'rally-annotation-picking', on: picking }); }, [surface.framed, picking, frameDocument, tellFrame]);
 
   // The canonical public link carries no access code or viewer identity.
   // Copying it shares the current site with anyone.
@@ -465,7 +551,7 @@ export function SiteResourceDetail({
    * sits against the composited page below.
    */
   const headerActions = React.useMemo((): DetailHeaderAction[] => [
-    ...(annotationDraft ? [{ key: 'comment-mode', className: 'annotation-mode-button', label: 'Comment mode', disabledReason: surface.framed ? 'Website comments require the Rally Mac app.' : undefined, icon: <IconPointerCollaboration aria-hidden="true" size={16} stroke={1.9} />, pressed: picking, disabled: Boolean(surface.framed) || previewShown !== true, onSelect: () => { if (!surface.framed) setPicking((value) => !value); } }] : []),
+    ...(annotationDraft ? [{ key: 'comment-mode', className: 'annotation-mode-button', label: 'Comment mode', disabledReason: previewShown === true && !commentReady ? 'This page cannot take comments here.' : undefined, icon: <IconPointerCollaboration aria-hidden="true" size={16} stroke={1.9} />, pressed: picking, disabled: previewShown !== true || !commentReady, onSelect: () => { if (commentReady) setPicking((value) => !value); } }] : []),
     ...(access?.stateful ? [{
       key: 'stored-data',
       label: 'Stored data',
@@ -517,21 +603,35 @@ export function SiteResourceDetail({
         async (navigation) => await surface.openExternal(navigation.openUrl),
       ),
     },
-  ], [access, copy, copyState, mintAccess, resourceId, surface, title, version, annotationDraft, picking, previewShown, describeData, loadTable, editable]);
+  ], [access, copy, copyState, mintAccess, resourceId, surface, title, version, annotationDraft, picking, previewShown, commentReady, describeData, loadTable, editable]);
   const orderedHeaderActions = React.useMemo(() => [...headerActions.filter((action) => action.key !== 'comment-mode'), ...headerActions.filter((action) => action.key === 'comment-mode')], [headerActions]);
   useDetailHeaderActions(orderedHeaderActions);
 
-  React.useEffect(() => {
-    if (!annotationDraft || !surface.comments || previewShown!==true) return;
-    let active=true;
+  // Keyed on what the page would be told, not on the draft's identity: a
+  // keystroke in the editor changes the draft but not the cards.
+  const pageComments = React.useMemo(() => {
+    if (!annotationDraft) return null;
     const pins=annotationDraft.pins.filter((pin)=>pin.id!==editingPin && pin.annotation.target.resourceId===resourceId && pin.annotation.target.version===version).map(({id,annotation})=>({id,annotation}));
-    void surface.comments(pins).then((action)=>{
+    // The pin being edited stays highlighted in the page as the selection,
+    // on its own page and while its markup matches, as a card's element is.
+    const editing = annotationDraft.selections.find((pin) => pin.id === editingPin)?.annotation;
+    const locator = editing?.target.locator;
+    const selected: AnnotationSelection | null = locator?.type === 'element' ? { css: locator.css, ...(locator.pagePath !== undefined ? { pagePath: locator.pagePath } : {}), exact: editing!.content.exact } : null;
+    return JSON.stringify({ pins, selected });
+  }, [annotationDraft, editingPin, resourceId, version]);
+  React.useEffect(() => {
+    if (!annotationDraft || previewShown!==true || pageComments === null) return;
+    const { pins, selected } = JSON.parse(pageComments) as { pins: AnnotationCommentPins; selected: AnnotationSelection | null };
+    if (surface.framed) { tellFrame({ type: 'rally-annotation-comments', pins, selected }); return; }
+    if (!surface.comments) return;
+    let active=true;
+    void surface.comments(pins, selected).then((action)=>{
       if(!active || !action || !pins.some((pin)=>pin.id===action.id))return;
       if(action.action==='remove')annotationDraft.remove(action.id);
       else {const pane=paneRef.current?.getBoundingClientRect();if(action.point && pane)setCommentAnchor({x:Math.max(8,Math.min(pane.x+action.point.x,window.innerWidth-308)),y:pane.y+action.point.y});setEditingPin(action.id);}
     }).catch(()=>{});
     return ()=>{active=false;};
-  },[annotationDraft?.pins,editingPin,resourceId,version,surface,previewShown]);
+  },[pageComments,surface,previewShown,frameDocument,commentReady,tellFrame]);
 
   const editingSelection = annotationDraft?.selections.find((p) => p.id === editingPin);
   return (
@@ -553,7 +653,17 @@ export function SiteResourceDetail({
               <iframe
                 className="site-detail-frame"
                 data-loading={previewShown === true ? undefined : ''}
-                onLoad={() => setPreviewShown(true)}
+                onLoad={() => {
+                  setPreviewShown(true);
+                  // The script announces itself before the document finishes
+                  // loading, so by `load` a page that carries it has already
+                  // said so; one that does not (a refusal, an error page) has
+                  // not, and Comment mode cannot stay on there.
+                  setCommentReady(readySinceLoad.current);
+                  if (!readySinceLoad.current) setPicking(false);
+                  readySinceLoad.current = false;
+                }}
+                ref={frameRef}
                 sandbox={ARTIFACT_FRAME_SANDBOX}
                 src={frameUrl}
                 title={title}

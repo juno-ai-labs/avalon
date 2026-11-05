@@ -62,6 +62,16 @@ export default {
       return response;
     }
     if (url.pathname.startsWith("/assets/") || INSTALL_FILES.has(url.pathname)) return env.ASSETS.fetch(request);
+    if (url.pathname === "/annotation-frame.js") {
+      // The annotation script an HTML file's opaque preview frame loads from
+      // this origin under its nonce. Revalidated on every check so a deploy
+      // reaches open tabs, and never sniffed into something else.
+      const script = await env.ASSETS.fetch(request);
+      const response = new Response(script.body, script);
+      response.headers.set("Cache-Control", "no-cache");
+      response.headers.set("X-Content-Type-Options", "nosniff");
+      return response;
+    }
     if (url.pathname === "/sw.js") {
       // The push service worker, served from the root so its scope covers /app/.
       // Revalidated on every check so a deploy reaches open browsers.
