@@ -275,10 +275,16 @@ describe("Activity rows pushed from the directory", () => {
     expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${thread}` }]);
   });
 
-  it("given an Organization-wide breakout somebody starts, then the members who may list it are pushed its start", async () => {
-    await publish(asSubstreamId("0"), [common("Q3 plan", { createdAt: new Date(Date.now() - 86_400_000).toISOString() }), viewer(owner)]);
+  it("given an Organization-wide breakout somebody starts, then the thread's participants are pushed its start", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan", { createdAt: new Date(Date.now() - 86_400_000).toISOString() }), viewer(owner), viewer(member)]);
     await publish(breakout, [common("Pricing"), viewer(owner)]);
     expect(await pushed()).toEqual([{ user_id: member, item_id: `started:${breakout}` }]);
+  });
+
+  it("given an Organization-wide breakout somebody starts, then a member who may list the thread but is not in it is not pushed", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan", { createdAt: new Date(Date.now() - 86_400_000).toISOString() }), viewer(owner)]);
+    await publish(breakout, [common("Pricing"), viewer(owner)]);
+    expect(await pushed()).toEqual([]);
   });
 });
 
@@ -352,8 +358,8 @@ describe("a breakout merged into its thread", () => {
     } as ConversationEffect;
   }
 
-  it("given a merge message in an Organization-wide thread, then every other member with a device is pushed it once, worded as the sidebar row", async () => {
-    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+  it("given a merge message in a thread somebody else is in, then they are pushed it once, worded as the sidebar row", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner), viewer(member)]);
     const before = await pushed();
     await publish(asSubstreamId("0"), [mergeEvent()]);
     await publish(asSubstreamId("0"), [{ ...common("Q3 plan"), preview: "later traffic" }]);
@@ -369,6 +375,15 @@ describe("a breakout merged into its thread", () => {
     expect(apns.rally.kind).toBe("merged");
     expect(apns.rally.url).toContain(`/workstreams/${thread}`);
     expect(apns.rally.url).not.toContain(breakout);
+  });
+
+  it("given a merge message in an Organization-wide thread, then a member who may list it but is not in it is not pushed", async () => {
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+    const before = await pushed();
+    await publish(asSubstreamId("0"), [mergeEvent()]);
+
+    expect((await pushed()).filter((row) => !before.some((earlier) => earlier.item_id === row.item_id && earlier.user_id === row.user_id)))
+      .toEqual([]);
   });
 });
 

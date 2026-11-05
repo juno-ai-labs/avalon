@@ -17,7 +17,10 @@
  * neither fragment narrows them. A thread placed in no Organization-wide
  * Channel is outside this rule and keeps its listing audience.
  *
- * Both fragments are code-owned SQL over caller-chosen aliases and read the
+ * A change inside a thread (a breakout started or merged in it) is told to the
+ * thread's participants alone, Channel or no Channel.
+ *
+ * Every fragment here is code-owned SQL over caller-chosen aliases and read the
  * viewer's id from `?1`. See `docs/digests.md#the-activity-tab`.
  */
 
@@ -56,6 +59,17 @@ export function threadStartAudienceSql(directory: string, viewer: string, occurr
                         WHERE audience_placement.workstream_id = ${directory}.workstream_id
                           AND audience_placement.state = 'active'
                           AND ${channelParticipantSql("audience_placement.space_id", occurredAt)}))`;
+}
+
+/**
+ * Whether `?1` is told of a change inside a thread, such as a breakout
+ * started or merged in it: the thread's participants alone, whoever else may
+ * list it. `viewer` is the thread's `channel_viewers` row for `?1`,
+ * left-joined, and `participant` any further participation that counts, such
+ * as the breakout's own viewer row; pass `"0"` for none.
+ */
+export function threadChangeAudienceSql(viewer: string, participant = "0"): string {
+  return `(${viewer}.is_participant = 1 OR ${participant})`;
 }
 
 /**

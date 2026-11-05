@@ -212,7 +212,9 @@ must not re-run the batch's other work.
 **The feed decides what each person is told.** A start asks everyone when its
 conversation is Organization-wide, else the people its viewer rows name, and
 the feed keeps only those it would tell: in an Organization-wide Channel,
-its participants and the thread's ([`digests.md`](digests.md#who-is-told-about-channel-news)); a
+its participants and the thread's ([`digests.md`](digests.md#who-is-told-about-channel-news)),
+and for a breakout, or a breakout merged into its thread, the thread's
+participants alone; a
 finish asks only its participants, the only people the feed shows one to; a
 join asks the person who joined. D1 narrows that to active members, and the
 object keeps those with a live device or a channel other than push chosen for

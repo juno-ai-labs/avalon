@@ -10,7 +10,7 @@ import {
   type ActivityRowFacts,
   type ActivityWaterline,
 } from "./activity-clear-rules";
-import { threadStartAudienceSql } from "./activity-audience";
+import { threadChangeAudienceSql, threadStartAudienceSql } from "./activity-audience";
 import { boundParameterChunks } from "./bound-parameters";
 import { listedResourceVisibilitySql } from "../services/resource-listing";
 import { breakoutListedSql, channelListedSql, mainOpenableSql, type Viewer } from "./listing-rules";
@@ -30,6 +30,7 @@ import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace
  * - **thread_started** and **breakout_started** are a conversation the viewer
  *   may list, started by somebody else, read from its directory row; in an
  *   Organization-wide Channel only its participants and the thread's are told
+ *   of a thread, and only the thread's participants of a breakout
  *   (`activity-audience.ts`);
  * - **run_finished** is a thread or breakout the viewer takes part in whose
  *   run is `completed`, at its `completed_at`, so each conversation shows its
@@ -236,14 +237,14 @@ export class WorkspaceActivityFeed {
     const threadListed = channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" });
     const breakoutListed = breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass);
     const mentionsOnly = only === "mentions";
-    // Listing says who may see a start; this says who is told of it. An
-    // Organization-wide Channel's new threads reach its participants and the
-    // thread's, not every member (`activity-audience.ts`).
-    const spacesReady = this.spaces.ready();
-    const threadStartTold = spacesReady ? threadStartAudienceSql("directory", "viewer", "directory.source_created_at") : "1";
-    const breakoutStartTold = spacesReady
-      ? `(breakout.scope <> 'workspace' OR ${threadStartAudienceSql("directory", "viewer", "breakout.source_created_at", "breakout_viewer.is_participant = 1")})`
+    // Listing says who may see a conversation; these say who is told of it
+    // (`activity-audience.ts`). An Organization-wide Channel's new threads
+    // reach its participants and the thread's, not every member, and a change
+    // inside a thread reaches the thread's participants alone.
+    const threadStartTold = this.spaces.ready()
+      ? threadStartAudienceSql("directory", "viewer", "directory.source_created_at")
       : "1";
+    const breakoutStartTold = threadChangeAudienceSql("viewer", "breakout_viewer.is_participant = 1");
     const relations = mentionsOnly ? "('mentioned')" : "('added', 'mentioned')";
     const keys = [
       ...arm(`SELECT event.event_id AS id,
@@ -309,8 +310,8 @@ export class WorkspaceActivityFeed {
                  AND breakout.source_created_at IS NOT NULL
                  AND breakout.archived_at IS NULL`) : []),
       // A breakout's merge into its thread, read from the merge message's
-      // activity event through migration 109's partial index; anyone who may
-      // list the thread is told, as anyone who may read it sees the message.
+      // activity event through migration 109's partial index; the thread's
+      // participants are told, though anyone who may read it sees the message.
       ...(mentionsOnly ? [] : arm(`SELECT 'merged:' || event.event_id AS id, 'merged' AS kind,
                      event.occurred_at, event.actor_user_id, event.actor_label,
                      event.subject_id AS thread_id, '0' AS substream_id,
@@ -325,7 +326,8 @@ export class WorkspaceActivityFeed {
                  AND event.subject_type = 'workstream'
                  AND (event.actor_user_id IS NULL OR event.actor_user_id <> ?1)
                  AND directory.archived_at IS NULL
-                 AND ${threadListed}`)),
+                 AND ${threadListed}
+                 AND ${threadChangeAudienceSql("viewer")}`)),
       ...(mentionsOnly ? [] : this.spaces.mergeActivityKeys(viewer, after, limit)),
       ...(mentionsOnly ? [] : arm(`SELECT 'finished:' || directory.workstream_id || ':' || directory.completed_at AS id,
                      'run_finished' AS kind,
