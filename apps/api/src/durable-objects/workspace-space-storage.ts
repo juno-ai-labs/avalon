@@ -33,6 +33,7 @@ import {
 
 import { channelPostAudienceSql } from "./activity-audience";
 import { linkSpaceResources } from "./authorization-storage";
+import { MEMORY_DIGEST_SYNC_TRIGGERS } from "./memory-digest-sync";
 import { boundParameterChunks } from "./bound-parameters";
 import { stableUuidSync } from "../lib/stable-uuid";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -603,11 +604,40 @@ export const SPACE_INDIVIDUAL_SCOPE_MIGRATION: readonly string[] = [
  *
  * Set by this object's writers when a row turns participant, from this
  * object's clock: the Space's own `directory_user` projection carries no join
- * time. NULL is a participant from before this migration, whose join time
- * nobody recorded; they keep hearing about everything, as they did.
+ * time. Nobody recorded when an existing row's person joined, so the rebuild
+ * dates every row at its Channel's creation (`spaces.created_at`), which keeps
+ * everything they hear about today; a row whose Space row is missing gets 0.
+ *
+ * `NOT NULL` with no default, so a writer that forgets the column fails
+ * instead of silently telling someone the Channel's whole history. SQLite adds
+ * such a column only by a rebuild: copy, drop, rename, then put back what the
+ * drop took, the user index and the memory digest's participant triggers
+ * (`MEMORY_DIGEST_SYNC_TRIGGERS.space_viewers`). The copy does not fire those
+ * triggers, which hang off the old table. Nothing references `space_viewers`
+ * by foreign key.
  */
 export const SPACE_VIEWER_JOINED_AT_MIGRATION: readonly string[] = [
-  `ALTER TABLE space_viewers ADD COLUMN joined_at INTEGER CHECK (joined_at IS NULL OR joined_at >= 0)`,
+  `CREATE TABLE space_viewers_next (
+    space_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    is_participant INTEGER NOT NULL CHECK (is_participant IN (0, 1)),
+    authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+    source_version INTEGER NOT NULL CHECK (source_version >= 0),
+    payload_hash TEXT NOT NULL,
+    joined_at INTEGER NOT NULL CHECK (joined_at >= 0),
+    PRIMARY KEY (space_id, user_id)
+  ) STRICT`,
+  `INSERT INTO space_viewers_next
+     (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+   SELECT viewer.space_id, viewer.user_id, viewer.is_participant, viewer.authority_generation,
+          viewer.source_version, viewer.payload_hash,
+          COALESCE((SELECT space.created_at FROM spaces space WHERE space.space_id = viewer.space_id), 0)
+     FROM space_viewers viewer`,
+  `DROP TABLE space_viewers`,
+  `ALTER TABLE space_viewers_next RENAME TO space_viewers`,
+  // Its v70 name, which every object already carries and the rename tests hold.
+  `CREATE INDEX workspace_space_viewers_user_idx ON space_viewers(user_id, is_participant, space_id)`,
+  ...MEMORY_DIGEST_SYNC_TRIGGERS.space_viewers,
 ];
 
 /**
@@ -2245,7 +2275,7 @@ export class WorkspaceSpaceStorage {
       projection.authorityGeneration,
       projection.sourceVersion,
       projection.payloadHash,
-      projection.isParticipant ? now : null,
+      now,
     );
     if (changed) {
       this.storage.sql.exec(

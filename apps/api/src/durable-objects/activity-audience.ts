@@ -10,8 +10,7 @@
  *
  * A Channel counts only for what happened once the person had joined it
  * (`space_viewers.joined_at`, migration 134), so joining a Channel does not
- * bring its history into Activity. A NULL join time is a participant from
- * before that column, who keeps hearing about everything as before.
+ * bring its history into Activity.
  *
  * A private thread or a private Channel already lists to the people in it, so
  * neither fragment narrows them. A thread placed in no Organization-wide
@@ -33,8 +32,7 @@ function channelParticipantSql(spaceId: string, occurredAt: string): string {
                    WHERE audience_space_viewer.space_id = ${spaceId}
                      AND audience_space_viewer.user_id = ?1
                      AND audience_space_viewer.is_participant = 1
-                     AND (audience_space_viewer.joined_at IS NULL
-                          OR audience_space_viewer.joined_at <= ${occurredAt}))`;
+                     AND audience_space_viewer.joined_at <= ${occurredAt})`;
 }
 
 /**
