@@ -24,6 +24,7 @@ import {
   conversationEffectHash,
   type ConversationEffect,
   type ConversationEffectEnvelope,
+  type SpaceId,
   type SubstreamId,
   type UserId,
   type WorkstreamId,
@@ -205,6 +206,14 @@ beforeEach(async () => {
   });
 });
 
+/** Seat `userId` in the Organization-wide Channel beside its owner. */
+async function joinChannel(channelId: SpaceId, userId: UserId): Promise<void> {
+  const result = await organization().noteSpaceAudience({
+    workspaceId, userId: owner, spaceId: channelId, audience: { scope: "workspace", participantUserIds: [owner, userId] },
+  });
+  if (!result.ok) throw new Error(`noteSpaceAudience refused: ${result.code}`);
+}
+
 describe("Activity rows pushed from the directory", () => {
   it("given an Organization-wide thread somebody starts, then each other member with a device is pushed its start, once", async () => {
     await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
@@ -363,6 +372,26 @@ describe("a breakout merged into its thread", () => {
   });
 });
 
+describe("news in an Organization-wide Channel", () => {
+  it("given a thread started in a Channel, then its participants are pushed the start and a member in neither the Channel nor the thread is not", async () => {
+    const reserved = await organization().reserveSpace({ workspaceId, userId: owner,
+      space: { name: "GTM", iconKey: "briefcase", colorKey: "blue", scope: "workspace" } });
+    if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
+    const channelId = asSpaceId(reserved.space.id);
+    await joinChannel(channelId, bystander);
+    await registerPushDevice(env, { userId: bystander, workspaceId, sessionId: `session-${bystander}`, region: "global", role: "member" },
+      `mac-${bystander}`, {
+        platform: "macos", transport: "apns", topic: "ai.rallywith.desktop", apnsEnvironment: "production",
+        token: "cc".repeat(32), appVersion: "1",
+      });
+    // Placed before its start is decided, as a thread born in a Channel is.
+    await placeMembership(organization(), { workspaceId, userId: owner, spaceId: channelId, workstreamId: thread });
+    await publish(asSubstreamId("0"), [common("Q3 plan"), viewer(owner)]);
+
+    expect(await pushed()).toEqual([{ user_id: bystander, item_id: `started:${thread}` }]);
+  });
+});
+
 describe("a private thread merged into its Channel", () => {
   it("given a merge from a thread a member cannot open, then they are pushed it, worded and linked as the Channel's, never naming the thread", async () => {
     // Only Maya is in the thread.
@@ -372,6 +401,7 @@ describe("a private thread merged into its Channel", () => {
     if (!reserved.ok) throw new Error(`reserveSpace refused: ${reserved.code}`);
     const channelId = asSpaceId(reserved.space.id);
     await placeMembership(organization(), { workspaceId, userId: owner, spaceId: channelId, workstreamId: thread });
+    await joinChannel(channelId, member);
     const before = await pushed();
 
     const merged = await organization().mergeThreadIntoChannel({

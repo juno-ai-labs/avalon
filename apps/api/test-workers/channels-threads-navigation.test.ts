@@ -143,15 +143,19 @@ function viewerEffect(userId: UserId, overrides: { isParticipant?: boolean; list
   };
 }
 
-function breakoutEffect(title: string, overrides: { state?: string; completedAt?: string | null } = {}): ParentEffect {
+function breakoutEffect(
+  title: string,
+  overrides: { state?: string; completedAt?: string | null; scope?: "personal" | "workspace"; createdByUserId?: UserId } = {},
+): ParentEffect {
   return {
     kind: "directory_common",
     title,
     description: "",
     preview: "",
-    scope: "personal",
+    scope: overrides.scope ?? "personal",
     state: overrides.state ?? "idle",
     systemKind: null,
+    ...(overrides.createdByUserId ? { createdByUserId: overrides.createdByUserId } : {}),
     lastActivityAt: "2026-10-02T00:00:00.000Z",
     completedAt: overrides.completedAt ?? null,
     archivedAt: null,
@@ -233,6 +237,15 @@ async function channelWithThreads(): Promise<SpaceId> {
   await publish(PRIVATE_THREAD, [threadEffect("Comp bands", { scope: "personal" }), viewerEffect(OWNER)]);
   await place(channelId, PRIVATE_THREAD);
   return channelId;
+}
+
+/** Seat `userId` in the Organization-wide Channel beside its owner. */
+async function join(channelId: SpaceId, userId: UserId): Promise<void> {
+  const result = await workspace().noteSpaceAudience({
+    workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId,
+    audience: { scope: "workspace", participantUserIds: [OWNER, userId] },
+  });
+  if (!result.ok) throw new Error(`noteSpaceAudience refused: ${result.code}`);
 }
 
 async function feed(channelId: SpaceId, userId: UserId) {
@@ -1088,7 +1101,7 @@ describe("artifact pins", () => {
 
 describe("Activity tab", () => {
   it("given starts in conversations a member may and may not list, when they read Activity, then only the listable ones appear", async () => {
-    await channelWithThreads();
+    await join(await channelWithThreads(), MEMBER);
     // The owner starts all three: an Organization-wide thread, a private one,
     // and a breakout private to the owner inside the thread the member can open.
     await publish(OPEN_THREAD, [breakoutEffect("Side work"), viewerEffect(OWNER)], BREAKOUT);
@@ -1158,7 +1171,7 @@ describe("Activity tab", () => {
   });
 
   it("given more hidden starts than a page holds, when a member reads Activity, then the page holds what they may list and its cursor names nothing hidden", async () => {
-    await channelWithThreads();
+    await join(await channelWithThreads(), MEMBER);
     // A page's worth and one more private threads the owner started after the
     // open one. Filtered after the LIMIT, they would fill the page and its
     // cursor with threads the member may not list, and push the open one off.
@@ -1391,6 +1404,8 @@ describe("Activity settled by the app's events", () => {
     const channelId = await channelWithThreads();
     const elsewhere = await reserveChannel("Elsewhere");
     await place(elsewhere, OPEN_THREAD);
+    await join(channelId, MEMBER);
+    await join(elsewhere, MEMBER);
     const started = async () => (await activity(MEMBER)).items
       .filter((item) => item.kind === "thread_started" && item.threadId === OPEN_THREAD).map((item) => item.unread);
     expect(await started()).toEqual([true]);
@@ -1400,6 +1415,40 @@ describe("Activity settled by the app's events", () => {
 
     await removeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId, workstreamId: OPEN_THREAD });
     expect(await started()).toEqual([false]);
+  });
+
+  it("given a thread started in an Organization-wide Channel, when a member who is in neither reads Activity, then they are not told, and once they join the Channel they are", async () => {
+    const channelId = await channelWithThreads();
+    await publish(OPEN_THREAD, [breakoutEffect("Side work", { scope: "workspace", createdByUserId: OWNER }), viewerEffect(OWNER)], BREAKOUT);
+    const starts = async () => (await activity(MEMBER)).items
+      .filter((item) => item.kind === "thread_started" || item.kind === "breakout_started")
+      .map((item) => [item.kind, item.threadId]);
+
+    // They may still list and open it; they are just not told it started.
+    expect((await feed(channelId, MEMBER)).items.map((item) => item.kind === "thread" && item.thread.id))
+      .toContain(OPEN_THREAD);
+    expect(await starts()).toEqual([]);
+
+    await join(channelId, MEMBER);
+    expect(await starts()).toEqual([["breakout_started", OPEN_THREAD], ["thread_started", OPEN_THREAD]]);
+  });
+
+  it("given a thread in an Organization-wide Channel the member is not in, when they take part in the thread, then they are told it started", async () => {
+    await channelWithThreads();
+    // A start the member is a participant of, by somebody else, with no add
+    // row to stand in for it.
+    await publish(OPEN_THREAD, [viewerEffect(MEMBER)]);
+
+    expect((await activity(MEMBER)).items.filter((item) => item.kind === "thread_started").map((item) => item.threadId))
+      .toEqual([OPEN_THREAD]);
+  });
+
+  it("given an Organization-wide thread in no Channel, when a member reads Activity, then they are told it started", async () => {
+    await openThreadObject(LATE_THREAD);
+    await publish(LATE_THREAD, [threadEffect("Unplaced"), viewerEffect(OWNER)]);
+
+    expect((await activity(MEMBER)).items.filter((item) => item.kind === "thread_started").map((item) => item.threadId))
+      .toEqual([LATE_THREAD]);
   });
 });
 
@@ -1674,6 +1723,7 @@ describe("Channel merges", () => {
 
   it("given a merge, when each person reads Activity, then the member sees a merged row naming the Channel and its author does not", async () => {
     const channelId = await channelWithThreads();
+    await join(channelId, MEMBER);
     const merged = await merge(channelId, "op-1");
     if (!merged.ok) throw new Error("merge refused");
 
@@ -1688,8 +1738,22 @@ describe("Channel merges", () => {
     expect((await activity(MEMBER)).items.find((item) => item.kind === "merged")?.unread).toBe(false);
   });
 
+  it("given a merge into an Organization-wide Channel, when a member in neither the Channel nor the thread reads Activity, then they are not told, though the Channel shows it", async () => {
+    const channelId = await channelWithThreads();
+    if (!(await merge(channelId, "op-1")).ok) throw new Error("merge refused");
+    const merges = async () => (await activity(MEMBER)).items.filter((item) => item.kind === "merged").map((item) => item.threadId);
+
+    expect(await messages(channelId, MEMBER)).toHaveLength(1);
+    expect(await merges()).toEqual([]);
+
+    // Taking part in the thread is enough, as joining the Channel is.
+    await publish(OPEN_THREAD, [viewerEffect(MEMBER)]);
+    expect(await merges()).toEqual([OPEN_THREAD]);
+  });
+
   it("given a private thread's merge, when a member who cannot open the thread reads Activity, then the row is the Channel's and names no thread", async () => {
     const channelId = await channelWithThreads();
+    await join(channelId, MEMBER);
     await workspace().mergeThreadIntoChannel({
       auth: auth(OWNER), workstreamId: PRIVATE_THREAD, spaceId: null, body: "Bands are set.", operationId: "op-p", embeds: [],
     });

@@ -10,6 +10,7 @@ import {
   type ActivityRowFacts,
   type ActivityWaterline,
 } from "./activity-clear-rules";
+import { threadStartAudienceSql } from "./activity-audience";
 import { boundParameterChunks } from "./bound-parameters";
 import { listedResourceVisibilitySql } from "../services/resource-listing";
 import { breakoutListedSql, channelListedSql, mainOpenableSql, type Viewer } from "./listing-rules";
@@ -27,7 +28,9 @@ import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace
  * - **added** and **mentioned** are events that name the viewer as a target
  *   with that relation;
  * - **thread_started** and **breakout_started** are a conversation the viewer
- *   may list, started by somebody else, read from its directory row;
+ *   may list, started by somebody else, read from its directory row; in an
+ *   Organization-wide Channel only its participants and the thread's are told
+ *   (`activity-audience.ts`);
  * - **run_finished** is a thread or breakout the viewer takes part in whose
  *   run is `completed`, at its `completed_at`, so each conversation shows its
  *   latest finish once rather than one row per run.
@@ -233,6 +236,14 @@ export class WorkspaceActivityFeed {
     const threadListed = channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" });
     const breakoutListed = breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass);
     const mentionsOnly = only === "mentions";
+    // Listing says who may see a start; this says who is told of it. An
+    // Organization-wide Channel's new threads reach its participants and the
+    // thread's, not every member (`activity-audience.ts`).
+    const spacesReady = this.spaces.ready();
+    const threadStartTold = spacesReady ? threadStartAudienceSql("directory", "viewer") : "1";
+    const breakoutStartTold = spacesReady
+      ? `(breakout.scope <> 'workspace' OR ${threadStartAudienceSql("directory", "viewer", "breakout_viewer.is_participant = 1")})`
+      : "1";
     const relations = mentionsOnly ? "('mentioned')" : "('added', 'mentioned')";
     const keys = [
       ...arm(`SELECT event.event_id AS id,
@@ -274,6 +285,7 @@ export class WorkspaceActivityFeed {
                 FROM channels directory
                 ${CHANNEL_VIEWER}
                WHERE ${threadListed}
+                 AND ${threadStartTold}
                  AND directory.created_by_user_id IS NOT NULL
                  AND directory.created_by_user_id <> ?1
                  AND directory.source_created_at IS NOT NULL
@@ -290,6 +302,7 @@ export class WorkspaceActivityFeed {
                 ${CHANNEL_VIEWER}
                 ${BREAKOUT_VIEWER}
                WHERE ${threadListed} AND ${breakoutListed}
+                 AND ${breakoutStartTold}
                  AND directory.archived_at IS NULL
                  AND breakout.created_by_user_id IS NOT NULL
                  AND breakout.created_by_user_id <> ?1
