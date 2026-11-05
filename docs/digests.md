@@ -265,8 +265,19 @@ Organization-wide Channel, but its start and its merge into the Channel reach
 only people taking part: participants of the Channel (`space_viewers`) and of
 the thread (`channel_viewers.is_participant`). A member who never joined the
 Channel can still find and open the thread; nothing about it lands in their
-Activity, digest, push, email or Slack. Joining the Channel later brings its
-past starts into Activity, as being added to a private thread does.
+Activity, digest, push, email or Slack.
+
+A Channel counts only for what happened after the person joined it.
+`space_viewers.joined_at` (migration 134) is stamped from WorkspaceDO's own
+clock each time a row turns participant, by every writer: Space creation, an
+audience change, seating (General, invitees, posting, starting a thread there)
+and the Space's `directory_user` projection, which carries no join time of its
+own. A start is compared by `source_created_at`, a merge by `posted_at`. So
+joining a Channel brings none of its history into Activity, and someone who
+leaves and rejoins hears only what follows the rejoin. A participant from
+before migration 134 has no recorded join time (NULL) and keeps hearing about
+everything, as before. Participation in the thread itself is not timed: being
+added to a thread still tells you it started, and of its merges.
 
 The rule narrows only Organization-wide scope. A private thread or private
 Channel already lists to its people. A thread placed in no Organization-wide
@@ -749,24 +760,35 @@ device registration, provider delivery and retry receipts.
 
 **What changed:** A thread start, an Organization-wide breakout start and a
 thread's merge into an Organization-wide Channel are Activity rows only for
-participants of that Channel or of the thread (`activity-audience.ts`).
+participants of the thread, or of that Channel when they had joined it before
+the event (`activity-audience.ts`, `space_viewers.joined_at`, migration 134).
 Every notification channel reads this feed, so push, email, Slack and the
 digest narrow with it.
 
 **Why:** The product owner asked that people not be notified about new
-threads and posts in a public Channel they have not joined. Before, every
-member was told of every Organization-wide start and Channel merge.
+threads and posts in a public Channel they have not joined, and then that
+nothing from before they joined a Channel become Activity. Before, every
+member was told of every Organization-wide start and Channel merge, and a
+new member's Activity filled with history.
 
 **Considered and rejected:** Filtering in the push sweep alone: the Activity
 tab, the digest and the menu bar would still list the rows, and the feed is
 the one rule every surface reads. Narrowing listing itself: a member must
 still be able to find and open a public thread.
 
-**Consequences:** Joining a Channel surfaces its earlier starts as Activity
-rows, but does not push them, because a Channel join is not one of the
-directory changes that decides a push. A thread placed only in private
-Channels, or in none, is unchanged. A test that expects a member to hear
-about Channel news must seat them in the Channel.
+**Considered and rejected for the join time:** Comparing with the thread's
+placement time rather than its start: the row is the start and is dated by
+it, and a Channel member would be told of an old thread moved in. Backfilling
+existing participants to the migration's time: rows they already see would
+vanish from Activity, which nobody asked for, so their join time stays NULL.
+
+**Consequences:** A thread placed only in private Channels, or in none, is
+unchanged. A start is dated by `source_created_at`, which the creating client
+supplies, so a skewed clock can put a start just before or after a join. Any
+new writer of `space_viewers` must stamp `joined_at` when a row turns
+participant, or that person hears about the Channel's whole history. A test
+that expects a member to hear about Channel news must seat them in the
+Channel before the news.
 
 ### 2026-10-20 — Human replies join Activity and conversations collapse into one row
 

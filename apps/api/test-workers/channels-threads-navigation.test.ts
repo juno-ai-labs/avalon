@@ -105,6 +105,7 @@ function threadEffect(title: string, overrides: {
   completedAt?: string | null;
   lastActivityAt?: string;
   latestAttentionOrdinal?: number;
+  createdAt?: string;
 } = {}): ParentEffect {
   return {
     kind: "directory_common",
@@ -120,7 +121,7 @@ function threadEffect(title: string, overrides: {
     createdByUserId: OWNER,
     latestAttentionOrdinal: overrides.latestAttentionOrdinal ?? 0,
     unreadTrackingStartOrdinal: 0,
-    createdAt: "2026-10-01T00:00:00.000Z",
+    createdAt: overrides.createdAt ?? "2026-10-01T00:00:00.000Z",
     updatedAt: "2026-10-01T00:00:00.000Z",
     resourceLinks: [],
   };
@@ -227,11 +228,16 @@ async function place(channelId: SpaceId, workstreamId: WorkstreamId): Promise<vo
 /**
  * A Channel with three threads, oldest placement first: one the whole
  * Organization may open, one private to the owner, and one the member started.
+ *
+ * `joined` are seated in the Channel before the threads start, so they are
+ * told of the starts; otherwise the threads start on a fixed past date.
  */
-async function channelWithThreads(): Promise<SpaceId> {
+async function channelWithThreads(joined: readonly UserId[] = []): Promise<SpaceId> {
   const channelId = await reserveChannel("Outbound");
+  for (const userId of joined) await join(channelId, userId);
+  const createdAt = joined.length > 0 ? new Date(Date.now() + 1).toISOString() : undefined;
   await openThreadObject(OPEN_THREAD);
-  await publish(OPEN_THREAD, [threadEffect("Cold outreach"), viewerEffect(OWNER)]);
+  await publish(OPEN_THREAD, [threadEffect("Cold outreach", createdAt ? { createdAt } : {}), viewerEffect(OWNER)]);
   await place(channelId, OPEN_THREAD);
   await openThreadObject(PRIVATE_THREAD);
   await publish(PRIVATE_THREAD, [threadEffect("Comp bands", { scope: "personal" }), viewerEffect(OWNER)]);
@@ -1101,7 +1107,7 @@ describe("artifact pins", () => {
 
 describe("Activity tab", () => {
   it("given starts in conversations a member may and may not list, when they read Activity, then only the listable ones appear", async () => {
-    await join(await channelWithThreads(), MEMBER);
+    await channelWithThreads([MEMBER]);
     // The owner starts all three: an Organization-wide thread, a private one,
     // and a breakout private to the owner inside the thread the member can open.
     await publish(OPEN_THREAD, [breakoutEffect("Side work"), viewerEffect(OWNER)], BREAKOUT);
@@ -1171,7 +1177,7 @@ describe("Activity tab", () => {
   });
 
   it("given more hidden starts than a page holds, when a member reads Activity, then the page holds what they may list and its cursor names nothing hidden", async () => {
-    await join(await channelWithThreads(), MEMBER);
+    await channelWithThreads([MEMBER]);
     // A page's worth and one more private threads the owner started after the
     // open one. Filtered after the LIMIT, they would fill the page and its
     // cursor with threads the member may not list, and push the open one off.
@@ -1401,11 +1407,10 @@ describe("Activity settled by the app's events", () => {
   });
 
   it("given a start cleared by reading its Channel, when the thread moves out of that Channel, then it stays cleared", async () => {
-    const channelId = await channelWithThreads();
     const elsewhere = await reserveChannel("Elsewhere");
-    await place(elsewhere, OPEN_THREAD);
-    await join(channelId, MEMBER);
     await join(elsewhere, MEMBER);
+    const channelId = await channelWithThreads([MEMBER]);
+    await place(elsewhere, OPEN_THREAD);
     const started = async () => (await activity(MEMBER)).items
       .filter((item) => item.kind === "thread_started" && item.threadId === OPEN_THREAD).map((item) => item.unread);
     expect(await started()).toEqual([true]);
@@ -1417,7 +1422,7 @@ describe("Activity settled by the app's events", () => {
     expect(await started()).toEqual([false]);
   });
 
-  it("given a thread started in an Organization-wide Channel, when a member who is in neither reads Activity, then they are not told, and once they join the Channel they are", async () => {
+  it("given a thread started in an Organization-wide Channel, when a member who is in neither reads Activity, then they are not told, and joining the Channel afterwards tells them nothing", async () => {
     const channelId = await channelWithThreads();
     await publish(OPEN_THREAD, [breakoutEffect("Side work", { scope: "workspace", createdByUserId: OWNER }), viewerEffect(OWNER)], BREAKOUT);
     const starts = async () => (await activity(MEMBER)).items
@@ -1429,8 +1434,20 @@ describe("Activity settled by the app's events", () => {
       .toContain(OPEN_THREAD);
     expect(await starts()).toEqual([]);
 
+    // Both started before they joined, so joining is not news of either.
     await join(channelId, MEMBER);
-    expect(await starts()).toEqual([["breakout_started", OPEN_THREAD], ["thread_started", OPEN_THREAD]]);
+    expect(await starts()).toEqual([]);
+  });
+
+  it("given a member who joined an Organization-wide Channel, when threads start in it before and after, then only the later start is told", async () => {
+    const channelId = await channelWithThreads();
+    await join(channelId, MEMBER);
+    await openThreadObject(LATE_THREAD);
+    await publish(LATE_THREAD, [threadEffect("After joining", { createdAt: new Date(Date.now() + 1).toISOString() }), viewerEffect(OWNER)]);
+    await place(channelId, LATE_THREAD);
+
+    expect((await activity(MEMBER)).items.filter((item) => item.kind === "thread_started").map((item) => item.threadId))
+      .toEqual([LATE_THREAD]);
   });
 
   it("given a thread in an Organization-wide Channel the member is not in, when they take part in the thread, then they are told it started", async () => {
@@ -1746,7 +1763,11 @@ describe("Channel merges", () => {
     expect(await messages(channelId, MEMBER)).toHaveLength(1);
     expect(await merges()).toEqual([]);
 
-    // Taking part in the thread is enough, as joining the Channel is.
+    // Joining the Channel after the post does not make it news.
+    await join(channelId, MEMBER);
+    expect(await merges()).toEqual([]);
+
+    // Taking part in the thread is enough.
     await publish(OPEN_THREAD, [viewerEffect(MEMBER)]);
     expect(await merges()).toEqual([OPEN_THREAD]);
   });

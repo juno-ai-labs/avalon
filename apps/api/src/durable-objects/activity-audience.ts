@@ -8,6 +8,11 @@
  * Somebody who never joined the Channel can still open the thread; it is not
  * pushed, emailed, sent to Slack or put in their Activity and digest.
  *
+ * A Channel counts only for what happened once the person had joined it
+ * (`space_viewers.joined_at`, migration 134), so joining a Channel does not
+ * bring its history into Activity. A NULL join time is a participant from
+ * before that column, who keeps hearing about everything as before.
+ *
  * A private thread or a private Channel already lists to the people in it, so
  * neither fragment narrows them. A thread placed in no Organization-wide
  * Channel is outside this rule and keeps its listing audience.
@@ -16,22 +21,28 @@
  * viewer's id from `?1`. See `docs/digests.md#the-activity-tab`.
  */
 
-/** Whether `?1` takes part in the Channel `space` (its `space_id` expression). */
-function channelParticipantSql(spaceId: string): string {
+/**
+ * Whether `?1` took part in the Channel whose id is `spaceId` when the event
+ * at `occurredAt` (Unix milliseconds) happened.
+ */
+function channelParticipantSql(spaceId: string, occurredAt: string): string {
   return `EXISTS (SELECT 1 FROM space_viewers audience_space_viewer
                    WHERE audience_space_viewer.space_id = ${spaceId}
                      AND audience_space_viewer.user_id = ?1
-                     AND audience_space_viewer.is_participant = 1)`;
+                     AND audience_space_viewer.is_participant = 1
+                     AND (audience_space_viewer.joined_at IS NULL
+                          OR audience_space_viewer.joined_at <= ${occurredAt}))`;
 }
 
 /**
  * Whether `?1` is told a thread started. `directory` is the thread's `channels`
- * row and `viewer` its `channel_viewers` row for `?1`, left-joined.
+ * row and `viewer` its `channel_viewers` row for `?1`, left-joined;
+ * `occurredAt` is the start's time.
  *
  * `participant` is any further participation that counts, such as a
  * breakout's own viewer row; pass `"0"` for none.
  */
-export function threadStartAudienceSql(directory: string, viewer: string, participant = "0"): string {
+export function threadStartAudienceSql(directory: string, viewer: string, occurredAt: string, participant = "0"): string {
   return `(${directory}.scope <> 'workspace'
             OR ${viewer}.is_participant = 1
             OR ${participant}
@@ -44,16 +55,17 @@ export function threadStartAudienceSql(directory: string, viewer: string, partic
             OR EXISTS (SELECT 1 FROM space_channel_memberships audience_placement
                         WHERE audience_placement.workstream_id = ${directory}.workstream_id
                           AND audience_placement.state = 'active'
-                          AND ${channelParticipantSql("audience_placement.space_id")}))`;
+                          AND ${channelParticipantSql("audience_placement.space_id", occurredAt)}))`;
 }
 
 /**
  * Whether `?1` is told about a post in the Channel `space` that is about the
- * thread whose `channel_viewers` row is `viewer`: always in a private Channel,
- * else only as a participant of the Channel or of that thread.
+ * thread whose `channel_viewers` row is `viewer`, posted at `occurredAt`:
+ * always in a private Channel, else only as a participant of that thread or
+ * of the Channel by then.
  */
-export function channelPostAudienceSql(space: string, viewer: string): string {
+export function channelPostAudienceSql(space: string, viewer: string, occurredAt: string): string {
   return `(${space}.scope <> 'workspace'
             OR ${viewer}.is_participant = 1
-            OR ${channelParticipantSql(`${space}.space_id`)})`;
+            OR ${channelParticipantSql(`${space}.space_id`, occurredAt)})`;
 }

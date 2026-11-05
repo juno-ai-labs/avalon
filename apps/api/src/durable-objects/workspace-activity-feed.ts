@@ -240,9 +240,9 @@ export class WorkspaceActivityFeed {
     // Organization-wide Channel's new threads reach its participants and the
     // thread's, not every member (`activity-audience.ts`).
     const spacesReady = this.spaces.ready();
-    const threadStartTold = spacesReady ? threadStartAudienceSql("directory", "viewer") : "1";
+    const threadStartTold = spacesReady ? threadStartAudienceSql("directory", "viewer", "directory.source_created_at") : "1";
     const breakoutStartTold = spacesReady
-      ? `(breakout.scope <> 'workspace' OR ${threadStartAudienceSql("directory", "viewer", "breakout_viewer.is_participant = 1")})`
+      ? `(breakout.scope <> 'workspace' OR ${threadStartAudienceSql("directory", "viewer", "breakout.source_created_at", "breakout_viewer.is_participant = 1")})`
       : "1";
     const relations = mentionsOnly ? "('mentioned')" : "('added', 'mentioned')";
     const keys = [

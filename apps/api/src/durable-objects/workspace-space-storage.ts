@@ -597,6 +597,20 @@ export const SPACE_INDIVIDUAL_SCOPE_MIGRATION: readonly string[] = [
 ];
 
 /**
+ * WorkspaceDO migration 134: when each person last became a participant of a
+ * Channel, in Unix milliseconds. Activity tells a participant about Channel
+ * news from this moment on and not before (`activity-audience.ts`).
+ *
+ * Set by this object's writers when a row turns participant, from this
+ * object's clock: the Space's own `directory_user` projection carries no join
+ * time. NULL is a participant from before this migration, whose join time
+ * nobody recorded; they keep hearing about everything, as they did.
+ */
+export const SPACE_VIEWER_JOINED_AT_MIGRATION: readonly string[] = [
+  `ALTER TABLE space_viewers ADD COLUMN joined_at INTEGER CHECK (joined_at IS NULL OR joined_at >= 0)`,
+];
+
+/**
  * WorkspaceDO migration 104: messages in a Channel itself, outside any
  * thread (`docs/spaces.md#channel-messages`). A building block beside a
  * Channel's placements: who said it (Rally, or a member), what, and when.
@@ -1141,10 +1155,11 @@ export class WorkspaceSpaceStorage {
       );
       this.storage.sql.exec(
         `INSERT INTO space_viewers
-           (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-         VALUES (?, ?, 1, 1, 0, '')`,
+           (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+         VALUES (?, ?, 1, 1, 0, '', ?)`,
         spaceId,
         request.userId,
+        createdAt,
       );
       this.appendOrder(request.workspaceId, request.userId, spaceId, createdAt);
       this.postStartingMessages(spaceId, messages);
@@ -1498,7 +1513,7 @@ export class WorkspaceSpaceStorage {
             AND m.attention_ordinal IS NOT NULL
             AND (m.author_user_id IS NULL OR m.author_user_id <> ?1)
             AND m.space_id IN (SELECT value FROM json_each(?2))
-            AND ${channelPostAudienceSql("space", "viewer")}
+            AND ${channelPostAudienceSql("space", "viewer", "m.posted_at")}
             AND directory.archived_at IS NULL)
         WHERE (?3 IS NULL OR occurred_at < ?3 OR (occurred_at = ?3 AND id < ?4))
         ORDER BY occurred_at DESC, id DESC
@@ -2002,20 +2017,25 @@ export class WorkspaceSpaceStorage {
         request.spaceId,
       ).toArray()) {
         this.storage.sql.exec(
-          `UPDATE space_viewers SET is_participant = ? WHERE space_id = ? AND user_id = ?`,
+          `UPDATE space_viewers
+              SET joined_at = CASE WHEN is_participant = 0 AND ?1 = 1 THEN ?4 ELSE joined_at END,
+                  is_participant = ?1
+            WHERE space_id = ?2 AND user_id = ?3`,
           requested.has(row.user_id) ? 1 : 0,
           request.spaceId,
           row.user_id,
+          now,
         );
         requested.delete(row.user_id);
       }
       for (const userId of requested) {
         this.storage.sql.exec(
           `INSERT INTO space_viewers
-             (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-           VALUES (?, ?, 1, 1, 0, '')`,
+             (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+           VALUES (?, ?, 1, 1, 0, '', ?)`,
           request.spaceId,
           userId,
+          now,
         );
       }
       if (request.audience.inviteeEmails !== undefined) {
@@ -2078,11 +2098,12 @@ export class WorkspaceSpaceStorage {
     if (!space) return false;
     this.storage.sql.exec(
       `INSERT INTO space_viewers
-         (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-       VALUES (?, ?, 1, 1, 0, '')
-       ON CONFLICT(space_id, user_id) DO UPDATE SET is_participant = 1`,
+         (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+       VALUES (?, ?, 1, 1, 0, '', ?)
+       ON CONFLICT(space_id, user_id) DO UPDATE SET is_participant = 1, joined_at = excluded.joined_at`,
       spaceId,
       userId,
+      now,
     );
     this.advanceWaterline(now);
     return true;
@@ -2209,9 +2230,11 @@ export class WorkspaceSpaceStorage {
     const changed = current?.is_participant !== (projection.isParticipant ? 1 : 0);
     this.storage.sql.exec(
       `INSERT INTO space_viewers
-         (space_id, user_id, is_participant, authority_generation, source_version, payload_hash)
-       VALUES (?, ?, ?, ?, ?, ?)
+         (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(space_id, user_id) DO UPDATE SET
+         joined_at = CASE WHEN space_viewers.is_participant = 0 AND excluded.is_participant = 1
+                          THEN excluded.joined_at ELSE space_viewers.joined_at END,
          is_participant = excluded.is_participant,
          authority_generation = excluded.authority_generation,
          source_version = excluded.source_version,
@@ -2222,6 +2245,7 @@ export class WorkspaceSpaceStorage {
       projection.authorityGeneration,
       projection.sourceVersion,
       projection.payloadHash,
+      projection.isParticipant ? now : null,
     );
     if (changed) {
       this.storage.sql.exec(
