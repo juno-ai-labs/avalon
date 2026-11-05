@@ -1174,29 +1174,40 @@ regional Web Lock so an older renewal cannot replace a later login cookie.
 
 ### Artifact annotation pickers
 
-Website selection is native-only. Static HTML runs the bundled picker in an
-opaque `allow-scripts` iframe with a fresh nonce; `allow-same-origin` is never
-added. The external app-origin picker satisfies both the inherited app CSP and
-the frame's nonce policy without admitting file scripts. The parent validates
-pin messages and their frame source only while Comment mode is on. Native live
-sites install the shared inspector in isolated world 1001 and obtain crops from
-main-process `capturePage`, rather than accepting image bytes from page scripts.
+One annotation script runs in every HTML surface, and on a live artifact it
+shares the page's origin on both hosts: the serving Worker prepends it to the
+HTML a Rally viewer gets (a valid viewer session, or the browser client's
+frame), the desktop calls its `rallyAnnotations` API through
+`executeJavaScript`, and the browser client posts messages to the frame. The
+page's own scripts can see and replace it. That is accepted because the page is
+written by the workspace's own agent and nobody edits it by hand: a forged pin
+quotes only what the page already shows, the person sees the chip before
+typing, and the model treats quoted content as untrusted. The desktop's
+isolated world (1001) was retired on 2026-10-29 for that reason; it was free,
+not load-bearing. What stays: a host accepts a reply only from its own frame
+or view at the expected origin, in a shape the shared schema admits, only
+while Comment mode is on for a pin and only for a pin it holds for a card
+action; a pin's `screenshot` is set by the desktop's own `capturePage` or not
+at all, and the framed schema has no such field; a page without the script
+keeps Comment mode disabled. Public, crawler and unfurl responses carry no
+script.
 
-Local implementation checks exercised a hostile static file in real Electron:
-its own script remained blocked and its frame origin was `null`, while the
-trusted picker outlined and pinned its button. A native site defining the same
-picker-global name could not access the isolated callback; main captured the
-actual selected button. Pop-outs have a narrow sender-checked preview/transfer
-bridge, require an active originating composer scope and wait for its ACK.
-Canonical target read/version checks precede message admission. See
-[artifact annotations](artifact-annotations.md) for the protocol and failure modes.
-
-Confirmed comment cards use the same isolated world and opaque-frame transport as
-the picker. Cards insert comments with `textContent` in closed shadow roots and
-recheck the saved element quote before anchoring. The owner-window-only
-`artifact:preview-comments` IPC validates pin and action schemas and fences delayed
-actions against the current native view. Edit/remove actions require trusted
-clicks; artifact scripts receive no application bridge.
+An uploaded HTML file is not agent-authored, so it stays in an opaque
+`allow-scripts` `srcdoc` frame with a fresh nonce admitting only the app-origin
+script; `allow-same-origin` is never added, and the file's own scripts never
+run. `allow-scripts` does let the file navigate its frame to a page the app's
+`frame-src` admits, whose scripts would then run there behind the same
+`contentWindow`: the frame's script echoes a per-document key from its URL on
+every message, which that page never had, and announces its own leaving as
+it unloads, at which the surface stops sending to the window, ends Comment
+mode and remounts the frame without scripts; a second load of the frame is
+treated the same way. Pop-outs keep their narrow sender-checked preview/transfer bridge, require
+an active originating composer scope and wait for its ACK. Canonical target
+read/version checks precede message admission. The owner-window-only
+`artifact:preview-comments` and `artifact:preview-ready` IPC validate schemas
+and fence delayed answers against the current native view; artifact scripts
+receive no application bridge. See
+[artifact annotations](artifact-annotations.md) for the protocol.
 
 ## Changelog
 
@@ -1240,6 +1251,22 @@ subrequest depth limit ends).
 **Consequences:** Every refusal, receipt and audit row a direct call gets, a
 nested call gets. What a program returns is untrusted data, parsed by schema.
 Details in [`code-mode.md`](code-mode.md#security-and-trust-model).
+
+### 2026-10-29 — Website picking shares the page's origin on every host
+
+**What changed:** The annotation script runs in the artifact page's own world
+on every host; the desktop's isolated world is gone, and the browser client's
+framed preview hears the script's messages from that frame's window at the
+artifact origin only.
+
+**Why and what was considered:** Recorded once, in
+[artifact annotations](artifact-annotations.md#changelog); the trust model
+above is the summary this document keeps.
+
+**Consequences:** The uploaded-file frame keeps its opaque origin and nonce
+rule, and the artifact CSP, fetch-metadata and viewer-session fences are
+unchanged. The injection rule in `annotation-script.ts` is the one place that
+decides which responses carry Rally code.
 
 ### 2026-10-24 — Admit the Sidekicks window to composer microphone capture
 
