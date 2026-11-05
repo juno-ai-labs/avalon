@@ -598,23 +598,16 @@ export const SPACE_INDIVIDUAL_SCOPE_MIGRATION: readonly string[] = [
 ];
 
 /**
- * WorkspaceDO migration 134: when each person last became a participant of a
- * Channel, in Unix milliseconds. Activity tells a participant about Channel
- * news from this moment on and not before (`activity-audience.ts`).
+ * WorkspaceDO migration 134: `space_viewers.joined_at`, when each person last
+ * became a Channel participant (`docs/digests.md#who-is-told-about-channel-news`).
  *
- * Set by this object's writers when a row turns participant, from this
- * object's clock: the Space's own `directory_user` projection carries no join
- * time. Nobody recorded when an existing row's person joined, so the rebuild
- * dates every row at its Channel's creation (`spaces.created_at`), which keeps
- * everything they hear about today; a row whose Space row is missing gets 0.
- *
- * `NOT NULL` with no default, so a writer that forgets the column fails
- * instead of silently telling someone the Channel's whole history. SQLite adds
- * such a column only by a rebuild: copy, drop, rename, then put back what the
- * drop took, the user index and the memory digest's participant triggers
- * (`MEMORY_DIGEST_SYNC_TRIGGERS.space_viewers`). The copy does not fire those
- * triggers, which hang off the old table. Nothing references `space_viewers`
- * by foreign key.
+ * `NOT NULL` with no default, which SQLite adds only by a rebuild; the rebuild
+ * restores the user index under its v70 name and the memory digest's
+ * participant triggers. Nobody recorded when existing participants joined, so
+ * each is dated at the Channel's earliest known creation: the smaller of the
+ * local `created_at` and `source_created_at`, because a Space that arrived
+ * through its projection has `created_at` set to when it was applied here. A
+ * row whose Space row is missing gets 0.
  */
 export const SPACE_VIEWER_JOINED_AT_MIGRATION: readonly string[] = [
   `CREATE TABLE space_viewers_next (
@@ -631,7 +624,9 @@ export const SPACE_VIEWER_JOINED_AT_MIGRATION: readonly string[] = [
      (space_id, user_id, is_participant, authority_generation, source_version, payload_hash, joined_at)
    SELECT viewer.space_id, viewer.user_id, viewer.is_participant, viewer.authority_generation,
           viewer.source_version, viewer.payload_hash,
-          COALESCE((SELECT space.created_at FROM spaces space WHERE space.space_id = viewer.space_id), 0)
+          COALESCE((SELECT MIN(space.created_at, CASE WHEN space.source_created_at > 0
+                                                       THEN space.source_created_at ELSE space.created_at END)
+                      FROM spaces space WHERE space.space_id = viewer.space_id), 0)
      FROM space_viewers viewer`,
   `DROP TABLE space_viewers`,
   `ALTER TABLE space_viewers_next RENAME TO space_viewers`,
