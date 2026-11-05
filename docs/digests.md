@@ -227,14 +227,14 @@ for one person, newest first:
   directory row (`channels` / `breakouts`: `created_by_user_id`,
   `source_created_at`) rather than from an event. An Organization-wide
   thread placed in an Organization-wide Channel is told only to participants
-  of a Channel it is in and of the thread (or, for an Organization-wide
-  breakout, of the breakout); see [Who is told about Channel
-  news](#who-is-told-about-channel-news); and
+  of a Channel it is in and of the thread. A breakout is a change to its
+  thread, told only to the thread's participants and the breakout's; see
+  [Who is told about Channel news](#who-is-told-about-channel-news); and
 - the latest finished run (`exact_state = 'completed'`, `completed_at`) of
   each thread and breakout they take part in, read from the directory rather
   than from an event; and
 - every **merge** somebody else made ([`conversation-merge.md`](conversation-merge.md)):
-  a breakout's into a thread they may list, read from the merge message's own
+  a breakout's into a thread they take part in, read from the merge message's own
   event (its `metadata.mergedFrom`, through migration 109's partial index), and
   a thread's into a Channel they may list, read from `space_messages`, whether
   or not they may open the thread. Both are `merged`; a thread's carries
@@ -279,7 +279,15 @@ before migration 134 has no recorded join time (NULL) and keeps hearing about
 everything, as before. Participation in the thread itself is not timed: being
 added to a thread still tells you it started, and of its merges.
 
-The rule narrows only Organization-wide scope. A private thread or private
+**A change inside a thread reaches its participants alone.** A breakout started
+in a thread, or merged back into it, is told to the thread's participants (and,
+for a start, the breakout's own), however widely the thread is listed and
+whatever Channel it is in. Replies and finished runs already were
+participants-only. A mention and an update to a pinned artifact still reach a
+non-participant: the first names them, the second is something they chose to
+follow.
+
+The Channel rule narrows only Organization-wide scope. A private thread or private
 Channel already lists to its people. A thread placed in no Organization-wide
 Channel keeps its listing audience. Every member is seated in General, so
 General's news still reaches everyone who has not left it.
@@ -758,16 +766,19 @@ device registration, provider delivery and retry receipts.
 
 ### 2026-11-05 — News in an Organization-wide Channel reaches its participants only
 
-**What changed:** A thread start, an Organization-wide breakout start and a
-thread's merge into an Organization-wide Channel are Activity rows only for
-participants of the thread, or of that Channel when they had joined it before
-the event (`activity-audience.ts`, `space_viewers.joined_at`, migration 134).
+**What changed:** A thread start and a thread's merge into an
+Organization-wide Channel are Activity rows only for participants of the
+thread, or of that Channel when they had joined it before the event
+(`activity-audience.ts`, `space_viewers.joined_at`, migration 134). A
+breakout's start and its merge into its thread are rows only for the thread's
+participants (and the breakout's, for a start).
 Every notification channel reads this feed, so push, email, Slack and the
 digest narrow with it.
 
 **Why:** The product owner asked that people not be notified about new
-threads and posts in a public Channel they have not joined, and then that
-nothing from before they joined a Channel become Activity. Before, every
+threads and posts in a public Channel they have not joined, then that
+nothing from before they joined a Channel become Activity, and then that
+changes to a thread they are not in notify nobody. Before, every
 member was told of every Organization-wide start and Channel merge, and a
 new member's Activity filled with history.
 
@@ -782,8 +793,9 @@ it, and a Channel member would be told of an old thread moved in. Backfilling
 existing participants to the migration's time: rows they already see would
 vanish from Activity, which nobody asked for, so their join time stays NULL.
 
-**Consequences:** A thread placed only in private Channels, or in none, is
-unchanged. A start is dated by `source_created_at`, which the creating client
+**Consequences:** A thread placed only in private Channels, or in none, keeps
+its start's listing audience; its breakouts and breakout merges narrow to its
+participants like any other thread's. A start is dated by `source_created_at`, which the creating client
 supplies, so a skewed clock can put a start just before or after a join. Any
 new writer of `space_viewers` must stamp `joined_at` when a row turns
 participant, or that person hears about the Channel's whole history. A test
