@@ -1,0 +1,59 @@
+/**
+ * Who is told about news in an Organization-wide Channel.
+ *
+ * Listing decides who may *see* a thread or a Channel post; this decides who is
+ * *told* about one. Every member may list an Organization-wide thread placed in
+ * an Organization-wide Channel, but only the people taking part are told it
+ * started: participants of the Channel, and participants of the thread itself.
+ * Somebody who never joined the Channel can still open the thread; it is not
+ * pushed, emailed, sent to Slack or put in their Activity and digest.
+ *
+ * A private thread or a private Channel already lists to the people in it, so
+ * neither fragment narrows them. A thread placed in no Organization-wide
+ * Channel is outside this rule and keeps its listing audience.
+ *
+ * Both fragments are code-owned SQL over caller-chosen aliases and read the
+ * viewer's id from `?1`. See `docs/digests.md#the-activity-tab`.
+ */
+
+/** Whether `?1` takes part in the Channel `space` (its `space_id` expression). */
+function channelParticipantSql(spaceId: string): string {
+  return `EXISTS (SELECT 1 FROM space_viewers audience_space_viewer
+                   WHERE audience_space_viewer.space_id = ${spaceId}
+                     AND audience_space_viewer.user_id = ?1
+                     AND audience_space_viewer.is_participant = 1)`;
+}
+
+/**
+ * Whether `?1` is told a thread started. `directory` is the thread's `channels`
+ * row and `viewer` its `channel_viewers` row for `?1`, left-joined.
+ *
+ * `participant` is any further participation that counts, such as a
+ * breakout's own viewer row; pass `"0"` for none.
+ */
+export function threadStartAudienceSql(directory: string, viewer: string, participant = "0"): string {
+  return `(${directory}.scope <> 'workspace'
+            OR ${viewer}.is_participant = 1
+            OR ${participant}
+            OR NOT EXISTS (SELECT 1 FROM space_channel_memberships audience_placement
+                             JOIN spaces audience_space ON audience_space.space_id = audience_placement.space_id
+                            WHERE audience_placement.workstream_id = ${directory}.workstream_id
+                              AND audience_placement.state = 'active'
+                              AND audience_space.scope = 'workspace'
+                              AND audience_space.archived_at IS NULL)
+            OR EXISTS (SELECT 1 FROM space_channel_memberships audience_placement
+                        WHERE audience_placement.workstream_id = ${directory}.workstream_id
+                          AND audience_placement.state = 'active'
+                          AND ${channelParticipantSql("audience_placement.space_id")}))`;
+}
+
+/**
+ * Whether `?1` is told about a post in the Channel `space` that is about the
+ * thread whose `channel_viewers` row is `viewer`: always in a private Channel,
+ * else only as a participant of the Channel or of that thread.
+ */
+export function channelPostAudienceSql(space: string, viewer: string): string {
+  return `(${space}.scope <> 'workspace'
+            OR ${viewer}.is_participant = 1
+            OR ${channelParticipantSql(`${space}.space_id`)})`;
+}

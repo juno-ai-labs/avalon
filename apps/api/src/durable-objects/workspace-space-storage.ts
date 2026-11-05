@@ -31,6 +31,7 @@ import {
   type SpaceSummary,
 } from "@rally/contracts";
 
+import { channelPostAudienceSql } from "./activity-audience";
 import { linkSpaceResources } from "./authorization-storage";
 import { boundParameterChunks } from "./bound-parameters";
 import { stableUuidSync } from "../lib/stable-uuid";
@@ -1444,8 +1445,9 @@ export class WorkspaceSpaceStorage {
   /**
    * The Activity tab's `merged` rows for a thread's merges into Channels:
    * news merge messages in Channels this viewer may list, by somebody else,
-   * newest first after `after`, as the Channel feed shows them to every
-   * reader. `merged_thread_private` marks a thread this viewer may not open,
+   * newest first after `after`. In an Organization-wide Channel only its
+   * participants and the thread's are told (`activity-audience.ts`), though
+   * the Channel feed shows the post to every reader. `merged_thread_private` marks a thread this viewer may not open,
    * whose row must not name it. Shaped as the feed's keys. The id carries
    * `posted_at`, so a merge replaced later is a new row (and a new push)
    * rather than the old one moved.
@@ -1496,6 +1498,7 @@ export class WorkspaceSpaceStorage {
             AND m.attention_ordinal IS NOT NULL
             AND (m.author_user_id IS NULL OR m.author_user_id <> ?1)
             AND m.space_id IN (SELECT value FROM json_each(?2))
+            AND ${channelPostAudienceSql("space", "viewer")}
             AND directory.archived_at IS NULL)
         WHERE (?3 IS NULL OR occurred_at < ?3 OR (occurred_at = ?3 AND id < ?4))
         ORDER BY occurred_at DESC, id DESC
