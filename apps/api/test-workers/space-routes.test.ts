@@ -1108,6 +1108,16 @@ describe("an archived Space", () => {
   });
 });
 
+/** Seat the member in General, as joining the Organization does. */
+async function seatInGeneral(spaceId: string): Promise<void> {
+  const changed = await request(`/spaces/${spaceId}/audience`, OWNER_AUTH, {
+    scope: "workspace", participantUserIds: [OWNER, MEMBER],
+  }, "PATCH");
+  if (changed.status !== 200) {
+    throw new Error(`PATCH audience answered ${changed.status}: ${JSON.stringify(changed.body)}`);
+  }
+}
+
 /** A Space whose participants are exactly these people. */
 async function spaceWith(name: string, participantUserIds: readonly string[]): Promise<SpaceSummary> {
   const created = await createSpace(name);
@@ -1254,7 +1264,7 @@ describe("the navigation routes", () => {
   }
 
   it("settles a started thread's Activity row when the app reports the Channel read past its placement", async () => {
-    const space = await createSpace("Outbound");
+    const space = await spaceWith("Outbound", [OWNER, MEMBER]);
     const workstreamId = await createChannel("activity-channel-read", [asSpaceId(space.id)], { scope: "workspace" });
     await deliverEffectsToWorkspace(env, spaceConversation(workstreamId));
     expect(await activityRow(workstreamId)).toMatchObject({ kind: "thread_started", unread: true });
@@ -1276,7 +1286,7 @@ describe("the navigation routes", () => {
   });
 
   it("settles a started thread's Activity row when the app reports the thread opened", async () => {
-    const space = await createSpace("Outbound");
+    const space = await spaceWith("Outbound", [OWNER, MEMBER]);
     const workstreamId = await createChannel("activity-thread-open", [asSpaceId(space.id)], { scope: "workspace" });
     await deliverEffectsToWorkspace(env, spaceConversation(workstreamId));
     expect(await activityRow(workstreamId)).toMatchObject({ kind: "thread_started", unread: true });
@@ -1316,6 +1326,8 @@ describe("the navigation routes", () => {
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId("00000000-0000-7000-8000-00000000d2a5"),
     });
     if (!opened.ok || "absent" in opened) throw new Error("openGeneralSpace refused");
+    // Every member is in General; here only its creator was seated.
+    await seatInGeneral(opened.space.id);
     const threadId = "00000000-0000-7000-8000-00000000d2a6";
     await workspace().reserveChild({
       workspaceId: WORKSPACE_ID, parentId: threadId, substreamId: asSubstreamId("0"), kind: "main",
@@ -1357,6 +1369,8 @@ describe("the navigation routes", () => {
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId("00000000-0000-7000-8000-00000000d2a7"),
     });
     if (!opened.ok || "absent" in opened) throw new Error("openGeneralSpace refused");
+    // Every member is in General; here only its creator was seated.
+    await seatInGeneral(opened.space.id);
     const threadId = "00000000-0000-7000-8000-00000000d2a8";
     await workspace().reserveChild({
       workspaceId: WORKSPACE_ID, parentId: threadId, substreamId: asSubstreamId("0"), kind: "main",
