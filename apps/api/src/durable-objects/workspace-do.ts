@@ -11430,6 +11430,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const space = this.spaceStorage().applyAudience(request);
     if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     this.publishSpaceSnapshot();
+    // Who takes part in a Channel, and whether it is Organization-wide, decide
+    // who is told about its news (`activity-audience.ts`), so every window
+    // reads Activity again. A scope change moves rows for every member, and
+    // an audience edit is a person's rare, deliberate act.
+    try {
+      await this.publishSync(["activity"], request.workspaceId,
+        this.placementAffinity() ?? await workspacePlacementAffinity(this.env, request.workspaceId));
+    } catch (error) {
+      logWarn(this.env, "space_audience_activity_sync_failed", {
+        workspace_id: request.workspaceId,
+        reason: diagnosticErrorCode(error, "space_audience_activity_sync_failed"),
+      });
+    }
     // A new scope can change which Channel decides a thread's colour.
     await this.armNextAlarm();
     return WorkspaceSpaceAudienceResultSchema.parse(space === "left" ? { ok: true, left: true } : { ok: true, space });
@@ -13861,7 +13874,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           envelope.effect.kind === "directory_common" && (envelope.effect.resourceLinks?.length ?? 0) > 0
         )),
         directoryChanged,
-        syncTopics: [],
+        // A Channel's participants, scope and name decide who is told about
+        // its news and how a merge row reads (`activity-audience.ts`), so a
+        // Space row that moved has every window read Activity again.
+        syncTopics: spaceDirectoryChanged ? ["activity"] : [],
         refreshProductAlarm: false,
         channelLosses: [...channelLosses.channels].map(([id, { lost }]) => [id, [...lost]]),
         activityPushSubjects,
