@@ -1,0 +1,2892 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Canvases and Sidekicks</title>
+    <style>
+      /* Page chrome (not part of the mockups) */
+      :root {
+        --page: #f0f0ef;
+        --page-ink: #141414;
+        --page-muted: #696969;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --page: #1b1b1b;
+          --page-ink: #fcfcfc;
+          --page-muted: #a3a3a3;
+        }
+      }
+      :root[data-theme="dark"] {
+        --page: #1b1b1b;
+        --page-ink: #fcfcfc;
+        --page-muted: #a3a3a3;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--page);
+        color: var(--page-ink);
+        font:
+          400 14px/20px -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+        padding: 40px 16px 80px;
+      }
+      header.doc,
+      section.board {
+        max-width: 1440px;
+        margin: 0 auto;
+      }
+      header.doc h1 {
+        font-size: 28px;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+        margin: 0 0 8px;
+      }
+      header.doc p,
+      section.board > p {
+        margin: 0 0 8px;
+        color: var(--page-muted);
+        max-width: 80ch;
+        font-size: 15px;
+        line-height: 22px;
+      }
+      section.board {
+        margin-top: 48px;
+      }
+      section.board h2 {
+        font-size: 18px;
+        margin: 0 0 6px;
+      }
+      .frame {
+        overflow-x: auto;
+        border-radius: 14px;
+        margin-top: 14px;
+      }
+
+      /* ---------- Mockup tokens: mirror config/design-tokens ---------- */
+      .win {
+        --canvas: #fcfcfc;
+        --subtle: #f7f7f7;
+        --sunken: #f3f3f3;
+        --n4: #eeeeee;
+        --n5: #e4e4e4;
+        --hover: rgba(119, 119, 119, 0.09);
+        --selected: rgba(119, 119, 119, 0.17);
+        --t: #141414;
+        --t2: #3d3d3d;
+        --t3: #696969;
+        --t4: #8f8f8f;
+        --line: #e5e5e5;
+        --line-soft: #f0f0f0;
+        --hair: rgba(20, 20, 20, 0.1);
+        --raised: #fcfcfc;
+        --brand: #ccff00;
+        --brand-wash: #f5ffcc;
+        --danger: #c3453f;
+        --success: #1fa85c;
+        --accent: #6a80b8;
+        --accent-wash: #eef1f8;
+        --tint-blue: #dce9fe;
+        --ink-blue: #2b58a2;
+        --tint-green: #d1f2d6;
+        --ink-green: #026e2f;
+        --tint-pink: #ffdde9;
+        --ink-pink: #90355f;
+        --tint-violet: #e8e4ff;
+        --ink-violet: #5f499c;
+        --tint-amber: #fee3c5;
+        --ink-amber: #7e4f04;
+        --tint-cyan: #c3f1fd;
+        --ink-cyan: #046678;
+        --tint-emerald: #cbf3de;
+        --ink-emerald: #016c49;
+        --p-adam: #10b981;
+        --p-maya: #8b5cf6;
+        --p-theo: #f97316;
+        --p-priya: #3b82f6;
+        --thumb: #ffffff;
+        width: 1440px;
+        height: 900px;
+        background: var(--canvas);
+        color: var(--t);
+        font:
+          420 14px/20px -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          system-ui,
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+        display: flex;
+        position: relative;
+        overflow: hidden;
+      }
+      .win.dark {
+        --canvas: #070707;
+        --subtle: #111111;
+        --sunken: #070707;
+        --n4: #2f2f2f;
+        --n5: #3d3d3d;
+        --hover: rgba(119, 119, 119, 0.17);
+        --selected: #2f2f2f;
+        --t: #fcfcfc;
+        --t2: #e4e4e4;
+        --t3: #a3a3a3;
+        --t4: #777777;
+        --line: #202020;
+        --line-soft: #131313;
+        --hair: rgba(252, 252, 252, 0.1);
+        --raised: #2f2f2f;
+        --brand-wash: #202900;
+        --accent-wash: #1d2333;
+        --tint-blue: #1d3152;
+        --ink-blue: #bcd6ff;
+        --tint-green: #163a20;
+        --ink-green: #aae5b5;
+        --tint-pink: #45202f;
+        --ink-pink: #ffc0d7;
+        --tint-violet: #2c2550;
+        --ink-violet: #d5ccff;
+        --tint-amber: #3f2a0b;
+        --ink-amber: #fcd9a4;
+        --tint-cyan: #0d3640;
+        --ink-cyan: #8be4f9;
+        --tint-emerald: #0f3a29;
+        --ink-emerald: #9de7c3;
+        --thumb: #111111;
+      }
+
+      /* Rail */
+      .rail {
+        width: 76px;
+        flex: none;
+        background: var(--subtle);
+        border-right: 1px solid var(--hair);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 40px 0 14px;
+        gap: 14px;
+      }
+      .rail .item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 5px;
+        font-size: 10.5px;
+        color: var(--t2);
+        width: 76px;
+        position: relative;
+      }
+      .rail .item .ic {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+        color: var(--t);
+      }
+      .rail .item.on {
+        font-weight: 600;
+        color: var(--t);
+      }
+      .rail .item.on .ic {
+        background: var(--selected);
+      }
+      .rail .badge {
+        position: absolute;
+        top: -3px;
+        left: 44px;
+        min-width: 15px;
+        height: 15px;
+        border-radius: 999px;
+        background: var(--danger);
+        color: #fff;
+        font: 700 9px/15px system-ui;
+        text-align: center;
+        padding: 0 4px;
+      }
+      .rail .grow {
+        flex: 1;
+      }
+
+      /* Sidebar */
+      .side {
+        width: 340px;
+        flex: none;
+        background: var(--subtle);
+        border-right: 1px solid var(--hair);
+        display: flex;
+        flex-direction: column;
+        padding: 0 10px;
+      }
+      .side .top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 10px 8px;
+      }
+      .side .top h3 {
+        font-size: 22px;
+        line-height: 28px;
+        font-weight: 700;
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+      .side .acts {
+        display: flex;
+        gap: 14px;
+        color: var(--t);
+      }
+      .side .sec {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 13px;
+        color: var(--t3);
+        padding: 14px 12px 6px;
+      }
+      .side .sec span:last-child {
+        font-size: 12px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 10px;
+        border-radius: 12px;
+        min-height: 52px;
+      }
+      .row.on {
+        background: var(--selected);
+      }
+      .row .txt {
+        flex: 1;
+        min-width: 0;
+      }
+      .row .name {
+        font-size: 15px;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .row.unread .name {
+        font-weight: 650;
+      }
+      .row .sub {
+        font-size: 13px;
+        color: var(--t3);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .row .meta {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--t3);
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--danger);
+      }
+      .live {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--success);
+        box-shadow: 0 0 0 3px
+          color-mix(in srgb, var(--success) 22%, transparent);
+      }
+      .needs {
+        font-size: 11px;
+        font-weight: 650;
+        color: #fff;
+        background: var(--danger);
+        border-radius: 6px;
+        padding: 1px 6px;
+      }
+
+      /* Marks: canvases are sheets, sidekicks are hexagons */
+      .sheet {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+      .hex {
+        width: 36px;
+        height: 36px;
+        flex: none;
+        display: grid;
+        place-items: center;
+        clip-path: polygon(25% 4%, 75% 4%, 100% 50%, 75% 96%, 25% 96%, 0 50%);
+      }
+      .hex.lg {
+        width: 60px;
+        height: 60px;
+      }
+      .t-blue {
+        background: var(--tint-blue);
+        color: var(--ink-blue);
+      }
+      .t-green {
+        background: var(--tint-green);
+        color: var(--ink-green);
+      }
+      .t-pink {
+        background: var(--tint-pink);
+        color: var(--ink-pink);
+      }
+      .t-violet {
+        background: var(--tint-violet);
+        color: var(--ink-violet);
+      }
+      .t-amber {
+        background: var(--tint-amber);
+        color: var(--ink-amber);
+      }
+      .t-cyan {
+        background: var(--tint-cyan);
+        color: var(--ink-cyan);
+      }
+      .t-emerald {
+        background: var(--tint-emerald);
+        color: var(--ink-emerald);
+      }
+
+      /* Avatars */
+      .av {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        display: inline-grid;
+        place-items: center;
+        color: #fff;
+        font: 700 9.5px/1 system-ui;
+        flex: none;
+        box-shadow: 0 0 0 2px var(--canvas);
+      }
+      .av.sm {
+        width: 16px;
+        height: 16px;
+        font-size: 7.5px;
+        box-shadow: 0 0 0 1.5px var(--subtle);
+      }
+      .av.lg {
+        width: 28px;
+        height: 28px;
+        font-size: 11px;
+      }
+      .stack {
+        display: inline-flex;
+      }
+      .stack .av + .av {
+        margin-left: -6px;
+      }
+      .a-adam {
+        background: var(--p-adam);
+      }
+      .a-maya {
+        background: var(--p-maya);
+      }
+      .a-theo {
+        background: var(--p-theo);
+      }
+      .a-priya {
+        background: var(--p-priya);
+      }
+      .a-rally {
+        background: #141414;
+        color: var(--brand);
+      }
+
+      /* Main */
+      .main {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+      }
+      .bar {
+        height: 64px;
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 28px;
+        position: relative;
+      }
+      .navpair {
+        display: flex;
+      }
+      .navpair span {
+        width: 38px;
+        height: 34px;
+        border: 1px solid var(--line);
+        background: var(--raised);
+        display: grid;
+        place-items: center;
+        color: var(--t3);
+      }
+      .navpair span:first-child {
+        border-radius: 999px 0 0 999px;
+      }
+      .navpair span:last-child {
+        border-radius: 0 999px 999px 0;
+        border-left: 0;
+        color: var(--t4);
+      }
+      .pill {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 14px 5px 6px;
+        border-radius: 999px;
+        background: var(--raised);
+        border: 1px solid var(--line);
+        font-weight: 600;
+        font-size: 15px;
+      }
+      .pill .mini {
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+      }
+      .pill .hex {
+        width: 26px;
+        height: 26px;
+      }
+      .tools {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 34px;
+        padding: 0 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--raised);
+        font-size: 13.5px;
+        font-weight: 500;
+        color: var(--t);
+        white-space: nowrap;
+      }
+      .btn.ink {
+        background: var(--t);
+        color: var(--canvas);
+        border-color: var(--t);
+      }
+      .btn.ico {
+        width: 34px;
+        padding: 0;
+        justify-content: center;
+      }
+      .page {
+        padding: 28px 56px;
+        overflow: hidden;
+        flex: 1;
+      }
+      .page h1 {
+        font-size: 28px;
+        line-height: 34px;
+        font-weight: 700;
+        letter-spacing: -0.015em;
+        margin: 0;
+      }
+      .page .lede {
+        color: var(--t3);
+        font-size: 15px;
+        margin: 6px 0 0;
+      }
+      .head-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+      .search {
+        margin-top: 24px;
+        height: 44px;
+        border-radius: 999px;
+        background: var(--sunken);
+        border: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 16px;
+        color: var(--t4);
+        font-size: 15px;
+      }
+      .chips {
+        display: flex;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      .chip {
+        height: 34px;
+        padding: 0 16px;
+        border-radius: 999px;
+        background: var(--n4);
+        color: var(--t3);
+        display: inline-flex;
+        align-items: center;
+        font-size: 14px;
+      }
+      .chip.on {
+        background: var(--t);
+        color: var(--canvas);
+      }
+      .group-h {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        margin: 30px 0 14px;
+      }
+      .group-h b {
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .group-h span {
+        font-size: 13px;
+        color: var(--t3);
+      }
+
+      /* Canvas cards */
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+      .card {
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: var(--raised);
+        overflow: hidden;
+      }
+      .card .shot {
+        height: 150px;
+        background: var(--sunken);
+        border-bottom: 1px solid var(--line);
+        padding: 14px 18px 0;
+        position: relative;
+        overflow: hidden;
+      }
+      .card .shot .paper {
+        background: var(--thumb);
+        border-radius: 8px 8px 0 0;
+        height: 100%;
+        box-shadow: 0 0 0 1px var(--hair);
+        padding: 12px;
+      }
+      .card .body {
+        padding: 12px 14px 14px;
+      }
+      .card .ttl {
+        font-weight: 600;
+        font-size: 15px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .card .by {
+        font-size: 12.5px;
+        color: var(--t3);
+        margin-top: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .card .here {
+        position: absolute;
+        top: 22px;
+        right: 26px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--raised);
+        border-radius: 999px;
+        padding: 3px 8px 3px 4px;
+        font-size: 11.5px;
+        font-weight: 600;
+        box-shadow:
+          0 1px 4px rgba(0, 0, 0, 0.08),
+          0 0 0 1px var(--hair);
+      }
+      .ln {
+        height: 6px;
+        border-radius: 3px;
+        background: var(--n5);
+        margin-bottom: 7px;
+      }
+      .ln.h {
+        height: 10px;
+        width: 55%;
+        background: var(--t2);
+        opacity: 0.75;
+        margin-bottom: 10px;
+      }
+      .bars {
+        display: flex;
+        align-items: flex-end;
+        gap: 7px;
+        height: 70px;
+        margin-top: 8px;
+      }
+      .bars i {
+        flex: 1;
+        border-radius: 3px 3px 0 0;
+        background: var(--accent);
+        opacity: 0.8;
+      }
+      .cols {
+        display: flex;
+        gap: 8px;
+      }
+      .cols > div {
+        flex: 1;
+        background: var(--sunken);
+        border-radius: 6px;
+        padding: 6px;
+      }
+      .cols i {
+        display: block;
+        height: 18px;
+        border-radius: 4px;
+        background: var(--raised);
+        box-shadow: 0 0 0 1px var(--hair);
+        margin-bottom: 5px;
+      }
+      .tbl i {
+        display: block;
+        height: 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .tbl i:first-child {
+        background: var(--n4);
+        border-radius: 4px 4px 0 0;
+      }
+
+      /* Canvas surface */
+      .stage {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      .board-area {
+        flex: 1;
+        min-width: 0;
+        background: var(--sunken);
+        position: relative;
+        overflow: hidden;
+        border-top: 1px solid var(--line);
+      }
+      .board-area .doc {
+        position: absolute;
+        top: 28px;
+        left: 28px;
+        right: 28px;
+        bottom: 0;
+        background: var(--thumb);
+        border-radius: 12px 12px 0 0;
+        box-shadow:
+          0 0 0 1px var(--hair),
+          0 10px 30px rgba(0, 0, 0, 0.05);
+        padding: 36px 44px;
+      }
+      .board-area .doc h2 {
+        font-size: 24px;
+        margin: 0 0 4px;
+        letter-spacing: -0.01em;
+      }
+      .board-area .doc .kick {
+        font-size: 13px;
+        color: var(--t3);
+        margin-bottom: 22px;
+      }
+      .board-area .doc h4 {
+        font-size: 15px;
+        margin: 22px 0 8px;
+      }
+      .board-area .doc p {
+        margin: 0 0 8px;
+        color: var(--t2);
+        line-height: 22px;
+      }
+      .kpis {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+      .kpi {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+      }
+      .kpi small {
+        color: var(--t3);
+        font-size: 12px;
+      }
+      .kpi b {
+        display: block;
+        font-size: 22px;
+        margin-top: 2px;
+      }
+      .kpi em {
+        font-style: normal;
+        font-size: 12px;
+        color: var(--success);
+      }
+      .sel {
+        background: color-mix(in srgb, var(--p-maya) 18%, transparent);
+        box-shadow: inset 2px 0 0 var(--p-maya);
+        border-radius: 2px;
+      }
+      .cursor {
+        position: absolute;
+        display: flex;
+        align-items: flex-start;
+        gap: 2px;
+        pointer-events: none;
+      }
+      .cursor .tagn {
+        margin-top: 14px;
+        color: #fff;
+        font-size: 11.5px;
+        font-weight: 600;
+        padding: 2px 7px;
+        border-radius: 6px 6px 6px 2px;
+      }
+      .pin {
+        position: absolute;
+        width: 26px;
+        height: 26px;
+        border-radius: 50% 50% 50% 4px;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        font: 700 10px system-ui;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+      }
+      .edit-chip {
+        position: absolute;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--raised);
+        border-radius: 999px;
+        padding: 4px 10px 4px 4px;
+        font-size: 12px;
+        box-shadow:
+          0 0 0 1px var(--hair),
+          0 4px 14px rgba(0, 0, 0, 0.08);
+      }
+      .shimmer {
+        background: linear-gradient(
+          90deg,
+          var(--brand-wash),
+          color-mix(in srgb, var(--brand) 40%, transparent),
+          var(--brand-wash)
+        );
+        border-radius: 4px;
+      }
+
+      /* Right panel */
+      .panel {
+        width: 380px;
+        flex: none;
+        border-left: 1px solid var(--line);
+        border-top: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        background: var(--canvas);
+      }
+      .seg {
+        display: flex;
+        margin: 14px 16px 6px;
+        background: var(--n4);
+        border-radius: 999px;
+        padding: 3px;
+      }
+      .seg span {
+        flex: 1;
+        text-align: center;
+        padding: 5px 0;
+        border-radius: 999px;
+        font-size: 13px;
+        color: var(--t3);
+      }
+      .seg span.on {
+        background: var(--raised);
+        color: var(--t);
+        font-weight: 600;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+      }
+      .feed {
+        flex: 1;
+        padding: 10px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        overflow: hidden;
+        justify-content: flex-end;
+      }
+      .msg .byl {
+        font-size: 12px;
+        color: var(--t3);
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 4px;
+      }
+      .msg .byl b {
+        color: var(--t2);
+        font-weight: 600;
+      }
+      .msg .txt {
+        font-size: 14px;
+        line-height: 21px;
+        color: var(--t);
+      }
+      .msg.me {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+      }
+      .bub {
+        padding: 8px 12px;
+        border-radius: 16px;
+        color: #fff;
+        max-width: 88%;
+        font-size: 14px;
+        line-height: 20px;
+      }
+      .quote {
+        border-left: 2px solid var(--p-maya);
+        padding: 2px 0 2px 8px;
+        color: var(--t3);
+        font-size: 12.5px;
+        margin-bottom: 4px;
+      }
+      .change {
+        margin-top: 6px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 12.5px;
+        color: var(--t3);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .change b {
+        color: var(--t);
+        font-weight: 600;
+      }
+      .composer {
+        margin: 10px 16px 16px;
+        height: 44px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--raised);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 6px;
+        color: var(--t4);
+        font-size: 14px;
+      }
+      .composer .plus,
+      .composer .send {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+      .composer .plus {
+        background: var(--n4);
+        color: var(--t3);
+      }
+      .composer .send {
+        background: var(--t3);
+        color: var(--canvas);
+        margin-left: auto;
+      }
+      .composer.wide {
+        width: 620px;
+        align-self: center;
+        margin: 12px 0 18px;
+      }
+
+      /* Sidekick list */
+      .sk-list {
+        display: flex;
+        flex-direction: column;
+      }
+      .sk-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 14px 4px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      .sk-row .hex {
+        width: 48px;
+        height: 48px;
+      }
+      .sk-row .info {
+        flex: 1;
+        min-width: 0;
+      }
+      .sk-row .info b {
+        font-size: 16px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .sk-row .info p {
+        margin: 3px 0 0;
+        color: var(--t3);
+        font-size: 14px;
+      }
+      .sk-row .facts {
+        display: flex;
+        gap: 22px;
+        color: var(--t3);
+        font-size: 12.5px;
+        align-items: center;
+      }
+      .sk-row .facts div {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2px;
+        min-width: 104px;
+      }
+      .sk-row .facts b {
+        color: var(--t);
+        font-weight: 500;
+        font-size: 13px;
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        background: var(--n4);
+        color: var(--t3);
+        font-weight: 500;
+      }
+      .status.active {
+        background: #dfeae5;
+        color: #3d6a5b;
+      }
+      .status.paused {
+        background: #fbf3e0;
+        color: #8a6208;
+      }
+
+      /* Sidekick conversation */
+      .convo {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .tx {
+        flex: 1;
+        padding: 8px 64px;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: 18px;
+        overflow: hidden;
+      }
+      .tx .daysep {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--t3);
+        font-size: 12.5px;
+      }
+      .tx .daysep::before,
+      .tx .daysep::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--line);
+      }
+      .run {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        color: var(--t3);
+        max-width: 560px;
+      }
+      .run b {
+        color: var(--t);
+        font-weight: 600;
+      }
+      .canvas-card {
+        display: flex;
+        gap: 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px;
+        max-width: 420px;
+        align-items: center;
+        background: var(--raised);
+        margin-top: 8px;
+      }
+      .canvas-card .mini-shot {
+        width: 92px;
+        height: 60px;
+        border-radius: 6px;
+        background: var(--sunken);
+        border: 1px solid var(--line);
+        padding: 7px;
+      }
+      .detail {
+        width: 340px;
+        flex: none;
+        border-left: 1px solid var(--line);
+        padding: 22px 24px;
+        overflow: hidden;
+      }
+      .detail h2 {
+        font-size: 22px;
+        margin: 14px 0 8px;
+      }
+      .detail .tags {
+        display: flex;
+        gap: 6px;
+      }
+      .detail p {
+        color: var(--t2);
+        font-size: 14px;
+        line-height: 21px;
+        margin: 12px 0;
+      }
+      .detail .blk {
+        border-top: 1px solid var(--line);
+        padding: 14px 0;
+      }
+      .detail .blk h5 {
+        font-size: 13px;
+        color: var(--t3);
+        font-weight: 500;
+        margin: 0 0 8px;
+        display: flex;
+        justify-content: space-between;
+      }
+      .detail .li {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13.5px;
+        padding: 4px 0;
+      }
+      .detail .li small {
+        color: var(--t3);
+        margin-left: auto;
+        font-size: 12px;
+      }
+      .conn {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        display: grid;
+        place-items: center;
+        font: 700 10px system-ui;
+        color: #fff;
+      }
+
+      .note {
+        position: absolute;
+        background: var(--brand);
+        color: #141414;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 4px 9px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        z-index: 5;
+      }
+      .note::before {
+        content: attr(data-n);
+        display: inline-grid;
+        place-items: center;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #141414;
+        color: var(--brand);
+        font-size: 10px;
+        margin-right: 6px;
+      }
+      ol.notes {
+        max-width: 900px;
+        color: var(--page-muted);
+        font-size: 14px;
+        line-height: 21px;
+        padding-left: 20px;
+      }
+      ol.notes b {
+        color: var(--page-ink);
+      }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute">
+      <defs>
+        <symbol id="i-sheet" viewBox="0 0 24 24">
+          <path
+            d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M14 3v5h5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-hex" viewBox="0 0 24 24">
+          <path
+            d="M7.5 3.5h9L21 12l-4.5 8.5h-9L3 12z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24">
+          <path
+            d="M12 5v14M5 12h14"
+            stroke="currentColor"
+            stroke-width="1.9"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-search" viewBox="0 0 24 24">
+          <circle
+            cx="11"
+            cy="11"
+            r="6.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.9"
+          />
+          <path
+            d="M16 16l4 4"
+            stroke="currentColor"
+            stroke-width="1.9"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-left" viewBox="0 0 24 24">
+          <path
+            d="M14 6l-6 6 6 6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-right" viewBox="0 0 24 24">
+          <path
+            d="M10 6l6 6-6 6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-down" viewBox="0 0 24 24">
+          <path
+            d="M6 10l6 6 6-6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-up" viewBox="0 0 24 24">
+          <path
+            d="M12 19V5M6 11l6-6 6 6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-mic" viewBox="0 0 24 24">
+          <rect
+            x="9"
+            y="3"
+            width="6"
+            height="11"
+            rx="3"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          />
+          <path
+            d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-pin" viewBox="0 0 24 24">
+          <path
+            d="M9 4h6l-1 5 4 4H6l4-4zM12 13v7"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-sort" viewBox="0 0 24 24">
+          <path
+            d="M8 5v14M5 16l3 3 3-3M16 19V5M13 8l3-3 3 3"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-cursor" viewBox="0 0 24 24">
+          <path
+            d="M4 3l7 17 2.5-7.5L21 10z"
+            stroke="#fff"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-share" viewBox="0 0 24 24">
+          <path
+            d="M12 15V4M8 8l4-4 4 4M5 13v6a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24">
+          <circle
+            cx="12"
+            cy="12"
+            r="8"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          />
+          <path
+            d="M12 8v4l3 2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-bolt" viewBox="0 0 24 24">
+          <path
+            d="M13 3L5 14h6l-1 7 8-11h-6z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-dots" viewBox="0 0 24 24">
+          <circle cx="6" cy="12" r="1.6" fill="currentColor" />
+          <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+          <circle cx="18" cy="12" r="1.6" fill="currentColor" />
+        </symbol>
+        <symbol id="i-spark" viewBox="0 0 24 24">
+          <path
+            d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"
+            fill="currentColor"
+          />
+        </symbol>
+        <symbol id="i-chart" viewBox="0 0 24 24">
+          <path
+            d="M5 19V11M10 19V6M15 19v-9M20 19V4"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-board" viewBox="0 0 24 24">
+          <rect
+            x="4"
+            y="5"
+            width="4.5"
+            height="14"
+            rx="1.2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          />
+          <rect
+            x="10"
+            y="5"
+            width="4.5"
+            height="9"
+            rx="1.2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          />
+          <rect
+            x="16"
+            y="5"
+            width="4"
+            height="11"
+            rx="1.2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          />
+        </symbol>
+        <symbol id="i-doc" viewBox="0 0 24 24">
+          <path
+            d="M6 6h12M6 10h12M6 14h8M6 18h10"
+            stroke="currentColor"
+            stroke-width="1.9"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-table" viewBox="0 0 24 24">
+          <rect
+            x="4"
+            y="5"
+            width="16"
+            height="14"
+            rx="2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          />
+          <path d="M4 10h16M10 10v9" stroke="currentColor" stroke-width="1.8" />
+        </symbol>
+        <symbol id="i-wand" viewBox="0 0 24 24">
+          <path
+            d="M5 19L15 9M14 4v3M17.5 5.5l-2 2M20 9h-3"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.9"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-aperture" viewBox="0 0 24 24">
+          <circle
+            cx="12"
+            cy="12"
+            r="8"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.9"
+          />
+          <path
+            d="M12 4l3 7M20 12l-7 3M12 20l-3-7M4 12l7-3"
+            stroke="currentColor"
+            stroke-width="1.7"
+          />
+        </symbol>
+        <symbol id="i-inbox" viewBox="0 0 24 24">
+          <path
+            d="M4 13l2.5-7h11L20 13v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1zM4 13h4.5l1 2h5l1-2H20"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-bug" viewBox="0 0 24 24">
+          <rect
+            x="7.5"
+            y="8"
+            width="9"
+            height="11"
+            rx="4.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          />
+          <path
+            d="M9.5 6.5L8 5M14.5 6.5L16 5M4 12h3.5M16.5 12H20M5 17l2.5-1M19 17l-2.5-1"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          />
+        </symbol>
+      </defs>
+    </svg>
+
+    <header class="doc">
+      <h1>Rally, in two modes: Canvases and Sidekicks</h1>
+      <p>
+        Mockups for the pivot in <a href="prd.md">the PRD</a>. Every screen is
+        drawn in the current visual language: the 76px section rail, the 340px
+        list sidebar, the centered header pill, pastel marks from the project
+        palette, the pill composer, and the light and dark tokens in
+        <code>config/design-tokens/</code>. Frames are 1440×900, the desktop app
+        at its default size.
+      </p>
+      <p>
+        A <b>Canvas</b> is a live artifact several people edit at once, with
+        Rally as one more editor. A <b>Sidekick</b> is an AI agent several
+        people talk to and share. Channels, Threads, Breakouts, Activity and the
+        Pinned section go away.
+      </p>
+    </header>
+
+    <!-- =============== 1. Canvases home =============== -->
+    <section class="board">
+      <h2>1. Canvases: the section and its home page</h2>
+      <p>
+        The rail has two sections. The sidebar lists Canvases, with a Pinned
+        group on top (the same drag-to-pin pattern the current lists use) and a
+        green dot where people are in the Canvas right now. The home page reuses
+        the Sidekicks library layout: title, black “New” pill, search, filter
+        chips.
+      </p>
+      <div class="frame">
+        <div class="win">
+          <div class="rail">
+            <div class="item on">
+              <div class="ic">
+                <svg width="22" height="22"><use href="#i-sheet" /></svg>
+              </div>
+              Canvases<span class="badge">3</span>
+            </div>
+            <div class="item">
+              <div class="ic">
+                <svg width="22" height="22"><use href="#i-hex" /></svg>
+              </div>
+              Sidekicks<span class="badge">1</span>
+            </div>
+            <div class="grow"></div>
+            <div class="item">
+              <div class="ic"><span class="av a-adam lg">A</span></div>
+              Settings
+            </div>
+          </div>
+          <div class="side">
+            <div class="top">
+              <h3>Canvases</h3>
+              <div class="acts">
+                <svg width="20" height="20"><use href="#i-plus" /></svg
+                ><svg width="20" height="20"><use href="#i-search" /></svg>
+              </div>
+            </div>
+            <div class="sec">
+              <span>Pinned</span
+              ><svg width="14" height="14"><use href="#i-pin" /></svg>
+            </div>
+            <div class="row unread">
+              <div class="sheet t-blue">
+                <svg width="18" height="18"><use href="#i-chart" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Q4 revenue review</div>
+                <div class="sub">
+                  <span class="live"></span>Maya and Theo are here
+                </div>
+              </div>
+              <div class="meta">2m<span class="dot"></span></div>
+            </div>
+            <div class="row">
+              <div class="sheet t-amber">
+                <svg width="18" height="18"><use href="#i-board" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Launch plan</div>
+                <div class="sub">Edited by Rally</div>
+              </div>
+              <div class="meta">1h</div>
+            </div>
+            <div class="sec">
+              <span>All canvases</span
+              ><span
+                >Recent
+                <svg width="11" height="11" style="vertical-align: -1px">
+                  <use href="#i-sort" /></svg
+              ></span>
+            </div>
+            <div class="row unread">
+              <div class="sheet t-violet">
+                <svg width="18" height="18"><use href="#i-doc" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Acme follow-up</div>
+                <div class="sub">2 new comments</div>
+              </div>
+              <div class="meta">14m<span class="dot"></span></div>
+            </div>
+            <div class="row">
+              <div class="sheet t-green">
+                <svg width="18" height="18"><use href="#i-table" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Hiring pipeline</div>
+                <div class="sub"><span class="live"></span>Priya is here</div>
+              </div>
+              <div class="meta">32m</div>
+            </div>
+            <div class="row unread">
+              <div class="sheet t-cyan">
+                <svg width="18" height="18"><use href="#i-doc" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Weekly changelog · Nov 6</div>
+                <div class="sub">Made by Weekly changelog</div>
+              </div>
+              <div class="meta">3h<span class="dot"></span></div>
+            </div>
+            <div class="row">
+              <div class="sheet t-pink">
+                <svg width="18" height="18"><use href="#i-board" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Design crit board</div>
+                <div class="sub">Edited by Maya</div>
+              </div>
+              <div class="meta">Tue</div>
+            </div>
+            <div class="row">
+              <div class="sheet t-emerald">
+                <svg width="18" height="18"><use href="#i-chart" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Infra cost tracker</div>
+                <div class="sub">Edited by Theo</div>
+              </div>
+              <div class="meta">Mon</div>
+            </div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <div class="navpair">
+                <span
+                  ><svg width="16" height="16">
+                    <use href="#i-left" /></svg></span
+                ><span
+                  ><svg width="16" height="16"><use href="#i-right" /></svg
+                ></span>
+              </div>
+            </div>
+            <div class="page" style="padding-top: 8px">
+              <div class="head-row">
+                <div>
+                  <h1>Canvases</h1>
+                  <p class="lede">
+                    Live pages your team and Rally build together.
+                  </p>
+                </div>
+                <span
+                  class="btn ink"
+                  style="height: 42px; padding: 0 20px; font-size: 14.5px"
+                  ><svg width="16" height="16"><use href="#i-plus" /></svg>New
+                  Canvas</span
+                >
+              </div>
+              <div class="search">
+                <svg width="16" height="16"><use href="#i-search" /></svg>Search
+                Canvases
+              </div>
+              <div class="chips">
+                <span class="chip on">Everyone</span
+                ><span class="chip">Made by me</span
+                ><span class="chip">Shared with me</span
+                ><span class="chip">From Sidekicks</span>
+              </div>
+              <div class="group-h"><b>Live now</b><span>2 Canvases</span></div>
+              <div class="grid">
+                <div class="card">
+                  <div class="shot">
+                    <div class="paper">
+                      <div class="ln h"></div>
+                      <div class="bars">
+                        <i style="height: 40%"></i><i style="height: 62%"></i
+                        ><i style="height: 48%"></i><i style="height: 80%"></i
+                        ><i style="height: 92%"></i><i style="height: 70%"></i>
+                      </div>
+                    </div>
+                    <div class="here">
+                      <span class="stack"
+                        ><span class="av sm a-maya">M</span
+                        ><span class="av sm a-theo">T</span></span
+                      >Live
+                    </div>
+                  </div>
+                  <div class="body">
+                    <div class="ttl">Q4 revenue review</div>
+                    <div class="by">
+                      <span>Maya, Theo and Rally</span><span>2m</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="shot">
+                    <div class="paper tbl">
+                      <i></i><i></i><i></i><i></i><i></i><i></i>
+                    </div>
+                    <div class="here">
+                      <span class="stack"
+                        ><span class="av sm a-priya">P</span></span
+                      >Live
+                    </div>
+                  </div>
+                  <div class="body">
+                    <div class="ttl">Hiring pipeline</div>
+                    <div class="by"><span>Priya</span><span>32m</span></div>
+                  </div>
+                </div>
+                <div
+                  class="card"
+                  style="
+                    border-style: dashed;
+                    background: transparent;
+                    display: grid;
+                    place-items: center;
+                    color: var(--t3);
+                  "
+                >
+                  <div style="text-align: center">
+                    <div style="font-weight: 600; color: var(--t)">
+                      Start from a prompt
+                    </div>
+                    <div style="font-size: 13px; margin-top: 4px">
+                      “A tracker for our Q1 hiring plan”
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="group-h"><b>Recent</b><span>5 Canvases</span></div>
+              <div class="grid">
+                <div class="card">
+                  <div class="shot">
+                    <div class="paper">
+                      <div class="ln h"></div>
+                      <div class="ln"></div>
+                      <div class="ln" style="width: 80%"></div>
+                      <div class="ln"></div>
+                      <div class="ln" style="width: 60%"></div>
+                    </div>
+                  </div>
+                  <div class="body">
+                    <div class="ttl">Acme follow-up</div>
+                    <div class="by">
+                      <span>Adam · 2 new comments</span><span>14m</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="shot">
+                    <div class="paper">
+                      <div class="ln h"></div>
+                      <div class="ln"></div>
+                      <div class="ln" style="width: 70%"></div>
+                      <div class="ln"></div>
+                    </div>
+                  </div>
+                  <div class="body">
+                    <div class="ttl">Weekly changelog · Nov 6</div>
+                    <div class="by">
+                      <span>Made by a Sidekick</span><span>3h</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="shot">
+                    <div class="paper cols">
+                      <div><i></i><i></i><i></i></div>
+                      <div><i></i><i></i></div>
+                      <div><i></i></div>
+                    </div>
+                  </div>
+                  <div class="body">
+                    <div class="ttl">Launch plan</div>
+                    <div class="by">
+                      <span>Theo and Rally</span><span>1h</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== 2. Canvas open =============== -->
+    <section class="board">
+      <h2>2. A Canvas, open</h2>
+      <p>
+        The Canvas fills the main pane. The header pill names it; on the right
+        are the people in it now, Share, and a menu. Other people’s cursors and
+        selections show live. Rally edits like a person: its pending change
+        shimmers where it lands. The right panel has two tabs. <b>Chat</b> is
+        the Canvas’s own conversation with Rally, open to everyone in the
+        Canvas. <b>Comments</b>
+        holds the pinned notes (today’s artifact annotations).
+      </p>
+      <div class="frame">
+        <div class="win">
+          <div class="rail">
+            <div class="item on">
+              <div class="ic">
+                <svg width="22" height="22"><use href="#i-sheet" /></svg>
+              </div>
+              Canvases<span class="badge">2</span>
+            </div>
+            <div class="item">
+              <div class="ic">
+                <svg width="22" height="22"><use href="#i-hex" /></svg>
+              </div>
+              Sidekicks<span class="badge">1</span>
+            </div>
+            <div class="grow"></div>
+            <div class="item">
+              <div class="ic"><span class="av a-adam lg">A</span></div>
+              Settings
+            </div>
+          </div>
+          <div class="side">
+            <div class="top">
+              <h3>Canvases</h3>
+              <div class="acts">
+                <svg width="20" height="20"><use href="#i-plus" /></svg
+                ><svg width="20" height="20"><use href="#i-search" /></svg>
+              </div>
+            </div>
+            <div class="sec">
+              <span>Pinned</span
+              ><svg width="14" height="14"><use href="#i-pin" /></svg>
+            </div>
+            <div class="row on">
+              <div class="sheet t-blue">
+                <svg width="18" height="18"><use href="#i-chart" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Q4 revenue review</div>
+                <div class="sub">
+                  <span class="live"></span>Maya and Theo are here
+                </div>
+              </div>
+              <div class="meta">now</div>
+            </div>
+            <div class="row">
+              <div class="sheet t-amber">
+                <svg width="18" height="18"><use href="#i-board" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Launch plan</div>
+                <div class="sub">Edited by Rally</div>
+              </div>
+              <div class="meta">1h</div>
+            </div>
+            <div class="sec">
+              <span>All canvases</span
+              ><span
+                >Recent
+                <svg width="11" height="11" style="vertical-align: -1px">
+                  <use href="#i-sort" /></svg
+              ></span>
+            </div>
+            <div class="row unread">
+              <div class="sheet t-violet">
+                <svg width="18" height="18"><use href="#i-doc" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Acme follow-up</div>
+                <div class="sub">2 new comments</div>
+              </div>
+              <div class="meta">14m<span class="dot"></span></div>
+            </div>
+            <div class="row">
+              <div class="sheet t-green">
+                <svg width="18" height="18"><use href="#i-table" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Hiring pipeline</div>
+                <div class="sub"><span class="live"></span>Priya is here</div>
+              </div>
+              <div class="meta">32m</div>
+            </div>
+            <div class="row unread">
+              <div class="sheet t-cyan">
+                <svg width="18" height="18"><use href="#i-doc" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Weekly changelog · Nov 6</div>
+                <div class="sub">Made by Weekly changelog</div>
+              </div>
+              <div class="meta">3h<span class="dot"></span></div>
+            </div>
+            <div class="row">
+              <div class="sheet t-pink">
+                <svg width="18" height="18"><use href="#i-board" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Design crit board</div>
+                <div class="sub">Edited by Maya</div>
+              </div>
+              <div class="meta">Tue</div>
+            </div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <div class="navpair">
+                <span
+                  ><svg width="16" height="16">
+                    <use href="#i-left" /></svg></span
+                ><span
+                  ><svg width="16" height="16"><use href="#i-right" /></svg
+                ></span>
+              </div>
+              <div class="pill">
+                <span class="sheet t-blue mini"
+                  ><svg width="15" height="15">
+                    <use href="#i-chart" /></svg></span
+                >Q4 revenue review<svg
+                  width="14"
+                  height="14"
+                  style="color: var(--t3)"
+                >
+                  <use href="#i-down" />
+                </svg>
+              </div>
+              <div class="tools">
+                <span class="stack"
+                  ><span class="av a-maya">M</span
+                  ><span class="av a-theo">T</span
+                  ><span class="av a-rally">R</span></span
+                ><span class="btn"
+                  ><svg width="15" height="15"><use href="#i-share" /></svg
+                  >Share</span
+                ><span class="btn ico"
+                  ><svg width="16" height="16"><use href="#i-dots" /></svg
+                ></span>
+              </div>
+            </div>
+            <div class="stage">
+              <div class="board-area">
+                <div class="doc">
+                  <h2>Q4 revenue review</h2>
+                  <div class="kick">
+                    Draft for Monday’s board prep · updated live
+                  </div>
+                  <div class="kpis">
+                    <div class="kpi">
+                      <small>Net revenue</small><b>$4.82M</b><em>+18% QoQ</em>
+                    </div>
+                    <div class="kpi">
+                      <small>Gross margin</small><b>71.4%</b><em>+2.1 pts</em>
+                    </div>
+                    <div class="kpi">
+                      <small>Net retention</small><b>118%</b><em>+4 pts</em>
+                    </div>
+                  </div>
+                  <h4>What moved</h4>
+                  <p>
+                    <span class="sel"
+                      >Enterprise expansion drove most of the quarter, led by
+                      three accounts that moved to annual plans in
+                      October.</span
+                    >
+                    Self-serve held flat after the September price change.
+                  </p>
+                  <p>
+                    <span class="shimmer"
+                      >Churn fell to 1.9%, the lowest since launch, with two of
+                      three lost accounts citing budget rather than
+                      product.</span
+                    >
+                  </p>
+                  <h4>Open questions</h4>
+                  <p>
+                    Do we restate the September cohort, or footnote the price
+                    change?
+                  </p>
+                </div>
+                <div class="cursor" style="left: 470px; top: 300px">
+                  <svg
+                    width="20"
+                    height="20"
+                    style="color: var(--p-maya); fill: var(--p-maya)"
+                  >
+                    <use href="#i-cursor" /></svg
+                  ><span class="tagn a-maya">Maya</span>
+                </div>
+                <div class="cursor" style="left: 160px; top: 560px">
+                  <svg width="20" height="20" style="fill: var(--p-theo)">
+                    <use href="#i-cursor" /></svg
+                  ><span class="tagn a-theo">Theo</span>
+                </div>
+                <div class="edit-chip" style="left: 304px; top: 364px">
+                  <span
+                    class="av a-rally"
+                    style="width: 20px; height: 20px; font-size: 9px"
+                    >R</span
+                  >Rally is writing…
+                </div>
+                <div class="pin a-theo" style="left: 582px; top: 330px">T</div>
+              </div>
+              <div class="panel">
+                <div class="seg">
+                  <span class="on">Chat</span><span>Comments · 3</span>
+                </div>
+                <div class="feed">
+                  <div class="msg">
+                    <div class="byl">
+                      <span
+                        class="av a-maya"
+                        style="width: 16px; height: 16px; font-size: 7px"
+                        >M</span
+                      ><b>Maya</b>10:42
+                    </div>
+                    <div class="txt">
+                      Rally, add churn to “What moved”. Use the October cohort,
+                      not the blended number.
+                    </div>
+                  </div>
+                  <div class="msg">
+                    <div class="byl">
+                      <span
+                        class="av a-rally"
+                        style="width: 16px; height: 16px; font-size: 7px"
+                        >R</span
+                      ><b>Rally</b>10:42
+                    </div>
+                    <div class="txt">
+                      Adding it after the expansion line. The October cohort
+                      churned 1.9%.
+                    </div>
+                    <div class="change">
+                      <svg width="14" height="14" style="color: var(--t)">
+                        <use href="#i-spark" /></svg
+                      ><span><b>Editing</b> What moved · 1 paragraph</span>
+                    </div>
+                  </div>
+                  <div class="msg me">
+                    <div class="byl">10:44 <b>Adam</b></div>
+                    <div class="quote">
+                      “Enterprise expansion drove most of the quarter…”
+                    </div>
+                    <div class="bub a-adam">
+                      Can we name the three accounts here, or is that
+                      board-only?
+                    </div>
+                  </div>
+                  <div class="msg">
+                    <div class="byl">
+                      <span
+                        class="av a-theo"
+                        style="width: 16px; height: 16px; font-size: 7px"
+                        >T</span
+                      ><b>Theo</b>10:45
+                    </div>
+                    <div class="txt">
+                      Board-only. Keep them out of this one.
+                    </div>
+                  </div>
+                </div>
+                <div class="composer">
+                  <span class="plus"
+                    ><svg width="15" height="15">
+                      <use href="#i-plus" /></svg></span
+                  >Ask Rally or the people here…<svg
+                    width="16"
+                    height="16"
+                    style="margin-left: auto"
+                  >
+                    <use href="#i-mic" /></svg
+                  ><span class="send" style="margin-left: 0"
+                    ><svg width="15" height="15"><use href="#i-up" /></svg
+                  ></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== 3. Sidekicks home =============== -->
+    <section class="board">
+      <h2>3. Sidekicks: the section and its home page</h2>
+      <p>
+        Sidekicks move from their own window into the main shell. The sidebar
+        puts a <b>Needs input</b>
+        group first: Sidekicks waiting on information only you have. The home
+        page is today’s library, in a row layout that shows what matters at a
+        glance: status, who shares it, when it runs next.
+      </p>
+      <div class="frame">
+        <div class="win">
+          <div class="rail">
+            <div class="item">
+              <div class="ic">
+                <svg width="22" height="22"><use href="#i-sheet" /></svg>
+              </div>
+              Canvases<span class="badge">3</span>
+            </div>
+            <div class="item on">
+              <div class="ic">
+                <svg width="22" height="22"><use href="#i-hex" /></svg>
+              </div>
+              Sidekicks<span class="badge">1</span>
+            </div>
+            <div class="grow"></div>
+            <div class="item">
+              <div class="ic"><span class="av a-adam lg">A</span></div>
+              Settings
+            </div>
+          </div>
+          <div class="side">
+            <div class="top">
+              <h3>Sidekicks</h3>
+              <div class="acts">
+                <svg width="20" height="20"><use href="#i-plus" /></svg
+                ><svg width="20" height="20"><use href="#i-search" /></svg>
+              </div>
+            </div>
+            <div class="sec"><span>Needs input</span></div>
+            <div class="row unread">
+              <div class="hex t-amber">
+                <svg width="18" height="18"><use href="#i-bug" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Incident triage</div>
+                <div class="sub">Which status page gets the update?</div>
+              </div>
+              <div class="meta">5m<span class="dot"></span></div>
+            </div>
+            <div class="sec">
+              <span>Pinned</span
+              ><svg width="14" height="14"><use href="#i-pin" /></svg>
+            </div>
+            <div class="row">
+              <div class="hex t-green">
+                <svg width="18" height="18"><use href="#i-aperture" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Weekly changelog</div>
+                <div class="sub">Runs Friday 2:00 PM</div>
+              </div>
+              <div class="meta">3h</div>
+            </div>
+            <div class="sec">
+              <span>All sidekicks</span
+              ><span
+                >Recent
+                <svg width="11" height="11" style="vertical-align: -1px">
+                  <use href="#i-sort" /></svg
+              ></span>
+            </div>
+            <div class="row unread">
+              <div class="hex t-blue">
+                <svg width="18" height="18"><use href="#i-inbox" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Support inbox</div>
+                <div class="sub">
+                  <span class="live"></span>Working · 4 tickets
+                </div>
+              </div>
+              <div class="meta">now<span class="dot"></span></div>
+            </div>
+            <div class="row">
+              <div class="hex t-pink">
+                <svg width="18" height="18"><use href="#i-wand" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Former-client monitor</div>
+                <div class="sub">No changes this week</div>
+              </div>
+              <div class="meta">Mon</div>
+            </div>
+            <div class="row">
+              <div class="hex t-violet">
+                <svg width="18" height="18"><use href="#i-chart" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Revenue analyst</div>
+                <div class="sub">Paused by Theo</div>
+              </div>
+              <div class="meta">Oct 30</div>
+            </div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <div class="navpair">
+                <span
+                  ><svg width="16" height="16">
+                    <use href="#i-left" /></svg></span
+                ><span
+                  ><svg width="16" height="16"><use href="#i-right" /></svg
+                ></span>
+              </div>
+            </div>
+            <div class="page" style="padding-top: 8px">
+              <div class="head-row">
+                <div>
+                  <h1>Sidekicks</h1>
+                  <p class="lede">AI teammates your whole team can talk to.</p>
+                </div>
+                <span
+                  class="btn ink"
+                  style="height: 42px; padding: 0 20px; font-size: 14.5px"
+                  ><svg width="16" height="16"><use href="#i-plus" /></svg>New
+                  Sidekick</span
+                >
+              </div>
+              <div class="search">
+                <svg width="16" height="16"><use href="#i-search" /></svg>Search
+                Sidekicks
+              </div>
+              <div class="chips">
+                <span class="chip on">Everyone</span
+                ><span class="chip">Only you</span
+                ><span class="chip">Organization</span
+                ><span class="chip">Paused</span>
+              </div>
+              <div class="group-h">
+                <b>Your Sidekicks</b><span>5 Sidekicks</span>
+              </div>
+              <div class="sk-list">
+                <div class="sk-row">
+                  <div class="hex t-amber">
+                    <svg width="22" height="22"><use href="#i-bug" /></svg>
+                  </div>
+                  <div class="info">
+                    <b
+                      >Incident triage <span class="needs">Needs input</span></b
+                    >
+                    <p>
+                      Watches PagerDuty, rolls back bad deploys, and keeps the
+                      team and the incident Canvas current.
+                    </p>
+                  </div>
+                  <div class="facts">
+                    <div>
+                      <span>Status</span
+                      ><span class="status active">Active</span>
+                    </div>
+                    <div>
+                      <span>Shared with</span
+                      ><span class="stack"
+                        ><span class="av sm a-adam">A</span
+                        ><span class="av sm a-theo">T</span
+                        ><span class="av sm a-priya">P</span></span
+                      >
+                    </div>
+                    <div><span>Next</span><b>On alert</b></div>
+                  </div>
+                  <svg width="16" height="16" style="color: var(--t3)">
+                    <use href="#i-right" />
+                  </svg>
+                </div>
+                <div class="sk-row">
+                  <div class="hex t-blue">
+                    <svg width="22" height="22"><use href="#i-inbox" /></svg>
+                  </div>
+                  <div class="info">
+                    <b>Support inbox</b>
+                    <p>
+                      Answers support email with help center sources and hands
+                      off billing.
+                    </p>
+                  </div>
+                  <div class="facts">
+                    <div>
+                      <span>Status</span
+                      ><span class="status active"
+                        ><span class="live"></span>Working</span
+                      >
+                    </div>
+                    <div><span>Shared with</span><b>Organization</b></div>
+                    <div><span>Next</span><b>On email</b></div>
+                  </div>
+                  <svg width="16" height="16" style="color: var(--t3)">
+                    <use href="#i-right" />
+                  </svg>
+                </div>
+                <div class="sk-row">
+                  <div class="hex t-green">
+                    <svg width="22" height="22"><use href="#i-aperture" /></svg>
+                  </div>
+                  <div class="info">
+                    <b>Weekly changelog</b>
+                    <p>
+                      Prepares a concise changelog Canvas from completed work
+                      every Friday.
+                    </p>
+                  </div>
+                  <div class="facts">
+                    <div>
+                      <span>Status</span
+                      ><span class="status active">Active</span>
+                    </div>
+                    <div><span>Shared with</span><b>Organization</b></div>
+                    <div><span>Next</span><b>Fri 2:00 PM</b></div>
+                  </div>
+                  <svg width="16" height="16" style="color: var(--t3)">
+                    <use href="#i-right" />
+                  </svg>
+                </div>
+                <div class="sk-row">
+                  <div class="hex t-pink">
+                    <svg width="22" height="22"><use href="#i-wand" /></svg>
+                  </div>
+                  <div class="info">
+                    <b>Former-client monitor</b>
+                    <p>Watches a public page for meaningful changes.</p>
+                  </div>
+                  <div class="facts">
+                    <div>
+                      <span>Status</span
+                      ><span class="status active">Active</span>
+                    </div>
+                    <div><span>Shared with</span><b>Only you</b></div>
+                    <div><span>Next</span><b>Daily 9:00 AM</b></div>
+                  </div>
+                  <svg width="16" height="16" style="color: var(--t3)">
+                    <use href="#i-right" />
+                  </svg>
+                </div>
+                <div class="sk-row">
+                  <div class="hex t-violet">
+                    <svg width="22" height="22"><use href="#i-chart" /></svg>
+                  </div>
+                  <div class="info">
+                    <b>Revenue analyst</b>
+                    <p>
+                      Keeps the revenue Canvases current from Stripe and the
+                      warehouse.
+                    </p>
+                  </div>
+                  <div class="facts">
+                    <div>
+                      <span>Status</span
+                      ><span class="status paused">Paused</span>
+                    </div>
+                    <div>
+                      <span>Shared with</span
+                      ><span class="stack"
+                        ><span class="av sm a-theo">T</span
+                        ><span class="av sm a-maya">M</span></span
+                      >
+                    </div>
+                    <div><span>Next</span><b>—</b></div>
+                  </div>
+                  <svg width="16" height="16" style="color: var(--t3)">
+                    <use href="#i-right" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== 4. Sidekick open =============== -->
+    <section class="board">
+      <h2>4. A Sidekick, open</h2>
+      <p>
+        One conversation per Sidekick, shared by everyone it is shared with.
+        People talk to it and to each other; its runs land in the same
+        transcript as collapsed rows, and what it makes is a Canvas card that
+        opens in the Canvases section. The details column keeps today’s Sidekick
+        page content (status, Pause, who it can act as, schedule) and adds
+        triggers, tools and the Canvases it writes to.
+      </p>
+      <div class="frame">
+        <div class="win">
+          <div class="rail">
+            <div class="item">
+              <div class="ic">
+                <svg width="22" height="22"><use href="#i-sheet" /></svg>
+              </div>
+              Canvases<span class="badge">3</span>
+            </div>
+            <div class="item on">
+              <div class="ic">
+                <svg width="22" height="22"><use href="#i-hex" /></svg>
+              </div>
+              Sidekicks
+            </div>
+            <div class="grow"></div>
+            <div class="item">
+              <div class="ic"><span class="av a-adam lg">A</span></div>
+              Settings
+            </div>
+          </div>
+          <div class="side">
+            <div class="top">
+              <h3>Sidekicks</h3>
+              <div class="acts">
+                <svg width="20" height="20"><use href="#i-plus" /></svg
+                ><svg width="20" height="20"><use href="#i-search" /></svg>
+              </div>
+            </div>
+            <div class="sec"><span>Needs input</span></div>
+            <div class="row on">
+              <div class="hex t-amber">
+                <svg width="18" height="18"><use href="#i-bug" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Incident triage</div>
+                <div class="sub">Which status page gets the update?</div>
+              </div>
+              <div class="meta">5m</div>
+            </div>
+            <div class="sec">
+              <span>Pinned</span
+              ><svg width="14" height="14"><use href="#i-pin" /></svg>
+            </div>
+            <div class="row">
+              <div class="hex t-green">
+                <svg width="18" height="18"><use href="#i-aperture" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Weekly changelog</div>
+                <div class="sub">Runs Friday 2:00 PM</div>
+              </div>
+              <div class="meta">3h</div>
+            </div>
+            <div class="sec">
+              <span>All sidekicks</span
+              ><span
+                >Recent
+                <svg width="11" height="11" style="vertical-align: -1px">
+                  <use href="#i-sort" /></svg
+              ></span>
+            </div>
+            <div class="row unread">
+              <div class="hex t-blue">
+                <svg width="18" height="18"><use href="#i-inbox" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Support inbox</div>
+                <div class="sub">
+                  <span class="live"></span>Working · 4 tickets
+                </div>
+              </div>
+              <div class="meta">now<span class="dot"></span></div>
+            </div>
+            <div class="row">
+              <div class="hex t-pink">
+                <svg width="18" height="18"><use href="#i-wand" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Former-client monitor</div>
+                <div class="sub">No changes this week</div>
+              </div>
+              <div class="meta">Mon</div>
+            </div>
+            <div class="row">
+              <div class="hex t-violet">
+                <svg width="18" height="18"><use href="#i-chart" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Revenue analyst</div>
+                <div class="sub">Paused by Theo</div>
+              </div>
+              <div class="meta">Oct 30</div>
+            </div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <div class="navpair">
+                <span
+                  ><svg width="16" height="16">
+                    <use href="#i-left" /></svg></span
+                ><span
+                  ><svg width="16" height="16"><use href="#i-right" /></svg
+                ></span>
+              </div>
+              <div class="pill" style="left: calc(50% - 170px)">
+                <span class="hex t-amber"
+                  ><svg width="14" height="14"><use href="#i-bug" /></svg></span
+                >Incident triage<svg
+                  width="14"
+                  height="14"
+                  style="color: var(--t3)"
+                >
+                  <use href="#i-down" />
+                </svg>
+              </div>
+              <div class="tools" style="margin-right: 340px">
+                <span class="stack"
+                  ><span class="av a-adam">A</span
+                  ><span class="av a-theo">T</span
+                  ><span class="av a-priya">P</span></span
+                >
+              </div>
+            </div>
+            <div class="stage" style="position: absolute; inset: 64px 0 0 0">
+              <div class="convo">
+                <div class="tx">
+                  <div class="daysep">Today</div>
+                  <div class="run">
+                    <svg width="16" height="16" style="color: var(--t)">
+                      <use href="#i-bolt" /></svg
+                    ><span
+                      ><b>Run 412</b> · PagerDuty alert: checkout p95 over 2s ·
+                      4 steps</span
+                    ><svg width="14" height="14" style="margin-left: auto">
+                      <use href="#i-right" />
+                    </svg>
+                  </div>
+                  <div class="msg">
+                    <div class="byl">
+                      <span
+                        class="hex t-amber"
+                        style="width: 16px; height: 16px"
+                      ></span
+                      ><b>Incident triage</b>10:31
+                    </div>
+                    <div class="txt" style="max-width: 640px">
+                      Checkout latency rose after the 10:12 deploy of
+                      <code>payments-api</code>. Error rate is flat; the slow
+                      path is the new tax lookup. I rolled back
+                      <code>payments-api</code> to v2.41.0 and p95 is back under
+                      400ms. Should the status update go to #status or the
+                      customer status page?
+                    </div>
+                    <div class="canvas-card">
+                      <div class="mini-shot">
+                        <div
+                          class="ln h"
+                          style="height: 6px; margin-bottom: 5px"
+                        ></div>
+                        <div
+                          class="ln"
+                          style="height: 4px; margin-bottom: 4px"
+                        ></div>
+                        <div class="ln" style="height: 4px; width: 70%"></div>
+                      </div>
+                      <div>
+                        <div style="font-weight: 600; font-size: 14px">
+                          Checkout latency · Nov 6
+                        </div>
+                        <div style="font-size: 12.5px; color: var(--t3)">
+                          Canvas · incident timeline
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="msg">
+                    <div class="byl">
+                      <span
+                        class="av a-theo"
+                        style="width: 16px; height: 16px; font-size: 7px"
+                        >T</span
+                      ><b>Theo</b>10:33
+                    </div>
+                    <div class="txt">
+                      Tax lookup is mine. Keep <code>tax_lookup_v2</code> off
+                      until I ship the fix; the migration can stay.
+                    </div>
+                  </div>
+                  <div class="msg me">
+                    <div class="byl">10:34 <b>Adam</b></div>
+                    <div class="bub a-adam">
+                      #status for now. Customers didn't see errors, only slow
+                      pages.
+                    </div>
+                  </div>
+                  <div class="msg">
+                    <div class="byl">
+                      <span
+                        class="hex t-amber"
+                        style="width: 16px; height: 16px"
+                      ></span
+                      ><b>Incident triage</b>10:34
+                    </div>
+                    <div class="txt">
+                      Posted to #status and turned <code>tax_lookup_v2</code>
+                      off. The Canvas has the timeline; I'll add Theo's fix when
+                      it ships.
+                    </div>
+                  </div>
+                </div>
+                <div class="composer wide">
+                  <span class="plus"
+                    ><svg width="15" height="15">
+                      <use href="#i-plus" /></svg></span
+                  >Message Incident triage and the team…<svg
+                    width="16"
+                    height="16"
+                    style="margin-left: auto"
+                  >
+                    <use href="#i-mic" /></svg
+                  ><span class="send" style="margin-left: 0"
+                    ><svg width="15" height="15"><use href="#i-up" /></svg
+                  ></span>
+                </div>
+              </div>
+              <div class="detail">
+                <div class="hex lg t-amber">
+                  <svg width="28" height="28"><use href="#i-bug" /></svg>
+                </div>
+                <h2>Incident triage</h2>
+                <div class="tags">
+                  <span class="status active">Active</span
+                  ><span class="status">Shared · 3 people</span>
+                </div>
+                <p>
+                  Watches PagerDuty, finds the likely cause, rolls back a bad
+                  deploy, and keeps the team and the incident Canvas current.
+                </p>
+                <div style="display: flex; gap: 8px">
+                  <span class="btn" style="flex: 1; justify-content: center"
+                    >Pause</span
+                  ><span class="btn ico"
+                    ><svg width="16" height="16"><use href="#i-dots" /></svg
+                  ></span>
+                </div>
+                <div class="blk" style="margin-top: 14px">
+                  <h5>Wakes on</h5>
+                  <div class="li">
+                    <svg width="15" height="15"><use href="#i-bolt" /></svg
+                    >PagerDuty alert, service: checkout
+                  </div>
+                  <div class="li">
+                    <svg width="15" height="15"><use href="#i-clock" /></svg
+                    >Weekdays 9:00 AM, open incidents
+                  </div>
+                </div>
+                <div class="blk">
+                  <h5>Uses <span>4 tools</span></h5>
+                  <div class="li">
+                    <span class="conn" style="background: #06ac38">P</span
+                    >PagerDuty<small>Adam</small>
+                  </div>
+                  <div class="li">
+                    <span class="conn" style="background: #141414">G</span
+                    >GitHub<small>Theo</small>
+                  </div>
+                  <div class="li">
+                    <span class="conn" style="background: #4a154b">S</span
+                    >Slack<small>Organization</small>
+                  </div>
+                </div>
+                <div class="blk">
+                  <h5>Writes to</h5>
+                  <div class="li">
+                    <span
+                      class="sheet t-blue"
+                      style="width: 22px; height: 22px; border-radius: 6px"
+                      ><svg width="13" height="13">
+                        <use href="#i-doc" /></svg></span
+                    >Checkout latency · Nov 6
+                  </div>
+                  <div class="li">
+                    <span
+                      class="sheet t-amber"
+                      style="width: 22px; height: 22px; border-radius: 6px"
+                      ><svg width="13" height="13">
+                        <use href="#i-table" /></svg></span
+                    >Incident log
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== 5. Dark =============== -->
+    <section class="board">
+      <h2>5. Dark appearance</h2>
+      <p>
+        The same Canvas in the dark tokens. Marks switch to their dark tint and
+        ink pairs; nothing else needs a dark-only rule.
+      </p>
+      <div class="frame">
+        <div class="win dark">
+          <div class="rail">
+            <div class="item on">
+              <div class="ic">
+                <svg width="22" height="22"><use href="#i-sheet" /></svg>
+              </div>
+              Canvases<span class="badge">2</span>
+            </div>
+            <div class="item">
+              <div class="ic">
+                <svg width="22" height="22"><use href="#i-hex" /></svg>
+              </div>
+              Sidekicks<span class="badge">1</span>
+            </div>
+            <div class="grow"></div>
+            <div class="item">
+              <div class="ic"><span class="av a-adam lg">A</span></div>
+              Settings
+            </div>
+          </div>
+          <div class="side">
+            <div class="top">
+              <h3>Canvases</h3>
+              <div class="acts">
+                <svg width="20" height="20"><use href="#i-plus" /></svg
+                ><svg width="20" height="20"><use href="#i-search" /></svg>
+              </div>
+            </div>
+            <div class="sec">
+              <span>Pinned</span
+              ><svg width="14" height="14"><use href="#i-pin" /></svg>
+            </div>
+            <div class="row">
+              <div class="sheet t-blue">
+                <svg width="18" height="18"><use href="#i-chart" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Q4 revenue review</div>
+                <div class="sub">
+                  <span class="live"></span>Maya and Theo are here
+                </div>
+              </div>
+              <div class="meta">2m</div>
+            </div>
+            <div class="row on">
+              <div class="sheet t-amber">
+                <svg width="18" height="18"><use href="#i-board" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Launch plan</div>
+                <div class="sub"><span class="live"></span>Theo is here</div>
+              </div>
+              <div class="meta">now</div>
+            </div>
+            <div class="sec">
+              <span>All canvases</span
+              ><span
+                >Recent
+                <svg width="11" height="11" style="vertical-align: -1px">
+                  <use href="#i-sort" /></svg
+              ></span>
+            </div>
+            <div class="row unread">
+              <div class="sheet t-violet">
+                <svg width="18" height="18"><use href="#i-doc" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Acme follow-up</div>
+                <div class="sub">2 new comments</div>
+              </div>
+              <div class="meta">14m<span class="dot"></span></div>
+            </div>
+            <div class="row">
+              <div class="sheet t-green">
+                <svg width="18" height="18"><use href="#i-table" /></svg>
+              </div>
+              <div class="txt">
+                <div class="name">Hiring pipeline</div>
+                <div class="sub">Edited by Priya</div>
+              </div>
+              <div class="meta">32m</div>
+            </div>
+          </div>
+          <div class="main">
+            <div class="bar">
+              <div class="navpair">
+                <span
+                  ><svg width="16" height="16">
+                    <use href="#i-left" /></svg></span
+                ><span
+                  ><svg width="16" height="16"><use href="#i-right" /></svg
+                ></span>
+              </div>
+              <div class="pill">
+                <span class="sheet t-amber mini"
+                  ><svg width="15" height="15">
+                    <use href="#i-board" /></svg></span
+                >Launch plan<svg
+                  width="14"
+                  height="14"
+                  style="color: var(--t3)"
+                >
+                  <use href="#i-down" />
+                </svg>
+              </div>
+              <div class="tools">
+                <span class="stack"
+                  ><span class="av a-theo">T</span
+                  ><span class="av a-rally">R</span></span
+                ><span class="btn"
+                  ><svg width="15" height="15"><use href="#i-share" /></svg
+                  >Share</span
+                ><span class="btn ico"
+                  ><svg width="16" height="16"><use href="#i-dots" /></svg
+                ></span>
+              </div>
+            </div>
+            <div class="stage">
+              <div class="board-area">
+                <div class="doc">
+                  <h2>Launch plan</h2>
+                  <div class="kick">Rally 2.0 · ships Nov 20</div>
+                  <div class="cols" style="height: 430px">
+                    <div>
+                      <div
+                        style="
+                          font-size: 12px;
+                          color: var(--t3);
+                          margin: 2px 0 8px;
+                        "
+                      >
+                        To do · 4
+                      </div>
+                      <i style="height: 44px"></i><i style="height: 44px"></i
+                      ><i style="height: 44px"></i><i style="height: 44px"></i>
+                    </div>
+                    <div>
+                      <div
+                        style="
+                          font-size: 12px;
+                          color: var(--t3);
+                          margin: 2px 0 8px;
+                        "
+                      >
+                        Doing · 3
+                      </div>
+                      <i style="height: 44px"></i
+                      ><i
+                        style="
+                          height: 44px;
+                          box-shadow: 0 0 0 2px var(--p-theo);
+                        "
+                      ></i
+                      ><i class="shimmer" style="height: 44px"></i>
+                    </div>
+                    <div>
+                      <div
+                        style="
+                          font-size: 12px;
+                          color: var(--t3);
+                          margin: 2px 0 8px;
+                        "
+                      >
+                        Done · 6
+                      </div>
+                      <i style="height: 44px"></i><i style="height: 44px"></i
+                      ><i style="height: 44px"></i>
+                    </div>
+                  </div>
+                </div>
+                <div class="cursor" style="left: 420px; top: 240px">
+                  <svg width="20" height="20" style="fill: var(--p-theo)">
+                    <use href="#i-cursor" /></svg
+                  ><span class="tagn a-theo">Theo</span>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="seg">
+                  <span>Chat</span><span class="on">Comments · 2</span>
+                </div>
+                <div class="feed" style="justify-content: flex-start">
+                  <div class="msg">
+                    <div class="byl">
+                      <span
+                        class="av a-maya"
+                        style="width: 16px; height: 16px; font-size: 7px"
+                        >M</span
+                      ><b>Maya</b>Yesterday
+                    </div>
+                    <div class="quote">Pricing page copy</div>
+                    <div class="txt">
+                      Blocked on legal review of the annual discount line.
+                    </div>
+                  </div>
+                  <div class="msg">
+                    <div class="byl">
+                      <span
+                        class="av a-theo"
+                        style="width: 16px; height: 16px; font-size: 7px"
+                        >T</span
+                      ><b>Theo</b>9:12
+                    </div>
+                    <div class="quote">Migration dry run</div>
+                    <div class="txt">
+                      Done on staging. Rally, move this to Done and link the run
+                      log.
+                    </div>
+                  </div>
+                </div>
+                <div class="composer">
+                  <span class="plus"
+                    ><svg width="15" height="15">
+                      <use href="#i-plus" /></svg></span
+                  >Comment on Launch plan…<span class="send"
+                    ><svg width="15" height="15"><use href="#i-up" /></svg
+                  ></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =============== What goes =============== -->
+    <section class="board">
+      <h2>What the sidebar loses, and where each thing goes</h2>
+      <p>
+        The full list of what each removed feature becomes lives in
+        <a href="prd.md#what-each-feature-becomes">the PRD</a>.
+      </p>
+    </section>
+  </body>
+</html>
