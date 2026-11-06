@@ -978,9 +978,13 @@ input that makes the run pick a path. It may read current_time to work out which
 or items the work covers, never to decide whether to do the work: a time-of-day or
 day-of-week gate belongs in the trigger and the instructions, and the tool does its
 job whenever it is called.
-A test performs its writes: test a writing tool against a scratch table or accept the
-test's row. Every connector plugin a tool calls goes in recommendedPlugins. A changed
-tool is tested again before it is saved.
+A tool takes the IDs of the Sidekick's tables it reads or writes as input, never fixed
+in its code or found by name, and the instructions pass the real ones. A test performs
+its writes: test a writing tool against scratch tables with the same columns, passed as
+its input, or accept the test's row. Name each scratch table after its real table with
+" (test)" appended, never the real name, which reopens the live table; reuse it on
+later tests, and invalidate the rows a test wrote once you have read its result. Every connector plugin a tool calls goes in recommendedPlugins.
+A changed tool is tested again before it is saved.
 In a self-review, tools change with the procedure, using only plugins already
 recommended. The plan takes each deterministic step the report says a run repeated,
 skipped or got wrong (a dedupe after the reads, a page not followed, date bounds, a
@@ -993,9 +997,11 @@ run calls, unless the run shows the step failed on something outside it (a timed
 read) rather than being done by hand or skipped. A tool the runs misused or no longer
 need is rewritten or removed along with the instructions that call it. A tool is part
 of the procedure, not a new capability.
-Nobody is present during a review, so it tests a writing tool only against a scratch
-table, never by accepting a row in a table the runs read; a writing tool it cannot
-test that way it leaves as it is and reports.`;
+Nobody is present during a review, so it tests a writing tool only against scratch
+tables passed as its input, never by accepting a row in a table the runs read. A tool
+with a table ID fixed in its code is rewritten to take the ID as input when the
+review changes it; a writing tool it still cannot test that way it leaves as it is
+and reports.`;
 
 /**
  * Drafting tools for a Sidekick's own authoring conversation. The host controls
