@@ -175,12 +175,9 @@ writes) and keep the set under five, adding a tool only where the run must judge
 something between two steps. The tool returns the facts to report and an
 `exceptions` list of items it could not handle, finishes the rest rather than
 stopping on one bad item, works in bounded shares that record where they stopped
-when the job can outgrow the two-minute deadline, sized by elapsed time (about
-three quarters of the deadline) rather than a fixed count, and is safe to call
-again. Inside the tool a share is claimed and recorded with one write each, not a
-write and a re-read per item, since a run's re-read-after-write rule does not
-carry into code; independent reads run side by side up to any limit the
-instructions set. It
+when the job can outgrow the two-minute deadline, sized by elapsed time and
+recorded in one write, with its share sized from a timing test rather than a
+guess, and is safe to call again. It
 records the facts it found with its progress and returns every one not yet marked
 delivered, so a call that timed out after its writes loses nothing; the run marks
 them delivered after posting, through a second tool. A tool takes the IDs of the
@@ -490,11 +487,14 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
 
 ### 2026-11-06 — Size a tool's share by time and batch its writes
 
-**What changed:** The guide has a tool size its share by elapsed time, taking
-items until about three quarters of the two-minute deadline, never by a fixed
-count; claim and record a share with one write each rather than a write and a
-re-read per item; and run independent reads side by side up to any limit the
-instructions set, rather than one per turn.
+**What changed:** The guide has a tool size its share by elapsed time, reading
+`current_time` at the start and after each group of reads and stopping at about
+three quarters of the two-minute deadline, rather than a fixed count. It records
+the finished items in one `update_rows`, leaves unreached items pending (or
+releases them in that write if it claimed them), takes new revisions from the
+write's result rather than re-reading, and runs independent reads side by side up
+to any limit the instructions set. The tool returns how many items it finished
+and how long it took, and setup sizes its groups from a timing test on real items.
 
 **Why:** Daily Active Rally Organizations' first one-tool revision,
 `scan_fixed_batch`, took ten conversations per call. Nothing in the guide said
@@ -502,16 +502,17 @@ how to size a share, so the setup agent picked a small fixed count, and it
 copied the Sidekick's run rules into the program: a claim, a re-read, the SQL
 count, a completion write and another re-read for every conversation, with
 reads capped at four at a time. About 450 conversations a day still meant about
-45 tool calls, each re-sending the run's context. The tool is the only owner of
-the rows it claims, so a per-item re-read adds a call and no safety. A cap on
+45 tool calls, each re-sending the run's context.
+
+**Considered and rejected:** `Date.now()` for the time budget, which
+`checkProgram` refuses in a program that writes (`write_with_clock_or_random`).
+Claiming the whole share up front without releasing it, which strands the rows
+the time budget does not reach. Raising the program deadline, which bounded
+shares make unnecessary.
+
+**Consequences:** The guide states the deadline in words; a change to
+`CODE_PROGRAM_DEADLINE_MS` must update `CUSTOM_TOOLS_GUIDE` by hand. A cap on
 concurrent reads may protect a production source, so the code keeps it.
-
-**Considered and rejected:** Raising the program deadline, which the bounded
-share makes unnecessary. A fixed larger count, which is wrong for both fast and
-slow sources.
-
-**Consequences:** "About three quarters" comes from the existing
-`CODE_PROGRAM_DEADLINE_MS`; a change to that deadline changes the share with it.
 
 ### 2026-11-06 — A custom tool takes its tables as input
 
