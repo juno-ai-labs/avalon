@@ -970,8 +970,10 @@ The run keeps what needs judgement: whether and what to post and how to word it,
 an exception means and what to do about it, and anything the instructions leave to a
 person. Posting and messages to people stay out of the tool; the run delivers what the
 tool returned. A tool has one entry point, never a mode, action, dryRun or preview
-input that makes the run pick a path. It may read current_time to work out its window,
-but whether this run should act at all belongs in the trigger and the instructions.
+input that makes the run pick a path. It may read current_time to work out which dates
+or items the work covers, never to decide whether to do the work: a time-of-day or
+day-of-week gate belongs in the trigger and the instructions, and the tool does its
+job whenever it is called.
 A test performs its writes: test a writing tool against a scratch table or accept the
 test's row. Every connector plugin a tool calls goes in recommendedPlugins. A changed
 tool is tested again before it is saved.
