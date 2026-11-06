@@ -5115,6 +5115,8 @@ export class WorkstreamObjectProductService {
         "SELECT COUNT(*) AS stopped FROM background_agent WHERE stopped_at IS NOT NULL",
       ).one().stopped === 0
       && this.loops.hasInputAhead(preparation.input_sequence);
+    const sharedSidekickConversation = this.objectStore.identity()?.parentKind === "automation"
+      && this.externalSubstreamId() === "0";
     const now = preparation.created_at;
     const messageId = preparation.input_id;
     const messageText = this.withPersonalSystemPrompt(prepared.text, auth.userId,
@@ -5280,7 +5282,10 @@ export class WorkstreamObjectProductService {
         const result = this.loops.completeInputPreparation({
           inputId: messageId,
           preparedTurnId: messageId,
-          mode: shouldInvoke ? input.runMode ?? "queue" : "queue",
+          // The Sidekick's shared conversation decides who answers when its
+          // loop takes the message (wizard or a run), so nothing there may
+          // steer a turn already running past that decision.
+          mode: shouldInvoke && !sharedSidekickConversation ? input.runMode ?? "queue" : "queue",
           startsRun: shouldInvoke,
           actor: "human",
           authorUserId: auth.userId,
@@ -5312,6 +5317,8 @@ export class WorkstreamObjectProductService {
             executionPrincipal: { type: "user", userId: auth.userId },
             sessionId: auth.sessionId,
             principal: auth.principal ?? "session",
+            // Read when the Sidekick decides whether the sender manages it.
+            actorRole: auth.role,
             confirmedParticipantUserIds,
             participantEpochs: this.pendingParticipantEpochs([
               auth.userId,
