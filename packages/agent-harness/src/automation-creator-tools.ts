@@ -964,7 +964,14 @@ its identifier, what was wrong and what is known, for the run to handle. It thro
 when it cannot do the job at all. A program has two minutes; when the work can outgrow
 that, the tool does a bounded share, records where it stopped in the Sidekick's own
 table, and returns what remains, and the instructions call it again until nothing
-remains. Calling it again after a failure or a partial call is safe: it skips work it
+remains. Size the share by elapsed time, never a fixed count: the tool notes the time
+it started, keeps taking items until about three quarters of the two minutes have
+passed, then records its results and returns. Inside the tool, claim a share with one
+write over all its rows and record its results with one write, not a write and a
+re-read per item: the program already saw its own write succeed, so a run's rule to
+re-read after every write does not carry into the code. Independent reads may run side
+by side, up to any limit the instructions set on concurrent reads, which the code then
+enforces; writes run one at a time. Calling it again after a failure or a partial call is safe: it skips work it
 already recorded. What it records is the facts it found, not only that an item is
 done, and it returns every recorded fact and exception the run has not yet marked
 delivered, so a call that timed out after its writes loses nothing. The run marks them
