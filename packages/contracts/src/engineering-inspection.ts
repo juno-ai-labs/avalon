@@ -107,7 +107,7 @@ export const SetEngineeringSidekickPausedResultSchema = deferredZodSchema(() => 
   region: RegionSchema,
   orgId: WorkspaceIdSchema,
   sidekickId: AutomationIdSchema,
-  lifecycle: z.enum(["draft", "active", "paused", "deleted"]),
+  lifecycle: z.enum(["paused", "active"]),
 }));
 export type SetEngineeringSidekickPausedResult = z.infer<typeof SetEngineeringSidekickPausedResultSchema>;
 
