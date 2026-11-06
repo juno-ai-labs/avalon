@@ -780,6 +780,8 @@ could not be read must not be. Deleting an attachment mid-run also reports
 `resource_not_found` and so no longer triggers the boundary; the model holds the
 refusal and has no content from it.
 
+Shipped in [#1479](https://github.com/juno-ai-labs/avalon/pull/1479).
+
 ### 2026-10-22 — Resolve known Sidekick resources through the execution user's access
 
 Sidekick point reads now use canonical resource authorization for IDs outside
