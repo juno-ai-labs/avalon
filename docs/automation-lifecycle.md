@@ -1109,7 +1109,12 @@ person's unfinished draft, and never adding a validation step that can turn
 a report into a blocker: a run that withheld a data report because two
 sources disagreed is a run that was silent when it should have posted, and
 the fix is to post with the discrepancy named in one line; a review that
-finds such a check removes it, unless a person asked for it. When a change was saved
+finds such a check removes it, and keeps one a person asked for only as a
+caveat the report names. The run cannot be told otherwise: the activation
+prompt's platform policy says a data report is always delivered, with a
+failed source's reason in place of that section's numbers, and that rule
+outranks the saved instructions. Only a person's own words add a check; a
+request another agent relays does not. When a change was saved
 and the notice names where to announce it, it publishes one message there
 with `conversation_post`, naming that conversation, for the people the
 Sidekick works for: what it now does differently, why, and how to restore
@@ -1702,6 +1707,45 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-11-06 — No saved instruction can turn a data report into a blocker
+
+**What changed:** The activation prompt's platform policy says a data report
+is always delivered and that the rule outranks the saved instructions: a
+zero, an empty result, an unknown value or two sources that disagree is
+reported with a one-line caveat, and a failed source costs only its own
+section. A saved rule to stay silent when there is nothing new still holds.
+The authoring prompt no longer lets a run hold a whole report back when a
+person asked for the check; it writes every check as a caveat, and adds one
+only when a person asks in their own words (a message in the wizard, or the
+words a change request quotes), never because another agent relayed it. The
+self-review keeps a check a person asked for as a caveat rather than as a
+gate. `reporting-on-data` gains a short reading guide (a filter that matches
+nothing is a zero; other values of the same field are other cases; a field
+only some cases set is expected; a late source is a caveat) and no longer
+skips its checks in a Sidekick run.
+
+**Why:** The two 2026-10-30 entries below put the rule in the wizard's
+prose, and the Daily Signup, Traffic & Attribution Report kept withholding
+anyway. Its revision 15 still said "Block only required-source failure,
+missing result contradictory to relevant data, unconfirmed freshness … No
+partial report", because the exception for "the person asked" was met by the
+Thread agent's own `send_message` text ("Post complete report … or exact
+query/data blocker"), not by anything its owner wrote. On 2026-11-04 the run
+saw only `download` clicks, which carry no `flowId` by design, read the
+missing `secondary_cta` clicks as contradictory data and posted nothing; the
+same zero on 2026-11-02 had posted. A rule in the wizard holds only while
+every revision obeys it, and saved instructions sit below platform policy,
+so the run-time rule is the one place the behavior cannot drift.
+
+**Consequences:** A run that once would have withheld now posts with
+caveats, including for a Sidekick whose saved instructions still say to
+block; those instructions need no rewrite to take effect. A person who
+genuinely wants silence on a bad day has no way to ask for it; that is
+deliberate, and a later request for it is a new decision, not a regression.
+A check stated as "missing result contradictory to relevant data" is now a
+caveat, so a real tracking break shows up as a posted zero with its caveat
+rather than as a missing report.
 
 ### 2026-11-02 — A run's change request is not the review's, and a wizard's answer reaches the thread
 

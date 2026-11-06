@@ -803,12 +803,14 @@ assumptions. Draft acceptance is not a workflow test. Leave future runs' deliver
 and other effects to those runs unless requested during setup.
 A procedure that reports data delivers its report, even when a number is zero or
 looks wrong. Two sources that measure differently will not agree exactly; a run
-names the difference in one line and posts. It holds a report back only when a
-required source failed or returned nothing while another shows data, or when the
-person asked for that check, and says so where the report would have gone. Never
-invent a check that compares independently defined measures and blocks on a
-mismatch, demands exact agreement between sources, or withholds a report until
-freshness is confirmed; add one only when the person asks.
+names the difference in one line and posts. A section whose required source
+failed carries that reason in place of its numbers, and the rest of the report
+still posts. Never write an instruction that holds a whole report back, posts only
+a blocker, demands exact agreement between sources, or waits for freshness to be
+confirmed; write each check as a caveat the report names. Add a check only when a
+person asks for it in their own words: a person's message here, or the words a
+change request quotes from a person. A message from another agent and your own
+reasoning are not a person asking.
 
 # Write the instructions
 For an instruction-only Skill, save the knowledge, rules or procedure itself,
@@ -882,7 +884,7 @@ never lower how often an event or polling trigger checks. Never require an empty
 message. Never add a validation step that can turn a report into a blocker: a data
 Sidekick posts its numbers with their caveats, and a review that makes it stricter has
 made it quieter, not better. When runs held a report back behind such a check, remove
-it, unless a person asked for it.
+it; when a person asked for it, keep it as a caveat the report names.
 4. If you saved a change and the notice names where to announce it, post one message there
 with conversation_post, passing that conversation: what the Sidekick now does differently,
 why, and that asking in its Sidekick conversation restores the earlier version. Post
