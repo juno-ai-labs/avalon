@@ -395,6 +395,41 @@ describe("Bind host durability boundaries", () => {
     });
   });
 
+  it("keeps a partial read unverified when the rest of the resource disappears mid-run", async () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    const resourceId = "00000000-0000-7000-8000-000000000783";
+    guard.onStarted({ type: "tool_started", toolCallId: "tool-read-page-1", toolName: "read_resource",
+      pluginId: "rally_core", policy, input: { resourceId } } as never);
+    guard.onCompleted({ type: "tool_completed", toolCallId: "tool-read-page-1", toolName: "read_resource",
+      pluginId: "rally_core", policy, result: { summary: "page 1", output: {
+        resourceId, nextPageId: "page-2", previousPageId: null,
+      } } } as never);
+    guard.onStarted({ type: "tool_started", toolCallId: "tool-read-page-2", toolName: "read_resource",
+      pluginId: "rally_core", policy, input: { pageId: "page-2" } } as never);
+    guard.onFailed({ type: "tool_failed", toolCallId: "tool-read-page-2", toolName: "read_resource",
+      pluginId: "rally_core", policy, error: "The resource was not found",
+      data: { code: "resource_not_found" }, phase: "execution", outcome: "definitive_failure" } as never);
+
+    expect(guard.boundary()).toContain(`Resource ${resourceId}`);
+
+    const replayed = new __integrationTesting.AttachmentGroundingGuard();
+    const receipt = (overrides: Record<string, unknown>) => ({
+      effectIntentId: "effect-page", runId: "run-1", toolCallId: "tool-read-page", toolName: "read_resource",
+      mode: "read", connectionId: null, requestHash: "hash", inputJson: JSON.stringify({ resourceId }),
+      status: "completed", outputRef: null, outputSummary: null, providerOperationId: null, errorJson: null,
+      executionPlanHash: "plan", executionPlanJson: JSON.stringify({ capability: "workstream.resources.read" }),
+      startedAt: 1, settledAt: 2, checkpointIndex: 0, ...overrides,
+    });
+    await replayed.restoreReceipts([
+      receipt({}),
+      receipt({ effectIntentId: "effect-page-again", toolCallId: "tool-read-page-again", status: "failed",
+        errorJson: JSON.stringify({ code: "tool_failed",
+          data: { code: "resource_not_found", details: { resourceId } } }), startedAt: 3, settledAt: 4 }),
+    ] as never);
+    expect(replayed.boundary()).toContain(`Resource ${resourceId}`);
+  });
+
   it("does not hold an answer hostage to a resource this conversation cannot see", async () => {
     const guard = new __integrationTesting.AttachmentGroundingGuard();
     const readPolicy = { capability: "workstream.resources.read" };
