@@ -178,6 +178,19 @@ Space private still grants and removes no reader of any Channel in it, and only
 a participant may place a Channel into it (`canEdit`). Guests are shown only
 Organization-wide Spaces through `sharedNavigationSpaces`.
 
+**A guest may be a participant.** `noteSpaceAudience` admits any person with an
+active relationship to the Organization, guest or member, into
+`participantUserIds`; a suspended or departed person is still refused
+`space_access_denied`. Only the actor has to be a member. A guest participant
+is listed the Space, private or not, by the ordinary participant rule, reads
+its feed and summary like any participant, and reads every Organization-wide
+thread placed in it, as a member does
+([the Channel reader](#a-channel-lends-its-public-threads-to-its-guests)),
+posting there as a member may. They may also start a thread in it:
+`reserveChannelInSpaces` admits a guest whose reach into every named Space is
+`participant`, and never through the General fallback of a request naming no
+Space they take part in. Every other Space write stays refused to them.
+
 A participant leaves a private Space by sending its audience without
 themselves; any participant but the last may take themselves out, and only an
 owner or admin may take out somebody else. The last participant stays: the
@@ -201,6 +214,44 @@ threads: a Space never adds, removes or acts as a thread participant, and every
 thread starts with only its creator plus whoever the creator adds. Any active
 member may edit an Organization-wide Space; a private one is edited by its
 participants.
+
+#### A Channel lends its public threads to its guests
+
+Taking part in a Channel is one path to reading its Organization-wide threads,
+beside Organization membership and a grant. It is the only path that matters
+for a guest: a member already reads every Organization-wide thread, so for a
+member a Channel still changes nothing. The rule is `channelReaderSql` in
+`listing-rules.ts`: an `active` placement of the thread in an unarchived
+Space, not a Personal Channel, where the person's `space_viewers` row is a
+participant. It is asked at read time and stored nowhere:
+
+- **Reading.** `resolveScopedAccess` takes it as `channelReader`, which the
+  thread's hosted parent reads from the Organization's own Space tables (they
+  share one database), and admits it exactly as it admits a member:
+  `workspaceMemberAccess`, Main and any inheriting Breakout, never parent
+  management, never a private thread or a restricted Breakout. Search follows,
+  because its conversation groups come from the same check. The thread's own
+  product calls (`WorkstreamObjectProduct.authorize`: its summary, read
+  position, transcript reads) refuse a guest who is not a participant unless
+  the Organization object's `authorizeViewer` admits them, which asks the
+  same rule; members never pay that hop.
+- **Listing.** `threadOrganizationWideSql` is the thread and Breakout leaf of
+  the listing ladder, so the sidebar, the feed, attention counts, activity and
+  the rest agree ([`listing-rules.md`](listing-rules.md)).
+- **Moving.** Adding a guest, removing one, taking a thread out, moving it
+  between Channels, and archiving or restoring a Channel each call
+  `guestChannelReachMoved` after commit. It sends the affected guests the
+  thread rows, or their tombstones, sends `workspace_reach_changed`, and for
+  each thread a guest can no longer read publishes the revocations a
+  participant removal sends, naming them (`workstream` and
+  `workstream_automations`), so every socket they hold on it closes
+  ([`access-revocation.md`](access-revocation.md)). A placement that adds a
+  thread needs nothing more: its row already goes to everybody who can see it.
+
+It is not the retired Space access sources
+([`space-access-sources.md`](space-access-sources.md)): nothing is seated,
+nothing is planned, and a thread's own audience is never written. Its cost is
+one indexed subquery on a guest's reads and nothing on a member's.
 
 The contract says so: `CreateSpaceRequest.scope` is `SpaceCreationScopeSchema`,
 which reads `personal` from an older desktop as `workspace`, so a creation is
@@ -1237,8 +1288,9 @@ Channels list and a Channel screen with a feed of its threads and a composer.
 take from the Space authority.
 
 Every shell, member or guest, on either host, is handed the socket's Space
-directory. A guest's holds only the Organization-wide Spaces the listing rules
-give them, each a `through_channel` or `participant` summary, and nothing a
+directory. A guest's holds only the Spaces the listing rules give them: an
+Organization-wide Space reached through a Channel (`through_channel`), and any
+Space, private or not, they are a participant of (`participant`). Nothing a
 guest is shown carries a Space write.
 
 **A placement is not a copy.** A thread in two Channels is one record listed in
@@ -1429,11 +1481,15 @@ active keep `NULL`, which the feed reports as zero.
   operations**, from the Worker, which is where the retained-content
   containment preflight and its SQL triggers run. Nothing in the Space code
   writes one.
-- **A Space grants no reader, Organization-wide or private.** Joining,
-  leaving, making private, archiving and restoring change nobody's access to a
-  thread. The thread's own scope and participants are its whole audience. A
-  Space's scope decides only who lists the Space. A feature that lets a Space
-  grant readers again should start from
+- **A Space grants no reader, Organization-wide or private, except what it
+  lends its guests.** Joining, leaving, making private, archiving and
+  restoring change no member's access to a thread, and never make a private
+  thread readable. The thread's own scope and participants are its audience;
+  the one addition is that a guest participant reads the Organization-wide
+  threads placed in the Space
+  ([the Channel reader](#a-channel-lends-its-public-threads-to-its-guests)),
+  decided at read time. A Space's scope decides only who lists the Space. A
+  feature that lets a Space grant readers by writing them should start from
   [`space-access-sources.md`](space-access-sources.md).
 - **An active thread has a home, or a durable archive in flight.** Removing its
   last membership is refused `space_membership_final`. Archiving its last
@@ -2042,6 +2098,47 @@ while Spaces are not open, and closing the cutover queues it again when a
 member is still unseated.
 
 ## Changelog
+
+### 2026-11-05 — A guest may be a Channel's participant, and works in it as a member does
+
+**What changed:** `noteSpaceAudience` accepts a guest in `participantUserIds`;
+it used to ask every listed participant to be an active member, and now asks
+only for an active relationship. Taking part in a Channel became a path to
+reading every Organization-wide thread placed in it (`channelReaderSql`),
+beside membership and grants: the read check (`resolveScopedAccess`'s
+`channelReader`), the listing leaf (`threadOrganizationWideSql`) and the
+socket rows all ask it, and the Space writes that move it publish rows,
+`workspace_reach_changed` and a narrowing for what a guest lost. A guest
+Channel participant may post in those threads and start threads in the
+Channel: `POST /workstreams` moved to the identity layer, and
+`reserveChannelInSpaces` admits a guest into Spaces where their reach is
+`participant`.
+
+**Why:** Members could share a thread with a guest but not bring a guest into
+the Channel around it, and product wants a guest in a Channel to work there
+with permissions like a member's: see its public threads, post in them and
+start new ones. The desktop people menu already offered
+guests from the roster, and the write refused them with a generic error.
+
+**Considered and rejected:** Seating guests as thread participants through
+grants when they join a Channel or a thread is placed. That is the retired
+Space access sources' shape ([`space-access-sources.md`](space-access-sources.md)):
+a write per thread per guest, provenance to keep, plans that replay old rules,
+and every guest showing in every thread's face pile and notifications. Read
+time costs one indexed subquery on a guest's reads and needs no bookkeeping.
+Granting members anything through a Channel was not considered: they already
+read every Organization-wide thread.
+
+**Consequences:** The thread-level leaf binds the user id for a guest, so a
+statement binding positionally binds it `userIdBindCount` times, and a
+numbered one passes its own expression; a new listing statement has to do one
+or the other. Any write that moves a placement, a participant or a Space's
+archive state owes `guestChannelReachMoved` for the guests it affects. The
+read check admits a guest Channel reader as writable, as it does a member.
+Memory facts from Organization-wide threads stay
+members-only (`readsOrganizationFacts`), and a mention still asks to seat a
+guest. Anything reading a Space's participants must not assume they are all
+members.
 
 ### 2026-10-29 — A Sidekick's review announces a change as a Channel message
 

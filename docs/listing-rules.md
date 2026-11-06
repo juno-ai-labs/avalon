@@ -27,10 +27,17 @@ built from the one below it:
 
 1. **Organization-wide** (`admitsOrganizationWide`, rendered as
    `organizationWideSql`). A `workspace`-scoped Space, Channel or Breakout
-   admits every member. It admits no guest. This leaf is the only place the
-   access class changes an answer, and read authority asks the same one:
-   `resolveScopedAccess` in `scope-grant-policy.ts` and search's members group
-   (`readSearchAudience`).
+   admits every member. It admits no guest by itself. This leaf is the only
+   place the access class changes an answer, and read authority asks the same
+   one: `resolveScopedAccess` in `scope-grant-policy.ts` and search's members
+   group (`readSearchAudience`).
+   For a thread or a Breakout the leaf is `threadOrganizationWideSql`
+   (`threadOrganizationWide` for rows already read), which also admits a guest
+   who is a **Channel reader** of the thread (`channelReaderSql`): a
+   participant of an unarchived Space, not a Personal Channel, the thread is
+   actively placed in. A member's text carries no subquery; a guest's binds
+   the user id. The read check asks the same fact, as `channelReader`
+   ([`spaces.md`](spaces.md#a-channel-lends-its-public-threads-to-its-guests)).
 2. **Main openable** (`mainOpenableSql`). Organization-wide, or the person's
    `channel_viewers` row says they take part. A Channel grant makes a guest a
    participant.
@@ -56,7 +63,10 @@ A Channel's feed (`feedPage` in `workspace-space-storage.ts`) lists only the
 threads its viewer may open, by `mainOpenableSql`.
 
 A call site passes a `Viewer` (`userId` and `accessClass`) and never branches
-on the access class itself. The socket pins the access class on its attachment
+on the access class itself. Because a guest's thread leaf binds the user id, a
+statement either passes the user id expression it already binds (`"?1"`) or,
+binding positionally, binds the user id `userIdBindCount(sql)` times where
+the fragment sits; how many depends on the access class. The socket pins the access class on its attachment
 at accept time; an RPC reads it from the caller's relationship. Paths that only
 a member reaches (writes, durable intents, pinning) build their viewer with
 `member(userId)`.
@@ -100,9 +110,11 @@ for what the person may already reach.
   Channel and no participant ([`spaces.md`](spaces.md#invariants)). Guard: the
   `space-authority`, `channel-rails` and `space-conversation-page` workerd
   tests.
-- **A guest is told nothing Organization-wide.** If `organizationWideSql`
-  admitted guests, every guest would learn every public Channel's and Space's
-  name. Guard: `channel-rails.test.ts` "lists a guest the Channel they take
+- **A guest is told nothing Organization-wide** beyond the threads of the
+  Channels they take part in. If `organizationWideSql` admitted guests, every
+  guest would learn every public Channel's and Space's name. Guard for the
+  exception: `channels-threads-navigation.test.ts` "a Channel lends its
+  Organization-wide threads to its guests". Guard: `channel-rails.test.ts` "lists a guest the Channel they take
   part in, and nothing of an Organization-wide one they are not in", and the
   guest cases in `space-authority.test.ts`.
 - **One text per rule.** A second hand-written test drifts from the first, and

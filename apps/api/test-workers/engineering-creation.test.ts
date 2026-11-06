@@ -226,7 +226,7 @@ describe("engineering product creation", () => {
       channelId: CHANNEL, prompt: "  " }, OPERATOR)).rejects.toThrow(/prompt:custom/);
   });
 
-  it("creates as a member and enforces the app's guest creation refusal without changing their role", async () => {
+  it("creates as a member, lets a guest start threads only in their Channels, and never changes their role", async () => {
     const context = executionContext();
     const bridge = new EngineeringInspectionBridge(context, creationEnv());
     await createOrg(bridge);
@@ -241,10 +241,73 @@ describe("engineering product creation", () => {
     await changeRelationships(creationEnv(), ORG, [MEMBER], env.DB.prepare("UPDATE workspace_members SET role = NULL, access_class = 'guest', revision = revision + 1 WHERE workspace_id = ? AND user_id = ?").bind(ORG, MEMBER));
     await expect(bridge.createChannel({ operationId: crypto.randomUUID(), creatorUserId: MEMBER, orgId: ORG,
       name: "Guest launch", participantUserIds: [] }, OPERATOR)).rejects.toThrow("space_access_denied");
+    // A guest starts a thread in a Channel they take part in, as a member does.
+    const guestCreate = { operationId: "00000000-0000-7000-8000-00000000ee0b", creatorUserId: MEMBER,
+      orgId: ORG, channelId: CHANNEL, prompt: PROMPT };
+    const started = await bridge.createThread(guestCreate, OPERATOR);
+    const guestThread = await settledThread(started.threadId, MEMBER, null);
+    expect((await guestThread.boot()).workstream).toMatchObject({ createdByUserId: MEMBER, scope: "workspace" });
+    // A retry of the same create, as after a lost response, answers the thread it made.
+    await expect(bridge.createThread(guestCreate, OPERATOR)).resolves.toMatchObject({ threadId: started.threadId, turnId: started.turnId });
+    // And nowhere else: not in a Channel they are not in.
+    const elsewhere = "00000000-0000-7000-8000-00000000ee0c";
+    await bridge.createChannel({ operationId: elsewhere, creatorUserId: CREATOR, orgId: ORG,
+      name: "Elsewhere", participantUserIds: [] }, OPERATOR);
     await expect(bridge.createThread({ operationId: crypto.randomUUID(), creatorUserId: MEMBER,
-      orgId: ORG, channelId: CHANNEL, prompt: PROMPT }, OPERATOR)).rejects.toThrow("space_access_denied");
+      orgId: ORG, channelId: asSpaceId(elsewhere), prompt: PROMPT }, OPERATOR)).rejects.toThrow("space_access_denied");
     expect((await env.DB.prepare("SELECT access_class, role FROM workspace_members WHERE workspace_id = ? AND user_id = ?").bind(ORG, MEMBER).all()).results)
       .toEqual([{ access_class: "guest", role: null }]);
+  });
+
+  it("lets a guest start a thread in a private Channel they take part in, and Rally answers them", async () => {
+    const context = executionContext();
+    const bridge = new EngineeringInspectionBridge(context, creationEnv());
+    await createOrg(bridge);
+    await createChannel(bridge);
+    await new SpaceService(creationEnv(), auth()).updateAudience(CHANNEL, { scope: "personal", participantUserIds: [CREATOR, MEMBER] });
+    await changeRelationships(creationEnv(), ORG, [MEMBER], env.DB.prepare(
+      "UPDATE workspace_members SET role = NULL, access_class = 'guest', revision = revision + 1 WHERE workspace_id = ? AND user_id = ?").bind(ORG, MEMBER));
+
+    const started = await bridge.createThread({ operationId: THREAD_OPERATION, creatorUserId: MEMBER,
+      orgId: ORG, channelId: CHANNEL, prompt: PROMPT }, OPERATOR);
+    const thread = await settledThread(started.threadId, MEMBER, null);
+    await waitOnExecutionContext(context);
+
+    expect((await thread.boot()).workstream).toMatchObject({ createdByUserId: MEMBER, scope: "personal" });
+  });
+
+  it("reads and posts in a public thread as a guest who takes part in its Channel, and keeps it only once they have posted", async () => {
+    const context = executionContext();
+    const bridge = new EngineeringInspectionBridge(context, creationEnv());
+    await createOrg(bridge);
+    await createChannel(bridge);
+    const created = await bridge.createThread({ operationId: THREAD_OPERATION, creatorUserId: CREATOR,
+      orgId: ORG, channelId: CHANNEL, prompt: PROMPT }, OPERATOR);
+    await settledThread(created.threadId);
+    await waitOnExecutionContext(context);
+    // A Channel participant who is not in the thread, now a guest.
+    await changeRelationships(creationEnv(), ORG, [MEMBER], env.DB.prepare(
+      "UPDATE workspace_members SET role = NULL, access_class = 'guest', revision = revision + 1 WHERE workspace_id = ? AND user_id = ?").bind(ORG, MEMBER));
+    const guest = new WorkstreamObjectClient(creationEnv(), auth(MEMBER, null), created.threadId);
+    const spaces = new SpaceService(creationEnv(), auth());
+
+    await expect(guest.get()).resolves.toMatchObject({ id: created.threadId });
+    expect((await bridge.readConversation({ orgId: ORG, userId: MEMBER, threadId: created.threadId })).text).toContain(PROMPT);
+    // The Channel is their only route while they have only read.
+    await spaces.updateAudience(CHANNEL, { scope: "workspace", participantUserIds: [CREATOR] });
+    await expect(guest.get()).rejects.toThrow(/Thread not found|workstream_not_found/);
+
+    // Back in the Channel, they post without being added first, as a member may.
+    await spaces.updateAudience(CHANNEL, { scope: "workspace", participantUserIds: [CREATOR, MEMBER] });
+    const posted = "Can we add the launch date?";
+    await bridge.sendMessage({ orgId: ORG, userId: MEMBER, threadId: created.threadId,
+      operationId: "00000000-0000-7000-8000-00000000ee0d", text: posted, runMode: "queue" }, OPERATOR);
+    await runDurableObjectAlarm(env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", ORG, created.threadId, asSubstreamId("0"))));
+    await expect.poll(async () => (await bridge.readConversation({ orgId: ORG, userId: CREATOR, threadId: created.threadId })).text,
+      { timeout: 10_000 }).toContain(posted);
+    // Posting made them a participant, so leaving the Channel no longer takes the thread.
+    await spaces.updateAudience(CHANNEL, { scope: "workspace", participantUserIds: [CREATOR] });
+    await expect(guest.get()).resolves.toMatchObject({ id: created.threadId });
   });
 
   it.each(["member", "guest"] as const)("admits an ordinary send as a %s, executes it, and deduplicates retries", async (accessClass) => {
@@ -348,6 +411,53 @@ describe("engineering product creation", () => {
     expect(rest.text).toContain("Historical message 19.");
     expect(rest.text).toContain("Historical message 25.");
     expect(rest.text).not.toContain("Historical message 18.");
+  });
+
+  it("opens a Breakout for a guest added to it who is not in the Channel, and only that Breakout", async () => {
+    const context = executionContext();
+    const bridge = new EngineeringInspectionBridge(context, creationEnv());
+    await createOrg(bridge);
+    // MEMBER is not in this Channel.
+    await bridge.createChannel({ operationId: CHANNEL, creatorUserId: CREATOR, orgId: ORG, name: "Releases", participantUserIds: [] }, OPERATOR);
+    const created = await bridge.createThread({ operationId: THREAD_OPERATION, creatorUserId: CREATOR,
+      orgId: ORG, channelId: CHANNEL, prompt: PROMPT }, OPERATOR);
+    const thread = await settledThread(created.threadId);
+    await expect.poll(() => workspace().beginMainParticipantMigration({ workspaceId: ORG, parentId: created.threadId }), { timeout: 10_000 })
+      .toMatchObject({ status: "complete" });
+    const service = new SubstreamCreationService(creationEnv(), auth());
+    const breakout = async (title: string) => {
+      const prepared = await service.prepare(created.threadId, { operationId: crypto.randomUUID(), title, throughTurnId: null });
+      const child = await service.confirm(created.threadId, prepared.operationId);
+      await deliverEffectsToWorkspace(creationEnv(), env.SUBSTREAM_AGENTS.getByName(
+        conversationObjectName("global", ORG, created.threadId, asSubstreamId(child.substreamId))));
+      return child.substreamId;
+    };
+    const shared = await breakout("Shared with the guest");
+    const unshared = await breakout("Kept from the guest");
+    await thread.addParticipant(MEMBER);
+    await new WorkstreamObjectClient(creationEnv(), auth(), created.threadId, shared).addParticipant(MEMBER);
+    await changeRelationships(creationEnv(), ORG, [MEMBER], env.DB.prepare(
+      "UPDATE workspace_members SET role = NULL, access_class = 'guest', revision = revision + 1 WHERE workspace_id = ? AND user_id = ?").bind(ORG, MEMBER));
+    await waitOnExecutionContext(context);
+    const opens = async (substreamId: string) => (await workspace().authorizeViewer({
+      workspaceId: ORG, parentId: created.threadId, userId: MEMBER, substreamId: asSubstreamId(substreamId) })).authorized;
+    const target = { orgId: ORG, userId: MEMBER, threadId: created.threadId };
+
+    // The thread they were added to, and the Breakout they were added to.
+    expect(await opens("0")).toBe(true);
+    expect(await opens(shared)).toBe(true);
+    await expect(new WorkstreamObjectClient(creationEnv(), auth(MEMBER, null), created.threadId, shared).get())
+      .resolves.toMatchObject({ id: created.threadId });
+    await bridge.sendMessage({ ...target, breakoutId: shared, operationId: crypto.randomUUID(), text: "A guest note.", runMode: "queue" }, OPERATOR);
+    await expect.poll(async () => (await bridge.readConversation({ ...target, breakoutId: shared })).text, { timeout: 10_000 })
+      .toContain("A guest note.");
+    // Not a Breakout of the same thread nobody added them to.
+    expect(await opens(unshared)).toBe(false);
+    await expect(bridge.readConversation({ ...target, breakoutId: unshared })).rejects.toThrow();
+    // None of it comes from the Channel: they are not one of its participants.
+    const channel = await workspace().spaceSummary({ workspaceId: ORG, userId: CREATOR, spaceId: CHANNEL });
+    if (!channel.ok) throw new Error(`spaceSummary refused: ${channel.code}`);
+    expect(channel.space.participants.map((person) => person.userId)).toEqual([CREATOR]);
   });
 
   it("reads the app's Channel feed and independently authorizes, sends to, and pages a private Breakout", async () => {

@@ -150,6 +150,7 @@ type WorkspaceStub = Awaited<ReturnType<typeof durableObjectStubForWorkspace<Wor
 interface ReplaySpacePlacement {
   ensureGeneral(): Promise<SpaceSummary>;
   addChannel(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<unknown>;
+  channelSpaceIds(workstreamId: WorkstreamId): Promise<string[]>;
 }
 
 /**
@@ -166,16 +167,25 @@ interface ReplaySpacePlacement {
  * reservation assumes already happened. `addChannel`'s preflight answers an
  * already-active membership with the generation it already has, so the second
  * attempt settles rather than conflicting.
+ *
+ * Only a missing placement is written. A guest may start a thread in a
+ * Channel they take part in but may not place one, so their replay, which
+ * finds the placement their create made, must not ask; and a create that
+ * named no Space asked only for a home, which a thread placed anywhere has.
  */
 export async function reconcileReplayedSpaceMembership(input: {
   spaces: ReplaySpacePlacement;
   spaceIds: readonly SpaceId[];
   workstreamId: WorkstreamId;
 }): Promise<void> {
+  const placed = new Set(await input.spaces.channelSpaceIds(input.workstreamId));
+  if (input.spaceIds.length === 0 && placed.size > 0) return;
   const spaceIds = input.spaceIds.length > 0
     ? input.spaceIds
     : [(await input.spaces.ensureGeneral()).id];
-  for (const spaceId of spaceIds) await input.spaces.addChannel(spaceId, input.workstreamId);
+  for (const spaceId of spaceIds) {
+    if (!placed.has(spaceId)) await input.spaces.addChannel(spaceId, input.workstreamId);
+  }
 }
 
 /**

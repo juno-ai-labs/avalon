@@ -1,6 +1,6 @@
 ---
 title: Sharing with people outside your Organization
-description: Invite a client or contractor into one conversation by email, and take that access back when you are done.
+description: Invite a client or contractor into one conversation by email or into a whole Channel, and take that access back when you are done.
 nav_title: Sharing with guests
 ---
 
@@ -55,6 +55,43 @@ conversation itself, not loose copies of the files.
 > a guest. Anyone else gets access the first time they sign in with that
 > address.
 
+## Add a guest to a Channel
+
+Once someone is a guest, you can bring them into a whole Channel rather than
+one conversation at a time. That suits a client who should follow everything on
+their project.
+
+1. Open the Channel's menu and choose **Add people**.
+2. Pick the guest. They are listed with a **Guest** label.
+
+Only people who are already guests in your Organization are offered. To bring
+in someone new, share a conversation with them first, as above.
+
+Inside the Channel, a guest works much as a member does:
+
+- They see the Channel, its feed and its messages, even if the Channel is
+  private.
+- They open, read and post in every Thread in it that is public to the
+  Organization, the same ones a member could. Posting in a Thread makes them
+  one of its participants, as it does for a member.
+- They start new Threads from the Channel's **Start a thread in** box. A Thread
+  they start follows the usual rule: public in a Channel open to the whole
+  Organization, private in a private Channel.
+
+They still cannot open a private Thread unless they are one of its
+participants, or a Breakout they have not been added to. They cannot rename the
+Channel, change its people, or create Channels of their own.
+
+> [!WARNING]
+> Adding a guest to **General** lets them read every public Thread in General,
+> which is usually most of your Organization's Threads. Make a separate Channel
+> for the work you want them to see.
+
+To take a guest out, open **People** in the Channel's menu and choose **Remove
+from channel** beside their name. The Channel's public Threads close for them
+within moments, except Threads they are a participant of (including any they
+started or posted in) and Threads another of their Channels holds.
+
 ## What the guest sees
 
 The guest gets an email with a link to the conversation. Signing in with that
@@ -63,9 +100,11 @@ sign in as that address gets in, so a forwarded invitation is no use to anyone
 else.
 
 Guests use Rally in a web browser, in a lighter version of the app made for
-this. They see the conversations shared with them and the names of the
-Channels and Threads those conversations sit in, and nothing else in your
-Organization. They cannot create Channels or browse your Organization's directory.
+this. They see the conversations shared with them, the Channels they have been
+added to with the public Threads in those, and the names of the Channels and
+Threads their conversations sit in. They also see who is in your Organization,
+by name and picture, so a message shows who wrote it. They see nothing else in
+your Organization, and they cannot create Channels or add people.
 [Rally in a web browser](../08-rally-everywhere/08-rally-in-a-browser.md) shows
 what that looks like from their side.
 
