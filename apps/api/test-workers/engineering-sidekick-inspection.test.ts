@@ -221,5 +221,9 @@ describe("engineering inspection of a Sidekick", () => {
     await expect(bridge().setSidekickPaused({ orgId: WORKSPACE_ID, userId: BYSTANDER_ID, sidekickId: SIDEKICK_ID, paused: true }, OPERATOR))
       .rejects.toThrow("engineering_operation_failed:sidekick_forbidden");
     expect(await sidekickState()).toEqual({ lifecycle: "active", paused_by: null, schedule_alarms: 1 });
+    const result = await env.AUDIT_DB.prepare(
+      "SELECT metadata_json FROM audit_events WHERE workspace_id = ? AND action = 'engineering.pause_sidekick.result'",
+    ).bind(WORKSPACE_ID).first<{ metadata_json: string }>();
+    expect(JSON.parse(result!.metadata_json)).toMatchObject({ outcome: "failed_or_uncertain", errorCode: "sidekick_forbidden" });
   });
 });
