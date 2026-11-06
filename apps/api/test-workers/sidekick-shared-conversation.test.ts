@@ -31,6 +31,7 @@ import { conversationObjectName, workspaceDOName } from "../src/durable-objects/
 import type { AuthContext, Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { ConversationService } from "../src/services/conversation-service";
+import { deliverChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { useOpenRouterDouble, type ProviderReply } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
@@ -226,6 +227,57 @@ function callsThatSaw(marker: string) {
   return provider.calls.filter((call) => call.messages.some((message) => text(message.content).includes(marker)));
 }
 
+
+interface RunRowView {
+  turns: number;
+  text: string;
+  run: { state: string; stepCount: number; reply: string | null } | undefined;
+  runId: string | undefined;
+}
+
+/** A run's row in the shared conversation, read the way the room reads its turns. */
+async function runRow(runId: string): Promise<RunRowView> {
+  return runInDurableObject(conversationStub(), (instance, state) => {
+    const ids = state.storage.sql.exec<{ id: string }>(
+      `SELECT id FROM canonical_conversation_turn_details WHERE client_message_id = ?`, `sidekick-run:${runId}`,
+    ).toArray();
+    const transcript = (instance as unknown as { transcript: {
+      participantTurn(turnId: string): { blocks: { type: string; text?: string; structuredContent?: Record<string, unknown> }[] } | null;
+    } }).transcript;
+    const block = ids[0] ? transcript.participantTurn(ids[0].id)?.blocks[0] : undefined;
+    return {
+      turns: ids.length,
+      text: block?.text ?? "",
+      run: block?.structuredContent?.run as RunRowView["run"],
+      runId: block?.structuredContent?.runId as string | undefined,
+    };
+  });
+}
+
+/** Fire the Organization's alarm until the run's row says `state`; each change arms its own entry. */
+async function rowReaches(runId: string, wanted: string): Promise<RunRowView> {
+  let latest: RunRowView | undefined;
+  await expect.poll(async () => {
+    await runDurableObjectAlarm(workspaceStub());
+    latest = await runRow(runId);
+    return latest.run?.state;
+  }, { timeout: SETTLE_TIMEOUT_MS, interval: 100 }).toBe(wanted);
+  return latest!;
+}
+
+/** The run's first activation, once it has ended. */
+async function runSettled(runId: string): Promise<void> {
+  await expect.poll(() => runInDurableObject(conversationStub(runId), (_instance, state) => {
+    try {
+      return state.storage.sql.exec<{ terminal: number }>(
+        `SELECT COUNT(*) AS terminal FROM runs WHERE execution_context_json IS NOT NULL AND terminalized_at IS NOT NULL`,
+      ).one().terminal;
+    } catch {
+      return 0;
+    }
+  }), { timeout: SETTLE_TIMEOUT_MS, interval: 100 }).toBe(1);
+}
+
 beforeEach(async () => {
   script = [];
   ordinal += 1;
@@ -287,5 +339,42 @@ describe("a Sidekick's shared conversation", () => {
     expect(await landed(turnId)).toBe(true);
     expect(await sidekickRuns()).toEqual([]);
     expect(await wizardExecutions()).toEqual([]);
+  });
+  it("writes a run's row into the shared conversation and carries its reply when the run finishes", async () => {
+    await activeSidekick();
+    script = [{ say: "Version 4.2 shipped the new importer." }];
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "row-run-0001" });
+    expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
+    const running = await rowReaches(started.runId, "running");
+    expect(running).toMatchObject({ turns: 1, runId: started.runId, text: "Working on it.", run: { stepCount: 0, reply: null } });
+    await runSettled(started.runId);
+    // The run's finish reaches the Sidekick through its effects; the row follows the run row.
+    await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
+    const finished = await rowReaches(started.runId, "completed");
+    expect(finished).toEqual({
+      turns: 1,
+      runId: started.runId,
+      text: "Version 4.2 shipped the new importer.",
+      run: { state: "completed", stepCount: 0, reply: "Version 4.2 shipped the new importer." },
+    });
+    // The wizard was not woken by the row.
+    expect(await wizardExecutions()).toEqual([]);
+  });
+
+  it("rebuilds a run's row from the Sidekick's runs on a replay", async () => {
+    await activeSidekick();
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "row-run-0002" });
+    await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
+    await rowReaches(started.runId, "running");
+    await runSettled(started.runId);
+    await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
+    await rowReaches(started.runId, "completed");
+    // The conversation's copy drifts; the Sidekick's run row does not.
+    await runInDurableObject(conversationStub(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE sidekick_run_rows SET state = 'running', reply = NULL, source_version = 0 WHERE run_id = ?`, started.runId);
+    });
+    expect((await runRow(started.runId)).run?.state).toBe("running");
+    expect(await workspaceStub().sidekickReplayRunRows({ ...addressed(), actor: actor() })).toEqual({ armed: 1 });
+    expect(await rowReaches(started.runId, "completed")).toMatchObject({ turns: 1, run: { reply: "Done." } });
   });
 });

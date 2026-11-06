@@ -26,19 +26,19 @@ it, is [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 ## Where the code lives
 
-| Path | Responsibility |
-| --- | --- |
-| `apps/api/src/durable-objects/hosted-parent.ts` | `HostedParent`: one Channel's or Space's parent authority, scoped to a `parent_id` inside `WorkspaceDO`'s SQLite. The port of what `WorkstreamDO` and `ConversationParentDurableObject` did for one object. Also the batch readers for what a Channel row adds per viewer (`visiblePrivateChildren`, `runningBackgroundAgents`, `channelViewerStates`). |
-| `apps/api/src/durable-objects/channel-rails.ts` | A Channel's rail: the set reads a `channel_rails` answer is built from, the frame packer, and migration 82 (`CHANNEL_RAIL_MIGRATION`: the rail tables, `rail_waterline` and its triggers). |
-| `apps/api/src/durable-objects/sql-write-observer.ts` | `observeSqlWrites`: the state `WorkspaceDO` hands everything, whose SQL handle schedules the rail drain after every write. |
-| `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 72: the `parent_*` tables and the directory renames. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel rows on the workspace socket (with each viewer's breakouts and running background agents), the retired Channel control socket kept for older clients, the in-transaction apply of what a parent publishes, the outbox drain, and the workspace relationship table. |
-| `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts` | The grant and invitation repositories, now scoped by `parent_id`. |
-| `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: one Sidekick's parent and lifecycle, scoped to a `sidekick_id` inside `WorkspaceDO`'s SQLite. The port of what `SidekickDO` did for one object. Also `sidekickReaderAllows`, the read rule the library listing shares. |
-| `apps/api/src/durable-objects/hosted-sidekick-schema.ts` | `WorkspaceDO` migration 91: the definition columns on `automation_directory`, the `sidekick_*` tables and the `sidekick_imports` ledger, which migration 92 drops; and migration 132: the self-review columns and `sidekick_reviews`. |
-| `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: the Queue consumer step that opens a run's conversation and starts its loop, off the Organization's alarm. |
-| `apps/api/src/services/conversation-parent-client.ts` | `hostedParentStub` and `conversationParentStub`: `WorkspaceDO` for every parent. |
-| `apps/api/src/queues/activity-consumer.ts` | A `conversation_effect` for any parent goes to `WorkspaceDO.receiveChildEffects`; a `sidekick_run_provision` message to `provisionSidekickRun`; a `sidekick_review` message to `deliverSidekickReview`. |
+| Path                                                                                                                | Responsibility                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api/src/durable-objects/hosted-parent.ts`                                                                     | `HostedParent`: one Channel's or Space's parent authority, scoped to a `parent_id` inside `WorkspaceDO`'s SQLite. The port of what `WorkstreamDO` and `ConversationParentDurableObject` did for one object. Also the batch readers for what a Channel row adds per viewer (`visiblePrivateChildren`, `runningBackgroundAgents`, `channelViewerStates`).                                                  |
+| `apps/api/src/durable-objects/channel-rails.ts`                                                                     | A Channel's rail: the set reads a `channel_rails` answer is built from, the frame packer, and migration 82 (`CHANNEL_RAIL_MIGRATION`: the rail tables, `rail_waterline` and its triggers).                                                                                                                                                                                                               |
+| `apps/api/src/durable-objects/sql-write-observer.ts`                                                                | `observeSqlWrites`: the state `WorkspaceDO` hands everything, whose SQL handle schedules the rail drain after every write.                                                                                                                                                                                                                                                                               |
+| `apps/api/src/durable-objects/hosted-parent-schema.ts`                                                              | `WorkspaceDO` migration 72: the `parent_*` tables and the directory renames.                                                                                                                                                                                                                                                                                                                             |
+| `apps/api/src/durable-objects/workspace-do.ts`                                                                      | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel rows on the workspace socket (with each viewer's breakouts and running background agents), the retired Channel control socket kept for older clients, the in-transaction apply of what a parent publishes, the outbox drain, and the workspace relationship table. |
+| `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts` | The grant and invitation repositories, now scoped by `parent_id`.                                                                                                                                                                                                                                                                                                                                        |
+| `apps/api/src/durable-objects/hosted-sidekick.ts`                                                                   | `HostedSidekick`: one Sidekick's parent and lifecycle, scoped to a `sidekick_id` inside `WorkspaceDO`'s SQLite. The port of what `SidekickDO` did for one object. Also `sidekickReaderAllows`, the read rule the library listing shares.                                                                                                                                                                 |
+| `apps/api/src/durable-objects/hosted-sidekick-schema.ts`                                                            | `WorkspaceDO` migration 91: the definition columns on `automation_directory`, the `sidekick_*` tables and the `sidekick_imports` ledger, which migration 92 drops; and migration 132: the self-review columns and `sidekick_reviews`.                                                                                                                                                                    |
+| `apps/api/src/services/sidekick-run-provisioning.ts`                                                                | `provisionSidekickRun`: the Queue consumer step that opens a run's conversation and starts its loop, off the Organization's alarm.                                                                                                                                                                                                                                                                       |
+| `apps/api/src/services/conversation-parent-client.ts`                                                               | `hostedParentStub` and `conversationParentStub`: `WorkspaceDO` for every parent.                                                                                                                                                                                                                                                                                                                         |
+| `apps/api/src/queues/activity-consumer.ts`                                                                          | A `conversation_effect` for any parent goes to `WorkspaceDO.receiveChildEffects`; a `sidekick_run_provision` message to `provisionSidekickRun`; a `sidekick_review` message to `deliverSidekickReview`.                                                                                                                                                                                                  |
 
 ## How it works
 
@@ -56,46 +56,46 @@ mean.
 The directory tables `WorkspaceDO` already held were renamed to the product's
 names:
 
-| Before | After |
-| --- | --- |
-| `workspace_workstream_directory` | `channels` |
-| `workspace_workstream_viewers` | `channel_viewers` |
-| `workspace_breakout_directory` | `breakouts` |
-| `workspace_breakout_viewers` | `breakout_viewers` |
-| `workspace_space_directory` | `spaces` |
-| `workspace_space_viewers` | `space_viewers` |
+| Before                           | After              |
+| -------------------------------- | ------------------ |
+| `workspace_workstream_directory` | `channels`         |
+| `workspace_workstream_viewers`   | `channel_viewers`  |
+| `workspace_breakout_directory`   | `breakouts`        |
+| `workspace_breakout_viewers`     | `breakout_viewers` |
+| `workspace_space_directory`      | `spaces`           |
+| `workspace_space_viewers`        | `space_viewers`    |
 
 The parent state moved in under a `parent_` prefix, one row set per parent:
 
-| Legacy table (one object) | Hosted table (keyed by `parent_id`) |
-| --- | --- |
-| `workstream_metadata` (`id = 1`) | `parent_metadata` |
-| `conversation_children` | `parent_children` |
-| `substream_directory`, `substream_user_directory` | `parent_child_projections`, `parent_child_viewer_projections` |
-| `child_effect_receipts` | `parent_child_receipts` |
-| `projection_keys` | `parent_projection_keys` |
-| `workstream_state_clock` (`id = 1`), `workstream_state_changes` | `parent_state_clock`, `parent_state_changes` |
-| `durable_outbox` | `parent_outbox` |
-| `private_child_preparations`, `private_child_memberships`, `private_child_membership_effects` | `parent_breakout_preparations`, `parent_breakout_members`, `parent_breakout_member_effects` |
-| `scope_grant_revision`, `scope_grants`, `scope_grant_operations`, `scope_grant_imports` | `parent_grant_revision`, `parent_grants`, `parent_grant_operations`, `parent_grant_imports` |
-| `participant_projection_targets`, `participant_projection_deliveries` | `parent_participant_targets`, `parent_participant_deliveries` |
-| `main_participant_migration`, `child_participant_migrations` | `parent_participant_migrations` (substream `0` is Main) |
-| `scope_invitations`, `scope_invitation_operations` | `parent_invitations`, `parent_invitation_operations` |
-| `connector_participant_admissions` | `parent_connector_admissions` |
-| `workstream_sidekick_attachments` | `parent_sidekicks` |
+| Legacy table (one object)                                                                                                            | Hosted table (keyed by `parent_id`)                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `workstream_metadata` (`id = 1`)                                                                                                     | `parent_metadata`                                                                                                                          |
+| `conversation_children`                                                                                                              | `parent_children`                                                                                                                          |
+| `substream_directory`, `substream_user_directory`                                                                                    | `parent_child_projections`, `parent_child_viewer_projections`                                                                              |
+| `child_effect_receipts`                                                                                                              | `parent_child_receipts`                                                                                                                    |
+| `projection_keys`                                                                                                                    | `parent_projection_keys`                                                                                                                   |
+| `workstream_state_clock` (`id = 1`), `workstream_state_changes`                                                                      | `parent_state_clock`, `parent_state_changes`                                                                                               |
+| `durable_outbox`                                                                                                                     | `parent_outbox`                                                                                                                            |
+| `private_child_preparations`, `private_child_memberships`, `private_child_membership_effects`                                        | `parent_breakout_preparations`, `parent_breakout_members`, `parent_breakout_member_effects`                                                |
+| `scope_grant_revision`, `scope_grants`, `scope_grant_operations`, `scope_grant_imports`                                              | `parent_grant_revision`, `parent_grants`, `parent_grant_operations`, `parent_grant_imports`                                                |
+| `participant_projection_targets`, `participant_projection_deliveries`                                                                | `parent_participant_targets`, `parent_participant_deliveries`                                                                              |
+| `main_participant_migration`, `child_participant_migrations`                                                                         | `parent_participant_migrations` (substream `0` is Main)                                                                                    |
+| `scope_invitations`, `scope_invitation_operations`                                                                                   | `parent_invitations`, `parent_invitation_operations`                                                                                       |
+| `connector_participant_admissions`                                                                                                   | `parent_connector_admissions`                                                                                                              |
+| `workstream_sidekick_attachments`                                                                                                    | `parent_sidekicks`                                                                                                                         |
 | `workstream_direct_audience`, `workstream_space_access_sources`, `workstream_space_supplied_readers`, `workstream_access_operations` | `parent_direct_audience`, `parent_space_sources`, `parent_space_readers`, `parent_access_operations` (dropped by WorkspaceDO migration 94) |
-| `workstream_socket_ticket_receipts` | `workspace_socket_ticket_receipts` (already existed) |
-| `scope_grant_deliveries` | dropped; nothing had written it since WorkstreamDO migration 17 |
+| `workstream_socket_ticket_receipts`                                                                                                  | `workspace_socket_ticket_receipts` (already existed)                                                                                       |
+| `scope_grant_deliveries`                                                                                                             | dropped; nothing had written it since WorkstreamDO migration 17                                                                            |
 
 ### What stopped crossing an object boundary
 
-| Flow | Before | Now |
-| --- | --- | --- |
-| A viewer check on a conversation request | two calls to the parent object, after probing which namespace owns the id, each reading D1 for the relationship | one call to `WorkspaceDO`, which resolves the kind and answers the viewer together from its own relationship table |
-| A conversation's title, preview or unread reaching the sidebar | conversation → Queue → parent → Queue → `WorkspaceDO` | conversation → Queue → `WorkspaceDO`, which applies the parent step and the directory step in one transaction |
-| A grant reaching the grant directory | grant in the parent, Queue message, directory in `WorkspaceDO` | one transaction in `WorkspaceDO` |
-| Creating a Channel | reserve in the parent, a synchronous call back to `WorkspaceDO` for the provisional directory row | one `WorkspaceDO` call |
-| Breakout creation | about ten calls to the parent | the same calls, now answered by the warm Organization object |
+| Flow                                                           | Before                                                                                                          | Now                                                                                                                |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| A viewer check on a conversation request                       | two calls to the parent object, after probing which namespace owns the id, each reading D1 for the relationship | one call to `WorkspaceDO`, which resolves the kind and answers the viewer together from its own relationship table |
+| A conversation's title, preview or unread reaching the sidebar | conversation → Queue → parent → Queue → `WorkspaceDO`                                                           | conversation → Queue → `WorkspaceDO`, which applies the parent step and the directory step in one transaction      |
+| A grant reaching the grant directory                           | grant in the parent, Queue message, directory in `WorkspaceDO`                                                  | one transaction in `WorkspaceDO`                                                                                   |
+| Creating a Channel                                             | reserve in the parent, a synchronous call back to `WorkspaceDO` for the provisional directory row               | one `WorkspaceDO` call                                                                                             |
+| Breakout creation                                              | about ten calls to the parent                                                                                   | the same calls, now answered by the warm Organization object                                                       |
 
 What still crosses: anything that touches a conversation (`initialize`, the
 participant projection pushed into a conversation, breakout lifecycle and
@@ -369,13 +369,13 @@ schedules, runs, inbound email) shares nothing with a Channel's, and Channel
 code scans the `parent_*` tables across every parent, where a Sidekick's runs
 would read as Breakouts.
 
-| Legacy `SidekickDO` table | Hosted |
-| --- | --- |
-| `automation` (`id = 1`) | `automation_directory`, which gains the definition columns: the sidebar row and the definition row are one row, so there is no copy to publish |
-| `definition_revisions`, `schedules`, `runs`, `inbound_email_receipts` | `sidekick_revisions`, `sidekick_schedules`, `sidekick_runs`, `sidekick_email_receipts` |
-| `conversation_children`, `substream_directory`, `child_effect_receipts` | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts` |
-| `_internal_durable_alarms` | the Organization's own, keyed `<sidekickId>:<key>`; `sidekick_publication` became `sidekick_memory_tables` |
-| `durable_outbox` | none: the directory row is written in place |
+| Legacy `SidekickDO` table                                               | Hosted                                                                                                                                         |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `automation` (`id = 1`)                                                 | `automation_directory`, which gains the definition columns: the sidebar row and the definition row are one row, so there is no copy to publish |
+| `definition_revisions`, `schedules`, `runs`, `inbound_email_receipts`   | `sidekick_revisions`, `sidekick_schedules`, `sidekick_runs`, `sidekick_email_receipts`                                                         |
+| `conversation_children`, `substream_directory`, `child_effect_receipts` | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts`                                                                   |
+| `_internal_durable_alarms`                                              | the Organization's own, keyed `<sidekickId>:<key>`; `sidekick_publication` became `sidekick_memory_tables`                                     |
+| `durable_outbox`                                                        | none: the directory row is written in place                                                                                                    |
 
 Declared execution tables share the activation transaction; [Sidekick publication](automation-lifecycle.md) owns its atomicity and legacy recovery contract.
 
@@ -414,6 +414,19 @@ the conversation, starts its loop and reports `sidekickRunProvisioned`. The
 entry is moved later after each send, since the drain deletes an entry at the
 instant that ran whatever its handler returned; the wait grows with the run's
 age, and the report settles it.
+
+A Sidekick is also the one parent that writes into one of its own
+conversations. Each run's row in the Sidekick's shared conversation (`"0"`) is
+a projection of its `sidekick_runs` row: triggers on that table arm a
+`sidekick_run_row` entry on every change (WorkspaceDO migration 135), and the
+entry reads the run when it runs and hands the whole row to `"0"`'s
+`projectSidekickRunRow`, which drops a projection older than the one it holds.
+The call is made from the alarm rather than through the Queue, unlike a run's
+provisioning, because it is one small idempotent write to a conversation that
+already exists, not a cold conversation's bootstrap; a throw is retried on the
+scheduler's backoff. [Runs in the shared
+conversation](automation-lifecycle.md#runs-in-the-shared-conversation) owns
+what the row says.
 
 A Channel-scoped Sidekick keeps the two access rules it had: who may manage the
 owning Channel (its grants and an archive included) manages it and reads its
@@ -498,22 +511,22 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 
 ## Failure modes and limits
 
-| Condition | Behavior |
-| --- | --- |
-| A local apply fails inside a parent write (a viewer row before its Channel row, a constraint, a schema rejection) | The parent transaction rolls back. A child's delivery throws and the Queue redelivers it; a request fails with the error. Nothing is left in the outbox. |
-| A write meets somebody the member table has never heard of | The transaction rolls back with `workspace_member_unknown`; the ids are learned with one D1 read each and the write runs once more. A second miss fails the write with that code. |
-| One Sidekick's archive fails in the canonical cascade | The Breakout registry change or Thread projection acceptance rolls back with its Sidekicks, preserving retryable work. Legacy post-commit reconciliation retains per-Sidekick rollback and logs `sidekick_owning_room_archival_failed`. |
-| A `parent_outbox` send fails | The row stays `pending`, with its code in `last_error_code`, and is due again on the alarm's retry schedule. `parent_effect_delivery_deferred` names the rows. |
-| A `parent_outbox` or `workspace_directory_followups` row does not parse (a follow-up row in the shape written before #989 is one), or an outbox row's destination refuses its shape | It is kept as `failed` with a `zodDiagnosticCode` naming the field, logged (`parent_outbox_row_unreadable`, `directory_followup_unreadable`), and never retried. An operator reads it with `run_workspace_sql` and deletes or repairs it. |
-| A directory row is found in `parent_outbox` | It is kept as `failed` with `parent_outbox_directory_row` and not applied. Directory rows apply in the parent's own transaction, so nothing writes one there. |
-| One alarm phase throws | `workspace_alarm_phase_failed` names the phase; the other phases still run, and the alarm then fails and retries. |
-| An Organization held below schema 58 by the meeting-notes cleanup | Migration 72 has not run, so there are no `channels` or `parent_*` tables and every Channel request fails with `no such table`. The object itself still starts and its alarm skips the hosted-parent phases, so the operator retirement RPCs can finish it. Every production object was at schema 70 before this change, so none should be held; the error is loud if one is. |
-| A rail larger than a socket frame | It is named in its frame's `oversized` list with its waterline, logged `channel_rail_oversized` with its size, and the client paints that Channel from its snapshot. |
-| A stored row fails the rail's schema | That rail is sent as `oversized` and logged `channel_rail_invalid` naming the field; the answer still ends with its `final` frame. A Sidekick whose stored appearance no longer parses is listed without one and logged `automation_directory_appearance_invalid`. |
-| A drained rail change's row push fails | Logged `channel_rows_publish_failed`; nothing retries it, because rows are best effort and a reconnect reads the current waterline. The change is not lost, only the prompt to ask for it. |
-| The drain itself throws | Logged `channel_rail_drain_failed`. The ledger keeps its rows and the next write's drain takes them; nothing arms the alarm for them. |
-| A run's provisioning message is lost | The run's entry sends it again; the wait grows with the run's age until `sidekickRunProvisioned` settles it. |
-| The Organization object is unavailable | Channels and Spaces cannot be opened, listed or changed. That was already true of the sidebar; it is now true of a Channel's viewer check too. |
+| Condition                                                                                                                                                                           | Behavior                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A local apply fails inside a parent write (a viewer row before its Channel row, a constraint, a schema rejection)                                                                   | The parent transaction rolls back. A child's delivery throws and the Queue redelivers it; a request fails with the error. Nothing is left in the outbox.                                                                                                                                                                                                                      |
+| A write meets somebody the member table has never heard of                                                                                                                          | The transaction rolls back with `workspace_member_unknown`; the ids are learned with one D1 read each and the write runs once more. A second miss fails the write with that code.                                                                                                                                                                                             |
+| One Sidekick's archive fails in the canonical cascade                                                                                                                               | The Breakout registry change or Thread projection acceptance rolls back with its Sidekicks, preserving retryable work. Legacy post-commit reconciliation retains per-Sidekick rollback and logs `sidekick_owning_room_archival_failed`.                                                                                                                                       |
+| A `parent_outbox` send fails                                                                                                                                                        | The row stays `pending`, with its code in `last_error_code`, and is due again on the alarm's retry schedule. `parent_effect_delivery_deferred` names the rows.                                                                                                                                                                                                                |
+| A `parent_outbox` or `workspace_directory_followups` row does not parse (a follow-up row in the shape written before #989 is one), or an outbox row's destination refuses its shape | It is kept as `failed` with a `zodDiagnosticCode` naming the field, logged (`parent_outbox_row_unreadable`, `directory_followup_unreadable`), and never retried. An operator reads it with `run_workspace_sql` and deletes or repairs it.                                                                                                                                     |
+| A directory row is found in `parent_outbox`                                                                                                                                         | It is kept as `failed` with `parent_outbox_directory_row` and not applied. Directory rows apply in the parent's own transaction, so nothing writes one there.                                                                                                                                                                                                                 |
+| One alarm phase throws                                                                                                                                                              | `workspace_alarm_phase_failed` names the phase; the other phases still run, and the alarm then fails and retries.                                                                                                                                                                                                                                                             |
+| An Organization held below schema 58 by the meeting-notes cleanup                                                                                                                   | Migration 72 has not run, so there are no `channels` or `parent_*` tables and every Channel request fails with `no such table`. The object itself still starts and its alarm skips the hosted-parent phases, so the operator retirement RPCs can finish it. Every production object was at schema 70 before this change, so none should be held; the error is loud if one is. |
+| A rail larger than a socket frame                                                                                                                                                   | It is named in its frame's `oversized` list with its waterline, logged `channel_rail_oversized` with its size, and the client paints that Channel from its snapshot.                                                                                                                                                                                                          |
+| A stored row fails the rail's schema                                                                                                                                                | That rail is sent as `oversized` and logged `channel_rail_invalid` naming the field; the answer still ends with its `final` frame. A Sidekick whose stored appearance no longer parses is listed without one and logged `automation_directory_appearance_invalid`.                                                                                                            |
+| A drained rail change's row push fails                                                                                                                                              | Logged `channel_rows_publish_failed`; nothing retries it, because rows are best effort and a reconnect reads the current waterline. The change is not lost, only the prompt to ask for it.                                                                                                                                                                                    |
+| The drain itself throws                                                                                                                                                             | Logged `channel_rail_drain_failed`. The ledger keeps its rows and the next write's drain takes them; nothing arms the alarm for them.                                                                                                                                                                                                                                         |
+| A run's provisioning message is lost                                                                                                                                                | The run's entry sends it again; the wait grows with the run's age until `sidekickRunProvisioned` settles it.                                                                                                                                                                                                                                                                  |
+| The Organization object is unavailable                                                                                                                                              | Channels and Spaces cannot be opened, listed or changed. That was already true of the sidebar; it is now true of a Channel's viewer check too.                                                                                                                                                                                                                                |
 
 ## Testing
 
@@ -629,6 +642,26 @@ Space in an Organization now shares one SQLite database and one socket set.
 
 ## Changelog
 
+### 2026-11-06 — A Sidekick projects each run into its own shared conversation
+
+**What changed:** `HostedSidekick` writes a row per run into its shared
+conversation (`"0"`) and keeps it current: triggers on `sidekick_runs` arm a
+`sidekick_run_row` entry on every change, and the entry's handler calls
+`projectSidekickRunRow` on `"0"` with the run as it stands.
+
+**Why:** The Canvases and Sidekicks decision log has runs appear as rows in
+the Sidekick's shared conversation, carrying their reply. A run was a sibling
+of `"0"` and wrote nothing there. The parent already holds the authoritative
+run row and already hears every run change, so it is the one place a
+projection can be kept from drifting; arming in the table's own triggers
+means a run writer added later cannot forget it.
+
+**Consequences:** The only parent-to-own-conversation write in this module is
+an alarm-driven RPC, not an outbox row: the write is idempotent and versioned
+by the run's `updated_at`, so the alarm's retry is all the delivery guarantee
+it needs. A change that moves this onto the Queue must keep the handler
+reading the run at delivery time, never carrying a copy.
+
 ### 2026-10-23 — Read historical directory projections without retaining obsolete fields
 
 **What changed:** Common and viewer directory schemas strip unknown properties
@@ -650,8 +683,7 @@ still fails with a field-specific code rather than being silently discarded.
 ### 2026-10-22 — Preserve irreversible archive cascades across restore snapshots
 
 **What changed:** Main's common projection carries the root's monotonic
-`archiveGeneration`, retained on restore and backfilled by conversation schema
-81. Accepting a higher generation archives owned Sidekicks in the same
+`archiveGeneration`, retained on restore and backfilled by conversation schema 81. Accepting a higher generation archives owned Sidekicks in the same
 transaction as the projection and receipt. Breakout archival applies the
 cascade alongside the canonical child registry write; compatibility fan-out
 reads that registry rather than a delayed Breakout directory projection.

@@ -170,3 +170,39 @@ export const SIDEKICK_REVIEW_SCHEMA_STATEMENTS: readonly string[] = [
     PRIMARY KEY (sidekick_id, review_id)
   ) STRICT`,
 ];
+
+/** The alarm kind that writes one run's row into its Sidekick's shared conversation. */
+export const SIDEKICK_RUN_ROW_ALARM_KIND = "sidekick_run_row";
+
+/**
+ * A run's row in its Sidekick's shared conversation (substream `"0"`) is a
+ * projection of its `sidekick_runs` row, which stays authoritative. Every
+ * insert, and every change to what the row shows (state, summary, steps),
+ * arms one entry keyed `<sidekickId>:<runId>` in the same statement, so no
+ * writer can change a run without its row following; the entry's handler
+ * reads the run as it is then and writes it into the conversation, which
+ * applies it only when it is not older than what it holds. Each arm takes a
+ * fresh instant, because the drain deletes the entry it ran by its instant
+ * and a change during that run must survive it.
+ * `docs/automation-lifecycle.md` owns the mechanism.
+ */
+export const SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS: readonly string[] = [
+  `ALTER TABLE sidekick_runs ADD COLUMN step_count INTEGER NOT NULL DEFAULT 0 CHECK (step_count >= 0)`,
+  `CREATE TRIGGER sidekick_runs_row_on_insert AFTER INSERT ON sidekick_runs
+   BEGIN
+     INSERT OR REPLACE INTO _internal_durable_alarms (kind, alarm_key, due_at, created_at, updated_at)
+     VALUES ('${SIDEKICK_RUN_ROW_ALARM_KIND}', NEW.sidekick_id || ':' || NEW.run_id,
+       MAX(NEW.updated_at, COALESCE((SELECT due_at + 1 FROM _internal_durable_alarms
+         WHERE kind = '${SIDEKICK_RUN_ROW_ALARM_KIND}' AND alarm_key = NEW.sidekick_id || ':' || NEW.run_id), 0)),
+       NEW.updated_at, NEW.updated_at);
+   END`,
+  `CREATE TRIGGER sidekick_runs_row_on_change AFTER UPDATE OF state, summary, step_count ON sidekick_runs
+   WHEN OLD.state IS NOT NEW.state OR OLD.summary IS NOT NEW.summary OR OLD.step_count IS NOT NEW.step_count
+   BEGIN
+     INSERT OR REPLACE INTO _internal_durable_alarms (kind, alarm_key, due_at, created_at, updated_at)
+     VALUES ('${SIDEKICK_RUN_ROW_ALARM_KIND}', NEW.sidekick_id || ':' || NEW.run_id,
+       MAX(NEW.updated_at, COALESCE((SELECT due_at + 1 FROM _internal_durable_alarms
+         WHERE kind = '${SIDEKICK_RUN_ROW_ALARM_KIND}' AND alarm_key = NEW.sidekick_id || ':' || NEW.run_id), 0)),
+       NEW.updated_at, NEW.updated_at);
+   END`,
+];

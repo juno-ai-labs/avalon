@@ -3603,6 +3603,26 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `UPDATE workstream SET archive_generation = 1 WHERE archived_at IS NOT NULL`,
     ],
   },
+
+  {
+    version: 82,
+    description: "hold each Sidekick run's row in the Sidekick's shared conversation as a projection of its run",
+    // The transcript turn is written once; this row is what it shows now,
+    // joined in when the turn is read. Its source is the Sidekick's
+    // `sidekick_runs` row, so `source_version` is that row's `updated_at`.
+    // Empty in every conversation but a Sidekick's "0".
+    statements: [
+      `CREATE TABLE sidekick_run_rows (
+        run_id TEXT PRIMARY KEY,
+        turn_id TEXT NOT NULL UNIQUE,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'running', 'needs_input', 'completed', 'failed', 'stopped')),
+        step_count INTEGER NOT NULL CHECK (step_count >= 0),
+        reply TEXT,
+        source_version INTEGER NOT NULL CHECK (source_version >= 0),
+        updated_at INTEGER NOT NULL
+      ) STRICT`,
+    ],
+  },
 ];
 
 /**
