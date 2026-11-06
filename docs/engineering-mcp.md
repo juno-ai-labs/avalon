@@ -76,6 +76,7 @@ The regional bridge uses D1 only for identity and routing:
 | `create_channel` | Resolve the Organization in exactly one region | SpaceService creation and audience update in WorkspaceDO |
 | `create_thread` | Resolve the Organization in exactly one region | WorkstreamObjectCreationService, placement, opening turn and normal agent run |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
+| `pause_sidekick`, `resume_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause or resume, which call HostedSidekick in WorkspaceDO |
 | `read_channel` | Resolve the Organization in exactly one region | SpaceService summary and authorized Channel feed |
 | `list_channels` | Resolve the Organization in exactly one region | SpaceService.list and the workspace socket's active Channel directory |
 | `list_threads`, `list_breakouts` | Resolve the Organization in exactly one region | SpaceService.listChannels with kind and all-visible filters in the ordinary paginated reader |
@@ -247,6 +248,21 @@ supplies `afterSequence` and `throughSequence` to continue under the same append
 fence. A later call without the fence includes
 newer turns. Read and send both enforce the selected user's exact Breakout
 membership independently of their parent Thread access.
+
+### Pausing a Sidekick
+
+`pause_sidekick` and `resume_sidekick` take `orgId`, `userId` and
+`sidekickId`. They share one bridge method, `setSidekickPaused`, which builds
+the selected user's engineering auth and calls the same AutomationService
+`pause` and `resume` as the app's `POST /automations/:id/pause` and `/resume`.
+HostedSidekick then decides as it does for the app: the user must manage the
+Sidekick (its author, its run-as user, a manager of its owning Thread, or an
+owner or admin for an Organization-wide one), a pause stops open runs, cancels
+schedule and run alarms and clears trigger registrations, and a resume
+restarts schedules from now. Both are idempotent, so they take no
+`operationId`; the bridge mints one per call only to pair the attempt and
+result audit rows, which also carry `sidekickId` and the resulting lifecycle.
+A draft or deleted Sidekick is refused with the object's own code.
 
 ### User-visible lists
 
@@ -509,6 +525,11 @@ and executes against its initialized WorkspaceDO from regional identity alone.
 Sidekick created through the real path and reaches its run conversation only
 through the Sidekick's own registry.
 
+The same file pauses and resumes a published hourly Sidekick through the
+bridge as its author, reading its lifecycle and schedule alarm from the real
+WorkspaceDO and its audit rows from `AUDIT_DB`, and proves a member who cannot
+manage it is refused with `sidekick_forbidden` and leaves it running.
+
 `apps/api/test-workers/engineering-artifact-inspection.test.ts` does the same
 for an artifact published through `registerArtifact` and `recordPublish`, and
 additionally proves the facet boundary: after a real request through the facet
@@ -609,6 +630,31 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-11-06 — Pause and resume a Sidekick
+
+**What changed:** `pause_sidekick` and `resume_sidekick` call the app's own
+AutomationService pause and resume as a selected user, through a new bridge
+method, `setSidekickPaused`. The bridge's error mapping now uses `asApiError`,
+so an ApiError thrown inside a Durable Object keeps its code across the RPC hop.
+
+**Why:** An engineer had to pause Sidekicks that were spending heavily, for
+people who were not at hand, and the console offered only SQL. A pause is more
+than `lifecycle = 'paused'`: it stops runs, cancels alarms, bumps the stop
+generation and clears registrations in other objects, so a hand-written update
+would show a paused Sidekick whose work kept going. Adding the tool also
+showed that `productOperation` tested `instanceof ApiError`, which is false
+for any error raised in an object, so a Sidekick's `sidekick_forbidden`
+reached the operator as bare message text and the log as `tool_failed`; the
+other write tools had the same gap for their objects' refusals.
+
+**Considered and rejected:** Copying `pauseByPerson` into SQL, for the reason
+above; a tool that acts as the operator rather than a selected user, which
+would need an operator-only manager exception in HostedSidekick.
+
+**Consequences:** The selected user must pass the app's manager check, so pick
+the Sidekick's author when unsure. Resume exists so a pause made here can be
+undone here. Errors from any product write now carry the object's code.
 
 ### 2026-11-04 — Post a message that starts no run
 
