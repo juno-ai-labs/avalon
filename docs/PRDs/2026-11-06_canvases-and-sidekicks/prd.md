@@ -81,9 +81,11 @@ See [design.html](design.html) for every screen in light and dark.
 - **Sidekicks home.** Today's library, moved into the main window, as rows with
   status, who it is shared with, and when it next wakes.
 - **Sidekick open.** One shared conversation, with runs as collapsed rows and
-  Canvases as cards. The details column keeps today's Sidekick page (status,
-  Pause, delegation, schedule) and adds triggers, tools and the Canvases it
-  writes to.
+  Canvases as cards. People talk to each other there; a message addressed to
+  the Sidekick starts a run, whose row carries the reply. Managers edit the
+  Sidekick in the same conversation through the wizard, as today. The details
+  column keeps today's Sidekick page (status, Pause, delegation, schedule) and
+  adds triggers, tools and the Canvases it writes to.
 
 ### States
 
@@ -258,6 +260,48 @@ pivot.
 **Changes:** The Product behavior for "Canvas open" and section 2 of
 [design.html](design.html) are superseded on layout. The header pill, people
 present, Share and the menu stay as drawn.
+
+### 2026-11-06 — The shared Sidekick conversation keeps the wizard and run separation
+
+**Decided:** In a Sidekick's shared conversation, a message addressed to the
+Sidekick starts a run under its definition, the same path a manual trigger
+takes, and the run's row carries its reply. Managers keep editing the Sidekick
+through the wizard in that conversation. The conversation itself never runs the
+Sidekick's definition directly.
+
+**Why:** The product owner's call. Today's split between the authoring
+conversation and runs is what makes a run auditable and delegatable; collapsing
+them would make the conversation's loop act with delegate access on any
+message.
+
+**Changes:** The Product behavior for "Sidekick open" and the prose of section
+4 of [design.html](design.html) now say so. The frames are unchanged.
+
+### 2026-11-06 — Canvas conversations stay in the conversation object, which is renamed
+
+**Decided:** A Canvas's conversation is an ordinary conversation object, the
+class today called `SubstreamAgent`, hosted in WorkspaceDO by one hosting
+primitive shared with Sidekicks. The class is renamed to say what it is; no new
+Durable Object is added.
+
+**Why:** The product owner's call. The object already hosts every kind of
+conversation; the name describes a Breakout that no longer exists.
+
+**Changes:** Nothing in the agreed scope. The rename is a `renamed_classes`
+migration, as the earlier `WorkstreamRoom` to `SubstreamAgent` rename was.
+
+### 2026-11-06 — Transcripts are dumped to R2 before Threads are retired
+
+**Decided:** Before any Thread or Breakout is retired, its transcript is written
+to R2 as text by a one-off operator operation. The dump is for operators, not a
+product surface.
+
+**Why:** Retirement is irreversible and the product owner chose deletion; the
+dump costs one pass the retirement walk already makes.
+
+**Changes:** Adds one step before deletion. Slack mentions and the browser
+session import stay deleted; a Canvas conversation could have hosted them, and
+the product owner chose not to.
 
 ### 2026-11-06 — iOS, Sideline, browser import and Thread-scoped Sidekicks
 
