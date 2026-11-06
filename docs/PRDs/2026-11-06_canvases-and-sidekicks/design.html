@@ -736,6 +736,59 @@
         color: var(--t2);
         line-height: 22px;
       }
+      .board-area.artifact {
+        flex: none;
+        width: 540px;
+        border-left: 1px solid var(--line);
+      }
+      .artifact .ahead {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 54px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--canvas);
+        font-size: 13.5px;
+      }
+      .artifact .ahead b {
+        display: block;
+        font-weight: 600;
+      }
+      .artifact .ahead small {
+        display: block;
+        color: var(--t3);
+        font-size: 12px;
+      }
+      .artifact .ahead .btn {
+        margin-left: auto;
+      }
+      .artifact .doc {
+        top: 74px;
+        left: 20px;
+        right: 20px;
+        padding: 26px 28px;
+      }
+      .artifact .doc h2 {
+        font-size: 20px;
+      }
+      .artifact .doc .kick {
+        margin-bottom: 16px;
+      }
+      .artifact .kpi b {
+        font-size: 18px;
+      }
+      .convo.narrow .tx {
+        padding: 8px 28px;
+      }
+      .convo.narrow .composer.wide {
+        margin-left: 28px;
+        margin-right: 28px;
+      }
       .kpis {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -760,26 +813,6 @@
         font-size: 12px;
         color: var(--success);
       }
-      .sel {
-        background: color-mix(in srgb, var(--p-maya) 18%, transparent);
-        box-shadow: inset 2px 0 0 var(--p-maya);
-        border-radius: 2px;
-      }
-      .cursor {
-        position: absolute;
-        display: flex;
-        align-items: flex-start;
-        gap: 2px;
-        pointer-events: none;
-      }
-      .cursor .tagn {
-        margin-top: 14px;
-        color: #fff;
-        font-size: 11.5px;
-        font-weight: 600;
-        padding: 2px 7px;
-        border-radius: 6px 6px 6px 2px;
-      }
       .pin {
         position: absolute;
         width: 26px;
@@ -791,69 +824,8 @@
         font: 700 10px system-ui;
         box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
       }
-      .edit-chip {
-        position: absolute;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        background: var(--raised);
-        border-radius: 999px;
-        padding: 4px 10px 4px 4px;
-        font-size: 12px;
-        box-shadow:
-          0 0 0 1px var(--hair),
-          0 4px 14px rgba(0, 0, 0, 0.08);
-      }
-      .shimmer {
-        background: linear-gradient(
-          90deg,
-          var(--brand-wash),
-          color-mix(in srgb, var(--brand) 40%, transparent),
-          var(--brand-wash)
-        );
-        border-radius: 4px;
-      }
 
       /* Right panel */
-      .panel {
-        width: 380px;
-        flex: none;
-        border-left: 1px solid var(--line);
-        border-top: 1px solid var(--line);
-        display: flex;
-        flex-direction: column;
-        background: var(--canvas);
-      }
-      .seg {
-        display: flex;
-        margin: 14px 16px 6px;
-        background: var(--n4);
-        border-radius: 999px;
-        padding: 3px;
-      }
-      .seg span {
-        flex: 1;
-        text-align: center;
-        padding: 5px 0;
-        border-radius: 999px;
-        font-size: 13px;
-        color: var(--t3);
-      }
-      .seg span.on {
-        background: var(--raised);
-        color: var(--t);
-        font-weight: 600;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-      }
-      .feed {
-        flex: 1;
-        padding: 10px 18px;
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-        overflow: hidden;
-        justify-content: flex-end;
-      }
       .msg .byl {
         font-size: 12px;
         color: var(--t3);
@@ -1770,13 +1742,13 @@
     <section class="board">
       <h2>2. A Canvas, open</h2>
       <p>
-        The Canvas fills the main pane. The header pill names it; on the right
-        are the people in it now, Share, and a menu. Other people’s cursors and
-        selections show live. Rally edits like a person: its pending change
-        shimmers where it lands. The right panel has two tabs. <b>Chat</b> is
-        the Canvas’s own conversation with Rally, open to everyone in the
-        Canvas. <b>Comments</b>
-        holds the pinned notes (today’s artifact annotations).
+        A Canvas opens like a conversation. The transcript fills the main pane
+        and the artifact sits in the right panel once Rally has made one. The
+        header pill names the Canvas; on the right are the people in it now,
+        Share, and a menu. Rally changes the artifact by publishing a new
+        version from the conversation, and the version chip in its message says
+        so. Comments are the pins people drop on the artifact, which arrive in
+        the conversation as quoted messages, as today.
       </p>
       <div class="frame">
         <div class="win">
@@ -1918,73 +1890,9 @@
               </div>
             </div>
             <div class="stage">
-              <div class="board-area">
-                <div class="doc">
-                  <h2>Q4 revenue review</h2>
-                  <div class="kick">
-                    Draft for Monday’s board prep · updated live
-                  </div>
-                  <div class="kpis">
-                    <div class="kpi">
-                      <small>Net revenue</small><b>$4.82M</b><em>+18% QoQ</em>
-                    </div>
-                    <div class="kpi">
-                      <small>Gross margin</small><b>71.4%</b><em>+2.1 pts</em>
-                    </div>
-                    <div class="kpi">
-                      <small>Net retention</small><b>118%</b><em>+4 pts</em>
-                    </div>
-                  </div>
-                  <h4>What moved</h4>
-                  <p>
-                    <span class="sel"
-                      >Enterprise expansion drove most of the quarter, led by
-                      three accounts that moved to annual plans in
-                      October.</span
-                    >
-                    Self-serve held flat after the September price change.
-                  </p>
-                  <p>
-                    <span class="shimmer"
-                      >Churn fell to 1.9%, the lowest since launch, with two of
-                      three lost accounts citing budget rather than
-                      product.</span
-                    >
-                  </p>
-                  <h4>Open questions</h4>
-                  <p>
-                    Do we restate the September cohort, or footnote the price
-                    change?
-                  </p>
-                </div>
-                <div class="cursor" style="left: 470px; top: 300px">
-                  <svg
-                    width="20"
-                    height="20"
-                    style="color: var(--p-maya); fill: var(--p-maya)"
-                  >
-                    <use href="#i-cursor" /></svg
-                  ><span class="tagn a-maya">Maya</span>
-                </div>
-                <div class="cursor" style="left: 160px; top: 560px">
-                  <svg width="20" height="20" style="fill: var(--p-theo)">
-                    <use href="#i-cursor" /></svg
-                  ><span class="tagn a-theo">Theo</span>
-                </div>
-                <div class="edit-chip" style="left: 304px; top: 364px">
-                  <span
-                    class="av a-rally"
-                    style="width: 20px; height: 20px; font-size: 9px"
-                    >R</span
-                  >Rally is writing…
-                </div>
-                <div class="pin a-theo" style="left: 582px; top: 330px">T</div>
-              </div>
-              <div class="panel">
-                <div class="seg">
-                  <span class="on">Chat</span><span>Comments · 3</span>
-                </div>
-                <div class="feed">
+              <div class="convo narrow">
+                <div class="tx">
+                  <div class="daysep">Today</div>
                   <div class="msg">
                     <div class="byl">
                       <span
@@ -1993,7 +1901,7 @@
                         >M</span
                       ><b>Maya</b>10:42
                     </div>
-                    <div class="txt">
+                    <div class="txt" style="max-width: 640px">
                       Rally, add churn to “What moved”. Use the October cohort,
                       not the blended number.
                     </div>
@@ -2006,14 +1914,16 @@
                         >R</span
                       ><b>Rally</b>10:42
                     </div>
-                    <div class="txt">
+                    <div class="txt" style="max-width: 640px">
                       Adding it after the expansion line. The October cohort
                       churned 1.9%.
                     </div>
                     <div class="change">
                       <svg width="14" height="14" style="color: var(--t)">
                         <use href="#i-spark" /></svg
-                      ><span><b>Editing</b> What moved · 1 paragraph</span>
+                      ><span
+                        ><b>Published</b> Q4 revenue review · version 4</span
+                      >
                     </div>
                   </div>
                   <div class="msg me">
@@ -2034,12 +1944,12 @@
                         >T</span
                       ><b>Theo</b>10:45
                     </div>
-                    <div class="txt">
+                    <div class="txt" style="max-width: 640px">
                       Board-only. Keep them out of this one.
                     </div>
                   </div>
                 </div>
-                <div class="composer">
+                <div class="composer wide">
                   <span class="plus"
                     ><svg width="15" height="15">
                       <use href="#i-plus" /></svg></span
@@ -2053,6 +1963,53 @@
                     ><svg width="15" height="15"><use href="#i-up" /></svg
                   ></span>
                 </div>
+              </div>
+              <div class="board-area artifact">
+                <div class="ahead">
+                  <span
+                    class="sheet t-blue"
+                    style="width: 28px; height: 28px; border-radius: 8px"
+                    ><svg width="15" height="15"><use href="#i-doc" /></svg
+                  ></span>
+                  <div>
+                    <b>Q4 revenue review</b
+                    ><small>Document · version 4 · Rally, 10:42</small>
+                  </div>
+                  <span class="btn ico"
+                    ><svg width="16" height="16"><use href="#i-dots" /></svg
+                  ></span>
+                </div>
+                <div class="doc">
+                  <h2>Q4 revenue review</h2>
+                  <div class="kick">Draft for Monday’s board prep</div>
+                  <div class="kpis">
+                    <div class="kpi">
+                      <small>Net revenue</small><b>$4.82M</b><em>+18% QoQ</em>
+                    </div>
+                    <div class="kpi">
+                      <small>Gross margin</small><b>71.4%</b><em>+2.1 pts</em>
+                    </div>
+                    <div class="kpi">
+                      <small>Net retention</small><b>118%</b><em>+4 pts</em>
+                    </div>
+                  </div>
+                  <h4>What moved</h4>
+                  <p>
+                    Enterprise expansion drove most of the quarter, led by three
+                    accounts that moved to annual plans in October. Self-serve
+                    held flat after the September price change.
+                  </p>
+                  <p>
+                    Churn fell to 1.9%, the lowest since launch, with two of
+                    three lost accounts citing budget rather than product.
+                  </p>
+                  <h4>Open questions</h4>
+                  <p>
+                    Do we restate the September cohort, or footnote the price
+                    change?
+                  </p>
+                </div>
+                <div class="pin a-adam" style="right: 34px; top: 262px">A</div>
               </div>
             </div>
           </div>
@@ -2776,69 +2733,9 @@
               </div>
             </div>
             <div class="stage">
-              <div class="board-area">
-                <div class="doc">
-                  <h2>Launch plan</h2>
-                  <div class="kick">Rally 2.0 · ships Nov 20</div>
-                  <div class="cols" style="height: 430px">
-                    <div>
-                      <div
-                        style="
-                          font-size: 12px;
-                          color: var(--t3);
-                          margin: 2px 0 8px;
-                        "
-                      >
-                        To do · 4
-                      </div>
-                      <i style="height: 44px"></i><i style="height: 44px"></i
-                      ><i style="height: 44px"></i><i style="height: 44px"></i>
-                    </div>
-                    <div>
-                      <div
-                        style="
-                          font-size: 12px;
-                          color: var(--t3);
-                          margin: 2px 0 8px;
-                        "
-                      >
-                        Doing · 3
-                      </div>
-                      <i style="height: 44px"></i
-                      ><i
-                        style="
-                          height: 44px;
-                          box-shadow: 0 0 0 2px var(--p-theo);
-                        "
-                      ></i
-                      ><i class="shimmer" style="height: 44px"></i>
-                    </div>
-                    <div>
-                      <div
-                        style="
-                          font-size: 12px;
-                          color: var(--t3);
-                          margin: 2px 0 8px;
-                        "
-                      >
-                        Done · 6
-                      </div>
-                      <i style="height: 44px"></i><i style="height: 44px"></i
-                      ><i style="height: 44px"></i>
-                    </div>
-                  </div>
-                </div>
-                <div class="cursor" style="left: 420px; top: 240px">
-                  <svg width="20" height="20" style="fill: var(--p-theo)">
-                    <use href="#i-cursor" /></svg
-                  ><span class="tagn a-theo">Theo</span>
-                </div>
-              </div>
-              <div class="panel">
-                <div class="seg">
-                  <span>Chat</span><span class="on">Comments · 2</span>
-                </div>
-                <div class="feed" style="justify-content: flex-start">
+              <div class="convo narrow">
+                <div class="tx">
+                  <div class="daysep">Today</div>
                   <div class="msg">
                     <div class="byl">
                       <span
@@ -2848,7 +2745,7 @@
                       ><b>Maya</b>Yesterday
                     </div>
                     <div class="quote">Pricing page copy</div>
-                    <div class="txt">
+                    <div class="txt" style="max-width: 640px">
                       Blocked on legal review of the annual discount line.
                     </div>
                   </div>
@@ -2861,20 +2758,105 @@
                       ><b>Theo</b>9:12
                     </div>
                     <div class="quote">Migration dry run</div>
-                    <div class="txt">
+                    <div class="txt" style="max-width: 640px">
                       Done on staging. Rally, move this to Done and link the run
                       log.
                     </div>
                   </div>
+                  <div class="msg">
+                    <div class="byl">
+                      <span
+                        class="av a-rally"
+                        style="width: 16px; height: 16px; font-size: 7px"
+                        >R</span
+                      ><b>Rally</b>9:13
+                    </div>
+                    <div class="txt" style="max-width: 640px">
+                      Moved “Migration dry run” to Done and linked the run log.
+                    </div>
+                    <div class="change">
+                      <svg width="14" height="14" style="color: var(--t)">
+                        <use href="#i-spark" /></svg
+                      ><span><b>Published</b> Launch plan · version 7</span>
+                    </div>
+                  </div>
                 </div>
-                <div class="composer">
+                <div class="composer wide">
                   <span class="plus"
                     ><svg width="15" height="15">
                       <use href="#i-plus" /></svg></span
-                  >Comment on Launch plan…<span class="send"
+                  >Ask Rally or the people here…<svg
+                    width="16"
+                    height="16"
+                    style="margin-left: auto"
+                  >
+                    <use href="#i-mic" /></svg
+                  ><span class="send" style="margin-left: 0"
                     ><svg width="15" height="15"><use href="#i-up" /></svg
                   ></span>
                 </div>
+              </div>
+              <div class="board-area artifact">
+                <div class="ahead">
+                  <span
+                    class="sheet t-amber"
+                    style="width: 28px; height: 28px; border-radius: 8px"
+                    ><svg width="15" height="15"><use href="#i-table" /></svg
+                  ></span>
+                  <div>
+                    <b>Launch plan</b
+                    ><small>Board · version 7 · Rally, 9:13</small>
+                  </div>
+                  <span class="btn ico"
+                    ><svg width="16" height="16"><use href="#i-dots" /></svg
+                  ></span>
+                </div>
+                <div class="doc">
+                  <h2>Launch plan</h2>
+                  <div class="kick">Rally 2.0 · ships Nov 20</div>
+                  <div class="cols" style="height: 380px">
+                    <div>
+                      <div
+                        style="
+                          font-size: 12px;
+                          color: var(--t3);
+                          margin: 2px 0 8px;
+                        "
+                      >
+                        To do · 4
+                      </div>
+                      <i style="height: 40px"></i><i style="height: 40px"></i
+                      ><i style="height: 40px"></i><i style="height: 40px"></i>
+                    </div>
+                    <div>
+                      <div
+                        style="
+                          font-size: 12px;
+                          color: var(--t3);
+                          margin: 2px 0 8px;
+                        "
+                      >
+                        Doing · 2
+                      </div>
+                      <i style="height: 40px"></i><i style="height: 40px"></i>
+                    </div>
+                    <div>
+                      <div
+                        style="
+                          font-size: 12px;
+                          color: var(--t3);
+                          margin: 2px 0 8px;
+                        "
+                      >
+                        Done · 7
+                      </div>
+                      <i style="height: 40px"></i><i style="height: 40px"></i
+                      ><i style="height: 40px"></i><i style="height: 40px"></i
+                      ><i style="height: 40px"></i>
+                    </div>
+                  </div>
+                </div>
+                <div class="pin a-maya" style="left: 150px; top: 240px">M</div>
               </div>
             </div>
           </div>
