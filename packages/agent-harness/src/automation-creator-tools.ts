@@ -973,14 +973,19 @@ flight. When a write is refused, it lists the row the error names under exceptio
 writes the rest, so one bad item never stalls the share. Items it did not reach stay
 pending for the next call: claim only the group about to be read, and take each row's
 new revision from the claim write's result, not a re-read. A run's rule to re-read after every write does not carry
-into the code. Independent reads may run side by side, up to any limit the
-instructions set on concurrent reads, which the code then enforces. Measure, don't
-guess: have the tool return how many items it finished and the seconds it took, run
-sidekick_tool_test on a representative share of real items, and size groups and
-concurrency from the measured time per item; say in the instructions what the test
-measured. When no real items exist yet, time a few scratch items instead; never hold
-up setup to ask for data to time. Calling it again after a failure or a partial call is safe: it skips work it
-already recorded. What it records is the facts it found, not only that an item is
+into the code. Independent reads may run side by side. Tune by measurement, not by
+guess: the aim is the most finished items per call, so the run needs the fewest calls
+and turns. Have the tool return how many items it finished, the seconds it took and
+the errors it met, take the concurrency and group size as inputs while you tune, and
+run sidekick_tool_test on a representative share of real items at a few settings (for
+example 4, 8 and 16 reads at once). Keep the setting with the most items per second
+that adds no errors and no slowdown per item, then fix it in the tool. A limit a person
+asked for, or a source's documented rate limit, caps the setting; a number an earlier
+revision wrote without a measurement is a guess to re-measure, not a limit. Write the
+measured numbers and the chosen setting in the instructions. When no real items exist
+yet, time a few scratch items instead; never hold up setup to ask for data to time.
+Calling it again after a failure or a partial call is safe: it skips work it already
+recorded. What it records is the facts it found, not only that an item is
 done, and it returns every recorded fact and exception the run has not yet marked
 delivered, so a call that timed out after its writes loses nothing. The run marks them
 delivered only after posting succeeds, with a second tool that takes what it marks as

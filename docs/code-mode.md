@@ -176,8 +176,9 @@ something between two steps. The tool returns the facts to report and an
 `exceptions` list of items it could not handle, finishes the rest rather than
 stopping on one bad item, works in bounded shares that record where they stopped
 when the job can outgrow the two-minute deadline, sized by elapsed time and
-recorded one write per group of items, with its share sized from a timing test
-rather than a guess, and is safe to call again. It
+recorded one write per group of items, with its concurrency and group size tuned
+by timing tests at a few settings to finish the most items per call, and is safe
+to call again. It
 records the facts it found with its progress and returns every one not yet marked
 delivered, so a call that timed out after its writes loses nothing; the run marks
 them delivered after posting, through a second tool. A tool takes the IDs of the
@@ -493,8 +494,11 @@ three quarters of the two-minute deadline, rather than a fixed count. It records
 each group's finished items with one `update_rows`, moves a row a refused write
 names into its exceptions and writes the rest, claims only the group about to be
 read, takes new revisions from the write's result rather than re-reading, and runs
-independent reads side by side up to any limit the instructions set. The tool returns how many items it finished
-and how long it took, and setup sizes its groups from a timing test on real items.
+independent reads side by side up to any limit a person or a source set. The tool returns how many items it
+finished, how long it took and its errors, and setup tunes concurrency and group
+size by timing tests at a few settings, keeping the one with the most items per
+second that adds no errors. A number an earlier revision wrote without a
+measurement is re-measured, not obeyed.
 
 **Why:** Daily Active Rally Organizations' first one-tool revision,
 `scan_fixed_batch`, took ten conversations per call. Nothing in the guide said
@@ -502,7 +506,10 @@ how to size a share, so the setup agent picked a small fixed count, and it
 copied the Sidekick's run rules into the program: a claim, a re-read, the SQL
 count, a completion write and another re-read for every conversation, with
 reads capped at four at a time. About 450 conversations a day still meant about
-45 tool calls, each re-sending the run's context.
+45 tool calls, each re-sending the run's context. The cap of four was itself a
+guess: the setup agent wrote it into revision 4 during a repair, no person asked
+for it, and neither the platform nor the source sets it, yet later revisions
+treated it as a rule.
 
 **Considered and rejected:** `Date.now()` for the time budget, which
 `checkProgram` refuses in a program that writes (`write_with_clock_or_random`).
