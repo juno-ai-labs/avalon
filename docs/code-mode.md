@@ -178,8 +178,8 @@ stopping on one bad item, works in bounded shares that record where they stopped
 when the job can outgrow the two-minute deadline, and is safe to call again.
 Posting and messages to people stay with the run, and a tool has one entry
 point, never a `mode`, `action`, `dryRun` or `preview` input. It may read the
-clock to compute its window; whether a run acts at all stays in the trigger and
-the instructions. In a self-review, the plan says of each deterministic step the
+clock to work out which dates or items the work covers, never to decide whether
+to do it: a time-of-day gate stays in the trigger and the instructions. In a self-review, the plan says of each deterministic step the
 runs repeated, skipped or got wrong whether it moves into the tool or why it
 stays in the instructions, with "the instructions already say so" ruled out as a
 reason; tools the runs always call one after another become one, and a writing
@@ -484,7 +484,7 @@ asks for one tool that runs the whole repeated procedure, a set under five, a
 compact result with an `exceptions` list, bounded resumable shares, and safe
 re-calls. It drops "two steps are two tools" and "never a tool that computes and
 writes": a tool may now read, compute and write the Sidekick's own progress rows
-in one call, and may read the clock for its window. It keeps one entry point
+in one call, and may read the clock to work out which dates it covers. It keeps one entry point
 with no mode or preview input, posting with the run, and the whether-to-act
 decision in the trigger and instructions. `scripts/code-mode-evals.mjs` grades
 the new shape (no flag inputs, no posting from a tool, at most four tools),
