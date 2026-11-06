@@ -105,6 +105,18 @@ export const AutomationActivationV1Schema = z.strictObject({
     provider: z.string().min(1).max(80),
     displayName: z.string().min(1).max(180),
   }).optional(),
+  /**
+   * Present on a run's own row in its Sidekick's shared conversation: the run
+   * as it stands, a projection of the Sidekick's `sidekick_runs` row. The
+   * conversation fills it in when it reads the row, so it is always current
+   * and the stored row never holds a second copy. `reply` is the run's last
+   * message once the run has stopped working (finished, or waiting on input).
+   */
+  run: z.strictObject({
+    state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
+    stepCount: z.number().int().nonnegative(),
+    reply: z.string().max(1_000).nullable(),
+  }).optional(),
 });
 export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;
 

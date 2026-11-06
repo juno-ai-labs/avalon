@@ -63,6 +63,11 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
    * the Channel rail's list. Absent on an envelope written before it existed.
    */
   sidekickAttachmentIds: z.array(IdSchema).optional(),
+  /**
+   * A Sidekick run's tool calls so far, its steps: what the run's row in the
+   * Sidekick's shared conversation counts. Sent only by a run's conversation.
+   */
+  stepCount: z.number().int().nonnegative().optional(),
   attachmentReservationReleases: z.array(z.object({
     inputId: IdSchema,
     resourceId: IdSchema,

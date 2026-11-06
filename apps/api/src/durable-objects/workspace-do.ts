@@ -1222,7 +1222,7 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
+import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   hostedSidekickAlarmTarget,
@@ -4865,6 +4865,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       PRIMARY KEY (parent_id, substream_id)
     ) STRICT`,
   ],
+}, {
+  version: 135,
+  description: "count each Sidekick run's steps, and arm its row in the Sidekick's shared conversation whenever the run changes",
+  // See SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#runs-in-the-shared-conversation.
+  statements: SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -6967,6 +6972,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async sidekickRunSeeded(input: Parameters<HostedSidekick["runSeeded"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runSeeded(input));
+  }
+
+  /** Rebuild a Sidekick's run rows in its shared conversation from its runs; see `HostedSidekick.replayRunRows`. */
+  async sidekickReplayRunRows(input: Parameters<HostedSidekick["replayRunRows"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.replayRunRows(input));
   }
 
   /** Who answers a message in a Sidekick's shared conversation; see `HostedSidekick.admitConversationMessage`. */

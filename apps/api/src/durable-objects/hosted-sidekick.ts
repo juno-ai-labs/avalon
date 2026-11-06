@@ -1,4 +1,6 @@
 import { sidekickProjectionRunning } from "./sidekick-activity";
+import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
+import { conversationObjectName } from "./names";
 import {
   SIDEKICK_DELEGATION_ERRORS, SidekickDelegatesResultSchema,
   SidekickExecutionDelegationSchema, type SidekickExecutionDelegation, type WorkspaceExternalEvent,
@@ -37,6 +39,8 @@ import {
   sidekickReceivesEmail,
   automationDraftAcceptanceBlocker,
   asAutomationId,
+  asSubstreamId,
+  asWorkspaceId,
   asUserId,
   isExternalEventTrigger,
   semanticConditionsForEventType,
@@ -84,6 +88,7 @@ import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../l
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { sha256 } from "../lib/crypto";
 import { conversationMessageOpening } from "../lib/conversation-message-opening";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { externalEventOpening } from "../lib/external-event-opening";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { parseRpcInput } from "../lib/rpc-input";
@@ -109,6 +114,7 @@ import {
   AutomationRunDefinitionRequestSchema,
   AutomationRunNowRequestSchema,
   SidekickConversationMessageRequestSchema,
+  type SidekickRunRowProjection,
   type SidekickConversationMessageRequest,
   type SidekickConversationMessageRoute,
   AutomationRunRequestSchema,
@@ -192,6 +198,7 @@ export const SIDEKICK_REVIEW_SAMPLE_LIMITS = { failed: 10, needsInput: 5, comple
 const SIDEKICK_REVIEW_ALARM_INNER_KEY = "review";
 /** The Sidekick alarm kinds `WorkspaceDO` dispatches here. */
 export const HOSTED_SIDEKICK_ALARM_KINDS: ReadonlySet<string> = new Set([
+  SIDEKICK_RUN_ROW_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
   AUTOMATION_RUN_ALARM_KIND,
   SIDEKICK_MEMORY_TABLES_ALARM_KIND,
@@ -1894,7 +1901,7 @@ export class HostedSidekick {
     // instant equal to `now` is the witness that this projection finished it.
     const moved = first(this.sql.exec<{ completed_at: number | null; definition_revision: number }>(
       `UPDATE sidekick_runs
-          SET summary = ?1, updated_at = ?2,
+          SET summary = ?1, updated_at = ?2, step_count = COALESCE(?9, step_count),
               state = CASE WHEN state <> ?3 THEN ?3 ELSE state END,
               completed_at = CASE WHEN state <> ?3 AND ?4 = 0 THEN ?2 ELSE completed_at END
         WHERE sidekick_id = ?5 AND run_id = ?6
@@ -1904,9 +1911,71 @@ export class HostedSidekick {
             ) = 'active'))
         RETURNING completed_at, definition_revision`,
       effect.preview || null, now, next, live ? 1 : 0, this.sidekickId, substreamId, effect.state !== "idle" ? 1 : 0,
-      JSON.stringify([...TERMINAL_RUN_STATES]),
+      JSON.stringify([...TERMINAL_RUN_STATES]), effect.stepCount ?? null,
     ));
     if (!live && moved?.completed_at === now) this.noteRunFinished(moved.definition_revision, now);
+  }
+
+  // ---------------------------------------------------------------------------
+  // A run's row in the shared conversation: a projection of `sidekick_runs`.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Write one run, as it stands now, into the Sidekick's shared conversation.
+   *
+   * The entry that calls this is armed by `sidekick_runs`' own triggers on
+   * every change to what the row shows, and this reads the run when it runs
+   * rather than carrying a copy, so the row is always the table's: a lost or
+   * repeated delivery converges on the next one, and `replayRunRows` rebuilds
+   * every row from the table. A throw retries on the scheduler's backoff.
+   */
+  private async projectRunRow(runId: string): Promise<void> {
+    const row = first(this.sql.exec<{
+      workspace_id: string; region: string | null; title: string; trigger_json: string; state: RunState;
+      summary: string | null; step_count: number; created_at: number; updated_at: number;
+    }>(
+      `SELECT directory.workspace_id, directory.region, directory.title, run.trigger_json, run.state, run.summary,
+              run.step_count, run.created_at, run.updated_at
+         FROM sidekick_runs run JOIN automation_directory directory ON directory.automation_id = run.sidekick_id
+        WHERE run.sidekick_id = ? AND run.run_id = ? AND directory.lifecycle <> 'deleted'`,
+      this.sidekickId, runId,
+    ));
+    if (!row) return;
+    const projection: SidekickRunRowProjection = {
+      workspaceId: asWorkspaceId(row.workspace_id),
+      automationId: this.sidekickId,
+      runId,
+      automationName: row.title || "New Sidekick",
+      triggerKind: (JSON.parse(row.trigger_json) as AutomationRunTriggerV1).kind,
+      createdAt: row.created_at,
+      state: row.state,
+      stepCount: row.step_count,
+      // The reply is what the run said last, once it stopped working: a
+      // finish, or the question it is waiting on. While it works the summary
+      // is whatever it said most recently, which is progress, not a reply.
+      reply: row.state === "pending" || row.state === "running" ? null : row.summary,
+      version: row.updated_at,
+    };
+    const conversation = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, projection.workspaceId,
+      conversationObjectName(row.region ?? this.env.AVALON_REGION, projection.workspaceId, this.sidekickId, asSubstreamId("0")));
+    const written = await conversation.projectSidekickRunRow(projection);
+    if (written.outcome === "refused") {
+      logWarn(this.env, "sidekick_run_row_refused", { ...this.logFields(), run_id: runId, code: written.code });
+    }
+  }
+
+  /** Rebuild every run's row in the shared conversation from `sidekick_runs`, newest last. */
+  async replayRunRows(input: AutomationActorRequest): Promise<{ armed: number }> {
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "replay_run_rows");
+    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    const now = Date.now();
+    const runs = this.sql.exec<{ run_id: string }>(
+      `SELECT run_id FROM sidekick_runs WHERE sidekick_id = ? ORDER BY created_at, run_id`, this.sidekickId,
+    ).toArray();
+    for (const run of runs) {
+      this.host.alarms.schedule({ kind: SIDEKICK_RUN_ROW_ALARM_KIND, key: sidekickAlarmKey(this.sidekickId, run.run_id), dueAt: now }, now);
+    }
+    return { armed: runs.length };
   }
 
   // ---------------------------------------------------------------------------
@@ -2188,6 +2257,10 @@ export class HostedSidekick {
       return { progressed: true };
     }
     if (alarm.kind === AUTOMATION_RUN_ALARM_KIND) return this.startRun(innerKey, alarm.attempt);
+    if (alarm.kind === SIDEKICK_RUN_ROW_ALARM_KIND) {
+      await this.projectRunRow(innerKey);
+      return { progressed: true };
+    }
     if (alarm.kind === SIDEKICK_REVIEW_ALARM_KIND) return this.startReview();
     if (alarm.kind === SIDEKICK_MEMORY_TABLES_ALARM_KIND) {
       try {
