@@ -69,47 +69,6 @@
         border-radius: 14px;
         margin-top: 14px;
       }
-      table.goes {
-        border-collapse: collapse;
-        margin-top: 12px;
-        font-size: 14px;
-        max-width: 1000px;
-        width: 100%;
-      }
-      table.goes th,
-      table.goes td {
-        text-align: left;
-        padding: 8px 12px;
-        border-bottom: 1px solid
-          color-mix(in srgb, var(--page-ink) 12%, transparent);
-        vertical-align: top;
-      }
-      table.goes th {
-        color: var(--page-muted);
-        font-weight: 600;
-        font-size: 12px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-      }
-      .tag {
-        display: inline-block;
-        padding: 1px 8px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 600;
-      }
-      .tag.cut {
-        background: #fdeeed;
-        color: #a5332e;
-      }
-      .tag.keep {
-        background: #dfeae5;
-        color: #3d6a5b;
-      }
-      .tag.fold {
-        background: #eef1f8;
-        color: #55689b;
-      }
 
       /* ---------- Mockup tokens: mirror config/design-tokens ---------- */
       .win {
@@ -2106,7 +2065,7 @@
       <h2>3. Sidekicks: the section and its home page</h2>
       <p>
         Sidekicks move from their own window into the main shell. The sidebar
-        puts a <b>Needs you</b>
+        puts a <b>Needs input</b>
         group first: Sidekicks waiting on information only you have. The home
         page is today’s library, in a row layout that shows what matters at a
         glance: status, who shares it, when it runs next.
@@ -2140,7 +2099,7 @@
                 ><svg width="20" height="20"><use href="#i-search" /></svg>
               </div>
             </div>
-            <div class="sec"><span>Needs you</span></div>
+            <div class="sec"><span>Needs input</span></div>
             <div class="row unread">
               <div class="hex t-amber">
                 <svg width="18" height="18"><use href="#i-bug" /></svg>
@@ -2149,7 +2108,7 @@
                 <div class="name">Incident triage</div>
                 <div class="sub">Which status page gets the update?</div>
               </div>
-              <div class="meta">5m<span class="needs">Needs input</span></div>
+              <div class="meta">5m<span class="dot"></span></div>
             </div>
             <div class="sec">
               <span>Pinned</span
@@ -2420,7 +2379,7 @@
                 ><svg width="20" height="20"><use href="#i-search" /></svg>
               </div>
             </div>
-            <div class="sec"><span>Needs you</span></div>
+            <div class="sec"><span>Needs input</span></div>
             <div class="row on">
               <div class="hex t-amber">
                 <svg width="18" height="18"><use href="#i-bug" /></svg>
@@ -2924,63 +2883,10 @@
     <!-- =============== What goes =============== -->
     <section class="board">
       <h2>What the sidebar loses, and where each thing goes</h2>
-      <table class="goes">
-        <thead>
-          <tr>
-            <th>Today</th>
-            <th></th>
-            <th>After the pivot</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Channels section, Channel feed, General, Personal Channel</td>
-            <td><span class="tag cut">Removed</span></td>
-            <td>
-              No grouping layer. A Canvas or Sidekick is shared with people
-              directly.
-            </td>
-          </tr>
-          <tr>
-            <td>Threads section and the Thread conversation</td>
-            <td><span class="tag cut">Removed</span></td>
-            <td>
-              Talking to Rally happens inside a Canvas (its Chat tab) or with a
-              Sidekick.
-            </td>
-          </tr>
-          <tr>
-            <td>Breakouts, merge-back, breakout and merge suggestions</td>
-            <td><span class="tag cut">Removed</span></td>
-            <td>Nothing to break out of. A side task becomes a new Canvas.</td>
-          </tr>
-          <tr>
-            <td>Activity section</td>
-            <td><span class="tag fold">Folded</span></td>
-            <td>
-              Unread dots, “Needs input” and rail badges on the two lists.
-            </td>
-          </tr>
-          <tr>
-            <td>Pinned section</td>
-            <td><span class="tag fold">Folded</span></td>
-            <td>A Pinned group at the top of each list.</td>
-          </tr>
-          <tr>
-            <td>Artifacts section, live web artifacts, annotations</td>
-            <td><span class="tag keep">Becomes Canvases</span></td>
-            <td>
-              Live artifacts are the Canvas engine; annotations are its Comments
-              tab.
-            </td>
-          </tr>
-          <tr>
-            <td>Sidekicks window and library</td>
-            <td><span class="tag keep">Moves in</span></td>
-            <td>A first-class section in the main window.</td>
-          </tr>
-        </tbody>
-      </table>
+      <p>
+        The full list of what each removed feature becomes lives in
+        <a href="prd.md#what-each-feature-becomes">the PRD</a>.
+      </p>
     </section>
   </body>
 </html>
