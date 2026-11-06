@@ -943,39 +943,53 @@ information is still needed.`;
  * program runtime exists; without one the test tool is absent too.
  */
 export const CUSTOM_TOOLS_GUIDE = `# Save the tested method as a tool
-When the tested method is work every run repeats, save it as a custom tool: declare
-its input, write the program against the tools you used (the API code_execute shows),
-test it with sidekick_tool_test on representative input, and tell runs in the
-instructions to call custom_<name> and what to do when it fails. Read each tool's
-real output once before the program parses it: inside a program a call returns the
-\`data\` of a direct result with no success/data wrapper, and current_time, for one,
-returns text lines, not an object. One tool does one thing a run can name in a
-sentence, takes only that thing's inputs, and returns the facts the run decides
-with. Two steps are two tools: never a mode, action, dryRun or preview input, and
-never a tool that computes and writes when the run should look at the result
-first. A tool that writes takes what it writes as input; it never reads the
-clock to decide whether to act. Whether to post, whether it is time, and which
-step comes next stay in the instructions with judgement, formatting and
-delivery; the tool holds the deterministic part. A test performs its writes: test a writing tool against a
-scratch table or accept the test's row, and leave an external delivery out of
-the tool when it is not wanted during setup. Every connector plugin a tool calls
-goes in recommendedPlugins. A changed tool is tested again before it is saved.
+When the tested method is work every run repeats, save it as a custom tool, so a run
+does the routine part in one call rather than over many turns. Every turn re-reads the
+whole conversation, so a procedure split across small tools costs a turn per step and
+grows dearer as the run goes on. Prefer one tool that runs the whole repeated
+procedure end to end: the reads, every page, the loop over items, the dedupe, the date
+bounds, the arithmetic, and the writes to the Sidekick's own tables that record
+progress. Add another tool only where the run must judge something between two steps
+that code cannot decide, and keep the set under five.
+Declare its input, write the program against the tools you used (the API code_execute
+shows), test it with sidekick_tool_test on representative input, and tell runs in the
+instructions to call custom_<name> first, what to do with what it returns, and what to
+do when it fails. Read each tool's real output once before the program parses it:
+inside a program a call returns the \`data\` of a direct result with no success/data
+wrapper, and current_time, for one, returns text lines, not an object.
+The tool returns what the run reports and decides with, compactly: totals and the facts
+to report, not the raw rows it read. It does not stop for one item that fails or does
+not fit the rule: it finishes the rest and lists each such item under exceptions, with
+its identifier, what was wrong and what is known, for the run to handle. It throws only
+when it cannot do the job at all. A program has two minutes; when the work can outgrow
+that, the tool does a bounded share, records where it stopped in the Sidekick's own
+table, and returns what remains, and the instructions call it again until nothing
+remains. Calling it again after a failure or a partial call is safe: it skips work it
+already recorded.
+The run keeps what needs judgement: whether and what to post and how to word it, what
+an exception means and what to do about it, and anything the instructions leave to a
+person. Posting and messages to people stay out of the tool; the run delivers what the
+tool returned. A tool has one entry point, never a mode, action, dryRun or preview
+input that makes the run pick a path. It may read current_time to work out its window,
+but whether this run should act at all belongs in the trigger and the instructions.
+A test performs its writes: test a writing tool against a scratch table or accept the
+test's row. Every connector plugin a tool calls goes in recommendedPlugins. A changed
+tool is tested again before it is saved.
 In a self-review, tools change with the procedure, using only plugins already
-recommended. The plan takes each deterministic step the report says a run
-repeated, skipped or got wrong (a dedupe after the reads, a page not followed,
-date bounds, a union, a count) and says whether it becomes a tool or why it
-stays in the instructions; a plan that leaves that unanswered is incomplete.
-"The instructions already say so" is not a reason it stays: an instruction the
-run did not follow is the case for a tool, which moves the step out of prose the
-run can skip and into code the run calls, unless the run shows the step failed
-on something outside it (a timed-out read) rather than being done by hand or
-skipped. A
-tool the runs misused or no longer need is rewritten or removed along with the
-instructions that call it. A tool is part of the procedure, not a new
-capability.
-Nobody is present during a review, so it tests a writing tool only against a
-scratch table, never by accepting a row in a table the runs read; a writing tool
-it cannot test that way it leaves as it is and reports.`;
+recommended. The plan takes each deterministic step the report says a run repeated,
+skipped or got wrong (a dedupe after the reads, a page not followed, date bounds, a
+union, a count) and says whether it moves into the tool or why it stays in the
+instructions; a plan that leaves that unanswered is incomplete. A run that spent many
+turns on routine steps is the case for moving them into the tool, and tools the runs
+always call one after another become one. "The instructions already say so" is not a
+reason a step stays: an instruction the run did not follow is the case for code the
+run calls, unless the run shows the step failed on something outside it (a timed-out
+read) rather than being done by hand or skipped. A tool the runs misused or no longer
+need is rewritten or removed along with the instructions that call it. A tool is part
+of the procedure, not a new capability.
+Nobody is present during a review, so it tests a writing tool only against a scratch
+table, never by accepting a row in a table the runs read; a writing tool it cannot
+test that way it leaves as it is and reports.`;
 
 /**
  * Drafting tools for a Sidekick's own authoring conversation. The host controls
