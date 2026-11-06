@@ -70,10 +70,11 @@ See [design.html](design.html) for every screen in light and dark.
 - **Canvases home.** Title, New Canvas, search, filter chips (Everyone, Made by
   me, Shared with me, From Sidekicks), a Live now group, then Recent.
 - **Canvas open.** The header pill names the Canvas; to its right are the
-  people present, Share and a menu. The Canvas fills the pane. The right panel
-  has two tabs: Chat (the Canvas's conversation with Rally, open to everyone in
-  it, where a quoted selection travels with the message) and Comments (the
-  current artifact annotations). Rally's pending edit shimmers where it lands.
+  people present, Share and a menu. The conversation fills the main pane, open
+  to everyone in the Canvas, and the artifact sits in the right panel once one
+  exists, with its version. A quoted selection travels with a message, and
+  comments are the artifact annotations people drop, arriving in the
+  conversation as today. Rally changes the artifact by publishing a version.
 - **Sidekicks sidebar.** Needs input, then Pinned, then all Sidekicks. Rows
   show the hexagon mark and current state (working, next run, paused). "Needs
   input" means the Sidekick is missing information only a person has; it never
@@ -257,9 +258,11 @@ annotation flow already exist for Threads; the mockup's artifact-first pane
 with Chat and Comments tabs would have been the one new client primitive in the
 pivot.
 
-**Changes:** The Product behavior for "Canvas open" and section 2 of
-[design.html](design.html) are superseded on layout. The header pill, people
-present, Share and the menu stay as drawn.
+**Changes:** The Product behavior for "Canvas open" changes, and section 2 and
+the dark frame in section 5 of [design.html](design.html) were redrawn the same
+day: transcript in the main pane, artifact in the right panel with its version,
+no cursors or pending-edit shimmer. The header pill, people present, Share and
+the menu stay as drawn.
 
 ### 2026-11-06 — The shared Sidekick conversation keeps the wizard and run separation
 
