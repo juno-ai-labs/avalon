@@ -12,6 +12,8 @@ import {
   CreateEngineeringThreadResultSchema,
   SendEngineeringMessageInputSchema,
   SendEngineeringMessageResultSchema,
+  SetEngineeringSidekickPausedInputSchema,
+  SetEngineeringSidekickPausedResultSchema,
   ReadEngineeringChannelInputSchema,
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
@@ -245,6 +247,20 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     workspace_id: request.orgId, workstream_id: request.threadId, substream_id: request.breakoutId,
     user_id: request.userId, operation_id: request.operationId,
   }, async () => SendEngineeringMessageResultSchema.parse(await (await organizationBinding(request.orgId)).sendMessage(request, principal))));
+
+  const sidekickPauseSchema = SetEngineeringSidekickPausedInputSchema.unwrap().omit({ paused: true });
+  for (const [name, paused] of [["pause_sidekick", true], ["resume_sidekick", false]] as const) {
+    server.registerTool(name, {
+      description: paused
+        ? "Pause an active Sidekick as userId, exactly as the app's Pause button does: open runs stop, scheduled and pending runs are cancelled, and its activity triggers are cleared. userId must be allowed to manage the Sidekick in the app; its author always is. Pausing a paused Sidekick changes nothing; a draft or deleted one is refused. Returns the resulting lifecycle."
+        : "Resume a paused Sidekick as userId, exactly as the app's Resume button does: schedules restart from now without firing what was missed, and its activity triggers are restored. userId must be allowed to manage the Sidekick in the app; its author always is. Resuming an active Sidekick changes nothing. Returns the resulting lifecycle.",
+      inputSchema: sidekickPauseSchema.shape,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, (request) => tool(principal, name, {
+      workspace_id: request.orgId, sidekick_id: request.sidekickId, user_id: request.userId,
+    }, async () => SetEngineeringSidekickPausedResultSchema.parse(
+      await (await organizationBinding(request.orgId)).setSidekickPaused({ ...request, paused }, principal))));
+  }
 
   server.registerTool("read_channel", {
     description: "Read the Channel feed visible to userId as plain text, with messages and Thread cards in app order. The app's ordinary feed pagination applies; follow the returned cursor for older history. Does not read the contents of every Thread.",

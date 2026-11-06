@@ -4,12 +4,13 @@ import { diagnosticErrorCode } from "../observability/logger";
 
 /** Same independent audit authority as impersonation: an attempt precedes effects. */
 export async function auditedEngineeringWrite<T>(env: Env, operator: EngineeringOperator, entry: {
-  action: "create_org" | "create_channel" | "create_thread" | "send_message";
+  action: "create_org" | "create_channel" | "create_thread" | "send_message" | "pause_sidekick" | "resume_sidekick";
   orgId: string;
   representedUserId: string;
   operationId: string;
   threadId?: string;
   breakoutId?: string;
+  sidekickId?: string;
 }, run: () => Promise<T>, receipt: (result: T) => Record<string, unknown>): Promise<T> {
   const attemptId = crypto.randomUUID();
   const record = async (phase: "attempt" | "result", outcome: string, result: Record<string, unknown> = {}) => {

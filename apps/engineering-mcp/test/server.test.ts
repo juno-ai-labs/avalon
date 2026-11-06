@@ -22,6 +22,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     createChannel: vi.fn<EngineeringInspectionRpcBinding["createChannel"]>(),
     createThread: vi.fn<EngineeringInspectionRpcBinding["createThread"]>(),
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
+    setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
     readChannel: vi.fn<EngineeringInspectionRpcBinding["readChannel"]>(),
     readConversation: vi.fn<EngineeringInspectionRpcBinding["readConversation"]>(),
     listUserChannels: vi.fn<EngineeringInspectionRpcBinding["listUserChannels"]>(),
@@ -190,6 +191,21 @@ describe("Rally engineering MCP tools", () => {
     }
   });
 
+  it.each([["pause_sidekick", true], ["resume_sidekick", false]] as const)("routes %s to the Organization's region as the trusted operator", async (name, paused) => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
+    const sidekickId = asAutomationId("00000000-0000-7000-8000-000000000ef6");
+    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
+    vi.mocked(enterprise.setSidekickPaused).mockResolvedValue({ region: "enterprise", orgId, sidekickId, lifecycle: paused ? "paused" : "active" });
+    const request = { orgId, userId: asUserId("00000000-0000-7000-8000-000000000ef2"), sidekickId };
+    const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name, arguments: request });
+    expect(response.result).not.toHaveProperty("isError", true);
+    expect(response.result).toMatchObject({ content: [{ type: "text", text: expect.stringContaining(`"lifecycle": "${paused ? "paused" : "active"}"`) }] });
+    expect(enterprise.setSidekickPaused).toHaveBeenCalledExactlyOnceWith({ ...request, paused }, principal);
+    expect(global.setSidekickPaused).not.toHaveBeenCalled();
+  });
+
   it("sends Organization creation to only the named region", async () => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
@@ -261,6 +277,8 @@ describe("Rally engineering MCP tools", () => {
       "create_channel",
       "create_thread",
       "send_message",
+      "pause_sidekick",
+      "resume_sidekick",
       "read_channel",
       "read_thread",
       "read_breakout",
