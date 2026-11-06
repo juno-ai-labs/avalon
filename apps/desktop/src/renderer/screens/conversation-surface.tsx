@@ -784,14 +784,18 @@ export function RemoveParticipantDialog({ failure, member, noun, onCancel, onCon
   pending: boolean;
   self: boolean;
 }): React.JSX.Element {
-  // A Channel grants no reader (`docs/spaces.md`), so being in a Channel that
-  // holds this thread keeps nobody in it: only a public thread does. A
-  // Channel itself is listed to everybody only while it is public.
+  // A member keeps a public conversation or Channel: Organization-wide scope
+  // admits them. A guest reads a Channel's public threads only while they
+  // are in it (`docs/spaces.md`), so leaving it takes those threads too,
+  // except the ones they take part in.
   const who = self ? 'You' : member?.name ?? 'They';
   const keeps = self ? 'You keep' : 'They keep';
+  const description = noun === 'channel' && member?.accessClass === 'guest'
+    ? `${who} will be taken off this channel and lose its threads, except those ${self ? 'you' : 'they'} take part in.`
+    : `${who} will be taken off this ${noun}. ${keeps} access only if it’s public.`;
   return (
     <Modal
-      description={`${who} will be taken off this ${noun}. ${keeps} access only if it’s public.`}
+      description={description}
       footer={<>
         <Button disabled={pending} onClick={onCancel}>Cancel</Button>
         <Button className="button-danger" disabled={pending} onClick={onContinue}>Continue</Button>

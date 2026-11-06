@@ -347,8 +347,21 @@ readers keep whatever sockets they have open until they reconnect.
 
 This is a gap rather than a regression. Before the Spaces branch that path
 published *nothing at all*, so the announcement is strictly new and the missing
-gate is the part that was never built. It is now the only narrowing, because
-[a Space grants no reader](spaces.md#a-space-starts-organization-wide-and-grants-no-reader).
+gate is the part that was never built.
+
+A guest losing a Channel's public threads
+([the Channel reader](spaces.md#a-channel-lends-its-public-threads-to-its-guests))
+is not announced that way: removed from the Channel, the thread taken out or
+moved, or the Channel archived. The narrowing hop finds people only through a
+thread's control sockets, and a client that opens conversation sockets
+directly holds none, so it would leave the guest's conversation open.
+WorkspaceDO's `guestChannelReachMoved` already knows which guests may have
+lost the thread; after the write commits it asks the thread whether each can
+still read Main, and for each who cannot publishes the `workstream` and
+`workstream_automations` revocations a participant removal sends, naming
+them, in queue batches of 100. It shares the gap above: a send that fails is
+logged `channel_reach_revocation_publish_failed`, and the guest keeps an open
+socket until they reconnect.
 
 Closing it means giving the direct narrowing a durable intent of its own, which
 is a change with a table behind it rather than a line in this one; it is named

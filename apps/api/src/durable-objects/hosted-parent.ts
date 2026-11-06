@@ -128,6 +128,7 @@ import {
   type SocketAccessRevocation,
 } from "../services/access-revocation";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from "../services/authorization-policy";
+import { channelReaderSql } from "./listing-rules";
 import { resolveScopedAccess, type ScopedAccess } from "../services/scope-grant-policy";
 import type { WorkspaceRelationship } from "../services/workspace-relationship-service";
 import {
@@ -1841,7 +1842,21 @@ export class HostedParent {
           ? { status: "ready", archived: metadata.archived_at !== null, audience: "inherits_workstream" }
           : null,
       grants,
+      // Only a guest's answer can turn on it, and only for an Organization-wide thread.
+      channelReader: metadata.scope === "workspace" && relationship?.accessClass === "guest"
+        && this.channelReader(request.userId),
     });
+  }
+
+  /**
+   * Whether this person takes part in a Channel this thread is placed in
+   * (`channelReaderSql`). The Space tables are this object's own: a hosted
+   * parent shares the Organization's database, so this is one local read.
+   */
+  private channelReader(userId: string): boolean {
+    return this.role.kind === "workstream" && this.sql.exec<{ reads: number }>(
+      `SELECT ${channelReaderSql("?1", "?2")} AS reads`, this.parentId, userId,
+    ).one().reads === 1;
   }
 
   private async membershipIncarnations(workspaceId: string): Promise<Record<string, string>> {

@@ -25,7 +25,7 @@ deliberately, and after one attempt at the opposite that the changelog records.
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | `AgentWorkTiming`, the work timer the optimistic surface starts and the created work stream keeps counting from. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The authoritative create, opening turn/run, feed snapshot, and synchronous child-effect drain used by the route-activation fence. |
 | `apps/api/src/durable-objects/hosted-parent.ts`, `workspace-do.ts` | Aggregate the child's metadata, commit the authoritative workspace directory row, and prove it exists before the D1 route becomes active. |
-| `apps/api/src/routes/workstreams.ts` | `POST /workstreams`. |
+| `apps/api/src/routes/workstreams.ts` | `POST /workstreams` (`workstreamCreateRoutes`, mounted on the identity layer for members and guests). |
 | `apps/api/src/services/workstream-object-creation-service.ts` | Post-cutover creation receipt, identity anchor, the Space memberships the new Channel is born with, verified-to-active route transition, hierarchy drain, and email activation. |
 | `apps/api/src/services/workstream-service.ts` | The fenced pre-cutover create path retained until Durable Object authority opens. |
 | `apps/api/src/observability/tracing.ts` | The custom spans every step of the create is measured with; the names and the queries are in [`performance-tracing.md`](performance-tracing.md). |
@@ -231,8 +231,11 @@ risk was the wrong trade.
 
 Every Channel belongs to at least one Space, and creation is where that becomes
 true. `POST /workstreams` carries `spaceIds`, defaulted to empty, and **empty
-means General** — `SpaceService.ensureGeneral` makes the Organization's General
-Space if this is the first thing that ever needed it.
+means General**: `SpaceService.ensureGeneral` makes the Organization's General
+Space if this is the first thing that ever needed it. A guest may call it too:
+the route sits on the identity layer, and `WorkspaceDO.reserveChannelInSpaces`
+admits a guest only into Spaces they are a participant of, General included
+only when they are one.
 
 **A Channel is born with the scope its caller asked for**, whichever Spaces it
 is born in, Organization-wide or private, because a Space grants no reader
@@ -275,7 +278,10 @@ active membership keeps its generation and the reservation finds its child
 registered). A replayed receipt reconciles through
 `reconcileReplayedSpaceMembership`, which uses the staged `addChannel` path
 rather than this call because the Channel already exists and its audience has
-to be widened through its canonical operations.
+to be widened through its canonical operations. It writes only a placement
+that is missing (`SpaceService.channelSpaceIds` says where the thread sits),
+and a create that named no Space is settled by any home: a guest may start a
+thread in their Channel but not place one, so their retry must not ask.
 
 Two creation paths do not go through here, and both call
 `placeConnectorChannelInGeneral` for the same step. The Slack agent opens a

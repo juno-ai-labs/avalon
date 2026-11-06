@@ -46,6 +46,10 @@ import {
   channelListedSql,
   organizationWideSql,
   spaceListedSql,
+  userIdBindCount,
+  admitsOrganizationWide,
+  channelReaderSql,
+  channelReadersSql,
   type AccessClass,
   type Viewer,
 } from "./listing-rules";
@@ -1097,23 +1101,17 @@ export class WorkspaceSpaceStorage {
   /** Whether this object has reached the migration that created Breakout projections. */
   /**
    * The listing rules as this object renders them, with the bindings each
-   * fragment takes for one viewer. A Breakout reach binds the user id once
-   * more, and only on an object that has the Breakout projection.
+   * fragment takes for one viewer: the user id, as many times as the fragment
+   * asks for it (more for a guest, and for an object with Breakouts).
    */
   private channelListing(viewer: Viewer, directory = "directory", channelViewer = "viewer"): { sql: string; binds: string[] } {
-    const breakouts = this.breakoutsReady();
-    return {
-      sql: channelListedSql(directory, channelViewer, viewer.accessClass, { breakouts }),
-      binds: breakouts ? [viewer.userId] : [],
-    };
+    const sql = channelListedSql(directory, channelViewer, viewer.accessClass, { breakouts: this.breakoutsReady() });
+    return { sql, binds: Array<string>(userIdBindCount(sql)).fill(viewer.userId) };
   }
 
   private spaceListing(viewer: Viewer, space = "space", spaceViewer = "viewer"): { sql: string; binds: string[] } {
-    const breakouts = this.breakoutsReady();
-    return {
-      sql: spaceListedSql(space, spaceViewer, viewer.accessClass, { breakouts }),
-      binds: breakouts ? [viewer.userId, viewer.userId] : [viewer.userId],
-    };
+    const sql = spaceListedSql(space, spaceViewer, viewer.accessClass, { breakouts: this.breakoutsReady() });
+    return { sql, binds: Array<string>(userIdBindCount(sql)).fill(viewer.userId) };
   }
 
   /**
@@ -1526,7 +1524,7 @@ export class WorkspaceSpaceStorage {
                 m.source_workstream_id AS thread_id, '0' AS substream_id,
                 m.attention_ordinal AS attention_ordinal,
                 m.space_id AS merged_channel_id, space.title AS merged_channel_name,
-                CASE WHEN ${mainOpenableSql("directory", "viewer", viewer.accessClass)} THEN 0 ELSE 1 END AS merged_thread_private
+                CASE WHEN ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")} THEN 0 ELSE 1 END AS merged_thread_private
            FROM space_messages m
            JOIN spaces space ON space.space_id = m.space_id
            JOIN channels directory ON directory.workstream_id = m.source_workstream_id
@@ -2376,7 +2374,7 @@ export class WorkspaceSpaceStorage {
               AND viewer.authority_generation = directory.authority_generation
             WHERE membership.space_id = ?2 AND membership.state = 'active'
               AND directory.archived_at IS NULL
-              AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+              AND ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")}
               AND ${options.kind === "breakout" ? "0" : "1"}
               AND ${options.needsViewerOnly === false ? "1" : liveForViewerSql("directory", "viewer")}
               AND ${afterCursorSql("channel", "directory.last_activity_at", "directory.workstream_id")}
@@ -2408,7 +2406,7 @@ export class WorkspaceSpaceStorage {
               AND directory.archived_at IS NULL
               AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" })}
               AND breakout.archived_at IS NULL
-              AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
+              AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass, "?1")}
               AND ${options.kind === "channel" ? "0" : "1"}
               AND ${options.needsViewerOnly === false ? "1" : liveForViewerSql("breakout", "breakout_viewer")}
               AND ${afterCursorSql("breakout", "breakout.last_activity_at", "breakout.substream_id")}
@@ -2490,7 +2488,7 @@ export class WorkspaceSpaceStorage {
         WHERE membership.space_id = ?2 AND membership.state = 'active'
           AND directory.archived_at IS NULL
           AND directory.system_kind IS NULL
-          AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+          AND ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")}
           AND (?3 IS NULL
                OR membership.joined_at < ?3
                OR (membership.joined_at = ?3 AND membership.workstream_id > ?4))
@@ -2514,7 +2512,7 @@ export class WorkspaceSpaceStorage {
       `SELECT m.message_id, m.author_kind, m.author_user_id, m.body, m.posted_at,
               m.attention_ordinal, m.source_workstream_id, m.embeds_json,
               directory.title AS source_title, directory.description AS source_description,
-              ${mainOpenableSql("directory", "viewer", viewer.accessClass)} AS source_openable
+              ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?5")} AS source_openable
          FROM space_messages m
          LEFT JOIN channels directory
            ON directory.workstream_id = m.source_workstream_id
@@ -2623,7 +2621,7 @@ export class WorkspaceSpaceStorage {
             WHERE directory.archived_at IS NULL
               AND directory.system_kind IS NULL
               AND (${pinnedOnly ? "0" : "viewer.is_participant = 1"} OR ${pinned("thread", "directory.workstream_id")})
-              AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+              AND ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")}
               AND ${afterCursorSql("channel", "directory.last_activity_at", "directory.workstream_id")}
             ORDER BY directory.last_activity_at DESC, directory.workstream_id
             LIMIT ?6
@@ -2651,7 +2649,7 @@ export class WorkspaceSpaceStorage {
               AND directory.archived_at IS NULL
               AND (${pinnedOnly ? "0" : "breakout_viewer.is_participant = 1"} OR ${pinned("breakout", "breakout.substream_id")})
               AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts, userId: "?1" })}
-              AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
+              AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass, "?1")}
               AND ${afterCursorSql("breakout", "breakout.last_activity_at", "breakout.substream_id")}
             ORDER BY breakout.last_activity_at DESC, breakout.substream_id
             LIMIT ?6
@@ -2766,7 +2764,7 @@ export class WorkspaceSpaceStorage {
             WHERE membership.state = 'active'
               AND directory.archived_at IS NULL
               AND directory.system_kind IS NULL
-              AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+              AND ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")}
               AND COALESCE(membership.attention_ordinal, 0)
                   > COALESCE(reads.seen_attention_ordinal, space.unread_tracking_start_ordinal)
               AND membership.space_id IN (${chunk.map(() => "?").join(", ")})
@@ -2923,7 +2921,7 @@ export class WorkspaceSpaceStorage {
           WHERE membership.space_id IN (SELECT value FROM json_each(?))
             AND membership.state = 'active'
             AND directory.archived_at IS NULL
-            AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+            AND ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")}
             AND ${liveForViewerSql("directory", "viewer")}
          ${includeBreakouts ? `UNION ALL
          SELECT membership.space_id, breakout.substream_id AS conversation_id
@@ -2944,14 +2942,15 @@ export class WorkspaceSpaceStorage {
           WHERE membership.space_id IN (SELECT value FROM json_each(?))
             AND membership.state = 'active'
             AND directory.archived_at IS NULL
-            AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true })}
+            AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true, userId: "?1" })}
             AND breakout.archived_at IS NULL
-            AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
+            AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass, "?1")}
             AND ${liveForViewerSql("breakout", "breakout_viewer")}` : ""}
        ) GROUP BY space_id`,
+      // The first is `?1`, which each listing rule reuses for the user id.
       userId,
       JSON.stringify(ids),
-      ...(includeBreakouts ? [userId, userId, JSON.stringify(ids), userId] : []),
+      ...(includeBreakouts ? [userId, userId, JSON.stringify(ids)] : []),
     ).toArray();
     for (const row of rows) result.set(row.space_id, row.count);
     return result;
@@ -2981,7 +2980,7 @@ export class WorkspaceSpaceStorage {
           AND viewer.authority_generation = directory.authority_generation
         WHERE directory.archived_at IS NULL
           AND directory.system_kind IS NULL
-          AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+          AND ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")}
           AND (viewer.is_participant = 1 OR ${mentionedSql("directory", "viewer")})
           AND ${waitingForReaderSql("directory", "viewer")}`,
       viewer.userId,
@@ -3003,12 +3002,11 @@ export class WorkspaceSpaceStorage {
           AND breakout_viewer.authority_generation = breakout.authority_generation
         WHERE directory.archived_at IS NULL
           AND directory.system_kind IS NULL
-          AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true })}
+          AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true, userId: "?1" })}
           AND breakout.archived_at IS NULL
-          AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
+          AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass, "?1")}
           AND breakout_viewer.is_participant = 1
           AND ${waitingForReaderSql("breakout", "breakout_viewer")}`,
-      viewer.userId,
       viewer.userId,
       viewer.userId,
     ).one().count;
@@ -3041,15 +3039,14 @@ export class WorkspaceSpaceStorage {
             AND breakout_viewer.authority_generation = breakout.authority_generation
           WHERE breakout.workstream_id IN (${ids.map(() => "?").join(", ")})
             AND directory.archived_at IS NULL
-            AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true })}
+            AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true, userId: "?1" })}
             AND breakout.archived_at IS NULL
-            AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}
+            AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass, "?1")}
             AND ${liveForViewerSql("breakout", "breakout_viewer")}
           GROUP BY breakout.workstream_id`,
         userId,
         userId,
         ...ids,
-        userId,
       ).toArray();
       for (const row of rows) result.set(row.workstream_id, row.count);
     }
@@ -3091,10 +3088,62 @@ export class WorkspaceSpaceStorage {
           AND directory.archived_at IS NULL
           -- A missing viewer row makes the predicate NULL, and NOT NULL is
           -- NULL: "IS NOT 1" is what reads that as "cannot see the Channel".
-          AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)} IS NOT 1
+          AND ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")} IS NOT 1
         ORDER BY breakout.workstream_id`,
       userId,
     ).toArray().map((row) => row.workstream_id);
+  }
+
+  /**
+   * Which of these threads this person reads as a Channel reader: they take
+   * part in a Channel the thread is placed in ({@link channelReaderSql}). Empty
+   * for a member, whose Organization-wide reach does not depend on it, so a
+   * member's read costs nothing.
+   */
+  channelReaderIds(viewer: Viewer, workstreamIds: readonly string[]): Set<string> {
+    if (admitsOrganizationWide(viewer.accessClass) || workstreamIds.length === 0 || !this.ready()) return new Set();
+    return new Set(this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT ids.value AS workstream_id FROM json_each(?2) ids
+        WHERE ${channelReaderSql("ids.value", "?1")}`,
+      viewer.userId,
+      JSON.stringify([...new Set(workstreamIds)]),
+    ).toArray().map((row) => row.workstream_id));
+  }
+
+  /**
+   * What a Channel lends to a guest who takes part in it: its participants,
+   * and the unarchived Organization-wide threads actively placed in it
+   * (`channelReaderSql`). Read before and after a write that can move it.
+   */
+  lentReach(spaceId: string): { participantIds: string[]; threadIds: string[] } {
+    if (!this.ready()) return { participantIds: [], threadIds: [] };
+    return {
+      participantIds: this.participantUserIds(spaceId),
+      threadIds: this.storage.sql.exec<{ workstream_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT membership.workstream_id
+           FROM space_channel_memberships membership
+           JOIN channels directory ON directory.workstream_id = membership.workstream_id
+          WHERE membership.space_id = ? AND membership.state = 'active'
+            AND directory.scope = 'workspace' AND directory.archived_at IS NULL
+          ORDER BY membership.workstream_id`,
+        spaceId,
+      ).toArray().map((row) => row.workstream_id),
+    };
+  }
+
+  /** Every Channel reader of each of these threads, whatever their access class. */
+  channelReaders(workstreamIds: readonly string[]): Map<string, Set<string>> {
+    const result = new Map<string, Set<string>>();
+    if (workstreamIds.length === 0 || !this.ready()) return result;
+    for (const row of this.storage.sql.exec<{ workstream_id: string; user_id: string } & Record<string, SqlStorageValue>>(
+      channelReadersSql("SELECT value FROM json_each(?)"),
+      JSON.stringify([...new Set(workstreamIds)]),
+    ).toArray()) {
+      const readers = result.get(row.workstream_id) ?? new Set<string>();
+      readers.add(row.user_id);
+      result.set(row.workstream_id, readers);
+    }
+    return result;
   }
 
   /**

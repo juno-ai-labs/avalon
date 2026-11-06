@@ -232,6 +232,8 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { resolveSpaceWorkstreamStart } from "../lib/channel-audience";
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import {
+  AccessRevocationMessageSchema,
+  type AccessRevocationMessage,
   descendantRevocation,
   publishDescendantRevocations,
   revocationClosesSession,
@@ -812,6 +814,8 @@ import {
   organizationWide as organizationWideAdmits,
   organizationWideSql,
   spaceListedSql,
+  threadOrganizationWide,
+  userIdBindCount,
   type AccessClass,
   type Viewer,
 } from "./listing-rules";
@@ -5211,9 +5215,13 @@ function mainWithheld(row: WorkspaceDirectoryRow): Partial<Workstream> {
   };
 }
 
-/** Whether this viewer may open a directory row's Main: {@link mainOpenableSql} for a row already read. */
-function mainOpenFor(row: WorkspaceDirectoryRow, accessClass: Viewer["accessClass"]): boolean {
-  return organizationWideAdmits(row.scope, accessClass) || row.is_participant === 1;
+/**
+ * Whether this viewer may open a directory row's Main: {@link mainOpenableSql}
+ * for a row already read. `channelReader` is whether they read it through a
+ * Channel they take part in (`WorkspaceSpaceStorage.channelReaderIds`).
+ */
+function mainOpenFor(row: WorkspaceDirectoryRow, accessClass: Viewer["accessClass"], channelReader: boolean): boolean {
+  return threadOrganizationWide(row.scope, accessClass, channelReader) || row.is_participant === 1;
 }
 
 /** A Channel's per-viewer state without Main's part: its agents and its rail. */
@@ -5353,8 +5361,9 @@ function mapDirectoryWorkstreams(
   const viewerStates = withViewerState
     ? channelViewerStates(sql, viewer.userId, rows.map((row) => row.workstream_id))
     : new Map<string, ChannelViewerState>();
+  const channelReader = spaces.channelReaderIds(viewer, rows.map((row) => row.workstream_id));
   return rows.map((row) => {
-    const mainOpen = mainOpenFor(row, viewer.accessClass);
+    const mainOpen = mainOpenFor(row, viewer.accessClass, channelReader.has(row.workstream_id));
     const state = viewerStates.get(row.workstream_id);
     return {
       ...directoryWorkstream(
@@ -5374,6 +5383,7 @@ function loadSpacePins(
 ): Map<string, { spaceId: string; position: number }[]> {
   const userId = viewer.userId;
   const result = new Map<string, { spaceId: string; position: number }[]>();
+  const listed = spaceListedSql("space", "viewer", viewer.accessClass, { breakouts });
   for (const ids of boundParameterChunks([...new Set(workstreamIds)])) {
     const rows = sql.exec<{
       workstream_id: string;
@@ -5391,13 +5401,12 @@ function loadSpacePins(
            ON viewer.space_id = space.space_id
           AND viewer.user_id = ? AND viewer.is_participant = 1
         WHERE pin.user_id = ? AND space.archived_at IS NULL
-          AND ${spaceListedSql("space", "viewer", viewer.accessClass, { breakouts })}
+          AND ${listed}
           AND pin.workstream_id IN (${ids.map(() => "?").join(", ")})
         ORDER BY pin.workstream_id, pin.space_id, pin.position`,
       userId,
       userId,
-      userId,
-      ...(breakouts ? [userId] : []),
+      ...Array<string>(userIdBindCount(listed)).fill(userId),
       ...ids,
     ).toArray();
     for (const row of rows) {
@@ -10539,7 +10548,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       this.state.storage.sql.exec<WorkspaceDirectoryRow>(
         `${SELECT_WORKSPACE_DIRECTORY}
          WHERE directory.workstream_id IN (${chunk.map(() => "?").join(", ")})
-           AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}
+           AND ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")}
          ORDER BY directory.workstream_id`,
         viewer.userId,
         viewer.userId,
@@ -11285,7 +11294,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         WHERE breakout.workstream_id = ?2 AND breakout.substream_id = ?3
           AND breakout.archived_at IS NULL AND directory.archived_at IS NULL
           AND ${channelListedSql("directory", "viewer", viewer.accessClass, { breakouts: true, userId: "?1" })}
-          AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass)}`,
+          AND ${breakoutListedSql("breakout", "breakout_viewer", viewer.accessClass, "?1")}`,
       viewer.userId,
       parentId,
       itemId,
@@ -11405,7 +11414,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Record a Space's scope and participants. A Space grants no reader to its
    * Channels, so this is the whole change: no intent, no walk. The actor may
-   * leave a private Space this way, and is answered `left`.
+   * leave a private Space this way, and is answered `left`. A guest may be a
+   * participant; only a member may make the change.
    */
   async noteSpaceAudience(input: WorkspaceSpaceAudienceNoteRequest): Promise<WorkspaceSpaceAudienceResult> {
     await this.initialized;
@@ -11421,13 +11431,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       || storage.isPersonalSpace(request.spaceId)) {
       return { ok: false, code: "space_protected", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
-    const activeMembers = await Promise.all(request.audience.participantUserIds.map((userId) => (
-      this.activeSpaceMember(request.workspaceId, userId)
+    // A participant is anybody active in the Organization, a guest included:
+    // the listing rules already list a private Space to its participants
+    // whatever their access class, and a Space grants no reader to its
+    // threads. Only the actor has to be a member, which the gate above asks.
+    const participants = await Promise.all(request.audience.participantUserIds.map((userId) => (
+      this.spaceReader(request.workspaceId, userId)
     )));
-    if (activeMembers.some((active) => !active)) {
+    if (participants.some((participant) => participant === null)) {
       return { ok: false, code: "space_access_denied", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
-    const space = this.spaceStorage().applyAudience(request);
+    const before = new Set(storage.lentReach(request.spaceId).participantIds);
+    const space = storage.applyAudience(request);
     if (space === false) return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     this.publishSpaceSnapshot();
     // Who takes part in a Channel, and whether it is Organization-wide, decide
@@ -11443,6 +11458,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         reason: diagnosticErrorCode(error, "space_audience_activity_sync_failed"),
       });
     }
+    const after = storage.lentReach(request.spaceId);
+    const now = new Set(after.participantIds);
+    await this.guestChannelReachMoved(after.threadIds,
+      after.participantIds.filter((userId) => !before.has(userId)),
+      [...before].filter((userId) => !now.has(userId)));
     // A new scope can change which Channel decides a thread's colour.
     await this.armNextAlarm();
     return WorkspaceSpaceAudienceResultSchema.parse(space === "left" ? { ok: true, left: true } : { ok: true, space });
@@ -11564,16 +11584,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refused = (code: SpaceErrorCode, spaceId: string | null): WorkspaceChannelReservationResult =>
       WorkspaceChannelReservationResultSchema.parse({ status: "refused", code, spaceId });
-    const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
+    // A guest starts a thread only in a Channel they take part in; a member
+    // anywhere the Space write gate admits them.
+    const viewer = await this.spaceReader(request.workspaceId, request.userId);
+    const guest = viewer?.accessClass === "guest";
+    const refusal = guest
+      ? (this.spaceStorage().ready() ? null : "space_bootstrap_pending")
+      : await this.spaceRefusalCode(request.workspaceId, request.userId, "write");
     if (refusal) return refused(refusal, null);
     const storage = this.spaceStorage();
     const generalSpaceId = request.spaceIds.length > 0 ? null : storage.generalSpaceId();
     if (request.spaceIds.length === 0 && generalSpaceId === null) return { status: "general_missing" };
     const spaceIds = request.spaceIds.length > 0 ? [...new Set<string>(request.spaceIds)] : [generalSpaceId ?? ""];
     // The same per-Space gate every Space write takes: reaching a Space only
-    // through a Channel in it is not enough to put another Channel there.
-    const throughChannel = spaceIds.find((spaceId) => storage.reach(member(request.userId), spaceId) === "through_channel");
-    if (throughChannel) return refused("space_access_denied", throughChannel);
+    // through a Channel in it is not enough to put another Channel there. A
+    // guest's only reach that counts is taking part.
+    const outside = guest
+      ? spaceIds.find((spaceId) => storage.reach(viewer, spaceId) !== "participant")
+      : spaceIds.find((spaceId) => storage.reach(member(request.userId), spaceId) === "through_channel");
+    if (outside) return refused("space_access_denied", outside);
     const parent = await this.hostedParent(request.workstreamId, request.workspaceId);
     const workstreamId = request.workstreamId;
     const followUpMark = this.pendingParentFollowUps.length;
@@ -11655,11 +11684,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const refusal = await this.spaceMoveRefusal(request);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
+    const lent = this.spaceStorage().lentReach(request.sourceSpaceId);
     const result = WorkspaceSpaceMembershipMoveOutcomeSchema.parse(await this.withMembersLearned(() => (
       this.spaceStorage().moveMembership(request)
     )));
     if (result.ok && result.moved) {
       this.publishSpaceSnapshot();
+      // The target's guests are sent the row by the convergence below; the
+      // source's may have lost it.
+      if (lent.threadIds.includes(request.workstreamId)) {
+        await this.guestChannelReachMoved([request.workstreamId], [], lent.participantIds);
+      }
       this.publishSpaceConversationsChanged({
         spaceIdsThroughChannel: new Map([[
           request.workstreamId,
@@ -11825,12 +11860,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     );
     if (refusal) return this.spaceChannelRefusal(refusal);
     const storage = this.spaceStorage();
+    const lent = storage.lentReach(request.spaceId);
     const result = storage.removeMembership({
       workspaceId: request.auth.workspaceId, userId: request.auth.userId,
       spaceId: request.spaceId, workstreamId: request.workstreamId,
     });
     if (!result.ok) return this.spaceMutationRefusal(result);
     this.publishSpaceSnapshot();
+    if (lent.threadIds.includes(request.workstreamId)) {
+      await this.guestChannelReachMoved([request.workstreamId], [], lent.participantIds);
+    }
     // The Space is named alongside the Channel: the membership is `removed`
     // by now, so the Channel no longer resolves to the Space it just left.
     this.publishSpaceConversationsChanged({
@@ -12001,9 +12040,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const refusal = await this.spaceRefusalCode(request.workspaceId, request.userId, "write", request.spaceId);
     if (refusal) return { ok: false, code: refusal, unreachableUserIds: [], blockedWorkstreamIds: [] };
     const storage = this.spaceStorage();
+    const lent = storage.lentReach(request.spaceId);
     const result = WorkspaceSpaceMutationResultSchema.parse(storage.archive(request.userId, request.spaceId));
     if (!result.ok) return result;
     this.publishSpaceSnapshot();
+    await this.guestChannelReachMoved(lent.threadIds, [], lent.participantIds);
     // The transaction staged durable commands; the alarm delivers them without
     // adding one cross-object round trip per thread to the request.
     // An archive takes every member Channel off this Space's dashboard and a
@@ -12027,6 +12068,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "space_not_found", unreachableUserIds: [], blockedWorkstreamIds: [] };
     }
     this.publishSpaceSnapshot();
+    const lent = this.spaceStorage().lentReach(request.spaceId);
+    await this.guestChannelReachMoved(lent.threadIds, lent.participantIds, []);
     this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
     // Its threads were marked for their colour as their placements came back.
     await this.armNextAlarm();
@@ -14230,6 +14273,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const attachment = readAttachment(socket);
       if (attachment?.subscribed && organizationWideAdmits("workspace", viewerOf(attachment).accessClass)) readers.add(attachment.userId);
     }
+    // A guest reads an Organization-wide Channel through a Channel they take
+    // part in; a member's socket is already counted above.
+    for (const userId of this.spaceStorage().channelReaders([workstreamId]).get(workstreamId) ?? []) readers.add(userId);
     return [...readers];
   }
 
@@ -18409,7 +18455,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         AND viewer.user_id = ?
         AND viewer.authority_generation = directory.authority_generation
        WHERE directory.workstream_id = ? AND directory.archived_at IS NULL
-         AND ${mainOpenableSql("directory", "viewer", viewer.accessClass)}`,
+         AND ${mainOpenableSql("directory", "viewer", viewer.accessClass, "?1")}`,
       viewer.userId,
       workstreamId,
     ).toArray().length === 1;
@@ -18550,6 +18596,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         channelIds,
       )
       : new Map<string, Set<string>>();
+    const channelReaders = this.spaceStorage().channelReaders(channelIds);
     const owed = new Map<string, string[]>();
     for (const [workstreamId, audience] of plan.channels) {
       const channel = channels.get(workstreamId);
@@ -18558,6 +18605,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         const sees = channel.archived_at === null && channelListed({
           scope: channel.scope,
           accessClass: person.accessClass,
+          channelReader: channelReaders.get(workstreamId)?.has(person.userId) === true,
           mainParticipant: participants.get(workstreamId)?.has(person.userId) === true,
           reachedThroughBreakout: breakoutReach.get(workstreamId)?.has(person.userId) === true,
         });
@@ -18648,8 +18696,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       : spaces.breakoutAttentionCounts(viewer, visibleIds);
     const viewerStates = channelViewerStates(this.state.storage.sql, person.userId, visibleIds, shared.background);
     const shown = new Set(visibleIds);
+    const channelReader = spaces.channelReaderIds(viewer, visibleIds);
     return rows.map((row) => {
       const stateVersion = this.directoryStateVersion(row);
+      const mainOpen = mainOpenFor(row, person.accessClass, channelReader.has(row.workstream_id));
       return JSON.stringify(WorkspaceWorkstreamStateEventSchema.parse({
         type: "workspace_workstream_state",
         occurredAt: shared.occurredAt,
@@ -18666,9 +18716,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             ...directoryWorkstream(
               row, person.workspaceId, shared.previews.get(row.workstream_id),
               spaceIds.get(row.workstream_id) ?? [], [], attention.get(row.workstream_id) ?? 0,
-              mainOpenFor(row, person.accessClass),
+              mainOpen,
             ),
-            ...(mainOpenFor(row, person.accessClass)
+            ...(mainOpen
               ? viewerStates.get(row.workstream_id)
               : withoutMainState(viewerStates.get(row.workstream_id))),
           }
@@ -18784,6 +18834,69 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    *
    * One relationship read per publish, whatever the number of sockets.
    */
+  /**
+   * A Channel's guests gained or lost the Organization-wide threads it lends
+   * them (`channelReaderSql`), after the write that moved it committed.
+   *
+   * Members are left out: Organization-wide scope already admits them, so a
+   * Channel changes nothing for them. A guest who gained is sent each
+   * thread's row; one who lost is sent the row or its tombstone, whichever
+   * the rules now give (another Channel may still lend it). For each thread a
+   * guest can no longer read, a revocation naming them is published, the one
+   * a participant removal sends: it reaches every socket they hold on the
+   * thread, its conversations' own sockets included, and the Sidekicks it
+   * owns. An anonymous narrowing would not: it finds people only through the
+   * thread's control sockets, which a client opening conversations directly
+   * does not hold.
+   *
+   * Never throws: the write is committed, rows are best effort, and a
+   * revocation that could not be queued is logged.
+   */
+  private async guestChannelReachMoved(
+    threadIds: readonly string[],
+    gained: Iterable<string>,
+    lost: Iterable<string>,
+  ): Promise<void> {
+    const guests = (userIds: Iterable<string>) => [...new Set(userIds)].filter((userId) => !this.knownActiveMember(userId));
+    const gainedGuests = guests(gained);
+    const lostGuests = guests(lost);
+    const workspaceId = this.workspaceId();
+    if (!workspaceId || threadIds.length === 0 || gainedGuests.length + lostGuests.length === 0) return;
+    const plan = new ChannelRowPlan();
+    for (const threadId of threadIds) {
+      plan.users(threadId, gainedGuests);
+      plan.lost(threadId, lostGuests);
+    }
+    this.publishChannelRows(plan);
+    this.publishReachChanged(new Set([...gainedGuests, ...lostGuests]));
+    if (lostGuests.length === 0) return;
+    try {
+      const occurredAt = new Date().toISOString();
+      const messages: AccessRevocationMessage[] = [];
+      for (const threadId of threadIds) {
+        const parent = await this.hostedParent(threadId, workspaceId);
+        for (const userId of lostGuests) {
+          if (parent.readableSubstreams(asUserId(userId), this.knownRelationship(userId) ?? null).includes(asSubstreamId("0"))) continue;
+          for (const target of [
+            { scope: "workstream" as const, workstreamId: threadId },
+            { scope: "workstream_automations" as const, workstreamId: threadId },
+          ]) {
+            messages.push(AccessRevocationMessageSchema.parse({
+              kind: "access_revoked", occurredAt, reason: "workstream_participant_removed",
+              workspaceId, userId, sessionId: null, target,
+            }));
+          }
+        }
+      }
+      await publishDescendantRevocations(this.env, messages);
+    } catch (error) {
+      logWarn(this.env, "channel_reach_revocation_publish_failed", {
+        workspace_id: workspaceId,
+        code: diagnosticErrorCode(error, "channel_reach_revocation_publish_failed"),
+      });
+    }
+  }
+
   private publishReachChanged(userIds: ReadonlySet<string>): void {
     if (userIds.size === 0) return;
     const workspaceId = this.workspaceId();

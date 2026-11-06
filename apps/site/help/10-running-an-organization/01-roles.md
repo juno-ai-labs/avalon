@@ -29,8 +29,10 @@ shares. They cannot invite people or change Organization-wide settings.
 
 **Guest.** Someone from outside who was invited into one conversation, as
 described in [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md).
-A guest holds no role at all. They see only the conversations shared with them,
-and nothing else in the Organization.
+A guest holds no role at all. They see the conversations shared with them, the
+Channels they have been added to with the public Threads in those, and who is
+in the Organization, and nothing else. In a Channel they have been added to,
+they post and start Threads as a member does.
 
 ## Who can do what
 

@@ -404,6 +404,98 @@ describe("Channel feed for a guest", () => {
   });
 });
 
+describe("a Channel lends its Organization-wide threads to its guests", () => {
+  const opens = async (workstreamId: WorkstreamId) => (await workspace().authorizeViewer({
+    workspaceId: WORKSPACE_ID, parentId: workstreamId, userId: GUEST, substreamId: asSubstreamId("0"),
+  })).authorized;
+  const audience = (spaceId: SpaceId, participantUserIds: UserId[]) => workspace().noteSpaceAudience({
+    workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, audience: { scope: "workspace", participantUserIds },
+  });
+
+  it("given a guest added to a Channel, when they read it, then its public threads are theirs and its private ones are not, until they leave", async () => {
+    const channelId = await channelWithThreads();
+    expect(await opens(OPEN_THREAD)).toBe(false);
+
+    await expect(audience(channelId, [OWNER, GUEST])).resolves.toMatchObject({ ok: true });
+
+    expect((await feed(channelId, GUEST)).items.map((item) => item.thread.id)).toEqual([OPEN_THREAD]);
+    expect(await opens(OPEN_THREAD)).toBe(true);
+    expect(await opens(PRIVATE_THREAD)).toBe(false);
+
+    await expect(audience(channelId, [OWNER])).resolves.toMatchObject({ ok: true });
+
+    expect(await opens(OPEN_THREAD)).toBe(false);
+    await expect(workspace().listChannelFeed({ workspaceId: WORKSPACE_ID, userId: GUEST, spaceId: channelId, cursor: null }))
+      .resolves.toMatchObject({ ok: false });
+  });
+
+  it("given a public thread taken out of a guest's Channel, then the guest no longer reads it", async () => {
+    const channelId = await channelWithThreads();
+    const elsewhere = await reserveChannel("Elsewhere");
+    await place(elsewhere, OPEN_THREAD);
+    await audience(channelId, [OWNER, GUEST]);
+    expect(await opens(OPEN_THREAD)).toBe(true);
+
+    await expect(workspace().removeSpaceChannel({
+      auth: { sessionId: "lend-session", workspaceId: WORKSPACE_ID, userId: OWNER, region: "global", role: "owner" },
+      spaceId: channelId, workstreamId: OPEN_THREAD,
+    })).resolves.toMatchObject({ ok: true });
+
+    expect(await opens(OPEN_THREAD)).toBe(false);
+    expect((await feed(channelId, GUEST)).items).toEqual([]);
+  });
+});
+
+describe("a guest who loses a Channel's public thread", () => {
+  /** Every revocation the next writes publish, as `target.scope:target.workstreamId:userId`. */
+  function captureRevocations(): { sent: string[]; restore: () => void } {
+    const queue = Object.getPrototypeOf(env.ACCESS_REVOCATION_QUEUE) as {
+      sendBatch: (messages: Array<{ body: unknown }>) => Promise<void>;
+    };
+    const sent: string[] = [];
+    const spy = vi.spyOn(queue, "sendBatch").mockImplementation(async (messages) => {
+      for (const { body } of messages) {
+        const message = body as { userId: string | null; target: { scope: string; workstreamId?: string } };
+        sent.push(`${message.target.scope}:${message.target.workstreamId ?? ""}:${message.userId ?? ""}`);
+      }
+    });
+    return { sent, restore: () => spy.mockRestore() };
+  }
+  const audience = (spaceId: SpaceId, participantUserIds: UserId[]) => workspace().noteSpaceAudience({
+    workspaceId: WORKSPACE_ID, userId: OWNER, spaceId, audience: { scope: "workspace", participantUserIds },
+  });
+
+  it("given a guest taken out of the Channel, then a revocation naming them reaches every socket they hold on the thread", async () => {
+    const channelId = await channelWithThreads();
+    await audience(channelId, [OWNER, GUEST]);
+    const revocations = captureRevocations();
+
+    await audience(channelId, [OWNER]);
+    revocations.restore();
+
+    // Named, so it reaches the thread's conversations' own sockets and the
+    // Sidekicks it owns, not only the thread's control sockets.
+    expect(revocations.sent.sort()).toEqual([
+      `workstream:${OPEN_THREAD}:${GUEST}`,
+      `workstream_automations:${OPEN_THREAD}:${GUEST}`,
+    ]);
+  });
+
+  it("given another Channel still lends the thread, when the guest leaves one, then nothing is revoked", async () => {
+    const channelId = await channelWithThreads();
+    const elsewhere = await reserveChannel("Elsewhere");
+    await place(elsewhere, OPEN_THREAD);
+    await audience(channelId, [OWNER, GUEST]);
+    await audience(elsewhere, [OWNER, GUEST]);
+    const revocations = captureRevocations();
+
+    await audience(channelId, [OWNER]);
+    revocations.restore();
+
+    expect(revocations.sent).toEqual([]);
+  });
+});
+
 describe("private Channels", () => {
   it("given a Channel made private, when a member who is not in it reads it, then it does not exist for them even through a thread in it", async () => {
     const channelId = await channelWithThreads();
@@ -425,6 +517,32 @@ describe("private Channels", () => {
       .resolves.toEqual({ ok: false, code: "space_not_found" });
     await expect(workspace().spaceSummary({ workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: channelId }))
       .resolves.toMatchObject({ ok: true });
+  });
+
+  it("given a guest added to a private Channel, when they read it, then it is theirs with only the threads they are in, and they still cannot change it", async () => {
+    const channelId = await channelWithThreads();
+    await publish(OPEN_THREAD, [viewerEffect(GUEST)]);
+
+    const made = await workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID,
+      userId: OWNER,
+      spaceId: channelId,
+      audience: { scope: "personal", participantUserIds: [OWNER, GUEST] },
+    });
+    expect(made).toMatchObject({ ok: true, space: { scope: "personal" } });
+    if (!made.ok || !("space" in made)) throw new Error("noteSpaceAudience refused");
+    expect(made.space.participants.map((participant) => participant.userId).sort()).toEqual([OWNER, GUEST].sort());
+
+    await expect(workspace().spaceSummary({ workspaceId: WORKSPACE_ID, userId: GUEST, spaceId: channelId }))
+      .resolves.toMatchObject({ ok: true, space: { id: channelId, reach: "participant" } });
+    // The Channel grants no reader: the private thread in it stays the owner's.
+    expect((await feed(channelId, GUEST)).items.map((item) => item.thread.id)).toEqual([OPEN_THREAD]);
+    await expect(workspace().noteSpaceAudience({
+      workspaceId: WORKSPACE_ID,
+      userId: GUEST,
+      spaceId: channelId,
+      audience: { scope: "personal", participantUserIds: [OWNER, GUEST, MEMBER] },
+    })).resolves.toMatchObject({ ok: false, code: "space_access_denied" });
   });
 
   it("given General, when somebody makes it private, then it is refused as protected", async () => {

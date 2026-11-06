@@ -293,7 +293,7 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
         AND viewer.authority_generation = directory.authority_generation
       WHERE directory.workstream_id IN (SELECT value FROM json_each(?))
         AND directory.archived_at IS NULL
-        AND ${mainOpenableSql("directory", "viewer", request.accessClass)}`,
+        AND ${mainOpenableSql("directory", "viewer", request.accessClass, "?1")}`,
     request.userId,
     JSON.stringify(asked),
   ).toArray().map((row): [string, RailChannel] => [row.workstream_id, {
