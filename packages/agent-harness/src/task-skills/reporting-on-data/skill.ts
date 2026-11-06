@@ -30,7 +30,7 @@ asked for breadth ("everything we know about…"), the grain is the entity and
 the columns come from every source you can connect.
 
 In a Sidekick run whose instructions already name the sources, joins and
-output, follow them and skip steps 2 and 3.
+output, follow them and skip steps 2 and 3. Steps 4 to 6 still apply.
 
 ## 2. Find every related source
 
@@ -77,6 +77,21 @@ join, count:
 
 Fix fan-outs before summing anything. Keep unmatched rows visible rather than
 dropping them; they are often the finding.
+
+Before you call a result wrong, read what it says:
+
+- **A filter that matches nothing is a zero.** Report 0 for that row or step.
+  It is not evidence the tracking is broken.
+- **Other values of the same field are other cases.** If an event's filter asks
+  for one action and the day's events show only a different action, nobody took
+  that action that day. Count it as zero; do not report a contradiction.
+- **A field missing on some events is expected** when only some cases set it,
+  such as an id given only to the flows that need one.
+- **A late or quiet source is a caveat.** Say how old its newest record is and
+  report what it has.
+
+Only a source that failed to answer (an error, a timeout, a refusal) is a
+failure. Name it in that section and report the rest.
 
 ## 5. Slice and connect the way the person asked
 
@@ -126,8 +141,9 @@ repeat discovery.
   separately with a count.
 - **Summing after a fan-out.** One deal with three contacts counts three times.
   Check for duplicate matches before every total.
-- **Blocking on disagreement.** Two sources that define a measure differently
-  will not agree. Report both and deliver the report.`;
+- **Holding the report back.** Two sources that define a measure differently
+  will not agree, and a zero is a result. Report both, with a one-line caveat,
+  and deliver the report.`;
 
 export const REPORTING_ON_DATA_SKILL: HarnessSkill = {
   name: "reporting-on-data",
