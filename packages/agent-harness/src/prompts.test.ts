@@ -208,7 +208,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           sidekick: workstreamAutomation,
         }),
-        hash: "c9799a1299ede754478687123f38692a69a699f89a825d9ef4de565c64cf13af",
+        hash: "00f61420b3f00ec54327291344a090c6be1ab66af638ddbbd4f50ae37a7387a2",
       },
       workstreamName: {
         actual: renderWorkstreamNameMessages({
@@ -413,6 +413,10 @@ describe("prompt renderers", () => {
     expect(prompt).not.toMatch(/conversation_[a-z_]+/u);
     expect(prompt).toContain("alert the owning conversation");
     expect(prompt).toContain("Successful fallback needs no permission-error message");
+    // Platform policy outranks the saved instructions, so no saved rule can turn a data report into a blocker,
+    // and a run with no data reports that rather than inventing numbers.
+    expect(prompt).toContain("A data report is always delivered, and this rule outranks the saved instructions.");
+    expect(prompt).toContain("never fill the gap with estimates or remembered numbers");
     expect(prompt).toContain("report the unresolved problem once for this run");
     expect(prompt).toContain("do not claim delivery");
     expect(prompt).not.toContain("# Result delivery");
