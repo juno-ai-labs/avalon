@@ -28,9 +28,14 @@ edits need a real-time collaboration layer that does not exist yet.
 
 ## Motivation
 
-The team decided to pivot to these two modes. The evidence behind that decision
-is not recorded here yet; the team must add it before this PRD is approved, and
-the pull request that introduces it should not merge until it has.
+The current product, built around Channels, Threads and Breakouts, failed to
+win market interest. Continuing to build on it means more work on something the
+market has not asked for.
+
+Both new modes reuse parts that already exist, live artifacts and Sidekicks, so
+the pivot keeps that work and removes the surfaces around it. Why these two
+modes in particular, and the evidence behind the lack of interest (prospect
+conversations, usage or pipeline numbers), are not recorded here.
 
 ## Goals
 
