@@ -110,9 +110,7 @@ admission is split in two.
    same pair from Node's `ws` client and supplies the fixed application Origin
    (`app://rallywithai`). iOS `URLSession` does not send `Origin` on a WebSocket
    upgrade, so the native client sets that same allowlisted value on the
-   handshake request. Sideline's main process opens only the workspace
-   socket, from the `ws` client, and presents its own `app://sideline`
-   Origin rather than borrowing Rally's. Both become `Sec-WebSocket-Protocol`, the handshake header
+   handshake request. Both become `Sec-WebSocket-Protocol`, the handshake header
    available for browser-compatible ticket presentation. A ticket is a compact
    JWS — base64url joined by dots — which is a legal subprotocol token, so it
    needs no encoding.
@@ -502,13 +500,13 @@ or holds an active impersonation relationship to them. It is not a
 `workspace_sync` topic, because the topic enum is closed and a new value would
 fail every older desktop's subscribe answer; an unknown event `type` is ignored
 instead. It is not on the waterline or replayed, so a listener rereads on every
-subscribe answer. Three clients listen. The desktop's own workspace socket rereads the
+subscribe answer. Two clients listen. The desktop's own workspace socket rereads the
 conversation directory (`shared-navigation`) on it: Channel rows and Space
 pages already move on the same flip, but the directory says which conversation
 a Breakout-only Channel opens on, and without the reread a new grant's row
-opened on Main. Hosts with no workspace
-socket of their own — Sideline ([`impersonation.md`](impersonation.md)) and the
-lite browser client ([`browser-client.md`](browser-client.md)) — hold one
+opened on Main. A host with no workspace
+socket of its own — the lite browser client
+([`browser-client.md`](browser-client.md)) — holds one
 through `watchWorkspaceReach` in `@rally/contracts/workspace-reach-watch`, which
 subscribes, discards the sidebar, and reports only this event and subscribe
 answers, with a diagnostic hook the host logs when it cannot connect. It is a
