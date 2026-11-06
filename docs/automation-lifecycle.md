@@ -1113,8 +1113,12 @@ finds such a check removes it, and keeps one a person asked for only as a
 caveat the report names. The run cannot be told otherwise: the activation
 prompt's platform policy says a data report is always delivered, with a
 failed source's reason in place of that section's numbers, and that rule
-outranks the saved instructions. Only a person's own words add a check; a
-request another agent relays does not. When a change was saved
+outranks the saved instructions. A run where no required source answered
+reports that once rather than estimating, and a saved condition for when to
+report (nothing new, a threshold not crossed) still holds. Only a person adds
+a check: their own message in the wizard, or a change request whose
+host-written "Run turn started by" line names a Rally member, never a request
+another agent relays. When a change was saved
 and the notice names where to announce it, it publishes one message there
 with `conversation_post`, naming that conversation, for the people the
 Sidekick works for: what it now does differently, why, and how to restore
@@ -1710,20 +1714,12 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 ### 2026-11-06 — No saved instruction can turn a data report into a blocker
 
-**What changed:** The activation prompt's platform policy says a data report
-is always delivered and that the rule outranks the saved instructions: a
-zero, an empty result, an unknown value or two sources that disagree is
-reported with a one-line caveat, and a failed source costs only its own
-section. A saved rule to stay silent when there is nothing new still holds.
-The authoring prompt no longer lets a run hold a whole report back when a
-person asked for the check; it writes every check as a caveat, and adds one
-only when a person asks in their own words (a message in the wizard, or the
-words a change request quotes), never because another agent relayed it. The
-self-review keeps a check a person asked for as a caveat rather than as a
-gate. `reporting-on-data` gains a short reading guide (a filter that matches
-nothing is a zero; other values of the same field are other cases; a field
-only some cases set is expected; a late source is a caveat) and no longer
-skips its checks in a Sidekick run.
+**What changed:** The no-gate rule moved from the wizard's prose into the
+activation prompt's platform policy, which outranks a Sidekick's saved
+instructions; the wizard and self-review now write a person's check as a
+caveat, and only a person's own message or a member-started change request
+adds one. `reporting-on-data` gains a short guide to reading zeros and
+unmatched values.
 
 **Why:** The two 2026-10-30 entries below put the rule in the wizard's
 prose, and the Daily Signup, Traffic & Attribution Report kept withholding
@@ -1745,7 +1741,10 @@ genuinely wants silence on a bad day has no way to ask for it; that is
 deliberate, and a later request for it is a new decision, not a regression.
 A check stated as "missing result contradictory to relevant data" is now a
 caveat, so a real tracking break shows up as a posted zero with its caveat
-rather than as a missing report.
+rather than as a missing report. A run where no required source answered
+still posts only that, with a recovery step: the alternative, an absolute
+"never only a blocker", invites a model to fill an empty report with
+estimates.
 
 ### 2026-11-02 — A run's change request is not the review's, and a wizard's answer reaches the thread
 
