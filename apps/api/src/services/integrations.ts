@@ -572,6 +572,8 @@ class AttachmentGroundingGuard {
   private readonly started = new Map<string, StartedAttachmentAccess>();
   private readonly readContinuations = new Map<string, string>();
   private readonly unresolved = new Map<string, FailedAttachmentAccess>();
+  /** Resources whose content this run has delivered at least once. */
+  private readonly delivered = new Set<string>();
   private nudgeSent = false;
   private terminalBoundaryApplied = false;
 
@@ -605,7 +607,7 @@ class AttachmentGroundingGuard {
         ...access.resourceIds,
         ...attachmentResourceIds(event.result.output),
       ]);
-      for (const resourceId of verifiedResourceIds) this.unresolved.delete(`resource:${resourceId}`);
+      for (const resourceId of verifiedResourceIds) this.markDelivered(resourceId);
       return;
     }
 
@@ -616,9 +618,10 @@ class AttachmentGroundingGuard {
         : [];
       const item = matching.length === 1 ? matching[0] : undefined;
       if (item?.status === "included") {
-        this.unresolved.delete(`resource:${resourceId}`);
+        this.markDelivered(resourceId);
         continue;
       }
+      if (item?.reasonCode && this.isOutOfScope(item.reasonCode, [resourceId])) continue;
       this.unresolved.set(`resource:${resourceId}`, {
         resourceIds: [resourceId],
         toolCallId: event.toolCallId,
@@ -637,6 +640,7 @@ class AttachmentGroundingGuard {
     let resourceIds = access?.resourceIds.length
       ? access.resourceIds
       : structuredAttachmentFailureResourceIds(event);
+    if (this.isOutOfScope(errorCode, resourceIds)) return;
     if (resourceIds.length === 0
       && errorCode === "invalid_cursor"
       && access?.cursorOnly) {
@@ -674,7 +678,7 @@ class AttachmentGroundingGuard {
           this.recordReadCursorProvenance(plan.capability, output);
           resourceIds = [...new Set([...resourceIds, ...attachmentResourceIds(output)])];
         }
-        for (const resourceId of resourceIds) this.unresolved.delete(`resource:${resourceId}`);
+        for (const resourceId of resourceIds) this.markDelivered(resourceId);
         this.started.delete(receipt.toolCallId);
         continue;
       }
@@ -703,6 +707,7 @@ class AttachmentGroundingGuard {
         const structuredResourceId = structured?.details?.["resourceId"];
         if (typeof structuredResourceId === "string") resourceIds = [structuredResourceId];
       }
+      if (this.isOutOfScope(errorCode, resourceIds)) continue;
       if (resourceIds.length === 0
         && errorCode === "invalid_cursor"
         && attachmentCursor(input)) {
@@ -753,13 +758,17 @@ class AttachmentGroundingGuard {
 
   /**
    * Replace ungrounded output before Bind or the canonical transcript accepts
-   * it. Tool-bearing turns may still recover through another attachment call;
-   * a tool-less replacement is terminal and suppresses the later nudge.
+   * it. A tool-bearing turn may still recover through another attachment call,
+   * so its prose is withheld rather than replaced: publishing the boundary on
+   * every such turn repeated the same notice once per tool round. A tool-less
+   * replacement is terminal and suppresses the later nudge; a run that ends on
+   * a withheld turn still gets the boundary once, as the participant notice.
    */
   sanitizeAssistantContent(content: string, hasToolCalls: boolean): string {
     const boundary = this.boundary();
     if (!boundary) return content;
-    if (!hasToolCalls) this.terminalBoundaryApplied = true;
+    if (hasToolCalls) return "";
+    this.terminalBoundaryApplied = true;
     return boundary;
   }
 
@@ -776,6 +785,22 @@ class AttachmentGroundingGuard {
       errorCodes: [...new Set(failures.map((failure) => failure.errorCode))].sort(),
       toolNames: [...new Set(failures.map((failure) => failure.toolName))].sort(),
     };
+  }
+
+  private markDelivered(resourceId: string): void {
+    this.delivered.add(resourceId);
+    this.unresolved.delete(`resource:${resourceId}`);
+  }
+
+  /**
+   * A not-found refusal is out of scope only for a resource this run never
+   * read. Once a page was delivered, losing the rest (detached, deleted or
+   * access revoked mid-read) leaves a partial read the guard must still hold.
+   */
+  private isOutOfScope(errorCode: string, resourceIds: readonly string[]): boolean {
+    return isOutOfScopeAttachmentCode(errorCode)
+      && resourceIds.length > 0
+      && !resourceIds.some((resourceId) => this.delivered.has(resourceId));
   }
 
   private identities(): string[] {
@@ -856,6 +881,16 @@ const READ_CURSOR_ISSUER_CAPABILITIES = [
   "workstream.resources.search",
   "workstream.resources.summarize",
 ] as const;
+
+/**
+ * Failures that say the resource is not visible to this conversation at all.
+ * Nothing attached here went unread, so there is no attachment evidence for the
+ * guard to protect; the model already holds the structured refusal. Latching on
+ * these let one guessed or foreign ID replace a whole answer.
+ */
+function isOutOfScopeAttachmentCode(code: string): boolean {
+  return code === "resource_not_found";
+}
 
 function isAttachmentContentCapability(capability: string): boolean {
   return (ATTACHMENT_CONTENT_CAPABILITIES as readonly string[]).includes(capability);
