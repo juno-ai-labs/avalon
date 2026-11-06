@@ -978,7 +978,8 @@ instructions set on concurrent reads, which the code then enforces. Measure, don
 guess: have the tool return how many items it finished and the seconds it took, run
 sidekick_tool_test on a representative share of real items, and size groups and
 concurrency from the measured time per item; say in the instructions what the test
-measured. Calling it again after a failure or a partial call is safe: it skips work it
+measured. When no real items exist yet, time a few scratch items instead; never hold
+up setup to ask for data to time. Calling it again after a failure or a partial call is safe: it skips work it
 already recorded. What it records is the facts it found, not only that an item is
 done, and it returns every recorded fact and exception the run has not yet marked
 delivered, so a call that timed out after its writes loses nothing. The run marks them
