@@ -834,21 +834,31 @@ describe("a workspace's derived alarm lanes", () => {
       // its immediate wake and the pass is not counted. A derived lane first,
       // then a stored entry, with the schedule reconcile left out so it cannot
       // take the entry back.
+      // Each due time is set from the pass's own instant, inside the await, so
+      // it lands after that instant however slowly the runner reached the pass.
       hooks.runDueAlarmWork = () => Promise.resolve();
-      hooks.scheduledAlarmDeferral = () => new Promise((resolve) => setTimeout(() => resolve(null), 20));
-      const derivedDue = Date.now() + 5;
-      futureCandidate = derivedDue;
+      const comeDueDuringDeferral = (arm: (dueAt: number) => void) => {
+        let dueAt = Number.NaN;
+        hooks.scheduledAlarmDeferral = (passNow: number) => {
+          dueAt = passNow + 1;
+          arm(dueAt);
+          return new Promise((resolve) => setTimeout(() => resolve(null), 20));
+        };
+        return () => dueAt;
+      };
+      const derivedDue = comeDueDuringDeferral((dueAt) => { futureCandidate = dueAt; });
       await instance.alarm();
-      expect(Date.now()).toBeGreaterThan(derivedDue);
+      expect(Date.now()).toBeGreaterThan(derivedDue());
       expect(held).toEqual([1, 2, 3, 4, 1]);
       expect(await state.storage.getAlarm()).toBeLessThanOrEqual(Date.now() + 1);
       futureCandidate = null;
 
       const store = new ScheduledAlarmStore(state.storage.sql);
-      const storedDue = Date.now() + 5;
-      store.schedule({ kind: "schedule", key: "comes-due", dueAt: storedDue }, Date.now());
+      const storedDue = comeDueDuringDeferral((dueAt) => {
+        store.schedule({ kind: "schedule", key: "comes-due", dueAt }, Date.now());
+      });
       await instance.alarm();
-      expect(Date.now()).toBeGreaterThan(storedDue);
+      expect(Date.now()).toBeGreaterThan(storedDue());
       expect(held).toEqual([1, 2, 3, 4, 1]);
       expect(await state.storage.getAlarm()).toBeLessThanOrEqual(Date.now() + 1);
       expect(store.get("schedule", "comes-due")?.attempt).toBe(0);
