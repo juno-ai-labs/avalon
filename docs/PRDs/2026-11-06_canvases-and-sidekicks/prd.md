@@ -227,6 +227,38 @@ leave every other generated file with no home.
 that table covers all artifacts. The Canvas viewer is chosen by kind, reusing
 the existing previews. Annotations already work across these kinds.
 
+### 2026-11-06 — A Canvas is identified by its conversation and starts empty
+
+**Decided:** A Canvas's id is the id of its own conversation (the agent loop's
+parent coordinate), not an artifact or resource id. The artifacts a Canvas
+generates hang off that conversation, one today and possibly several later. A
+new Canvas has no artifacts; the first publish from its Chat creates the first
+one as version 1.
+
+**Why:** The product owner's call, after the plan first keyed a Canvas by its
+resource and started it with a synthetic empty document. A resource version is
+a pointer snapshot with provenance, and an empty file nobody made has none. The
+conversation is the one thing that exists from the moment a Canvas is created,
+and keying on it leaves room for one Canvas to produce many artifacts.
+
+**Changes:** Nothing in the agreed scope. The artifact-to-conversation link
+that exists today keeps its role, with the Canvas in the place a Thread held.
+
+### 2026-11-06 — An open Canvas reuses the conversation layout
+
+**Decided:** Opening a Canvas shows its conversation in the main pane and, once
+an artifact exists, that artifact in the right panel, the way a Thread shows a
+generated artifact today. Comments stay annotations in the conversation.
+
+**Why:** The product owner's call. The layout, the artifact panel and the
+annotation flow already exist for Threads; the mockup's artifact-first pane
+with Chat and Comments tabs would have been the one new client primitive in the
+pivot.
+
+**Changes:** The Product behavior for "Canvas open" and section 2 of
+[design.html](design.html) are superseded on layout. The header pill, people
+present, Share and the menu stay as drawn.
+
 ### 2026-11-06 — iOS, Sideline, browser import and Thread-scoped Sidekicks
 
 **Decided:** All iOS code is deleted rather than left to follow later. Sideline,
