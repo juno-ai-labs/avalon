@@ -165,7 +165,7 @@ const safeDefaults = {
   // publish still mints a URL, and pointing those at the production domain
   // would put a dead link in the rail that looks live.
   ARTIFACT_SERVING_DOMAIN: "rallyusercontent.localhost",
-  ALLOWED_ORIGINS: "app://rallywithai,app://avalon,app://sideline,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174",
+  ALLOWED_ORIGINS: "app://rallywithai,app://avalon,http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174",
   DESKTOP_DEEP_LINK_URI: "rallywithai://auth/complete",
   TERMINAL_REGION_CAPABILITY: "unsupported",
   TERMINAL_EMERGENCY_DISABLED: "false",

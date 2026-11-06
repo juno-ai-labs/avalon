@@ -2,7 +2,7 @@ import {
   ConnectorOAuthProviders,
   type ConnectorOAuthProviderValue as ConnectorOAuthProvider,
 } from "./connector-oauth-providers";
-import { isDesktopDeepLinkProtocol, SIDELINE_AUTH_CALLBACK_URI } from "./desktop-deep-link";
+import { isDesktopDeepLinkProtocol } from "./desktop-deep-link";
 import {
   parseWorkspaceAddressedDeepLink,
   type WorkspaceTarget,
@@ -238,32 +238,4 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
     || url.searchParams.has("status")
   ) return parseConnectorResult(url, target);
   return parseIdentityResult(url, target);
-}
-
-/**
- * Parse a target the hosted browser handoff may open. Rally deep links retain
- * their shared application grammar; Sideline admits only its dedicated,
- * unaddressed identity callback and never becomes a Rally navigation scheme.
- */
-export function parseDesktopHandoffIntent(raw: string | URL): DesktopDeepLinkIntent | null {
-  const desktopIntent = parseDesktopDeepLinkIntent(raw);
-  if (desktopIntent) return desktopIntent;
-
-  let target: URL;
-  try {
-    target = typeof raw === "string" ? new URL(raw) : new URL(raw.toString());
-  } catch {
-    return null;
-  }
-  const sideline = new URL(SIDELINE_AUTH_CALLBACK_URI);
-  if (
-    target.protocol !== sideline.protocol
-    || target.hostname !== sideline.hostname
-    || target.pathname !== sideline.pathname
-    || target.hash
-    || target.username
-    || target.password
-    || target.port
-  ) return null;
-  return parseIdentityResult(target, null);
 }

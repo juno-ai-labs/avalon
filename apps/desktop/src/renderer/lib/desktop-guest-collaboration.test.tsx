@@ -30,7 +30,7 @@ const directory: DesktopWorkspaceOnboardingState = {
  * the API, less the Organization profile, roster and socket ticket under `/workspace`,
  * and the Sidekick library and creation, which refuse a guest per route.
  */
-const MEMBER_ONLY = /^\/(workspace\/(?!socket$|members$|me\/device-timezone$)|workspaces|workstreams|sideline|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime|(sidekicks|automations)\/?$)/u;
+const MEMBER_ONLY = /^\/(workspace\/(?!socket$|members$|me\/device-timezone$)|workspaces|workstreams|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime|(sidekicks|automations)\/?$)/u;
 
 const spaceId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 

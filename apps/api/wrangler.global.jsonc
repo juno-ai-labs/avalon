@@ -41,7 +41,7 @@
     // there is nothing whose absence could gate it. Anything but "true" leaves
     // the type out of the connector catalog and refuses creation here.
     "FIREFLIES_CONNECTOR_ENABLED": "true",
-    "ALLOWED_ORIGINS": "https://app.rallywith.ai,app://rallywithai,app://avalon,app://sideline,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
+    "ALLOWED_ORIGINS": "https://app.rallywith.ai,app://rallywithai,app://avalon,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
     "DESKTOP_DEEP_LINK_URI": "rallywithai://auth/complete",
     "OPENROUTER_PRIMARY_MODEL": "openai/gpt-6.1-sol",
     "OPENROUTER_FALLBACK_MODELS": "google/gemini-3.8-flash",
