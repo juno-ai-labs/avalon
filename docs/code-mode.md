@@ -175,7 +175,12 @@ writes) and keep the set under five, adding a tool only where the run must judge
 something between two steps. The tool returns the facts to report and an
 `exceptions` list of items it could not handle, finishes the rest rather than
 stopping on one bad item, works in bounded shares that record where they stopped
-when the job can outgrow the two-minute deadline, and is safe to call again. It
+when the job can outgrow the two-minute deadline, sized by elapsed time (about
+three quarters of the deadline) rather than a fixed count, and is safe to call
+again. Inside the tool a share is claimed and recorded with one write each, not a
+write and a re-read per item, since a run's re-read-after-write rule does not
+carry into code; independent reads run side by side up to any limit the
+instructions set. It
 records the facts it found with its progress and returns every one not yet marked
 delivered, so a call that timed out after its writes loses nothing; the run marks
 them delivered after posting, through a second tool. A tool takes the IDs of the
@@ -482,6 +487,31 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   is a listing-rules question still open.
 
 ## Changelog
+
+### 2026-11-06 — Size a tool's share by time and batch its writes
+
+**What changed:** The guide has a tool size its share by elapsed time, taking
+items until about three quarters of the two-minute deadline, never by a fixed
+count; claim and record a share with one write each rather than a write and a
+re-read per item; and run independent reads side by side up to any limit the
+instructions set, rather than one per turn.
+
+**Why:** Daily Active Rally Organizations' first one-tool revision,
+`scan_fixed_batch`, took ten conversations per call. Nothing in the guide said
+how to size a share, so the setup agent picked a small fixed count, and it
+copied the Sidekick's run rules into the program: a claim, a re-read, the SQL
+count, a completion write and another re-read for every conversation, with
+reads capped at four at a time. About 450 conversations a day still meant about
+45 tool calls, each re-sending the run's context. The tool is the only owner of
+the rows it claims, so a per-item re-read adds a call and no safety. A cap on
+concurrent reads may protect a production source, so the code keeps it.
+
+**Considered and rejected:** Raising the program deadline, which the bounded
+share makes unnecessary. A fixed larger count, which is wrong for both fast and
+slow sources.
+
+**Consequences:** "About three quarters" comes from the existing
+`CODE_PROGRAM_DEADLINE_MS`; a change to that deadline changes the share with it.
 
 ### 2026-11-06 — A custom tool takes its tables as input
 
