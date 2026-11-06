@@ -281,7 +281,7 @@ message.
 
 **Decided:** A Canvas's conversation is an ordinary conversation object, the
 class today called `SubstreamAgent`, hosted in WorkspaceDO by one hosting
-primitive shared with Sidekicks. The class is renamed to say what it is; no new
+primitive shared with Sidekicks. The class is renamed `AgentLoopDO`; no new
 Durable Object is added.
 
 **Why:** The product owner's call. The object already hosts every kind of
