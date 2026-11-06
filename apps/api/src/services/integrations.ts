@@ -572,6 +572,8 @@ class AttachmentGroundingGuard {
   private readonly started = new Map<string, StartedAttachmentAccess>();
   private readonly readContinuations = new Map<string, string>();
   private readonly unresolved = new Map<string, FailedAttachmentAccess>();
+  /** Resources whose content this run has delivered at least once. */
+  private readonly delivered = new Set<string>();
   private nudgeSent = false;
   private terminalBoundaryApplied = false;
 
@@ -605,7 +607,7 @@ class AttachmentGroundingGuard {
         ...access.resourceIds,
         ...attachmentResourceIds(event.result.output),
       ]);
-      for (const resourceId of verifiedResourceIds) this.unresolved.delete(`resource:${resourceId}`);
+      for (const resourceId of verifiedResourceIds) this.markDelivered(resourceId);
       return;
     }
 
@@ -616,10 +618,10 @@ class AttachmentGroundingGuard {
         : [];
       const item = matching.length === 1 ? matching[0] : undefined;
       if (item?.status === "included") {
-        this.unresolved.delete(`resource:${resourceId}`);
+        this.markDelivered(resourceId);
         continue;
       }
-      if (item?.reasonCode && isOutOfScopeAttachmentCode(item.reasonCode)) continue;
+      if (item?.reasonCode && this.isOutOfScope(item.reasonCode, [resourceId])) continue;
       this.unresolved.set(`resource:${resourceId}`, {
         resourceIds: [resourceId],
         toolCallId: event.toolCallId,
@@ -635,10 +637,10 @@ class AttachmentGroundingGuard {
     this.started.delete(event.toolCallId);
     if (event.phase === "validation") return;
     const errorCode = structuredAttachmentFailureCode(event);
-    if (isOutOfScopeAttachmentCode(errorCode)) return;
     let resourceIds = access?.resourceIds.length
       ? access.resourceIds
       : structuredAttachmentFailureResourceIds(event);
+    if (this.isOutOfScope(errorCode, resourceIds)) return;
     if (resourceIds.length === 0
       && errorCode === "invalid_cursor"
       && access?.cursorOnly) {
@@ -676,7 +678,7 @@ class AttachmentGroundingGuard {
           this.recordReadCursorProvenance(plan.capability, output);
           resourceIds = [...new Set([...resourceIds, ...attachmentResourceIds(output)])];
         }
-        for (const resourceId of resourceIds) this.unresolved.delete(`resource:${resourceId}`);
+        for (const resourceId of resourceIds) this.markDelivered(resourceId);
         this.started.delete(receipt.toolCallId);
         continue;
       }
@@ -701,11 +703,11 @@ class AttachmentGroundingGuard {
       this.started.delete(receipt.toolCallId);
       const errorCode = structured?.code
         ?? (typeof error.code === "string" ? error.code : "attachment_receipt_failed");
-      if (isOutOfScopeAttachmentCode(errorCode)) continue;
       if (resourceIds.length === 0) {
         const structuredResourceId = structured?.details?.["resourceId"];
         if (typeof structuredResourceId === "string") resourceIds = [structuredResourceId];
       }
+      if (this.isOutOfScope(errorCode, resourceIds)) continue;
       if (resourceIds.length === 0
         && errorCode === "invalid_cursor"
         && attachmentCursor(input)) {
@@ -783,6 +785,22 @@ class AttachmentGroundingGuard {
       errorCodes: [...new Set(failures.map((failure) => failure.errorCode))].sort(),
       toolNames: [...new Set(failures.map((failure) => failure.toolName))].sort(),
     };
+  }
+
+  private markDelivered(resourceId: string): void {
+    this.delivered.add(resourceId);
+    this.unresolved.delete(`resource:${resourceId}`);
+  }
+
+  /**
+   * A not-found refusal is out of scope only for a resource this run never
+   * read. Once a page was delivered, losing the rest (detached, deleted or
+   * access revoked mid-read) leaves a partial read the guard must still hold.
+   */
+  private isOutOfScope(errorCode: string, resourceIds: readonly string[]): boolean {
+    return isOutOfScopeAttachmentCode(errorCode)
+      && resourceIds.length > 0
+      && !resourceIds.some((resourceId) => this.delivered.has(resourceId));
   }
 
   private identities(): string[] {
