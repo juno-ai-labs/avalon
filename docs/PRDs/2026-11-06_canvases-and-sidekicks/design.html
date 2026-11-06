@@ -738,37 +738,55 @@
       }
       .board-area.artifact {
         flex: none;
-        width: 540px;
+        width: 500px;
         border-left: 1px solid var(--line);
       }
-      .artifact .ahead {
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 54px;
+      .bar.split {
+        padding: 0;
+      }
+      .bar .col-convo {
+        flex: 1;
+        min-width: 0;
+        height: 64px;
+        position: relative;
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 0 16px;
-        border-bottom: 1px solid var(--line);
-        background: var(--canvas);
-        font-size: 13.5px;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 0 20px;
       }
-      .artifact .ahead b {
-        display: block;
-        font-weight: 600;
+      .bar .col-panel {
+        width: 500px;
+        flex: none;
+        height: 64px;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 0 20px;
       }
-      .artifact .ahead small {
-        display: block;
-        color: var(--t3);
+      .bar .col-convo .pill {
+        position: static;
+        transform: none;
+        margin: 0 auto;
+        white-space: nowrap;
+      }
+      .bar .col-convo .tools {
+        flex: none;
+      }
+      .bar .col-panel .pill {
+        font-size: 14px;
+      }
+      .artifact .updated {
+        position: absolute;
+        top: 16px;
+        left: 20px;
         font-size: 12px;
-      }
-      .artifact .ahead .btn {
-        margin-left: auto;
+        color: var(--t3);
       }
       .artifact .doc {
-        top: 74px;
+        top: 46px;
         left: 20px;
         right: 20px;
         padding: 26px 28px;
@@ -786,8 +804,11 @@
         padding: 8px 28px;
       }
       .convo.narrow .composer.wide {
-        margin-left: 28px;
-        margin-right: 28px;
+        align-self: stretch;
+        margin-left: 20px;
+        margin-right: 20px;
+        width: auto;
+        max-width: none;
       }
       .kpis {
         display: grid;
@@ -1271,14 +1292,6 @@
             stroke-linejoin="round"
           />
         </symbol>
-        <symbol id="i-cursor" viewBox="0 0 24 24">
-          <path
-            d="M4 3l7 17 2.5-7.5L21 10z"
-            stroke="#fff"
-            stroke-width="1.4"
-            stroke-linejoin="round"
-          />
-        </symbol>
         <symbol id="i-share" viewBox="0 0 24 24">
           <path
             d="M12 15V4M8 8l4-4 4 4M5 13v6a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-6"
@@ -1314,6 +1327,27 @@
             stroke-width="1.8"
             stroke-linejoin="round"
           />
+        </symbol>
+        <symbol
+          id="i-expand"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+        </symbol>
+        <symbol
+          id="i-close"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        >
+          <path d="M18 6 6 18M6 6l12 12" />
         </symbol>
         <symbol id="i-dots" viewBox="0 0 24 24">
           <circle cx="6" cy="12" r="1.6" fill="currentColor" />
@@ -1855,37 +1889,59 @@
             </div>
           </div>
           <div class="main">
-            <div class="bar">
-              <div class="navpair">
-                <span
-                  ><svg width="16" height="16">
-                    <use href="#i-left" /></svg></span
-                ><span
-                  ><svg width="16" height="16"><use href="#i-right" /></svg
-                ></span>
+            <div class="bar split">
+              <div class="col-convo">
+                <div class="navpair">
+                  <span
+                    ><svg width="16" height="16">
+                      <use href="#i-left" /></svg></span
+                  ><span
+                    ><svg width="16" height="16"><use href="#i-right" /></svg
+                  ></span>
+                </div>
+                <div class="pill">
+                  <span class="sheet t-blue mini"
+                    ><svg width="15" height="15">
+                      <use href="#i-chart" /></svg></span
+                  >Q4 revenue review<svg
+                    width="14"
+                    height="14"
+                    style="color: var(--t3)"
+                  >
+                    <use href="#i-down" />
+                  </svg>
+                </div>
+                <div class="tools">
+                  <span class="stack"
+                    ><span class="av a-maya">M</span
+                    ><span class="av a-theo">T</span
+                    ><span class="av a-rally">R</span></span
+                  ><span class="btn"
+                    ><svg width="15" height="15"><use href="#i-share" /></svg
+                    >Share</span
+                  ><span class="btn ico"
+                    ><svg width="16" height="16"><use href="#i-dots" /></svg
+                  ></span>
+                </div>
               </div>
-              <div class="pill">
-                <span class="sheet t-blue mini"
+              <div class="col-panel">
+                <div class="pill">
+                  <span class="sheet t-blue mini"
+                    ><svg width="15" height="15">
+                      <use href="#i-doc" /></svg></span
+                  >Q4 revenue review<svg
+                    width="14"
+                    height="14"
+                    style="color: var(--t3)"
+                  >
+                    <use href="#i-down" />
+                  </svg>
+                </div>
+                <span class="btn ico"
                   ><svg width="15" height="15">
-                    <use href="#i-chart" /></svg></span
-                >Q4 revenue review<svg
-                  width="14"
-                  height="14"
-                  style="color: var(--t3)"
-                >
-                  <use href="#i-down" />
-                </svg>
-              </div>
-              <div class="tools">
-                <span class="stack"
-                  ><span class="av a-maya">M</span
-                  ><span class="av a-theo">T</span
-                  ><span class="av a-rally">R</span></span
-                ><span class="btn"
-                  ><svg width="15" height="15"><use href="#i-share" /></svg
-                  >Share</span
+                    <use href="#i-expand" /></svg></span
                 ><span class="btn ico"
-                  ><svg width="16" height="16"><use href="#i-dots" /></svg
+                  ><svg width="15" height="15"><use href="#i-close" /></svg
                 ></span>
               </div>
             </div>
@@ -1965,19 +2021,8 @@
                 </div>
               </div>
               <div class="board-area artifact">
-                <div class="ahead">
-                  <span
-                    class="sheet t-blue"
-                    style="width: 28px; height: 28px; border-radius: 8px"
-                    ><svg width="15" height="15"><use href="#i-doc" /></svg
-                  ></span>
-                  <div>
-                    <b>Q4 revenue review</b
-                    ><small>Document · version 4 · Rally, 10:42</small>
-                  </div>
-                  <span class="btn ico"
-                    ><svg width="16" height="16"><use href="#i-dots" /></svg
-                  ></span>
+                <div class="updated">
+                  Last updated today, 10:42 · version 4 · Rally
                 </div>
                 <div class="doc">
                   <h2>Q4 revenue review</h2>
@@ -2699,36 +2744,58 @@
             </div>
           </div>
           <div class="main">
-            <div class="bar">
-              <div class="navpair">
-                <span
-                  ><svg width="16" height="16">
-                    <use href="#i-left" /></svg></span
-                ><span
-                  ><svg width="16" height="16"><use href="#i-right" /></svg
-                ></span>
+            <div class="bar split">
+              <div class="col-convo">
+                <div class="navpair">
+                  <span
+                    ><svg width="16" height="16">
+                      <use href="#i-left" /></svg></span
+                  ><span
+                    ><svg width="16" height="16"><use href="#i-right" /></svg
+                  ></span>
+                </div>
+                <div class="pill">
+                  <span class="sheet t-amber mini"
+                    ><svg width="15" height="15">
+                      <use href="#i-board" /></svg></span
+                  >Launch plan<svg
+                    width="14"
+                    height="14"
+                    style="color: var(--t3)"
+                  >
+                    <use href="#i-down" />
+                  </svg>
+                </div>
+                <div class="tools">
+                  <span class="stack"
+                    ><span class="av a-theo">T</span
+                    ><span class="av a-rally">R</span></span
+                  ><span class="btn"
+                    ><svg width="15" height="15"><use href="#i-share" /></svg
+                    >Share</span
+                  ><span class="btn ico"
+                    ><svg width="16" height="16"><use href="#i-dots" /></svg
+                  ></span>
+                </div>
               </div>
-              <div class="pill">
-                <span class="sheet t-amber mini"
+              <div class="col-panel">
+                <div class="pill">
+                  <span class="sheet t-amber mini"
+                    ><svg width="15" height="15">
+                      <use href="#i-table" /></svg></span
+                  >Launch plan<svg
+                    width="14"
+                    height="14"
+                    style="color: var(--t3)"
+                  >
+                    <use href="#i-down" />
+                  </svg>
+                </div>
+                <span class="btn ico"
                   ><svg width="15" height="15">
-                    <use href="#i-board" /></svg></span
-                >Launch plan<svg
-                  width="14"
-                  height="14"
-                  style="color: var(--t3)"
-                >
-                  <use href="#i-down" />
-                </svg>
-              </div>
-              <div class="tools">
-                <span class="stack"
-                  ><span class="av a-theo">T</span
-                  ><span class="av a-rally">R</span></span
-                ><span class="btn"
-                  ><svg width="15" height="15"><use href="#i-share" /></svg
-                  >Share</span
+                    <use href="#i-expand" /></svg></span
                 ><span class="btn ico"
-                  ><svg width="16" height="16"><use href="#i-dots" /></svg
+                  ><svg width="15" height="15"><use href="#i-close" /></svg
                 ></span>
               </div>
             </div>
@@ -2797,19 +2864,8 @@
                 </div>
               </div>
               <div class="board-area artifact">
-                <div class="ahead">
-                  <span
-                    class="sheet t-amber"
-                    style="width: 28px; height: 28px; border-radius: 8px"
-                    ><svg width="15" height="15"><use href="#i-table" /></svg
-                  ></span>
-                  <div>
-                    <b>Launch plan</b
-                    ><small>Board · version 7 · Rally, 9:13</small>
-                  </div>
-                  <span class="btn ico"
-                    ><svg width="16" height="16"><use href="#i-dots" /></svg
-                  ></span>
+                <div class="updated">
+                  Last updated today, 9:13 · version 7 · Rally
                 </div>
                 <div class="doc">
                   <h2>Launch plan</h2>
