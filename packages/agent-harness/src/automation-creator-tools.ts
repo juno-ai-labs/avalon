@@ -973,12 +973,13 @@ flight. When a write is refused, it lists the row the error names under exceptio
 writes the rest, so one bad item never stalls the share. Items it did not reach stay
 pending for the next call: claim only the group about to be read, and take each row's
 new revision from the claim write's result, not a re-read. A run's rule to re-read after every write does not carry
-into the code. Independent reads may run side by side. Tune by measurement, not by
+into the code. Independent calls may run side by side in Promise.all, writes included;
+read a group together, then write it. Tune by measurement, not by
 guess: the aim is the most finished items per call, so the run needs the fewest calls
 and turns. Have the tool return how many items it finished, the seconds it took and
 the errors it met, take the concurrency and group size as inputs while you tune, and
 run sidekick_tool_test on a representative share of real items at a few settings (for
-example 4, 8 and 16 reads at once). Keep the setting with the most items per second
+example 4, 8 and 16 calls at once). Keep the setting with the most items per second
 that adds no errors and no slowdown per item, then fix it in the tool. A limit a person
 asked for, or a source's documented rate limit, caps the setting; a number an earlier
 revision wrote without a measurement is a guess to re-measure, not a limit. Write the
