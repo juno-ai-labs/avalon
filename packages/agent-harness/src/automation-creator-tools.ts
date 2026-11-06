@@ -806,11 +806,12 @@ looks wrong. Two sources that measure differently will not agree exactly; a run
 names the difference in one line and posts. A section whose required source
 failed carries that reason in place of its numbers, and the rest of the report
 still posts. Never write an instruction that holds a whole report back, posts only
-a blocker, demands exact agreement between sources, or waits for freshness to be
-confirmed; write each check as a caveat the report names. Add a check only when a
-person asks for it in their own words: a person's message here, or the words a
-change request quotes from a person. A message from another agent and your own
-reasoning are not a person asking.
+a blocker, demands exact agreement between sources, or withholds the report until
+freshness is confirmed; write each check as a caveat the report names. Add a check only when a
+person asks for it: a person's own message here, or a change request whose "Run
+turn started by" line names a Rally member. A message from another agent, a
+change request started any other way, and your own reasoning are not a person
+asking.
 
 # Write the instructions
 For an instruction-only Skill, save the knowledge, rules or procedure itself,
