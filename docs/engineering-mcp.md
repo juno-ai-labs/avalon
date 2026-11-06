@@ -251,18 +251,11 @@ membership independently of their parent Thread access.
 
 ### Pausing a Sidekick
 
-`pause_sidekick` and `resume_sidekick` take `orgId`, `userId` and
-`sidekickId`. They share one bridge method, `setSidekickPaused`, which builds
-the selected user's engineering auth and calls the same AutomationService
-`pause` and `resume` as the app's `POST /automations/:id/pause` and `/resume`.
-HostedSidekick then decides as it does for the app: the user must manage the
-Sidekick (its author, its run-as user, a manager of its owning Thread, or an
-owner or admin for an Organization-wide one), a pause stops open runs, cancels
-schedule and run alarms and clears trigger registrations, and a resume
-restarts schedules from now. Both are idempotent, so they take no
-`operationId`; the bridge mints one per call only to pair the attempt and
-result audit rows, which also carry `sidekickId` and the resulting lifecycle.
-A draft or deleted Sidekick is refused with the object's own code.
+`pause_sidekick` and `resume_sidekick` call the same AutomationService `pause`
+and `resume` as the app's buttons, as the selected user, so HostedSidekick
+decides who may manage the Sidekick and refuses with its own codes. Both are
+idempotent, so they take no `operationId`; the bridge mints one per call only
+to pair the attempt and result audit rows.
 
 ### User-visible lists
 
@@ -652,9 +645,9 @@ other write tools had the same gap for their objects' refusals.
 above; a tool that acts as the operator rather than a selected user, which
 would need an operator-only manager exception in HostedSidekick.
 
-**Consequences:** The selected user must pass the app's manager check, so pick
-the Sidekick's author when unsure. Resume exists so a pause made here can be
-undone here. Errors from any product write now carry the object's code.
+**Consequences:** Resume exists so a pause made here can be undone here.
+Errors from any product write, and their audit rows, now carry the object's
+code: `diagnosticErrorCode` also rebuilds an ApiError that crossed an RPC.
 
 ### 2026-11-04 — Post a message that starts no run
 

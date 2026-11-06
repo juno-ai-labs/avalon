@@ -16,8 +16,12 @@ export async function setEngineeringSidekickPaused(
 ): Promise<SetEngineeringSidekickPausedResult> {
   const auth = await engineeringUserAuth(env, input.orgId, input.userId);
   const sidekicks = new AutomationService(env, auth);
+  // Each returns only when the Sidekick ends in that state, and throws
+  // otherwise, so the lifecycle needs no read-back.
   if (input.paused) await sidekicks.pause(input.sidekickId);
   else await sidekicks.resume(input.sidekickId);
-  const { lifecycle } = await sidekicks.detail(input.sidekickId);
-  return { region: env.AVALON_REGION, orgId: input.orgId, sidekickId: input.sidekickId, lifecycle };
+  return {
+    region: env.AVALON_REGION, orgId: input.orgId, sidekickId: input.sidekickId,
+    lifecycle: input.paused ? "paused" : "active",
+  };
 }
