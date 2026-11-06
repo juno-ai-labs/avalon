@@ -213,6 +213,20 @@ has rendered nothing since 2026-09-11; both only ever created Threads.
 **Changes:** Open question 3 closes. The Activity-derived clauses of the brief's
 contract are removed rather than relocated.
 
+### 2026-11-06 — A Canvas is any generated artifact, not only a live site
+
+**Decided:** Every artifact Rally generates is a Canvas: documents,
+spreadsheets, images, PDFs, archives and live sites. A Canvas is one resource
+with versions and its own Chat; a site Canvas also has its per-artifact origin.
+
+**Why:** The product owner's call. The Summary and the "What each feature
+becomes" table read as if only live web artifacts became Canvases, which would
+leave every other generated file with no home.
+
+**Changes:** The "Artifacts section, live web artifacts, annotations" row of
+that table covers all artifacts. The Canvas viewer is chosen by kind, reusing
+the existing previews. Annotations already work across these kinds.
+
 ### 2026-11-06 — iOS, Sideline, browser import and Thread-scoped Sidekicks
 
 **Decided:** All iOS code is deleted rather than left to follow later. Sideline,
