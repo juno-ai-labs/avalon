@@ -286,6 +286,40 @@ export const SidekickRunContinuationSchema = z.discriminatedUnion("outcome", [
 ]);
 export type SidekickRunContinuation = z.infer<typeof SidekickRunContinuationSchema>;
 
+/**
+ * A person's message in the Sidekick's shared conversation (substream `"0"`)
+ * that the addressing classifier sent to an agent, asked about once before the
+ * conversation's loop takes it. `messageId` is the turn the message lands as,
+ * so a retried claim admits the same run.
+ */
+export const SidekickConversationMessageRequestSchema = z.strictObject({
+  ...Addressed,
+  actor: AutomationActorSchema,
+  messageId: IdSchema,
+  authorName: z.string().min(1).max(200),
+  text: z.string().min(1),
+});
+export type SidekickConversationMessageRequest = z.infer<typeof SidekickConversationMessageRequestSchema>;
+
+/** Why a message addressed to the Sidekick started no run. */
+export const SidekickConversationMessageRefusalCodeSchema = z.enum([
+  "sidekick_not_active",
+  "sidekick_not_runnable",
+  "run_no_eligible_delegate",
+]);
+export type SidekickConversationMessageRefusalCode = z.infer<typeof SidekickConversationMessageRefusalCodeSchema>;
+
+/**
+ * Who answers the message: the wizard (its sender manages the Sidekick, which
+ * is today's authoring turn), a run the message started, or nobody, with why.
+ */
+export const SidekickConversationMessageRouteSchema = z.discriminatedUnion("route", [
+  z.strictObject({ route: z.literal("wizard") }),
+  z.strictObject({ route: z.literal("run"), runId: IdSchema, reused: z.boolean() }),
+  z.strictObject({ route: z.literal("refused"), code: SidekickConversationMessageRefusalCodeSchema }),
+]);
+export type SidekickConversationMessageRoute = z.infer<typeof SidekickConversationMessageRouteSchema>;
+
 export const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
 export const AUTOMATION_RUN_ALARM_KIND = "automation_run";
 /** One entry per Sidekick, armed when enough runs have finished; see `HostedSidekick.startReview`. */

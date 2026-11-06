@@ -83,6 +83,7 @@ import { connectorPluginBindingViews } from "../lib/connector-plugin-views";
 import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../lib/connector-activity-triggers";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { sha256 } from "../lib/crypto";
+import { conversationMessageOpening } from "../lib/conversation-message-opening";
 import { externalEventOpening } from "../lib/external-event-opening";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { parseRpcInput } from "../lib/rpc-input";
@@ -107,6 +108,9 @@ import {
   AutomationOwningRoomArchivedRequestSchema,
   AutomationRunDefinitionRequestSchema,
   AutomationRunNowRequestSchema,
+  SidekickConversationMessageRequestSchema,
+  type SidekickConversationMessageRequest,
+  type SidekickConversationMessageRoute,
   AutomationRunRequestSchema,
   AutomationRunSeededRequestSchema,
   AutomationSetAppearanceRequestSchema,
@@ -1218,6 +1222,54 @@ export class HostedSidekick {
       request.seed,
     );
     return admitted;
+  }
+
+  /**
+   * Who answers a person's message in the Sidekick's shared conversation
+   * (substream `"0"`), once the addressing classifier sent it to an agent.
+   *
+   * The conversation keeps the wizard and run separation the PRD's decision
+   * log records: a manager's message is the wizard's, which is the authoring
+   * turn the conversation has always run; anyone else's starts a run under
+   * the Sidekick's definition, the path `runNow` takes, with the message as
+   * the run's opening, and the run answers in its own child conversation. The
+   * conversation's loop itself never acts on the Sidekick's definition.
+   *
+   * The run acts only as its sender, and only when the sender is an eligible
+   * delegate: a person must not read, through the Sidekick, what they cannot
+   * read themselves, and borrowing another delegate's access here would be
+   * exactly that. Running under a non-delegate's own access is plan step A-4.
+   * Idempotent on the message's turn id, so a retried claim admits nothing
+   * twice.
+   */
+  async admitConversationMessage(input: SidekickConversationMessageRequest): Promise<SidekickConversationMessageRoute> {
+    const request = parseRpcInput(SidekickConversationMessageRequestSchema, input, "admit_conversation_message");
+    const initial = this.assertSidekick(request.workspaceId, request.automationId);
+    if (await this.managerAllows(initial, request.actor)) return { route: "wizard" };
+    if (initial.lifecycle !== "active") return { route: "refused", code: "sidekick_not_active" };
+    const coordinator = await this.coordinator(request.actor.userId, [request.actor.userId], false);
+    // Read after the awaits, as `runNow` does: a pause or a revision applied
+    // meanwhile is what the run must see.
+    const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
+    if (row.lifecycle !== "active") return { route: "refused", code: "sidekick_not_active" };
+    const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
+    if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
+      return { route: "refused", code: "sidekick_not_runnable" };
+    }
+    if (coordinator === null) return { route: "refused", code: "run_no_eligible_delegate" };
+    const admitted = this.admitOccurrence(
+      row.accepted_definition_revision,
+      `message:${request.messageId}`,
+      { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
+      conversationMessageOpening({
+        messageId: request.messageId,
+        authorUserId: request.actor.userId,
+        authorName: request.authorName,
+        text: request.text,
+      }),
+      coordinator,
+    );
+    return { route: "run", runId: admitted.runId, reused: admitted.reused };
   }
 
   /**

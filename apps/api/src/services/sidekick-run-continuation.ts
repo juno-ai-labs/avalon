@@ -8,7 +8,11 @@ import type { Region } from "@rally/contracts/regions";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 
 import {
+  SidekickConversationMessageRouteSchema,
   SidekickRunContinuationSchema,
+  type SidekickConversationMessageRefusalCode,
+  type SidekickConversationMessageRequest,
+  type SidekickConversationMessageRoute,
   type SidekickRunContinuation,
   type SidekickRunContinuationRefusalCode,
 } from "../durable-objects/automation-do-protocol";
@@ -81,4 +85,24 @@ export const SIDEKICK_RUN_REFUSAL_TEXT: Record<SidekickRunContinuationRefusalCod
   sidekick_deleted: "This message did not continue the run because its Sidekick was archived.",
   run_not_found: "This message did not continue the run because its Sidekick no longer knows the run.",
   run_no_eligible_delegate: "This message did not continue the run because no delegated user is available. Add a delegate with access to continue.",
+};
+
+/**
+ * Ask the Sidekick who answers a message in its shared conversation: the
+ * wizard, a run the message starts, or nobody. The shared conversation's loop
+ * asks before it takes the message, as a run child asks `continueSidekickRun`.
+ */
+export async function routeSidekickConversationMessage(
+  env: Env,
+  input: SidekickConversationMessageRequest,
+): Promise<SidekickConversationMessageRoute> {
+  const workspace = await hostedParentStub(env, asWorkspaceId(input.workspaceId));
+  return SidekickConversationMessageRouteSchema.parse(await workspace.sidekickAdmitConversationMessage(input));
+}
+
+/** What the shared conversation says when a message addressed to the Sidekick started no run. */
+export const SIDEKICK_MESSAGE_REFUSAL_TEXT: Record<SidekickConversationMessageRefusalCode, string> = {
+  sidekick_not_active: "This message did not start a run because the Sidekick is not active.",
+  sidekick_not_runnable: "This message did not start a run because this Sidekick has no way to run; it is used as a skill in other conversations.",
+  run_no_eligible_delegate: "This message did not start a run because you have not allowed this Sidekick to act for you. Allow delegation to ask it directly.",
 };
