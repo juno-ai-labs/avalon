@@ -68,7 +68,6 @@ below from being read as bigger than it is.
 | Public hostnames | `rallywith.ai` and its nine subdomains | ten `with-avalon.com` hostnames still served — [`domain-migration.md`](domain-migration.md) owns the retirement conditions |
 | Product HTTP headers | `x-rally-*`, read through `readRallyHeader` | `x-avalon-*` accepted as superseded prefixes (31 occurrences, 9 files) |
 | Desktop bundle | `appId: ai.rallywith.desktop`, `productName: Rally` | none |
-| iOS bundle | `PRODUCT_BUNDLE_IDENTIFIER = ai.rallywith.ios`, display name Rally | none |
 | Desktop deep link | `rallywithai://` minted everywhere | `avalon://` registered and accepted, never emitted (73 occurrences, 27 files) |
 | Renderer origin | `app://rallywithai` | `app://avalon` still admitted by `ALLOWED_ORIGINS` (50 occurrences) |
 | Telemetry envelope | Rally identifiers | superseded Avalon identifiers still parsed |
