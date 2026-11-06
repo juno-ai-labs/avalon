@@ -12,6 +12,9 @@ import {
   ListEngineeringUserChannelsInputSchema,
   ListEngineeringUserConversationsInputSchema,
   type SendEngineeringMessageResult,
+  SetEngineeringSidekickPausedInputSchema,
+  SetEngineeringSidekickPausedResultSchema,
+  type SetEngineeringSidekickPausedResult,
   type EngineeringTextResult,
   CreateEngineeringOrgInputSchema,
   CreateEngineeringOrgResultSchema,
@@ -85,11 +88,12 @@ import {
   workspacePlacementAffinity,
 } from "./lib/durable-object-namespace";
 import { parseRpcInput } from "./lib/rpc-contracts";
-import { ApiError } from "./lib/api-error";
+import { asApiError } from "./lib/api-error";
 import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
 import { createEngineeringOrg, createEngineeringChannel, createEngineeringThread } from "./services/engineering-creation";
 import { sendEngineeringMessage, readEngineeringChannel, readEngineeringConversation, listEngineeringUserChannels, listEngineeringUserConversations } from "./services/engineering-messages";
 import { auditedEngineeringWrite } from "./services/engineering-audit";
+import { setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
   id: z.string(),
@@ -272,6 +276,19 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
+  async setSidekickPaused(input: unknown, operator: unknown): Promise<SetEngineeringSidekickPausedResult> {
+    return this.productOperation("setSidekickPaused", async () => {
+      const request = SetEngineeringSidekickPausedInputSchema.parse(input);
+      // Pause and resume are idempotent, so there is no caller recovery key;
+      // a fresh ID still pairs this call's attempt and result audit rows.
+      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
+        action: request.paused ? "pause_sidekick" : "resume_sidekick", orgId: request.orgId,
+        representedUserId: request.userId, operationId: crypto.randomUUID(), sidekickId: request.sidekickId,
+      }, async () => SetEngineeringSidekickPausedResultSchema.parse(await setEngineeringSidekickPaused(this.env, request)),
+      (result) => ({ lifecycle: result.lifecycle }));
+    });
+  }
+
   async readChannel(input: unknown): Promise<EngineeringTextResult> {
     return this.productOperation("readChannel", async () => EngineeringTextResultSchema.parse(
       await readEngineeringChannel(this.env, ReadEngineeringChannelInputSchema.parse(input)),
@@ -291,7 +308,9 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       // as a diagnostic code, without putting names, prompts or emails in logs.
       const schemaCode = zodDiagnosticCode(error, name);
       if (schemaCode) throw new Error(schemaCode, { cause: error });
-      if (error instanceof ApiError) throw new Error(`engineering_operation_failed:${error.code}`, { cause: error });
+      // An object's ApiError arrives as a plain Error after its RPC hop.
+      const api = asApiError(error);
+      if (api) throw new Error(`engineering_operation_failed:${api.code}`, { cause: error });
       throw error;
     }
   }
