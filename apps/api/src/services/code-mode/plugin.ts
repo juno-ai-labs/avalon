@@ -135,10 +135,13 @@ stopped; split work larger than that across programs.
 A write made from a program is made for real. Compute first and write last, so a
 failure before the write leaves nothing half done. Before it runs, a program is
 checked and refused by line, with nothing written, when a write's promise is
-dropped, when a write runs inside Promise.all or a map/forEach callback, or when
-a program that writes reads Date.now(), new Date() or Math.random(). Await each
-write in order, in a for...of loop when there are several, and take the time
-from the time tool. When Rally re-runs an
+dropped (a bare call, or one inside a forEach callback), or when a program that
+writes reads Date.now(), new Date() or Math.random(). Await every write. Await
+writes in order when one depends on the last, or when a failure should stop the
+rest; independent calls, writes included, may run together in Promise.all. Start
+calls that run together in a fixed order, such as map over a list already in
+hand, so a re-run makes them in the same order. Take the time from the time
+tool. When Rally re-runs an
 interrupted program, calls that already completed replay instead of running
 again; a program you send again is a new run and repeats its writes. A failed
 program names the call that failed and the writes that stand. Correct the

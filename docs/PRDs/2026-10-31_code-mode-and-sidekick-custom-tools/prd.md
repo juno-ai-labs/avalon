@@ -731,12 +731,10 @@ arithmetic for the team to set it before merge.
 
 ## Open questions
 
-1. **Concurrency inside a program.** `Promise.all` over reads is natural
-   JavaScript and allowed; a write inside `Promise.all` or an iteration
-   callback is refused before the program runs, so writes are sequential by
-   rule as well as by the gateway's serialization. Whether connectors tolerate
-   the read concurrency a program can generate is a provider question the
-   first production trip decides.
+1. **Concurrency inside a program.** `Promise.all` over reads and writes is
+   allowed (since 2026-11-06; writes were sequential before). Whether
+   connectors tolerate the concurrency a program can generate is a provider
+   question the first production trip decides.
 2. **Pagination inside a program.** `_next` tools are offered as stubs so a
    program can loop pages. Whether to add an async iterator helper depends on
    how often programs page; decide after the first ten programs.
