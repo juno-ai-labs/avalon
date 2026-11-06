@@ -136,7 +136,96 @@ The brief needs its own update once this PRD is approved.
 
 ## Decision log
 
-None yet.
+The implementation plan written against these decisions is
+[plan.md](plan.md).
+
+### 2026-11-06 — Existing Threads, Breakouts and Channels are deleted
+
+**Decided:** At cutover, every Thread, Breakout and Channel is deleted through
+the workspace-retirement walk, object by object. No read-only mode, export or
+conversion into Canvases.
+
+**Why:** The product owner's call on open question 1. The old product drew no
+market interest, and keeping its data reachable means keeping its readers
+deployed.
+
+**Changes:** Open question 1 closes. The Rollout section's no-flag default now
+holds. Deletion is irreversible, so it runs as a guarded operator operation
+after the readers are gone.
+
+### 2026-11-06 — A Canvas has its own participant list
+
+**Decided:** A Canvas is visible to its creator by default. The creator can add
+participants, including guests, or open it to the whole Organization. The
+public per-artifact origin keeps its current rules.
+
+**Why:** The product owner's call on the first half of open question 2. Sharing
+is per Canvas, with no grouping layer (non-goal 2).
+
+**Changes:** Open question 2's first half closes. The Security and trust model's
+first boundary is now decided.
+
+### 2026-11-06 — A shared Sidekick uses delegate access only for its own runs
+
+**Decided:** Anyone a Sidekick is shared with can talk to it. Delegate access is
+used for runs its triggers start or that a delegate asks for. A request from a
+person who is not a delegate runs under that person's own access, and a tool
+that would need a delegate is refused with a named reason.
+
+**Why:** The product owner's call on the second half of open question 2. A
+person must not read, through the Sidekick, what they cannot read themselves.
+
+**Changes:** Open question 2 closes. The Security and trust model's second
+boundary is now decided.
+
+### 2026-11-06 — Editing stays as it is; live co-editing is out of scope
+
+**Decided:** Rally changes a Canvas by republishing it, as it does today, and
+people comment through the existing annotations. Several people editing one
+Canvas at once, live cursors and selections, in-place typed edit tools and the
+pending-edit shimmer are not built.
+
+**Why:** The product owner's call. The two modes already exist in the codebase
+and are being pulled to the front; the collaboration layer the Summary names as
+the larger half is the one part that does not exist, and the commenting feature
+covers working together on a Canvas for now.
+
+**Changes:** Goal 4 narrows to presence: people see who is in a Canvas. The
+Product behavior for an open Canvas loses cursors and the shimmer. The Agent
+behavior clause "republishing a whole directory is not how a Canvas changes"
+is withdrawn; republishing is how a Canvas changes, and each version is
+attributed to Rally. The tool contract the build PRD was to hold is the
+existing `publish_resource`, scoped to a Canvas.
+
+### 2026-11-06 — Connector ingress stops creating conversations
+
+**Decided:** A Slack mention of Rally and inbound email no longer create a
+conversation. Slack and email remain Sidekick triggers and delivery, and a
+Slack reply still continues the Sidekick run it answers. Routing suggestions and
+Suggested Work are deleted. Digests are deleted. Push notifications stay for
+mentions in a Canvas Chat or Sidekick conversation, "Needs input" and finished
+runs.
+
+**Why:** The product owner's call on open question 3 and the ingress paths the
+survey found. Routing suggestions were retired on 2026-08-30 and Suggested Work
+has rendered nothing since 2026-09-11; both only ever created Threads.
+
+**Changes:** Open question 3 closes. The Activity-derived clauses of the brief's
+contract are removed rather than relocated.
+
+### 2026-11-06 — iOS, Sideline, browser import and Thread-scoped Sidekicks
+
+**Decided:** All iOS code is deleted rather than left to follow later. Sideline,
+the represented-messaging app whose destinations are Threads, is deleted. The
+ChatGPT and Claude session import is deleted. Thread-scoped Sidekicks convert to
+Organization scope. Help center and site copy change in the same train as the
+code.
+
+**Why:** The product owner's call. Each either targets a Thread or is a
+prototype with no home after the pivot.
+
+**Changes:** Non-goal 1 (iOS deferred) becomes a deletion. The rollout is one
+cutover train with no flag.
 
 ## Key design decisions
 
@@ -197,10 +286,11 @@ adds the supersession note to its `state.md`.
 
 ## Open questions
 
-1. **What happens to existing Threads, Breakouts and their transcripts?** Keep
-   them read-only, export them, or convert them into Canvases. **Blocks the
-   build**, because the answer decides whether shipping deletes user data.
-2. **Who can open a Canvas, and whose access a shared Sidekick uses.** See
-   Security and trust model. **Blocks the build.**
-3. **Where connector routing suggestions go** once there are no streams to
-   suggest routing into.
+All three were answered on 2026-11-06; see the decision log.
+
+1. **What happens to existing Threads, Breakouts and their transcripts?**
+   Deleted.
+2. **Who can open a Canvas, and whose access a shared Sidekick uses.** A
+   per-Canvas participant list, creator-only by default; a shared Sidekick uses
+   delegate access only for its own runs.
+3. **Where connector routing suggestions go.** Nowhere; they are deleted.
