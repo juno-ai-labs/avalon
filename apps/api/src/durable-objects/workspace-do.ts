@@ -6932,6 +6932,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runSeeded(input));
   }
 
+  /** Who answers a message in a Sidekick's shared conversation; see `HostedSidekick.admitConversationMessage`. */
+  async sidekickAdmitConversationMessage(input: Parameters<HostedSidekick["admitConversationMessage"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitConversationMessage(input));
+  }
+
   async sidekickListRuns(input: Parameters<HostedSidekick["listRuns"]>[0]) {
     return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.listRuns(input));
   }

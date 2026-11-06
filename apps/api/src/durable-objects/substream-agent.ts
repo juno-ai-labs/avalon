@@ -212,6 +212,8 @@ import type { SidekickRunContinuation, SidekickRunContinuationRefusalCode } from
 import {
   continuationSource,
   continueSidekickRun,
+  routeSidekickConversationMessage,
+  SIDEKICK_MESSAGE_REFUSAL_TEXT,
   SIDEKICK_RUN_REFUSAL_TEXT,
 } from "../services/sidekick-run-continuation";
 import {
@@ -4238,6 +4240,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         slackSearchAuthorization: z.unknown().nullable().optional(),
         seed: DemoSeedSchema.nullable().optional(),
         agentExchange: AgentExchangeSchema.optional(),
+        actorRole: z.enum(["owner", "admin", "member"]).nullable().optional(),
       }).parse(JSON.parse(pending.authorization_json));
       // Input to a Sidekick run child continues that run: its instructions,
       // tools and run-as authority, against the Sidekick's accepted revision
@@ -4277,6 +4280,44 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           delegation = { runId: authorityRunId, stopGeneration: decided.stopGeneration };
         } else {
           continuation = decided;
+        }
+      }
+      // A person's message in the Sidekick's shared conversation is the
+      // wizard's only when its sender manages the Sidekick. Anyone else's
+      // starts a run under the Sidekick's definition with the message as its
+      // opening, and lands here as said to the room: the run answers in its
+      // own conversation, and its row here carries the reply. Asked before
+      // anything is activated, exactly as a run child asks above.
+      const sender = pending.actor === "human" && pending.author_user_id !== null
+        && authorization.reason === "human_message" && authorization.agentExchange === undefined
+        ? pending.author_user_id : null;
+      if (identity.parentKind === "automation" && externalSubstreamId === "0" && !background && sender !== null) {
+        const opening = this.transcript.pendingTranscriptInput(pending.input_id);
+        const routed = await routeSidekickConversationMessage(this.env, {
+          workspaceId: asWorkspaceId(identity.workspaceId),
+          automationId: identity.parentId,
+          actor: { userId: asUserId(sender), actorRole: authorization.actorRole ?? null, participantOfOwningWorkstream: false },
+          messageId: pending.prepared_turn_id,
+          authorName: pending.author_name_snapshot ?? "Somebody",
+          text: opening?.block.text || "(no text)",
+        });
+        const current = this.loop.loop();
+        if (!current || current.status !== "idle" || current.revision !== loop.revision
+          || this.transcript.nextActivationInput(loop.loop_id)?.input_id !== pending.input_id) {
+          return this.claimPersistentLoopExecution();
+        }
+        if (routed.route !== "wizard") {
+          await this.landInputWithoutRun(loop, pending, routed.route === "refused" ? {
+            clientMessageId: `sidekick-message-refused:${pending.input_id}`,
+            text: SIDEKICK_MESSAGE_REFUSAL_TEXT[routed.code],
+            structuredContent: { kind: "sidekick_message_refused", code: routed.code, turnId: pending.prepared_turn_id },
+          } : null);
+          const fields = {
+            workspace_id: identity.workspaceId, automation_id: identity.parentId, input_id: pending.input_id,
+          };
+          if (routed.route === "run") logInfo(this.env, "sidekick_conversation_message_started_run", { ...fields, run_id: routed.runId, reused: routed.reused });
+          else logInfo(this.env, "sidekick_conversation_message_refused", { ...fields, code: routed.code });
+          return this.claimPersistentLoopExecution();
         }
       }
       // Read after any continuation call, so the Bind fences the activation
@@ -4425,20 +4466,42 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     code: SidekickRunContinuationRefusalCode,
     authorityRunId: string,
   ): Promise<void> {
-    const now = Date.now();
-    const prepared = await this.messages.prepareMessage({
-      messageId: uuidV7(now),
+    await this.landInputWithoutRun(loop, pending, {
       clientMessageId: `sidekick-run-refused:${pending.input_id}`,
+      text: SIDEKICK_RUN_REFUSAL_TEXT[code],
+      structuredContent: { kind: "sidekick_run_refused", code, turnId: pending.prepared_turn_id },
+    });
+    const identity = this.objectStore.identity();
+    logInfo(this.env, "sidekick_run_continuation_refused", {
+      workspace_id: identity?.workspaceId ?? null,
+      automation_id: identity?.parentId ?? null,
+      run_id: authorityRunId,
+      input_id: pending.input_id,
+      code,
+    });
+  }
+
+  /**
+   * Land the input at the head of the queue as the sender wrote it, starting
+   * nothing here, with an optional system row after it saying why. Both in one
+   * transaction, keyed on the input, so a retried drain neither duplicates the
+   * note nor lands the input without it.
+   */
+  private async landInputWithoutRun(
+    loop: SubstreamLoopRow,
+    pending: PendingLoopInputRow,
+    note: { clientMessageId: string; text: string; structuredContent: Record<string, unknown> } | null,
+  ): Promise<void> {
+    const now = Date.now();
+    const prepared = note === null ? null : await this.messages.prepareMessage({
+      messageId: uuidV7(now),
+      clientMessageId: note.clientMessageId,
       authorType: "system",
       authorUserId: null,
       externalActorJson: null,
       messageType: "system",
-      text: SIDEKICK_RUN_REFUSAL_TEXT[code],
-      structuredContentJson: JSON.stringify({
-        kind: "sidekick_run_refused",
-        code,
-        turnId: pending.prepared_turn_id,
-      }),
+      text: note.text,
+      structuredContentJson: JSON.stringify(note.structuredContent),
       producedByRunId: null,
       now,
     });
@@ -4449,16 +4512,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         expectedLoopRevision: loop.revision,
         now,
       }));
-      this.messages.appendPreparedMessage(prepared);
+      if (prepared) this.messages.appendPreparedMessage(prepared);
     }, true);
-    const identity = this.objectStore.identity();
-    logInfo(this.env, "sidekick_run_continuation_refused", {
-      workspace_id: identity?.workspaceId ?? null,
-      automation_id: identity?.parentId ?? null,
-      run_id: authorityRunId,
-      input_id: pending.input_id,
-      code,
-    });
     await this.flushSemanticRealtimeOutboxBestEffort();
   }
 
