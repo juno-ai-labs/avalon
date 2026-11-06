@@ -4,7 +4,7 @@ import type { Context } from "hono";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import type { Env } from "../env";
-import { ApiError } from "../lib/api-error";
+import { asApiError } from "../lib/api-error";
 import { ObjectPortError } from "../runtime/object-port-error";
 
 const REDACTED = "[REDACTED]";
@@ -92,7 +92,9 @@ export function stableCode(text: string): string {
  * to the caller's fallback, as they always did.
  */
 export function diagnosticErrorCode(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) return error.diagnosticCode ?? error.code;
+  // Also an object's ApiError, which arrives as a plain Error after its RPC hop.
+  const api = asApiError(error);
+  if (api) return api.diagnosticCode ?? api.code;
   if (error instanceof ObjectPortError && STABLE_CODE.test(error.code)) return error.code;
   if (error instanceof z.ZodError) return codeShaped(`${fallback}:${describeZodIssues(error)}`);
   if (!(error instanceof Error)) return fallback;
