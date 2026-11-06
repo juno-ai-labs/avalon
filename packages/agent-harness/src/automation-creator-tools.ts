@@ -966,11 +966,13 @@ that, the tool does a bounded share, records where it stopped in the Sidekick's 
 table, and returns what remains, and the instructions call it again until nothing
 remains. Size the share by elapsed time, never a fixed count: the tool reads
 current_time when it starts and again after each group of reads (a program that writes
-may not use Date.now() or new Date()), keeps taking items until about three quarters of
-the two minutes have passed, then records the finished items with one update_rows and
-returns. Items it did not reach stay pending for the next call; a claim made up front
-is released in that same write, and each row's new revision comes from the claim
-write's result, not a re-read. A run's rule to re-read after every write does not carry
+may not use Date.now() or new Date()), and keeps taking groups until about three
+quarters of the two minutes have passed. After each group it records that group's
+finished items with one update_rows, so a call that overruns loses at most the group in
+flight. When a write is refused, it lists the row the error names under exceptions and
+writes the rest, so one bad item never stalls the share. Items it did not reach stay
+pending for the next call: claim only the group about to be read, and take each row's
+new revision from the claim write's result, not a re-read. A run's rule to re-read after every write does not carry
 into the code. Independent reads may run side by side, up to any limit the
 instructions set on concurrent reads, which the code then enforces. Measure, don't
 guess: have the tool return how many items it finished and the seconds it took, run
