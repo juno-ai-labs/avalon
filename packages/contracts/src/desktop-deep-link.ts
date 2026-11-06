@@ -25,9 +25,6 @@
 /** The scheme every surface mints today. */
 export const DESKTOP_DEEP_LINK_PROTOCOL = "rallywithai:";
 
-/** Dedicated authentication target owned by the Sideline internal sidecar. */
-export const SIDELINE_AUTH_CALLBACK_URI = "sideline://auth/complete";
-
 /** Schemes still honoured inbound, and deliberately never emitted. */
 export const LEGACY_DESKTOP_DEEP_LINK_PROTOCOLS: readonly string[] = Object.freeze([
   "avalon:",
