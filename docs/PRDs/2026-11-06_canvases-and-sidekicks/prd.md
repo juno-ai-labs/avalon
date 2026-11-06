@@ -187,8 +187,8 @@ Threads and Breakouts. Whether to stage it behind a flag is an engineer's call
 when the build starts.
 
 The [Channels and Threads navigation](../2026-10-10_channels-threads-navigation/prd.md)
-PRD is `in progress`. Its build stops when this PRD is approved, and its
-`state.md` gains a supersession note in the same change.
+PRD is `in progress`. Its build stops when this PRD is approved; this change
+adds the supersession note to its `state.md`.
 
 ## Open questions
 
