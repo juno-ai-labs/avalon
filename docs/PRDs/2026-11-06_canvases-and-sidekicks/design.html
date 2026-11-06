@@ -2107,7 +2107,7 @@
       <p>
         Sidekicks move from their own window into the main shell. The sidebar
         puts a <b>Needs you</b>
-        group first: Sidekicks waiting on an answer or an approval. The home
+        group first: Sidekicks waiting on information only you have. The home
         page is today’s library, in a row layout that shows what matters at a
         glance: status, who shares it, when it runs next.
       </p>
@@ -2147,7 +2147,7 @@
               </div>
               <div class="txt">
                 <div class="name">Incident triage</div>
-                <div class="sub">Approve the rollback plan?</div>
+                <div class="sub">Which status page gets the update?</div>
               </div>
               <div class="meta">5m<span class="needs">Needs input</span></div>
             </div>
@@ -2253,8 +2253,8 @@
                       >Incident triage <span class="needs">Needs input</span></b
                     >
                     <p>
-                      Watches PagerDuty, drafts the first response, and asks
-                      before it acts.
+                      Watches PagerDuty, rolls back bad deploys, and keeps the
+                      team and the incident Canvas current.
                     </p>
                   </div>
                   <div class="facts">
@@ -2427,7 +2427,7 @@
               </div>
               <div class="txt">
                 <div class="name">Incident triage</div>
-                <div class="sub">Approve the rollback plan?</div>
+                <div class="sub">Which status page gets the update?</div>
               </div>
               <div class="meta">5m</div>
             </div>
@@ -2540,8 +2540,10 @@
                     <div class="txt" style="max-width: 640px">
                       Checkout latency rose after the 10:12 deploy of
                       <code>payments-api</code>. Error rate is flat; the slow
-                      path is the new tax lookup. I drafted a rollback plan and
-                      a status update. I’ll roll back once one of you approves.
+                      path is the new tax lookup. I rolled back
+                      <code>payments-api</code> to v2.41.0 and p95 is back under
+                      400ms. Should the status update go to #status or the
+                      customer status page?
                     </div>
                     <div class="canvas-card">
                       <div class="mini-shot">
@@ -2560,7 +2562,7 @@
                           Checkout latency · Nov 6
                         </div>
                         <div style="font-size: 12.5px; color: var(--t3)">
-                          Canvas · rollback plan and timeline
+                          Canvas · incident timeline
                         </div>
                       </div>
                     </div>
@@ -2574,15 +2576,15 @@
                       ><b>Theo</b>10:33
                     </div>
                     <div class="txt">
-                      Tax lookup is mine. Rolling back is fine, but keep the
-                      feature flag off rather than reverting the migration.
+                      Tax lookup is mine. Keep <code>tax_lookup_v2</code> off
+                      until I ship the fix; the migration can stay.
                     </div>
                   </div>
                   <div class="msg me">
                     <div class="byl">10:34 <b>Morgan</b></div>
                     <div class="bub a-adam">
-                      Agree with Theo. Approve with the flag off, and post the
-                      status update to #status.
+                      #status for now. Customers didn't see errors, only slow
+                      pages.
                     </div>
                   </div>
                   <div class="msg">
@@ -2594,9 +2596,9 @@
                       ><b>Incident triage</b>10:34
                     </div>
                     <div class="txt">
-                      Rolling back <code>payments-api</code> to v2.41.0 with
-                      <code>tax_lookup_v2</code> off. Updating the Canvas as I
-                      go.
+                      Posted to #status and turned <code>tax_lookup_v2</code>
+                      off. The Canvas has the timeline; I'll add Theo's fix when
+                      it ships.
                     </div>
                   </div>
                 </div>
@@ -2625,8 +2627,8 @@
                   ><span class="status">Shared · 3 people</span>
                 </div>
                 <p>
-                  Watches PagerDuty, finds the likely cause, drafts the first
-                  response, and asks before it changes anything in production.
+                  Watches PagerDuty, finds the likely cause, rolls back a bad
+                  deploy, and keeps the team and the incident Canvas current.
                 </p>
                 <div style="display: flex; gap: 8px">
                   <span class="btn" style="flex: 1; justify-content: center"
