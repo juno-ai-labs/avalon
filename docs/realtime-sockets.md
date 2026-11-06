@@ -504,15 +504,15 @@ subscribe answer. Two clients listen. The desktop's own workspace socket rereads
 conversation directory (`shared-navigation`) on it: Channel rows and Space
 pages already move on the same flip, but the directory says which conversation
 a Breakout-only Channel opens on, and without the reread a new grant's row
-opened on Main. A host with no workspace
-socket of its own — the lite browser client
-([`browser-client.md`](browser-client.md)) — holds one
-through `watchWorkspaceReach` in `@rally/contracts/workspace-reach-watch`, which
-subscribes, discards the sidebar, and reports only this event and subscribe
-answers, with a diagnostic hook the host logs when it cannot connect. It is a
-filter over `watchWorkspaceSocket` in the same module, the transport alone,
-which the desktop's main process also uses to hold the Channel directory behind
-the menu bar ([`menu-bar.md`](menu-bar.md)).
+opened on Main. `watchWorkspaceReach` in
+`@rally/contracts/workspace-reach-watch` is the listen-only socket for a host
+with no workspace socket of its own: it subscribes, discards the sidebar, and
+reports only this event and subscribe answers, with a diagnostic hook the host
+logs when it cannot connect. No shipped host holds one since Sideline was
+removed; the browser client uses the full workspace socket. It is a filter
+over `watchWorkspaceSocket` in the same module, the transport alone, which the
+desktop's main process uses to hold the Channel directory behind the menu bar
+([`menu-bar.md`](menu-bar.md)).
 
 After a plan change, WorkspaceDO sends `workspace_usage`, the new usage meter,
 to every member socket, outside the waterline and never replayed.
