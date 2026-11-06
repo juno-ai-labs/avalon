@@ -74,11 +74,10 @@ whether it works, or on whether the next person can follow it.
 
 ## Platform
 
-We currently have a macOS electron app, browser SPA, and iOS app. When wither designing
-or implementing an app first consider which platform or platforms the feature should support.
-Some features are native macos only, and others are shared across platforms. When in doubt ask
-the (human) user before implementing the feature, if there is no answer assume macOS and web
-(iOS usually lags behind as it is a prototype non-production platform).
+We have a macOS Electron app and a browser SPA, and nothing else. When designing
+or implementing a feature, first consider which platform or platforms it should support.
+Some features are native macOS only, and others are shared across both. When in doubt ask
+the (human) user before implementing the feature; if there is no answer, assume macOS and web.
 
 ## Tool execution product policy
 

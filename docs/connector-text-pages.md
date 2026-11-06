@@ -65,7 +65,7 @@ classifier's shape so a permission refusal can try another eligible connection.
 
 ## Boundary
 
-This is shared backend behavior for desktop, browser, and iOS agent execution.
+This is shared backend behavior for desktop and browser agent execution.
 There is no new renderer flow or per-call approval. The store is a trusted host
 capability, not a public endpoint. Other connectors can adopt the text-page
 primitive without acquiring Google-specific MIME or authorization logic.

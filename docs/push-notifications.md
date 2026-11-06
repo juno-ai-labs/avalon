@@ -1,7 +1,7 @@
 # Push notifications
 
-Rally pushes every row of the sidebar's Activity tab to signed-in Macs and
-iPhones through APNs, and to signed-in browser tabs through Web Push. Mentions
+Rally pushes every row of the sidebar's Activity tab to signed-in Macs through
+APNs, and to signed-in browser tabs through Web Push. Mentions
 and additions use the existing workspace notification intent; the rows Activity
 reads from the directory (a thread or breakout somebody started, a run Rally
 finished) are pushed from the Organization object as they appear
@@ -20,7 +20,6 @@ nothing falls back from one channel to another.
 - `packages/contracts/src/push-notifications.ts`: the registration contract and the Web Push service host allowlist (`isWebPushServiceUrl`).
 - `apps/desktop/src/renderer/lib/web-push.ts` and `apps/browser/public/sw.js`: browser subscription and the service worker that shows the notification.
 - `apps/desktop/src/main/push-notifications.ts` and `apps/desktop/native/push-notifications/`: Mac registration and native response/permission callbacks.
-- `apps/ios/Rally/App/RallyPush.swift`, `RallyAppDelegate.swift`, and `AppModel` reconcile: iPhone registration, permission, and tap routing.
 
 ## How it works
 
@@ -28,11 +27,9 @@ Every stored workspace credential registers the installation with its own region
 The Mac loops every credential it holds, a guest's included, and the browser
 registers a guest's tab as it does a member's. A registration belongs to the account in that deployment, not to one
 workspace, so a guest workspace's notifications still reach a device that a
-membership in the same deployment registered; the iPhone holds one workspace session
-and registers that one. Delivery requires a live session bound to that device; another installation's
+membership in the same deployment registered. Delivery requires a live session bound to that device; another installation's
 session cannot keep it alive. The device switch and a separate push installation
-ID persist in the existing application settings file on the Mac, and in the
-Keychain on iPhone.
+ID persist in the existing application settings file on the Mac.
 
 The producer enqueues only region, workspace, recipient and intent identifiers.
 Settlement retains the payload only when push was enqueued, until the existing
@@ -69,7 +66,7 @@ Threads list. The
 directory `attention` read returns it as `readerAttentionCount`
 (`WorkspaceSpaceStorage.readerAttentionCount`). A run in `needs_input` is not
 counted, as the Threads count does not include it. A send from one workspace does not sum
-other workspaces: iOS holds one session, and a global inbox is out of scope.
+other workspaces: a global inbox is out of scope.
 Omitting `badge` would leave the previous icon count in place; `0` clears it.
 
 While Rally runs, the Mac sets the dock badge itself. `useDockBadge` sends the
@@ -125,11 +122,6 @@ APNs groups notifications by the main workstream ID, including notifications
 from its substreams. Clicks still target the originating substream.
 Clicks pass the HTTPS link through the existing work-stream parser and scheme
 navigation, including pending navigation before sign-in or window readiness.
-iOS parses the same `rally` object and opens `url` as a universal link. Debug
-iPhone builds sign the development APNs entitlement, so their tokens are
-`apnsEnvironment: sandbox` and the consumer posts to
-`api.sandbox.push.apple.com`; Release and TestFlight stay on production, like
-the Mac.
 Main-window creation waits for renderer protocol and IPC installation, including
 when a native notification response arrives during asynchronous app startup.
 
@@ -419,8 +411,7 @@ covers that count, Breakouts included, against the same directory projection,
 `dock-badge.test.tsx` covers when the Mac sends its local count, and
 `platform.test.ts` covers the browser bridge setting and restoring the app
 icon badge, and leaving it to the tab focused last. Desktop push/link tests cover registration and routing; existing settings and
-release suites cover the integration. iOS XCTest covers payload parse and the
-PUT body. For Web Push, `web-push-transport.test.ts` reproduces RFC 8291's
+release suites cover the integration. For Web Push, `web-push-transport.test.ts` reproduces RFC 8291's
 worked example, checks the VAPID token and maps push service answers, redirects
 and hosts outside the allowlist. The workerd suite covers routing each device to
 its own transport, disabling a dropped browser subscription at once, and an
@@ -428,7 +419,7 @@ APNs credential fault that leaves Web Push sending. The contract test covers the
 host allowlist and key shapes, and `web-push.test.ts` covers registration,
 re-subscribing on a key change, and the permission prompt coming first.
 `activity-push.test.ts` drives Activity rows through `receiveChildEffects` on
-real workerd, and the consumer's read-back. The provider itself and macOS/iOS alert
+real workerd, and the consumer's read-back. The provider itself and macOS alert
 presentation require a signed installed build.
 
 Local acceptance on 2026-09-14: lint/typecheck, scoped API and desktop tests,
@@ -440,6 +431,13 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-06 — The iOS client is deleted
+
+`apps/ios` is gone; only the Mac registers through APNs. The `platform: "ios"`
+registration shape, the `ai.rallywith.ios` topic and the sandbox APNs host
+existed only for iPhone debug builds and stay in code until a later phase of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md) removes them.
 
 ### 2026-10-21 — The installed browser app shows the badge
 

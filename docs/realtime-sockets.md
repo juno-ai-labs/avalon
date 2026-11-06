@@ -1,7 +1,7 @@
 # Realtime socket admission
 
 Every Rally WebSocket (workspace synchronization/commands, the retired Channel
-control socket that installed desktops and the iOS client still open, the direct
+control socket that installed desktops still open, the direct
 conversation feed of a work stream or an automation, and the dictation bridge to
 Azure) is opened with a short-lived ticket rather than
 the session credential. This document owns how a purpose-specific ticket is
@@ -61,7 +61,7 @@ admission is split in two.
    is mounted with the workspace-relationship check, not the member-only
    `requireAuth`, because WorkspaceDO shapes a guest's socket itself),
    `GET /workstreams/:id/control-socket` for the retired Channel control socket
-   (still served for installed desktops and the iOS client; the current desktop
+   (still served for installed desktops; the current desktop
    never asks for it),
    `GET /conversations/:parentId/substreams/:substreamId/socket` for the feed
    of a work stream's or an automation's conversation, or
@@ -108,9 +108,7 @@ admission is split in two.
    protocol: `[rally.ticket.v1, <ticket>]`. Native browser sockets send those
    from the `WebSocket` constructor; Electron's work-stream broker passes the
    same pair from Node's `ws` client and supplies the fixed application Origin
-   (`app://rallywithai`). iOS `URLSession` does not send `Origin` on a WebSocket
-   upgrade, so the native client sets that same allowlisted value on the
-   handshake request. Sideline's main process opens only the workspace
+   (`app://rallywithai`). Sideline's main process opens only the workspace
    socket, from the `ws` client, and presents its own `app://sideline`
    Origin rather than borrowing Rally's. Both become `Sec-WebSocket-Protocol`, the handshake header
    available for browser-compatible ticket presentation. A ticket is a compact
@@ -1015,6 +1013,12 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-11-06 — The iOS client is deleted
+
+The native client that set `app://rallywithai` on its own handshake and kept
+opening the retired control socket is gone; the control socket now serves only
+installed desktops, and its removal is a later phase of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
 
 ### 2026-10-16 — The dictation lease is held by the open socket, not by its frames
 
