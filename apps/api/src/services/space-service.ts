@@ -722,6 +722,13 @@ export class SpaceService {
     }));
   }
 
+  /** The active Spaces a Channel sits in, as this caller may be told them. */
+  async channelSpaceIds(workstreamId: WorkstreamId): Promise<string[]> {
+    return (await (await this.workspace()).channelSpaces({
+      workspaceId: asWorkspaceId(this.auth.workspaceId), userId: asUserId(this.auth.userId), workstreamId,
+    })).spaceIds;
+  }
+
   /** Take a Channel out of a Space, when it still has another home: one WorkspaceDO call. */
   async removeChannel(spaceId: SpaceId, workstreamId: WorkstreamId): Promise<SpaceSummary> {
     return this.changedChannel(await (await this.workspace()).removeSpaceChannel({

@@ -2099,10 +2099,26 @@ export class WorkstreamObjectProductService {
       `SELECT access_class FROM workspace_members
         WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
     ).bind(auth.workspaceId, auth.userId).first<{ access_class: "member" | "guest" }>();
-    if (!membership || (membership.access_class === "guest" && !this.isParticipant(auth.userId))) {
+    if (!membership || (membership.access_class === "guest" && !this.isParticipant(auth.userId)
+      && !(root.scope === "workspace" && await this.channelReader(root, auth.userId)))) {
       throw new ApiError(404, "workstream_not_found", "Thread not found");
     }
     return root;
+  }
+
+  /**
+   * Whether this guest takes part in a Channel this thread is placed in
+   * (`channelReaderSql`): the path a guest who is not a participant reads an
+   * Organization-wide thread by. The Space tables are the Organization
+   * object's, so this asks its viewer admission, which applies the rule, and
+   * is asked only for such a guest.
+   */
+  private async channelReader(root: RootRow, userId: string): Promise<boolean> {
+    const workspace = await this.workspaceDirectory(root.parent_workspace_key);
+    return (await workspace.authorizeViewer({
+      workspaceId: asWorkspaceId(root.parent_workspace_key), parentId: root.workstream_key,
+      userId: asUserId(userId), substreamId: asSubstreamId("0"),
+    })).authorized;
   }
 
   private attention(userId: string, root: RootRow): AttentionRow {

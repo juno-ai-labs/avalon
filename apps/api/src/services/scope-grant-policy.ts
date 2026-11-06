@@ -1,6 +1,6 @@
 import type { ChildAudience, ScopeGrant, ScopeGrantTarget, WorkspaceAccessClass, ScopeAccessResult } from "@rally/contracts/scope-grants";
 import type { UserId, WorkspaceId } from "@rally/contracts";
-import { organizationWide } from "../durable-objects/listing-rules";
+import { threadOrganizationWide } from "../durable-objects/listing-rules";
 
 export interface ScopedWorkspaceRelationship {
   workspaceId: WorkspaceId;
@@ -25,6 +25,13 @@ export interface ScopedAccessFacts {
     audience: ChildAudience;
   } | null;
   grants: readonly ScopeGrant[];
+  /**
+   * Whether this person takes part in a Channel (a stored Space) the parent is
+   * placed in, read from the Organization's own Space tables
+   * (`channelReaderSql`). One path to an Organization-wide parent, beside
+   * membership and grants.
+   */
+  channelReader: boolean;
 }
 
 export type ScopedAccess = ScopeAccessResult;
@@ -64,7 +71,9 @@ export function resolveScopedAccess(facts: ScopedAccessFacts): ScopedAccess {
   });
   // Implicit member discovery grants conversation collaboration, not parent
   // management. Existing owner/participant rules still govern parent mutations.
-  const workspaceMemberAccess = organizationWide(facts.parentVisibility, relationship.accessClass) && inherits;
+  // A Channel reader collaborates the same way a member does.
+  const workspaceMemberAccess = threadOrganizationWide(facts.parentVisibility, relationship.accessClass,
+    facts.channelReader) && inherits;
   if (!grants.length && !workspaceMemberAccess) return { allowed: false, reason: "grant_required" };
   return {
     allowed: true,

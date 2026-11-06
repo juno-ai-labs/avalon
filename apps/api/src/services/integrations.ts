@@ -7147,9 +7147,26 @@ async function readRunAuthority(
     // Use the same conversation admission as the transport. It also reports
     // parent/child archive state, so a second parent authority read is redundant.
     const parent = await conversationParentStub(env, input);
-    const access = await parent.authorizeViewer({ workspaceId: input.workspaceId, parentId: input.parentId,
-      userId: input.executionPrincipal.userId, substreamId: asSubstreamId(input.substreamId ?? "0"),
-      requireGrantAuthority: true });
+    const viewer = {
+      workspaceId: input.workspaceId, parentId: input.parentId, userId: input.executionPrincipal.userId,
+      substreamId: asSubstreamId(input.substreamId ?? "0"), requireGrantAuthority: true,
+    };
+    let access = await parent.authorizeViewer(viewer);
+    // A thread's first run can check its guest before the thread's participant
+    // handoff reaches its parent. Finish the handoff and ask once more: it
+    // imports the thread's own roster, so it admits nobody that roster does
+    // not. A handoff that cannot finish yet leaves the refusal standing.
+    if (!access.authorized && input.parentKind === "workstream") {
+      const settled = await parent.ensureParticipantAuthority({ workspaceId: asWorkspaceId(input.workspaceId),
+        parentId: input.parentId, substreamId: viewer.substreamId }).then(() => true, (error: unknown) => {
+        logStructuredEvent(env, "warn", "run_participant_handoff_unfinished", {
+          workspace_id: input.workspaceId, parent_id: input.parentId,
+          error_code: diagnosticErrorCode(error, "run_participant_handoff_unfinished"),
+        });
+        return false;
+      });
+      if (settled) access = await parent.authorizeViewer(viewer);
+    }
     recordOptionalTiming(onTiming, "conversation", startedAt);
     if (!access.authorized) throw new ConnectorError("unauthorized", "Shared conversation access has ended");
     if (access.archived) throw new ConnectorError("unauthorized", "Work stream is no longer active");

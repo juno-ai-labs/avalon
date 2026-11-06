@@ -44,7 +44,7 @@ import { workOpportunityRoutes } from "./routes/work-opportunities";
 import { deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { workspaceOperatorRoutes } from './routes/workspace-operations';
-import { workstreamRoutes } from "./routes/workstreams";
+import { workstreamCreateRoutes, workstreamRoutes } from "./routes/workstreams";
 import { sidelineRoutes } from "./routes/sideline";
 import {
   isAllowedGitHubIngressRoute,
@@ -169,6 +169,11 @@ export function createApp(): Hono<HonoAppEnv> {
   identityApi.get("/workspace/socket", requireWorkspaceAuth, workspaceSocketTicket);
   identityApi.get("/workspace", requireWorkspaceAuth, workspaceProfile);
   identityApi.get("/workspace/members", requireWorkspaceAuth, workspaceMembers);
+  // Starting a thread: a guest may start one in a Channel they take part in.
+  // Only `POST /workstreams` itself; every other `/workstreams` route falls
+  // through to the member-only mount below.
+  identityApi.post("/workstreams", requireWorkspaceAuth, workspaceRealtimeInvalidation);
+  identityApi.route("/workstreams", workstreamCreateRoutes);
   // A support session's device is the impersonator's, not the person's.
   identityApi.use("/workspace/me/device-timezone", requireWorkspaceAuth, refuseSupportSession);
   identityApi.route("/workspace/me/device-timezone", deviceTimezoneRoutes);

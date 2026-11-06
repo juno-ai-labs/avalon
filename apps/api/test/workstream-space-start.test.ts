@@ -140,7 +140,7 @@ describe("reconciling a replayed create's placement", () => {
     const first = asSpaceId("00000000-0000-7000-8000-000000000204");
     const second = asSpaceId("00000000-0000-7000-8000-00000000020a");
     await reconcileReplayedSpaceMembership({
-      spaces: { ensureGeneral, addChannel },
+      spaces: { ensureGeneral, addChannel, channelSpaceIds: vi.fn().mockResolvedValue([]) },
       spaceIds: [first, second],
       workstreamId,
     });
@@ -152,11 +152,36 @@ describe("reconciling a replayed create's placement", () => {
     const addChannel = vi.fn().mockResolvedValue(undefined);
     const general = space({ id: "00000000-0000-7000-8000-00000000020c", scope: "workspace", systemRole: "general" });
     await reconcileReplayedSpaceMembership({
-      spaces: { ensureGeneral: vi.fn().mockResolvedValue(general), addChannel },
+      spaces: { ensureGeneral: vi.fn().mockResolvedValue(general), addChannel, channelSpaceIds: vi.fn().mockResolvedValue([]) },
       spaceIds: [],
       workstreamId,
     });
     expect(addChannel.mock.calls).toEqual([[general.id, workstreamId]]);
+  });
+
+  it("given a placement already there, when its receipt replays, then only the missing one is written", async () => {
+    const addChannel = vi.fn().mockResolvedValue(undefined);
+    const placed = asSpaceId("00000000-0000-7000-8000-000000000204");
+    const missing = asSpaceId("00000000-0000-7000-8000-00000000020a");
+    await reconcileReplayedSpaceMembership({
+      spaces: { ensureGeneral: vi.fn(), addChannel, channelSpaceIds: vi.fn().mockResolvedValue([placed]) },
+      spaceIds: [placed, missing],
+      workstreamId,
+    });
+    expect(addChannel.mock.calls).toEqual([[missing, workstreamId]]);
+  });
+
+  it("given a create that named none and a thread with a home, when its receipt replays, then nothing is written", async () => {
+    const addChannel = vi.fn();
+    const ensureGeneral = vi.fn();
+    await reconcileReplayedSpaceMembership({
+      spaces: { ensureGeneral, addChannel,
+        channelSpaceIds: vi.fn().mockResolvedValue(["00000000-0000-7000-8000-000000000204"]) },
+      spaceIds: [],
+      workstreamId,
+    });
+    expect(ensureGeneral).not.toHaveBeenCalled();
+    expect(addChannel).not.toHaveBeenCalled();
   });
 
   it("given a placement that refuses, when its receipt replays, then the refusal reaches the caller", async () => {
@@ -164,7 +189,7 @@ describe("reconciling a replayed create's placement", () => {
       .mockRejectedValueOnce(new Error("workspace_temporarily_unavailable"))
       .mockResolvedValueOnce(undefined);
     const input = {
-      spaces: { ensureGeneral: vi.fn(), addChannel },
+      spaces: { ensureGeneral: vi.fn(), addChannel, channelSpaceIds: vi.fn().mockResolvedValue([]) },
       spaceIds: [asSpaceId("00000000-0000-7000-8000-000000000204")],
       workstreamId,
     };
