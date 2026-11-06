@@ -1,6 +1,6 @@
 # Electron network requests
 
-Rally and Sideline share an upload bridge that keeps request failures inside the
+Rally's Electron main process has an upload bridge that keeps request failures inside the
 request's promise. It uses Chromium's network stack, default Electron session,
 proxy configuration, certificate checks, and credentials policy.
 

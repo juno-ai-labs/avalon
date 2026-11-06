@@ -33,9 +33,7 @@ same set the desktop does — the full workspace socket and the proactive feed
 swarm — over native `WebSocket`s, with presence from page visibility and focus.
 See [browser-client.md](browser-client.md).
 
-Sideline's main process holds one workspace socket for the signed-in operator
-over Node's `ws`, presenting `app://sideline`, and reads only the same event
-([`impersonation.md`](impersonation.md)). Both use `watchWorkspaceReach` in
+The guest tab's listener is `watchWorkspaceReach` in
 `@rally/contracts/workspace-reach-watch`, which shares the desktop workspace
 socket's heartbeat and reconnect numbers.
 
@@ -61,7 +59,7 @@ broadcast and replay delivery for older enum decoders; see
 | `apps/desktop/src/common/workspace-sync-relay.ts` | The relay's IPC channel names and message types, the `{ region, workspaceId }` comparison every hop uses, the preload's structural check, and the preload's inbox that holds news arriving before any listener. Dependency-free for the sandboxed preload. |
 | `apps/desktop/src/main/workspace-sync-relay.ts` | Main's relay state: the closed Zod parse of what the main window publishes, which Organization is attached, the revision that orders source changes, and forwarding news only for the attached Organization. |
 | `apps/desktop/src/main/workspace-sync-relay-ipc.ts` | The relay's two invoke channels and their sender checks: publish from the main window only, read the source from the Settings and Sidekicks windows only. `main/index.ts` registers it and owns the one receiver and the release points. |
-| `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for hosts without one of their own (Sideline main, the lite browser), and the heartbeat and reconnect numbers every workspace-socket client shares. |
+| `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for hosts without one of their own (the lite browser), and the heartbeat and reconnect numbers every workspace-socket client shares. |
 | `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one substream `0` feed per selected work stream above the route, retains recently viewed feeds for five minutes, and supports presence-free feed warming on deliberate hover. |
 | `apps/api/src/durable-objects/workspace-resource-versions.ts`, `apps/desktop/src/renderer/lib/resource-heads.ts` | The one ledger of new resource versions, drained for `workspace_resource_versions` and the pinned-artifact announcement, and the client's merge of each announced head into the conversation details and popped-out windows that show it. |

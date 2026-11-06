@@ -201,9 +201,8 @@ configured deployments and a connection completes on whichever origin the client
   compiled into every shipped DMG, so binaries in the field poll it forever. It
   outlives every other Avalon hostname.
 - **Every origin a live client sends appears in `ALLOWED_ORIGINS`.** That is the
-  four site origins, the browser app origin, both renderer origins, and
-  Sideline's `app://sideline`, which its main process presents on the workspace
-  socket. An origin the browser actually
+  four site origins, the browser app origin, and both renderer origins. An
+  origin the browser actually
   used but the Worker does not list is rejected by Chromium before any route
   code runs — the renderer sees a transport failure and no API request is
   logged, so the failure is invisible from the server side.

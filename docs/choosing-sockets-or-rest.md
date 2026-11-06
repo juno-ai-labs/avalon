@@ -611,11 +611,9 @@ A narrow command client that deliberately owns no conversation feed is the
 other no-socket case. `POST
 /conversations/:parentId/substreams/:substreamId/messages` gives such a client
 ordinary authenticated message admission, using the same durable
-`clientMessageId` and private admission receipt as the socket command. Sideline
-uses it only when the selected participant is the signed-in user. Rally's open
-conversation view already has the owning socket and must not call this route;
-represented Sideline sends remain on the separately audited impersonation
-boundary.
+`clientMessageId` and private admission receipt as the socket command. Rally's
+open conversation view already has the owning socket and must not call this
+route.
 
 **Do**
 
