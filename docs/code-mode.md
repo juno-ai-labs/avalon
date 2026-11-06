@@ -175,7 +175,10 @@ writes) and keep the set under five, adding a tool only where the run must judge
 something between two steps. The tool returns the facts to report and an
 `exceptions` list of items it could not handle, finishes the rest rather than
 stopping on one bad item, works in bounded shares that record where they stopped
-when the job can outgrow the two-minute deadline, and is safe to call again.
+when the job can outgrow the two-minute deadline, and is safe to call again. It
+records the facts it found with its progress and returns every one not yet marked
+delivered, so a call that timed out after its writes loses nothing; the run marks
+them delivered after posting, through a second tool.
 Posting and messages to people stay with the run, and a tool has one entry
 point, never a `mode`, `action`, `dryRun` or `preview` input. It may read the
 clock to work out which dates or items the work covers, never to decide whether
