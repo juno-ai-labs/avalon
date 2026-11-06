@@ -179,8 +179,10 @@ when the job can outgrow the two-minute deadline, and is safe to call again. It
 records the facts it found with its progress and returns every one not yet marked
 delivered, so a call that timed out after its writes loses nothing; the run marks
 them delivered after posting, through a second tool. A tool takes the IDs of the
-Sidekick's tables as input rather than fixing them in its code, so setup and a
-review can test it against scratch tables.
+Sidekick's tables as input rather than fixing them in its code or finding them by
+name, so setup and a review can test it against scratch tables. A scratch table is
+named after its real table with " (test)" appended, because creating a table under
+the real name reopens the live one; tests reuse it and invalidate the rows they wrote.
 Posting and messages to people stay with the run, and a tool has one entry
 point, never a `mode`, `action`, `dryRun` or `preview` input. It may read the
 clock to work out which dates or items the work covers, never to decide whether
@@ -486,7 +488,8 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
 **What changed:** The guide has a tool take the IDs of the Sidekick's tables as
 input, has setup and reviews test writing tools against scratch tables passed
 that way, and has a review rewrite a tool whose table ID is fixed in its code.
-The prod eval grader fails a writing tool with a table ID in its code, and its
+The prod eval grader fails a writing tool with a table ID in its code or one it
+finds by name through `rally_tables.create` or `search`, and its
 no-posting check now covers `send`, `reply`, `reply_to_message` and
 `create_comment` as well as `post`, `conversation_post` and `send_message`, in
 both the dot form and the bracket form a dotted connector name such as
@@ -502,7 +505,9 @@ three names, so a tool that sent mail or left a comment passed.
 would mark real items done that no run reported.
 
 **Consequences:** A tool saved before this keeps its fixed IDs until it next
-changes.
+changes. Scratch tables persist, since nothing drops a table; the fixed
+" (test)" name keeps it to one per real table, and invalidating test rows keeps
+them out of searches.
 
 ### 2026-11-06 — One tool runs the whole procedure; the run handles the exceptions
 

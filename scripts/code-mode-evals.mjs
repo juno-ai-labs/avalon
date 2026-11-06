@@ -257,8 +257,9 @@ const flagged = (sk) => toolsOf(sk).flatMap((t) => Object.keys(t.inputSchema.pro
 const POSTS = /(?:\.|\[\s*["'`](?:\w+\.)?)(conversation_post|post|send_message|send|reply|reply_to_message|create_comment)(?:["'`]\s*\])?\s*\(/;
 // A table the tool writes is passed in, so a test or review can point it at a scratch table.
 // Only writes are graded: a fixed read cannot change the live tables during a test.
+// A table found by name (create reopens a same-named table, search returns it) is as fixed as a literal ID.
 const TABLE_WRITES = /\.(insert_rows|update_rows|delete_rows|invalidate_rows)\s*\(/;
-const FIXED_TABLE = /['"`]mtt_[A-Za-z0-9_-]+['"`]/;
+const FIXED_TABLE = /['"`]mtt_[A-Za-z0-9_-]+['"`]|rally_tables\.(create|search)\s*\(/;
 const MAX_TOOLS = 4;
 const posters = (sk) => toolsOf(sk).filter((t) => POSTS.test(t.code)).map((t) => t.name);
 const fixedWriters = (sk) => toolsOf(sk).filter((t) => TABLE_WRITES.test(t.code) && FIXED_TABLE.test(t.code)).map((t) => t.name);

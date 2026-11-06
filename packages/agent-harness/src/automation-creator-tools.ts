@@ -979,9 +979,11 @@ or items the work covers, never to decide whether to do the work: a time-of-day 
 day-of-week gate belongs in the trigger and the instructions, and the tool does its
 job whenever it is called.
 A tool takes the IDs of the Sidekick's tables it reads or writes as input, never fixed
-in its code, and the instructions pass the real ones. A test performs its writes: test
-a writing tool against scratch tables with the same columns, passed as its input, or
-accept the test's row. Every connector plugin a tool calls goes in recommendedPlugins.
+in its code or found by name, and the instructions pass the real ones. A test performs
+its writes: test a writing tool against scratch tables with the same columns, passed as
+its input, or accept the test's row. Name each scratch table after its real table with
+" (test)" appended, never the real name, which reopens the live table; reuse it on
+later tests, and invalidate the rows a test wrote once you have read its result. Every connector plugin a tool calls goes in recommendedPlugins.
 A changed tool is tested again before it is saved.
 In a self-review, tools change with the procedure, using only plugins already
 recommended. The plan takes each deterministic step the report says a run repeated,
