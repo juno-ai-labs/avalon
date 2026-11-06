@@ -3994,6 +3994,22 @@ export class WorkstreamObjectProductService {
     const sidekickAttachmentIds = this.storage.sql.exec<{ sidekick_id: string }>(
       `SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`,
     ).toArray().map((row) => row.sidekick_id);
+    // A Sidekick run's steps and its last reply, for its row in the
+    // Sidekick's conversation (the Sidekick copies the preview onto the run's
+    // summary). Read only in a run: no other conversation's parent reads them.
+    const identity = this.objectStore.identity();
+    const sidekickRun = identity?.parentKind === "automation" && this.externalSubstreamId() !== "0" && background === undefined;
+    const stepCount = sidekickRun
+      ? Number(this.storage.sql.exec<{ steps: number }>(
+        `SELECT COUNT(*) AS steps FROM participant_transcript_blocks WHERE block_kind = 'tool'`,
+      ).one().steps)
+      : undefined;
+    const preview = sidekickRun
+      ? this.storage.sql.exec<{ content: string | null }>(
+        `SELECT content FROM canonical_conversation_turn_details
+          WHERE author_type = 'agent' AND message_type = 'text' ORDER BY sequence_number DESC LIMIT 1`,
+      ).toArray()[0]?.content ?? ""
+      : root.preview;
     return {
       kind: "directory_common" as const,
       backgroundAgent: background !== undefined,
@@ -4003,7 +4019,7 @@ export class WorkstreamObjectProductService {
       appearance: root.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json)) : undefined,
       title: truncateUtf16Safe(root.title, 500),
       description: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
-      preview: truncateUtf16Safe(root.preview, 1_000),
+      preview: truncateUtf16Safe(preview, 1_000),
       scope: root.scope,
       state: root.exact_state,
       systemKind: root.system_kind,
@@ -4023,6 +4039,7 @@ export class WorkstreamObjectProductService {
         : null,
       resourceLinks,
       sidekickAttachmentIds,
+      ...(stepCount !== undefined ? { stepCount } : {}),
       ...(attachmentReservationReleases.length > 0 ? { attachmentReservationReleases } : {}),
       createdAt: iso(root.created_at)!,
       updatedAt: iso(root.updated_at)!,

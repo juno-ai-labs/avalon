@@ -897,7 +897,9 @@ The run reports its state the way every conversation does: its
 `HostedSidekick.onChildCommonProjection` maps the accepted conversation state
 onto `sidekick_runs.state`, as [continuing a run](#continuing-a-run) describes.
 Nothing a run says leaves the Sidekick: a run produces no sidebar row, no
-activity, and no notification.
+activity, and no notification. Its one appearance outside its own
+conversation is its row in the Sidekick's shared conversation
+([runs in the shared conversation](#runs-in-the-shared-conversation)).
 
 ### Continuing a run
 
@@ -1040,6 +1042,49 @@ Running under a non-delegate's own access is the next step of the plan, not
 this one. Because a non-manager's message never reaches the wizard,
 `rally:sidekicks` loads only for a manager's wizard turn without a check of its
 own at plugin load.
+
+### Runs in the shared conversation
+
+Every run has one row in the Sidekick's shared conversation (`"0"`): an
+`automation_activation` turn, keyed `sidekick-run:<runId>`, rendered under the
+Sidekick's name, whose structured content carries `runId`, the trigger kind
+and `run: {state, stepCount, reply}`. The row is a projection of the run's
+`sidekick_runs` row, which stays authoritative; expanding it is
+`sidekick_runs_read`'s.
+
+- **Arming.** WorkspaceDO migration 135's triggers on `sidekick_runs` arm one
+  `sidekick_run_row` alarm entry, keyed `<sidekickId>:<runId>`, on every
+  insert and on every change to `state`, `summary` or `step_count`, in the
+  statement that changes the run. No writer can move a run without its row
+  following, and each arm takes a fresh instant so a change during a delivery
+  survives the drain's delete of the entry it ran.
+- **Delivery.** `HostedSidekick.projectRunRow` reads the run as it is when the
+  entry runs, never a copy carried in the entry, and calls
+  `SubstreamAgent.projectSidekickRunRow` on `"0"`. A throw retries on the
+  scheduler's backoff; a refusal is logged `sidekick_run_row_refused`.
+- **In the conversation.** The first projection appends the turn and a
+  `sidekick_run_rows` row (SubstreamAgent migration 82); later ones update that
+  row when they are not older (`source_version` is the run's `updated_at`), move
+  the turn's revision and send it to the room. The transcript joins the row in
+  whenever the turn is read (`sidekick-run-row.ts`), so the turn's text is the
+  reply once there is one and a line saying where the run is until then. The
+  canonical turn is never rewritten, and a row wakes no agent.
+- **What it shows.** `state` is the run row's. `stepCount` is the run's tool
+  calls, which the run's conversation now sends in its `directory_common`
+  effect (`stepCount`) and `onChildCommonProjection` stores in
+  `sidekick_runs.step_count`. `reply` is the run's last message once it has
+  stopped working (finished, or waiting on input): a run's conversation now
+  sends its last agent message as its effect's `preview`, which
+  `onChildCommonProjection` already copied onto `summary`, and which the run
+  history and the self-review's `resultSummary` therefore show too.
+- **Replay.** `sidekickReplayRunRows` (a manager's) arms an entry for every run
+  the Sidekick holds, which rebuilds each row from `sidekick_runs`; a row that
+  is missing is appended, at the end of the conversation.
+
+Runs that finished before migration 135 have no row, and nothing backfills
+them: appended now, they would land at the bottom of the conversation, out of
+order with what was said around them. A replay is how a person who wants them
+gets them.
 
 ### Scheduled self-review
 
@@ -1632,6 +1677,11 @@ external conversation bindings table's. Owner migration 4 stores the
 source counter. Versioned registration IDs equal immutable evaluator IDs, so a
 late delivery from a superseded predicate is refused by the owner.
 
+Workspace migration 135 adds `sidekick_runs.step_count` and the two triggers
+that arm a run's row entry; SubstreamAgent migration 82 adds
+`sidekick_run_rows` (run, turn, state, steps, reply, `source_version`), empty
+everywhere but a Sidekick's `"0"`.
+
 ## Regional impact
 
 Every object name is `<region>:<workspaceId>:automation:<automationId>` and the
@@ -1759,7 +1809,10 @@ addressing classifier sends to an agent is the wizard's only when its sender
 manages the Sidekick. Anyone else's starts a run under the Sidekick's
 definition, admitted as a manual run with the message as its opening, and
 lands in `"0"` as said to the room; a refusal lands with a `system` row that
-names it. See [the shared conversation](#the-shared-conversation).
+names it. See [the shared conversation](#the-shared-conversation). Every run
+also gets one row in `"0"`, an `automation_activation` turn carrying the run's
+id, state, step count and reply, kept current from `sidekick_runs` by triggers
+that arm a delivery on every change ([runs in the shared conversation](#runs-in-the-shared-conversation)).
 
 **Why:** The Canvases and Sidekicks pivot opens a Sidekick's conversation to
 everyone it is shared with, and the product owner decided the conversation
@@ -1771,11 +1824,25 @@ it. Routing at claim time reuses the decision point a run child already has
 (`sidekickContinueRun`) and the admission `runNow` already has, so there is no
 new trigger kind and no new loop. Rejected: asking the classifier to tell the
 Sidekick from the wizard, which needs a new prompt and a model call for a
-question the sender's management right already answers.
+question the sender's management right already answers. The same decision
+says runs appear as rows in that conversation and a run's row carries its
+reply; before this a run wrote nothing there, so the people who asked never
+saw an answer. The row reuses `automation_activation`, which every client
+already renders under the Sidekick's name, rather than a new message type,
+and it is a projection of `sidekick_runs` rather than a second record, so the
+two cannot disagree. Rejected: appending a new row per state change, which
+turns one run into a column of status lines.
 
 **Consequences:** A manager cannot start a run by message; they use Run now,
 as before, and a later change that wants it needs a signal other than the
-sender (a mention of the Sidekick, say). A message-started run runs only as an
+sender (a mention of the Sidekick, say). The row is a projection: anything
+that needs a run's truth reads `sidekick_runs`, and a row that drifted is
+rebuilt by a replay. Triggers were chosen over arming the entry at each of the
+seven places that write a run, because a writer added later would silently
+leave its row behind; the cost is that the arming is in SQL, not beside the
+code that writes. A run's summary is now its last reply rather than empty, so
+run history and the self-review read it too. Runs from before the change have
+no row. A message-started run runs only as an
 eligible delegate who sent it; a non-delegate is refused with
 `run_no_eligible_delegate` until runs can act under the requester's own
 access. A message in `"0"` can no longer steer a running turn.

@@ -63,6 +63,8 @@ type LocalOnlyTranscriptOperation =
   // Accepted assistant turns may enqueue regional effects in the same SQLite
   // transaction. Function callbacks cannot cross the object-port boundary.
   | "commitBindTransition"
+  // Joins the owning object's mutation transaction (a Sidekick run's row).
+  | "reviseParticipantTurnInTransaction"
   | "range";
 export type TranscriptOperation = Exclude<keyof WorkstreamTranscriptStorage, LocalOnlyTranscriptOperation>;
 export type TranscriptObjectPort = ObjectPortOf<Pick<WorkstreamTranscriptStorage, TranscriptOperation>>;

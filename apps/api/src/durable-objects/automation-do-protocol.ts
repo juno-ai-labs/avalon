@@ -320,6 +320,25 @@ export const SidekickConversationMessageRouteSchema = z.discriminatedUnion("rout
 ]);
 export type SidekickConversationMessageRoute = z.infer<typeof SidekickConversationMessageRouteSchema>;
 
+/**
+ * One run, as its row in the Sidekick's shared conversation shows it: a
+ * projection of the Sidekick's `sidekick_runs` row, sent whole each time so
+ * any delivery converges. `version` is the run row's `updated_at`; the
+ * conversation applies a projection not older than the one it holds.
+ */
+export const SidekickRunRowProjectionSchema = z.strictObject({
+  ...Addressed,
+  runId: IdSchema,
+  automationName: z.string().min(1).max(300),
+  triggerKind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+  createdAt: z.number().int().nonnegative(),
+  state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
+  stepCount: z.number().int().nonnegative(),
+  reply: z.string().max(1_000).nullable(),
+  version: z.number().int().nonnegative(),
+});
+export type SidekickRunRowProjection = z.infer<typeof SidekickRunRowProjectionSchema>;
+
 export const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
 export const AUTOMATION_RUN_ALARM_KIND = "automation_run";
 /** One entry per Sidekick, armed when enough runs have finished; see `HostedSidekick.startReview`. */
