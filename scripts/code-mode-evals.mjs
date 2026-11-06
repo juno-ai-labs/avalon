@@ -252,7 +252,7 @@ const FLAG_INPUT = /^(mode|action|dry_?run|preview|record_[a-z_]+|only_[a-z_]+|s
 const singlePurpose = (sk) => toolsOf(sk).every((t) => !Object.keys(t.inputSchema.properties ?? {}).some((k) => FLAG_INPUT.test(k)));
 const flagged = (sk) => toolsOf(sk).flatMap((t) => Object.keys(t.inputSchema.properties ?? {}).filter((k) => FLAG_INPUT.test(k)).map((k) => `${t.name}.${k}`));
 // A tool runs the routine procedure, its own table writes included; delivery to people stays with the run.
-const POSTS = /\.(conversation_post|post|send_message)\(/;
+const POSTS = /\.(conversation_post|post|send_message)\s*\(/;
 const MAX_TOOLS = 4;
 const posters = (sk) => toolsOf(sk).filter((t) => POSTS.test(t.code)).map((t) => t.name);
 const shaped = (sk) => singlePurpose(sk) && posters(sk).length === 0 && toolsOf(sk).length <= MAX_TOOLS;

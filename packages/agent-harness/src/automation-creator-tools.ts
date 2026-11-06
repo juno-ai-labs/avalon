@@ -965,7 +965,11 @@ when it cannot do the job at all. A program has two minutes; when the work can o
 that, the tool does a bounded share, records where it stopped in the Sidekick's own
 table, and returns what remains, and the instructions call it again until nothing
 remains. Calling it again after a failure or a partial call is safe: it skips work it
-already recorded.
+already recorded. What it records is the facts it found, not only that an item is
+done, and it returns every recorded fact and exception the run has not yet marked
+delivered, so a call that timed out after its writes loses nothing. The run marks them
+delivered only after posting succeeds, with a second tool that takes what it marks as
+input.
 The run keeps what needs judgement: whether and what to post and how to word it, what
 an exception means and what to do about it, and anything the instructions leave to a
 person. Posting and messages to people stay out of the tool; the run delivers what the
