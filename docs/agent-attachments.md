@@ -120,10 +120,15 @@ provenance set. Completed receipt outputs rebuild that set after run resumption.
 The guard does not decode or approximate-match the bad cursor. A successful
 restart by resource ID can then clear the same guard entry instead of leaving a
 tool-call-only false positive. More than one active resource
-remains anonymous and fail-closed. A run
-that still ends replaces its prose with a deterministic, content-free
+remains anonymous and fail-closed. A `resource_not_found` failure, or a view
+item skipped for that reason, does not enter the guard when the run never
+delivered that resource: it is not visible to this conversation, so nothing
+attached here went unread. Once any of its content was delivered, the same
+failure means a partial read and still enters the guard. While
+the guard holds, a tool-bearing turn's prose is withheld. A run
+that still ends replaces its final prose with a deterministic, content-free
 `Attachment content unverified` boundary carrying only resource/tool/error
-provenance. `attachment_grounding_guard_triggered` records the same bounded
+provenance, stated once. `attachment_grounding_guard_triggered` records the same bounded
 identities without content.
 
 The person-facing ordered transcript uses the same durable relationship. The
@@ -750,6 +755,36 @@ existing ten-file cap. Target read/version authorization is independent from
 attachment reservation, since a pin usually names an already-sent resource.
 
 ## Changelog
+
+### 2026-11-06 — Out-of-scope resources no longer trip the grounding guard
+
+**What changed:** The attachment grounding guard ignores `resource_not_found`,
+live and on receipt replay, for a resource the run never delivered, and a tool-bearing turn accepted while the guard
+holds now carries no text instead of the boundary. The boundary appears once:
+on the final tool-less turn, or as the participant notice when the run ends on a
+withheld turn.
+
+**Why:** A coordinator asked to compare a competitor with "our live artifact"
+found the artifact's resource ID in another Thread through admin SQL and passed
+it to `read_resource`, which correctly refused it as not in scope. The guard
+latched on that refusal. Nothing later could clear it, so every turn's prose,
+including the finished comparison built from a successful web fetch, became the
+same boundary, published four times.
+
+**Considered and rejected:** Clearing the guard on any later successful tool
+call, which would let unrelated reads launder an attachment that truly failed.
+Treating every refusal as out of scope, which would drop the guard for a
+resource that is attached here but unreadable, the case it exists for. Ignoring
+every `resource_not_found`, which would let an answer built on page one of a
+document detached before page two go out with no notice.
+
+**Consequences:** A new code that means "not visible to this conversation" must
+be added to `isOutOfScopeAttachmentCode`; a code for an attached resource that
+could not be read must not be. The exemption depends on the guard knowing which
+resources it delivered, so a new content tool must report its resource IDs on
+success as the existing ones do.
+
+Shipped in [#1479](https://github.com/juno-ai-labs/avalon/pull/1479).
 
 ### 2026-10-22 — Resolve known Sidekick resources through the execution user's access
 
