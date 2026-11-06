@@ -251,12 +251,12 @@ const FINAL = [
 const FLAG_INPUT = /^(mode|action|dry_?run|preview|record_[a-z_]+|only_[a-z_]+|skip_[a-z_]+)$/i;
 const singlePurpose = (sk) => toolsOf(sk).every((t) => !Object.keys(t.inputSchema.properties ?? {}).some((k) => FLAG_INPUT.test(k)));
 const flagged = (sk) => toolsOf(sk).flatMap((t) => Object.keys(t.inputSchema.properties ?? {}).filter((k) => FLAG_INPUT.test(k)).map((k) => `${t.name}.${k}`));
-// A tool that writes takes what it writes as input; one that reads the clock to decide whether to write decides for the run.
-const WRITES = /\.(insert_rows|update_rows|delete_rows|table_create|create_table|conversation_post|post)\(/;
-const writersTakeInput = (sk) => toolsOf(sk).filter((t) => WRITES.test(t.code)).every((t) => Object.keys(t.inputSchema.properties ?? {}).length >= 1 && !/current_time/.test(t.code));
-const badWriters = (sk) => toolsOf(sk).filter((t) => WRITES.test(t.code) && (Object.keys(t.inputSchema.properties ?? {}).length === 0 || /current_time/.test(t.code))).map((t) => t.name);
-const shaped = (sk) => singlePurpose(sk) && writersTakeInput(sk);
-const shapeNotes = (sk) => `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} flags=${flagged(sk).join(",")} badWriters=${badWriters(sk).join(",")}`;
+// A tool runs the routine procedure, its own table writes included; delivery to people stays with the run.
+const POSTS = /\.(conversation_post|post|send_message)\s*\(/;
+const MAX_TOOLS = 4;
+const posters = (sk) => toolsOf(sk).filter((t) => POSTS.test(t.code)).map((t) => t.name);
+const shaped = (sk) => singlePurpose(sk) && posters(sk).length === 0 && toolsOf(sk).length <= MAX_TOOLS;
+const shapeNotes = (sk) => `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} count=${toolsOf(sk).length} flags=${flagged(sk).join(",")} posters=${posters(sk).join(",")}`;
 
 const PROD = [
   { id: "P01", level: "daily activity report", message: "Set up a Sidekick that every day at 9am Pacific reports how many rows were added to memory table 'org_messages' (columns org text, sent_at text ISO timestamp) during the preceding Pacific calendar day, DST-aware, and how many distinct orgs sent them. Keep a checkpoint in a second table so a day a run missed is covered by the next run. During setup create the tables and insert 8 rows spread over yesterday and today across three orgs. Put the counting in a saved tool that takes the day to count as input. Report in the run's own conversation; do not post to another conversation.",
@@ -269,7 +269,7 @@ const PROD = [
     gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).length >= 2 && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_tables")) && tested(w) && singlePurpose(sk), notes: `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} flags=${flagged(sk).join(",")}` }), run: true,
     gradeRun: (r) => ({ pass: ranCustom(r) && /\b[0-5]\b|five|no new/i.test(r.finalText), notes: `text=${r.finalText.slice(0, 160)}` }) },
   { id: "P04", level: "weekly call prep", message: "Set up a Sidekick for Tuesday call prep: every Tuesday at 1pm Pacific it records the week's key (that Tuesday's date) in memory table 'weekly_calls', and at 2pm it reports which of Alex, Katherine and Adam have an entry for that week key in table 'call_responses' (person text, week_key text, items text) and who is missing. A manual run does the 2pm report for the current week. Put the deterministic parts in saved tools. Create both tables during setup.",
-    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).length >= 2 && tested(w) && (sk.definition?.triggers ?? []).filter((t) => t.type === "calendar").length >= 1 && singlePurpose(sk), notes: `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} flags=${flagged(sk).join(",")} triggers=${(sk.definition?.triggers ?? []).length}` }), run: true,
+    gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).length >= 1 && tested(w) && (sk.definition?.triggers ?? []).filter((t) => t.type === "calendar").length >= 1 && singlePurpose(sk), notes: `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} flags=${flagged(sk).join(",")} triggers=${(sk.definition?.triggers ?? []).length}` }), run: true,
     gradeRun: (r) => ({ pass: ranCustom(r) && /Alex|Katherine|Adam/.test(r.finalText), notes: `text=${r.finalText.slice(0, 160)}` }) },
   { id: "P05", level: "daily signup report", message: "Set up a Sidekick that every day at 3pm Pacific reports, for the previous Pacific calendar day: web signups, desktop signups, and the top attribution source, from memory table 'signups' (signed_up_at text ISO, platform text web or desktop, source text). During setup create the table and insert 10 rows across yesterday with both platforms and three sources. Put the counting in a saved tool that takes the day as input; the instructions decide the wording. Report in the run's own conversation; do not post to another conversation.",
     gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_tables") && Object.keys(t.inputSchema.properties ?? {}).length >= 1) && tested(w), notes: `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")}` }), run: true,
@@ -332,7 +332,7 @@ if (args.suite === "wizard" || args.suite === "all" || args.suite === "final" ||
       if (scenario.run && g.pass) {
         const r = await runSidekick(sidekickId, timeoutMs);
         const gr = scenario.gradeRun(r);
-        results.push({ suite: "run", id: `${scenario.id}-run`, level: scenario.level, model: r.model ?? "primary", pass: gr.pass, notes: gr.notes, status: r.status, seconds: Math.round((Date.now() - started) / 1000), sidekickId, runId: r.runId, finalText: r.finalText.slice(0, 600), tools: r.tools });
+        results.push({ suite: "run", id: `${scenario.id}-run`, level: scenario.level, model: r.model ?? "primary", pass: gr.pass, notes: gr.notes, toolCalls: r.tools.length, status: r.status, seconds: Math.round((Date.now() - started) / 1000), sidekickId, runId: r.runId, finalText: r.finalText.slice(0, 600), tools: r.tools });
       }
     } catch (error) {
       results.push({ suite: "wizard", id: scenario.id, level: scenario.level, model: "sol", pass: false, notes: `error ${error.message}`, seconds: Math.round((Date.now() - started) / 1000) });
@@ -345,7 +345,7 @@ if (args.suite === "rerun" && args.sidekicks) {
     const scenario = WIZARD.find((w) => w.id === (args.scenario ?? "WE1"));
     const r = await runSidekick(sidekickId, timeoutMs);
     const gr = scenario.gradeRun(r);
-    results.push({ suite: "run", id: `${scenario.id}-run`, level: scenario.level, model: r.model ?? "primary", pass: gr.pass, notes: gr.notes, status: r.status, seconds: Math.round((Date.now() - started) / 1000), sidekickId, runId: r.runId, finalText: r.finalText.slice(0, 600), tools: r.tools });
+    results.push({ suite: "run", id: `${scenario.id}-run`, level: scenario.level, model: r.model ?? "primary", pass: gr.pass, notes: gr.notes, toolCalls: r.tools.length, status: r.status, seconds: Math.round((Date.now() - started) / 1000), sidekickId, runId: r.runId, finalText: r.finalText.slice(0, 600), tools: r.tools });
   });
 }
 let next = 0;
@@ -353,6 +353,6 @@ await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, asy
   while (next < jobs.length) { const job = jobs[next++]; await job(); }
 }));
 results.sort((a, b) => a.id.localeCompare(b.id) || a.model.localeCompare(b.model));
-for (const r of results) console.log(`${r.pass ? "PASS" : "FAIL"} ${r.suite}/${r.id} [${r.level}] ${r.model} ${r.seconds}s status=${r.status} ${r.notes}`);
+for (const r of results) console.log(`${r.pass ? "PASS" : "FAIL"} ${r.suite}/${r.id} [${r.level}] ${r.model} ${r.seconds}s status=${r.status}${r.toolCalls === undefined ? "" : ` toolCalls=${r.toolCalls}`} ${r.notes}`);
 console.log(`${results.filter((r) => r.pass).length}/${results.length} passed`);
 if (args.out) writeFileSync(args.out, JSON.stringify(results, null, 1));

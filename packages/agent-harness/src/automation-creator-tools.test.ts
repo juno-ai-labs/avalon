@@ -1047,8 +1047,8 @@ describe("custom tools in the drafting plugin", () => {
     expect(withRuntime.tools.some((tool) => tool.definition.name === "tool_test")).toBe(true);
     expect(withRuntime.systemMessage).toContain(CUSTOM_TOOLS_GUIDE);
     expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("In a self-review, tools change with the procedure");
-    expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("says whether it becomes a tool or why it stays in the instructions");
-    expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("\"The instructions already say so\" is not a reason it stays");
+    expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("says whether it moves into the tool or why it stays in the instructions");
+    expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("\"The instructions already say so\" is not a reason a step stays");
     expect(withRuntime.systemMessage.replace(/\s+/g, " ")).toContain("unless the run shows the step failed on something outside it (a timed-out read)");
   });
 

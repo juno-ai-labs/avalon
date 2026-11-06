@@ -169,25 +169,33 @@ which a resumed conversation restores it. `submit_draft` refuses a ready draft
 whose tool has no recorded test for its current identity with
 `custom_tool_untested`, naming `customTools.<i>.code`. The test tool and its
 guide paragraph exist only where `CODE_LOADER` does. The guide holds the shape
-of a saved tool: one tool does one thing a run can name in a sentence, takes
-only that thing's inputs, and returns the facts the run decides with. Two steps
-are two tools, never one behind a `mode`, `action`, `dryRun` or `preview`
-input, and a tool does not compute and write in one call when the run should
-read the result first. A tool that writes takes what it writes as input and
-never reads the clock to decide whether to act. The decisions (whether to post, whether it is time,
-which step is next) stay in the instructions; a smaller model running the
-Sidekick reads a narrow contract correctly where a wide one makes it guess. In
-a self-review, the plan says of each deterministic step the runs repeated,
-skipped or got wrong whether it becomes a tool or why it stays in the
-instructions, with "the instructions already say so" ruled out as a reason, and
-a writing tool is tested only against a scratch table
+of a saved tool: prefer one tool that runs the whole repeated procedure (reads,
+pages, loops, dedupe, date bounds, arithmetic and the Sidekick's own progress
+writes) and keep the set under five, adding a tool only where the run must judge
+something between two steps. The tool returns the facts to report and an
+`exceptions` list of items it could not handle, finishes the rest rather than
+stopping on one bad item, works in bounded shares that record where they stopped
+when the job can outgrow the two-minute deadline, and is safe to call again. It
+records the facts it found with its progress and returns every one not yet marked
+delivered, so a call that timed out after its writes loses nothing; the run marks
+them delivered after posting, through a second tool.
+Posting and messages to people stay with the run, and a tool has one entry
+point, never a `mode`, `action`, `dryRun` or `preview` input. It may read the
+clock to work out which dates or items the work covers, never to decide whether
+to do it: a time-of-day gate stays in the trigger and the instructions. In a self-review, the plan says of each deterministic step the
+runs repeated, skipped or got wrong whether it moves into the tool or why it
+stays in the instructions, with "the instructions already say so" ruled out as a
+reason; tools the runs always call one after another become one, and a writing
+tool is tested only against a scratch table
 ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)).
 The schema refuses, by
 field, a tool on an instruction-only Sidekick, a `plugin_*` entry missing from
 `recommendedPlugins`, and a Rally plugin outside the allowlist.
 
 A run whose definition carries tools registers `rally:custom-tools`, always
-active, with one `custom_<name>` tool per saved tool: the saved schema closed
+active, with one `custom_<name>` tool per saved tool, and a system message
+telling the run to call it rather than redo its method, to call again while work
+remains, and to handle each listed exception itself: the saved schema closed
 with `additionalProperties: false` as its input, `mode: write`,
 `record_before_execute`, and the identity hash in `providerOperationName` so the
 surface hash, and so receipt replay, follows the tool. Calling one validates
@@ -470,6 +478,43 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   is a listing-rules question still open.
 
 ## Changelog
+
+### 2026-11-06 — One tool runs the whole procedure; the run handles the exceptions
+
+**What changed:** The wizard's custom-tools guide, the `customTools` schema
+description and the run's `rally:custom-tools` system message. The guide now
+asks for one tool that runs the whole repeated procedure, a set under five, a
+compact result with an `exceptions` list, bounded resumable shares, and safe
+re-calls. It drops "two steps are two tools" and "never a tool that computes and
+writes": a tool may now read, compute and write the Sidekick's own progress rows
+in one call, and may read the clock to work out which dates it covers. It keeps one entry point
+with no mode or preview input, posting with the run, and the whether-to-act
+decision in the trigger and instructions. `scripts/code-mode-evals.mjs` grades
+the new shape (no flag inputs, no posting from a tool, at most four tools),
+no longer fails a writing tool for reading the clock, lets P04 save one tool,
+and records each run's tool-call count.
+
+**Why:** Every model turn re-reads the whole conversation, so a run's cost grows
+with the square of its turns. Daily Active Rally Organizations made 1,318 tool
+calls in one run on 2026-11-05, re-sending 250k to 840k tokens each time, for
+$197. Its only custom tool picked the next four pending rows, the kind of
+single-step tool the old guide asked for, and saved nothing: across six
+Sidekicks given custom tools since 2026-11-01, no run got cheaper per run.
+Splitting a procedure into one-thing tools keeps the turns and only moves the
+arithmetic.
+
+**Considered and rejected:** Keeping small tools and asking runs to batch their
+calls, which leaves a turn per step. A tool that also posts, which would take
+wording and the decision to deliver away from the run. Raising the program
+deadline so one call can always finish, which the bounded-share rule makes
+unnecessary.
+
+**Consequences:** This reverses the PRD's decision that a saved tool does one
+thing (see its decision log). The risk that decision guarded against, a small
+model misreading a wide contract, is now carried by the result shape: the tool
+decides only what code can decide and hands every case it cannot to the run as
+an exception. A future change should keep exceptions in the result rather than
+thrown, and keep delivery out of tools.
 
 ### 2026-10-31 — A program is checked before it runs
 
