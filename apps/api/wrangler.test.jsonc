@@ -18,7 +18,7 @@
     "SESSION_SIGNING_KEY": "test-session-signing-key-not-a-credential",
     "OAUTH_STATE_ENCRYPTION_KEY": "test-invitation-encryption-key-not-a-credential",
     "ARTIFACT_SERVING_DOMAIN": "rallyusercontent.test",
-    "ALLOWED_ORIGINS": "app://rallywithai,app://avalon,app://sideline",
+    "ALLOWED_ORIGINS": "app://rallywithai,app://avalon",
     "DESKTOP_DEEP_LINK_URI": "avalon://auth/callback",
     "LOG_LEVEL": "error",
     // Not a credential: lets harness tests reach the provider call itself, so

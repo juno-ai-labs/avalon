@@ -131,8 +131,6 @@ describe('public Rally site', () => {
 
     expect(parseDesktopTarget(asFragment(successTarget))).toBe(successTarget);
     expect(parseDesktopTarget(asFragment(errorTarget))).toBe(errorTarget);
-    expect(parseDesktopTarget(asFragment(sidelineSuccessTarget))).toBe(sidelineSuccessTarget);
-    expect(parseDesktopTarget(asFragment(sidelineErrorTarget))).toBe(sidelineErrorTarget);
     expect(parseDesktopTarget(asFragment(connectorSuccessTarget))).toBe(connectorSuccessTarget);
     expect(parseDesktopTarget(asFragment(targetedConnectorSuccess))).toBe(targetedConnectorSuccess);
     expect(parseDesktopTarget(asFragment(connectorErrorTarget))).toBe(connectorErrorTarget);
@@ -145,7 +143,9 @@ describe('public Rally site', () => {
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=global`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=us&attempt=${attempt}`))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=global&attempt=short`))).toBeNull();
-    expect(parseDesktopTarget(asFragment(`sideline://auth/complete?ticket=${ticket}&region=global&attempt=short`))).toBeNull();
+    // The retired Sideline app's callback scheme is no longer a handoff target.
+    expect(parseDesktopTarget(asFragment(sidelineSuccessTarget))).toBeNull();
+    expect(parseDesktopTarget(asFragment(sidelineErrorTarget))).toBeNull();
     expect(parseDesktopTarget(asFragment(`avalon://auth/complete?ticket=${ticket}&region=global&attempt=${attempt}&extra=value`))).toBeNull();
     expect(parseDesktopTarget(asFragment('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=enterprise&provider=linear')))
       .toBe('avalon://auth/complete?connection=00000000-0000-7000-8000-000000000004&status=connected&region=enterprise&provider=linear');

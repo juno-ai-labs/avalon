@@ -325,8 +325,8 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
  * Hold one workspace socket and report when a list drawn from membership went
  * stale.
  *
- * For a host with no workspace socket of its own, Sideline and the lite
- * browser client, that needs only to hear that somebody it shows joined or
+ * For a host with no workspace socket of its own, such as the lite browser
+ * client, that needs only to hear that somebody it shows joined or
  * left a Channel or Breakout, so it ignores everything but
  * `workspace_reach_changed` and the subscribe answer.
  *

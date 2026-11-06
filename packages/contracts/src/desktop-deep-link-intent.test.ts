@@ -1,7 +1,7 @@
 import "../../../tests/isolated-region";
 import { describe, expect, it } from 'vitest';
 
-import { parseDesktopDeepLinkIntent, parseDesktopHandoffIntent } from './desktop-deep-link-intent';
+import { parseDesktopDeepLinkIntent } from './desktop-deep-link-intent';
 
 const WORKSPACE_ID = '00000000-0000-7000-8000-000000000009';
 const RESOURCE_ID = '00000000-0000-7000-8000-000000000010';
@@ -79,20 +79,6 @@ describe('desktop deep-link intent grammar', () => {
     expect(parseDesktopDeepLinkIntent(
       `avalon://auth/complete?provider=linear&region=enterprise&status=denied&error=oauth_denied`,
     )).toMatchObject({ kind: 'connector-result', status: 'denied', target: null });
-  });
-
-  it('admits Sideline identity callbacks only at the hosted handoff boundary', () => {
-    const success = `sideline://auth/complete?ticket=${ATTEMPT_ID}&region=global&attempt=${ATTEMPT_ID}`;
-    const denial = `sideline://auth/complete?error=google_oauth_denied&region=global&attempt=${ATTEMPT_ID}`;
-    expect(parseDesktopDeepLinkIntent(success)).toBeNull();
-    expect(parseDesktopHandoffIntent(success)).toMatchObject({ kind: 'identity-result', status: 'ticket' });
-    expect(parseDesktopHandoffIntent(denial)).toMatchObject({ kind: 'identity-result', status: 'failed' });
-    expect(parseDesktopHandoffIntent(
-      `sideline://auth/complete?ticket=${ATTEMPT_ID}&region=global&attempt=short`,
-    )).toBeNull();
-    expect(parseDesktopHandoffIntent(
-      `sideline://auth/elsewhere?ticket=${ATTEMPT_ID}&region=global&attempt=${ATTEMPT_ID}`,
-    )).toBeNull();
   });
 
   it.each([
