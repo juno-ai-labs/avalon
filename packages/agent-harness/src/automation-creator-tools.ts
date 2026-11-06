@@ -964,8 +964,29 @@ its identifier, what was wrong and what is known, for the run to handle. It thro
 when it cannot do the job at all. A program has two minutes; when the work can outgrow
 that, the tool does a bounded share, records where it stopped in the Sidekick's own
 table, and returns what remains, and the instructions call it again until nothing
-remains. Calling it again after a failure or a partial call is safe: it skips work it
-already recorded. What it records is the facts it found, not only that an item is
+remains. Size the share by elapsed time, never a fixed count: the tool reads
+current_time when it starts and again after each group of reads (a program that writes
+may not use Date.now() or new Date()), and keeps taking groups until about three
+quarters of the two minutes have passed. After each group it records that group's
+finished items with one update_rows, so a call that overruns loses at most the group in
+flight. When a write is refused, it lists the row the error names under exceptions and
+writes the rest, so one bad item never stalls the share. Items it did not reach stay
+pending for the next call: claim only the group about to be read, and take each row's
+new revision from the claim write's result, not a re-read. A run's rule to re-read after every write does not carry
+into the code. Independent calls may run side by side in Promise.all, writes included;
+read a group together, then write it. Tune by measurement, not by
+guess: the aim is the most finished items per call, so the run needs the fewest calls
+and turns. Have the tool return how many items it finished, the seconds it took and
+the errors it met, take the concurrency and group size as inputs while you tune, and
+run sidekick_tool_test on a representative share of real items at a few settings (for
+example 4, 8 and 16 calls at once). Keep the setting with the most items per second
+that adds no errors and no slowdown per item, then fix it in the tool. A limit a person
+asked for, or a source's documented rate limit, caps the setting; a number an earlier
+revision wrote without a measurement is a guess to re-measure, not a limit. Write the
+measured numbers and the chosen setting in the instructions. When no real items exist
+yet, time a few scratch items instead; never hold up setup to ask for data to time.
+Calling it again after a failure or a partial call is safe: it skips work it already
+recorded. What it records is the facts it found, not only that an item is
 done, and it returns every recorded fact and exception the run has not yet marked
 delivered, so a call that timed out after its writes loses nothing. The run marks them
 delivered only after posting succeeds, with a second tool that takes what it marks as
