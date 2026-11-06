@@ -80,8 +80,9 @@ dropping them; they are often the finding.
 
 Before you call a result wrong, read what it says:
 
-- **A filter that matches nothing is a zero.** Report 0 for that row or step.
-  It is not evidence the tracking is broken.
+- **A filter that matches nothing is a zero count.** Report 0 for that row or
+  step. It is not evidence the tracking is broken. A rate or average over zero
+  records has no value: show it as n/a, never as 0.
 - **Other values of the same field are other cases.** If an event's filter asks
   for one action and the day's events show only a different action, nobody took
   that action that day. Count it as zero; do not report a contradiction.
