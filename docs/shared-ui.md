@@ -1,7 +1,7 @@
 # Shared collaboration UI
 
-`@rally/ui` owns the collaboration presentation used by desktop, the lite
-browser, and the Sideline internal host. Desktop's current UI is the reference;
+`@rally/ui` owns the collaboration presentation used by desktop and the lite
+browser. Desktop's current UI is the reference;
 each smaller host supplies fewer actions to the same components rather than
 drawing a second design.
 
@@ -23,8 +23,6 @@ drawing a second design.
   device preferences. `packages/ui/src/styles` owns the shared styles/tokens.
 - Desktop renderer adapters retain routing, UI stores, IPC, telemetry and data
   queries. Existing import sites re-export shared primitives during migration.
-- Sideline composes `SidelineComposer` and `SearchSelect`; its adapter owns
-  authentication, catalog reads, send requests, and native Rally handoff.
 - The next stacked browser host supplies email entry, cookie session restoration,
   its scoped directory and selected-conversation data. Those screens are not in #824.
 
@@ -130,8 +128,8 @@ from canonical reads and preserves the existing Main-label boundary.
 Desktop and browser both mount the one non-collapsing `ResizableSidebar`
 (`collapsible={false}`) and compose the plain `SidebarFooter` with an account
 slot ([`desktop-shell.md`](desktop-shell.md)). `SidebarCollapseFooter` and the
-primitive's compact layout remain only for Sideline, the one host that still
-collapses. A host that keeps a sidebar's width (and, for Sideline, its
+primitive's compact layout have had no host since Sideline, the one host that
+collapsed, was removed. A host that keeps a sidebar's width (and its
 collapsed state) across launches does it through `lib/sidebar-preferences.ts`
 under its own local-storage keys. A missing or unreadable width falls back to
 the default, a readable one is clamped to the sidebar's limits, a missing
@@ -190,7 +188,7 @@ editable region first, so a phone's keyboard drops.
 
 Theme application stamps the same `data-theme` attribute before rendering, and writes
 the applied canvas into any `theme-color` meta the host document carries. Desktop
-installs the native theme reporter/broadcast adapter; browser and Sideline install system
+installs the native theme reporter/broadcast adapter; browser installs system
 appearance observation. Visual primitives share the same theme subscription.
 
 Sidekick management options are requested when management controls open. Transcript
@@ -268,11 +266,8 @@ src/renderer/components/sidekick-section.test.tsx` (as one command). The desktop
 suite imports the real shared implementations through their re-export adapters.
 Run `pnpm --filter @rally/desktop exec vitest run
 src/renderer/components/error-notice.test.tsx
-src/renderer/components/acknowledged-error-dialog.test.tsx
-src/renderer/components/sideline-composer.test.tsx` for the popup queue,
-acknowledgement, focus, nested-dialog behavior and Sideline message validation.
-Sideline validation uses this DOM harness because static HTML cannot represent
-a client-side popup.
+src/renderer/components/acknowledged-error-dialog.test.tsx` for the popup
+queue, acknowledgement, focus and nested-dialog behavior.
 Run `pnpm --filter @rally/desktop exec electron-vite build` and inspect the changed
 surfaces in Electron. The browser host in #825 adds Chrome verification; no second
 component test runner is needed for the same implementations.

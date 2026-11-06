@@ -1026,37 +1026,11 @@ For ordinary releases after both entrypoints exist:
 
 ### Automated workflows
 
-Three GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
+Two GitHub Actions workflows carry the mechanical part of this procedure. They are the same commands documented above, so a local operator run and a workflow run remain interchangeable.
 
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the commits the pull request adds to its base branch. Verification fans out across independent Ubuntu runners; the desktop Vitest suite uses two shards, the API Vitest suite uses three, and the workers suite uses two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
 
 - `.github/workflows/release-desktop-macos.yml` freezes the version-bumped release commit and runs lint, typecheck, the Electron desktop test suite (`pnpm --filter @rally/desktop test`), and the release invariants on Ubuntu before it claims macOS; the Apple runner then guards the tag, runs the packaged Crashpad fixture, builds, signs, notarizes, staples, and verifies the macOS package, checks configured regional APIs, publishes the immutable payloads, promotes the release manifest, and records the release config on `main`. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its cheap admission filter; the Ubuntu planner rejects contract-only changes outside the desktop's derived import closure before bumping or claiming macOS. A manual dispatch names an existing tag. Nothing triggers on a tag.
-- `.github/workflows/release-sideline-macos.yml` automatically releases after a
-  `main` change to Sideline, its shared UI/contracts, workspace build inputs, or
-  the shared macOS release helpers. Its singleton verification job fetches
-  `main`, compares that tip with the latest `sideline-v<version>` tag, skips a
-  stale run with no outstanding inputs, and stamps the next Sideline patch
-  version itself; do not bump `apps/sideline/package.json` by hand. If another
-  workflow advances `main` before the stamp is pushed, it fetches and replans,
-  including the shared-contract API deployment gate. It never silently builds
-  a newer tree using the old plan. The workflow
-  freezes the stamped commit, repeats workspace lint/typecheck plus Sideline
-  and release-tooling tests, and waits for the matching API deployment when
-  contracts changed. It builds, signs, notarizes, and preserves one release
-  artifact, then publishes that artifact in a separate job. Retrying a failed
-  publication job reuses the same bytes; rerun only failed jobs while the run
-  and its artifact are retained.
-  Publication verifies the signed arm64 ZIP, DMG, blockmaps, update manifest,
-  and canonical installer under `sideline/stable/darwin/arm64/` in the release
-  R2 bucket before pushing the Sideline tag. Its R2 reads use the same
-  idle-only download as Rally's publisher, never a total-time cap. A publish
-  rerun reuses its run's original commit, so after a publisher fix, let the
-  push-triggered run resume the pending version rather than rerunning the
-  failed one. The `desktop-release` environment's
-  `CLOUDFLARE_ZONE_ID` must identify the `rallywith.ai` zone that owns
-  `downloads.rallywith.ai`; a successful purge against a different zone leaves
-  old installer bytes in the CDN. This workflow does not change Rally's release
-  record or landing site.
 
 ### Deploying the Sidekick class rename
 
