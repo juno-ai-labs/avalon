@@ -2067,7 +2067,7 @@ The gate reads `x-rally-client-contract`: absent, or below
 `MINIMUM_SERVED_CLIENT_CONTRACT` in `packages/contracts/src/http-headers.ts`,
 is a refusal. `Origin` is not the gate — it only separates a browser context
 from a native one, so that a request with neither header is admitted, because
-iOS and the desktop main process decode with schemas that ignore unknown keys.
+the desktop main process decodes with schemas that ignore unknown keys.
 
 **`426` is a wire-level refusal, not an update prompt.** No build that predates
 this release knows the code, so a pre-cutover desktop shows whatever it shows

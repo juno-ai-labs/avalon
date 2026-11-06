@@ -278,7 +278,7 @@ owned by [authorization](authorization.md), uploaded bytes and model image
 hydration by [agent attachments](agent-attachments.md), ordinary draft
 persistence by [composer drafts](composer-drafts.md), and site publication by
 [live web artifacts](live-web-artifacts.md). It adds no editing tool, approvals,
-artifact comment records or iOS surface.
+or artifact comment records.
 
 ## Failure modes and limits
 
