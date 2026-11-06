@@ -12,11 +12,12 @@
  */
 
 import { env } from "cloudflare:workers";
-import { createExecutionContext, reset } from "cloudflare:test";
+import { createExecutionContext, reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationDraft } from "@rally/contracts";
 
+import { AUTOMATION_SCHEDULE_ALARM_KIND } from "../src/durable-objects/automation-do-protocol";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridge";
 import type { Env } from "../src/env";
@@ -24,6 +25,7 @@ import { createAutomation } from "../src/services/automation-service";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { hostedParentStub } from "./helpers/hosted-parent";
 import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
+import { ensureAuditSchema } from "./helpers/audit-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ef10");
@@ -32,6 +34,15 @@ const ROOM_ID = asWorkstreamId("00000000-0000-7000-8000-00000000ef12");
 const SIDEKICK_ID = asAutomationId("00000000-0000-7000-8000-00000000ef13");
 const SESSION_ID = "00000000-0000-7000-8000-00000000ef14";
 const NOW = "2026-09-17T10:00:00.000Z";
+const BYSTANDER_ID = asUserId("00000000-0000-7000-8000-00000000ef18");
+const OPERATOR = { subject: "access-engineer", email: "engineer@example.com", audience: "engineering-mcp" };
+const HOURLY: AutomationDraft = {
+  name: "Hourly digest", description: "Summarizes the hour", overview: "Runs every hour",
+  instructions: "Say what happened in one sentence.",
+  triggers: [{ type: "interval", intervalSeconds: 3_600, summary: "Every hour" }],
+  requiredCapabilities: [], expectedOutputs: [], defaultBehavior: {}, recommendedPlugins: [],
+  memoryTables: [], customTools: [], suggestedScope: "personal", followUpQuestion: null, elicitation: null, ready: true,
+};
 const TEST_ENV: Env = env;
 
 useHeldEffectQueue();
@@ -91,12 +102,52 @@ async function createSidekick(): Promise<void> {
   expect(created.created).toBe(true);
 }
 
+function workspace() {
+  return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+}
+
+/** Published through the same submit and apply the drafting conversation uses. */
+async function activeHourlySidekick(): Promise<void> {
+  await createSidekick();
+  await workspace().sidekickSubmitDefinition({
+    workspaceId: WORKSPACE_ID, automationId: SIDEKICK_ID, draft: HOURLY, evaluatorRules: null, submittedByRunId: null,
+  });
+  await runInDurableObject(workspace(), (instance) => instance.sidekickApply({
+    workspaceId: WORKSPACE_ID, automationId: SIDEKICK_ID,
+    actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },
+  }));
+}
+
+async function sidekickState(): Promise<{ lifecycle: string; paused_by: string | null; schedule_alarms: number }> {
+  return runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
+    lifecycle: string; paused_by: string | null; schedule_alarms: number;
+  }>(
+    `SELECT lifecycle, paused_by,
+            (SELECT COUNT(*) FROM _internal_durable_alarms WHERE kind = ?) AS schedule_alarms
+       FROM automation_directory WHERE automation_id = ?`,
+    AUTOMATION_SCHEDULE_ALARM_KIND, SIDEKICK_ID,
+  ).one());
+}
+
 beforeEach(async () => {
   await reset();
   await seedRegionalDatabase();
   await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
     .initializeWorkspace(WORKSPACE_ID, "wnam");
   await seedRoom();
+  await ensureAuditSchema();
+  await env.AUDIT_DB.prepare("DELETE FROM audit_events WHERE workspace_id = ?").bind(WORKSPACE_ID).run();
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'member', ?)`).bind(WORKSPACE_ID, BYSTANDER_ID, NOW),
+    // Publishing reserves the Sidekick's email address.
+    env.DB.prepare(`CREATE TABLE workstream_email_routes (
+      email_address TEXT PRIMARY KEY COLLATE NOCASE, address_source TEXT NOT NULL,
+      region TEXT NOT NULL, workspace_id TEXT NOT NULL, workstream_id TEXT,
+      automation_subscription_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE (region, workspace_id, workstream_id)
+    )`),
+  ]);
 });
 
 describe("engineering inspection of a Sidekick", () => {
@@ -136,5 +187,43 @@ describe("engineering inspection of a Sidekick", () => {
     expect(await inspection.runSubstreamSql({
       workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: runId, authorityGeneration: 1, query,
     })).toEqual({ found: false });
+  });
+
+  it("pauses and resumes a Sidekick as a user who manages it, through the app's own path", async () => {
+    await activeHourlySidekick();
+    expect(await sidekickState()).toEqual({ lifecycle: "active", paused_by: null, schedule_alarms: 1 });
+
+    expect(await bridge().setSidekickPaused({ orgId: WORKSPACE_ID, userId: AUTHOR_ID, sidekickId: SIDEKICK_ID, paused: true }, OPERATOR))
+      .toEqual({ region: "global", orgId: WORKSPACE_ID, sidekickId: SIDEKICK_ID, lifecycle: "paused" });
+    expect(await sidekickState()).toEqual({ lifecycle: "paused", paused_by: "person", schedule_alarms: 0 });
+
+    expect(await bridge().setSidekickPaused({ orgId: WORKSPACE_ID, userId: AUTHOR_ID, sidekickId: SIDEKICK_ID, paused: false }, OPERATOR))
+      .toEqual({ region: "global", orgId: WORKSPACE_ID, sidekickId: SIDEKICK_ID, lifecycle: "active" });
+    expect(await sidekickState()).toEqual({ lifecycle: "active", paused_by: null, schedule_alarms: 1 });
+
+    const audits = (await env.AUDIT_DB.prepare(
+      "SELECT action, target_id, metadata_json FROM audit_events WHERE workspace_id = ? ORDER BY created_at, action",
+    ).bind(WORKSPACE_ID).all<{ action: string; target_id: string; metadata_json: string }>()).results;
+    expect(audits.map(({ action, target_id }) => ({ action, target_id }))).toEqual([
+      { action: "engineering.pause_sidekick.attempt", target_id: AUTHOR_ID },
+      { action: "engineering.pause_sidekick.result", target_id: AUTHOR_ID },
+      { action: "engineering.resume_sidekick.attempt", target_id: AUTHOR_ID },
+      { action: "engineering.resume_sidekick.result", target_id: AUTHOR_ID },
+    ]);
+    expect(JSON.parse(audits[1]!.metadata_json)).toMatchObject({
+      operator: OPERATOR, sidekickId: SIDEKICK_ID, outcome: "admitted", lifecycle: "paused",
+    });
+  });
+
+  it("refuses a pause by a member who cannot manage the Sidekick, and leaves it running", async () => {
+    await activeHourlySidekick();
+
+    await expect(bridge().setSidekickPaused({ orgId: WORKSPACE_ID, userId: BYSTANDER_ID, sidekickId: SIDEKICK_ID, paused: true }, OPERATOR))
+      .rejects.toThrow("engineering_operation_failed:sidekick_forbidden");
+    expect(await sidekickState()).toEqual({ lifecycle: "active", paused_by: null, schedule_alarms: 1 });
+    const result = await env.AUDIT_DB.prepare(
+      "SELECT metadata_json FROM audit_events WHERE workspace_id = ? AND action = 'engineering.pause_sidekick.result'",
+    ).bind(WORKSPACE_ID).first<{ metadata_json: string }>();
+    expect(JSON.parse(result!.metadata_json)).toMatchObject({ outcome: "failed_or_uncertain", errorCode: "sidekick_forbidden" });
   });
 });
