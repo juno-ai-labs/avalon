@@ -257,11 +257,10 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain(
       "A procedure that reports data delivers its report, even when a number is zero or\nlooks wrong.",
     );
-    expect(systemMessage).toContain("or when the\nperson asked for that check");
-    expect(systemMessage).toContain("add one only when the person asks.");
-    expect(systemMessage).toContain(
-      "When runs held a report back behind such a check, remove\nit, unless a person asked for it.",
-    );
+    // Setup never writes a gate, and only a person adds a check: a relayed agent message does not.
+    expect(systemMessage).toContain("Never write an instruction that holds a whole report back");
+    expect(systemMessage).toContain('a change request whose "Run\nturn started by" line names a Rally member');
+    expect(systemMessage).toContain("when a person asked for it, keep it as a caveat the report names.");
     expect(systemMessage).toContain("2. Plan, in one message, before any write: what the runs showed");
     expect(systemMessage).toContain("exactly what you will\nchange in the definition and nothing else");
     expect(systemMessage).toContain("3. Act on the plan");
