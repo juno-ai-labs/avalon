@@ -253,8 +253,10 @@ const singlePurpose = (sk) => toolsOf(sk).every((t) => !Object.keys(t.inputSchem
 const flagged = (sk) => toolsOf(sk).flatMap((t) => Object.keys(t.inputSchema.properties ?? {}).filter((k) => FLAG_INPUT.test(k)).map((k) => `${t.name}.${k}`));
 // A tool runs the routine procedure, its own table writes included; delivery to people stays with the run.
 // Delivery tools across Rally and the connectors: conversation and agent messages, mail, replies, comments.
-const POSTS = /\.(conversation_post|post|send_message|send|send_email|reply|reply_to_message|create_comment)\s*\(/;
+// A dotted connector name such as gmail.send is called in bracket form: tools.plugin_google["gmail.send"](...).
+const POSTS = /(?:\.|\[\s*["'`](?:\w+\.)?)(conversation_post|post|send_message|send|reply|reply_to_message|create_comment)(?:["'`]\s*\])?\s*\(/;
 // A table the tool writes is passed in, so a test or review can point it at a scratch table.
+// Only writes are graded: a fixed read cannot change the live tables during a test.
 const TABLE_WRITES = /\.(insert_rows|update_rows|delete_rows|invalidate_rows)\s*\(/;
 const FIXED_TABLE = /['"`]mtt_[A-Za-z0-9_-]+['"`]/;
 const MAX_TOOLS = 4;

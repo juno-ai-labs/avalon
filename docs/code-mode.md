@@ -187,9 +187,8 @@ clock to work out which dates or items the work covers, never to decide whether
 to do it: a time-of-day gate stays in the trigger and the instructions. In a self-review, the plan says of each deterministic step the
 runs repeated, skipped or got wrong whether it moves into the tool or why it
 stays in the instructions, with "the instructions already say so" ruled out as a
-reason; tools the runs always call one after another become one, a writing
-tool is tested only against scratch tables passed as its input, and a tool with a
-table ID fixed in its code is rewritten to take it as input when the review changes it
+reason; tools the runs always call one after another become one, and a tool
+the review changes is tested against scratch tables as above
 ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)).
 The schema refuses, by
 field, a tool on an instruction-only Sidekick, a `plugin_*` entry missing from
@@ -488,8 +487,10 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
 input, has setup and reviews test writing tools against scratch tables passed
 that way, and has a review rewrite a tool whose table ID is fixed in its code.
 The prod eval grader fails a writing tool with a table ID in its code, and its
-no-posting check now covers `send`, `send_email`, `reply`, `reply_to_message` and
-`create_comment` as well as `post`, `conversation_post` and `send_message`.
+no-posting check now covers `send`, `reply`, `reply_to_message` and
+`create_comment` as well as `post`, `conversation_post` and `send_message`, in
+both the dot form and the bracket form a dotted connector name such as
+`gmail.send` takes inside a program.
 
 **Why:** The one-tool guide put progress writes inside the tool, but a review may
 test a writing tool only against a scratch table, and a fixed table ID cannot be
@@ -498,8 +499,7 @@ tool, and the costly per-step tools would stay. The posting check matched only
 three names, so a tool that sent mail or left a comment passed.
 
 **Considered and rejected:** Letting a review test against the live tables, which
-would mark real items done that no run reported. Checking a tool's write mode
-instead of its call names, which the saved definition does not carry.
+would mark real items done that no run reported.
 
 **Consequences:** A tool saved before this keeps its fixed IDs until it next
 changes.
