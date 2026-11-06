@@ -96,6 +96,21 @@ export const SendEngineeringMessageResultSchema = deferredZodSchema(() => z.stri
 }));
 export type SendEngineeringMessageResult = z.infer<typeof SendEngineeringMessageResultSchema>;
 
+export const SetEngineeringSidekickPausedInputSchema = deferredZodSchema(() => z.strictObject({
+  orgId: WorkspaceIdSchema,
+  userId: UserIdSchema.describe("Existing Organization user to act as. They must be allowed to manage the Sidekick in the app: its author, its run-as user, a manager of its owning Thread, or an owner or admin for an Organization-wide one."),
+  sidekickId: AutomationIdSchema,
+  paused: z.boolean(),
+}));
+export type SetEngineeringSidekickPausedInput = z.infer<typeof SetEngineeringSidekickPausedInputSchema>;
+export const SetEngineeringSidekickPausedResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  sidekickId: AutomationIdSchema,
+  lifecycle: z.enum(["draft", "active", "paused", "deleted"]),
+}));
+export type SetEngineeringSidekickPausedResult = z.infer<typeof SetEngineeringSidekickPausedResultSchema>;
+
 export const ReadEngineeringChannelInputSchema = deferredZodSchema(() => z.strictObject({
   ...engineeringViewer,
   channelId: SpaceIdSchema,
@@ -519,6 +534,7 @@ export interface EngineeringInspectionRpcBinding {
   listUserChannels(input: ListEngineeringUserChannelsInput): Promise<SpaceDirectory>;
   listUserConversations(input: ListEngineeringUserConversationsInput): Promise<SpaceChannelPage>;
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
+  setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
   readChannel(input: ReadEngineeringChannelInput): Promise<EngineeringTextResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;
