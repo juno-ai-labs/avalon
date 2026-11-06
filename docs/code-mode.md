@@ -56,8 +56,8 @@ async function and is always wrapped as one. Before any isolate is loaded,
 `checkProgram` parses the wrapped body with acorn, walks it, and refuses the
 program as `code_program_rejected`, by line and with nothing written: a body
 that does not parse; a write (`tools.<plugin>.<tool>` whose mode is `write`)
-called as a bare statement with its promise dropped, inside `Promise.all` and
-its kin, or inside a `map`/`forEach` callback; and `Date.now()`, `new Date()`,
+called with its promise dropped, as a bare statement or inside a `forEach`
+callback or another array method that discards its callback's result; and `Date.now()`, `new Date()`,
 `Math.random()` and the like in a program that writes, because a re-run
 replays a nested call by its input hash and cannot match a write whose input
 changed. The balance is latency against certainty: the parse of a
@@ -131,9 +131,16 @@ Terminal's `command_outcome_unknown` is ambiguous; everything else is a
 definitive failure with the tool's own code. A `ZodError` after valid
 arguments names the fields it rejected, in the receipt's code
 (`tool_response_invalid:<fields>`) and in the sentence. Writes and `serial`
-tools run one at a time per program, and a write queued behind the call that
-stopped the program is refused when its turn comes; reads run as the program
-asks.
+tools run one at a time per program, and a call queued behind the one that
+stopped the program is refused when its turn comes. Every other call, writes
+included, runs as the program asks: `Promise.all` over writes runs them
+together. Each call checks the stopped state again just before its receipt is
+claimed, so a write that was authorized while another call stopped the program
+is refused with nothing written; one already dispatched finishes. A nested
+receipt's key is the call's index in the order calls were made, so a program
+whose concurrent calls start in an order that depends on timing may, on a
+re-run, meet a recorded call at that index with other input; the receipt lookup
+treats that as an ambiguous write and halts, rather than make it twice.
 
 The session has a lifetime. When the program returns, the tool closes it:
 calls still running are awaited, not aborted (a write the program did not
@@ -283,8 +290,8 @@ twenty values, `expected`, `retryAfterMs`); a tool's message text is bounded to
   Breaking the first nests receipts without bound; breaking the second puts an
   image in a JSON value. Guard: `callableTools` in `test/code-mode.test.ts`.
 - **A program reaches the isolate only through the pre-run check.** Breaking it
-  means a write in a `catch`, a `map` callback or a `Promise.all` that the
-  gateway meets with the write already made, and a clock-stamped write a re-run
+  means a write whose promise was dropped that the gateway meets with the write
+  already made, and a clock-stamped write a re-run
   makes twice. Guard: `test/code-mode.test.ts` fails when the executor skips
   the check, since the loader is then called for a flagged program.
 
@@ -486,7 +493,7 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
 
 ## Changelog
 
-### 2026-11-06 — Size a tool's share by time and batch its writes
+### 2026-11-06 — Size a tool's share by time, and let a program's writes run together
 
 **What changed:** The guide has a tool size its share by elapsed time, reading
 `current_time` at the start and after each group of reads and stopping at about
@@ -500,6 +507,14 @@ size by timing tests at a few settings, keeping the one with the most items per
 second that adds no errors. A number an earlier revision wrote without a
 measurement is re-measured, not obeyed.
 
+The gateway no longer queues write-mode calls: only `serial` tools run one at a
+time, and every other call runs as the program starts it. Each call checks the
+stopped state again just before its receipt is claimed. `checkProgram` drops
+`write_in_parallel` and narrows `write_in_callback` to callbacks whose result
+the array method discards (`forEach`, `filter` and the like), which drop a
+write's promise; `Promise.all` over writes, and writes in a `map` callback,
+pass.
+
 **Why:** Daily Active Rally Organizations' first one-tool revision,
 `scan_fixed_batch`, took ten conversations per call. Nothing in the guide said
 how to size a share, so the setup agent picked a small fixed count, and it
@@ -511,16 +526,38 @@ guess: the setup agent wrote it into revision 4 during a repair, no person asked
 for it, and neither the platform nor the source sets it, yet later revisions
 treated it as a rule.
 
+The setup agent's first timing test of 4, 8 and 16 concurrent reads could not
+run. Its reads go through a hosted MCP SQL tool whose `readOnlyHint` is false,
+so Rally treats it as a write: the checker refused it inside `Promise.all`, and
+the earlier revision's "four at a time" had in fact run one at a time, because
+the gateway queued every write-mode call. Write-mode is a retry and receipt
+policy, not a promise that two calls conflict; the program already sees each
+call's outcome, and the ambiguous-write halt and receipts do not depend on
+order. Writes that must not overlap still have a way to say so: await them in
+sequence, or mark the tool `serial`.
+
 **Considered and rejected:** `Date.now()` for the time budget, which
 `checkProgram` refuses in a program that writes (`write_with_clock_or_random`).
 Claiming the whole share up front, which strands the rows the time budget does
 not reach. One write for the whole share, which loses every result on an overrun
 and stalls on one bad row, since `update_rows` refuses the whole batch. Raising the program deadline, which bounded
-shares make unnecessary.
+shares make unnecessary. Exempting only hosted SQL tools from the write queue:
+the same mismatch applies to any tool whose mode is write for retry reasons, and
+a per-tool exception list is a rule nobody keeps. Keying nested receipts by input
+rather than index, so concurrent calls replay in any order: a re-run whose input
+diverged would then make a new write where today it halts, and the order a
+program starts its calls in is already fixed when it maps over a list in hand.
 
 **Consequences:** The guide states the deadline in words; a change to
 `CODE_PROGRAM_DEADLINE_MS` must update `CUSTOM_TOOLS_GUIDE` by hand. A cap on
-concurrent reads may protect a production source, so the code keeps it.
+concurrent reads may protect a production source, so the code keeps it. A
+program that fires writes together no longer stops at the first failure: the
+ones already dispatched finish, and the program sees every outcome. A program
+whose concurrent calls start in an order that depends on timing (a write after
+an `await` inside each branch) can, on a re-run, meet a recorded call at its
+index with other input and halt as ambiguous; the system message tells the
+model to start calls that run together in a fixed order. Bind's direct path
+still runs a turn's write calls one at a time.
 
 ### 2026-11-06 — A custom tool takes its tables as input
 

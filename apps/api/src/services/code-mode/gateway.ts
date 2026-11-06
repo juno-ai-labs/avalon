@@ -299,9 +299,7 @@ export class GatewaySession {
         const resolved = this.resolve(pluginModelId, toolName);
         record.mode = resolved.tool.definition.mode;
         const run = () => this.execute(index, resolved.plugin, resolved.tool, rawInput, record);
-        return resolved.tool.serial || resolved.tool.definition.mode === "write"
-          ? await this.serialized(run, label)
-          : await run();
+        return resolved.tool.serial ? await this.serialized(run, label) : await run();
       } catch (error) {
         if (record.outcome === "refused" && error instanceof CodeModeToolError && error.code === "code_call_refused") {
           record.refusal = error.details?.reason as RefusalReason;
@@ -324,9 +322,11 @@ export class GatewaySession {
   }
 
   /**
-   * One write at a time. A call checked the stopped state when it was made;
-   * it checks again when its turn comes, because the call ahead of it may be
-   * the one that stopped the program.
+   * One `serial` tool call at a time. A call checked the stopped state when it
+   * was made; it checks again when its turn comes, because the call ahead of
+   * it may be the one that stopped the program. Writes are not queued here:
+   * a program that starts several writes together runs them together, and
+   * each checks the stopped state again just before its receipt is claimed.
    */
   private serialized<T>(run: () => Promise<T>, label: string): Promise<T> {
     const guarded = () => {
@@ -474,6 +474,10 @@ export class GatewaySession {
       if (prior.halt === "needs_input") throw this.halt(record, label);
       return this.replayed(record, prior.output);
     }
+    // Calls run side by side, so another call may have stopped the program
+    // while this one was authorized and looked up. Nothing is claimed after a
+    // stop; a call already past this line finishes, as a call in flight does.
+    if (this.fatal !== null || this.halted !== null) throw this.stopped(label);
     const planned = host.plan(plugin.canonicalId, tool);
     const providerIdempotencyKey = definition.idempotency === "provider_key" ? toolCallId : undefined;
     let claim: Awaited<ReturnType<typeof persistToolExecutionPlan>>;
