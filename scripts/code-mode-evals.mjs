@@ -252,11 +252,16 @@ const FLAG_INPUT = /^(mode|action|dry_?run|preview|record_[a-z_]+|only_[a-z_]+|s
 const singlePurpose = (sk) => toolsOf(sk).every((t) => !Object.keys(t.inputSchema.properties ?? {}).some((k) => FLAG_INPUT.test(k)));
 const flagged = (sk) => toolsOf(sk).flatMap((t) => Object.keys(t.inputSchema.properties ?? {}).filter((k) => FLAG_INPUT.test(k)).map((k) => `${t.name}.${k}`));
 // A tool runs the routine procedure, its own table writes included; delivery to people stays with the run.
-const POSTS = /\.(conversation_post|post|send_message)\s*\(/;
+// Delivery tools across Rally and the connectors: conversation and agent messages, mail, replies, comments.
+const POSTS = /\.(conversation_post|post|send_message|send|send_email|reply|reply_to_message|create_comment)\s*\(/;
+// A table the tool writes is passed in, so a test or review can point it at a scratch table.
+const TABLE_WRITES = /\.(insert_rows|update_rows|delete_rows|invalidate_rows)\s*\(/;
+const FIXED_TABLE = /['"`]mtt_[A-Za-z0-9_-]+['"`]/;
 const MAX_TOOLS = 4;
 const posters = (sk) => toolsOf(sk).filter((t) => POSTS.test(t.code)).map((t) => t.name);
-const shaped = (sk) => singlePurpose(sk) && posters(sk).length === 0 && toolsOf(sk).length <= MAX_TOOLS;
-const shapeNotes = (sk) => `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} count=${toolsOf(sk).length} flags=${flagged(sk).join(",")} posters=${posters(sk).join(",")}`;
+const fixedWriters = (sk) => toolsOf(sk).filter((t) => TABLE_WRITES.test(t.code) && FIXED_TABLE.test(t.code)).map((t) => t.name);
+const shaped = (sk) => singlePurpose(sk) && posters(sk).length === 0 && fixedWriters(sk).length === 0 && toolsOf(sk).length <= MAX_TOOLS;
+const shapeNotes = (sk) => `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} count=${toolsOf(sk).length} flags=${flagged(sk).join(",")} posters=${posters(sk).join(",")} fixedTables=${fixedWriters(sk).join(",")}`;
 
 const PROD = [
   { id: "P01", level: "daily activity report", message: "Set up a Sidekick that every day at 9am Pacific reports how many rows were added to memory table 'org_messages' (columns org text, sent_at text ISO timestamp) during the preceding Pacific calendar day, DST-aware, and how many distinct orgs sent them. Keep a checkpoint in a second table so a day a run missed is covered by the next run. During setup create the tables and insert 8 rows spread over yesterday and today across three orgs. Put the counting in a saved tool that takes the day to count as input. Report in the run's own conversation; do not post to another conversation.",
