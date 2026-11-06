@@ -16,7 +16,6 @@ envelope strings in `packages/contracts/src/text.ts`, which also owns
 `stripPersonalSystemPrompt`, shared by desktop transcript display (settled and
 queued messages), outbound message reduction, and Activity/mention effect
 producers before their excerpt limit.
-The iOS `FeedProjection` applies the same display rule.
 
 ## How it works
 
@@ -96,7 +95,7 @@ effect as saving it in settings.
 ## Testing
 
 `message-to-output-pipeline.test.ts` proves admission refresh, retry stability and
-durable user-role history. Desktop transcript and iOS feed tests cover display
+durable user-role history. Desktop transcript tests cover display
 filtering; harness prompt tests cover XML formatting, escaping and compatibility
 with the shared display filter.
 `citations.test.ts`, `mention-email.test.ts`, `slack-notification-service.test.ts`,
