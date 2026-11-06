@@ -334,9 +334,10 @@ describe("Bind host durability boundaries", () => {
       content: "The unverified total is 42; I will try another reader.",
       hasToolCalls: true,
     });
-    expect(accepted).toMatchObject({ turnId: "run-one:turn:2" });
-    expect(accepted.text).toContain("Attachment content unverified");
-    expect(accepted.text).not.toContain("42");
+    // A tool-bearing turn may still recover, so its prose is withheld rather
+    // than published as one more copy of the boundary.
+    expect(accepted).toEqual({ turnId: "run-one:turn:2", text: "" });
+    expect(guard.consumeTerminalBoundaryApplied()).toBe(false);
 
     guard.onStarted({
       type: "tool_started",
@@ -358,7 +359,80 @@ describe("Bind host durability boundaries", () => {
     expect(guard.boundary()).toBeNull();
     // Settlement owns the accepted copy, not the earlier streamed provider
     // text and not whatever guard state happens to remain at run completion.
-    expect(accepted.text).toContain("Attachment content unverified");
+    expect(accepted.text).toBe("");
+  });
+
+  it("publishes the boundary once when every tool round fails and the answer ends tool-less", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    const resourceId = "00000000-0000-7000-8000-000000000781";
+    guard.onStarted({ type: "tool_started", toolCallId: "tool-read-unconvertible", toolName: "read_resource",
+      pluginId: "rally_core", policy, input: { resourceId } } as never);
+    guard.onFailed({ type: "tool_failed", toolCallId: "tool-read-unconvertible", toolName: "read_resource",
+      pluginId: "rally_core", policy, error: "The resource could not be converted",
+      data: { code: "resource_format_unsupported" }, phase: "execution", outcome: "definitive_failure" } as never);
+
+    const turns = [
+      { turnId: "run-two:turn:2", content: "Let me list the threads.", hasToolCalls: true },
+      { turnId: "run-two:turn:3", content: "Reading three threads now.", hasToolCalls: true },
+      { turnId: "run-two:turn:4", content: "Here is the comparison.", hasToolCalls: false },
+    ].map((turn) => __integrationTesting.acceptHarnessAssistantContent(guard, turn).text);
+
+    expect(turns.filter((text) => text.includes("Attachment content unverified"))).toHaveLength(1);
+    expect(turns.slice(0, 2)).toEqual(["", ""]);
+    expect(turns[2]).toContain(`Resource ${resourceId}`);
+  });
+
+  it("states the boundary once when the run ends on a withheld tool-bearing turn", () => {
+    const boundary = "## Attachment content unverified";
+    expect(__integrationTesting.applyHarnessAttachmentBoundary(
+      { text: "", turnId: "run-three:turn:2" },
+      boundary,
+      new Set(["run-three:turn:2"]),
+    )).toEqual({
+      finalTurn: { text: "", turnId: "run-three:turn:2" },
+      participantNotice: boundary,
+    });
+  });
+
+  it("does not hold an answer hostage to a resource this conversation cannot see", async () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const readPolicy = { capability: "workstream.resources.read" };
+    const viewPolicy = { capability: "workstream.resources.view" };
+    const foreignId = "00000000-0000-7000-8000-000000000782";
+    guard.onStarted({ type: "tool_started", toolCallId: "tool-read-foreign", toolName: "read_resource",
+      pluginId: "rally_core", policy: readPolicy, input: { resourceId: foreignId, startCharacter: 0 } } as never);
+    guard.onFailed({ type: "tool_failed", toolCallId: "tool-read-foreign", toolName: "read_resource",
+      pluginId: "rally_core", policy: readPolicy, error: "The resource was not found",
+      data: { code: "resource_not_found", details: { resourceId: foreignId } },
+      phase: "execution", outcome: "definitive_failure" } as never);
+    guard.onStarted({ type: "tool_started", toolCallId: "tool-view-foreign", toolName: "view_resource",
+      pluginId: "rally_core", policy: viewPolicy, input: { resourceIds: [foreignId] } } as never);
+    guard.onCompleted({ type: "tool_completed", toolCallId: "tool-view-foreign", toolName: "view_resource",
+      pluginId: "rally_core", policy: viewPolicy, result: { summary: "Viewed none", output: {
+        requested: 1, returned: 0, items: [{
+          resourceId: foreignId, title: "Unavailable", sourceMimeType: null, modelMimeType: null,
+          version: null, sourceBytes: 0, derivativeBytes: null, width: null, height: null,
+          status: "skipped", reasonCode: "resource_not_found", reason: "The resource was not found",
+          suggestedCall: null, visualPartIndex: null,
+        }],
+      } } } as never);
+    await guard.restoreReceipts([{
+      effectIntentId: "effect-foreign", runId: "run-1", toolCallId: "tool-read-foreign-replayed",
+      toolName: "read_resource", mode: "read", connectionId: null, requestHash: "hash",
+      inputJson: JSON.stringify({ resourceId: foreignId }), status: "failed", outputRef: null,
+      outputSummary: null, providerOperationId: null,
+      errorJson: JSON.stringify({ code: "tool_failed", message: "The resource was not found",
+        data: { code: "resource_not_found", details: { resourceId: foreignId } } }),
+      executionPlanHash: "plan", executionPlanJson: JSON.stringify({ capability: "workstream.resources.read" }),
+      startedAt: 1, settledAt: 2, checkpointIndex: 0,
+    }] as never);
+
+    expect(guard.boundary()).toBeNull();
+    expect(guard.nudge()).toBeNull();
+    expect(__integrationTesting.acceptHarnessAssistantContent(guard, {
+      turnId: "run-four:turn:5", content: "Here is the comparison.", hasToolCalls: false,
+    }).text).toBe("Here is the comparison.");
   });
 
   it("rebuilds attachment safety from durable receipts and lets a later verified read clear it", async () => {

@@ -619,6 +619,7 @@ class AttachmentGroundingGuard {
         this.unresolved.delete(`resource:${resourceId}`);
         continue;
       }
+      if (item?.reasonCode && isOutOfScopeAttachmentCode(item.reasonCode)) continue;
       this.unresolved.set(`resource:${resourceId}`, {
         resourceIds: [resourceId],
         toolCallId: event.toolCallId,
@@ -634,6 +635,7 @@ class AttachmentGroundingGuard {
     this.started.delete(event.toolCallId);
     if (event.phase === "validation") return;
     const errorCode = structuredAttachmentFailureCode(event);
+    if (isOutOfScopeAttachmentCode(errorCode)) return;
     let resourceIds = access?.resourceIds.length
       ? access.resourceIds
       : structuredAttachmentFailureResourceIds(event);
@@ -699,6 +701,7 @@ class AttachmentGroundingGuard {
       this.started.delete(receipt.toolCallId);
       const errorCode = structured?.code
         ?? (typeof error.code === "string" ? error.code : "attachment_receipt_failed");
+      if (isOutOfScopeAttachmentCode(errorCode)) continue;
       if (resourceIds.length === 0) {
         const structuredResourceId = structured?.details?.["resourceId"];
         if (typeof structuredResourceId === "string") resourceIds = [structuredResourceId];
@@ -753,13 +756,17 @@ class AttachmentGroundingGuard {
 
   /**
    * Replace ungrounded output before Bind or the canonical transcript accepts
-   * it. Tool-bearing turns may still recover through another attachment call;
-   * a tool-less replacement is terminal and suppresses the later nudge.
+   * it. A tool-bearing turn may still recover through another attachment call,
+   * so its prose is withheld rather than replaced: publishing the boundary on
+   * every such turn repeated the same notice once per tool round. A tool-less
+   * replacement is terminal and suppresses the later nudge; a run that ends on
+   * a withheld turn still gets the boundary once, as the participant notice.
    */
   sanitizeAssistantContent(content: string, hasToolCalls: boolean): string {
     const boundary = this.boundary();
     if (!boundary) return content;
-    if (!hasToolCalls) this.terminalBoundaryApplied = true;
+    if (hasToolCalls) return "";
+    this.terminalBoundaryApplied = true;
     return boundary;
   }
 
@@ -856,6 +863,16 @@ const READ_CURSOR_ISSUER_CAPABILITIES = [
   "workstream.resources.search",
   "workstream.resources.summarize",
 ] as const;
+
+/**
+ * Failures that say the resource is not visible to this conversation at all.
+ * Nothing attached here went unread, so there is no attachment evidence for the
+ * guard to protect; the model already holds the structured refusal. Latching on
+ * these let one guessed or foreign ID replace a whole answer.
+ */
+function isOutOfScopeAttachmentCode(code: string): boolean {
+  return code === "resource_not_found";
+}
 
 function isAttachmentContentCapability(capability: string): boolean {
   return (ATTACHMENT_CONTENT_CAPABILITIES as readonly string[]).includes(capability);
