@@ -96,16 +96,13 @@ export interface ConversationToolAccess {
 /**
  * Which scope and which tools a loop gets, or null for none.
  *
- * - A Breakout loop: its own conversation, its Thread's Main and the Thread's
- *   Channels and their Threads and Breakouts, list, read and search. It posts
- *   to its own conversation by replying.
- * - A Thread's Main loop: itself, its Channels and their Threads and Breakouts,
- *   list, read and search.
  * - A Sidekick's configuration conversation (substream "0", no run): the
- *   Sidekick's conversations, every tool.
+ *   Sidekick's own conversation, the Canvases it writes and the Canvases
+ *   attached to it, every tool.
  * - A Sidekick run (`automationRun` present): the same conversations, without
  *   attach, so a run cannot widen its own reach.
  *
+ * A Canvas's Chat gets none: its own transcript and Canvas are its context.
  * A loop acting under workspace authority has no person to admit, and a run
  * child woken without its run has no Sidekick context; neither gets a scope.
  */
@@ -131,8 +128,8 @@ export interface ConversationWorkspacePort {
 }
 
 /**
- * A message the search index found in a conversation: a Thread's or a
- * Breakout's, or a Channel's (its Space id as `parentId`, substream "0").
+ * A message the search index found in a conversation: a Canvas's Chat or a
+ * Sidekick's own conversation, each its parent's substream "0".
  */
 export interface ConversationIndexHit {
   parentId: string;

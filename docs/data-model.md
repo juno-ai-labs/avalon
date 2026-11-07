@@ -131,8 +131,8 @@ previously admitted executions.
 `WorkspaceDO` keeps Main's reported `sidekick_attachments` per Channel in
 `channel_sidekick_attachments` (migration 82) for the Channel menu's Sidekicks, applied
 from `sidekickAttachmentIds` on a directory effect. No conversation sends that
-field yet; emission follows in a later deploy, and the table stays empty until
-then.
+field (a Thread's Main was the only sender, removed in plan step C-3), so the
+table stays empty.
 
 SidekickDO migration 3 adds automation.loadable, atomically maintained with the accepted revision. WorkspaceDO migration 35 projects this value, using null for unresolved legacy eligibility. Substream migration 43 adds sidekick_attachments and sidekick_execution_skills for conversation ownership and retry-stable instruction snapshots. Existing namespace lookup keys remain unchanged.
 
@@ -1022,9 +1022,9 @@ column catalog; what follows is only what WorkspaceDO still holds.
   500 of 2026-08-31. A session row is delivery state (status, reaction, who
   started the thread); where a Slack message routes is decided by
   `external_conversation_bindings`, below. Each SubstreamAgent's
-  `run_absorbed_slack_origins` (its migration 73) records the Slack origin of
-  every steer a run absorbed, so that run can settle those messages' status
-  reactions; see [`slack-integration.md`](slack-integration.md#the-status-reaction).
+  `run_absorbed_slack_origins` (its migration 73) recorded the Slack origin of
+  every steer a Thread's run absorbed; nothing writes or reads it since plan
+  step C-3, and it stays as an unwritten table.
 
 - An automation has no destinations anywhere: its rows store none, and
   a run's loop input is a reference to its definition revision. A room-owned

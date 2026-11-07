@@ -138,7 +138,7 @@ export function runInput(
 export function seedWorkstreamRoot(
   state: DurableObjectState,
   now = 1,
-  identity: { workspaceId?: string; workstreamId?: string } = {},
+  identity: { workspaceId?: string; workstreamId?: string; parentKind?: "automation" | "canvas" } = {},
 ): void {
   const workspaceId = identity.workspaceId ?? WORKSPACE_ID;
   const workstreamId = identity.workstreamId ?? WORKSTREAM_ID;
@@ -156,7 +156,7 @@ export function seedWorkstreamRoot(
        'idle', 'seeded', 1, 1,
        0, 0, 0,
        0, 0, 0, 0,
-       ?, ?, ?, ?, 'canvas'
+       ?, ?, ?, ?, ?
      ) ON CONFLICT(id) DO NOTHING`,
     workstreamId,
     workspaceId,
@@ -164,6 +164,9 @@ export function seedWorkstreamRoot(
     now,
     now,
     now,
+    // A schema older than migration 83 admits no `canvas` parent; a test
+    // seeding one at such a version names a Sidekick's instead.
+    identity.parentKind ?? "canvas",
   );
   state.storage.sql.exec(
     `INSERT INTO substreams

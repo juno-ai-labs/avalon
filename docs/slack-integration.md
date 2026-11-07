@@ -337,9 +337,9 @@ was carried falls back to whatever the slot holds.
 
 A follow-up from a member Rally cannot map to an account is admitted as a
 steer, and when it reaches a step boundary of the live run it merges into that
-run instead of starting its own. The commit that promotes it records its
-`slackOrigin` in the conversation's `run_absorbed_slack_origins`, and the run's
-delivery settles every message it absorbed as well as its own. A linked
+run instead of starting its own. Only a Thread's run settled the Slack
+messages it absorbed, through `run_absorbed_slack_origins`; with Threads gone
+nothing writes or reads that table (plan step C-3). A linked
 member's answer to an open question carries `slackOrigin` into the run the
 answer starts, as an ordinary message does.
 
