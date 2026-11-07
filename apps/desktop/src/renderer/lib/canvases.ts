@@ -2,7 +2,7 @@ import type { CanvasEditor, CanvasSidebarRow } from '@rally/contracts';
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { useCollaborationSession } from './collaboration-session';
+import { useOptionalCollaborationSession } from './collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from './sidebar-list-store';
 import type { AutomationSummary, WorkspaceMember } from './types';
 
@@ -89,7 +89,7 @@ export function canvasRowDetail(
  * on a conversation already under way.
  */
 export function useCreateCanvas(): (prompt?: string) => Promise<void> {
-  const { api } = useCollaborationSession();
+  const api = useOptionalCollaborationSession()?.api;
   const navigate = useNavigate();
   return useCallback(async (prompt?: string) => {
     if (!api) throw new Error('Rally is not connected yet.');

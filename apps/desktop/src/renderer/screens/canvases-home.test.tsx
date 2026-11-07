@@ -14,6 +14,7 @@ const getWorkspaceMembers = vi.hoisted(() => vi.fn());
 const shell = vi.hoisted(() => ({ guest: false }));
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({ api: { createCanvas, getWorkspaceMembers }, session: { user: { id: ME } } }),
+  useOptionalCollaborationSession: () => ({ api: { createCanvas } }),
   useShellCapabilities: () => ({ host: 'desktop', guest: shell.guest }),
 }));
 
