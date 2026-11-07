@@ -171,7 +171,7 @@ import {
 import { WorkspaceImpersonationStorage } from "./workspace-impersonation-storage";
 import {
   AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema,
-  connectionAdmits, owningChannelAdmitsMember, sidekickAdmitsMember,
+  connectionAdmits, sidekickAdmits,
 } from '../services/authorization-policy';
 import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey, searchDecisionFingerprint } from '../services/search-authorization';
 import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
@@ -194,6 +194,9 @@ import { MEMORY_SEARCH_KEY_PURGE_MIGRATION, SEARCH_AUTHORIZATION_PUSH_MIGRATION 
 import {
   applyReportedSidekickAttachments,
   automationSummary,
+  AUTOMATION_AUDIENCE_SQL,
+  AUTOMATION_VIEWER_JOINS,
+  AUTOMATION_VIEWER_SQL,
   bumpChannelRail,
   CHANNEL_RAIL_MIGRATION,
   channelParticipantIds,
@@ -1222,7 +1225,7 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
+import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   hostedSidekickAlarmTarget,
@@ -4854,6 +4857,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "count each Sidekick run's steps, and arm its row in the Sidekick's shared conversation whenever the run changes",
   // See SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#runs-in-the-shared-conversation.
   statements: SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS,
+}, {
+  version: 136,
+  description: "record who a Sidekick is shared with, and what each reader of its shared conversation has read",
+  // See SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#who-a-sidekick-is-shared-with.
+  statements: SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -6648,15 +6656,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         await this.readRelationship(this.workspaceId()!, userId);
         return this.isWorkstreamParticipant(workstreamId, userId);
       },
-      // A Sidekick's home is a Channel or one of its Breakouts, never another
-      // Sidekick, so this asks the hosted Channel parent directly.
-      channelViewer: async (input) => (await this.hostedParent(input.parentId, input.workspaceId)).authorizeViewer({
-        workspaceId: asWorkspaceId(input.workspaceId),
-        parentId: input.parentId,
-        substreamId: asSubstreamId(input.substreamId),
-        userId: asUserId(input.userId),
-        ...(input.requireGrantAuthority ? { requireGrantAuthority: true } : {}),
-      }),
       readManagementAccess: async (input) => {
         const access = await this.readManagementAccess(input);
         return { allowed: access.allowed, writable: access.allowed ? access.writable : false };
@@ -6915,6 +6914,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async sidekickSetAppearance(input: Parameters<HostedSidekick["setAppearance"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setAppearance(input));
+  }
+
+  async sidekickSetAudience(input: Parameters<HostedSidekick["setAudience"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setAudience(input));
   }
 
   async sidekickPause(input: Parameters<HostedSidekick["pause"]>[0]) {
@@ -9644,22 +9647,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & {
       author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string; last_run_at: number | null;
+      shared_count: number;
     }>(
-      `SELECT directory.*,
+      `SELECT directory.*, ${AUTOMATION_AUDIENCE_SQL},
               (SELECT MAX(created_at) FROM sidekick_runs WHERE sidekick_id = directory.automation_id) AS last_run_at
          FROM automation_directory directory WHERE workspace_id = ? AND lifecycle <> 'deleted'
         ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId,
     ).toArray();
     // The management read rule (`sidekickReaderAllows`), the same one the
     // detail screen applies: a guest is not listed Organization-scope
-    // Sidekicks, a Breakout-homed one is listed to that Breakout's members,
-    // and a personal one to the person it runs as.
+    // Sidekicks, and a personal one is listed to its author, the person it
+    // runs as and the people it is shared with.
     // The role decides Organization-scope rows only, so it is read at most
     // once and only when such a row is not already the person's own.
     let actorRole: "owner" | "admin" | "member" | null | undefined = request.accessClass === undefined
       ? undefined
       : request.accessClass === "guest" ? null : request.role ?? null;
-    const host = this.hostedSidekickHost();
     const admitted: typeof candidates = [];
     for (const row of candidates) {
       const own = row.author_user_id === request.userId || row.run_as_user_id === request.userId;
@@ -9668,9 +9671,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         actorRole = relationship?.accessClass === "guest" ? null : relationship?.role ?? null;
       }
       const actor = { userId: request.userId, actorRole: actorRole ?? null };
-      // A Main-homed Channel Sidekick asks `isWorkstreamParticipant`, a local
-      // read; only a Breakout-homed one asks the Breakout's viewer rule.
-      if (await sidekickReaderAllows({ ...row, run_as_user_id: row.run_as_user_id ?? null }, actor, host)) {
+      if (sidekickReaderAllows({ ...row, run_as_user_id: row.run_as_user_id ?? null }, actor, this.state.storage.sql)) {
         admitted.push(row);
       }
     }
@@ -17629,10 +17630,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Everything is read from this object's own tables. A conversation is
    * decided by its parent's own `readableSubstreams`, the rule its canonical
    * reads apply; a Sidekick and a connection by the predicates canonical
-   * authorization shares (`sidekickAdmitsMember`, `owningChannelAdmitsMember`,
-   * `connectionAdmits`). Two narrowings are search's own, from the PRD: a guest
-   * never holds a workspace connection, and reaches a Channel-owned Sidekick
-   * only through management access on that Channel. Archived Channels and
+   * authorization shares (`sidekickAdmits`,
+   * `connectionAdmits`). One narrowing is search's own, from the PRD: a guest
+   * never holds a workspace connection. Archived Channels and
    * Spaces are skipped: member search never returns an archived row. A person
    * who is not an active member of the Organization holds no groups.
    */
@@ -17671,27 +17671,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     for (const sidekick of sql.exec<{
-      automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null;
-      owning_workstream_id: string | null; owning_substream_id: string;
-    }>(`SELECT automation_id, scope, author_user_id, run_as_user_id, owning_workstream_id, owning_substream_id
-          FROM automation_directory WHERE lifecycle <> 'deleted'`).toArray()) {
-      // A guest reads a Sidekick only through management access on the Channel
-      // that owns it; a member through its scope, authorship, execution, or
-      // participation in that Channel while it is not archived. A Breakout home
-      // narrows both to whoever reads that Breakout, as viewer admission does.
-      let readable = member && sidekickAdmitsMember({ scope: sidekick.scope,
-        author: sidekick.author_user_id === request.userId, executor: sidekick.run_as_user_id === request.userId });
-      if (!readable && hosted && sidekick.scope === "workstream" && sidekick.owning_workstream_id) {
-        const owner = await parent(sidekick.owning_workstream_id);
-        const metadata = owner.metadataRow();
-        const home = sidekick.owning_substream_id;
-        readable = metadata !== null && (home !== "0"
-          ? metadata.archived_at === null && owner.readableSubstreams(request.userId, relationship).includes(asSubstreamId(home))
-          : member
-          ? owningChannelAdmitsMember({ archived: metadata.archived_at !== null, participant: owner.isParticipant(request.userId, relationship) })
-          : owner.managementAccess({ workspaceId: request.workspaceId, parentId: sidekick.owning_workstream_id,
-            userId: request.userId }, relationship).allowed);
-      }
+      automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null; shared: number;
+    }>(`SELECT automation_id, scope, author_user_id, run_as_user_id,
+               EXISTS (SELECT 1 FROM sidekick_audience audience
+                        WHERE audience.sidekick_id = automation_id AND audience.user_id = ?) AS shared
+          FROM automation_directory WHERE lifecycle <> 'deleted'`, request.userId).toArray()) {
+      // Whoever the Sidekick is shared with, the rule its canonical reads apply.
+      const readable = sidekickAdmits({ scope: sidekick.scope, author: sidekick.author_user_id === request.userId,
+        executor: sidekick.run_as_user_id === request.userId, shared: sidekick.shared === 1 }, member);
       if (readable) groups.push(searchAudienceGroup.sidekick(sidekick.automation_id));
     }
     // A guest never gets a workspace connection (the PRD's decision 7); every
@@ -18395,17 +18382,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
-    return this.state.storage.sql.exec<AutomationDirectoryRow>(
-      `SELECT automation_id, loadable, appearance_json, lifecycle, scope, owning_workstream_id, title,
-              description, next_run_at, projected_at
-         FROM automation_directory
-        WHERE workspace_id = ? AND lifecycle <> 'deleted'
-          AND owning_workstream_id IS NULL
-          AND (scope = 'workspace' OR author_user_id = ?)
-        ORDER BY title COLLATE NOCASE, automation_id
-        LIMIT ?`,
-      workspaceId,
+    // The viewer's own Sidekicks, the Organization's, and those shared with
+    // them, each with what they have not read in its shared conversation.
+    return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_count: number; unread: number; needs_input: number }>(
+      `SELECT directory.automation_id, directory.loadable, directory.appearance_json, directory.lifecycle,
+              directory.scope, directory.owning_workstream_id, directory.title, directory.description,
+              directory.next_run_at, directory.projected_at, ${AUTOMATION_AUDIENCE_SQL}, ${AUTOMATION_VIEWER_SQL}
+         FROM automation_directory directory
+         ${AUTOMATION_VIEWER_JOINS}
+        WHERE directory.workspace_id = ?2 AND directory.lifecycle <> 'deleted'
+          AND directory.owning_workstream_id IS NULL
+          AND (directory.scope = 'workspace' OR directory.author_user_id = ?1 OR directory.run_as_user_id = ?1
+            OR EXISTS (SELECT 1 FROM sidekick_audience audience
+                        WHERE audience.sidekick_id = directory.automation_id AND audience.user_id = ?1))
+        ORDER BY directory.title COLLATE NOCASE, directory.automation_id
+        LIMIT ?3`,
       userId,
+      workspaceId,
       limit,
     ).toArray().map((row) => automationSummary(row, this.invalidAppearanceReporter(workspaceId)));
   }

@@ -10,6 +10,7 @@ import {
   SidekickReviewNoticeV1Schema, type SidekickReviewNoticeV1,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
+import { sidekickAdmits } from "../services/authorization-policy";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -120,6 +121,8 @@ import {
   AutomationRunRequestSchema,
   AutomationRunSeededRequestSchema,
   AutomationSetAppearanceRequestSchema,
+  AutomationSetAudienceRequestSchema,
+  type AutomationSetAudienceRequest,
   AutomationSubmitDefinitionRequestSchema,
   AUTOMATION_RUN_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
@@ -408,10 +411,6 @@ export interface HostedSidekickHost {
   isChannelParticipant(workstreamId: string, userId: string): boolean | Promise<boolean>;
   /** Current canonical Channel color, independent of delayed conversation projections. */
   channelColor(workstreamId: string): SpaceColorKey | null;
-  /** A Channel's or Breakout's own viewer decision, for a Sidekick homed there. */
-  channelViewer(input: {
-    workspaceId: string; parentId: string; substreamId: string; userId: string; requireGrantAuthority?: boolean;
-  }): Promise<{ authorized: boolean; archived: boolean }>;
   readManagementAccess(input: { workspaceId: string; parentId: string; userId: string }): Promise<{ allowed: boolean; writable: boolean }>;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** Hand a run to the activity Queue, whose consumer provisions it. */
@@ -450,57 +449,31 @@ function scheduleDueAfter(kind: "calendar" | "interval", definitionJson: string,
 
 /**
  * The library's and the management API's read rule, over a directory row
- * alone, so a Sidekick whose import has not run is decided the same way.
- *
- * Organization scope admits members with a role and never a guest; personal
- * scope its author and the person it runs as; Channel scope that Channel's
- * participants, or a Breakout home's members.
+ * alone, so a Sidekick whose import has not run is decided the same way:
+ * `sidekickAdmits` over its scope, its author and executor, and its `people`
+ * list. A guest has no `actorRole`, so Organization scope never admits one.
  */
-export async function sidekickReaderAllows(
+export function sidekickReaderAllows(
   row: {
-    automation_id?: string;
+    automation_id: string;
     scope: string; author_user_id: string; run_as_user_id: string | null; lifecycle: string;
-    owning_workstream_id: string | null; owning_substream_id: string; workspace_id: string;
   },
   actor: { userId: string; actorRole: "owner" | "admin" | "member" | null },
-  host: Pick<HostedSidekickHost, "isChannelParticipant" | "readManagementAccess" | "channelViewer">,
-  rule: "participant" | "manager" = "participant",
-): Promise<boolean> {
+  sql: SqlStorage,
+): boolean {
   if (row.lifecycle === "deleted") return false;
-  if (row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return true;
-  if (row.scope === "workspace") return actor.actorRole != null;
-  if (row.scope !== "workstream" || row.owning_workstream_id === null) return false;
-  return homeAdmits(row, actor.userId, host, rule);
+  return sidekickAdmits({
+    scope: row.scope,
+    author: row.author_user_id === actor.userId,
+    executor: row.run_as_user_id === actor.userId,
+    shared: sidekickSharedWith(sql, row.automation_id, actor.userId),
+  }, actor.actorRole != null);
 }
 
-/**
- * Whether a Channel-scoped Sidekick's home admits this person. For a
- * Main-homed one, `participant` asks the Channel's own participant rows, which
- * leave an archived Channel out and cost no read beyond this object's; that is
- * the viewer's and the library's rule. `manager` asks who may manage the
- * Channel, grants and an archive included, which is the rule the management
- * API applied before the move. A Breakout-homed one admits the Breakout's
- * members either way.
- */
-async function homeAdmits(
-  row: { owning_workstream_id: string | null; owning_substream_id: string; workspace_id: string },
-  userId: string,
-  host: Pick<HostedSidekickHost, "isChannelParticipant" | "readManagementAccess" | "channelViewer">,
-  rule: "participant" | "manager" = "participant",
-): Promise<boolean> {
-  if (row.owning_workstream_id === null) return false;
-  if (row.owning_substream_id === "0") {
-    if (rule === "manager") {
-      return (await host.readManagementAccess({
-        workspaceId: row.workspace_id, parentId: row.owning_workstream_id, userId,
-      })).allowed;
-    }
-    return host.isChannelParticipant(row.owning_workstream_id, userId);
-  }
-  return (await host.channelViewer({
-    workspaceId: row.workspace_id, parentId: row.owning_workstream_id,
-    substreamId: row.owning_substream_id, userId,
-  })).authorized;
+/** Whether this person is on a Sidekick's `people` list. */
+export function sidekickSharedWith(sql: SqlStorage, sidekickId: string, userId: string): boolean {
+  return sql.exec(`SELECT 1 FROM sidekick_audience WHERE sidekick_id = ? AND user_id = ? LIMIT 1`, sidekickId, userId)
+    .toArray().length > 0;
 }
 
 /** An agent's child reservation: the reservation request without what the parent supplies itself. */
@@ -798,7 +771,7 @@ export class HostedSidekick {
     if (!row || row.lifecycle === "deleted") return false;
     const relationship = await this.host.readRelationship(row.workspace_id, grant.userId);
     return relationship?.status === "active" && relationship.incarnation === grant.membershipIncarnation &&
-      await sidekickReaderAllows(row, { userId: grant.userId, actorRole: relationship.role }, this.host);
+      sidekickReaderAllows(row, { userId: grant.userId, actorRole: relationship.role }, this.sql);
   }
 
   /** Capture before asynchronous dispatch. Withdrawal needs no viewer or membership access. */
@@ -815,7 +788,7 @@ export class HostedSidekick {
     if (!row || row.workspace_id !== workspaceId || row.lifecycle === "deleted") throw this.delegationError("sidekick_not_found");
     const relationship = await this.host.readRelationship(workspaceId, userId);
     if (!relationship || relationship.status !== "active") throw this.delegationError("sidekick_delegation_membership_unavailable");
-    if (!organizationTarget && !await sidekickReaderAllows(row, { userId, actorRole: relationship.role }, this.host)) throw this.delegationError("sidekick_not_found");
+    if (!organizationTarget && !sidekickReaderAllows(row, { userId, actorRole: relationship.role }, this.sql)) throw this.delegationError("sidekick_not_found");
     return { row, relationship };
   }
 
@@ -860,9 +833,9 @@ export class HostedSidekick {
     const row = this.row();
     if (!row || row.workspace_id !== request.workspaceId || row.lifecycle === "deleted") throw this.delegationError("sidekick_not_found");
     const relationship = await this.host.readRelationship(request.workspaceId, request.actor.userId);
-    if (relationship?.status !== "active" || !await sidekickReaderAllows(row, {
+    if (relationship?.status !== "active" || !sidekickReaderAllows(row, {
       userId: request.actor.userId, actorRole: relationship.role,
-    }, this.host)) throw this.delegationError("sidekick_not_found");
+    }, this.sql)) throw this.delegationError("sidekick_not_found");
     const grants = this.delegations().forSidekick(this.sidekickId).filter((grant) => grant.allowed);
     const [people, availability] = await Promise.all([this.env.DB.prepare(
       "SELECT id,name,avatar_url,presentation_json FROM users WHERE id IN (SELECT value FROM json_each(?))",
@@ -994,6 +967,9 @@ export class HostedSidekick {
         now,
         this.sidekickId,
       );
+      // A draft's suggested scope that moves the audience is a new choice of
+      // it, so a `people` list does not outlive it.
+      if (scope !== latest.scope) this.sql.exec(`DELETE FROM sidekick_audience WHERE sidekick_id = ?`, this.sidekickId);
       this.touchDirectory(now);
       return definitionRevision;
     });
@@ -1119,6 +1095,40 @@ export class HostedSidekick {
       this.sql.exec(
         `UPDATE automation_directory SET appearance_json = ?, updated_at = ? WHERE automation_id = ?`,
         JSON.stringify(appearance), now, this.sidekickId,
+      );
+      this.touchDirectory(now);
+    });
+    return this.detail(request.actor.userId);
+  }
+
+  /**
+   * Choose who the Sidekick is shared with, and return the Sidekick that
+   * results. `people` is stored as scope `personal` with its list in
+   * `sidekick_audience`, so the released scope CHECK and every reader of
+   * `scope` are unchanged; the other two clear the list. Everyone named must
+   * be an active member or guest of the Organization.
+   */
+  async setAudience(input: AutomationSetAudienceRequest): Promise<AutomationDetail> {
+    const request = parseRpcInput(AutomationSetAudienceRequestSchema, input, "set_audience");
+    const row = this.assertSidekick(request.workspaceId, request.automationId);
+    await this.assertManager(row, request.actor);
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
+    const userIds = [...new Set(request.update.userIds)].filter((userId) => userId !== row.author_user_id);
+    const relationships = await Promise.all(userIds.map((userId) => this.host.readRelationship(row.workspace_id, userId)));
+    const absent = userIds.filter((_userId, index) => relationships[index]?.status !== "active");
+    if (absent.length > 0) {
+      throw new ApiError(422, "sidekick_audience_not_member", "Everyone a Sidekick is shared with must be in the Organization");
+    }
+    const now = Date.now();
+    this.storage.transactionSync(() => {
+      this.sql.exec(`DELETE FROM sidekick_audience WHERE sidekick_id = ?`, this.sidekickId);
+      for (const userId of request.update.audience === "people" ? userIds : []) {
+        this.sql.exec(`INSERT INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, ?)`,
+          this.sidekickId, userId, now);
+      }
+      this.sql.exec(
+        `UPDATE automation_directory SET scope = ?, updated_at = ? WHERE automation_id = ?`,
+        request.update.audience === "workspace" ? "workspace" : "personal", now, this.sidekickId,
       );
       this.touchDirectory(now);
     });
@@ -1669,10 +1679,9 @@ export class HostedSidekick {
   // ---------------------------------------------------------------------------
 
   /**
-   * The conversation-parent viewer check (`sidekickViewer`), or with
-   * `requireGrantAuthority` the guest path (`sidekickGrantViewer`): a guest
-   * reaches a Channel- or Breakout-homed Sidekick through that place's grants,
-   * and nothing else.
+   * The conversation-parent viewer check: whoever the Sidekick is shared with
+   * (`sidekickReaderAllows`). A guest is admitted only from its `people`
+   * list, whichever path asks.
    */
   async authorizeViewer(input: ConversationParentAuthorizeViewerRequest): Promise<ConversationParentAuthorizeViewerResult> {
     const request = parseRpcInput(ConversationParentAuthorizeViewerRequestSchema, input, "authorize_viewer");
@@ -1681,40 +1690,14 @@ export class HostedSidekick {
       return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: true });
     }
     this.assertIdentity(row, request.workspaceId, request.parentId);
-    if (request.requireGrantAuthority) return this.sidekickGrantViewer(row, request.userId);
+    // The caller admitted the person to the Organization; a guest asks with
+    // `requireGrantAuthority`, so only that path withholds Organization scope.
+    const authorized = sidekickReaderAllows(row, {
+      userId: request.userId, actorRole: request.requireGrantAuthority ? null : "member",
+    }, this.sql);
     return ConversationParentAuthorizeViewerResultSchema.parse({
-      authorized: await this.sidekickViewer(row, request.userId),
+      authorized,
       archived: row.owning_room_archived_at !== null,
-    });
-  }
-
-  /** Who may read a Sidekick's conversations. */
-  private async sidekickViewer(row: HostedSidekickRow, userId: string): Promise<boolean> {
-    if (row.scope === "workspace" || row.author_user_id === userId || row.run_as_user_id === userId) return true;
-    if (row.scope !== "workstream") return false;
-    return homeAdmits(row, userId, this.host);
-  }
-
-  /** A guest's path: the home Channel's grants, or a Breakout home's own. */
-  private async sidekickGrantViewer(row: HostedSidekickRow, userId: string): Promise<ConversationParentAuthorizeViewerResult> {
-    if (row.scope !== "workstream" || !row.owning_workstream_id) {
-      return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: false });
-    }
-    if (row.owning_substream_id !== "0") {
-      const home = await this.host.channelViewer({
-        workspaceId: row.workspace_id, parentId: row.owning_workstream_id,
-        substreamId: row.owning_substream_id, userId, requireGrantAuthority: true,
-      });
-      return ConversationParentAuthorizeViewerResultSchema.parse({
-        authorized: home.authorized, archived: row.owning_room_archived_at !== null || home.archived,
-      });
-    }
-    const access = await this.host.readManagementAccess({
-      workspaceId: row.workspace_id, parentId: row.owning_workstream_id, userId,
-    });
-    return ConversationParentAuthorizeViewerResultSchema.parse({
-      authorized: access.allowed,
-      archived: row.owning_room_archived_at !== null || (access.allowed && !access.writable),
     });
   }
 
@@ -1735,9 +1718,9 @@ export class HostedSidekick {
     if (!row || row.lifecycle === "deleted") return { exists: false as const, validatedAt: Date.now() };
     this.assertIdentity(row, request.workspaceId, request.parentId);
     return {
-      exists: true as const, scope: row.scope, owningWorkstreamId: row.owning_workstream_id,
-      owningSubstreamId: row.owning_substream_id,
+      exists: true as const, scope: row.scope,
       author: row.author_user_id === request.userId,
+      shared: sidekickSharedWith(this.sql, this.sidekickId, request.userId),
       executor: row.run_as_user_id === request.userId,
       children: this.childRegistry().map((child) => child.substreamId),
       revision: JSON.stringify([row.authority_generation, row.updated_at]), validatedAt: Date.now(),
@@ -1862,15 +1845,45 @@ export class HostedSidekick {
       if (envelope.effect.kind === "directory_common" && this.acceptChildProjection(substreamId, envelope, now)) {
         this.onChildCommonProjection(substreamId, envelope.effect, now);
       }
+      if (envelope.effect.kind === "directory_user" && substreamId === "0") {
+        this.acceptViewerRead(envelope.effect, envelope.sourceVersion, now);
+      }
     });
+  }
+
+  /**
+   * Keep what one person has read of the shared conversation, its own
+   * `directory_user` report of `member_attention`, so the sidebar row can say
+   * whether they have something unread; the newest report wins. A change
+   * republishes the Sidekick list.
+   */
+  private acceptViewerRead(effect: Extract<ConversationEffectEnvelope["effect"], { kind: "directory_user" }>,
+    sourceVersion: number, now: number): void {
+    const changed = this.sql.exec(
+      `INSERT INTO sidekick_viewer_reads
+         (sidekick_id, user_id, source_version, seen_attention_ordinal, manual_unread_from_ordinal, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(sidekick_id, user_id) DO UPDATE SET source_version = excluded.source_version,
+         seen_attention_ordinal = excluded.seen_attention_ordinal,
+         manual_unread_from_ordinal = excluded.manual_unread_from_ordinal, updated_at = excluded.updated_at
+       WHERE excluded.source_version >= sidekick_viewer_reads.source_version
+         AND (sidekick_viewer_reads.seen_attention_ordinal IS NOT excluded.seen_attention_ordinal
+           OR sidekick_viewer_reads.manual_unread_from_ordinal IS NOT excluded.manual_unread_from_ordinal)
+       RETURNING user_id`,
+      this.sidekickId, effect.userId, sourceVersion, effect.seenAttentionOrdinal ?? 0,
+      effect.manualUnreadFromOrdinal ?? null, now,
+    ).toArray().length > 0;
+    if (changed) this.host.noteDirectoryChanged(this.sidekickId, false, now);
   }
 
   /** Keep a child's newest common projection; `false` for one that is not newer. */
   private acceptChildProjection(substreamId: string, envelope: ConversationEffectEnvelope, now: number): boolean {
     const existing = first(this.sql.exec<{
       source_version: number; payload_hash: string; state: string; archived_at: string | null; background_agent: number | null;
+      latest_attention_ordinal: number | null;
     }>(
       `SELECT source_version, payload_hash, json_extract(effect_json, '$.state') AS state,
+         json_extract(effect_json, '$.latestAttentionOrdinal') AS latest_attention_ordinal,
          json_extract(effect_json, '$.archivedAt') AS archived_at,
          json_extract(effect_json, '$.backgroundAgent') AS background_agent FROM sidekick_child_projections WHERE sidekick_id = ? AND substream_id = ?`,
       this.sidekickId, substreamId,
@@ -1891,6 +1904,16 @@ export class HostedSidekick {
          payload_hash = excluded.payload_hash, effect_json = excluded.effect_json, updated_at = excluded.updated_at`,
       this.sidekickId, substreamId, envelope.sourceVersion, envelope.payloadHash, JSON.stringify(envelope.effect), now,
     );
+    if (envelope.effect.kind === "directory_common" && substreamId === "0") {
+      // What the sidebar row says about the shared conversation moves with its
+      // latest message, for anyone who has read it, and with whether it waits
+      // on input.
+      const unreadMoved = (existing?.latest_attention_ordinal ?? null) !== (envelope.effect.latestAttentionOrdinal ?? null)
+        && this.sql.exec(`SELECT 1 FROM sidekick_viewer_reads WHERE sidekick_id = ? LIMIT 1`, this.sidekickId).toArray().length > 0;
+      if (unreadMoved || (existing?.state === "needs_input") !== (envelope.effect.state === "needs_input")) {
+        this.host.noteDirectoryChanged(this.sidekickId, false, now);
+      }
+    }
     if (envelope.effect.kind === "directory_common") {
       const wasRunning = existing ? sidekickProjectionRunning({
         state: existing.state, archivedAt: existing.archived_at, backgroundAgent: existing.background_agent === 1,
@@ -1947,7 +1970,9 @@ export class HostedSidekick {
    * every change to what the row shows, and this reads the run when it runs
    * rather than carrying a copy, so the row is always the table's: a lost or
    * repeated delivery converges on the next one, and `replayRunRows` rebuilds
-   * every row from the table. A throw retries on the scheduler's backoff.
+   * every row from the table. `replay` is set for a replay's entry, and has
+   * the conversation apply the row even over a newer version it holds. A
+   * throw retries on the scheduler's backoff.
    */
   private async projectRunRow(runId: string, replay: boolean): Promise<void> {
     const row = first(this.sql.exec<{
@@ -3084,7 +3109,7 @@ export class HostedSidekick {
   /** The management API's read check (`sidekickReader`). */
   private async assertReader(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-    if (await sidekickReaderAllows(row, { userId: actor.userId, actorRole: actor.actorRole ?? null }, this.host, "manager")) return;
+    if (sidekickReaderAllows(row, { userId: actor.userId, actorRole: actor.actorRole ?? null }, this.sql)) return;
     throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
   }
 
@@ -3117,6 +3142,9 @@ export class HostedSidekick {
     const acceptedDefinition = row.accepted_definition_json
       ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json))
       : null;
+    const sharedWithUserIds = this.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM sidekick_audience WHERE sidekick_id = ? ORDER BY added_at, user_id`, this.sidekickId,
+    ).toArray().map((shared) => shared.user_id);
     const threadId = row.scope === "workstream" ? row.owning_workstream_id : null;
     const owningThread = threadId !== null && await this.host.isChannelParticipant(threadId, readerUserId)
       ? owningThreads(this.sql, [threadId], (workstreamId, code) => logWarn(this.env, "owning_thread_appearance_invalid", {
@@ -3151,6 +3179,8 @@ export class HostedSidekick {
         && (acceptedDefinition.triggers.length > 0 || sidekickReceivesEmail(acceptedDefinition)),
       connectorBindings: JSON.parse(row.connector_bindings_json),
       recentRuns: this.runSummaries(20),
+      audience: sharedWithUserIds.length > 0 ? "people" : row.scope === "workspace" ? "workspace" : "personal",
+      sharedWithUserIds,
     });
   }
 

@@ -11,7 +11,7 @@ import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmen
 import { AutomationLifecycleStateSchema,
   AutomationRunReferenceV1Schema,
   AutomationRunTriggerV1Schema,
-  AutomationScopeSchema } from "./automation-agent";
+  AutomationScopeSchema, SidekickAudienceSchema } from "./automation-agent";
 import { ConnectorInstallationSchema } from "./connector-installation";
 export * from "./conversation-attention";
 export * from "./conversation-source";
@@ -1871,6 +1871,15 @@ export const AutomationSummarySchema = z.object({
   nextRunAt: TimestampSchema.nullable(),
   lastRunAt: TimestampSchema.nullable(),
   updatedAt: TimestampSchema,
+  /** Who it is shared with; absent from a server that predates it. */
+  audience: SidekickAudienceSchema.optional(),
+  /**
+   * This viewer has not read the latest message in the Sidekick's shared
+   * conversation, or marked it unread. Sidebar rows only; absent elsewhere.
+   */
+  unread: z.boolean().optional(),
+  /** The Sidekick waits on someone: its delegation needs attention, or its shared conversation needs input. */
+  needsInput: z.boolean().optional(),
 });
 
 /**
@@ -1927,6 +1936,8 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   runnable: z.boolean().default(false),
   connectorBindings: z.record(z.string(), z.string()),
   recentRuns: z.array(AutomationRunSchema),
+  /** The people a `people` Sidekick is shared with, besides its author; empty for the other audiences. Absent from a server that predates it. */
+  sharedWithUserIds: z.array(IdSchema).optional(),
 });
 
 export const ApiErrorSchema = z.object({

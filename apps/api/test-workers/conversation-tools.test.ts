@@ -1549,16 +1549,19 @@ describe("a guest", () => {
     });
   }
 
-  it("opens a Breakout-homed Sidekick through the Breakout's grant, not the Channel's", async () => {
+  it("opens a Sidekick to a guest from its people list, not through its home's grants", async () => {
     const breakout = await seedBreakout("Weekly call");
     await seedSidekick(breakout);
     await seedGuest([asSubstreamId("0"), breakout]);
     const opens = async () => (await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID,
       parentId: AUTOMATION_ID, userId: GUEST_ID, requireGrantAuthority: true })).authorized;
 
-    await grant({ kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID });
-    expect(await opens()).toBe(false);
     await grant({ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakout });
+    expect(await opens()).toBe(false);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, 1)`,
+        AUTOMATION_ID, GUEST_ID);
+    });
     expect(await opens()).toBe(true);
   });
 

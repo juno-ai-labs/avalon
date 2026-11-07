@@ -22,6 +22,29 @@ export const asAutomationId = (value: string): AutomationId => AutomationIdSchem
 export const AutomationScopeSchema = z.enum(["personal", "workspace", "workstream"]);
 export type AutomationScope = z.infer<typeof AutomationScopeSchema>;
 
+/**
+ * Who a Sidekick is shared with: its author alone (`personal`), every member
+ * of the Organization (`workspace`), or its author and the people named
+ * (`people`). Beside `scope` rather than a value of it, because `scope` is
+ * stored and parsed by released clients, and a third value there would fail
+ * their whole sidebar. A `people` Sidekick is stored with scope `personal`
+ * and its list in `sidekick_audience`.
+ */
+export const SidekickAudienceSchema = z.enum(["personal", "workspace", "people"]);
+export type SidekickAudience = z.infer<typeof SidekickAudienceSchema>;
+
+/** A manager's change to who a Sidekick is shared with; `userIds` only, and always, for `people`. */
+export const SidekickAudienceUpdateSchema = z.strictObject({
+  audience: SidekickAudienceSchema,
+  userIds: z.array(UserIdSchema).default([]),
+}).superRefine((update, context) => {
+  if ((update.audience === "people") !== (update.userIds.length > 0)) {
+    context.addIssue({ code: "custom", path: ["userIds"],
+      message: "must name people exactly when the audience is people" });
+  }
+});
+export type SidekickAudienceUpdate = z.infer<typeof SidekickAudienceUpdateSchema>;
+
 export const AutomationLifecycleStateSchema = z.enum(["draft", "active", "paused", "deleted"]);
 export type AutomationLifecycleState = z.infer<typeof AutomationLifecycleStateSchema>;
 
