@@ -279,21 +279,6 @@ export const WorkspaceDirectoryScheduleTargetsResultSchema = deferredZodSchema((
   })).max(20_000),
 }));
 
-export const WorkspaceDirectoryResourceAccessRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  resourceId: IdSchema,
-  userId: IdSchema,
-}));
-
-export const WorkspaceDirectoryResourceAccessResultSchema = deferredZodSchema(() => z.strictObject({
-  items: z.array(z.strictObject({
-    workstreamId: IdSchema,
-    scope: z.enum(["personal", "workspace"]),
-    createdByUserId: IdSchema.nullable(),
-    isParticipant: z.boolean(),
-  })).max(10_000),
-}));
-
 /**
  * The most directory envelopes one apply RPC accepts. Its callers (the Queue
  * consumer and the outbox drain's legacy rows) send one at a time; a hosted
@@ -433,8 +418,6 @@ export type WorkspaceDirectoryRecentRequest = z.infer<typeof WorkspaceDirectoryR
 export type WorkspaceDirectoryDueRequest = z.infer<typeof WorkspaceDirectoryDueRequestSchema>;
 export type WorkspaceDirectoryScheduleTargetsRequest = z.infer<typeof WorkspaceDirectoryScheduleTargetsRequestSchema>;
 export type WorkspaceDirectoryScheduleTargetsResult = z.infer<typeof WorkspaceDirectoryScheduleTargetsResultSchema>;
-export type WorkspaceDirectoryResourceAccessRequest = z.infer<typeof WorkspaceDirectoryResourceAccessRequestSchema>;
-export type WorkspaceDirectoryResourceAccessResult = z.infer<typeof WorkspaceDirectoryResourceAccessResultSchema>;
 export type WorkspaceDirectoryApplyRequest = z.infer<typeof WorkspaceDirectoryApplyRequestSchema>;
 export type WorkspaceDirectoryApplyResult = z.infer<typeof WorkspaceDirectoryApplyResultSchema>;
 export type WorkspaceRegionalEffectApplyRequest = z.infer<typeof WorkspaceRegionalEffectApplyRequestSchema>;
