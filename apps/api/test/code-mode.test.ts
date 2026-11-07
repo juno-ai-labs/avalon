@@ -543,5 +543,13 @@ describe("programTestWarnings", () => {
     // One read works out the dates; msLeft() already times the share.
     expect(programTestWarnings({ code: "x", calls: [clock, read] })).toEqual([]);
     expect(programTestWarnings({ code: "while (msLeft() > 5000) {}", calls: [clock, clock] })).toEqual([]);
+    expect(programTestWarnings({ code: "if (msLeft?.() > 5000) {}", calls: [clock, clock] })).toEqual([]);
+    expect(programTestWarnings({ code: "const left = msLeft /* remaining */ ();", calls: [clock, clock] })).toEqual([]);
+  });
+
+  it("does not take msLeft() in a comment or a string for a call", () => {
+    for (const code of ["// TODO: use msLeft()\nreturn 1;", "return 'call msLeft() next';"]) {
+      expect(programTestWarnings({ code, calls: [clock, clock] })).toEqual([expect.stringContaining("never calls msLeft()")]);
+    }
   });
 });
