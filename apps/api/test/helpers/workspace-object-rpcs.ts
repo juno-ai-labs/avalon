@@ -124,22 +124,12 @@ export const SLACK_WORKSPACE_OBJECT_METHODS = [
   "clearSlackPendingPrompt",
   "claimSlackThread",
   "releaseSlackThreadClaim",
-  // The agent-session lifecycle, converted alongside the ingress spine.
-  "slackSessionById",
-  "slackSessionByThread",
-  "slackSessionByWorkstream",
-  "slackSessionExists",
-  "createSlackSession",
-  "assignSlackSessions",
-  "setSlackSessionDeliveryKey",
-  "setSlackSessionStream",
-  "settleSlackSessionReaction",
-  "anchorSlackSessionReaction",
+  // The App Home context and feedback, converted alongside the ingress spine.
   "slackAppContext",
   "storeSlackAppContext",
   "recordSlackFeedback",
   // External conversation bindings: the routing authority Slack ingress asks
-  // before it looks a session up or creates a Channel.
+  // before it routes a reply.
   "resolveExternalConversation",
   "externalConversationBinding",
   "activateExternalConversationBinding",

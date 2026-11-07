@@ -238,7 +238,7 @@ export async function acceptInvitationForUser(
         workspace_id: invitation.workspace_id, user_id: user.id,
         error: diagnosticErrorCode(error, "workspace_relationship_dispatch_failed"),
       }));
-    await adoptSlackWorkstreamsForMember(env, invitation.workspace_id, user);
+    await recordSlackIdentityForMember(env, invitation.workspace_id, user);
     return invitation.workspace_id;
   }
 
@@ -301,25 +301,25 @@ export async function acceptInvitationForUser(
       workspaceBound: true,
     }).catch(() => undefined);
   }
-  await adoptSlackWorkstreamsForMember(env, invitation.workspace_id, user);
+  await recordSlackIdentityForMember(env, invitation.workspace_id, user);
   return invitation.workspace_id;
 }
 
-async function adoptSlackWorkstreamsForMember(
+async function recordSlackIdentityForMember(
   env: Env,
   workspaceId: string,
   user: { id: string; email: string },
 ): Promise<void> {
   try {
-    await new SlackAgentService(env).assignWorkspaceWorkstreamsForMember(
+    await new SlackAgentService(env).recordSlackIdentityForMember(
       workspaceId,
       user.id,
       user.email,
     );
   } catch (error) {
-    // Membership acceptance is authoritative. Slack adoption is a recoverable
-    // convenience and can also run when the member explicitly links Slack.
-    logWarn(env, "slack_workspace_workstream_adoption_failed", {
+    // Membership acceptance is authoritative. The Slack identity is a
+    // recoverable convenience the member's explicit link also records.
+    logWarn(env, "slack_member_identity_record_failed", {
       workspace_id: workspaceId,
       user_id: user.id,
       reason: error instanceof Error ? error.message : "unknown",

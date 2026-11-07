@@ -25,7 +25,7 @@ import {
   asWorkspaceId,
   WorkspaceExternalEventMatchResultSchema,
 } from "@rally/contracts";
-import { writeSidekickDirectoryRow } from "./helpers/sidekick";
+import { writeSidekickDirectoryRow, writeSidekickRegistrations } from "./helpers/sidekick";
 
 import { conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
@@ -417,6 +417,11 @@ describe("the connector side of a binding", () => {
     });
   }
 
+  async function seedAutomation() {
+    await writeSidekickDirectoryRow(env, { automationId: AUTOMATION, workspaceId: WORKSPACE_ID, authorUserId: USER_ID,
+      lifecycle: "active", scope: "workspace", title: "Deploy watcher", description: "Watch deploys" });
+  }
+
   it("claims a message in a bound thread, so it never also becomes Suggested Work", async () => {
     await seedSlackConnection();
     let ordinal = 0;
@@ -462,16 +467,11 @@ describe("the connector side of a binding", () => {
       await writeSidekickDirectoryRow(env, { automationId, workspaceId: WORKSPACE_ID, authorUserId: USER_ID,
         lifecycle: "active", scope: "workspace", title: "Reply watcher", description: "Watch replies" });
     }
-    const register = (automationId: string, evaluatorId: string) => workspace().applyExternalEventRegistrations({
-      schemaVersion: 1,
-      workspaceId: WORKSPACE_ID,
-      destination: { kind: "automation", automationId },
-      evaluators: [{
-        evaluatorId,
-        source: { connectorType: "slack", connectionId: CONNECTION, eventType: "slack.direct_message.received" },
-        when: { kind: "all", allOf: [{ kind: "string", attribute: "channelId", operator: "in", value: ["D1"] }] },
-      }],
-    });
+    const register = (automationId: string, evaluatorId: string) => writeSidekickRegistrations(env, WORKSPACE_ID, automationId, [{
+      evaluatorId,
+      source: { connectorType: "slack", connectionId: CONNECTION, eventType: "slack.direct_message.received" },
+      when: { kind: "all", allOf: [{ kind: "string", attribute: "channelId", operator: "in", value: ["D1"] }] },
+    }]);
     await register(SIDEKICK, "00000000-0000-7000-8000-000000000ef6");
     await register(AUTOMATION, "00000000-0000-7000-8000-000000000ef7");
     await workspace().recordOutboundExternalConversationBinding({
@@ -505,21 +505,17 @@ describe("the connector side of a binding", () => {
       .toEqual([{ kind: "automation", automationId: AUTOMATION }]);
   });
 
-  it("queues a join for the conversations a saved Slack source names, and links no Space", async () => {
+  it("queues a join for the conversations a saved Slack source names, and binds nothing", async () => {
     await seedSlackConnection();
-    await workspace().applyExternalEventRegistrations({
-      schemaVersion: 1,
-      workspaceId: WORKSPACE_ID,
-      destination: { kind: "automation", automationId: AUTOMATION },
-      evaluators: [{
-        evaluatorId: "00000000-0000-7000-8000-000000000ef3",
-        source: { connectorType: "slack", connectionId: CONNECTION, eventType: "slack.message.posted" },
-        when: { kind: "all", allOf: [
-          { kind: "string", attribute: "channelId", operator: "in", value: ["C9", "C8"] },
-          { kind: "string", attribute: "text", operator: "contains", value: "deploy" },
-        ] },
-      }],
-    });
+    await seedAutomation();
+    await writeSidekickRegistrations(env, WORKSPACE_ID, AUTOMATION, [{
+      evaluatorId: "00000000-0000-7000-8000-000000000ef3",
+      source: { connectorType: "slack", connectionId: CONNECTION, eventType: "slack.message.posted" },
+      when: { kind: "all", allOf: [
+        { kind: "string", attribute: "channelId", operator: "in", value: ["C9", "C8"] },
+        { kind: "string", attribute: "text", operator: "contains", value: "deploy" },
+      ] },
+    }], "global", 1);
     const jobs = await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{
       id: string; connection_id: string; payload_json: string;
     }>("SELECT id, connection_id, payload_json FROM slack_ingress_jobs").toArray());
@@ -529,24 +525,19 @@ describe("the connector side of a binding", () => {
       team_id: "T1",
       event: { type: "rally_sidekick_source_join", channel_ids: ["C8", "C9"] },
     });
-    // A join a Sidekick needs is not an invitation.
+    // A join a Sidekick needs is not an invitation, and makes no room.
     expect(await bindingRows()).toEqual([]);
     expect(await spaceIds()).toEqual([]);
   });
 
-  it("joins again on every accepted save of the same conversations, and not on a stale one", async () => {
+  it("joins again on every accepted revision of the same conversations, and once per revision", async () => {
     await seedSlackConnection();
-    const save = (sourceGeneration: number, channels = ["C9"]) => workspace().applyExternalEventRegistrations({
-      schemaVersion: 1,
-      workspaceId: WORKSPACE_ID,
-      destination: { kind: "automation", automationId: AUTOMATION },
-      sourceGeneration,
-      evaluators: [{
-        evaluatorId: "00000000-0000-7000-8000-000000000ef4",
-        source: { connectorType: "slack", connectionId: CONNECTION, eventType: "slack.message.posted" },
-        when: { kind: "all", allOf: [{ kind: "string", attribute: "channelId", operator: "in", value: channels }] },
-      }],
-    });
+    await seedAutomation();
+    const save = (revision: number) => writeSidekickRegistrations(env, WORKSPACE_ID, AUTOMATION, [{
+      evaluatorId: "00000000-0000-7000-8000-000000000ef4",
+      source: { connectorType: "slack", connectionId: CONNECTION, eventType: "slack.message.posted" },
+      when: { kind: "all", allOf: [{ kind: "string", attribute: "channelId", operator: "in", value: ["C9"] }] },
+    }], "global", revision);
     const jobs = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ id: string }>(
       "SELECT id FROM slack_ingress_jobs ORDER BY id",
     ).toArray().map((row) => row.id));
@@ -558,9 +549,8 @@ describe("the connector side of a binding", () => {
     });
     await save(2);
     expect(await jobs()).toHaveLength(2);
-    // A projection older than the one applied changes nothing, so it joins
-    // nothing, whatever conversations it names.
-    await save(1, ["C7"]);
+    // The same revision's post-commit step again queues no second join.
+    await save(2);
     expect(await jobs()).toHaveLength(2);
   });
 });
