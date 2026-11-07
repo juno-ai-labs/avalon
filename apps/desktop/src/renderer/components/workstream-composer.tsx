@@ -180,7 +180,7 @@ const BASE_COMMANDS: ComposerCommand[] = [
 ];
 
 export function WorkstreamComposer({
-  placeholder = 'Message the thread…',
+  placeholder = 'Message Rally…',
   annotationsEnabled = true,
   ariaLabel,
   className,

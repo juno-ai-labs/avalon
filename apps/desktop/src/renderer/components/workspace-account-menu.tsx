@@ -105,8 +105,8 @@ function waitingLabel(attention: WorkspaceAttention): string | null {
   return attention.waitingReason === 'mentioned'
     ? `${count} mention${plural} waiting for you`
     : attention.waitingReason === 'needs_input'
-      ? `${count} thread${plural} waiting for your input`
-      : `${count} new thread${plural} you have not opened`;
+      ? `${count} waiting for your input`
+      : `${count} new conversation${plural} you have not opened`;
 }
 
 function IndicatorTooltip({ children, label }: { children: React.ReactElement; label: string }): React.JSX.Element {

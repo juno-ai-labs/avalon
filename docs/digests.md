@@ -773,6 +773,29 @@ device registration, provider delivery and retry receipts.
 
 ## Changelog
 
+### 2026-11-07 — Settings stops offering the Personal Channel and the Thread-only kinds
+
+**What changed:** Settings → Notifications no longer lists **New threads**,
+**New breakouts** or **Merges** under Notify me about, and the Daily digest's
+Send to no longer offers **Personal Channel**. The stored preferences and the
+server's delivery are unchanged: a kind or a `personal_channel` target already
+saved stays saved and is still honoured.
+
+**Why:** The client pivot to Canvases and Sidekicks removed Threads, Breakouts
+and merges, and with them every client screen that opens a Personal Channel.
+Offering a choice whose result nobody can open, or an announcement of
+something nobody can start, is a promise the app cannot keep.
+
+**Considered and rejected:** Rewriting the stored preferences from the client,
+which would be a data migration run from whichever device opened Settings
+first. Removing the kinds from `NotificationKindSchema`, which would reject
+stored records the server still writes.
+
+**Consequences:** A member whose digest goes only to the Personal Channel (the
+default pairs it with email) receives it where no client shows it, and cannot
+see that target selected. Retiring the Personal Channel destination, the three
+kinds, and moving stored targets is the server half of the pivot's work.
+
 ### 2026-11-05 — News in an Organization-wide Channel reaches its participants only
 
 **What changed:** A thread start and a thread's merge into an

@@ -261,7 +261,7 @@ describe('InspectorRail details', () => {
     const emailAddress = 'luminous-tidal-structured-curie@automation.rallywith.ai';
     expect(screen.getByText(emailAddress)).toBeVisible();
 
-    const copyButton = screen.getByRole('button', { name: 'Copy thread email address' });
+    const copyButton = screen.getByRole('button', { name: 'Copy email address' });
     fireEvent.click(copyButton);
 
     expect(copyText).toHaveBeenCalledWith(emailAddress);
@@ -279,7 +279,7 @@ describe('InspectorRail details', () => {
       </Tooltip.Provider>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Copy thread email address' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy email address' }));
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Copy failed — click to retry' })).toBeEnabled();
     });
@@ -648,7 +648,7 @@ describe('InspectorRail details', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Archive this resource?' });
-    expect(dialog).toHaveAccessibleDescription(/will leave this thread/u);
+    expect(dialog).toHaveAccessibleDescription(/will be removed/u);
     expect(within(dialog).getByText(new RegExp(watched.title, 'u'))).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(onDetachResource).not.toHaveBeenCalled();

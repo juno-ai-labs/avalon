@@ -4291,7 +4291,7 @@ function registerIpc(): void {
       if (action.type === 'link') {
         const { spaceIds } = z.object({ spaceIds: z.array(IdSchema) }).parse(result);
         const workspace = session?.workspace;
-        if (!workspace || !spaceIds[0]) throw new Error('This artifact has no linkable Channel');
+        if (!workspace || !spaceIds[0]) throw new Error('This artifact has no link to share');
         return workstreamCanonicalUrl(runtimeConfig().webBaseUrl, {
           region: workspace.region, workspaceId: workspace.id, spaceId: spaceIds[0],
           workstreamId: record.request.annotationScope!.split(':')[0]!, artifactId: record.resourceId,

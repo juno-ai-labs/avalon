@@ -620,19 +620,23 @@ describe('Organization settings', () => {
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
     api.updateMyPreferences.mockImplementation(async () => ({ ...DEFAULT_MEMBER_PREFERENCES,
-      notify: { ...DEFAULT_NOTIFICATION_CHANNELS, newThreads: ['push', 'email'] } }));
+      notify: { ...DEFAULT_NOTIFICATION_CHANNELS, newMessages: ['push', 'email'] } }));
     renderSettings();
     fireEvent.click(await within(screen.getByRole('navigation', { name: 'Settings sections' }))
       .findByRole('button', { name: 'Notifications' }));
 
     // jsdom lays nothing out, so the row has no room for a button each and offers its menu.
-    const menu = await screen.findByRole('button', { name: 'How to tell you about new threads' });
+    const menu = await screen.findByRole('button', { name: 'How to tell you about new messages' });
+    // Kinds that announce a Thread, a Breakout or a merge are stored but not offered.
+    for (const retired of ['new threads', 'new breakouts', 'merges']) {
+      expect(screen.queryByRole('button', { name: `How to tell you about ${retired}` })).toBeNull();
+    }
     expect(menu).toHaveTextContent('Push');
     fireEvent.pointerDown(menu, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: /^Email/u }));
 
     // Only the kind that changed, whole: a stale copy of the others must not be written back.
-    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({ notify: { newThreads: ['push', 'email'] } }));
+    await waitFor(() => expect(api.updateMyPreferences).toHaveBeenCalledWith({ notify: { newMessages: ['push', 'email'] } }));
     await waitFor(() => expect(menu).toHaveTextContent('Push and Email'));
   });
 
