@@ -13,28 +13,39 @@ Start from a migrated and seeded local database:
 ```text
 pnpm db:migrate
 pnpm db:seed
-pnpm dev:api
+pnpm dev:api:local            # opens the authority and imports the seeded Canvases
 pnpm smoke:local
 ```
 
 The smoke check signs in through development-only authentication, verifies
-protected workspace routes, validates the right-rail fixtures and persisted
-tool transcript from the canonical boot, replays a human message over the main
-SubstreamAgent socket without duplicating agent work, receives its private
-command receipt, and rejects reuse of the single-use socket ticket. It does not
-create provider data or send email.
+protected workspace routes and the invitation lifecycle, and reads the seeded
+fixtures from `packages/db/seed-product.json`: the Launch plan Canvas's
+artifact, the Q4 revenue review Chat's turns and reply, and the Weekly
+changelog Sidekick's shared conversation. It then makes a Canvas under an id
+it minted (`POST /canvases`), checks that a retried create answers the same
+Canvas and that a message resent to its Chat
+(`POST /conversations/:id/substreams/0/messages`) lands once, and, when
+`/health` reports OpenRouter configured, waits for Rally's reply there; without
+a model its summary line says the reply was not checked. Last, it replays the
+seeded opening message over the Chat's conversation socket without duplicating
+it, receives its private command receipt, and rejects reuse of the single-use
+socket ticket. It does not create provider data or send email.
 
 Set `AVALON_SMOKE_BASE_URL` to exercise another Worker. Local Workers use the development session endpoint; hosted production smoke tests must also set a short-lived `AVALON_SMOKE_ACCESS_TOKEN` because development authentication remains disabled in production. A hosted Worker serves the model its `agent-model-workstream` flag names, which can differ from the checked-in default; set `AVALON_SMOKE_EXPECTED_MODEL` to that model.
 
 ## Automated behavioral lane
 
 `pnpm e2e:local` drives the running local stack through the same REST bootstrap
-and SubstreamAgent command socket the desktop client uses, in three lanes:
-**happy** paths that must produce an agent
-reply (create-and-reply, follow-up, stop, transcript ordering, title
-settlement), **sad** paths that must be refused safely (auth, validation,
-idempotent replays, missing targets), and **chaos** paths that must not corrupt
-or wedge anything (concurrent bursts). Counts and concurrency are arguments:
+and conversation command socket the desktop client uses. Every scenario makes a
+Canvas under an id it minted (`POST /canvases`) and sends its opening message
+to the Canvas's Chat (`POST /conversations/:id/substreams/0/messages`), in
+three lanes: **happy** paths that must produce an agent reply
+(create-and-reply, follow-up, stop, transcript ordering, an artifact
+published), **sad** paths that must be refused safely (auth, validation, an
+oversize message, idempotent replays, missing targets), and **chaos** paths
+that must not corrupt or wedge anything (concurrent bursts, and concurrent
+creates each beside a retry of its own id, which must answer the same Canvas).
+Counts and concurrency are arguments:
 
 ```text
 pnpm db:migrate && pnpm db:seed
@@ -63,13 +74,20 @@ credential-less environments. The oracles and the gate are unit-tested in
 failed 34 stop scenarios because `idle` was missing from its terminal set, so
 the pass conditions are treated as code that can rot.
 
+The artifact scenario publishes through the Terminal, so it runs only when
+`/health` reports a model and `GET /workspace/terminal` reports the Terminal
+`supported`; otherwise the lane prints why it skipped it, per scenario and in
+the summary line (`artifacts=skipped (…)`), rather than passing or failing it.
+A local stack has no Daytona configuration, so locally it is skipped. The gate
+and the oracle (`artifactGateDecision`, `artifactOutcomeOracle`) are in the
+same oracle test.
+
 This lane exists because it catches what the unit and workerd suites
 structurally cannot: its first sustained run found a view trigger that crashed
-every retried run's settlement, a creation path that never scheduled
-work-stream naming, and a compound-SELECT limit under concurrent load.
-Follow-up messages, idempotency replays, validation refusals, concurrent bursts,
-and Stop all use the main child's socket; the lane must not preserve deleted
-work-stream REST mutation routes as a hidden compatibility client.
+every retried run's settlement, a creation path that never scheduled naming,
+and a compound-SELECT limit under concurrent load. Follow-up messages,
+idempotency replays, concurrent bursts, and Stop use the Chat's socket; the
+opening message uses the REST admission route a command client uses.
 
 ## Lightbox and desktop acceptance
 
