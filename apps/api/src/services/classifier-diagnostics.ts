@@ -31,7 +31,7 @@ export function createClassifierDiagnosticSink(
      * Names the classifier in logs and lakehouse records, and is the metered
      * activity its calls are recorded as.
      */
-    role: Extract<MeteredActivity, "addressing_classifier" | "semantic_trigger_gate" | "turn_disposition_classifier" | "completion_verification">;
+    role: Extract<MeteredActivity, "addressing_classifier" | "semantic_trigger_gate" | "completion_verification">;
     workspaceId: string;
     workstreamId?: string | undefined;
     /** Stable across every stage of one decision, including its fallback. */

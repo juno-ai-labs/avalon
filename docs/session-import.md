@@ -13,8 +13,9 @@ WorkspaceDO alarm lane), the share-URL and file helpers (`session-import.ts`,
 `session-import-files.ts`), the `session_import` agent profile, and
 `AgentLoopDO`'s prepared-conversation install.
 
-What survives until a later step: `AgentLoopDO`'s `imported_session_*` and
-`prepared_conversation_receipts` tables (dropped in plan step C-3), the
+`AgentLoopDO` migration 84 (plan step C-3) dropped the `imported_session_*`
+tables. What survives: `prepared_conversation_receipts`, kept as a dead table
+because `pending_attachment_reservation_recovery`'s foreign key names it, the
 prepared-content contracts in `packages/contracts/src/substream-content.ts`
 (step B-8), and WorkspaceDO migration 119's statements, which moved byte for
 byte to `retired-workspace-schema.ts`. This document is kept for its
@@ -27,8 +28,9 @@ changelog. Do not build on anything it describes.
 **What changed:** The run service and routes went in plan step C-1; step C-2
 deleted the import desktop action, the reservation reclaim and its WorkspaceDO
 alarm lane, the share-URL and file helpers, the `session_import` agent profile
-and `AgentLoopDO`'s prepared-conversation install. The `imported_session_*` and
-`prepared_conversation_receipts` tables stay until step C-3, and migration
+and `AgentLoopDO`'s prepared-conversation install. Step C-3 deleted the import
+product operations and dropped the `imported_session_*` tables (migration 84);
+`prepared_conversation_receipts` stays under a live foreign key, and migration
 119's statements moved byte for byte to `retired-workspace-schema.ts`.
 
 **Why:** An import landed in a reserved Channel, which the

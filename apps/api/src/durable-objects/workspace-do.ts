@@ -840,7 +840,10 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_reviews",
   "sidekick_audience", "sidekick_viewer_reads",
   // A hosted Canvas's own rows: `HostedCanvas` is their only writer.
-  "canvas_directory", "canvas_participants", "canvas_artifacts",
+  // `canvas_artifacts` is deliberately absent: the expired-drafts due time
+  // reads it through this object's local executor, the same predicate the
+  // reap applies, as the Slack due times above are read.
+  "canvas_directory", "canvas_participants",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",

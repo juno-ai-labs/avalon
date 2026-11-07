@@ -1956,6 +1956,37 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-11-07 — A conversation belongs to a Canvas or a Sidekick, and the Thread machinery is deleted
+
+**What changed:** Plan step C-3 removes from `AgentLoopDO` what only a Thread
+or a Breakout used. Deleted so far: the Thread `initialize` product operation
+and its prepared-conversation install, the session-import operations, the
+participant authority handoff (`participant-authority-transfer.ts`, the
+`transferParticipantAuthority` and `applyParticipantProjection(s)` RPCs and
+the roster check a feed ticket's membership version was held to), and the
+conversation suggestions with the turn-disposition observer, the drafter, the
+merge-result alarm and the per-client socket filtering. Migration 84 drops
+`conversation_suggestions`, `turn_disposition_judgements`, the handoff's two
+tables and three freeze triggers on `participants`, and the three
+`imported_session_*` tables. `prepared_conversation_receipts` stays as a dead
+table: `pending_attachment_reservation_recovery`'s foreign key names it, and
+dropping it would rebuild a live table to remove a reference nothing writes.
+
+**Why:** The Canvases and Sidekicks PRD's decision log: Threads, Channels,
+Spaces and Breakouts leave the product, a Canvas's Chat is an ordinary
+conversation object, and the conversation-parent contract already resolves
+only a Sidekick or a Canvas. Every removed path served a Thread's lifecycle
+(creating one with its first message, moving its roster to its Channel's
+grants, carrying a result up or breaking a question out), so each had no
+caller left once a Thread could not be created or opened.
+
+**Consequences:** A conversation is created by its parent (`createCanvas`,
+the Sidekick's hosting) and its first message is an ordinary
+`create_message`. Membership in a Canvas's or a Sidekick's conversation is
+the parent's to decide; the conversation's own `participants` rows record who
+has spoken and who was added, never who may read. A stored `merge_suggestion`
+alarm is acknowledged and dropped.
+
 ### 2026-11-07 — The conversation class is `AgentLoopDO`, and a conversation may belong to a Canvas
 
 **What changed:** The class `SubstreamAgent` is renamed `AgentLoopDO`
