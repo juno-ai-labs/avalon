@@ -4,7 +4,7 @@ One row per declared activity type, for every connector Rally registers. The
 rule these answer to, and the contract that makes stating them mandatory, is in
 [`connectors.md`](connectors.md#declaring-what-a-digest-may-read); what happens
 to the answer afterwards is in
-[`digests.md`](digests.md#digestible-what-a-person-should-be-told).
+`digests.md` (retired).
 
 **Nothing reads these answers today.** Since the digest became a list of unread
 Activity (mentions, additions, thread and breakout starts, finished runs),

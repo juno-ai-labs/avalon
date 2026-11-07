@@ -238,7 +238,7 @@ place's audience as it is now, never from a copy of who could read it then. A
 conversation's links are its inventory, read through its own authority. A
 **Space** (the product's Channel) is the other place: a thread's merge into a
 Channel links each artifact it embeds to that Space
-([`conversation-merge.md`](conversation-merge.md#thread-into-a-channel)).
+(`conversation-merge.md` (retired)).
 
 The link is a row in `authorization_locations` with `parent_kind = 'space'`
 and `substream_id = '0'`, written by `linkSpaceResources` in the merge's own

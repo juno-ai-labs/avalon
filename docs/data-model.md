@@ -51,7 +51,7 @@ telemetry keep the storage words; only user-facing copy uses the product ones.
 WorkspaceDO migration 97 adds `workspace_pins` (one pin list per person per
 kind; [`workstream-pinning.md`](workstream-pinning.md)) and
 `workspace_activity_seen` (the Activity tab's read mark;
-[`digests.md`](digests.md#the-activity-tab)).
+`digests.md` (retired)).
 
 Read it before adding a table, a column, or a migration, and before assuming that
 knowing an object's ID is enough to read it — it never is.
@@ -482,7 +482,7 @@ SQL joins.
   never who may read it. The only value is `digest`, on work streams the scheduled
   digest created when it still ran a model: `scope = 'personal'` and
   `system_kind = 'digest'`. The digest no longer runs a model, so nothing creates
-  new ones. See [`digests.md`](digests.md).
+  new ones. See `digests.md` (retired).
 - `workstream.model_override` pins this one work stream's runs to an OpenRouter
   model, ahead of the `agent-model-workstream` flag. `NULL` — the overwhelming
   majority — means the flag decides. It exists because model *selection* is a
@@ -550,7 +550,7 @@ SQL joins.
   `conversation_access_requests` (migration 95) holds each request to join a
   Channel or Breakout, addressed to one approver, with at most one pending per
   person per conversation; see
-  [`channel-access-requests.md`](channel-access-requests.md).
+  `channel-access-requests.md` (retired).
   `space_invitees` (migration 96) holds the addresses of Organization invitees a
   Space lists until they accept and are seated as participants; see
   [`spaces.md`](spaces.md#participants).
@@ -560,7 +560,7 @@ SQL joins.
   pin state; see [`workstream-pinning.md`](workstream-pinning.md). The same
   migration adds `workspace_activity_seen(user_id, seen_through)`, how far each
   person has read the Activity tab
-  ([`digests.md`](digests.md#the-activity-tab)), the `(user_id,
+  (`digests.md` (retired)), the `(user_id,
   is_participant)` indexes on `channel_viewers` and `breakout_viewers`, and the
   `(space_id, state, joined_at, workstream_id)` index the Channel feed pages by.
   Migration 98 gives a Space (the product's Channel) the unread columns a thread
@@ -933,7 +933,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   changed or that this region does not register. It carries no index: the reads
   that use it are already anchored on the `event_sequence` primary key, and a two-value
   column ahead of that range would only widen an index for every other reader.
-  [`digests.md`](digests.md#digestible-what-a-person-should-be-told) owns the rule,
+  `digests.md` (retired) owns the rule,
   and the WorkspaceDO column deliberately has no default: every producer must
   make the decision explicitly. Frozen D1 migration input retains its historical
   `DEFAULT 1`, but no post-cutover writer can use it.
@@ -1227,7 +1227,7 @@ has a document, and the column notes above point at it rather than restating it:
 | The automation lifecycle and every `sidekick_*` table | [`automation-lifecycle.md`](automation-lifecycle.md) |
 | The conversation-parent contract and the effect legs between the objects | [`workstream-durable-object.md`](workstream-durable-object.md) |
 | Channel, Space and Sidekick parent tables in WorkspaceDO, and how they moved from the legacy objects | [`hosted-conversation-parents.md`](hosted-conversation-parents.md) |
-| The activity log's semantics and the digest that reads it | [`digests.md`](digests.md) |
+| The activity log's semantics and the digest that reads it | `digests.md` (retired) |
 | Model pinning and the flags it overrides | [`feature-flags.md`](feature-flags.md) |
 | Telemetry routing, identities, lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
 | Running and reverting migrations against hosted databases | [`runbook.md`](runbook.md) |
@@ -1426,6 +1426,33 @@ Breakout, Activity, digest and suggested-work rows. Retired so far:
   `opportunity_provenance_*`, `suggested_work_*`) stay until the WorkspaceDO
   drop migration of step C-7, and `workspace-product-schema.ts` stays because
   migration 1 still spreads its statements.
+- **Digests.** `digest-service.ts`, `digest-run-service.ts`,
+  `digest-delivery-service.ts`, `digest-email-content.ts`,
+  `digest-personal-channel.ts`, `workspace-digests-protocol.ts`,
+  `workspace-digests-storage.ts`, the WorkspaceDO digest RPCs, the cron's
+  default reconciler and the timezone re-derivation. A `schedules` row that
+  names a digest is advanced and sends nothing until C-7 drops the digest
+  tables and those rows. `docs/digests.md` is deleted; the email converter it
+  also owned, `email-markdown.ts`, is now
+  [`markdown-rendering.md`](markdown-rendering.md)'s, with the decisions that
+  still bind it. The client's Daily digest section (`DailyDigestSettings`,
+  `getDigestSchedule`/`updateDigestSchedule`, the `DigestSchedule` types) went
+  with it, and a notification kind with no channel now reads **Off**.
+- **Merge, Channel access requests and session import.**
+  `conversation-merge-service.ts` and the agent's `conversation_merge` tool
+  backend, `conversation-access-request-service.ts` (its WorkspaceDO storage
+  goes with the Channel host) and `session-import-run-service.ts`; their
+  routes went in C-1. `docs/conversation-merge.md` and
+  `docs/channel-access-requests.md` are deleted.
+- **Thread backfill and Channel colour sync.** `thread-backfill.ts`,
+  `channel-color-sync.ts`, their alarm lanes and RPCs, and their activity-Queue
+  handlers. A message of either type still in the Queue at deploy is
+  acknowledged by the consumer's retired-message tombstone (with Projects'),
+  rather than dead-lettered. The migration statements they exported (99, 100,
+  115, 133, and the trigger migration 102 restates) moved byte for byte to
+  `retired-workspace-schema.ts`, the home for statements whose module is gone;
+  the colour triggers keep marking rows until C-7 drops their tables.
+  `docs/thread-backfill.md` is deleted.
 
 **Why:** After the client cutover nothing shows a suggestion, a Thread or a
 Channel; the PRD's decision log removes them from the product. Code that only

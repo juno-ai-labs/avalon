@@ -10,7 +10,7 @@ merges or starts a Breakout on its own. The product requirements are
 [`PRDs/2026-10-17_merge-and-breakout-suggestions/prd.md`](PRDs/2026-10-17_merge-and-breakout-suggestions/prd.md);
 the design and the evidence behind the classifier's question, its threshold and
 its context are in that folder's `design.md`. Related:
-[`conversation-merge.md`](conversation-merge.md) (the response card every merge
+`conversation-merge.md` (retired) (the response card every merge
 now uses, and the marker that resolves a suggestion),
 [`substream-creation.md`](substream-creation.md) (the launch pane a Breakout
 suggestion opens), [`agent-harness.md`](agent-harness.md) (the JEV primitives
@@ -159,7 +159,7 @@ held once in `packages/contracts`.
 ### The backfill
 
 Suggestions shipped for turns settled from 2026-10-18 on. Existing
-conversations get theirs through the [thread backfill](thread-backfill.md)
+conversations get theirs through the thread backfill (retired)
 lane: migration 115 lists every open thread under `suggestion_backfill`, and
 the handler, `backfillSuggestion`, asks each conversation's object (Main and
 each open Breakout) for `backfillTurnDisposition`. The object picks
@@ -173,7 +173,7 @@ transient classifier failure, or a step that threw before judging, is thrown
 back to the lane so the row retries rather than settling with nothing judged;
 a classifier failure no retry would fix settles with the kind recorded. After the release, force `WorkspaceDO`
 from the migration tracker so every Organization fills its list
-([thread-backfill.md](thread-backfill.md#reaching-every-organization)).
+(thread-backfill.md (retired)).
 
 ### What the client shows
 

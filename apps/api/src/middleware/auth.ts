@@ -20,8 +20,8 @@ type Context = Parameters<MiddlewareHandler<HonoAppEnv>>[0];
 /**
  * How coarse the record of "this member is using Avalon" is allowed to be.
  *
- * It exists to schedule background work — suggested-work ranking follows
- * attention rather than running for everyone on every activity — and nothing
+ * It exists to schedule background work that follows attention rather than
+ * running for everyone on every activity, and nothing
  * reads it at a finer grain than tens of minutes. Recording every request would
  * put a write on every authenticated read to answer a question no caller asks
  * that precisely.

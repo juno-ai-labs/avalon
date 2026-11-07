@@ -107,7 +107,7 @@ navigation is ignored, and any live conversation snapshot replaces the seed.
 
 SubstreamAgent migration 78 queues every historical turn and the conversation
 header. WorkspaceDO migration 124 also fills the existing
-[`thread_backfill`](thread-backfill.md) lane from `parent_children` and
+`thread_backfill` (retired) lane from `parent_children` and
 `sidekick_children`, plus `channels`, `spaces`, and `parent_metadata`
 for legacy parents without a materialized Main child. Work lookup supplies
 the implicit Main, matching the hosted parent registry. Its `conversation_view`
@@ -122,7 +122,7 @@ The parent remains claimed and later children wait until the current source
 has confirmed delivery of its pending rows to WorkspaceDO; the next pass
 resumes at that child, and a pass covers only children registered before the
 backfill first reached the parent
-([`thread-backfill.md`](thread-backfill.md#how-it-works)).
+(`thread-backfill.md` (retired)).
 A registered child whose source object is absent, preparing, quarantined, or
 has no active authority generation reports `missing`, so it cannot hold later
 children behind an undeliverable migration header. Projection publication and

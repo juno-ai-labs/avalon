@@ -488,7 +488,7 @@ cache here. `menu_bar_opened.attentionCount` changed meaning with this
 release. Before this change "Mark all read" told no other
 socket at all; another window's Activity tab now clears too. Something that
 should appear in Needs attention belongs in the Activity feed
-([`digests.md`](digests.md#the-activity-tab)), and must publish `activity`
+(`digests.md` (retired)), and must publish `activity`
 when it moves, or the menu will not see it until the next reconnect.
 
 Shipped in #1224.

@@ -359,60 +359,6 @@ import {
   type WorkspaceConnectorEventSettleRpcRequest,
 } from "./workspace-connector-event-protocol";
 import {
-  WorkspaceDigestClaimRequestSchema,
-  WorkspaceDigestDefaultRequestSchema,
-  WorkspaceDigestDeliveryContextRequestSchema,
-  WorkspaceDigestDeliveryTargetsRequestSchema,
-  WorkspaceDigestFireScheduleRequestSchema,
-  WorkspaceDigestReplaceRequestSchema,
-  WorkspaceDigestReplaceRowsRequestSchema,
-  WorkspaceDigestRowStateRequestSchema,
-  WorkspaceDigestSettingsRequestSchema,
-  WorkspaceDigestSettleRequestSchema,
-  WorkspaceDigestTargetDeliveredRequestSchema,
-  WorkspaceDigestTargetFailedRequestSchema,
-  WorkspaceDigestTerminalContextRequestSchema,
-  type WorkspaceDigestClaimRequest,
-  type WorkspaceDigestClaimResult,
-  type WorkspaceDigestDefaultRequest,
-  type WorkspaceDigestDefaultResult,
-  type WorkspaceDigestDeliveryContext,
-  type WorkspaceDigestDeliveryContextRequest,
-  type WorkspaceDigestDeliveryTargets,
-  type WorkspaceDigestDeliveryTargetsRequest,
-  type WorkspaceDigestFireSchedule,
-  type WorkspaceDigestFireScheduleRequest,
-  type WorkspaceDigestReplaceRequest,
-  type WorkspaceDigestReplaceResult,
-  type WorkspaceDigestReplaceRowsRequest,
-  type WorkspaceDigestRowState,
-  type WorkspaceDigestRowStateRequest,
-  type WorkspaceDigestSettings,
-  type WorkspaceDigestSettingsRequest,
-  type WorkspaceDigestSettleRequest,
-  type WorkspaceDigestSettleResult,
-  type WorkspaceDigestTargetDeliveredRequest,
-  type WorkspaceDigestTargetFailedRequest,
-  type WorkspaceDigestTargetOutcomeResult,
-  type WorkspaceDigestTerminalContext,
-  type WorkspaceDigestTerminalContextRequest,
-} from "./workspace-digests-protocol";
-import {
-  claimWorkspaceDigestDelivery,
-  ensureDefaultWorkspaceDigestSchedule,
-  markWorkspaceDigestTargetDelivered,
-  markWorkspaceDigestTargetFailed,
-  replaceWorkspaceDigestSchedule,
-  replaceWorkspaceDigestScheduleRows,
-  settleWorkspaceDigestDelivery,
-  workspaceDigestDeliveryContext,
-  workspaceDigestDeliveryTargets,
-  workspaceDigestScheduleForFire,
-  workspaceDigestScheduleRowState,
-  workspaceDigestSettings,
-  workspaceDigestTerminalContext,
-} from "./workspace-digests-storage";
-import {
   WorkspaceDirectoryApplyRequestSchema,
   WorkspaceAttentionRequestSchema,
   WorkspaceDirectoryBatchTargetsRequestSchema,
@@ -603,6 +549,12 @@ import {
   workspaceNotificationIntentMaintenanceTarget as storedWorkspaceNotificationIntentMaintenanceTarget,
 } from "./workspace-notification-intent-storage";
 import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
+import {
+  CHANNEL_COLOR_SYNC_MIGRATION,
+  SUGGESTION_BACKFILL_MIGRATION,
+  THREAD_BACKFILL_MIGRATION,
+  THREAD_BACKFILL_RESUME_MIGRATION,
+} from "./retired-workspace-schema";
 import {
   publishSpaceBootstrapWork,
   publishSpaceDefaultTargets,
@@ -803,40 +755,12 @@ import {
   WORKSPACE_RESOURCE_VERSION_CHANGES_MIGRATION,
 } from "./workspace-resource-versions";
 import {
-  CHANNEL_COLOR_SYNC_MIGRATION,
-  ChannelColorSyncMessageSchema,
-  ChannelColorWorkSchema,
-  channelColorWork,
-  completeChannelColorSync,
-  nextChannelColorSyncAt,
-  publishChannelColorSync,
-  releaseChannelColorSync,
-  type ChannelColorSyncMessage,
-  type ChannelColorWork,
-} from "./channel-color-sync";
-import {
   IMPORT_RESERVATION_RECLAIM_MIGRATION,
   armImportReservationReclaim,
   nextImportReservationReclaimAt,
   reclaimDueImportReservations,
 } from "./import-reservation-reclaim";
 import { retireUnopenedImportKey } from "../services/session-import-reclaim";
-import {
-  SUGGESTION_BACKFILL_MIGRATION,
-  THREAD_BACKFILL_MIGRATION,
-  THREAD_BACKFILL_RESUME_MIGRATION,
-  ThreadBackfillDeferSchema,
-  ThreadBackfillMessageSchema,
-  completeThreadBackfill,
-  deferThreadBackfill,
-  nextThreadBackfillAt,
-  publishThreadBackfill,
-  releaseThreadBackfill,
-  threadBackfillWork,
-  type ThreadBackfillDefer,
-  type ThreadBackfillMessage,
-  type ThreadBackfillWork,
-} from "./thread-backfill";
 import { unreadState } from "./unread-state";
 import { artifactActivityId, WorkspaceActivityFeed, WORKSPACE_ACTIVITY_READS_MIGRATION } from "./workspace-activity-feed";
 import { rankPeople, WORKSPACE_PEOPLE_RANKING_MIGRATION } from "./workspace-people-ranking";
@@ -1465,8 +1389,8 @@ const CONNECTOR_EVENT_PROCESSING_LEASE_MS = 15 * 60_000;
 // largest rows in the object: the busiest Organization adds about 0.26 GB a
 // week, so the earlier 396 days held about 14.7 GB against the 10 GB object
 // ceiling, and 90 days holds about 3.3 GB. Every reader of a processed event
-// (opportunity windows, reaped 30 days after they finish; a run's trigger
-// context; an opportunity's origin) reaches back well inside that. Only
+// (a run's trigger context, a watched resource's event) reaches back well
+// inside that. Only
 // processed rows age out: their two unique keys are the replay fence, so a
 // provider redelivering an event older than this would be processed again.
 const CONNECTOR_EVENT_BODY_RETENTION_MS = 90 * 24 * 60 * 60_000;
@@ -1527,7 +1451,7 @@ export const WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS = 2 * 60_000;
  *   to two minutes, before a real wedge recovers.
  */
 export const WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET = 2;
-/** `_internal_durable_alarms` identity for this workspace's opportunity and ranking work. */
+/** `_internal_durable_alarms` kind of retired suggested-work alarms, answered with nothing to do. */
 const PRODUCT_ALARM_KIND = "product";
 /** The one-shot entry a migrating object uses to reconcile itself once. */
 const SCHEDULE_BOOTSTRAP_ALARM_KIND = "schedule_bootstrap";
@@ -4420,12 +4344,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 99,
   description: "threads and Breakouts store their Channel's colour, and every existing thread is marked to take it",
-  // Triggers mark a thread whenever its colour can move; see channel-color-sync.ts.
+  // Triggers mark a thread whenever its colour can move; the lane that read them is retired.
   statements: CHANNEL_COLOR_SYNC_MIGRATION,
 }, {
   version: 100,
   description: "a work list of one-off jobs over every thread, and every thread listed to have its description summarized",
-  // The lane is channel colour sync's without triggers; see thread-backfill.ts.
+  // The lane is channel colour sync's without triggers; retired with it.
   statements: THREAD_BACKFILL_MIGRATION,
 }, {
   version: 101,
@@ -4481,7 +4405,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // derive, so each digest is marked and the reconciler adds whichever it
   // lacks and switches it on. The derived `schedules` rows are dropped rather
   // than rewritten, since their next instant needs the owner's timezone; the
-  // reconciler rebuilds them on the same visit. See docs/digests.md.
+  // reconciler rebuilds them on the same visit. (Digests are retired.)
   statements: [
     `ALTER TABLE digest_schedules ADD COLUMN default_destinations_pending INTEGER NOT NULL DEFAULT 0
        CHECK (default_destinations_pending IN (0, 1))`,
@@ -4798,7 +4722,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 134,
   description: "record when a person became a Channel participant, so Activity tells them only what happened after",
-  // See SPACE_VIEWER_JOINED_AT_MIGRATION and docs/digests.md#who-is-told-about-channel-news.
+  // See SPACE_VIEWER_JOINED_AT_MIGRATION.
   statements: SPACE_VIEWER_JOINED_AT_MIGRATION,
 }, {
   version: 135,
@@ -6071,7 +5995,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         Date.now(),
       );
       followUp.syncTopics.push(...(effect.kind === "activity_event"
-        ? ["activity", "work_opportunities"] as const : ["activity", "workstream_directory"] as const));
+        ? ["activity"] as const : ["activity", "workstream_directory"] as const));
       // A Breakout's merge into its thread is a `merged` Activity row, pushed
       // like a start once this batch commits.
       if (effect.kind === "activity_event" && !applied.replayed && mergedBreakoutId(effect.metadata) !== null) {
@@ -8425,8 +8349,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       channel_message_search: () => nextChannelMessageSearchDueAt(sql, this.env, this.channelMessageSearchPace),
       space_default_publish: () => this.spaceStorage().nextDefaultPublicationDueAt(),
       space_bootstrap: () => this.spaceStorage().nextBootstrapDueAt(),
-      channel_color_sync: () => nextChannelColorSyncAt(sql),
-      thread_backfill: () => nextThreadBackfillAt(sql),
       import_reservation_reclaim: () => nextImportReservationReclaimAt(sql),
       memory_digest_sync: () => nextMemoryDigestSyncAt(sql),
       activity_reap: () => {
@@ -8625,42 +8547,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           logWarn(this.env, "space_bootstrap_publication_failed", {
             workspace_id: workspaceId,
             reason: error instanceof Error ? error.message : "unknown",
-          });
-        }
-      });
-      // Threads whose colour can have moved; see channel-color-sync.ts.
-      if (due("channel_color_sync")) await this.instrumentWorkspaceAlarmPhase("channel_color_sync", undefined, async () => {
-        try {
-          await publishChannelColorSync({
-            sql: this.state.storage.sql,
-            queue: this.env.ACTIVITY_QUEUE,
-            workspaceId,
-            region: this.env.AVALON_REGION,
-            now,
-            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
-          });
-        } catch (error) {
-          logWarn(this.env, "channel_color_sync_publication_failed", {
-            workspace_id: workspaceId,
-            reason: diagnosticErrorCode(error, "channel_color_sync_publication_failed"),
-          });
-        }
-      });
-      // One-off jobs over every thread; see thread-backfill.ts.
-      if (due("thread_backfill")) await this.instrumentWorkspaceAlarmPhase("thread_backfill", undefined, async () => {
-        try {
-          await publishThreadBackfill({
-            sql: this.state.storage.sql,
-            queue: this.env.ACTIVITY_QUEUE,
-            workspaceId,
-            region: this.env.AVALON_REGION,
-            now,
-            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
-          });
-        } catch (error) {
-          logWarn(this.env, "thread_backfill_publication_failed", {
-            workspace_id: workspaceId,
-            reason: diagnosticErrorCode(error, "thread_backfill_publication_failed"),
           });
         }
       });
@@ -10202,8 +10088,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       sourceConnectionOwnerUserId: event.connection_owner_user_id,
     };
     // A message in a bound external conversation is claimed by its binding,
-    // as a matched watch claims one, so a bound reply never also becomes
-    // Suggested Work. The adapter wrote the binding key beside the provider
+    // as a matched watch claims one. The adapter wrote the binding key beside the provider
     // metadata; any connector that writes one is resolved the same way.
     const boundKey = ExternalConversationKeySchema.safeParse({
       installationId: metadata.externalConversationInstallationId,
@@ -12301,45 +12186,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * The colour one marked thread should carry and the conversations to write
-   * it into, or `null` (settling the row) when there is nothing to write.
-   * Server-to-server, like the default-target RPCs: there is no person on it.
-   */
-  async channelColorWork(input: ChannelColorSyncMessage): Promise<ChannelColorWork> {
-    await this.initialized;
-    const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "channel_color_work");
-    this.assertWorkspace(request.workspaceId);
-    const work = ChannelColorWorkSchema.parse(this.state.storage.transactionSync(() => channelColorWork(this.state.storage.sql, {
-      workstreamId: request.workstreamId,
-      revision: request.revision,
-      color: this.spaceStorage().channelColor(request.workstreamId),
-    })));
-    // A settled row may be the last of its batch, which lets the next one go.
-    if (work === null) await this.armNextAlarm();
-    return work;
-  }
-
-  /** Settle a thread every conversation of which now carries its colour. */
-  async completeChannelColorSync(input: ChannelColorSyncMessage): Promise<boolean> {
-    await this.initialized;
-    const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "complete_channel_color_sync");
-    this.assertWorkspace(request.workspaceId);
-    const completed = completeChannelColorSync(this.state.storage.sql, request.workstreamId, request.revision);
-    await this.armNextAlarm();
-    return completed;
-  }
-
-  /** A thread the consumer could not finish: it retries at its own gate and holds back nothing. */
-  async releaseChannelColorSync(input: ChannelColorSyncMessage): Promise<boolean> {
-    await this.initialized;
-    const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "release_channel_color_sync");
-    this.assertWorkspace(request.workspaceId);
-    const released = releaseChannelColorSync(this.state.storage.sql, request.workstreamId, request.revision);
-    await this.armNextAlarm();
-    return released;
-  }
-
-  /**
    * The conversations one listed thread's job runs over, or `null` (settling
    * the row) when there is nothing to do. Server-to-server, like the
    * channel-colour RPCs above.
@@ -12350,46 +12196,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(value.workspaceId);
     if (value.region !== this.env.AVALON_REGION) throw new Error("conversation_view_region_mismatch");
     new WorkspaceConversationView(this.state.storage).apply(value);
-  }
-
-  async threadBackfillWork(input: ThreadBackfillMessage): Promise<ThreadBackfillWork> {
-    await this.initialized;
-    const request = parseRpcInput(ThreadBackfillMessageSchema, input, "thread_backfill_work");
-    this.assertWorkspace(request.workspaceId);
-    const work = this.state.storage.transactionSync(() => threadBackfillWork(
-      this.state.storage.sql, { job: request.job, workstreamId: request.workstreamId },
-    ));
-    // A settled row may be the last of its batch, which lets the next one go.
-    if (work === null) await this.armNextAlarm();
-    return work;
-  }
-
-  /** Settle a thread whose job has run over every conversation. */
-  async completeThreadBackfill(input: ThreadBackfillMessage): Promise<boolean> {
-    await this.initialized;
-    const request = parseRpcInput(ThreadBackfillMessageSchema, input, "complete_thread_backfill");
-    this.assertWorkspace(request.workspaceId);
-    const completed = completeThreadBackfill(this.state.storage.sql, request.job, request.workstreamId);
-    await this.armNextAlarm();
-    return completed;
-  }
-
-  /** A pass that stopped at a conversation still delivering resumes there, not at Main. */
-  async deferThreadBackfill(input: ThreadBackfillDefer): Promise<boolean> {
-    await this.initialized;
-    const request = parseRpcInput(ThreadBackfillDeferSchema, input, "defer_thread_backfill");
-    this.assertWorkspace(request.workspaceId);
-    return deferThreadBackfill(this.state.storage.sql, request.job, request.workstreamId, request.attempt, request.resumeFrom);
-  }
-
-  /** A thread the consumer could not finish: it retries at its own gate and holds back nothing. */
-  async releaseThreadBackfill(input: ThreadBackfillMessage): Promise<boolean> {
-    await this.initialized;
-    const request = parseRpcInput(ThreadBackfillMessageSchema, input, "release_thread_backfill");
-    this.assertWorkspace(request.workspaceId);
-    const released = releaseThreadBackfill(this.state.storage.sql, request.job, request.workstreamId, request.attempt);
-    await this.armNextAlarm();
-    return released;
   }
 
   /**
@@ -16337,165 +16143,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return invalidateWorkspaceMemoryTableRows(this.state.storage, request);
   }
 
-  /** A person's digest configuration, minus the connector-joined delivery targets. */
-  async digestSettings(input: WorkspaceDigestSettingsRequest): Promise<WorkspaceDigestSettings> {
-    await this.initialized;
-    const request = WorkspaceDigestSettingsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestSettings(this.state.storage, request);
-  }
-
-  /**
-   * Replace a person's digest wholesale, in one transaction.
-   *
-   * The create-or-update decision lives inside it: as a read through the
-   * runtime facade followed by a batch, two first saves both read "nothing
-   * yet" and `UNIQUE (workspace_id, user_id)` refused whichever landed second.
-   */
-  async replaceDigestSchedule(
-    input: WorkspaceDigestReplaceRequest,
-  ): Promise<WorkspaceDigestReplaceResult> {
-    await this.initialized;
-    const request = WorkspaceDigestReplaceRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = replaceWorkspaceDigestSchedule(this.state.storage, request);
-    this.refreshScheduleAfterDigestWrite(request.workspaceId);
-    return result;
-  }
-
-  /** The reconciler's default: created on absence, otherwise what already exists. */
-  async ensureDefaultDigestSchedule(
-    input: WorkspaceDigestDefaultRequest,
-  ): Promise<WorkspaceDigestDefaultResult> {
-    await this.initialized;
-    const request = WorkspaceDigestDefaultRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return ensureDefaultWorkspaceDigestSchedule(this.state.storage, request);
-  }
-
-  /** How a digest's derived rows stand against the account timezone. */
-  async digestScheduleRowState(
-    input: WorkspaceDigestRowStateRequest,
-  ): Promise<WorkspaceDigestRowState> {
-    await this.initialized;
-    const request = WorkspaceDigestRowStateRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestScheduleRowState(this.state.storage, request);
-  }
-
-  /** Rebuild one digest's derived `schedules` rows — a timezone move, or a repair. */
-  async replaceDigestScheduleRows(input: WorkspaceDigestReplaceRowsRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceDigestReplaceRowsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    replaceWorkspaceDigestScheduleRows(this.state.storage, request);
-    this.refreshScheduleAfterDigestWrite(request.workspaceId);
-  }
-
-  /** What the scheduler must re-validate before firing an occurrence. */
-  async digestScheduleForFire(
-    input: WorkspaceDigestFireScheduleRequest,
-  ): Promise<WorkspaceDigestFireSchedule> {
-    await this.initialized;
-    const request = WorkspaceDigestFireScheduleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestScheduleForFire(this.state.storage, request);
-  }
-
-  /** Claim one occurrence; a retried alarm learns the first attempt already has it. */
-  async claimDigestDelivery(
-    input: WorkspaceDigestClaimRequest,
-  ): Promise<WorkspaceDigestClaimResult> {
-    await this.initialized;
-    const request = WorkspaceDigestClaimRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return claimWorkspaceDigestDelivery(this.state.storage, request);
-  }
-
-  /** One occurrence, as settlement and the run's trigger context read it. */
-  async digestDeliveryContext(
-    input: WorkspaceDigestDeliveryContextRequest,
-  ): Promise<WorkspaceDigestDeliveryContext> {
-    await this.initialized;
-    const request = WorkspaceDigestDeliveryContextRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestDeliveryContext(this.state.storage, request);
-  }
-
-
-  /**
-   * Settle one occurrence, exactly once.
-   *
-   * The witness is the point: two settlement attempts of one retried workflow
-   * step can overlap, and the loser must learn it lost rather than emit the
-   * terminal telemetry and the delivery note a second time.
-   */
-  async settleDigestDelivery(
-    input: WorkspaceDigestSettleRequest,
-  ): Promise<WorkspaceDigestSettleResult> {
-    await this.initialized;
-    const request = WorkspaceDigestSettleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return settleWorkspaceDigestDelivery(this.state.storage, request);
-  }
-
-  /** What the terminal telemetry event says about destinations and history. */
-  async digestTerminalTelemetryContext(
-    input: WorkspaceDigestTerminalContextRequest,
-  ): Promise<WorkspaceDigestTerminalContext> {
-    await this.initialized;
-    const request = WorkspaceDigestTerminalContextRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestTerminalContext(this.state.storage, request);
-  }
-
-  /** The frozen destinations one occurrence goes to. */
-  async digestDeliveryTargets(
-    input: WorkspaceDigestDeliveryTargetsRequest,
-  ): Promise<WorkspaceDigestDeliveryTargets> {
-    await this.initialized;
-    const request = WorkspaceDigestDeliveryTargetsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestDeliveryTargets(this.state.storage, request);
-  }
-
-  /** One destination received this digest. */
-  async markDigestTargetDelivered(
-    input: WorkspaceDigestTargetDeliveredRequest,
-  ): Promise<WorkspaceDigestTargetOutcomeResult> {
-    await this.initialized;
-    const request = WorkspaceDigestTargetDeliveredRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return markWorkspaceDigestTargetDelivered(this.state.storage, request);
-  }
-
-  /** Record why a destination did not receive this digest. */
-  async markDigestTargetFailed(
-    input: WorkspaceDigestTargetFailedRequest,
-  ): Promise<WorkspaceDigestTargetOutcomeResult> {
-    await this.initialized;
-    const request = WorkspaceDigestTargetFailedRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return markWorkspaceDigestTargetFailed(this.state.storage, request);
-  }
-
-  /**
-   * The alarm backstop the generic SQL path gives every `schedules` write.
-   *
-   * `executeRuntimeSql` re-arms the alarm whenever a routed statement mutates
-   * an alarm-source table, because a generic writer has no request to hang the
-   * reconcile off. The typed digest writers above would otherwise lose that
-   * net: their callers all refresh explicitly today, but a future caller that
-   * forgets would leave a schedule row dark until an unrelated wake.
-   */
-  private refreshScheduleAfterDigestWrite(workspaceId: string): void {
-    this.state.waitUntil(this.refreshScheduleKinds(workspaceId, ["schedule"]).catch((error: unknown) => {
-      logWarn(this.env, "workspace_schedule_auto_refresh_failed", {
-        workspace_id: workspaceId,
-        code: error instanceof Error ? error.message : "unknown_error",
-      });
-    }));
-  }
 
   async canReadWorkstream(input: WorkspaceDirectoryVisibilityRequest): Promise<boolean> {
     await this.initialized;

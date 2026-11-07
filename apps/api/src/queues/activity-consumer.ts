@@ -14,14 +14,9 @@ import { workspaceSearchIndex, searchChunkIdentity } from '../services/text-sear
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { AuthorizationProjectionJobSchema } from '../durable-objects/authorization-projection';
-import { ChannelColorSyncMessageSchema } from "../durable-objects/channel-color-sync";
-import { ThreadBackfillMessageSchema, type ThreadBackfillJob } from "../durable-objects/thread-backfill";
-import { backfillSuggestion } from "../services/suggestion-backfill-service";
 import { MemorySweepMessageSchema, runMemorySweep } from "../services/memory-sweep-service";
 import { MemoryDigestSyncMessageSchema } from "../durable-objects/memory-digest-sync";
 import { refreshMemoryDigestCopies } from "../services/memory-digest-service";
-import { summarizeExistingDescription } from "../services/workstream-naming-service";
-import { createIdentityObjectPort } from "../runtime/identity-port";
 import { projectAuthorization } from '../services/authorization-projection-service';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
 import { projectConversationDisplay } from '../services/search-conversation-display';
@@ -83,36 +78,18 @@ import { WorkstreamService } from "../services/workstream-service";
 import { hostedParentStub } from "../services/conversation-parent-client";
 
 /**
- * What each thread-backfill job does to one conversation, and the outcome it
- * logs. A job must be safe to run twice over the same conversation: a row
- * whose consumer failed part way is sent again whole.
- */
-const THREAD_BACKFILL_HANDLERS: Record<ThreadBackfillJob, (env: Env, target: {
-  workspaceId: string; workstreamId: string; substreamId: string;
-}) => Promise<string>> = {
-  description_summary: (env, target) => summarizeExistingDescription(env, target),
-  suggestion_backfill: (env, target) => backfillSuggestion(env, target),
-  conversation_view: async (env, target) => {
-    const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, target.workspaceId,
-      conversationObjectName(env.AVALON_REGION, asWorkspaceId(target.workspaceId), target.workstreamId, asSubstreamId(target.substreamId)));
-    return stub.backfillConversationView({ type: "conversation_view_v1", region: env.AVALON_REGION,
-      workspaceId: target.workspaceId, parentId: target.workstreamId, substreamId: target.substreamId, turnId: "" });
-  },
-};
-
-/**
- * The shape of a Project default delivery, kept only to recognize one.
+ * The shape of a message whose handler is gone, kept only to recognize one.
  *
- * Projects are retired and their protocol module is gone; what survives is the
- * platform's retry window, during which a message published before the cutover
- * can still arrive. Matching on the discriminator and the two fields a log line
- * needs is the whole contract — there is nothing left to act on, so parsing the
- * rest would be describing a payload in order to throw it away.
+ * Projects, then the thread backfill and Channel colour sync (plan step C-2),
+ * are retired and their protocol modules are gone; what survives is the
+ * platform's retry window, during which a message published before the
+ * cutover can still arrive. Matching on the discriminator and the field a log
+ * line needs is the whole contract — there is nothing left to act on, so
+ * parsing the rest would be describing a payload in order to throw it away.
  */
-const RetiredProjectDefaultMessageSchema = z.object({
-  type: z.literal("project_default_resource"),
+const RetiredQueueMessageSchema = z.object({
+  type: z.enum(["project_default_resource", "thread_backfill", "channel_color_sync"]),
   workspaceId: z.string(),
-  workstreamId: z.string(),
 });
 
 interface ActivityRow {
@@ -546,21 +523,19 @@ async function consumeOne(message: Message<unknown>, env: Env,
     }
     return;
   }
-  const projectDefault = RetiredProjectDefaultMessageSchema.safeParse(message.body);
-  if (projectDefault.success) {
+  const retired = RetiredQueueMessageSchema.safeParse(message.body);
+  if (retired.success) {
     // A tombstone, kept for the platform's retry window and no longer.
     //
-    // Projects are retired: the migration that retires them invalidates every
-    // pending target and drops the tables underneath it, so a target this
-    // message names can never be current again. Acknowledging is therefore the
-    // whole handler — a retry would reach the same answer on every redelivery
-    // until the message dead-lettered, which is a non-empty dead-letter queue
-    // saying something that is not a failure.
-    logInfo(env, "project_default_delivery_terminal", {
-      workspace_id: projectDefault.data.workspaceId,
-      workstream_id: projectDefault.data.workstreamId,
+    // What the message names can never be acted on again, so acknowledging is
+    // the whole handler — a retry would reach the same answer on every
+    // redelivery until the message dead-lettered, which is a non-empty
+    // dead-letter queue saying something that is not a failure.
+    logInfo(env, "retired_queue_message_terminal", {
+      workspace_id: retired.data.workspaceId,
+      message_type: retired.data.type,
       outcome: "skipped",
-      reason: "projects_retired",
+      reason: `${retired.data.type}_retired`,
     });
     message.ack();
     return;
@@ -641,74 +616,6 @@ async function consumeOne(message: Message<unknown>, env: Env,
     }
     return;
   }
-  const backfill = ThreadBackfillMessageSchema.safeParse(message.body);
-  if (backfill.success) {
-    const target = backfill.data;
-    if (target.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      target.workspaceId,
-      workspaceDOName(env.AVALON_REGION, target.workspaceId),
-    );
-    // The conversation being worked on, so a failure resumes there.
-    let current: string | null = null;
-    try {
-      const work = await workspace.threadBackfillWork(target);
-      if (work) {
-        // Main and each open Breakout, in turn. A failure part way leaves the
-        // row in place and the alarm sends it again, from the conversation
-        // that failed; every job is written to do nothing the second time
-        // over a conversation it already did.
-        for (const substreamId of work.substreamIds) {
-          current = substreamId;
-          const outcome = await THREAD_BACKFILL_HANDLERS[target.job](env, {
-            workspaceId: target.workspaceId, workstreamId: target.workstreamId, substreamId,
-          });
-          logInfo(env, "thread_backfill_conversation", {
-            job: target.job,
-            workspace_id: target.workspaceId,
-            workstream_id: target.workstreamId,
-            substream_id: substreamId,
-            outcome,
-          });
-          if (target.job === "conversation_view" && outcome === "queued") {
-            // Keep this parent claimed until its source has confirmed writes.
-            // Do not wake all its children and immediately admit another batch.
-            // Its durable retry gate will revisit it, at this conversation
-            // rather than at Main; ordinary pending work must not burn
-            // through Queue retries and land in the dead letter.
-            await workspace.deferThreadBackfill({ ...target, resumeFrom: asSubstreamId(substreamId) });
-            message.ack();
-            return;
-          }
-        }
-        await workspace.completeThreadBackfill(target);
-      }
-    } catch (error) {
-      // A retired Organization's thread is never written again.
-      if (!isRetirementRefusal(error)) {
-        // Acked rather than retried, as colour sync does: the row's own gate
-        // sends it again, and released so it holds no successor back.
-        logWarn(env, "thread_backfill_failed", {
-          job: target.job,
-          workspace_id: target.workspaceId,
-          workstream_id: target.workstreamId,
-          ...(current === null ? {} : { substream_id: current }),
-          reason: diagnosticErrorCode(error, "thread_backfill_failed"),
-        });
-        if (current !== null) {
-          await workspace.deferThreadBackfill({ ...target, resumeFrom: asSubstreamId(current) }).catch(() => undefined);
-        }
-        await workspace.releaseThreadBackfill(target).catch(() => undefined);
-      }
-    }
-    message.ack();
-    return;
-  }
   const memorySweep = MemorySweepMessageSchema.safeParse(message.body);
   if (memorySweep.success) {
     const target = memorySweep.data;
@@ -730,49 +637,6 @@ async function consumeOne(message: Message<unknown>, env: Env,
           attempt: target.attempt,
           reason: diagnosticErrorCode(error, "memory_sweep_delivery_failed"),
         });
-      }
-    }
-    message.ack();
-    return;
-  }
-  const colorSync = ChannelColorSyncMessageSchema.safeParse(message.body);
-  if (colorSync.success) {
-    const target = colorSync.data;
-    if (target.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      target.workspaceId,
-      workspaceDOName(env.AVALON_REGION, target.workspaceId),
-    );
-    try {
-      const work = await workspace.channelColorWork(target);
-      if (work) {
-        // Main and each open Breakout, in turn. A failure part way leaves the
-        // row in place, and the alarm sends it again; `recolor` writes nothing
-        // where the colour already matches, and refuses this revision wherever
-        // a newer one has already landed.
-        for (const substreamId of work.substreamIds) {
-          await createIdentityObjectPort(env, target.workspaceId, target.workstreamId, undefined, substreamId)
-            .recolor({ color: work.color, revision: target.revision, now: Date.now() });
-        }
-        await workspace.completeChannelColorSync(target);
-      }
-    } catch (error) {
-      // A retired Organization's thread is never written again.
-      if (!isRetirementRefusal(error)) {
-        // Acked rather than retried: the row's own gate sends it again, and a
-        // Queue retry beside it would be a second copy of the same attempt.
-        // Released so it does not hold the rest of its batch's successors back.
-        logWarn(env, "channel_color_sync_failed", {
-          workspace_id: target.workspaceId,
-          workstream_id: target.workstreamId,
-          reason: diagnosticErrorCode(error, "channel_color_sync_failed"),
-        });
-        await workspace.releaseChannelColorSync(target).catch(() => undefined);
       }
     }
     message.ack();
@@ -1576,8 +1440,8 @@ async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<vo
 /**
  * Whether this connector activity may be read back to a person in a digest.
  *
- * This answers the digest question only. Suggested Work reads the same activity
- * independently and must not inherit this notification choice.
+ * Digests are retired (plan step C-2); the flag is still recorded on the
+ * activity row, which is all that reads it now.
  *
  * The connector's manifest is the authority, keyed on the event type — the one
  * thing an activity durably carries all the way from the provider to the log.

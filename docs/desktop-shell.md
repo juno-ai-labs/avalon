@@ -653,7 +653,7 @@ which put the same action on screen twice under the newest reply.
 
 **Consequences:** No message has a breakout control outside its hover row. The
 row never wraps (`flex-wrap: nowrap`), so a long row runs under the title
-menu's pop-out instead of breaking. Mechanism: [`conversation-merge.md`](conversation-merge.md).
+menu's pop-out instead of breaking. Mechanism: `conversation-merge.md` (retired).
 
 ### 2026-10-16 — One header at phone width; counts on every section
 
