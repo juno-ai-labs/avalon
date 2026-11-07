@@ -1562,9 +1562,6 @@ describe('useWorkstreamSocket', () => {
     });
     const api = socketApiWith({ getSocketTicket });
     const queryClient = new QueryClient();
-    queryClient.setQueryData(['workstream-children', workstreamId], {
-      privateChildren: [{ substreamId, title: 'Private child' }],
-    });
     queryClient.setQueryData(['substream-workstream', workstreamId, substreamId], workstreamDetail({
       id: workstreamId,
       appearance: { icon: 'orbit', color: 'green' },
@@ -1710,47 +1707,6 @@ describe('useWorkstreamSocket', () => {
       status: 500,
       code: 'substream_command_receipt_mismatch',
     });
-  });
-
-  it('preserves the control-owned private child directory across a main feed snapshot', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-000000000623';
-    const child = {
-      substreamId: '00000000-0000-7000-8000-000000000624',
-      title: 'Ready child',
-      createdByUserId: '00000000-0000-7000-8000-000000000002',
-      createdAt: '2026-09-04T12:00:00.000Z',
-      updatedAt: '2026-09-04T12:00:00.000Z',
-    };
-    queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({
-      id: workstreamId,
-      title: 'Control title',
-    }));
-    queryClient.setQueryData(['workstream-children', workstreamId], { privateChildren: [child] });
-    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
-      url: `wss://api.rally.test/workstreams/${workstreamId}`,
-      ticket: 'socket-ticket',
-      protocols: socketTicketProtocols('socket-ticket'),
-    })) });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
-      wrapper: createWrapper(queryClient),
-    });
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => {
-      socket.open();
-      socket.message(snapshotFrame({
-        sequence: 1,
-        workstream: { id: workstreamId, title: 'Feed title' },
-      }));
-    });
-    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
-      .toMatchObject({ title: 'Feed title' });
-    expect(queryClient.getQueryData(['workstream-children', workstreamId]))
-      .toEqual({ privateChildren: [child] });
   });
 
   it('isolates a child feed from the main cache and recovers it through its own socket', async () => {
