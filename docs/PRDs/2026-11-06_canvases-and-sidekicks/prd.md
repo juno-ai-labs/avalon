@@ -280,6 +280,24 @@ message.
 **Changes:** The Product behavior for "Sidekick open" and the prose of section
 4 of [design.html](design.html) now say so. The frames are unchanged.
 
+### 2026-11-07 — Administrators can open what they manage; a Sidekick's Canvas reads the Sidekick's audience live
+
+**Decided:** An Organization's owners and administrators can open every
+Canvas, since they manage every Canvas's audience and cannot manage what they
+cannot see. A Canvas a Sidekick writes admits the Sidekick's audience as it
+stands, read live from the Sidekick, plus whoever its managers add to the
+Canvas itself; nothing copies the Sidekick's list into the Canvas.
+
+**Why:** The first build refused an administrator a private Canvas, so a
+creator leaving the company stranded their Canvases. The first build also
+copied the Sidekick's audience at creation and read it live, two sources of
+truth that disagreed as soon as either list changed. Reading it live stores
+nothing twice and keeps a Sidekick's Canvases open to whoever joins the
+Sidekick later.
+
+**Changes:** Plan steps A-6 and A-7. The earlier entry's "starts out open to
+the people the Sidekick is shared with" means this live rule.
+
 ### 2026-11-07 — Who manages a Canvas's participants, and who can open a Sidekick's Canvas
 
 **Decided:** A Canvas's creator, and the Organization's owners and
