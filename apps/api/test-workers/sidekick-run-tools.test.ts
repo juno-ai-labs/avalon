@@ -152,6 +152,12 @@ describe("Sidekick wizard run inspection", () => {
           VALUES (?, ?, 0, ?, ?, 'run_sql', 'read', 'hash', '1', 'completed', ?, '{}', ?, ?)`,
         `nested-${index}`, ACTIVATION, index + 1, `nested-${index}`, `scan-call:call:${index}`, startedAt, settledAt);
       }
+      // A write whose outcome is unknown: ambiguous, not a failure.
+      state.storage.sql.exec(`INSERT INTO tool_effects
+        (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name, mode, request_hash,
+         authority_revision, status, tool_call_id, input_json, started_at, settled_at)
+        VALUES ('post-effect', ?, 0, 3, 'post', 'post_update', 'write', 'hash', '1', 'ambiguous', 'post-call', '{}', 0, 5)`,
+      ACTIVATION);
       // Three provider attempts: two calls whose input grew with the conversation, and one retry.
       for (const [id, outcome, input, created] of [["a1", "success", 1000, 1], ["a2", "retry", 1500, 2], ["a3", "success", 2500, 3]] as const) {
         state.storage.sql.exec(`INSERT INTO inference_attempts
@@ -166,8 +172,9 @@ describe("Sidekick wizard run inspection", () => {
     expect(evidence(result.output).usage).toEqual({ model: { calls: 2, failedAttempts: 1, inputTokens: 5000,
       outputTokens: 150, cachedInputTokens: 2400, costUsd: 0.075, firstCallInputTokens: 1000, lastCallInputTokens: 2500,
       largestCallInputTokens: 2500, ms: 1200 }, note: expect.stringContaining("sends the whole conversation"), tools: [
-      { toolName: "run_sql", fromProgram: true, calls: 2, failed: 0, ms: 70, maxMs: 50 },
-      { toolName: "slack_send_message", fromProgram: false, calls: 1, failed: 1, ms: 60, maxMs: 60 },
+      { toolName: "run_sql", fromProgram: true, calls: 2, failed: 0, ambiguous: 0, ms: 70, maxMs: 50 },
+      { toolName: "slack_send_message", fromProgram: false, calls: 1, failed: 1, ambiguous: 0, ms: 60, maxMs: 60 },
+      { toolName: "post_update", fromProgram: false, calls: 1, failed: 0, ambiguous: 1, ms: 5, maxMs: 5 },
     ] });
     expect(toolsIn(result.output)).toEqual([expect.objectContaining({ toolCallId: "delivery-call", ms: 60 })]);
   });
