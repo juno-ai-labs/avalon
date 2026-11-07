@@ -73,7 +73,7 @@ update it in the same change.
 | [`easter-eggs.md`](easter-eggs.md) | The hidden extras (Konami code, credits in Settings › About, Pong) and the key-sequence and click-burst triggers they share; also the "can't connect" screen Pong lives on. Read before adding an egg or changing that screen. |
 | [`browser-client.md`](browser-client.md) | Browser host: static entry with email and Google sign-in, same-origin regional forwarding, the guest shell and the member shell. |
 | [`browser-sessions.md`](browser-sessions.md) | Opaque browser cookies over ordinary sessions, per-workspace tab isolation, Origin checks, renewal and HTTP adaptation. |
-| [`scope-grant-directory.md`](scope-grant-directory.md) | Durable discovery of independent shares, versioned candidate projection and canonical admission boundary. |
+| [`scope-grant-directory.md`](scope-grant-directory.md) | The versioned discovery index of direct grants, which has no producer or reader since Channels went, and why its table and apply path stay. |
 | [`scope-invitations.md`](scope-invitations.md) | Scoped invitation batches, claiming at sign-in by the verified address, atomic grant activation and durable email delivery. |
 | [`security.md`](security.md) | Trust boundaries — renderer isolation, contextIsolation and sandboxing, CSP, validated IPC, what is treated as untrusted. Read before changing any of those. |
 | [`private-access.md`](private-access.md) | Request-only landing, stored acknowledgements, Ace review, shared single-use and timed download grants and the remaining private-distribution rollout. |
