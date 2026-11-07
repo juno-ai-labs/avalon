@@ -1585,7 +1585,13 @@ describe("a hosted Sidekick", () => {
     });
   }
 
-  /** The review entry's instant moved to the past, and the object woken for it. */
+  /**
+   * The review entry's instant moved to the past, and the object's alarm armed
+   * for it. Not forced with `runDurableObjectAlarm`: that is a plain call the
+   * runtime does not know about, so it can run on top of the armed alarm's
+   * own pass and send the review a second time (the trap
+   * docs/durable-object-alarms.md records). The caller polls for the outcome.
+   */
   async function forceReviewEntry(): Promise<void> {
     await runInDurableObject(workspaceStub(), async (_instance, state) => {
       state.storage.sql.exec(
@@ -1594,7 +1600,6 @@ describe("a hosted Sidekick", () => {
       );
       await state.storage.setAlarm(Date.now());
     });
-    await runDurableObjectAlarm(workspaceStub());
   }
 
   it("asks its wizard for a review once ten runs have finished, with the counts, and not before", async () => {
@@ -1820,7 +1825,8 @@ describe("a hosted Sidekick", () => {
     });
     try {
       const requestedBy = Date.now();
-      await runDurableObjectAlarm(workspaceStub());
+      // The alarm armed above delivers the entry; forcing a second pass on top
+      // of it could send the request twice.
       await expect.poll(async () => (await reviewState()).reviews.length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
       const { review_id: reviewId, notice_json } = (await reviewState()).reviews[0]!;
       const notice = JSON.parse(notice_json) as {

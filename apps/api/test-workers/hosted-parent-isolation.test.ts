@@ -221,7 +221,7 @@ describe("the revocation walk's Channel step, run inside the Organization object
     await finishSockets([channelA, channelB], [socketA, socketB]);
   });
 
-  it("answers a narrowing with each closed reader's conversations and the Sidekicks the Channel owns", async () => {
+  it("answers a narrowing with each closed reader's conversations, and no Sidekick", async () => {
     const owned = "00000000-0000-4000-8000-0000000e00d0";
     await runInDurableObject(organization(), (_instance, state) => {
       state.storage.sql.exec("UPDATE channels SET scope = 'workspace'");
@@ -247,10 +247,12 @@ describe("the revocation walk's Channel step, run inside the Organization object
 
     const result = await organization().revokeNarrowedAudienceAccess({ workspaceId, parentId: channelA });
 
+    // A Channel owns no Sidekick since the room scope was retired, so even a
+    // row still naming it as owner gets no automation hop.
     expect(result).toEqual({
       closedUserIds: [shared],
       substreams: [{ userId: shared, substreamIds: ["0", breakoutA] }],
-      automationIds: [owned],
+      automationIds: [],
     });
     expect((await closed).code).toBe(1008);
     await finishSockets([channelA], [socket]);
