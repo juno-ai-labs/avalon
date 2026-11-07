@@ -3,12 +3,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
+import type { AutomationSummary } from '../lib/types';
 import { SidekicksLibraryRoute, SidekicksLibraryScreen, SidekicksWindow } from './sidekicks-library';
 
 const getSidekicks = vi.hoisted(() => vi.fn());
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api: { getSidekicks } }) }));
 const shell = vi.hoisted(() => ({ host: 'desktop' as 'desktop' | 'browser', guest: false }));
 vi.mock('../lib/collaboration-session', () => ({ useShellCapabilities: () => shell }));
+// Whether a workspace socket is mounted above the screen, as in the main window.
+const socket = vi.hoisted(() => ({ mounted: false }));
+vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => socket.mounted ? {} : null }));
 const openThread = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('../lib/platform', async (importOriginal) => ({
   ...await importOriginal<typeof PlatformModule>(),
@@ -16,6 +21,7 @@ vi.mock('../lib/platform', async (importOriginal) => ({
 }));
 
 beforeEach(() => {
+  socket.mounted = false;
   shell.host = 'desktop';
   shell.guest = false;
   getSidekicks.mockReset().mockResolvedValue([
@@ -53,13 +59,18 @@ describe('SidekicksLibraryScreen', () => {
 });
 
 describe('the Sidekicks home', () => {
-  it('lists each Sidekick as a row with its status, who it is shared with and when it next wakes', async () => {
-    getSidekicks.mockResolvedValue([
+  it('lists each Sidekick the workspace socket keeps as a row with its status, who it is shared with and when it next wakes', async () => {
+    // The rows as the socket's sidebar read carries them: only it says
+    // `needsInput`, which `GET /sidekicks` never does.
+    socket.mounted = true;
+    const client = new QueryClient();
+    applyVersionedSidebarList(client, 'automations', 1, [
       { id: 'triage', name: 'Incident triage', description: 'Watches alerts.', scope: 'you', audience: 'people', status: 'active', needsInput: true, updatedAt: '2026-11-07T09:00:00.000Z' },
       { id: 'changelog', name: 'Weekly changelog', description: 'Every Friday.', scope: 'workspace', audience: 'workspace', status: 'active', nextRunAt: '2099-11-13T22:00:00.000Z', updatedAt: '2026-11-07T09:00:00.000Z' },
       { id: 'revenue', name: 'Revenue analyst', description: 'Keeps revenue current.', scope: 'you', audience: 'personal', status: 'paused', updatedAt: '2026-11-07T09:00:00.000Z' },
-    ]);
-    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
+    ] satisfies AutomationSummary[]);
+    render(<QueryClientProvider client={client}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
+    expect(getSidekicks).not.toHaveBeenCalled();
     const triage = (await screen.findByRole('link', { name: 'Incident triage' })).closest('li')!;
     expect(within(triage).getByText('Needs input')).toBeInTheDocument();
     expect(within(triage).getByText('Named people')).toBeInTheDocument();

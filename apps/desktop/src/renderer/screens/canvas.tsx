@@ -2,17 +2,16 @@ import type { CanvasDetail } from '@rally/contracts';
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { CanvasMark } from '../components/canvas-mark';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import { AvatarStack, Button, EmptyState, ErrorNotice } from '../components/primitives';
-import { canvasDetailQueryKey, useCanvasList } from '../lib/canvases';
+import { canvasDetailQueryKey, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { layoutKey, readArtifactPanel } from '../lib/desktop-layout';
 import { openResourceRequest, openThreadResourceState } from '../lib/navigation-routes';
-import { useWorkspaceMembers } from '../lib/workspace-members';
 import { ConversationSurface } from './conversation-surface';
 
 /**
@@ -42,8 +41,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   });
   // The list row paints the name before the detail answers.
   const row = useCanvasList()?.find((candidate) => candidate.id === id);
-  const members = useWorkspaceMembers(api).data;
-  const membersById = useMemo(() => new Map((members ?? []).map((member) => [member.id, member])), [members]);
+  const { membersById } = useCanvasNameSources(api);
   const [sharing, setSharing] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
   useOpenNewestArtifact(id, canvas.data, session?.workspace?.id, session?.user.id, location.state, (resourceId) => {

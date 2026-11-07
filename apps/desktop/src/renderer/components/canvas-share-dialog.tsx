@@ -1,11 +1,10 @@
 import { asUserId, type CanvasDetail, type CanvasVisibility } from '@rally/contracts';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 
-import { canvasDetailQueryKey } from '../lib/canvases';
+import { canvasDetailQueryKey, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import type { WorkspaceMember } from '../lib/types';
-import { useWorkspaceMembers } from '../lib/workspace-members';
 import { Avatar, Badge, Button, ErrorNotice, Modal } from './primitives';
 import { ScopeSharingPanel } from './scope-sharing-panel';
 import { SidebarSearch } from './sidebar-search';
@@ -13,7 +12,7 @@ import { SidebarSearch } from './sidebar-search';
 const VISIBILITY_COPY: Record<CanvasVisibility, { label: string; description: string }> = {
   creator: { label: 'Only the creator', description: 'Nobody else can open it.' },
   participants: { label: 'Specific people', description: 'The people chosen below, guests among them.' },
-  workspace: { label: 'Everyone in the Organization', description: 'Every member can open it, and anyone chosen below.' },
+  workspace: { label: 'Everyone in the Organization', description: 'Every member can open it, and the guests chosen below.' },
 };
 
 /**
@@ -36,8 +35,7 @@ export function CanvasShareDialog({ canvas, onOpenChange, open }: {
 function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () => void }): React.JSX.Element {
   const { api, session } = useCollaborationSession();
   const queryClient = useQueryClient();
-  const members = useWorkspaceMembers(api).data;
-  const membersById = useMemo(() => new Map((members ?? []).map((member) => [member.id, member])), [members]);
+  const { members, membersById } = useCanvasNameSources(api);
   const [visibility, setVisibility] = useState<CanvasVisibility>(canvas.visibility);
   const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set(canvas.participantUserIds));
   const [search, setSearch] = useState('');

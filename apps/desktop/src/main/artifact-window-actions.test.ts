@@ -26,6 +26,19 @@ describe('detached artifact commands', () => {
     expect(() => artifactWindowActionRequest({ ...preview, annotationScope: '00000000-0000-4000-8000-000000000002:private' }, { type: 'archive' })).toThrow('editable thread context');
     expect(() => artifactWindowActionRequest({ ...preview, annotationScope: undefined }, { type: 'pin', pinned: false })).toThrow('editable thread context');
   });
+  it("renames and deletes a Canvas artifact through the Canvas's conversation, and refuses pin and link with a reason", () => {
+    const canvas = { ...preview, annotationScope: 'canvas:00000000-0000-4000-8000-0000000000c1' };
+    expect(artifactWindowActionRequest(canvas, { type: 'rename', title: 'Q1 plan' })).toMatchObject({
+      path: '/conversations/00000000-0000-4000-8000-0000000000c1/resources/00000000-0000-4000-8000-000000000001',
+      method: 'PATCH', body: { title: 'Q1 plan' },
+    });
+    expect(artifactWindowActionRequest(canvas, { type: 'archive' })).toMatchObject({
+      path: '/conversations/00000000-0000-4000-8000-0000000000c1/resources/00000000-0000-4000-8000-000000000001', method: 'DELETE',
+    });
+    expect(() => artifactWindowActionRequest(canvas, { type: 'pin', pinned: true })).toThrow('A Canvas artifact cannot be pinned from its own window; use the Canvas');
+    expect(() => artifactWindowActionRequest(canvas, { type: 'link' })).toThrow('A Canvas artifact cannot be linked from its own window; use the Canvas');
+    expect(() => artifactWindowActionRequest({ ...canvas, annotationScope: 'canvas:not-an-id' }, { type: 'archive' })).toThrow('editable thread context');
+  });
   it('confines historical page previews to the registered artifact', () => {
     expect(artifactWindowActionRequest(preview,{type:'site-preview',version:3,pagePath:'/pricing?q=team'})).toMatchObject({path:'/resources/00000000-0000-4000-8000-000000000001/versions/3/site-preview?path=%2Fpricing%3Fq%3Dteam',method:'GET',binary:true});
     expect(()=>artifactWindowActionRequest(preview,{type:'site-preview',version:3,pagePath:'/',resourceId:'other'})).toThrow();
@@ -51,4 +64,5 @@ it('derives detached cache keys with the same workspace and breakout identity as
   expect(annotationDraftKeyForScope('global','org','thread:0')).toBe('workspace:global:org:workstream:thread');
   expect(annotationDraftKeyForScope('enterprise','org','thread:private')).toBe('workspace:enterprise:org:workstream:thread:substream:private');
   expect(annotationDraftKeyForScope('global','org','channel:channel-id')).toBe('workspace:global:org:new-workstream:space:channel-id');
+  expect(annotationDraftKeyForScope('global','org','canvas:canvas-id')).toBe('workspace:global:org:canvas:canvas-id');
 });

@@ -1,10 +1,12 @@
 import type { CanvasEditor, CanvasSidebarRow } from '@rally/contracts';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useOptionalCollaborationSession } from './collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from './sidebar-list-store';
+import type { RallyApi } from './api';
 import type { AutomationSummary, WorkspaceMember } from './types';
+import { useWorkspaceMembers } from './workspace-members';
 
 /*
  * What the Canvas screens share: the list the workspace socket keeps, the
@@ -97,4 +99,20 @@ export function useCreateCanvas(): (prompt?: string) => Promise<void> {
     const created = await api.createCanvas(text ? { prompt: { text, clientMessageId: crypto.randomUUID() } } : {});
     void navigate(canvasRoute(created.canvasId));
   }, [api, navigate]);
+}
+
+/**
+ * Who a Canvas row or screen can name: the Organization's members and the
+ * Sidekicks the socket keeps, each by id, for `canvasRowDetail` and friends.
+ */
+export function useCanvasNameSources(api: Pick<RallyApi, 'getWorkspaceMembers'> | null | undefined): {
+  members: WorkspaceMember[] | undefined;
+  membersById: ReadonlyMap<string, WorkspaceMember>;
+  sidekicksById: ReadonlyMap<string, AutomationSummary>;
+} {
+  const members = useWorkspaceMembers(api).data;
+  const sidekicks = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
+  const membersById = useMemo(() => new Map((members ?? []).map((member) => [member.id, member])), [members]);
+  const sidekicksById = useMemo(() => new Map((sidekicks ?? []).map((sidekick) => [sidekick.id, sidekick])), [sidekicks]);
+  return { members, membersById, sidekicksById };
 }

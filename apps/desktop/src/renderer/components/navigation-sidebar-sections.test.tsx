@@ -64,6 +64,7 @@ function renderSidebar(person: Workspace = workspace): void {
   applyVersionedSidebarList(client, 'automations', 1, [
     sidekick('triage', 'Incident triage', { needsInput: true }),
     sidekick('changelog', 'Weekly changelog'),
+    sidekick('revenue', 'Revenue analyst', { pinnedPosition: 0 }),
   ]);
   render(<QueryClientProvider client={client}><Tooltip.Provider>
     <CollaborationSessionProvider api={api as never} session={{ user: { id: ME } } as never}>
@@ -98,12 +99,23 @@ describe('the Canvases and Sidekicks sections', () => {
     renderSidebar();
     expect(screen.getByRole('heading', { name: 'Canvases' })).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Pinned Canvases' })).getByRole('link', { name: /Launch plan/ })).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'All Canvases' })).getByRole('link', { name: /Q4 revenue review/ })).toHaveClass('is-unread');
+    const unread = within(screen.getByRole('region', { name: 'All Canvases' })).getByRole('link', { name: /Q4 revenue review/ });
+    expect(within(unread).getByRole('img', { name: 'Unread' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Pinned Canvases' })).queryByRole('img', { name: 'Unread' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Search organization' })).toBeEnabled();
     expect(within(screen.getByRole('navigation', { name: 'Sections' })).queryByRole('button', { name: /Canvases/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/canvases/00000000-0000-7000-8000-0000000000c9'));
     expect(api.createCanvas).toHaveBeenCalledWith({});
+  });
+
+  it('says so when New Canvas fails, rather than doing nothing', async () => {
+    api.createCanvas.mockRejectedValue(new Error('The organization is not reachable.'));
+    useUiStore.getState().setSidebarSection('canvases');
+    renderSidebar();
+    fireEvent.click(screen.getByRole('button', { name: 'New Canvas' }));
+    expect(await screen.findByText('The Canvas could not be made. Try again.')).toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/);
   });
 
   it('draws the Sidekicks section with Needs input first, and New Sidekick', () => {
@@ -112,6 +124,9 @@ describe('the Canvases and Sidekicks sections', () => {
     expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Needs input' })).getByRole('link', { name: /Incident triage/ })).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'All Sidekicks' })).getByRole('link', { name: /Weekly changelog/ })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Pinned Sidekicks' })).getByRole('link', { name: /Revenue analyst/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('region').map((region) => region.getAttribute('aria-label')))
+      .toEqual(['Needs input', 'Pinned Sidekicks', 'All Sidekicks']);
     fireEvent.click(screen.getByRole('button', { name: 'New Sidekick' }));
     expect(screen.getByTestId('location')).toHaveTextContent('/sidekicks/new');
   });
@@ -122,8 +137,10 @@ describe('the Canvases and Sidekicks sections', () => {
     expect(screen.queryByRole('button', { name: 'New Canvas' })).toBeNull();
   });
 
-  it('remembers either section across launches', () => {
+  it('remembers either section across launches', async () => {
     useUiStore.getState().setSidebarSection('sidekicks');
-    expect(localStorage.getItem('rally.sidebar-section')).toBe('sidekicks');
+    vi.resetModules();
+    const relaunched = await import('../lib/ui-store');
+    expect(relaunched.useUiStore.getState().sidebarSection).toBe('sidekicks');
   });
 });
