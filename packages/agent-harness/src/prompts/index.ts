@@ -9,5 +9,4 @@ export * from "./personal";
 export * from "./workstream";
 export * from "./memory-sweep";
 export * from "./memory-digest";
-export * from "./suggestion-draft";
 export * from "./icon-catalog";

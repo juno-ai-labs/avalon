@@ -1,8 +1,6 @@
 import { uuidV7 } from "../lib/uuid-v7";
 import { SearchLinkSchema } from '../durable-objects/conversation-link-search';
 import {
-  ConversationSuggestionActionResultSchema,
-  type ConversationSuggestionActionResult,
   ElicitationSchema,
   ParticipantSchema,
   WorkstreamResourceSchema,
@@ -23,7 +21,6 @@ import {
   type WorkstreamTranscriptSnapshot,
   type WorkstreamAppearancePatch,
   type WorkstreamMessageAdmissionReceipt,
-  type PreparedConversation,
 } from "@rally/contracts";
 import type {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -43,7 +40,6 @@ import type {
 } from "../durable-objects/agent-loop-do";
 import { rpcResultBody, type DurableObjectRpcResult } from "../durable-objects/rpc-result";
 import type {
-  InitializeWorkstreamObjectRequest,
   WorkstreamObjectCreateMessageInput,
 } from "../durable-objects/workstream-object-product";
 import type { AuthContext, Env } from "../env";
@@ -75,12 +71,6 @@ const CreatedMessageSchema = WorkstreamMessageAdmissionReceiptSchema;
 const AnsweredElicitationSchema = z.strictObject({
   elicitation: ElicitationSchema.optional(),
 });
-const InitializedWorkstreamSchema = z.strictObject({
-  workstream: WorkstreamSchema,
-  turnId: z.string().uuid(),
-  harnessRunId: z.string().uuid().nullable(),
-});
-
 async function objectStub(
   env: Env,
   workspaceId: string,
@@ -300,15 +290,6 @@ export class WorkstreamObjectClient {
     return BootPayloadSchema.parse(await this.request({ operation: "boot" }));
   }
 
-  async initialize(input: InitializeWorkstreamObjectRequest): Promise<{
-    workstream: Workstream;
-    turnId: string;
-    harnessRunId: string | null;
-  }> {
-    return InitializedWorkstreamSchema.parse(await this.request({ operation: "initialize", input }));
-  }
-
-
   async update(input: z.infer<typeof UpdateWorkstreamRequestSchema>): Promise<Workstream> {
     return WorkstreamSchema.parse(await this.request({ operation: "update", input }));
   }
@@ -321,16 +302,6 @@ export class WorkstreamObjectClient {
 
   async markUnread(): Promise<Workstream> {
     return WorkstreamSchema.parse(await this.request({ operation: "mark_unread" }));
-  }
-
-  /** Mark the conversation resolved through its completion suggestion. */
-  async resolveSuggestion(suggestionId: string): Promise<ConversationSuggestionActionResult> {
-    return ConversationSuggestionActionResultSchema.parse(await this.request({ operation: "resolve_suggestion", suggestionId }));
-  }
-
-  /** Dismiss a conversation suggestion for everyone; replayed when it was already resolved. */
-  async dismissSuggestion(suggestionId: string): Promise<ConversationSuggestionActionResult> {
-    return ConversationSuggestionActionResultSchema.parse(await this.request({ operation: "dismiss_suggestion", suggestionId }));
   }
 
   async createMessage(
@@ -350,22 +321,6 @@ export class WorkstreamObjectClient {
     return CreatedMessageSchema.extend({ replayed: z.boolean() }).parse(
       await this.request({ operation: "create_message", input }),
     );
-  }
-
-  async importedSessionSource(): Promise<{ provider: "chatgpt" | "claude" | "claude_code"; sessionId: string; url: string | null } | null> {
-    return z.strictObject({ source: z.strictObject({ provider: z.enum(["chatgpt", "claude", "claude_code"]),
-      sessionId: z.string(), url: z.string().nullable() }).nullable() }).parse(
-      await this.request({ operation: "import_source_get" })).source;
-  }
-
-  async importedSessionCheckpoint(): Promise<Array<{ sourceMessageId: string; sourceRevision: string }>> {
-    return z.strictObject({ messages: z.array(z.strictObject({ sourceMessageId: z.string(), sourceRevision: z.string() })) }).parse(
-      await this.request({ operation: "import_source_checkpoint_get" })).messages;
-  }
-
-  async updateImportedSession(operationId: string, conversation: PreparedConversation): Promise<{ added: number; updated: number }> {
-    return z.strictObject({ added: z.number().int().nonnegative(), updated: z.number().int().nonnegative() }).parse(
-      await this.request({ operation: "import_source_update", operationId, conversation }));
   }
 
   /** Seat a reader through the conversation that owns the roster. */

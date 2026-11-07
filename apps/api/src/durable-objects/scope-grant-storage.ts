@@ -13,7 +13,6 @@ import {
 import { IdSchema, SubstreamIdSchema, UserIdSchema, type UserId } from "@rally/contracts";
 import { uuidV7 } from "../lib/uuid-v7";
 import { z } from "zod";
-import { ParticipantProjectionSchema, ParticipantTransferSnapshotSchema, type ParticipantTransferSnapshot } from "./participant-authority-transfer";
 import { ScheduledAlarmStore } from "./scheduled-alarms";
 
 /** SQL counterpart of current-membership grant validity in resolveScopedAccess.
@@ -21,6 +20,29 @@ import { ScheduledAlarmStore } from "./scheduled-alarms";
 export const CURRENT_MEMBER_GRANT_SQL = `json_extract(grant_row.grant_json, '$.active') = 1
   AND relationship.active = 1 AND json_extract(relationship.relationship_json, '$.status') = 'active'
   AND json_extract(grant_row.grant_json, '$.membershipIncarnation') = json_extract(relationship.relationship_json, '$.incarnation')`;
+
+/** A Thread roster frozen for import into its parent's grants. */
+export const ParticipantTransferSnapshotSchema = z.strictObject({
+  transferId: IdSchema,
+  participants: z.array(z.strictObject({
+    userId: UserIdSchema,
+    addedByUserId: UserIdSchema.nullable(),
+    reason: z.string(),
+    addedAt: z.number().int().nonnegative(),
+  })),
+});
+export type ParticipantTransferSnapshot = z.infer<typeof ParticipantTransferSnapshotSchema>;
+
+/** Effective access from the parent, after combining all applicable grants. */
+export const ParticipantProjectionSchema = z.strictObject({
+  transferId: IdSchema,
+  userId: UserIdSchema,
+  revision: z.number().int().positive(),
+  active: z.boolean(),
+  reason: z.enum(["creator", "explicit", "message", "elicitation", "action"]),
+  addedByUserId: UserIdSchema.nullable(),
+  changedAt: z.number().int().nonnegative(),
+});
 
 /**
  * The Organization object's alarm kinds for a parent's grant work. Keys lead

@@ -96,7 +96,6 @@ const EXPECTED_TABLES = [
   "content_audience_fences",
   "content_refs",
   "conversation_search_links",
-  "conversation_suggestions",
   "conversation_view_changes",
   "conversation_view_clock",
   "delivered_loop_inputs",
@@ -106,9 +105,6 @@ const EXPECTED_TABLES = [
   "durable_inbox_receipts",
   "durable_outbox",
   "elicitation_requests",
-  "imported_session_messages",
-  "imported_session_sources",
-  "imported_session_update_receipts",
   "inference_attempts",
   "inference_delay_status",
   "member_attention",
@@ -116,8 +112,6 @@ const EXPECTED_TABLES = [
   "memory_sweep_state",
   "object_retirement",
   "object_versions",
-  "participant_authority_transfer",
-  "participant_projection_revisions",
   "participant_transcript_attachments",
   "participant_transcript_blocks",
   "participant_transcript_mentions",
@@ -167,7 +161,6 @@ const EXPECTED_TABLES = [
   "transcript_counters",
   "transcript_facts",
   "transcript_payloads",
-  "turn_disposition_judgements",
   "workstream",
   "workstream_resource_links",
   "workstream_wakeups",
@@ -186,30 +179,6 @@ function objectStorage(
 
 describe("the Workstream Durable Object relational schema", () => {
   let warn: MockInstance;
-
-  it("preserves existing suggestions when upgrading to resolution suggestions", () => {
-    const database = new DatabaseSync(":memory:");
-    const storage = objectStorage(database);
-    try {
-      applyDurableObjectSqliteMigrations({ storage,
-        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 78),
-        component: "substream_agent_do", workerVersionId: "before-resolution", now: 1 });
-      storage.sql.exec(`INSERT INTO conversation_suggestions
-        (suggestion_id, kind, judged_turn_id, judged_turn_sequence, run_id, status, draft_status,
-         draft_text, decision_choice, decision_confidence, decision_model, created_at)
-        VALUES ('existing', 'merge_up', 'turn-1', 1, 'run-1', 'open', 'ready', 'Keep the discount.',
-          'worth_carrying_up', 0.9, 'jev-test', 1)`);
-      applyWorkstreamObjectSchema(storage, "with-resolution", 2);
-      expect(storage.sql.exec("SELECT kind, status, draft_text FROM conversation_suggestions").toArray())
-        .toEqual([{ kind: "merge_up", status: "open", draft_text: "Keep the discount." }]);
-      expect(() => storage.sql.exec(`INSERT INTO conversation_suggestions
-        SELECT 'duplicate', kind, judged_turn_id, judged_turn_sequence, 'another-run', status,
-          draft_status, draft_text, draft_subject, target_kind, target_id, target_title,
-          decision_choice, decision_confidence, decision_model, created_at, resolved_at,
-          resolved_by_user_id, resolution, accepting_by_user_id FROM conversation_suggestions WHERE suggestion_id = 'existing'`))
-        .toThrow(/UNIQUE/);
-    } finally { database.close(); }
-  });
 
   beforeEach(() => {
     warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
