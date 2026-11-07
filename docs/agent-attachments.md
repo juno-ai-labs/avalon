@@ -36,15 +36,14 @@ and extracted text is labeled separately. See [session import](session-import.md
 | `apps/api/src/durable-objects/workspace-resources-protocol.ts` | The typed request/result contracts for every resource-domain WorkspaceDO method, with refusals as outcomes rather than throws. |
 | `apps/api/src/durable-objects/workspace-resources-storage.ts` | The resource domain's SQL against the object's own storage: upload commit, draft delete, connector resolve, hydration swaps, watches, version reads, cleanup claims, alias claims, inbound-email receipts, webhook resource upserts, and the maintenance bounds beside them. |
 | `apps/api/src/services/resource-listing.ts` | The listing flag that separates a resource being *reachable* from its being *advertised*, the SQL predicate every enumerating statement applies, and the metadata helper its one producer writes. |
-| `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries, all over `ConversationResourceLinks`: a conversation's own links, and for a Breakout its Channel's Main links as well. |
+| `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries, all over `ConversationResourceLinks`: a conversation's own links. |
 | `apps/api/src/runtime/resource-port.ts` | `createConversationResourceLinks`, the one way a reader builds those links from a conversation's address. |
 | `apps/api/src/services/workstream-resource-inventory.ts` | Renders the bounded current-principal inventory appended to live and replayed compaction checkpoints. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
-| `apps/api/src/services/automation-draft-attachment-tools.ts` | Reuses those operations behind a frozen compiler-request ID set and fresh draft ownership checks. |
 | `apps/api/src/services/attachment-model-content.ts` | Renders manifest-only non-image projection and bounded same-ID current-turn image derivatives; `normalizeModelImageBytes` applies the same format, pixel, edge and byte limits to bytes that are not a resource, for Terminal's `view_image`. |
 | `apps/api/src/services/attachment-tool-receipts.ts` | Atomically binds completed attachment results to current derivative hashes and revalidates replay dependencies. |
 | `apps/api/src/services/integrations.ts` | Current message projection, work-stream resource-tool registration, and authorization-aware receipt replay. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Hydrates attachment descriptors from durable participant-turn parts into ordered transcript snapshots. |
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects, and serves authorized person-facing previews from the original image/text or the reusable document derivative. |
 | `packages/contracts/src/workstream-transcript.ts` | Defines the attachment descriptor carried by a participant transcript text block. |
@@ -758,18 +757,7 @@ attachment reservation, since a pin usually names an already-sent resource.
 
 ## Changelog
 
-### 2026-11-07 — No conversation inherits a Thread's links
-
-**What changed:** `inheritanceContext` loses its `breakout` answer, and
-`conversationResourceLinks` its Channel-Main port and the fingerprint arm that
-folded a Thread's revision into a Breakout's.
-
-**Why:** Plan step C-2 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-the arm answered only for a `workstream` parent, which the conversation object
-refuses to host now, so it was unreachable.
-
-### 2026-11-07 — `publish_resource` lands in a Canvas
+### 2026-11-07 — `publish_resource` lands in a Canvas, and no conversation inherits a Thread's links
 
 **What changed:** A publish from a Canvas's Chat is one of the Canvas's
 artifacts: the bridge tells the Canvas after each publish
@@ -777,17 +765,23 @@ artifacts: the bridge tells the Canvas after each publish
 (`resolveTerminalPublicationHome`): the one its first publish made, or one it
 names with the new optional `canvas` argument, which must be a Canvas the
 Sidekick writes. The run's own conversation is still attached, so it reads
-back what it published.
+back what it published. `inheritanceContext` loses its `breakout` answer, and
+`conversationResourceLinks` its Channel-Main port and the fingerprint arm that
+folded a Thread's revision into a Breakout's.
 
 **Why:** A Sidekick's output is a Canvas (the Canvases and Sidekicks PRD), and
 a Canvas holds every artifact its conversation generates; the publish identity
-`(conversation, path)` did not need to change for either.
+`(conversation, path)` did not need to change for either. The inheritance arm
+answered only for a `workstream` parent, which the conversation object refuses
+to host after plan step C-2, so it was unreachable.
 
 **Considered and rejected:** A separate Canvas publish tool: it would have been
 the same tool with a second identity rule.
 
 **Consequences:** One run makes at most one Canvas of its own. A publish
 outside a Sidekick run that names a `canvas` is refused rather than ignored.
+
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-06 — Out-of-scope resources no longer trip the grounding guard
 

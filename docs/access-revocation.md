@@ -18,15 +18,14 @@ Canonical permission checks share observations only within one batch; persisted 
 reused. Queue-maintained attachment discovery can lag source changes, while a
 positive result still requires its canonical grant. New requests pass session and
 workspace-membership middleware, which reads D1. Checks inside `WorkspaceDO`
-(grants, invitations, Space writes, breakout creation, Channel viewer checks)
-read its local copy, `workspace_member_status`, which the
+(grants, invitations, Canvas and Sidekick viewer checks) read its local copy, `workspace_member_status`, which the
 `workspace_relationship_changed` consumer updates before it walks a revocation
-([`hosted-conversation-parents.md`](hosted-conversation-parents.md#workspace-relationships-are-local)).
+([`data-model.md`](data-model.md#conversations), `workspace_member_status`).
 This does not relax mutation checks, socket
 admission, or local socket visibility/revocation. Missing authority remains a
 retryable failure for direct reads and explicit partial status for search/lists.
 
-SubstreamAgent product RPCs reuse a positive session-and-membership observation
+AgentLoopDO product RPCs reuse a positive session-and-membership observation
 in that conversation object's memory for at most 300 seconds, capped by session
 expiry. The revocation walk clears it when it reaches that object. Direct object
 callers can use cached admission, including for writes, until it expires if the
@@ -52,7 +51,7 @@ the D1 intent for the existing scheduled recovery path.
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/worker-events.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate — and session expiry plus durable relationship dispatch on the existing cron. |
 | `apps/api/src/services/workspace-relationship-delivery.ts` | Retries D1-recorded membership changes through the existing revocation queue. Queue acceptance marks dispatch, not application. |
-| `apps/api/src/durable-objects/{workspace-do,substream-agent,artifact-host-do}.ts` | `revokeSocketAccess` on each socket-holding object. `WorkspaceDO.revokeSocketAccess` names every Canvas and its children's conversations in its answer, so the caller closes their feed sockets; a Thread hop names nothing, since Threads are retired. `AutomationDO` holds no socket; the consumer asks it `listChildren` instead. |
+| `apps/api/src/durable-objects/{workspace-do,agent-loop-do,artifact-host-do}.ts` | `revokeSocketAccess` on each socket-holding object. `WorkspaceDO.revokeSocketAccess` names every Canvas and its children's conversations in its answer, so the caller closes their feed sockets. A Sidekick holds no socket; the consumer asks `WorkspaceDO.listChildren` for it instead. |
 | `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the expired-session backlog older than seven days revoked so the sweep starts clean, and indexes the query it runs every five minutes. The cutoff matters: marking a row suppresses its announcement forever, and migrations run before the Worker deploys, so anything recent is left for the sweep to announce properly. |
 
 ### The producer writes the fact and publishes it
@@ -63,10 +62,8 @@ publishers remain; the cron retries the durable intent if a request failed to
 publish. A `workspace_relationship_changed` message first applies the
 relationship to `WorkspaceDO`'s `workspace_member_status` (sequence-fenced, so
 a redelivery changes nothing), then revokes removed/suspended relationships and
-publishes workspace profile, member and directory invalidation. Last, it seats
-an active member in General and their Personal Channel
-([`spaces.md`](spaces.md#the-personal-channel)), so a failure there retries a
-message whose earlier steps are fenced against applying twice. The table goes
+publishes workspace profile, member and directory invalidation; it seats
+nobody anywhere ([`new-user-onboarding.md`](new-user-onboarding.md)). The table goes
 first so that a revocation hop that throws, retries or dead-letters has not left
 the Organization's own checks answering active for the person it removes.
 Promotion invalidates those views without closing otherwise valid conversations.
@@ -85,16 +82,11 @@ without closing sessions admitted after rejoining. Missing legacy session bindin
 fail closed. Socket admission already checks the current relationship incarnation.
 Promotion preserves the incarnation and does not revoke the conversation.
 
-Revoked workstream grants use their existing durable `scope_grant_directory`
-effect as the publication intent. After applying its directory projection,
-WorkspaceDO reads the Sidekicks the Channel owns from its own
-`automation_directory`, publishes one `automation` hop per Sidekick (nothing when
-it owns none), and deletes the effect's outbox row only after Queue acceptance. A failed send retries the effect; repeated
-application is safe. The grant's membership incarnation travels with the message.
-This connects separately seated Sidekick authoring/run conversations to parent
-grant revocation without adding checks to frame publication or ordinary turns.
+A revoked Canvas grant removes the guest from the Canvas's participant list
+through the Canvas's directory step; a Canvas owns no Sidekick, so it
+publishes no `automation` hop, and its open feed is the gap below.
 
-Other revocation producers still publish in the request that writes their fact.
+Revocation producers publish in the request that writes their fact.
 
 The producers are:
 
@@ -138,50 +130,39 @@ calls `revokeSocketAccess`, and receives back the children that object knows
 about; each child becomes its own message on the same queue.
 
 ```
-workspace              ──▶ WorkspaceDO    ──▶ [substreams of every hosted Channel] + [automationIds] + [artifactIds]
-                                              (+ a workstream hop per Channel still awaiting its import)
-workstream_automations ──▶ (dropped: a room owns no Sidekick; acknowledged without a call)
-workstream             ──▶ WorkspaceDO    ──▶ [substreamIds]   (revokeParentSocketAccess)
-workstream_audience_narrowed
-                       ──▶ WorkspaceDO    ──▶ [substreams per closed reader] + [automationIds: always empty]
-                                              (revokeNarrowedAudienceAccess)
+workspace              ──▶ WorkspaceDO    ──▶ [substreams of every Canvas] + [automationIds] + [artifactIds]
 automation             ──▶ WorkspaceDO    ──▶ [substreamIds]   (listChildren; a Sidekick holds no socket)
-space                  ──▶ WorkspaceDO    ──▶ [substreamIds]   (listChildren; a Space holds no socket)
-substream              ──▶ SubstreamAgent ──▶ (leaf)
+substream              ──▶ AgentLoopDO    ──▶ (leaf)
 artifact               ──▶ ArtifactHostDO ──▶ (leaf)
+workstream, workstream_automations, workstream_audience_narrowed, space
+                       ──▶ (acknowledged without a call: they served Threads,
+                            Channels and Spaces, which are retired)
 ```
 
-A Channel's parent, its control sockets and its children all live in
-WorkspaceDO, so a hop that reaches WorkspaceDO runs the Channel step there
-rather than publishing a `workstream` or `workstream_automations` message that
-would only come back to the same object. The workspace hop answers `channels`,
-one entry per hosted Channel whose step it ran, beside the full
-`workstreamIds`; the consumer publishes a `workstream` hop only for a Channel
-not in `channels`. The narrowing hop answers `substreams` and `automationIds`
-beside `closedUserIds`. Both keep the older fields so a consumer from before
-this change still reaches everything, and the consumer falls back to the older
-hops when an object from before it answers without the new ones. The
-`workstream` hop stays: messages of that kind may already be queued at a
-deploy. The same holds for `workstream_automations`: no Worker publishes it,
-and the consumer acknowledges one still queued without a call.
+The workspace hop answers `channels`, one entry per Canvas with every
+conversation its child registry names, and the consumer publishes a
+`substream` hop for each; `workstreamIds`, which named Threads, is always
+empty and kept so a consumer from before the change still reads a list. The
+retired target kinds stay in the schema because messages of those kinds may
+already be queued at a deploy.
 
 The fan-out is queue-driven rather than one long call chain for three reasons: a
 hop that fails is retried alone rather than restarting the walk; no single
 invocation holds the whole hierarchy open while a hundred objects wake; and the
 objects stay ignorant of the transport — they return lists, and the consumer
 decides what carries them onward. An object that later needs a different carrier,
-or a sixth object type, changes the consumer and nothing else.
+or another object type, changes the consumer and nothing else.
 
 A **live artifact** is a sibling for the same reason, and holds no socket at all:
 what it holds is viewer sessions, and one that outlived a membership would keep
 serving a page to somebody no longer in the workspace. Its list comes from
 `artifact_registry`, which lives in WorkspaceDO beside the resource authority —
-so this is the only object that can name artifacts, and a work stream could not.
-Its `revokeSocketAccess` drops `viewer_sessions` rows under the same method name
-and the same child-naming contract, and returns no children. The list is
-deliberately unfiltered by person, matching the generosity the rest of this walk
-is built on: resource exposure can grant access through multiple conversations,
-so the walk must not infer a viewer list from one parent roster. A hop that finds
+so this is the only object that can name artifacts. Its `revokeSocketAccess`
+drops `viewer_sessions` rows under the same method name and the same
+child-naming contract, and returns no children. The list is deliberately
+unfiltered by person, matching the generosity the rest of this walk is built
+on: resource exposure can grant access through multiple conversations, so the
+walk must not infer a viewer list from one parent's audience. A hop that finds
 no session to drop costs one call. Canonical resource authorization admits the
 viewer before the session is minted; serving then trusts that durable session
 until this walk removes it or its fixed lifetime expires.
@@ -192,77 +173,30 @@ one Worker, so during a rollout a consumer that knows about a new child kind can
 reach an object that does not yet name it, and reading `undefined.map` there
 would throw and drop a retraction.
 
-An automation is a *sibling* of the work streams under a workspace rather than a
-child of one, and like a work stream it is a parent of conversations: its own
-chat is substream `0` under it and each run is a further substream, all of them
-`SubstreamAgent`s with sockets. A Sidekick holds no socket, so its hop is the
-Organization's `listChildren` for the Sidekick and one `substream` message per child,
-keyed by the automation id as the parent. Its list comes from
-`automation_directory`, the one place the workspace knows an automation exists,
-and is unfiltered by person for the reason the artifact list is: an
-automation's conversation admits its author, its run-as principal, any member
-when it is workspace-scoped, and anyone it is shared with, so the workspace
-cannot tell which automations a person holds a socket on, and a hop that finds
-nothing to drop costs one call. No room owns an automation, so nothing
-publishes the `workstream_automations` hop; one still queued ends at the
-consumer.
+A **Sidekick** and a **Canvas** are both parents of conversations hosted in
+WorkspaceDO: the shared conversation or Chat is substream `0` under it, and a
+Sidekick's runs are further substreams, all of them `AgentLoopDO`s with
+sockets. Neither parent holds a socket, so a Sidekick's hop is the
+Organization's `listChildren` for the Sidekick and one `substream` message per
+child, keyed by the automation id as the parent, and a Canvas's conversations
+come back named on the workspace hop itself. Both lists are unfiltered by
+person for the reason the artifact list is: a Sidekick's conversation admits
+its author, its run-as principal, any member when it is workspace-scoped, and
+anyone it is shared with, and a Canvas admits its audience, so the workspace
+cannot tell which conversations a person holds a socket on, and a hop that
+finds nothing to drop costs one call.
 
-A **narrowed audience** is the one hop that names nobody. Every other message
-is about one person, because every other way access ends names one: a member is
-removed, a session is revoked, a participant is taken out of a room. A work
-stream that stops being Organization-wide takes access from every member who is
-not a participant, which is a set nothing outside the room can enumerate and
-nobody wants one message per name for. What *is* enumerable is who is holding a
-socket right now, and only the room knows that — so the hop asks it to close
-what it can no longer admit and to answer with whose sockets those were. In the
-same call WorkspaceDO runs each of those people's Channel step (with the
-`workstream_participant_removed` reason the narrowing carries) and reads the
-automations the room owns, so the consumer publishes the substream and
-automation leaves for each name directly. The message carries `userId: null`, and the schema
-refuses that in any other combination: a per-user hop that lost its user would
-close every socket it found.
-
-This is the one place an object re-asks its own admission question, and it is
-not the polling the invariant below rules out. It runs once, because the
-audience it is about was just written; it is the same `authorizeViewer` a
-reconnect would run; and a holder it cannot confidently admit is closed rather
-than spared, which costs a reconnect where sparing keeps a reader reading a
-room that no longer admits them.
-
-A **Space** is the third sibling, and the simplest hop here. Its parent state
-is hosted in `WorkspaceDO` under a role whose `admitsClientSockets` is false
-([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), so it
-admits no client socket and there is nothing on it to close. The hop does not
-ask it to revoke anything. A Space created before 2026-09-26 also has a hidden
-main conversation, an ordinary `SubstreamAgent` that *does* hold whatever was
-opened against it, and only the Space's parent rows name it. So the hop is
-`WorkspaceDO.listChildren` for the Space id and one `substream` message per
-child, keyed by the Space id as the parent, exactly as an automation's
-conversations are keyed by its own; for a newer Space the message reaches an
-object holding nothing.
-
-**Only the object knows its own children.** A work stream's participants and a
-dashboard's blocks live in Durable Object SQL storage, not in D1, so no query the
-producer could write would enumerate them. That is why the walk exists at all
-rather than the producer publishing a flat list.
-
-The lists are deliberately generous. `WorkspaceDO` returns the person's own
-viewer rows plus every workspace-scoped work stream, because a workspace-scoped
-work stream is readable by any member and can therefore hold a socket the object
-never wrote a viewer row for. For each of those Channels (inside the workspace
-hop, or in a `workstream` hop), `WorkspaceDO` closes that Channel's control sockets (tagged `parent-control:<id>`) and names every child
-in the Channel's `parent_children` rows, which always include `"0"`, plus any
-substream in `parent_child_projections`. When the reason is
-`workstream_participant_removed`, it keeps `"0"` and drops breakouts the person
-can still read, because a breakout's roster is its own. A hop that finds nothing
-to close costs one call.
+**Only the object knows its own children.** A conversation's participants and
+a parent's child registry live in Durable Object SQL storage, not in D1, so no
+query the producer could write would enumerate them. That is why the walk
+exists at all rather than the producer publishing a flat list.
 
 ### What each object does
 
 Three of the four `revokeSocketAccess` methods walk `state.getWebSockets()`, read
 the hibernation attachment, and ask `revocationClosesSocket`, one shared
 predicate rather than an inline copy each. Those roles disagree about their own attachments:
-`SubstreamAgent` alone makes `sessionId` and the admitted `role` optional,
+`AgentLoopDO` alone makes `sessionId` and the admitted `role` optional,
 because sockets accepted before their respective command gateways carry none.
 Written out per role, the natural
 `attachment.sessionId !== request.sessionId` reads as *skip* for `undefined`,
@@ -274,10 +208,10 @@ rather than a network drop.
 
 A Sidekick has no `revokeSocketAccess` at all: it holds no socket, and the
 consumer asks `WorkspaceDO.listChildren` for it and fans out one substream hop per child, so
-the conversations under it close through `SubstreamAgent`'s shared predicate
+the conversations under it close through `AgentLoopDO`'s shared predicate
 like every other conversation.
 
-`SubstreamAgent` re-broadcasts presence afterwards, because `webSocketClose`
+`AgentLoopDO` re-broadcasts presence afterwards, because `webSocketClose`
 fires only for a *client*-initiated close: without it the people still in the
 room would go on seeing an evicted reader listed as present.
 
@@ -298,11 +232,11 @@ room would go on seeing an evicted reader listed as present.
 - **The producer publishes in the request that wrote the fact.** A fact written
   without a message is a socket that stays open until it reconnects. If you add a
   way to end access, you add a producer; there is nothing else to catch it.
-- **A message names one person, or one room's whole audience, never half of
-  each.** `workstream_audience_narrowed` is the only target carried with
-  `userId: null`, and the only one that may be; the schema enforces the
-  biconditional and names `userId` when it is broken. A per-user hop that lost
-  its user would close every socket it found.
+- **A message names one person.** `workstream_audience_narrowed`, the retired
+  Thread hop, is the only target the schema lets carry `userId: null`, and the
+  consumer acknowledges it without a call; every other hop refuses a missing
+  user by name (`access_revocation_user_required:<scope>`). A per-user hop that
+  lost its user would close every socket it found.
 - **A message with a `sessionId` closes only that session's sockets.** Closing
   the rest would sign a person out of every window because one of them logged
   out.
@@ -312,10 +246,7 @@ room would go on seeing an evicted reader listed as present.
   re-published list is a list of hops that each find nothing to do. Retries are
   therefore free of consequence, which is what lets the consumer retry at all.
 - **An object returns lists; it does not publish.** Keeping the transport in the
-  consumer is what keeps the five objects independent of the queue. The one
-  exception is WorkspaceDO applying a revoked Channel grant from its own outbox:
-  no consumer is involved there, so it publishes that grant's hops itself. A
-  Channel owns no Sidekick, so those include no `automation` hop.
+  consumer is what keeps the objects independent of the queue.
 - **Every object that accepts a socket is on this walk.** A room admits on a
   ticket and never re-authorizes, so an object added to the tree without a
   `revokeSocketAccess` and a hop to reach it keeps serving somebody who has lost
@@ -330,36 +261,20 @@ room would go on seeing an evicted reader listed as present.
 
 ## Known gaps
 
-### A narrowing published from the Channel's own scope change has no durable gate
+### Narrowing a Canvas's or a Sidekick's audience closes no open feed
 
-`WorkstreamService.update` reads the Channel before the update and publishes
-`workstream_audience_narrowed` when its scope goes from `workspace` to
-`personal`, and nothing durable
-stands behind that send: a refusal is logged
-`channel_narrowing_publish_unannounced` and the Organization's non-participant
-readers keep whatever sockets they have open until they reconnect.
+`canvasSetAudience` and a Sidekick's audience change re-check presence and
+republish the lists, so the person removed loses the row and leaves the face
+pile, but nothing publishes a revocation for their open conversation feed: the
+feed socket stays open, still receiving the conversation, until it reconnects, when
+the parent's viewer check refuses it. The Thread-era
+`workstream_audience_narrowed` hop that answered this for a Channel went with
+Channels and is acknowledged without a call.
 
-This is a gap rather than a regression. Before the Spaces branch that path
-published *nothing at all*, so the announcement is strictly new and the missing
-gate is the part that was never built.
-
-A guest losing a Channel's public threads
-([the Channel reader](spaces.md#a-channel-lends-its-public-threads-to-its-guests))
-is not announced that way: removed from the Channel, the thread taken out or
-moved, or the Channel archived. The narrowing hop finds people only through a
-thread's control sockets, and a client that opens conversation sockets
-directly holds none, so it would leave the guest's conversation open.
-WorkspaceDO's `guestChannelReachMoved` already knows which guests may have
-lost the thread; after the write commits it asks the thread whether each can
-still read Main, and for each who cannot publishes the `workstream` and
-`workstream_automations` revocations a participant removal sends, naming
-them, in queue batches of 100. It shares the gap above: a send that fails is
-logged `channel_reach_revocation_publish_failed`, and the guest keeps an open
-socket until they reconnect.
-
-Closing it means giving the direct narrowing a durable intent of its own, which
-is a change with a table behind it rather than a line in this one; it is named
-here so the next person to narrow something does not have to rediscover it.
+Closing it means publishing a per-person `substream` hop for the Canvas's or
+the Sidekick's conversations from the audience write, with a durable intent
+behind the send; it is named here so the next person to narrow something does
+not have to rediscover it.
 
 ## Boundary
 
@@ -369,11 +284,10 @@ own:
 - **Admission.** Whether a socket may open at all is
   [`realtime-sockets.md`](realtime-sockets.md) and the objects' own connect
   paths. This module never re-runs admission; it only closes.
-- **Object-local visibility.** Whether one work stream still admits one reader
-  is held in that parent's rows — `HostedParent.canRead`, `product.canRead` —
-  and the object enforces it itself when it publishes. No message here carries it,
-  and none should: it is not a D1 fact, and routing it through a queue would put
-  a round trip between a scope change and the reader it excludes.
+- **Object-local visibility.** Whether one Canvas or Sidekick still admits one
+  reader is held in its parent's rows (`canvasAdmits`, `sidekickAdmits`) and
+  the conversation's own (`product.canRead`). No message here carries it: it is
+  not a D1 fact. The one case it leaves open is the Known gap above.
 - **Authorization queries.** Membership and session validity are D1 facts owned
   by `middleware/auth.ts` and the services that write them. `WorkspaceDO`'s
   local copy of each relationship, `workspace_member_status`, is owned by
@@ -382,7 +296,7 @@ own:
 - **What flows over a socket while it is open.** That is
   [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
 - **The object hierarchy itself.** [`hosted-conversation-parents.md`](hosted-conversation-parents.md)
-  owns Channel and Space parents inside `WorkspaceDO`,
+  owns Canvas and Sidekick parents inside `WorkspaceDO`,
   [`workstream-durable-object.md`](workstream-durable-object.md) owns the
   conversations under them, and
   [`automation-lifecycle.md`](automation-lifecycle.md) owns Sidekicks;
@@ -433,7 +347,7 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   socket.
 
 - **`sendBatch` caps at 100 messages**, so `publishDescendantRevocations` chunks.
-  A workspace with more than 100 work streams fans out over several sends.
+  A workspace with more than 100 conversations fans out over several sends.
 
 - **The expiry sweep is bounded at 200 rows per run**, which is 40 sessions a
   minute. That is a real ceiling: a sustained expiry rate above it grows a
@@ -444,17 +358,13 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   and longer; the fix is paging within one invocation under a time budget, not a
   bigger single page.
 
-- **Not covered by the queue, and deliberately not left to it:** losing
-  participation in, or visibility of, one work stream. Those are facts in the
-  object's *own* SQL, not in D1, so no producer here can publish them — and the
-  object that holds them enforces them itself, synchronously, on its own publish
-  paths (`HostedParent.broadcastMetadata` and `SubstreamAgent` on an event that
-  narrows visibility). That is not a second
-  answer to this module's question. This module answers "does this person still
-  have access to the workspace", which only D1 knows; those checks answer "does
-  this work stream still admit this reader", which only that object knows. The
-  distinction to hold on to: what was removed from those paths is the **D1**
-  read, not the object-local one.
+- **Not covered by the queue:** losing a Canvas's or a Sidekick's audience.
+  That is a fact in `WorkspaceDO`'s own SQL, not in D1; the lists and presence
+  follow it at once, and an open feed does not (the Known gap above). This
+  module answers "does this person still have access to the workspace", which
+  only D1 knows; the parent answers "does this conversation still admit this
+  reader". What was removed from the publish paths is the **D1** read, not the
+  object-local one.
 
 - **Genuinely not covered:** a block's visibility narrowing within a dashboard
   the reader still has access to. That closes on their next reconnect.
@@ -463,8 +373,8 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   every socket an object holds when it writes the tombstone, so a hop that
   reaches a retired object has nothing left to find. `revokeSocketAccess` is
   permitted on every gated class, and the permit covers the whole call rather
-  than that one method name; the enumeration the `automation` and `space` hops
-  ask for (`listChildren`) stays refused, and the
+  than that one method name; the enumeration the `automation` hop asks for
+  (`listChildren`) stays refused, and the
   consumer acknowledges that refusal through `isRetirementRefusal` rather than
   retrying it — a retry would dead-letter one message per retired object,
   spending this module's own monitoring signal on a condition somebody designed.
@@ -528,42 +438,34 @@ would be a way into somebody else's workspace.
 `workstream_automations` revocation target is acknowledged by the access
 revocation consumer without a hop, and `WorkspaceDO.revokeSocketAccess` no
 longer runs a hosted Channel's step; it names every Canvas and its children's
-conversations for the caller to close.
+conversations for the caller to close. `automationIdsOwnedByWorkstream` is
+deleted, `revokeNarrowedAudienceAccess` answers an empty `automationIds`, and
+the last producer of `workstream_automations` is deleted (11e82d0). The
+relationship consumer seats nobody in General or a Personal Channel.
 
 **Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
 retired Threads and Channels and the conversations under them, so a hop queued
 before the deploy has nothing left to close, and acknowledging it ends the
-message where its work already ended.
+message where its work already ended. The PRD converts every Thread-scoped
+Sidekick to the Organization's scope, so no room owns one and a person who
+loses a room loses no Sidekick with it: their access to a Sidekick comes from
+its own scope and audience.
 
 **Considered and rejected:** Failing the queued hop. A message that can never
 succeed retries to the dead-letter queue, which this module reads as the alarm
 that somebody kept access, so a retired target would raise it falsely.
+Removing the targets from the schema now: messages of those kinds may be
+queued at a deploy, so a rejected parse would dead-letter them.
 
-**Consequences:** The four target kinds stay in the message schema until no
-producer can have one in flight; plan step C-4 removes their producers' last
-callers.
+**Consequences:** The four target kinds stay in `AccessRevocationMessageSchema`
+until no message of those kinds can still be queued, which is one
+queue-retention period after the deploy that stopped the publishes. Narrowing a
+Canvas's or a Sidekick's audience has no hop at all, so the removed person's
+open feed outlives the change until it reconnects (the Known gap); a future
+rule that closes it needs a new per-person hop, not the old narrowing hop
+revived.
 
-### 2026-11-07 — A room owns no Sidekick, so its Sidekick hop ends at the consumer
-
-**What changed:** `WorkspaceDO.automationIdsOwnedByWorkstream` is deleted, and
-the consumer acknowledges a `workstream_automations` message without a call.
-`revokeNarrowedAudienceAccess` answers an empty `automationIds`. The last
-producer of that hop is deleted too (11e82d0): nothing publishes it, and the
-target stays in `AccessRevocationMessageSchema` only so a queued message parses.
-
-**Why:** The Canvases and Sidekicks PRD converts every Thread-scoped Sidekick
-to the Organization's scope, so no room owns one and a person who loses a room
-loses no Sidekick with it: their access to a Sidekick comes from its own
-scope and audience, which a room removal does not change.
-
-**Considered and rejected:** Removing the target from the schema now. Workers
-still publish it and messages of that kind may be queued at a deploy, so a
-rejected parse would dead-letter them.
-
-**Consequences:** Removing the target from the schema is safe once no
-message of that kind can still be queued, which is one queue-retention period
-after the deploy that stopped the publishes. A future rule that lets a room admit someone to a Sidekick needs a new hop here,
-not the old one revived.
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-07 — Organization settings can suspend a member
 

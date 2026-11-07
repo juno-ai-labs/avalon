@@ -1,6 +1,6 @@
 # Agent harness
 
-Rally's production loop is an adapter over `@juno-ai/bind` 15.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. The owning `SubstreamAgent` Durable Object hosts every work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite; there is no pre-cutover drain or Workflow fallback for this surface. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Separate non-workstream loops may still use Cloudflare Workflows.
+Rally's production loop is an adapter over `@juno-ai/bind` 15.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. The owning `AgentLoopDO` Durable Object hosts every work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite; there is no pre-cutover drain or Workflow fallback for this surface. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Separate non-workstream loops may still use Cloudflare Workflows.
 
 Each substream owns one persistent server-side, tool-using loop. A run is a
 subordinate execution receipt for one activation of that loop; it never creates
@@ -8,7 +8,7 @@ or identifies the loop. The loop is not a participant, separate persona,
 terminal, or general code-execution environment.
 
 A Sidekick is drafted in a conversation of its own, and every run of it is a
-conversation of its own, both `SubstreamAgent`s under the Sidekick, which is
+conversation of its own, both `AgentLoopDO`s under the Sidekick, which is
 hosted in its Organization's `WorkspaceDO`; there is no second host. The drafting tools are the loadable
 `rally:sidekicks` plugin (`rally_sidekicks` to the model), available in a work
 stream and in a Sidekick's chat alike and withheld from a run, and a run's loop
@@ -18,7 +18,7 @@ reads its definition from the parent by revision at start. See
 Sidekick submission returns to the conversation loop after publication. The model
 acknowledges the save, and conversational completion requires a persisted final
 assistant turn. The generic `completedByTool` harness outcome does not exempt a
-SubstreamAgent run from that terminalization requirement.
+AgentLoopDO run from that terminalization requirement.
 
 
 `runRallyEvaluation` uses the production `runHarnessWithBind` assembly from an
@@ -26,11 +26,8 @@ initial prepared scenario or a settled checkpoint. Bind owns checkpoint advancem
 and forks; Rally captures its flat projection and plugin/skill activation hints.
 The eval host restores configuration and isolated tool state, and allocates a fresh
 loop identity per fork. Production without checkpoint capture keeps the existing
-ledger path. See [prepared conversations and session import](session-import.md).
-An explicit source update appends labeled, overheard provider context through
-Bind's `protocol_user_appended` transition, so the next Rally execution sees
-the updated source transcript without inventing a Rally run or treating imported
-assistant text as Rally's own output.
+ledger path. (Session import, the one production producer of a prepared
+conversation, is deleted; [`session-import.md`](session-import.md) records it.)
 
 A Thread's and a Breakout's first message had its own classifier
 (`opening-message.ts`, with an evaluation under `evals/opening-message`); both
@@ -140,7 +137,7 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 | `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
 | `packages/agent-harness/src/tool-schema-safety.ts` | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer *emits*, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
 | `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
-| `apps/api/src/durable-objects/substream-agent.ts` | The post-cutover full-loop host, durable dispatcher, keep-alive, stream feed, steering, and child-local timers. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | `AgentLoopDO`: the post-cutover full-loop host, durable dispatcher, keep-alive, stream feed, steering, and child-local timers. |
 | `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
 | `apps/api/src/services/sidekick-operation-accounts.ts` | Per-operation delegate selection, safe fallback and private debug checkpoints. |
 | `apps/api/src/services/completed-tool-replay.ts` | Read-only tool-owned validation before a historical completed result is presented again. |
@@ -190,7 +187,7 @@ execution tool receipt statuses, summaries and output references. It omits
 system policy and raw tool payloads. There is no last-N cutoff: nonadjacent
 instructions and later corrections remain available until ordinary compaction
 replaces them with a checkpoint. It does not retrieve discarded history or
-automatically add a Breakout's parent transcript. This production projection
+automatically add another conversation's transcript. This production projection
 differs from the offline suite's curated antecedents; judge errors and oversized
 requests still take the verification fallback.
 
@@ -363,7 +360,7 @@ A message that invokes nothing is still a turn the model reads. The conversation
 
 In a Sidekick's own conversation (substream `"0"` under the Sidekick) the classifier's answer decides only whether an agent answers. Which agent is the Sidekick's to say when the loop takes the message: a message its sender marked as a wizard edit (`intent: "edit_sidekick"`), or an answer to what the wizard asked, is the wizard's when the sender manages the Sidekick and is refused otherwise; every other message addressed there starts a run under the Sidekick's definition with the message as its opening, from a manager as much as from anyone, and the run answers in its own conversation ([`automation-lifecycle.md`](automation-lifecycle.md#the-shared-conversation)). A marked edit needs no classifier: the mark addresses it. The conversation's own loop therefore runs only the wizard, only for a manager, and a message there always queues rather than steering.
 
-A record-only message from the engineering bridge ([`engineering-mcp.md`](engineering-mcp.md#messages-and-text-reads)) never reaches either classifier: like a Breakout merge, it starts no run whatever the room's size. Apart from it, a demo seed action is the one message the classifier never sees. It carries a `seed` ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)) whose `assistant` turn says whether the line starts a run — present means yes, `null` means no — and the object takes that answer over the room's size and the message's attachments alike. The pack is the authority on which of its lines address Rally, and seeding a scripted conversation cannot wait on a live model's guess about each one. The field reaches the object only over its internal RPC; the message route has none.
+A record-only message from the engineering bridge ([`engineering-mcp.md`](engineering-mcp.md#messages-and-text-reads)) never reaches either classifier: it starts no run whatever the room's size. Apart from it, a demo seed action is the one message the classifier never sees. It carries a `seed` ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)) whose `assistant` turn says whether the line starts a run — present means yes, `null` means no — and the object takes that answer over the room's size and the message's attachments alike. The pack is the authority on which of its lines address Rally, and seeding a scripted conversation cannot wait on a live model's guess about each one. The field reaches the object only over its internal RPC; the message route has none.
 
 A separate continuation classifier handles information supplied for earlier work.
 `classifyMessageAdmission` composes it with ordinary addressing without changing
@@ -409,13 +406,11 @@ work; there is no new wait registration, alarm, or task lifecycle.
 
 ### Naming
 
-A work stream is created under a provisional title — the first non-empty line of its objective — and named by a separate one-shot structured call a moment afterwards. The naming agent gets the objective and the opening message as bounded user-role data: the request is what is being named, never an instruction it follows, and a request asking for a particular name has no more authority than any other outside content. Reasoning is switched off rather than left to the model's default, because the model is relabelling text it has already been handed in full — asking for the lowest *effort* would switch thinking on for a model that does none.
-
-Naming sits outside the creation path deliberately. The person who typed the request is waiting on that response, the run starts against the unchanged objective, and the name arrives over the socket as `workstream_renamed`; a person renaming from the header publishes the same event. Until it arrives the title is a placeholder, so `workstreams.title_status` says so and the sidebar row and header render a skeleton rather than showing the request as though it were a name.
-
-The transcript is what a name is usually missing. A work stream is looked at once more after it reaches five messages — on a new message and at the end of a run, both of which stop on a count for a work stream that is not due one — and named again from the conversation so far, which is where the identifier, the person, or the actual problem tends to arrive. That second pass settles the title for good.
-
-Every write is conditional on the status the pass started from, which is what keeps a person's title safe: renaming a work stream settles it, so a generated name that arrives afterwards is dropped rather than applied, and a title supplied by the caller is settled from the start and never generated over. Every failure — an unreachable model, an unusable answer, an absent `OPENROUTER_API_KEY` — leaves the title standing and still advances the status, because a skeleton that never resolves is worse than a title taken from the request.
+No conversation is named by a model: a person titles a Canvas, and a
+Sidekick's conversations carry the Sidekick's name. The Thread naming pass is
+deleted ([`workstream-naming.md`](workstream-naming.md) keeps its record). The
+`workstream_naming` model role survives for one call, the title a long pasted
+text is given (`pasted-text-service.ts`).
 
 ### Activation, admission, and immutable run scope
 
@@ -435,8 +430,8 @@ failed.
 
 Terminalization releases the persistent loop as soon as its canonical
 transcript, Bind state, and run status are durable. External result delivery,
-automation finalization, and work-stream name/description maintenance use the
-same run receipt's `external_settled_at` marker in a separate object-local
+and automation finalization use the same run receipt's
+`external_settled_at` marker in a separate object-local
 drain. Before awaiting external work, the drain moves the receipt's existing
 execution deadline to the maintenance-recovery horizon. The host starts the
 drain eagerly with `waitUntil`; the derived alarm candidate abandons a stale
@@ -453,7 +448,7 @@ prepared again.
 
 ### Execution primitive and expected duration
 
-One `SubstreamAgent` owns one **persistent Bind loop**, not one loop per message
+One `AgentLoopDO` owns one **persistent Bind loop**, not one loop per message
 or execution receipt. One model/tool step plus settlement is its safe boundary:
 steering input becomes visible after the active step settles, queued input waits
 until the active activation becomes idle, and neither interrupts in-flight
@@ -468,7 +463,7 @@ does not depend on remaining resident: the persistent-loop projection and
 lease, subordinate execution receipt and attempt lease, immutable scope, tool receipts, streaming checkpoint, and final-turn
 fence resume or reconcile the run after eviction. Hibernating feed sockets wake
 only for batched frames or product events; user message commands arrive through
-the admitted SubstreamAgent socket. Terminal remains a plugin in the same loop and executes its
+the admitted AgentLoopDO socket. Terminal remains a plugin in the same loop and executes its
 actual coding commands in Daytona.
 
 An invoked participant message is admitted first as a pending loop input. It
@@ -577,9 +572,9 @@ the automation catalog, without maintaining an unrelated second notion of
 "loaded." Because restored durable activations deliberately skip `onActivate`,
 the `rally:sidekicks` plugin prepares itself on its first tool call too: it
 rebuilds completed plugin inspections and staged evaluator rules from the run's
-tool receipts before validating a resumed draft. Its first submission from a
-work stream creates the room's Sidekick and posts the proposal card; from a
-Sidekick's own chat it submits a revision to that Sidekick. Authoring reads project saved
+tool receipts before validating a resumed draft. From a Sidekick's own
+conversation, on a manager's marked edit, it submits a revision to that
+Sidekick. Authoring reads project saved
 legacy custom-MCP recommendations into the current catalog IDs, so an edit
 can load and inspect the same IDs it resubmits.
 
@@ -843,7 +838,7 @@ Web discovery and page reading are bounded Firecrawl tools. Search returns ranke
 
 ### Elicitation
 
-The canonical `request_elicitation` tool belongs to `rally:core`, which carries no wire prefix, so the model reads it as `request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer (`answer: null` with `skipped: true` when they skipped, `cancelled: true` when a newer message cancelled the question; the tool's description tells the model not to ask a skipped question again) and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a work stream, the work stream becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `SubstreamAgent` loop. When drafting an automation, the agent first saves its best partial state with `automation_submit_draft` (a revision that is not `ready`), then calls the same core elicitation tool; the next turn resumes from the saved draft and the answered conversation.
+The canonical `request_elicitation` tool belongs to `rally:core`, which carries no wire prefix, so the model reads it as `request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer (`answer: null` with `skipped: true` when they skipped, `cancelled: true` when a newer message cancelled the question; the tool's description tells the model not to ask a skipped question again) and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a work stream, the work stream becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `AgentLoopDO` loop. When drafting an automation, the agent first saves its best partial state with `automation_submit_draft` (a revision that is not `ready`), then calls the same core elicitation tool; the next turn resumes from the saved draft and the answered conversation.
 
 ### Seeded runs
 
@@ -889,7 +884,7 @@ Authored pageable tools use [receipt-owned page IDs](tool-pagination.md). Their
 first-call schema has no cursor; `_next` accepts only a page ID. Private executor
 continuations are removed before output reaches Bind or the result receipt.
 
-Each tool call receives a stable Rally receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. A tool that starts work outside Rally keys it to `HarnessToolContext.effectIntentId` instead, which the host resolves through `resolveToolEffectIntentId` after `tool_started` and which names the stored receipt row rather than the call: the row is created once and kept, so a resumed attempt reattaches to the effect it already started instead of starting a second one. The owning `SubstreamAgent` stores canonical inputs, immutable plan hashes, plugin/connection identity, mode, idempotency policy, optional provider key, and append-only progress in `tool_effects` and `tool_effect_checkpoints`; there is no D1 compatibility owner. Completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional work-stream authority before Bind can observe it. A `code_execute` program's nested calls are receipts of their own at `<program toolCallId>:call:<index>`, planned, looked up and settled through the same host functions a direct call uses, with no transcript rows of their own ([`code-mode.md`](code-mode.md#nested-calls)).
+Each tool call receives a stable Rally receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. A tool that starts work outside Rally keys it to `HarnessToolContext.effectIntentId` instead, which the host resolves through `resolveToolEffectIntentId` after `tool_started` and which names the stored receipt row rather than the call: the row is created once and kept, so a resumed attempt reattaches to the effect it already started instead of starting a second one. The owning `AgentLoopDO` stores canonical inputs, immutable plan hashes, plugin/connection identity, mode, idempotency policy, optional provider key, and append-only progress in `tool_effects` and `tool_effect_checkpoints`; there is no D1 compatibility owner. Completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional work-stream authority before Bind can observe it. A `code_execute` program's nested calls are receipts of their own at `<program toolCallId>:call:<index>`, planned, looked up and settled through the same host functions a direct call uses, with no transcript rows of their own ([`code-mode.md`](code-mode.md#nested-calls)).
 
 If the object is evicted after `assistant_accepted` but before every
 `tool_result_accepted`, Bind does not repair the protocol array. Before another
@@ -1184,11 +1179,11 @@ compiler instead of letting it emerge later in a provider request.
 
 ### Streaming stability
 
-SSE comments are ignored. Azure's Chat function-call fragments are combined by index, and OpenRouter's Responses argument deltas by output index, with the `done` event's arguments taken as final. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the SubstreamAgent event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
+SSE comments are ignored. Azure's Chat function-call fragments are combined by index, and OpenRouter's Responses argument deltas by output index, with the `done` event's arguments taken as final. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the AgentLoopDO event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
 
 Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The room commits each sequenced stream frame together with an accumulated active-stream checkpoint in Durable Object storage. Its metadata and bounded text chunks share that transaction, so a long answer cannot make one storage value reject every later frame. An initial snapshot or history-gap resync reassembles that checkpoint, including its independent Bind cursor and attempt boundary, so somebody joining after the response began installs the exact partial text before catch-up and live frames cross the same sequence boundary.
 
-The desktop retains room and per-message stream cursors across socket and route handoffs, rejects duplicate or stale frames, and removes only the failed active turn's ephemeral preview while preserving completed text from earlier tool turns. The shell keeps a background subscriber only for running work streams that are not open, and a canonical refresh retains the active transient assistant row until its accepted turn or failure status arrives. The owning `SubstreamAgent` is the only regional work-stream authority: it stores the complete accepted assistant message plus a bounded active-output checkpoint while streaming, and terminal resynchronization remains canonical.
+The desktop retains room and per-message stream cursors across socket and route handoffs, rejects duplicate or stale frames, and removes only the failed active turn's ephemeral preview while preserving completed text from earlier tool turns. There is no background subscriber for a conversation that is not open, and a canonical refresh retains the active transient assistant row until its accepted turn or failure status arrives. The owning `AgentLoopDO` is the only regional authority for its conversation: it stores the complete accepted assistant message plus a bounded active-output checkpoint while streaming, and terminal resynchronization remains canonical.
 
 ### Transcript row attribution
 
@@ -1232,7 +1227,7 @@ and a series cancellation would lose its distinction from one occurrence. See
 
 ### Child agents
 
-Background agents have their own stable child substream and `SubstreamAgent`.
+Background agents have their own stable child substream and `AgentLoopDO`.
 The `rally_agents` plugin starts them through durable admission and returns
 without waiting for their execution. Each uses the same Bind harness, inherited
 model and execution principal, explicit opening context, and independent tool
@@ -1263,20 +1258,18 @@ connector, or Sidekick skills. This is a complete catalog declaration rather
 than a list of exclusions: general guidance about unsupported capabilities must
 not contradict a specialized profile that has those capabilities. A skill is
 instructions only, so naming one widens nothing a run can do. The
-registry is `apps/api/src/services/agent-profiles.ts`; `session_import`, the
-conversation importer, is its first entry, and its tools are [desktop
-actions](desktop-actions.md). A stored profile this Worker does not know fails
-the run as `agent_profile_unknown` rather than running with every tool.
+registry is `apps/api/src/services/agent-profiles.ts`, and it is empty: its
+one entry, `session_import`, went with Threads. A stored profile this Worker
+does not know fails the run as `agent_profile_unknown` rather than running
+with every tool.
 
 A profile may also name an `ended` hook: cleanup owed once a run of it has
-ended, failed or stopped. `SubstreamAgent` calls it right after
+ended, failed or stopped. `AgentLoopDO` calls it right after
 `terminalizeHarnessAttempt`, which every executed run passes through — a normal
 return, a stop, and a host that threw alike — so the outcome is durable first, with the run's workspace, parent and — for a run a person
 started — user; a hook that throws is logged as
 `agent_profile_run_end_failed` with its code and does not change the run's
-outcome. `session_import` uses it to archive a Channel its run reserved and
-never opened ([session import](session-import.md)), the one cleanup a closed or
-crashed import window cannot send.
+outcome. No profile names one now.
 
 ### Scoped durable memory
 
@@ -1285,8 +1278,8 @@ kind, searched by hybrid FTS and Vectorize retrieval, and recalled at admission 
 is gone. Rally's memory is now a store of facts a background sweep writes, with
 visibility decided by each fact's source conversations; [`agent-memory.md`](agent-memory.md)
 owns it, including the `rally_memory` plugin's three tools (`memory_recall`,
-`memory_remember`, `memory_forget`). No run recalls memory at admission in this
-release; the per-activation digest is that PRD's next step.
+`memory_remember`, `memory_forget`), and the per-activation digest every run
+starts with.
 
 What stays here is the scope resolution the typed tables use. `resolveMemoryAccess`,
 the canonical run check, derives a run's scope union from the frozen principal
@@ -1352,16 +1345,12 @@ columns.
 
 `rally:workstream` carries `schedule_wakeup`, `list_wakeups`, and `cancel_wakeup`, so a run can defer work to a stated instant instead of promising it in text. `schedule_wakeup` takes the prompt plus exactly one of `delay` — a duration in common units, `"5 minutes"`, `"90 sec"`, `"1h30m"`, or an ISO-8601 `"PT2H30M"` — or `at`, an exact ISO-8601 timestamp. An `at` without an offset is read in the run's local zone, or in an explicit `timezone`; an `at` that carries an offset is absolute and rejects `timezone` rather than silently choosing between the two. The resolved instant must be at least one minute and at most one year out, whichever form produced it. Pending wake-ups are capped per work stream, and every rejection returns a stable code with its remediation and accepted vocabulary in the model-visible failed result.
 
-The tool is `provider_key`-idempotent against `(workstream_id, idempotency_key)`, so a replayed receipt returns the persisted wake-up instead of scheduling a second. A wake-up belongs to the conversation whose run scheduled it — Main, a Breakout, or a Sidekick run child — and lives in that conversation's object, whose own alarm fires it into that conversation's loop. A Breakout's wake-up never runs in Main, which would write a private Breakout's prompt into Main's transcript; a Sidekick run child's continues its run only as `continueSidekickRun` allows, the question a member's message there asks, and a refusal consumes it. A delegated worker's wake-up runs as that worker, with its owner's sandbox and reporting, and a stopped worker's is consumed without running. Firing claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same work stream; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
+The tool is `provider_key`-idempotent against `(workstream_id, idempotency_key)`, so a replayed receipt returns the persisted wake-up instead of scheduling a second. A wake-up belongs to the conversation whose run scheduled it — a Canvas's Chat, a Sidekick's conversation, or a Sidekick run child — and lives in that conversation's object, whose own alarm fires it into that conversation's loop. A child's wake-up never runs in its parent's `"0"`, which would write the child's prompt into another transcript; a Sidekick run child's continues its run only as `continueSidekickRun` allows, the question a member's message there asks, and a refusal consumes it. A delegated worker's wake-up runs as that worker, with its owner's sandbox and reporting, and a stopped worker's is consumed without running. Firing claims the row before launching, so a lost claim means a missed wake-up rather than a duplicated run, and releases the claim when the harness cannot start so a later alarm retries. The principal that scheduled the wake-up is re-validated against current membership at fire time — a wake-up cannot outlive the authority that created it. The resulting run reads the prompt as an explicit trigger message labelled as coming from an earlier run of the same work stream; the transcript row is separate host-written system state. Sub-agents get none of these tools: they cannot schedule, and a parent's wake-ups are not theirs to act on.
 
-Every work-stream response carries `nextPendingWakeup`, the earliest pending row
-by due time, derived with an indexed lookup. The navigation sidebar renders that
-state as a clock at the trailing edge of the row, whether the wake-up came from
-`delay` or `at`; fired and cancelled rows do not qualify. Its tooltip shows the
-exact local due time and the first 40 characters of the prompt, with an ellipsis
-when more remains. The database read bounds the prefix and the mapper finishes
-the preview before the data crosses the API boundary, so the list never carries
-the full prompt just to label a compact marker; the work-stream tools remain the
+Every conversation response carries `nextPendingWakeup`, the earliest pending
+row by due time, derived with an indexed lookup; the bounded prompt prefix is
+cut before the data crosses the API boundary. The sidebar clock that drew it on
+a Thread's row went with the Thread rows; the wake-up tools remain the
 boundary for complete wake-up detail.
 
 That split — a labelled trigger message for the model, a system row for the person reading the transcript — is the contract for every scheduler-started run, not a wake-up detail. A run whose instructions exist only as a transcript `system` row reaches the model with nothing but its work stream's objective, because the protocol projector drops those rows as UI state; whatever starts a run has to hand the host something to render.
@@ -1622,7 +1611,7 @@ instead of racing the generic tool timer; run cancellation remains authoritative
 The host marks durable input re-entry with `HarnessToolContext.replaying` so a
 tool can decode a historical receipt without weakening validation of new calls.
 
-Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
+Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `AgentLoopDO` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
 Image attachments retain their exact original object for display and download. Before model admission, the regional Worker validates the byte signature and dimensions and writes a reusable bounded derivative to regional R2, referenced separately from D1. PNG, JPEG, WebP, HEIF/HEIC, and the primary TIFF path are normalized through Cloudflare Images; the TIFF fallback preflights dimensions before pixel decode, while HEIF has no whole-buffer local fallback. Animated GIFs become a single storyboard derivative with up to six representative timestamped frames plus bounded duration, frame-count, dimensions, and loop metadata. Only the derivative is placed in the model protocol transcript. Non-image message attachments contribute a compact manifest only; authorized attachment tools own every byte of text, Office, and PDF hydration.
 
@@ -1730,9 +1719,7 @@ covers agent identity and addressing semantics through live JEV regressions.
 
 Sidekick catalog naming is covered by `apps/api/test/sidekick-presentation.test.ts`
 (`pnpm --filter @rally/api exec vitest run test/sidekick-presentation.test.ts`).
-The load, durable attachment, and next-execution instruction restoration path is
-covered by `apps/api/test-workers/automation-do.test.ts`
-(`pnpm --filter @rally/api test:workers test-workers/automation-do.test.ts -t 'attaches a loaded main-stream Sidekick'`).
+
 
 The suite table below is an inventory, not a claim that the ordered-transcript
 PRD is fully proved. Its focused [test contract](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md#test-contract)
@@ -1765,7 +1752,7 @@ proof.
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, claim-before-launch, and that a Breakout's or a Sidekick run child's wake-up starts in its own loop, the latter only as the Sidekick allows. |
 | `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
 | `apps/api/test/attachment-tool-receipts.test.ts` | Exact derivative and completed-output-reference dependency fencing, replay reauthorization, all-or-nothing multi-image registration, and successor-safe mismatch cleanup. |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
+
 | `apps/api/test/agent-inference-logging.test.ts` | That no legacy D1/R2 path remains and provider refusals stay content-free in Workers Logs. |
 | `apps/api/test/inference-lakehouse.test.ts` | Exact request/attempt archival, pointer integrity, Pipeline delivery, and oversized-record preservation. |
 | `packages/db/test/agent-inference-retirement-migration.test.ts` | Migration 0094 removes the regional payload-log table and workspace preference while preserving workspace rows and foreign-key integrity. |
@@ -1850,9 +1837,23 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
-### 2026-11-07 — The prompts speak of Canvases and Sidekicks, and a run's result is posted once
+### 2026-11-07 — The prompts speak of Canvases and Sidekicks, a run's result is posted once, and a Sidekick's conversation goes to the wizard only on a manager's marked edit
 
-**What changed:** Plan step C-5's vocabulary half. The standing work prompt
+**What changed:** In a Sidekick's conversation (`"0"`), a message addressed to
+an agent starts a run of the Sidekick, whoever sent it; `"0"`'s loop takes no
+turn for it. A message marked `intent: "edit_sidekick"` on `create_message`, an
+elicitation answer and a resource authorization are the wizard's, and only from
+a manager. A marked edit skips the classifier, whose prompt is unchanged. With
+the `workstream` scope retired (plan step A-5), the Thread loop's
+`rally:sidekicks` variant keeps only the delegation tools, presented as
+`rally_sidekick_delegation`; `list_skill_recommendations`, `recommend_skill`
+and `unrecommend_skill` are gone. The authoring prompt and the submission
+schema offer only `personal` and `workspace`, and lose the owning-Thread lines
+(the room scope, "Scheduled result delivery to a workstream is limited to the
+owning workstream", and the home conversation as where feedback and Terminal
+publications live).
+
+Then plan step C-5's vocabulary half. The standing work prompt
 (`prompts/workstream.ts`) replaces the Channel, Thread and Breakout paragraph
 and its identifier map with the Organization, Canvas and Sidekick paragraph
 above, renames the task context's `workstream` key to `conversation`, and says
@@ -1884,24 +1885,26 @@ consumer) and `prompts/work-opportunity.ts` (no importer since suggested work
 was deleted). A run's row now carries its reply whole
 ([`automation-lifecycle.md`](automation-lifecycle.md#runs-in-the-shared-conversation)),
 which the prompts' claim that the row is the delivery depends on.
+`workstream-name.ts`, `workstream-description.ts` and `session-import.ts` went
+in C-2 with the naming and description services; `suggestion-draft.ts` and
+`src/turn-disposition.ts` went in C-3 with the suggestion services;
+`mergeInstruction` and the `merges` option of the conversation tools are
+deleted; C-3 also deleted `opening-message.ts` and its evaluation with a
+Thread's and a Breakout's first-message admission.
 
-**Deferred C-5 deletions:** `workstream-name.ts`, `workstream-description.ts`
-and `session-import.ts` went in C-2 with the naming and description services
-(no importer was left; `agent-profiles.ts` stays, `integrations.ts` reads it);
-`suggestion-draft.ts` and `src/turn-disposition.ts` went in C-3 with the
-suggestion services and the conversation-suggestions observer; `mergeInstruction` and the `merges` option of the conversation
-tools are deleted (the Thread merge they described is gone); and the memory subject kinds (`thread`, `channel`,
-`breakout`) with the `memory_facts` rebuild, which renames them to `canvas`.
-Until then the prose here avoids those names and the stored kinds stay. C-3 also deleted `opening-message.ts` and its
-evaluation with a Thread's and a Breakout's first-message admission; a
-Canvas's or a Sidekick's first message is addressed like any other.
+**Why:** The Canvases and Sidekicks decision log keeps the wizard and run
+separation in a conversation now open to everyone the Sidekick is shared with,
+and its 2026-11-07 entry has a manager mark a wizard edit explicitly. The first
+build sent every manager's message to the wizard, so a manager could never ask
+the Sidekick for work there. After the cutover every run is a Canvas Chat, a
+Sidekick's wizard or a Sidekick run, and the prompt still told the model it
+was in a Thread under a Channel, a structure no conversation has any more. A-4
+projects a run's final message into the Sidekick's shared conversation as the
+run's row, so "notifies nobody" was false, and the guidance that also had runs
+post their report with `conversation_post` put the same report in `"0"` twice.
 
-**Why:** After the cutover every run is a Canvas Chat, a Sidekick's wizard or a
-Sidekick run, and the prompt still told the model it was in a Thread under a
-Channel, a structure no conversation has any more. A-4 projects a run's final
-message into the Sidekick's shared conversation as the run's row, so "notifies
-nobody" was false, and the guidance that also had runs post their report with
-`conversation_post` put the same report in `"0"` twice.
+**Considered and rejected:** Telling an edit from a request by the text, which
+would be a second classifier with its own way to misroute.
 
 **Golden hashes moved:** `workstream`, `automationWorkstream` (the paragraph,
 the context key, the document line and, for the second, the activation lines),
@@ -1909,8 +1912,8 @@ the context key, the document line and, for the second, the activation lines),
 with the prompts; each was regenerated by rendering the case before and after
 the change and reading the diff, which held only the edits above.
 `compactionCheckpoint` moved only because its fixture's appendix string was
-renamed to the new heading; the renderer did not change. The fixed-prompt byte ceiling (8,500) holds: the new
-paragraph is shorter than the one it replaced.
+renamed to the new heading; the renderer did not change. The fixed-prompt byte
+ceiling (8,500) holds: the new paragraph is shorter than the one it replaced.
 
 **Evals:** The plan asked for the addressing and premature-stop evals before
 and after. The addressing prompt is unchanged, so its eval inputs are byte for
@@ -1918,40 +1921,16 @@ byte the same. The premature-stop addressing set, whose wake-up case quotes the
 renamed header, was rerun after the change against JEV 1.14.0: 15 of 15 labels
 correct.
 
-**Consequences:** The prompt files keep their stored names (`workstream.ts`,
-`outputSurface: "workstream"`, the memory subject kinds); renaming those is the
-main removal's. A future prompt that names a room must name a Canvas or a
-Sidekick's conversation, and a Sidekick report in Rally is its final message.
-
-### 2026-11-07 — Addressing in a Sidekick's conversation goes to the wizard only on a manager's marked edit
-
-**What changed:** In a Sidekick's conversation (`"0"`), a message addressed to
-an agent starts a run of the Sidekick, whoever sent it; `"0"`'s loop takes no
-turn for it. A message marked `intent: "edit_sidekick"` on `create_message`, an
-elicitation answer and a resource authorization are the wizard's, and only from
-a manager. A marked edit skips the classifier. The classifier and its prompt are
-unchanged.
-
-**Why:** The Canvases and Sidekicks decision log keeps the wizard and run
-separation in a conversation now open to everyone the Sidekick is shared with,
-and its 2026-11-07 entry has a manager mark a wizard edit explicitly. The first
-build sent every manager's message to the wizard, so a manager could never ask
-the Sidekick for work there. Rejected: telling an edit from a request by the
-text, which would be a second classifier with its own way to misroute.
-
 **Consequences:** Addressing in a Sidekick's conversation has two stages, the
-classifier (or the mark) and the Sidekick's routing. Anything that adds a new
-kind of human input to `"0"` must say whether it is the wizard's.
+classifier (or the mark) and the Sidekick's routing; anything that adds a new
+kind of human input to `"0"` must say whether it is the wizard's. The prompt
+files keep their stored names (`workstream.ts`, `outputSurface: "workstream"`,
+the memory subject kinds `thread`, `channel`, `breakout`), and the prose avoids
+those names until the `memory_facts` rebuild renames the kinds. A future
+prompt that names a room must name a Canvas or a Sidekick's conversation, and
+a Sidekick report in Rally is its final message.
 
-With the `workstream` scope retired (plan step A-5), the Thread loop's
-`rally:sidekicks` variant keeps only the delegation tools, presented as
-`rally_sidekick_delegation`; `list_skill_recommendations`, `recommend_skill`
-and `unrecommend_skill` are gone, because a Thread no longer owns or recommends
-a Sidekick. The authoring prompt and the submission schema offer only
-`personal` and `workspace`, and lose the owning-Thread lines (the room scope,
-"Scheduled result delivery to a workstream is limited to the owning
-workstream", and the home conversation as where feedback and Terminal
-publications live); the rest of the prompt is unchanged.
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-03 — Task skills: reporting on data and creating an app
 

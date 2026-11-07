@@ -43,12 +43,13 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 ### Identity
 
 A Canvas id is a conversation-parent id: the same `WorkstreamId` brand a
-Thread's or a Sidekick's conversation is named by, so its Chat (substream
-`"0"`) is an ordinary conversation object and every conversation route, ticket
-and tool takes it. Its directory row in `WorkspaceDO` (`canvas_directory`) is
-what makes the id a Canvas rather than a Thread or a Sidekick; `WorkspaceDO`
-asks for that row (`isCanvasParent`) after a Sidekick's and before the Channel
-fallback.
+Sidekick's conversation is named by, so its Chat (substream `"0"`) is an
+ordinary conversation object and every conversation route, ticket and tool
+takes it. Its directory row in `WorkspaceDO` (`canvas_directory`) is what makes
+the id a Canvas rather than a Sidekick; `WorkspaceDO.hostedConversationParent`
+asks for a Sidekick's row first and then for that one (`isCanvasParent`), and
+an id that is neither is no conversation parent at all
+(`conversation_parent_not_found`).
 
 The row holds the title, the creator, when it was made and last changed, the
 last editor (a person, Rally or a Sidekick), the Sidekick that writes it when a
@@ -74,8 +75,8 @@ The Chat is an `AgentLoopDO` like every other conversation; its root row says
 `parent_kind = 'canvas'` (conversation migration 83 widened the CHECK). Opening
 it is the conversation route's ordinary admission: `resolveHostedParent`
 answers `canvas` and the Canvas's viewer decision in one call, the admitted
-reader is seated in the conversation (`admitParticipant`, which a Channel
-refuses and a hosted parent's conversation accepts), and the socket ticket's
+reader is seated in the conversation (`admitParticipant`, which a hosted
+parent's conversation accepts), and the socket ticket's
 `pk` is `canvas`. The Chat's effects reach `HostedCanvas.receiveChildEffects`
 through the same Queue every conversation's do.
 
@@ -128,8 +129,9 @@ the people still in the Canvas, before the one Canvas list the write sends.
 
 ### Guests
 
-A guest is invited to a Canvas the way one is invited to a Channel: through
-`POST /sharing` (`createScopeInvitations`), with the Canvas id as the parent
+A guest is invited to a Canvas through the share primitive
+([`scope-invitations.md`](scope-invitations.md)): `POST /sharing`
+(`createScopeInvitations`), with the Canvas id as the parent
 and one `workstream` target naming it. The same `parent_invitations` rows, the
 same encrypted delivery alarm and the same `scope_share_recipients` lookup are
 written, keyed by the Canvas id, and a recipient who already has an account
@@ -140,10 +142,10 @@ directory step for that grant (`applyGrant`) adds the guest to
 `canvas_participants` with source `invitation` in the same transaction, moving
 a `creator` Canvas to `participants`. Only a manager may share
 (`sharing_required` otherwise). Creating, claiming and revoking a share, and
-its delivery and index alarms, are routed for a Canvas id; listing a Canvas's
-shares and grants (`listScopeInvitations`, `scopeSharingOptions`,
-`listManagedScopeGrants`, `mutateScopeGrant`) is not yet, and still answers
-`scope_not_found`.
+its delivery and index alarms, are routed for a Canvas id. Listing a Canvas's
+shares and grants has no route: `POST /sharing` and
+`DELETE /sharing/:parentId/:invitationId` are the share routes, and the list,
+options and grant routes went with the Channel share code.
 
 ### Making a Canvas
 
@@ -206,13 +208,14 @@ the reader may open.
 
 ### Rally in a Canvas Chat
 
-A message in a Canvas's Chat reaches Rally the way one in a Thread's Main does:
-alone in the Canvas, every message is for Rally; with others there, the
-addressing classifier (`classifyWorkstreamMessage`) decides whether a message
-is for Rally or for the people. The run has the resource tools a Thread's Main
-has (`list_resources`, `read_resource`, `view_resource`, the artifact data
-tools keyed by the Canvas id) and the Terminal's `publish_resource`, which
-publishes into the Canvas.
+A message in a Canvas's Chat reaches Rally through the conversation's
+addressing: alone in the Canvas, every message is for Rally; with others there,
+the addressing classifier (`classifyWorkstreamMessage`) decides whether a
+message is for Rally or for the people. The run has the resource tools
+(`list_resources`, `read_resource`, `view_resource`, the artifact data tools
+keyed by the Canvas id) and the Terminal's `publish_resource`, which publishes
+into the Canvas. It has no conversation tools; those serve a Sidekick
+([`conversation-tools.md`](conversation-tools.md)).
 
 Rally is told about the Canvas in a host-provided message, `CANVAS CONTEXT`
 (`canvasRunContextMessage`, from `WorkspaceDO.canvasContext`): the Canvas's
@@ -226,10 +229,10 @@ source kind (`canvas_context`), so it never shares an identity with another
 derived message keyed on that same message.
 
 Memory a Canvas's Chat learns is sourced `canvas:<canvasId>` and filed under
-the stored subject kind `thread` with the Canvas id, the kind its
-conversation shape shares with a Thread's Main: renaming the stored kind means
-rebuilding `memory_facts` for its CHECK, which the plan's memory step (C-5)
-does with the other subject kinds. Who may read such a fact is the Canvas's
+the stored subject kind `thread` with the Canvas id (`memory-review-service.ts`
+maps a `canvas` subject to it): the `memory_facts` CHECK still names the
+Thread-era kinds, and renaming one means rebuilding that table, which has not
+been done. Who may read such a fact is the Canvas's
 audience (`canvasReaderAllows` for a person, Organization-wide for
 `workspace` visibility or an Organization Sidekick's Canvas).
 
@@ -276,8 +279,11 @@ A Canvas id is a conversation-parent id, so `set_presence` already carries it
 as `foregroundWorkstreamId`, and `workspace_presence` fans out per
 conversation. The presence path admits a Canvas the viewer may open
 (`canvasVisible`, which asks `canvasReaderAllows`), so the face pile inside a
-Canvas is everyone in it now; foregrounding one wakes its Chat, as a
-Channel's Main is woken. A change to who is in any Canvas advances the
+Canvas is everyone in it now. A Canvas the viewer may not open yet (one still
+being created, or a link from elsewhere) is held as the socket's pending
+foreground and promoted when the list that names it arrives, rather than
+refused, because refusing would close the Organization socket for good. A
+change to who is in any Canvas advances the
 `canvases` waterline and republishes the Canvas list, whose rows carry
 `presentUserIds`; a push at the same waterline would be dropped by the
 desktop, which applies only a newer one. Presence decides from the
@@ -288,9 +294,9 @@ pile.
 ### In the client
 
 The desktop renderer, which the browser host also mounts, draws a Canvas from
-what the server already exposes; nothing in it is a new primitive. The rail
-does not list the section yet (plan step B-1), so `/canvases` and
-`/canvases/:id` are reached by URL.
+what the server already exposes; nothing in it is a new primitive. Canvases is
+the rail's first section and `/canvases` the landing route
+([`desktop-shell.md`](desktop-shell.md)).
 
 - **The list** is the `canvases` query the workspace socket fills
   (`workspace_canvas_list`, `applyVersionedSidebarList`), read with
@@ -304,13 +310,13 @@ does not list the section yet (plan step B-1), so `/canvases` and
   text as `prompt`; the client then opens the new Canvas, whose Chat already
   holds the prompt as the creator's message.
 - **An open Canvas** is `ConversationSurface` with `parentKind: "canvas"` and
-  substream `"0"`, the same surface a Thread's Main is, so the composer,
-  annotations (a Canvas's comments), the inspector rail, its resource cards and
-  versions menu, and the per-conversation panel restore
-  (`artifact-panel:<canvas id>:0` in `lib/desktop-layout.ts`) are the ones a
-  Thread uses. With nothing saved there, the screen opens the newest artifact
-  of `GET /canvases/:id` through `openThreadResourceState`, the route state a
-  pinned artifact's row already uses; with no artifact, the rail stays closed
+  substream `"0"`, so the composer, annotations (a Canvas's comments), the
+  inspector rail, its resource cards and versions menu, and the
+  per-conversation panel restore (`artifact-panel:<canvas id>:0` in
+  `lib/desktop-layout.ts`) are the conversation surface's own. With nothing
+  saved there, the screen opens the newest artifact of `GET /canvases/:id`
+  through `openResourceState` (`lib/navigation-routes.ts`), the route state a
+  pinned artifact's row also uses; with no artifact, the rail stays closed
   on the conversation's empty state. Closing the panel clears what was saved,
   so the next opening shows the newest artifact again.
 - **The header** is a `TitlePillHeader` naming the Canvas, the face pile of
@@ -321,7 +327,7 @@ does not list the section yet (plan step B-1), so `/canvases` and
   `POST /canvases/:id/audience`; anyone else sees the same audience read-only.
   A guest is invited by email through the conversation share panel
   (`ScopeSharingPanel`) with a `workstream` target naming the Canvas, without
-  its waiting-shares list, which a Canvas does not answer yet.
+  its waiting-shares list, which has no server route.
 - **Pinning** is `POST /canvases/:id/pin`, from the pill's menu, a row's
   context menu, or dragging a row into the section's Pinned group
   (`useRowPinDrop`). A pin lands at the end of the group: the order is
@@ -372,7 +378,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | A person the Canvas does not admit asks for it, or opens its Chat | `canvas_not_found` from the Canvas's own reads, `conversation_not_found` from the conversation route: the same answer as an id that names nothing. |
 | A participant who does not manage it changes its audience or shares it | `canvas_forbidden`; a share answers `sharing_required`. |
 | A person named in an audience change is not in the Organization | `canvas_audience_not_member`; nothing is written. |
-| An invitation email cannot be sent | The share stays pending and its delivery alarm retries, as a Channel share does. |
+| An invitation email cannot be sent | The share stays pending and its delivery alarm retries ([`scope-invitations.md`](scope-invitations.md)). |
 | A second create for the same Sidekick run under another Canvas id | Answers the run's first Canvas (`created: false`); `canvas_directory_run_idx` is the index that finds it. |
 | A create names a `canvasId` that is somebody else's Canvas, or another conversation's id | `canvas_id_unavailable` (409); nothing is written. |
 | A publish lands but its note to the Canvas cannot run (the Organization object fails, or holds no such Canvas) | The publish still succeeds and `canvas_artifact_note_failed` is logged with the reason. The artifact is missing from the Canvas until the path is published again or a retried attempt recovers it as `landed`, each of which notes it again; nothing else repairs it. |
@@ -449,72 +455,35 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
 | `sidekick_conversation_attachments` | `(automation_id, parent_kind, …)` | Migration 140 widens `parent_kind` to admit `canvas`. |
 | `workspace_pins` | `(user_id, item_kind, item_id)` | Migration 141 admits `canvas` and `sidekick`, with no parent. |
-| `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 142: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because `workspace_workstream_resource_links`' foreign key names a Thread's directory row, which a Canvas has none of. Indexed by resource. |
+| `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 142: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because the Thread-era resource-link table's foreign key named a Thread's directory row, which a Canvas has none of. Indexed by resource. |
 
 ## Changelog
-
-### 2026-11-07 — Narrowing a Canvas takes its removed viewers out of its presence
-
-**What changed:** `canvasSetAudience` re-checks presence inside its write, so
-someone the Canvas no longer admits stops showing in its face pile and their
-socket is backgrounded; restoring the audience does not put them back until
-their window says so. A new artifact version is announced to a Canvas's
-readers from `canvas_artifacts`, and the upload-draft delete and sweep count a
-draft noted on a Canvas as linked.
-
-**Why:** After plan step C-2 presence was re-checked only on socket changes and
-revocations, so a person removed from a Canvas stayed listed in it; and the
-resource-link table these reads used was written only by the retired Thread
-projection, so a Canvas artifact's new version reached nobody. The restored
-runtime suites showed both.
-
-### 2026-11-07 — A Canvas has its own link
-
-**What changed:** A Canvas is linked as `/app/<region>/<organization>/cv/<canvas>/`
-(deep link `.../canvases/<canvas>`), copied from the pill menu or a detached
-artifact window (with `a/<artifact>/`). A notification, email or Slack message
-about a Canvas's Chat links to the Canvas, and the handoff page names it from
-`canvas_directory`.
-
-**Why:** Until plan step B-5 of the [pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md) a Canvas borrowed
-the Thread link forms, which went with Threads.
-
-**Consequences:** [`links.md`](links.md) owns the form; a Canvas's id being its
-conversation's parent id is what lets a server mint the link from a
-conversation alone.
-
-### 2026-11-07 — A Canvas can be retitled, and a Pinned group reordered
-
-**What changed:** `PATCH /canvases/:id` writes the title (`HostedCanvas.rename`)
-for anyone the Canvas admits and moves the list's waterline for every open
-socket. `PUT /workspace/pinned-order` now takes `{ kind, itemIds }` and calls
-`reorderSidebarPins` for the Canvases or Sidekicks list; the Space-era
-container order (`PUT /workspace/order`) and the All Pinned order it replaced
-were deleted with the Channel routes.
-
-**Why:** The routes land ahead of the client: no renderer code renames a
-Canvas yet, and both sidebar sections pass `reorderable={false}`, so a pin
-lands at the end of its group with no way to move it. Retitling is open to
-anyone the Canvas admits rather than only to its managers because anyone it
-admits already changes its artifacts from its Chat; the title is no more
-protected than what it names (recorded in the PRD's decision log as open to
-the product owner's reversal). The order route kept its path, which the
-browser's `workspace` route family already forwards.
 
 ### 2026-11-07 — Document created: a Canvas is a hosted conversation with its own audience
 
 **What changed:** A Canvas has a directory row in `WorkspaceDO` (migration 139),
 keyed by the parent id of its `canvas`-kind conversation, with a participant
 list, a creator-only default, an Organization-wide option, guests invited
-through the Channel share primitive keyed by the Canvas id, and administrators
+through the share primitive keyed by the Canvas id, and administrators
 admitted to every Canvas. Its Chat is an ordinary conversation object on the
 one hosting primitive a Sidekick also uses, `HostedConversation`, and its
 artifacts are admitted to whoever opens it. `audienceAdmits` is the one rule
 under both `canvasAdmits` and `sidekickAdmits`. Each viewer's Canvas list,
 with unread, presence and pins, rides the workspace socket. A Canvas is made
-with `POST /canvases`; its Chat's publishes are its artifacts, and a Sidekick
-run publishes into a Canvas it makes or one it writes. Rally in the Chat is
-told the Canvas's artifacts, and what it learns is the Canvas's memory.
+with `POST /canvases`; its Chat's publishes are its artifacts (recorded in
+`canvas_artifacts`, migration 142), and a Sidekick run publishes into a Canvas
+it makes or one it writes. Rally in the Chat is told the Canvas's artifacts,
+and what it learns is the Canvas's memory.
+
+`PATCH /canvases/:id` retitles a Canvas for anyone it admits, and
+`PUT /workspace/pinned-order` takes `{ kind, itemIds }` and orders the
+Canvases or Sidekicks Pinned group (`reorderSidebarPins`); the Space-era
+container order and the All Pinned order it replaced went with the Channel
+routes. A Canvas is linked as `/app/<region>/<organization>/cv/<canvas>/`, and
+a notification, email or Slack message about its Chat links to the Canvas.
+`canvasSetAudience` re-checks presence inside its write, so someone the Canvas
+no longer admits leaves its face pile, and a new artifact version is announced
+to a Canvas's readers from `canvas_artifacts`.
 
 **Why:** The Canvases and Sidekicks decisions: a Canvas is identified by its
 conversation and starts empty, so it can generate many artifacts; it has its
@@ -528,6 +497,18 @@ relationship. The hosting was generalized from the Sidekick's rather than
 cloned, so the effect receipts, projections and read state have one
 implementation.
 
+Retitling is open to anyone the Canvas admits rather than only to its managers
+because anyone it admits already changes its artifacts from its Chat; the
+title is no more protected than what it names (recorded in the PRD's decision
+log as open to the product owner's reversal). The order route kept its path,
+which the browser's `workspace` route family already forwards. A Canvas
+borrowed the Thread link forms until plan step B-5, and those went with
+Threads. After the Thread server code was deleted, presence was re-checked
+only on socket changes and revocations, so a person removed from a Canvas
+stayed listed in it, and the resource-link table the version announcement read
+was written only by the retired Thread projection, so a Canvas artifact's new
+version reached nobody; the restored runtime suites showed both.
+
 **Considered and rejected:** Keying a Canvas by an artifact: an empty Canvas
 has no artifact, and a version with no maker has no provenance. Copying a
 Sidekick's audience into a new Canvas: the first build did, and also read it
@@ -535,20 +516,24 @@ live, two sources of truth that disagreed as soon as either list changed. A
 second host class cloned from `HostedSidekick`: two copies of the receipt and
 projection logic. New `canvas_*` child tables: the hosted-conversation tables
 are keyed by parent id already, and nothing that scans them across parents
-reads them without joining its own directory.
+reads them without joining its own directory. The mockup's artifact-first pane
+with Chat and Comments tabs: it would have been the one new client primitive
+of the pivot (decision log, "An open Canvas reuses the conversation layout").
 
 **Consequences:** A guest is admitted only from a list; the participant list,
 not the grant, is the authority for whom managers added; a writer Sidekick's
 audience is read live. A new hosted parent kind extends `HostedConversation`
 and is dispatched in `WorkspaceDO.hostedConversationParent`. Listing a Canvas's
-shares and grants is not routed yet.
-
-The client (plan step A-12) draws a Canvas with the conversation layout a
-Thread has: the Chat in `ConversationSurface` and the artifacts in the existing
-right rail, with its per-conversation restore, rather than the mockup's
-artifact-first pane with Chat and Comments tabs, which would have been the one
-new client primitive of the pivot (decision log, "An open Canvas reuses the
-conversation layout"). Its home page and sidebar section group the socket's
-list on the client from the row's own fields, so no list route was added.
+shares and grants has no route. The client (plan step A-12) draws a Canvas
+with the conversation layout: the Chat in `ConversationSurface` and the
+artifacts in the existing right rail, with its per-conversation restore; its
+home page and sidebar section group the socket's list on the client from the
+row's own fields, so no list route was added. No renderer code renames a
+Canvas yet, and both sidebar sections pass `reorderable={false}`, so a pin
+lands at the end of its group. Restoring someone to a Canvas's audience does
+not put them back in its face pile until their window says so.
+[`links.md`](links.md) owns the link form; a Canvas's id being its
+conversation's parent id is what lets a server mint the link from a
+conversation alone.
 
 Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.

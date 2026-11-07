@@ -33,7 +33,7 @@ verified.
 | `packages/agent-harness/src/automation-creator-tools.ts` | `sidekick_tool_test`, `customToolIdentityHash`, the buffered tests, `submit_draft`'s refusal of an untested tool, and `CUSTOM_TOOLS_GUIDE`. |
 | `packages/contracts/src/index.ts` | `SidekickCustomToolSchema`, `ToolInputObjectSchema`, `CUSTOM_TOOL_RALLY_PLUGIN_IDS`, `customTools` on the draft and the run definition. |
 | `apps/api/src/services/integrations.ts` | Registers the code plugin and a run's custom-tools plugin in `loadHarnessTools`; `findCompletedToolResult`, the one completed-receipt lookup Bind and the gateway share; attaches the gateway's host seams just before `runHarness`; the wizard's `testTool` port. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Crash repair names a program's completed nested calls in the ambiguity it records. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Crash repair names a program's completed nested calls in the ambiguity it records. |
 | `apps/api/src/env.ts`, `apps/api/wrangler.global.jsonc` | The `CODE_LOADER` Worker Loader binding. Optional: absent, neither plugin exists and the wizard has no test tool. |
 
 ## How it works
