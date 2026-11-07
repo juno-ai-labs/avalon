@@ -13,6 +13,18 @@ it. The extracted pieces below are still worth their seams (they are what a
 feed is made of), but a change to them has one caller, and a second surface is
 a thing to argue for rather than a thing to preserve.
 
+## A Canvas's Chat
+
+A Canvas's Chat is this surface with `parentKind: "canvas"` and substream
+`"0"`, opened by `screens/canvas.tsx` at `/canvases/:id`
+([`canvases.md`](canvases.md#in-the-client)). Nothing in the feed, composer,
+annotations or right rail is Canvas-specific: the artifacts the Chat publishes
+open in the inspector rail as a Thread's do, under the same per-conversation
+restore. The surface only words the Canvas as one: its opening and unavailable
+states say "Canvas", its ready state invites a request to Rally, and its
+composer reads "Ask Rally or the people here…". The header is the host's
+`renderHeader`: the Canvas's pill, the people in it now and Share.
+
 ## Sidekick navigation and attachments
 
 The main-window `/sidekicks` adapter opens the dedicated library and returns the
@@ -831,6 +843,25 @@ consume unrelated pins. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
+
+### 2026-11-07 — A Canvas's Chat and a Sidekick's shared conversation are this surface
+
+**What changed:** `ConversationSurface` hosts a Canvas's Chat
+(`parentKind: "canvas"`) under a Canvas header, with the Canvas's wording in
+its opening, unavailable and ready states and its composer placeholder.
+
+**Why:** The Canvases and Sidekicks PRD's decision that an open Canvas reuses
+the conversation layout: the Chat in the main pane, its artifacts in the
+existing right rail. A tabbed artifact-first pane would have been a second
+surface with its own composer, annotations and restore.
+
+**Considered and rejected:** A Canvas-specific feed component; everything it
+needed — the composer, annotations as comments, the rail and its restore — is
+what this surface already does for any parent.
+
+**Consequences:** A branch here that means "an ordinary Thread" still tests
+`parentKind === 'workstream'`; a Canvas falls through every Thread-only branch
+(breakouts, merge, invitations) as a Sidekick's conversation does.
 
 ### 2026-10-23 — Keep running counts through navigation, discard them on disconnect
 

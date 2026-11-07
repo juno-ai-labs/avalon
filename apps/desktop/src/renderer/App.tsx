@@ -46,6 +46,8 @@ import { BrowserImportProgress } from './lib/browser-import-progress';
 import { useOpenFirstWorkstream } from './lib/workstream-landing';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { AutomationScreen } from './screens/automation';
+import { CanvasScreen } from './screens/canvas';
+import { CanvasesHomeScreen } from './screens/canvases-home';
 import { DeepLinkErrorScreen } from './screens/deep-link-error';
 import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
 import { ErrorNotice } from './components/primitives';
@@ -423,6 +425,9 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
                 id is "new". */}
             <Route element={<Navigate replace to="/" />} path="/workstreams/new" />
             <Route element={<LoneThreadRoute />} path="/workstreams/:id" />
+            {/* Canvases (docs/canvases.md): reachable by URL ahead of the rail that lists them. */}
+            <Route element={<CanvasesHomeScreen />} path="/canvases" />
+            <Route element={<CanvasScreen />} path="/canvases/:id" />
             <Route element={<AutomationScreen />} path="/automations/:id" />
             <Route element={<SidekicksLibraryRoute />} path="/sidekicks" />
             {/* Creating a Sidekick is a member's, as in the Sidekicks window. */}
