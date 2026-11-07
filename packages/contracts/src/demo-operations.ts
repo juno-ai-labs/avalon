@@ -64,6 +64,11 @@ export type DemoOperationAbandonRequest = z.infer<typeof DemoOperationAbandonReq
 /** One thing a viewer's projection does not yet show; the wait phase's detail carries a list of these. */
 export const DemoReadinessGapSchema = z.strictObject({
   viewerUserId: IdSchema,
+  /**
+   * The pack's name for the Canvas or Sidekick the gap is about; null for the
+   * viewer's lists as a whole. Named `room` because the page reads the field
+   * by its released name, from when a pack made rooms.
+   */
   room: z.string().nullable(),
   code: z.string().min(1),
   detail: z.string(),

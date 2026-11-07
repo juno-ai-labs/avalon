@@ -53,7 +53,6 @@ import {
 } from "./demo-seeder";
 import { DEMO_TEMPLATE_WORKSPACE_ID } from "./demo-workspace-visibility";
 import { RegionalOnboardingService } from "./platform-onboarding-service";
-import { seatOrganizationMember } from "./space-bootstrap-service";
 import { workspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { retireWorkspaceGraph } from "./workspace-retirement-service";
 
@@ -864,11 +863,6 @@ async function phaseBody(
            ON CONFLICT (workspace_id, user_id) DO UPDATE SET status = 'active'`,
         ).bind(workspaceId, userId, at).run();
       }
-      // General and a Personal Channel for everyone seated, now rather than
-      // when the relationship dispatch next runs (up to the cron's interval):
-      // seeding starts next, and Ready waits on it (`compareSeating`). The
-      // presenter's were made with the workspace; this finds them present.
-      for (const userId of seated) await seatOrganizationMember(env, workspaceId, userId);
       const people = [...seated];
       await (await durableObjectStubForWorkspace(
         env,
