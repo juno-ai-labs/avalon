@@ -38,6 +38,7 @@ const CHANNEL = "00000000-0000-7000-8000-00000000b714";
 const CANVAS = "00000000-0000-7000-8000-00000000b715";
 const SIDEKICK = "00000000-0000-7000-8000-00000000b716";
 const OPERATOR = { subject: "access-engineer", email: "engineer@example.com", audience: "engineering-mcp" };
+const RESOURCE = "00000000-0000-7000-8000-00000000b717";
 const AT = Date.parse("2026-11-07T09:00:00.000Z");
 
 function bridge(): EngineeringInspectionBridge {
@@ -108,6 +109,11 @@ async function seedOrganization(): Promise<void> {
        VALUES (?, ?, ?, 1, 'h', 'active', 'workspace', NULL, 'Nightly', '', NULL, 0)`,
       SIDEKICK, WORKSPACE_ID, USER_ID,
     );
+    // Made in a Thread, kept after it: resources outlive the conversation that made them.
+    state.storage.sql.exec(`INSERT INTO resources (id, workspace_id, resource_type, provider, title, mime_type,
+        metadata_json, uploaded_by_user_id, attachment_status, created_at, updated_at)
+      VALUES (?, ?, 'document', 'avalon_upload', 'launch.md', 'text/markdown', '{}', ?, 'attached',
+        '2026-11-07T09:00:00.000Z', '2026-11-07T09:00:00.000Z')`, RESOURCE, WORKSPACE_ID, USER_ID);
   });
   await seedConversation(THREAD_A, "workstream", "0", ["Ship it Friday?", "Friday works."]);
   await seedConversation(THREAD_A, "workstream", BREAKOUT, ["Draft the post."]);
@@ -188,5 +194,71 @@ describe("dump_thread_transcripts", () => {
       { orgId: WORKSPACE_ID, confirm: "00000000-0000-7000-8000-00000000b7ff" }, OPERATOR,
     )).rejects.toThrow("engineering_operation_failed:thread_retirement_unconfirmed");
     expect(await dumpedKeys()).toEqual([]);
+  });
+});
+
+/** What is left of each seeded thing after a pass, read from the objects themselves. */
+async function survivors() {
+  const rows = await runInDurableObject(organization(), (_instance, state) => {
+    const count = (statement: string, ...bindings: string[]) =>
+      state.storage.sql.exec<{ count: number }>(statement, ...bindings).one().count;
+    const ids = [THREAD_A, THREAD_B, CHANNEL];
+    return {
+      threads: count("SELECT COUNT(*) AS count FROM channels"),
+      channel: count("SELECT COUNT(*) AS count FROM spaces WHERE space_id = ?", CHANNEL),
+      parentState: count(`SELECT (SELECT COUNT(*) FROM parent_metadata WHERE parent_id IN (?, ?, ?))
+        + (SELECT COUNT(*) FROM parent_children WHERE parent_id IN (?, ?, ?)) AS count`, ...ids, ...ids),
+      canvas: count("SELECT COUNT(*) AS count FROM canvas_directory WHERE canvas_id = ?", CANVAS),
+      sidekick: count("SELECT COUNT(*) AS count FROM automation_directory WHERE automation_id = ?", SIDEKICK),
+      resource: count("SELECT COUNT(*) AS count FROM resources WHERE id = ?", RESOURCE),
+    };
+  });
+  const retired = async (parentId: string, substreamId = "0") =>
+    (await (await conversation(parentId, substreamId)).objectRetirementState()).retired;
+  return {
+    ...rows,
+    retired: {
+      threadA: await retired(THREAD_A), breakout: await retired(THREAD_A, BREAKOUT),
+      threadB: await retired(THREAD_B), channel: await retired(CHANNEL), canvas: await retired(CANVAS),
+    },
+  };
+}
+
+describe("retire_threads", () => {
+  it("is refused before the dump, and touches nothing", async () => {
+    await expect(bridge().retireThreads({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR))
+      .rejects.toThrow("engineering_operation_failed:thread_retirement_dump_incomplete");
+    expect(await survivors()).toEqual({
+      threads: 2, channel: 1, parentState: 7, canvas: 1, sidekick: 1, resource: 1,
+      retired: { threadA: false, breakout: false, threadB: false, channel: false, canvas: false },
+    });
+  });
+
+  it("after the dump, retires every Thread, Breakout and Channel conversation and deletes their rows, leaving Canvases, Sidekicks and resources", async () => {
+    const general = await otherSpaceIds();
+    await bridge().dumpThreadTranscripts({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR);
+
+    const result = await bridge().retireThreads({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR);
+
+    expect(result).toMatchObject({ region: "global", orgId: WORKSPACE_ID, failed: [] });
+    expect(result.retiredParents).toBe(3 + general.length);
+    expect(result.retiredConversations).toBe(4 + general.length);
+    expect(await survivors()).toEqual({
+      threads: 0, channel: 0, parentState: 0, canvas: 1, sidekick: 1, resource: 1,
+      retired: { threadA: true, breakout: true, threadB: true, channel: true, canvas: false },
+    });
+    // The dump is still the copy.
+    expect(await dumpedText(THREAD_B)).toBe("Test user · 2026-11-07T09:00:00.000Z\nTwo offers out.");
+  });
+
+  it("is a no-op on a rerun", async () => {
+    await bridge().dumpThreadTranscripts({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR);
+    await bridge().retireThreads({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR);
+    const first = await (await conversation(THREAD_A)).objectRetirementState();
+
+    const rerun = await bridge().retireThreads({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR);
+
+    expect(rerun).toMatchObject({ parents: 0, conversations: 0, retiredParents: 0, retiredConversations: 0, failed: [] });
+    expect((await (await conversation(THREAD_A)).objectRetirementState()).retiredAt).toBe(first.retiredAt);
   });
 });
