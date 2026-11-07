@@ -28,18 +28,18 @@ export function cookieClientSession(region: string, session: BrowserSession): Co
  * desktop's own deep links set. Returns null when the path needs no rewrite.
  */
 export function shellLocation(pathname: string, hash: string): string | null {
+  // A conversation link names a Canvas now (Threads, Channels and Breakouts
+  // are gone from the client), so it opens the Canvas, and a Channel's link
+  // opens the Canvases home. The Breakout and artifact in a link are dropped:
+  // the Canvas opens its newest artifact itself.
   const workstream = parseWorkstreamLinkPathTarget(pathname);
   if (workstream?.region && workstream.workspaceId) {
-    const query = new URLSearchParams();
-    if (workstream.substreamId) query.set("substream", workstream.substreamId);
-    if ("spaceId" in workstream && workstream.spaceId) query.set("space", workstream.spaceId);
-    if ("artifactId" in workstream && workstream.artifactId) query.set("artifact", workstream.artifactId);
-    return `/app/workspaces/${workstream.region}/${workstream.workspaceId}#/workstreams/${workstream.workstreamId}${query.size ? `?${query}` : ""}`;
+    return `/app/workspaces/${workstream.region}/${workstream.workspaceId}#/canvases/${workstream.workstreamId}`;
   }
   const space = parseSpaceLinkPathTarget(pathname);
-  if (space) return `/app/workspaces/${space.region}/${space.workspaceId}#/spaces/${space.spaceId}`;
+  if (space) return `/app/workspaces/${space.region}/${space.workspaceId}#/canvases`;
   const sidekick = parseSidekickLinkPathTarget(pathname);
-  if (sidekick) return `/app/workspaces/${sidekick.region}/${sidekick.workspaceId}#/automations/${sidekick.sidekickId}`;
+  if (sidekick) return `/app/workspaces/${sidekick.region}/${sidekick.workspaceId}#/sidekicks/${sidekick.sidekickId}`;
   const workspace = /^\/app\/workspaces\/[^/]+\/[^/]+\/?$/u.test(pathname);
   return workspace && !hash ? `${pathname.replace(/\/$/u, "")}#/` : null;
 }
