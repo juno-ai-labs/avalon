@@ -44,15 +44,13 @@ the identity migration, with no feature flag.
 The journey owns setup stage and revision. Creators proceed through personal
 appearance, then invitations; members finish after personal appearance.
 Finishing saves `complete` and then leaves for the Canvases home through
-`useOpenLanding`, replacing the journey's entry. No workstream or
+`useOpenLanding`, replacing the journey's entry. No Canvas, conversation or
 agent run is created by onboarding. The unshipped starter columns and removed first-task stages are not part of the schema.
 
-Joining an organization, as its creator or an invited member, still makes the
-person a participant of General and gives them their own Personal Channel on
-the server; see [the Personal Channel](spaces.md#the-personal-channel). No
-client opens either any more: the journey ends on the Canvases home, whose
-empty state is **Start from a prompt**. Retiring the seating is the server
-half of the Canvases pivot.
+Joining an organization, as its creator or an invited member, seats the person
+nowhere: General and the Personal Channel went with Channels. The journey ends
+on the Canvases home, whose empty state is **Start from a prompt**, and a
+person's first Canvas is the one they start there.
 
 Creating an organization prefills its name. `GET /onboarding/organization-suggestion`
 takes the domain of the signed-in person's email and fetches `https://<domain>/`,
@@ -163,21 +161,24 @@ Onboarding no longer starts an agent run or a connector authorization.
 
 ## Changelog
 
-### 2026-11-07 — Finishing onboarding lands on the Canvases home
+### 2026-11-07 — Onboarding lands on the Canvases home and seats nobody
 
 **What changed:** Finishing the journey replaces it with the Canvases home
 (`useOpenLanding`, `LANDING_ROUTE`), whose empty state offers **Start from a
 prompt**, rather than the landing that opened a Channel. No journey step names
-a Channel. The server still seats the person in General and a Personal
-Channel.
+a Channel, and joining an organization no longer seats the person in General
+or gives them a Personal Channel.
 
-**Why:** The client pivot to Canvases and Sidekicks removed the Channel and
-Thread screens, so the old landing had nothing left to open; a new person's
-first useful act is starting a Canvas.
+**Why:** Plan step B-13 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+the Channel and Thread screens are deleted, so the old landing had nothing
+left to open, and a new person's first useful act is starting a Canvas. With
+no client to show them, General and the Personal Channel would have cost a
+Thread per member for nothing.
 
-**Consequences:** General and the Personal Channel are created for every new
-member and shown nowhere. Stopping that is the server's change, and until it
-lands the seating's cost (a Thread per member) remains.
+**Consequences:** A new member's sidebar is empty until they start a Canvas or
+are added to one; the Canvases empty state is the whole first-run surface, so
+a change to it is a change to onboarding.
 
 ### 2026-10-24 — Share the invite field with the account menu
 

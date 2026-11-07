@@ -223,7 +223,7 @@ Historical sites read frozen manifest assets without running the old worker.
 ## Draft restoration and new revisions
 
 Confirmed comments restore into their originating conversation, including its
-breakout identity. The cache preserves original evidence and a separately resolved
+substream. The cache preserves original evidence and a separately resolved
 annotation. The provider checks restored selections, visible artifact revision
 changes, window focus, and submission against the latest resource revision.
 

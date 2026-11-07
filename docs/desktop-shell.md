@@ -187,11 +187,12 @@ levels; reduced motion turns that off.
   export inside the pop-out menu; the preview stays mounted behind it.
   Comment mode, Expand/Collapse, and Close remain in the header. Shared title-menu action,
   navigation, and switch rows align their icons and labels consistently; compact
-  resource and breakout lists retain their own sizing.
-  Rename, navigation links, and pinning need an artifact in the thread's Main;
-  navigation links also need a Channel placement. Detached windows use their
-  saved Main thread eligibility and conversation context for these actions and retain their annotation
-  draft when opening menus. Rename uses
+  resource lists retain their own sizing.
+  Rename is offered on a generated artifact. The detached window offers rename,
+  copy link, archive and pinning only when it was opened as editable from a
+  conversation's Main (`"0"`); it uses that saved eligibility and conversation
+  context for these actions and retains its annotation draft when opening
+  menus. Rename uses
   `PATCH /conversations/:parentId/resources/:resourceId`. Download reads original
   bytes separately from readable previews, including files without a preview.
 
@@ -286,16 +287,23 @@ It does not own:
 
 ## Changelog
 
-### 2026-11-07 — The Channel, Thread and Breakout screens are deleted; the pane stack and attention menu are retired
+### 2026-11-07 — The shell becomes Canvases and Sidekicks; Channels, Threads and Breakouts are deleted
 
-**What changed:** The Channel screen (`screens/channel.tsx`), the Thread
-screen (`screens/workstream.tsx`), the Breakout launch surface, the old
-landing (`lib/workstream-landing.ts`), the Thread directory and its caches
-(`use-workstreams-query.ts`, `workstream-state-store.ts`,
-`channel-viewer-state.ts`, `channel-rails.ts`, `conversation-directory.ts`,
-`workspace-directory-cache.ts`), the Thread socket pool, the access-request
-dialog, the attention ranking behind the Threads count, and the Channel and
-Space places in search are deleted. The workspace socket no longer applies
+**What changed:** The rail lists two sections, Canvases and Sidekicks, with
+Settings at the bottom; `SidebarSection` is `'canvases' | 'sidekicks'` and a
+section stored before the cutover reads as Canvases. Their lists reuse the
+section switcher, the row primitives and the badge record. The landing opens
+the restorable `last-route` or `/canvases`, replacing the Channel fallback
+chain (pinned Channel, General, A–Z); `last-route` is written only for Canvas
+and Sidekick routes, and the Channel, Space, Thread, Project, Activity and
+Artifacts routes redirect to `/canvases`. The open Canvas is the shell's
+foreground conversation for presence. The phone row's More tab
+(`MoreSections`, `PHONE_RAIL_SECTIONS`) is gone. The Channel screen, the Thread
+screen, the Breakout launch surface, the old landing
+(`lib/workstream-landing.ts`), the Thread directory and its caches, the Thread
+socket pool, the access-request dialog, the attention ranking behind the
+Threads count, the per-device Thread and Channel sorts, and the Channel and
+Space places in search are deleted, and the workspace socket no longer applies
 Space snapshots, Thread pages, recency, state or rail frames, access requests
 or Space nudges. **`pane-stack.md` is retired**: it described the stack a
 Channel, a thread, a breakout and a panel formed, two on screen with the rest
@@ -303,74 +311,37 @@ as breadcrumbs; what survives of it is the right panel expanding over its
 conversation (`usePaneExpansion`, `expandToggle`, now in
 `lib/navigation-routes.ts`). **`attention-menu.md` is retired**: it kept what
 counted as needing attention (`attentionItems`) for the Threads count and the
-dock badge, and both now count the Canvases and Sidekicks lists
-(`useSectionCounts`, by the predicates in `common/sidebar-attention.ts`
-that the menu bar shares); the dock badge is the rail's counts added up. A search
-result opens its Canvas on the turn it names.
+dock badge; both now count the Canvases and Sidekicks lists
+(`useSectionCounts`, by the predicates in `common/sidebar-attention.ts` that
+the menu bar shares), and the dock badge is the rail's counts added up. A
+search result opens its Canvas on the turn it names.
 
-**Why:** Plan step B-3 of the
+**Why:** Plan steps A-14, B-1 and B-3 of the
 [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-Channels, Threads and Breakouts are deleted (decision log, 2026-11-06), and
-their screens were unreachable after B-1. Both documents described mechanisms
-that no longer have code; their decisions are summarised here so the reasoning
-is not lost.
+Threads, Breakouts and Channels are deleted (decision log, 2026-11-06), and the
+PRD's rail is Canvases, Sidekicks, then Settings. The new sections landed first
+as sections reachable by URL beside the untouched old shell, so the cutover was
+a switch of which sections the rail lists rather than new work. Redirecting
+removed routes to `/canvases`, as `/projects/*` already went to the landing,
+keeps every stored route and old link landing somewhere real. The More tab
+existed only because five sections did not fit a phone row with Settings; with
+two it can never fold. The app shell named only an open Thread as the
+foreground conversation, so a Canvas's face pile never saw anyone; a Canvas id
+is a conversation-parent id, so the same field carries it. Both retired
+documents described mechanisms that no longer have code; their decisions are
+summarised here so the reasoning is not lost.
+
+**Considered and rejected:** A second sidebar for the new sections. The
+existing switcher, row primitives and badge record already did what the two
+lists need.
 
 **Consequences:** A server mid-deployment still sends the Thread and Space
 frames; the socket ignores a type it no longer reads, as it does any unknown
-type. Opening a second pane beside a conversation would have to be built again
-rather than restored.
-
-### 2026-11-07 — The rail becomes Canvases and Sidekicks
-
-**What changed:** The rail lists two sections, Canvases and Sidekicks, with
-Settings at the bottom as before; `SidebarSection` is `'canvases' |
-'sidekicks'` and a section stored before the cutover reads as Canvases. The
-phone row's More tab (`MoreSections`, `PHONE_RAIL_SECTIONS`) is gone: two
-sections always fit. The landing opens the restorable `last-route` or
-`/canvases`, replacing the Channel fallback chain (pinned Channel, General,
-A–Z); `last-route` is written only for Canvas and Sidekick routes. The
-Channel, Space, Thread, Project, Activity and Artifacts routes redirect to
-`/canvases`. The Pinned, Channels, Threads, Activity and Artifacts section
-bodies are deleted from `navigation-sidebar.tsx` with the per-device thread
-and Channel sorts. The open Canvas is the shell's foreground conversation for
-presence. This document is rewritten as the two-section shell.
-
-**Why:** Plan step B-1 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-Threads, Breakouts and Channels are deleted (decision log, 2026-11-06), and the
-PRD's rail is Canvases, Sidekicks, then Settings. Redirecting removed routes to
-`/canvases`, as `/projects/*` already went to the landing, keeps every stored
-route and old link landing somewhere real. The More tab existed only because
-five sections did not fit a phone row with Settings; with two it can never
-fold, so keeping it would be dead code. The app shell named only an open Thread
-as the foreground conversation, so a Canvas's face pile never saw anyone; a
-Canvas id is a conversation-parent id, so the same field carries it.
-
-**Consequences:** The screens and modules only the removed sections reached
-(the Channel and Thread screens, the old landing, the Activity and Pinned
-helpers) are unreachable after this change and are deleted in plan step B-3;
-until then they still compile. Adding a third section is a `SECTIONS` entry and
-a `SidebarSection` value; if a phone row ever overflows again, the fold has to
-be rebuilt rather than restored.
-
-### 2026-11-07 — Canvases and Sidekicks as sidebar sections the rail can switch to
-
-**What changed:** `SidebarSection` gains `canvases` and `sidekicks`, whose
-bodies are the Canvases and Sidekicks lists, with New Canvas or New Sidekick
-and Search organization as their actions and their unread counts wired into the
-section badges. No rail tile selects them yet. The Canvases and Sidekicks
-screens render in the main window.
-
-**Why:** The product pivots to Canvases and Sidekicks
-([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)), and its plan lands the
-new surfaces reachable by URL beside the untouched old shell so the cutover
-(B-1) is a switch of which sections the rail lists rather than new work. The
-sections reuse the existing section switcher, row primitives and badge record
-instead of a second sidebar.
-
-**Consequences:** B-1 only has to put the two sections in `SECTIONS` and the
-phone row and drop the old ones. The saved `rally.sidebar-section` may already
-read `canvases` or `sidekicks`, so the preference's allowed list must keep them.
+type. The saved `rally.sidebar-section` may read `canvases` or `sidekicks`, so
+the preference's allowed list must keep them. Adding a third section is a
+`SECTIONS` entry and a `SidebarSection` value; if a phone row ever overflows
+again, the fold has to be rebuilt rather than restored, and opening a second
+pane beside a conversation would likewise have to be built again.
 
 ### 2026-10-21 — Keep artifacts directly discoverable in thread menus
 
