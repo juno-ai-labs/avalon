@@ -135,7 +135,14 @@ parent conversation no longer exists: the API logs
 **Rally is opening this organization**, and a Channel shows **Channel could not
 be opened**. The desktop client drifts with it: its stored session names an
 account in the old database (`account_reconnect_required`) and its caches still
-list the old Channels. Reset both at once:
+list the old Channels. A stack seeded before the seed made Canvases has the same
+drift under a new symptom: the seeded **Q4 revenue review** Canvas stays on
+**Connecting**, and the API answers `409 conversation_parent_kind_retired:workstream`,
+because id `…0020` was a seeded work stream then and its conversation object
+still holds that parent; bootstrapping the Canvas finds the object already
+rooted and keeps it. A fresh seed roots both Canvases as `canvas`. The client's
+stored route can likewise name a Sidekick the new database never made
+(**Sidekick could not be opened**). Reset both at once:
 
 ```bash
 pnpm dev:reset          # stop `pnpm dev` and quit Rally Development first
