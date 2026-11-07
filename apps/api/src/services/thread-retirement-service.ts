@@ -155,6 +155,9 @@ export async function retireThreads(
     }
   }
   if (undumped > 0) {
+    logWarn(env, "thread_retirement_dump_incomplete", {
+      workspace_id: workspaceId, operation_id: input.operationId, undumped,
+    });
     throw new ApiError(409, "thread_retirement_dump_incomplete",
       `${undumped} conversations have no transcript dump; run dump_thread_transcripts until nothing fails`);
   }
