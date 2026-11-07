@@ -1447,8 +1447,6 @@ or a log-based handoff a persistent credential in observability.*
 
 **Every rotation goes through the host, proactive and reactive alike.** A rotating refresh token is single-use, so two calls that refresh at the same moment leave the loser marking a connection `needs_reconnect` that its sibling had just rotated successfully. Use `withProviderReauthorization` on the rejection route and `refreshExpiringCredentials` on the near-expiry route; neither redeems a token beside the coordinator.
 
-**Say where the things you produce live.** A work stream that exists because of a place in a connected tool attaches that place, and the connector is the only thing that knows what the place is. Every adapter gets this for its activities without writing code — `connectorOriginFromActivity` reads the object normalization already recorded — so implement `ConnectorAdapter.origin` only for a place no activity describes, such as a provider-hosted agent session, or when the activity's own object is not the place a person would want to be sent back to. A described `resourceType` must be one the manifest declares in `resourceTypes`, and `describeConnectorOrigin` refuses one that is not: a typo there forks the resource identity for every work stream started from that place afterwards, and nothing downstream would notice. See [work-stream origin attachments](workstream-origin-attachments.md).
-
 **A work stream started from a conversation is that conversation's, not one member's.** Its visibility is the conversation's own — public for a public channel, private for anything else, including anything the connector could not classify — and a private one's participants are that conversation's members. Anybody in the conversation may continue it, and a member who arrives later is seated by their own message. *A Slack thread used to belong to whichever member happened to be linked first, and every other person in the channel — the workspace owner included — was answered with "this thread is already running with another Rally member's personal authority", in a public channel, in front of everyone.*
 
 **Authority is resolved per message, and only an account link grants it.** A run spends personal connectors, memory, and approvals made in somebody's name, so it may run as a member only where that member has authenticated to Rally and bound their provider identity to it. A `verified_email` match credits and seats somebody; it never authorizes a run as them, and a connector must not promote it to one because it makes a thread work more smoothly.
@@ -1686,6 +1684,26 @@ interruption, so it stays unresolved instead of risking a second event. Old
 creates without a recorded provider key cannot use this recovery path.
 
 ## Changelog
+
+### 2026-11-07 — The origin capability is deleted
+
+**What changed:** `ConnectorAdapter.origin`, `describeConnectorOrigin`,
+`connectorOriginFromActivity`, `connectorOriginUrl`, the origin locator and
+source types, the `origin_describe`/`origin_url_resolve` observations and
+Slack's origin source are deleted, with the "say where the things you produce
+live" rule.
+
+**Why:** Plan step B-8 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
+Only a Thread recorded the place it started from, and plan step C-2 deleted
+every host path that asked; [`workstream-origin-attachments.md`](workstream-origin-attachments.md)
+has the history.
+
+**Considered and rejected:** Keeping the capability for a later Sidekick
+"started from" link: a Sidekick run's trigger event already names the provider
+object, so that link would read the event, not a second description.
+
+**Consequences:** An adapter no longer has an origin obligation, and the
+manifest check on a described `resourceType` went with it.
 
 ### 2026-10-22 — Report shortened Sheets cell text
 

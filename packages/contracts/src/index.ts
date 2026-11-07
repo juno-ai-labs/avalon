@@ -2759,26 +2759,6 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
  */
 export const ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY = "_streamNotDigestible";
 
-/**
- * A place inside a provider that a work stream can be started from — a Slack
- * thread, a Linear issue, a GitHub pull request.
- *
- * This is the connector half of a work stream's origin attachment, and it
- * deliberately names no connection and no provider: a connector knows *which
- * object*, and only the host knows which installed credential it was reached
- * through. Keeping those apart is what stops an adapter from being able to
- * describe an origin against somebody else's connection.
- * See `docs/workstream-origin-attachments.md`.
- */
-export const ConnectorOriginResourceSchema = z.strictObject({
-  /** Must be one the connector's manifest declares in `resourceTypes`. */
-  resourceType: z.string().min(1).max(80),
-  providerResourceId: z.string().min(1).max(500),
-  title: z.string().min(1).max(300),
-  canonicalUrl: HttpUrlSchema.nullable().default(null),
-  metadata: z.record(z.string(), z.unknown()).default({}),
-});
-
 export const NormalizedActivitySchema = z.object({
   id: IdSchema,
   workspaceId: IdSchema,
@@ -3558,8 +3538,6 @@ export type WorkstreamMessageAdmissionReceipt = z.infer<typeof WorkstreamMessage
 export type ActiveStreamCheckpoint = z.infer<typeof ActiveStreamCheckpointSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
 export type NormalizedActivity = z.infer<typeof NormalizedActivitySchema>;
-export type ConnectorOriginResource = z.infer<typeof ConnectorOriginResourceSchema>;
-export type ConnectorOriginResourceInput = z.input<typeof ConnectorOriginResourceSchema>;
 export type ActivityQueueMessage = z.infer<typeof ActivityQueueMessageSchema>;
 export type SlackIngressQueueMessage = z.infer<typeof SlackIngressQueueMessageSchema>;
 export type ExecutionPrincipal = z.infer<typeof ExecutionPrincipalSchema>;
