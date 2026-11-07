@@ -5,9 +5,9 @@ through the `FLAGS` binding on configured regional Workers. The binding owns two
 things: which OpenRouter model each agent runs on, and which client-visible
 features the desktop is allowed to offer. Read this document before adding a
 flag, changing an agent's models, or changing what happens when a flag cannot be
-evaluated. One thing overrides a flag rather than being one — a conversation,
-a work stream or a substream alike, pinned to a single model — and it has [its
-own section](#a-conversations-own-model) below.
+evaluated. One thing overrides a flag rather than being one — a conversation
+pinned to a single model, which today means a Sidekick's pin copied onto each
+of its runs — and it has [its own section](#a-conversations-own-model) below.
 
 ## Where the code lives
 
@@ -174,21 +174,16 @@ the conversation is created, and not something to stage a rollout for. Precedenc
 follows from that: a rollout reaching the workspace must not quietly take the
 pinned conversation with it.
 
-**The row a run reads is its own, not its parent's.** A work stream's main
-conversation and each of its substreams is a separate object with a separate
-`model_override`, and routing resolves the one the run is executing in. So a
-substream is pinned by being created pinned, and a substream that names nothing
-follows the flag even inside a pinned work stream. Nothing copies a pin
-downward: making a child inherit its parent's would move every substream of
-every pinned work stream onto that model, none of which was chosen, and would
-make the selector's **Default** entry — which says it follows the flag — untrue
-in exactly the case somebody is looking at it.
+**The row a run reads is its own, not its parent's.** Each conversation is a
+separate object with a separate `model_override`, and routing resolves the one
+the run is executing in. Nothing copies a pin from a parent to a child
+implicitly: that would move conversations onto a model nobody chose, and make
+the selector's **Default** entry — which says it follows the flag — untrue in
+exactly the case somebody is looking at it.
 
-A pin comes from one place — the model selector in the composers that start work,
-which appears only while Application → Developer → **Debug enabled** is on. A new
-work stream carries the choice directly, and so does a new substream, through
-`POST …/substreams/confirm`; `substream-creation.md` (retired)
-owns that half. An automation's pin is the
+A Canvas is created unpinned (`createCanvas` writes `modelOverride: null`); the
+Thread and Breakout composers that used to carry a pin from the developer model
+selector are retired with them. An automation's pin is the
 `model_override` column on its `automation_directory` row; there is exactly one path
 that creates a run, `provisionSidekickRun`, which serves manual,
 scheduled, connector-event, and inbound-email triggers alike, and it copies

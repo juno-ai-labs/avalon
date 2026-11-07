@@ -31,7 +31,7 @@ necessarily keeps apart.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `inDurableObjectPhase`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place a Rally identifier becomes an attribute name. |
-| `apps/api/src/routes/canvases.ts`, `routes/conversations.ts` | Root spans for Canvas creation and conversation open/message flows. |
+| `apps/api/src/routes/conversations.ts` | Root spans for conversation open and message flows. `routes/canvases.ts` opens none. |
 | `apps/api/src/services/socket-service.ts` | `SocketService.upgrade`: the edge half of a socket open. |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | `AgentLoopDO`, the room: product operations, socket acceptance, subscription, snapshot assembly. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Workspace synchronization and the released-client compatibility handler for the former parent-routed `create_message`. |
