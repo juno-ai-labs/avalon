@@ -9,10 +9,7 @@ import type { z } from "zod";
 import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
 type LocalOnlyTranscriptOperation =
-  | "captureSubstreamContext"
-  | "installInitialContext"
   | "prepareParticipantMessage"
-  | "prepareConversation"
   // Authenticated product operations resolve immutable human provenance and
   // join the object transaction locally; no generic RPC may impersonate one.
   | "appendParticipantMessage"
@@ -70,7 +67,6 @@ export type TranscriptOperation = Exclude<keyof WorkstreamTranscriptStorage, Loc
 export type TranscriptObjectPort = ObjectPortOf<Pick<WorkstreamTranscriptStorage, TranscriptOperation>>;
 
 const DISPATCHED_OPERATIONS = [
-  "initialContext",
   "commitBindCompaction",
   "compactionCheckpoint",
   "recordProviderBoundary",

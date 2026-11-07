@@ -61,7 +61,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 84;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 85;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3811,6 +3811,22 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `DROP TABLE imported_session_sources`,
       `DROP TABLE imported_session_messages`,
       `DROP TABLE imported_session_update_receipts`,
+    ],
+  },
+  {
+    version: 85,
+    description: "drop a Breakout's context capture, inherited context and parent-owned mirrors",
+    // A Breakout froze its parent's transcript into `substream_context_captures`
+    // and started from `substream_initial_context` (version 40); a private
+    // child mirrored its parent's roster and archive versions (versions 41 and
+    // 50). Breakouts are deleted (plan step C-3). Dropping the membership
+    // mirror drops version 21's three authorization triggers on it with it;
+    // nothing else references these tables.
+    statements: [
+      `DROP TABLE substream_context_captures`,
+      `DROP TABLE substream_initial_context`,
+      `DROP TABLE private_child_membership_authority`,
+      `DROP TABLE private_child_lifecycle_authority`,
     ],
   },
 ];

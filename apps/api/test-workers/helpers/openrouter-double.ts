@@ -58,8 +58,13 @@ export interface ProviderCall {
  * last user message reads that instead of what was asked.
  */
 export function memberInputs(call: Pick<ProviderCall, "messages">): ProviderCall["messages"] {
-  return call.messages.filter((message) => message.role === "user"
-    && !(typeof message.content === "string" && message.content.startsWith("CANVAS CONTEXT (host-provided):")));
+  return call.messages.filter(isMemberInput);
+}
+
+/** Whether one provider message is a person's or a peer's input, not the host's appended context. */
+export function isMemberInput(message: { role?: unknown; content?: unknown }): boolean {
+  return message.role === "user"
+    && !(typeof message.content === "string" && message.content.startsWith("CANVAS CONTEXT (host-provided):"));
 }
 
 /**

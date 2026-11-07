@@ -278,7 +278,6 @@ import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { sidekickDelegationTools, sidekickDelegationGuidance } from "./sidekick-delegation-tools";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
-import { renderSubstreamInitialContext } from "./substream-initial-context";
 import type { TranscriptObjectPort } from "../durable-objects/workstream-transcript-protocol";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
@@ -3065,12 +3064,8 @@ export async function runWorkstreamHarness(
     undefined,
     input.substreamId ?? "0",
   );
-  const [initialContext, storedMessages] = await Promise.all([
-    requiresCanonicalBootstrap && priorCompaction === null
-      ? orderedTranscript.initialContext()
-      : Promise.resolve(null),
-    requiresCanonicalBootstrap
-      ? loadTriggerFencedTranscriptMessages(
+  const storedMessages = requiresCanonicalBootstrap
+      ? await loadTriggerFencedTranscriptMessages(
         transcript,
         input,
         // The transcript comes from the object rather than from a routed reader
@@ -3083,14 +3078,12 @@ export async function runWorkstreamHarness(
         ),
         priorCompaction?.compactedThroughSequence ?? -1,
       )
-      : Promise.resolve([]),
-  ]);
+      : [];
   const transcriptProjection = requiresCanonicalBootstrap
     ? await projectModelProtocolTranscript(env, input, storedMessages)
     : { messages: [], issues: [] };
   const transcriptBootstrapMs = Date.now() - transcriptBootstrapStartedAtMs;
   const rawModelMessages = [
-    ...renderSubstreamInitialContext(initialContext),
     ...(priorCompaction?.messages ?? []),
     ...transcriptProjection.messages,
   ];

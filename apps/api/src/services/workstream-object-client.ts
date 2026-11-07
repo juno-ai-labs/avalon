@@ -324,10 +324,8 @@ export class WorkstreamObjectClient {
   }
 
   /** Seat a reader through the conversation that owns the roster. */
-  async addParticipant(userId: string, options: { operationId?: string } = {}):
-  Promise<WorkstreamDetail["participants"][number]> {
-    return ParticipantSchema.parse(await this.request({ operation: "add_participant", userId,
-      operationId: options.operationId ?? uuidV7() }));
+  async addParticipant(userId: string): Promise<WorkstreamDetail["participants"][number]> {
+    return ParticipantSchema.parse(await this.request({ operation: "add_participant", userId }));
   }
 
   async removeParticipant(userId: string, options: { operationId?: string; owningThread?: boolean } = {}): Promise<void> {
