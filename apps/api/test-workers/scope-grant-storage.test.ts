@@ -132,7 +132,7 @@ describe("workstream scope grants in real workerd", () => {
 
   it("given a migrated Channel, when a reader is added through the participant path, then the grant is direct and reaches the candidate index", async () => {
     // The whole authority, not the storage class: `mutateParticipantGrant` is
-    // the method `substream-agent.ts` calls for every add on a Channel that
+    // the method `agent-loop-do.ts` calls for every add on a Channel that
     // has moved to grant authority. A Space grants no reader, so every add is
     // the Channel's own and is published like a direct share.
     const readerId = asUserId("00000000-0000-4000-8000-000000000007");

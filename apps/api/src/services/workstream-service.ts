@@ -25,7 +25,7 @@ import type {
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
-import { conversationObjectName } from "../durable-objects/substream-agent";
+import { conversationObjectName } from "../durable-objects/agent-loop-do";
 import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
 import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError } from "../lib/api-error";
@@ -997,7 +997,7 @@ export class WorkstreamService {
   /**
    * Resolve WorkspaceDO-owned provenance before initialize starts the first run.
    *
-   * SubstreamAgent enqueues the Workflow inside the initialize RPC, so attaching
+   * AgentLoopDO enqueues the Workflow inside the initialize RPC, so attaching
    * these after creation would race the run's first context read. WorkspaceDO
    * returns only roots visible to this member; this second check deliberately
    * keeps restricted connector objects out of a workspace-visible resource list.

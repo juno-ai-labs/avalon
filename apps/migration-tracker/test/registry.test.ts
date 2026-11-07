@@ -41,7 +41,7 @@ function report(overrides: Partial<DurableObjectMigrationReport> = {}): DurableO
     reportId: nextReportId(),
     objectId: objectId("a"),
     objectName: `global:${WORKSPACE_ID}:${WORKSTREAM_ID}`,
-    className: "SubstreamAgent",
+    className: "AgentLoopDO",
     component: "substream_agent_do",
     region: "global",
     appEnv: "production",
@@ -97,7 +97,7 @@ function rewindToLegacyComponent(state: DurableObjectState): void {
 function migrationRun(overrides: Partial<MigrationRun> = {}): MigrationRun {
   return {
     runId: nextReportId(),
-    className: "SubstreamAgent",
+    className: "AgentLoopDO",
     region: null,
     requestedBy: "operator@example.test",
     requestedAt: 1_700_000_000_000,
@@ -248,7 +248,7 @@ describe("recordSweep", () => {
         namespaces: [{
           namespaceId: "ns-1",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [
             { objectId: objectId("c"), hasStoredData: true },
@@ -281,7 +281,7 @@ describe("recordSweep", () => {
         namespaces: [{
           namespaceId: "ns-1",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [{
             objectId: objectId("a"),
@@ -308,7 +308,7 @@ describe("recordSweep", () => {
         namespaces: [{
           namespaceId: "ns-global",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [{ objectId: objectId("a"), hasStoredData: false }],
         }],
@@ -319,7 +319,7 @@ describe("recordSweep", () => {
         detail: registry.objectDetail(objectId("a")),
         namespace: registry.overview().namespaces[0],
         components: registry.forceableComponents(),
-        selection: registry.migrationTargets({ className: "SubstreamAgent" }),
+        selection: registry.migrationTargets({ className: "AgentLoopDO" }),
       };
     });
 
@@ -339,7 +339,7 @@ describe("recordSweep", () => {
         namespaces: [{
           namespaceId: "ns-1",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [{ objectId: objectId("a"), hasStoredData: false }],
         }],
@@ -364,7 +364,7 @@ describe("recordSweep", () => {
         namespaces: [{
           namespaceId: "ns-1",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [{
             objectId: objectId("a"),
@@ -392,7 +392,7 @@ describe("recordSweep", () => {
         namespaces: [{
           namespaceId: "ns-1",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [{ objectId: objectId("a"), hasStoredData: false }],
         }],
@@ -413,7 +413,7 @@ describe("recordSweep", () => {
         namespaces: [{
           namespaceId: "ns-1",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [{ objectId: objectId("a"), hasStoredData: true }],
         }],
@@ -433,7 +433,7 @@ describe("recordSweep", () => {
       const namespace = {
         namespaceId: "ns-1",
         scriptName: "avalon-api-global",
-        className: "SubstreamAgent",
+        className: "AgentLoopDO",
         usesSqlite: true,
       };
       registry.recordSweep(sweep({
@@ -452,7 +452,7 @@ describe("recordSweep", () => {
       const namespace = {
         namespaceId: "ns-1",
         scriptName: "avalon-api-global",
-        className: "SubstreamAgent",
+        className: "AgentLoopDO",
         usesSqlite: true,
       };
       registry.recordSweep(sweep({
@@ -475,7 +475,7 @@ describe("recordSweep", () => {
       const namespace = {
         namespaceId: "ns-1",
         scriptName: "avalon-api-global",
-        className: "SubstreamAgent",
+        className: "AgentLoopDO",
         usesSqlite: true,
       };
       registry.recordSweep(sweep({
@@ -516,7 +516,7 @@ describe("recordSweep", () => {
           {
             namespaceId: "ns-agents",
             scriptName: "avalon-api-global",
-            className: "SubstreamAgent",
+            className: "AgentLoopDO",
             usesSqlite: true,
             objects: [{ objectId: objectId("c"), hasStoredData: true }],
           },
@@ -538,7 +538,7 @@ describe("recordSweep", () => {
   it("keeps a failure visible even on a class that is otherwise not reporting", async () => {
     const detail = await withRegistry((registry) => {
       record(registry, report({
-        className: "SubstreamAgent",
+        className: "AgentLoopDO",
         status: "failed",
         appliedVersions: [],
         failure: { message: "substream_agent_do_schema_hash_mismatch:4", version: 4 },
@@ -588,7 +588,7 @@ describe("recordSweep", () => {
       const namespace = {
         namespaceId: "ns-1",
         scriptName: "avalon-api-enterprise",
-        className: "SubstreamAgent",
+        className: "AgentLoopDO",
         usesSqlite: true,
       };
       registry.recordSweep(sweep({
@@ -682,7 +682,7 @@ describe("the registry schema", () => {
         namespaces: [{
           namespaceId: "ns-1",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [],
         }],
@@ -730,7 +730,7 @@ describe("the registry schema", () => {
   });
 
   /**
-   * v3 renames `SubstreamAgent`'s component key. The rename is only safe
+   * v3 renames `AgentLoopDO`'s component key. The rename is only safe
    * because the tracker is the sole holder of that key, which also means the
    * tracker is the only thing that can carry the existing history across: an
    * unmigrated registry would show the fleet split between `workstream` at v15
@@ -799,6 +799,31 @@ describe("the registry schema", () => {
     expect(rows.components).toEqual([{ component: "substream_agent_do" }]);
     expect(rows.objects).toEqual([{ component: "substream_agent_do" }]);
     expect(rows.events).toEqual([{ component: "substream_agent_do" }]);
+  });
+
+  it("files the conversation class's stored rows under its new name, AgentLoopDO", async () => {
+    const applied = await withRegistry((registry, state) => {
+      record(registry, report({ schemaVersion: 82, latestVersion: 82 }));
+      // The shape v6 meets: every row filed under the class's old name.
+      for (const table of ["durable_objects", "migration_events", "component_versions"]) {
+        state.storage.sql.exec(`UPDATE ${table} SET class_name = 'SubstreamAgent'`);
+      }
+      state.storage.sql.exec(`DELETE FROM _sql_schema_migrations WHERE version = 6`);
+      return applyRegistrySchema(state.storage);
+    });
+    expect(applied).toEqual([6]);
+    const classes = await withRegistry((_registry, state) => ["durable_objects", "migration_events", "component_versions"]
+      .map((table) => state.storage.sql.exec<{ class_name: string }>(`SELECT DISTINCT class_name FROM ${table}`).toArray()));
+    expect(classes).toEqual([[{ class_name: "AgentLoopDO" }], [{ class_name: "AgentLoopDO" }], [{ class_name: "AgentLoopDO" }]]);
+  });
+
+  it("files a report the outgoing build sends under the old class name under the new one", async () => {
+    const classes = await withRegistry((registry, state) => {
+      record(registry, report({ className: "SubstreamAgent", schemaVersion: 83, latestVersion: 83 }));
+      return ["durable_objects", "migration_events", "component_versions"]
+        .map((table) => state.storage.sql.exec<{ class_name: string }>(`SELECT DISTINCT class_name FROM ${table}`).toArray());
+    });
+    expect(classes).toEqual([[{ class_name: "AgentLoopDO" }], [{ class_name: "AgentLoopDO" }], [{ class_name: "AgentLoopDO" }]]);
   });
 
   it("merges into a head the renamed component already has", async () => {
@@ -885,7 +910,7 @@ describe("retiring a namespace that has left the account", () => {
   const LIVE = {
     namespaceId: "ns-1",
     scriptName: "avalon-api-global",
-    className: "SubstreamAgent",
+    className: "AgentLoopDO",
     usesSqlite: true,
   };
   const DOOMED = {
@@ -1076,7 +1101,7 @@ describe("retiring a namespace that has left the account", () => {
    * The same Durable Object classes are deployed in `avalon-api-global` and
    * `avalon-api-enterprise`, so a class has one namespace per region and the tracker
    * holds a `component_versions` row per region. Deriving retirement from the
-   * class alone — asking whether *any* namespace for `SubstreamAgent` is still
+   * class alone — asking whether *any* namespace for `AgentLoopDO` is still
    * live — leaves the global component reading live after the global namespace
    * is deleted, purely because the enterprise one still exists, which is the case the
    * marker exists to show.
@@ -1085,7 +1110,7 @@ describe("retiring a namespace that has left the account", () => {
     const enterprise = {
       namespaceId: "ns-enterprise",
       scriptName: "avalon-api-enterprise",
-      className: "SubstreamAgent",
+      className: "AgentLoopDO",
       usesSqlite: true,
     };
 
@@ -1150,7 +1175,7 @@ describe("staleness", () => {
         namespaces: [{
           namespaceId: "ns-1",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [{ objectId: objectId("c"), hasStoredData: true }],
         }],
@@ -1190,7 +1215,7 @@ describe("staleness", () => {
         namespaces: [{
           namespaceId: "ns-1",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [{ objectId: objectId("c"), hasStoredData: true }],
         }],
@@ -1279,7 +1304,7 @@ describe("forced migration targets", () => {
         namespaces: [{
           namespaceId: "ns-global",
           scriptName: "avalon-api-global",
-          className: "SubstreamAgent",
+          className: "AgentLoopDO",
           usesSqlite: true,
           objects: [
             { objectId: objectId("a"), hasStoredData: true },
@@ -1310,7 +1335,7 @@ describe("forced migration targets", () => {
     });
 
     expect(components).toEqual([{
-      className: "SubstreamAgent",
+      className: "AgentLoopDO",
       region: "global",
       objects: 2,
       behind: 1,
@@ -1447,7 +1472,7 @@ describe("migration runs", () => {
     const runs = await withRegistry((registry) => {
       registry.recordMigrationRun(migrationRun({ className: "WorkspaceDO" }));
       registry.recordMigrationRun(migrationRun({
-        className: "SubstreamAgent",
+        className: "AgentLoopDO",
         region: "enterprise",
         matched: 40,
         dispatched: 25,
@@ -1459,7 +1484,7 @@ describe("migration runs", () => {
       return registry.listMigrationRuns();
     });
 
-    expect(runs.map((run) => run.className)).toEqual(["SubstreamAgent", "WorkspaceDO"]);
+    expect(runs.map((run) => run.className)).toEqual(["AgentLoopDO", "WorkspaceDO"]);
     expect(runs[0]).toMatchObject({
       region: "enterprise",
       matched: 40,

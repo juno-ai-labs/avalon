@@ -880,7 +880,7 @@ export class ConnectionService {
     // a Terminal repository selection is object-local provenance, not a copy
     // of connector authority, and every bootstrap rechecks this WorkspaceDO
     // row — so a narrowed policy takes effect on next use without a fan-out
-    // write to every SubstreamAgent. The rollback that used to live here
+    // write to every AgentLoopDO. The rollback that used to live here
     // existed only to undo this row when that fan-out failed.
     runtimeDeferral(this.recordConnectionAudit(
       connection.workspace_id,
@@ -2464,7 +2464,7 @@ export class ConnectionService {
       // Object-local Terminal repository selections are immutable provenance,
       // not a copy of connector authority. Every bootstrap rechecks this
       // WorkspaceDO row, so a disabled connection is unusable without a fanout
-      // write to every SubstreamAgent.
+      // write to every AgentLoopDO.
       await this.env.DB.prepare("UPDATE schedules SET enabled = 0, updated_at = ? WHERE connector_connection_id = ?")
         .bind(nowIso(), id).run();
       await this.syncConnectorIngressRoute(id);

@@ -1094,7 +1094,7 @@ const WORKSTREAM_SUBSTREAM_AGENT_SCHEMA = [
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS agent_run_dispatches_ready_idx
      ON agent_run_dispatches(state, available_at, created_at, run_id)`,
-  // One SubstreamAgent owns one independently ordered loop. This singleton is
+  // One AgentLoopDO owns one independently ordered loop. This singleton is
   // only the reconnect-safe activity indicator; immutable compaction history
   // remains in compaction_checkpoints.
   `CREATE TABLE IF NOT EXISTS active_agent_compaction (
@@ -3217,7 +3217,7 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 66,
     description: "admit a Space as a conversation's parent kind",
     // A Space is a third kind of conversation parent, and its hidden main
-    // conversation is an ordinary `SubstreamAgent` whose root row says so.
+    // conversation is an ordinary `AgentLoopDO` whose root row says so.
     // SQLite cannot widen a CHECK in place, so the singleton is rebuilt the way
     // version 55 rebuilt it. Version 55's literal is byte-frozen — it is hashed
     // into the `_sql_schema_migrations` receipt of every deployed conversation
@@ -5042,7 +5042,7 @@ export function workstreamObjectSchemaImplementationHash(
 /**
  * The migration runner's component key for the workstream object's schema.
  *
- * Exported because `SubstreamAgent` reports under it while this module migrates
+ * Exported because `AgentLoopDO` reports under it while this module migrates
  * under it; a second literal there could drift from this one and file the report
  * against a component the object's own ledger does not use.
  *
@@ -5050,7 +5050,7 @@ export function workstreamObjectSchemaImplementationHash(
  * module, because the class is the only thing an operator reading the tracker
  * can match against the fleet. Derived, not equal: `_do` comes from the two
  * sibling keys whose classes end in `DO` (`workstream_do`, `workspace_do`)
- * rather than from `SubstreamAgent`. The key said `workstream` while this
+ * rather than from `AgentLoopDO`. The key said `workstream` while this
  * history belonged to `WorkstreamRoom` and kept saying it through the class
  * rename, which left the only key derived from nothing still in the codebase
  * sitting next to `workstream_do` — a genuinely different object — under a name

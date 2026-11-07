@@ -823,14 +823,14 @@ function retractsReadAccess(event: ServerSocketEvent): boolean {
  * Take a socket out of the room and close it.
  *
  * The attachment is marked unsubscribed first, which is what {@link
- * SubstreamAgent.broadcast} filters on. Closing alone would leave the guarantee
+ * AgentLoopDO.broadcast} filters on. Closing alone would leave the guarantee
  * to the runtime — `send` on a closed socket throws, and that throw is caught —
  * so a disconnected reader would be spared the next frame by accident rather
  * than on purpose. On a privacy path that is the wrong place for the rule to
  * live.
  *
  * `snapshotInFlight` is lowered with it, because it is a second admission flag:
- * {@link SubstreamAgent.fulfillTranscriptRange} serves a range on a socket
+ * {@link AgentLoopDO.fulfillTranscriptRange} serves a range on a socket
  * whose own snapshot is assembling, and a flag this write left standing would
  * be an admission path the privacy write does not close. The close wins that
  * race today — a frame sent after it throws, one racing it is dropped — but
@@ -878,7 +878,7 @@ export { conversationObjectName };
  * This object's own name, or `null` while its identity is not yet fully its own.
  *
  * Split out from the object so the rule can be proved rather than reasoned
- * about. A `SubstreamAgent` is named by *two* durable facts — which work stream
+ * about. An `AgentLoopDO` is named by *two* durable facts — which work stream
  * it belongs to, and which external substream it is — and both have to be
  * present. An object holding only the first would otherwise take the main
  * child's name and answer self-calls addressed to a sibling out of its own
@@ -1020,7 +1020,7 @@ export interface SettledTurnJudgement {
   failureKind: string | null;
 }
 
-export class SubstreamAgent extends ScheduledDurableObject<Env> {
+export class AgentLoopDO extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly recentEvents: ServerSocketEvent[] = [];
   private recentEventBytes = 0;
@@ -1272,7 +1272,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       "runtime_recovery",
       {
         component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
-        className: "SubstreamAgent",
+        className: "AgentLoopDO",
         latestVersion: latestMigrationVersion(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS),
       },
       async () => {
@@ -4553,7 +4553,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         expectedBindStateRevision: projection?.stateRevision ?? 0,
         receipt: {
           runId,
-          // Each SubstreamAgent owns a local root row "0". The external
+          // Each AgentLoopDO owns a local root row "0". The external
           // child address belongs in executionContextJson, not this SQL FK.
           substreamId: "0",
           executionEpoch: 1,
@@ -7971,7 +7971,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   protected override migrationPlan(): DurableObjectMigrationPlan {
     return {
       component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
-      className: "SubstreamAgent",
+      className: "AgentLoopDO",
       migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
     };
   }
@@ -9680,7 +9680,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 }
 
-applyRetirementGate(SubstreamAgent, {
+applyRetirementGate(AgentLoopDO, {
   permit: [
     // Construction, arriving late. This object recovers its runtime lazily on
     // first access rather than in its constructor, so the window

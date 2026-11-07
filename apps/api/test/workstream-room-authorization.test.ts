@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SubstreamAgent, type SubstreamProductRequest } from "../src/durable-objects/substream-agent";
+import { AgentLoopDO, type SubstreamProductRequest } from "../src/durable-objects/agent-loop-do";
 import { rpcResultBody } from "../src/durable-objects/rpc-result";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -57,9 +57,9 @@ beforeEach(() => {
   });
 });
 
-const productDatabases = new WeakMap<SubstreamAgent, DatabaseSync>();
+const productDatabases = new WeakMap<AgentLoopDO, DatabaseSync>();
 
-function productDatabase(room: SubstreamAgent): DatabaseSync {
+function productDatabase(room: AgentLoopDO): DatabaseSync {
   const database = productDatabases.get(room);
   if (!database) throw new Error("room_product_database_missing");
   return database;
@@ -166,7 +166,7 @@ function roomFor(
   database: DatabaseSync,
   sockets: FakeSocket[] = [],
   region: string = "global",
-): SubstreamAgent {
+): AgentLoopDO {
   const storage = new Map<string, unknown>([
     ["roomIdentity", { workspaceId: WORKSPACE, workstreamId: WORKSTREAM }],
   ]);
@@ -238,7 +238,7 @@ function roomFor(
     },
   });
   seedProjectedParticipants(state.storage);
-  const room = new SubstreamAgent(
+  const room = new AgentLoopDO(
     state,
     createTestEnv({ DB: sqliteD1(database), AVALON_REGION: region, APP_ENV: "test" }),
   );
@@ -246,7 +246,7 @@ function roomFor(
   return room;
 }
 
-describe("message commands over the SubstreamAgent socket", () => {
+describe("message commands over the AgentLoopDO socket", () => {
   it("admits a participant write through the identity already attached to the room socket", async () => {
     const socket = fakeSocket(PARTICIPANT);
     const operationId = "00000000-0000-7000-8000-0000000000c7";
@@ -280,7 +280,7 @@ describe("message commands over the SubstreamAgent socket", () => {
   });
 });
 
-function publish(room: SubstreamAgent, event: Record<string, unknown>): Promise<Response> {
+function publish(room: AgentLoopDO, event: Record<string, unknown>): Promise<Response> {
   return room.fetch(new Request("https://room.internal/internal/events", {
     method: "POST",
     headers: {
@@ -301,7 +301,7 @@ function publish(room: SubstreamAgent, event: Record<string, unknown>): Promise<
  * step later, and the difference between "refused at the gate" and "let
  * through" is legible as 403 against 401.
  */
-function connectAs(room: SubstreamAgent, userId: string): Promise<Response> {
+function connectAs(room: AgentLoopDO, userId: string): Promise<Response> {
   const sessionId = userId === MEMBER ? MEMBER_SESSION : SESSION;
   return room.fetch(new Request("https://room.internal/socket", {
     headers: {

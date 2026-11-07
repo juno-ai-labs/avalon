@@ -38,9 +38,9 @@ import { ReadTranscriptResultSchema, SidekickRunTranscriptResultSchema, type Rea
 
 import { conversationObjectName } from "../durable-objects/names";
 import type {
-  SubstreamAgent,
+  AgentLoopDO,
   SubstreamProductRequestInput,
-} from "../durable-objects/substream-agent";
+} from "../durable-objects/agent-loop-do";
 import { rpcResultBody, type DurableObjectRpcResult } from "../durable-objects/rpc-result";
 import type {
   InitializeWorkstreamObjectRequest,
@@ -86,7 +86,7 @@ async function objectStub(
   workspaceId: string,
   workstreamId: string,
   substreamId = "0",
-): Promise<DurableObjectStub<SubstreamAgent>> {
+): Promise<DurableObjectStub<AgentLoopDO>> {
   return durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,
@@ -195,7 +195,7 @@ export class WorkstreamObjectClient {
      * Sent on every product request and checked against the object's own
      * identity before it runs anything. A conversation is addressed by id, so
      * this is what keeps a Space id from reaching a Channel operation — see
-     * `productOperation` in `substream-agent.ts`. The plain constructor means
+     * `productOperation` in `agent-loop-do.ts`. The plain constructor means
      * a Channel; {@link WorkstreamObjectClient.forParent} names another kind.
      */
     private readonly parentKind: ConversationParentKind = "workstream",

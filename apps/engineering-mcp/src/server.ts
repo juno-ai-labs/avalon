@@ -435,7 +435,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   ));
 
   server.registerTool("run_substream_sql", {
-    description: "Run arbitrary SQLite against a SubstreamAgent. Parent IDs are required because they are part of the Durable Object name. Statements may mutate production state.",
+    description: "Run arbitrary SQLite against an AgentLoopDO. Parent IDs are required because they are part of the Durable Object name. Statements may mutate production state.",
     inputSchema: {
       workspaceId: WorkspaceIdSchema,
       workstreamId: WorkstreamIdSchema,

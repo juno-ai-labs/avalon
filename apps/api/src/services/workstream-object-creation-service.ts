@@ -190,7 +190,7 @@ export async function reconcileReplayedSpaceMembership(input: {
 
 /**
  * Regional creation coordinator; the new Channel's hosted parent in WorkspaceDO
- * and its main conversation (`SubstreamAgent`) own product state.
+ * and its main conversation (`AgentLoopDO`) own product state.
  */
 export class WorkstreamObjectCreationService {
   constructor(

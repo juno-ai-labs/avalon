@@ -138,7 +138,7 @@ async function initializeWorkstream(
   });
 }
 
-/** Admit one member message through the SubstreamAgent product/RPC compatibility endpoint. */
+/** Admit one member message through the AgentLoopDO product/RPC compatibility endpoint. */
 async function sendMessage(
   stub: DurableObjectStub,
   input: {
@@ -836,7 +836,7 @@ describe("a message queued behind an unsettled admission", () => {
       return holdFirstWorkspaceRead(service as unknown as { env: Env });
     });
     // Enter through the same binding endpoint as production. The successful
-    // preparation returns an activation request to the SubstreamAgent; calling
+    // preparation returns an activation request to the AgentLoopDO; calling
     // the product service directly here would discard that handoff and invent
     // a wake-up failure that the real caller cannot have.
     void product(stub, {

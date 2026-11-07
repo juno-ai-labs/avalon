@@ -2582,7 +2582,7 @@ export const UpdateCustomMcpToolPolicyRequestSchema = z.object({
 });
 
 /**
- * The REST recovery twin of the SubstreamAgent `snapshot` frame.
+ * The REST recovery twin of the AgentLoopDO `snapshot` frame.
  *
  * Normal opens subscribe directly and paint the first snapshot. This response
  * remains for an explicit unavailable-state retry and is assembled by the same
@@ -3300,7 +3300,7 @@ export const WorkspaceWorkstreamStateEventSchema = z.strictObject({
 /**
  * The WorkstreamDO-owned common metadata plus the authenticated viewer overlay.
  * Transcript, tools, presence, and streaming output intentionally remain on
- * the selected SubstreamAgent feed.
+ * the selected AgentLoopDO feed.
  */
 export const WorkstreamControlMetadataSchema = z.strictObject({
   appearance: WorkstreamAppearanceSchema.optional(),

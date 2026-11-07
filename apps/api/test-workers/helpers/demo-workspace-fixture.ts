@@ -21,7 +21,7 @@ import { asSpaceId, asSubstreamId, asUserId, asWorkspaceId } from "@rally/contra
 
 import type { Env } from "../../src/env";
 import { conversationObjectName, workspaceDOName } from "../../src/durable-objects/names";
-import type { SubstreamAgent } from "../../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../../src/durable-objects/agent-loop-do";
 import { personalSpaceIdFor } from "../../src/durable-objects/workspace-space-protocol";
 import { DemoPackSchema } from "../../src/services/demo-pack";
 import {
@@ -245,10 +245,10 @@ export function demoWorkspaceStub() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", DEMO_WORKSPACE_ID)));
 }
 
-export function demoRoomStub(workstreamId: string, substreamId = "0"): DurableObjectStub<SubstreamAgent> {
+export function demoRoomStub(workstreamId: string, substreamId = "0"): DurableObjectStub<AgentLoopDO> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", DEMO_WORKSPACE_ID, workstreamId, asSubstreamId(substreamId)),
-  )) as DurableObjectStub<SubstreamAgent>;
+  )) as DurableObjectStub<AgentLoopDO>;
 }
 
 /**
@@ -257,10 +257,10 @@ export function demoRoomStub(workstreamId: string, substreamId = "0"): DurableOb
  * is configuration, not behaviour under test.
  */
 /** One Sidekick run's own conversation: a child substream under the Sidekick. */
-export function demoRunStub(sidekickId: string, runId: string): DurableObjectStub<SubstreamAgent> {
+export function demoRunStub(sidekickId: string, runId: string): DurableObjectStub<AgentLoopDO> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", DEMO_WORKSPACE_ID, sidekickId, asSubstreamId(runId)),
-  )) as DurableObjectStub<SubstreamAgent>;
+  )) as DurableObjectStub<AgentLoopDO>;
 }
 
 export function demoSeedEnv(): Env {

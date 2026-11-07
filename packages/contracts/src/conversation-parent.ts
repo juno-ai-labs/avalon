@@ -13,7 +13,7 @@ import {
 /**
  * The three kinds of thing a conversation can belong to.
  *
- * A `SubstreamAgent` is one ordered transcript and one agent loop; it does not
+ * An `AgentLoopDO` is one ordered transcript and one agent loop; it does not
  * decide who may read it or where its state rolls up. Its parent does. A work
  * stream's parent is `WorkstreamDO`; an automation's parent is `AutomationDO`;
  * a Space's parent is `SpaceDO`. All three answer the same five questions
