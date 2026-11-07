@@ -69,7 +69,7 @@ import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
-import { runSidekickAlarms } from "./helpers/sidekick";
+import { runSidekickAlarms, writeSidekickRegistrations } from "./helpers/sidekick";
 import { SidekickRunProvisionQueueMessageSchema } from "../src/durable-objects/automation-do-protocol";
 import { provisionSidekickRun } from "../src/services/sidekick-run-provisioning";
 import { deliverSidekickReview } from "../src/services/sidekick-review";
@@ -330,18 +330,14 @@ async function submit(draft: AutomationDraft = DEFINITION): Promise<{ definition
   return workspaceStub().sidekickSubmitDefinition({ ...addressed(), draft, evaluatorRules: null, submittedByRunId: null });
 }
 
-/** Legacy event watches still publish a real registration before delivery. */
+/** A Slack watch registered the way an apply writes it, without a Slack connector manifest. */
 async function registerSlackWatcher(): Promise<void> {
   // The object's own alarm runs the entry; forcing a pass on top of it could run it twice.
   await expect.poll(async () => (await alarms()).filter((entry) => entry.kind === "sidekick_delegation_sources").length,
     { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
-  await workspaceStub().applyExternalEventRegistrations({
-    schemaVersion: 1, workspaceId: WORKSPACE_ID, sourceGeneration: 1,
-    destination: { kind: "automation", automationId: AUTOMATION_ID },
-    evaluators: [{ evaluatorId: crypto.randomUUID(), source: {
-      connectorType: "slack", connectionId: SLACK_CONNECTION_ID, eventType: "slack.message.posted",
-    }, when: { kind: "always" } }],
-  });
+  await writeSidekickRegistrations(env, WORKSPACE_ID, AUTOMATION_ID, [{ evaluatorId: crypto.randomUUID(), source: {
+    connectorType: "slack", connectionId: SLACK_CONNECTION_ID, eventType: "slack.message.posted",
+  }, when: { kind: "always" } }]);
 }
 
 async function registrationFor(eventType: string): Promise<string> {

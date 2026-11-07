@@ -90,12 +90,22 @@ export async function runSidekickAlarms(env: Env, workspaceId: string, region = 
  * Replace a Sidekick's connector registrations the way an apply does, and set
  * its activation boundary to the sequence they take effect after, without the
  * rest of an apply. For a test that controls the event sequence itself.
+ *
+ * With `revision`, it also takes the apply's post-commit step for that
+ * revision (its Slack sources' joins), and in every case it re-arms the
+ * workspace alarm as a hosted write does, so a Canva poll schedule the
+ * registrations enabled is due.
  */
 export async function writeSidekickRegistrations(
   env: Env, workspaceId: string, automationId: string, evaluators: readonly unknown[], region = "global",
+  revision: number | null = null,
 ): Promise<void> {
-  await runInDurableObject(sidekickWorkspace(env, workspaceId, region), (instance, state) => {
-    const host = (instance as unknown as { hostedSidekickHost: () => HostedSidekickHost }).hostedSidekickHost();
+  await runInDurableObject(sidekickWorkspace(env, workspaceId, region), async (instance, state) => {
+    const object = instance as unknown as {
+      hostedSidekickHost: () => HostedSidekickHost;
+      afterHostedWrite: () => Promise<void>;
+    };
+    const host = object.hostedSidekickHost();
     const sidekick = new HostedSidekick(host, automationId) as unknown as {
       writeRegistrations: (evaluators: readonly unknown[]) => number;
       touchDirectory: (now: number, effectiveAfterEventSequence?: number) => void;
@@ -103,6 +113,8 @@ export async function writeSidekickRegistrations(
     // The same two steps an apply takes: replace the registrations, then
     // record the sequence they take effect after on the Sidekick's row.
     state.storage.transactionSync(() => sidekick.touchDirectory(Date.now(), sidekick.writeRegistrations(evaluators)));
+    await host.afterRegistrations(automationId, revision, evaluators);
+    await object.afterHostedWrite();
   });
 }
 
