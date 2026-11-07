@@ -63,6 +63,24 @@ export function audienceAdmits(audience: { named: boolean; organizationWide: boo
   return audience.named || (member && audience.organizationWide);
 }
 
+export type AccessClass = "member" | "guest";
+
+/** The person a listing is for, and their relationship to the Organization. */
+export interface Viewer {
+  userId: string;
+  accessClass: AccessClass;
+}
+
+/**
+ * The one difference between a member and a guest, everywhere a person is
+ * told something exists or may read it: Organization-wide scope admits a
+ * member and never a guest. Canvas and Sidekick reads, scope grants and
+ * search's audience all ask this.
+ */
+export function admitsOrganizationWide(accessClass: AccessClass): boolean {
+  return accessClass === "member";
+}
+
 /**
  * Who reads a Sidekick's conversations: the people it is shared with. Its
  * author, the person it runs as and anyone on its `people` list read it

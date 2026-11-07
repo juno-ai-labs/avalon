@@ -25,17 +25,17 @@ import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000101");
 const OWNER_ID = asUserId("00000000-0000-4000-8000-000000000102");
 const MEMBER_ID = asUserId("00000000-0000-4000-8000-000000000103");
-/** The owner's private thread: the owner is its only participant. */
-const PRIVATE_THREAD = asWorkstreamId("00000000-0000-4000-8000-000000000111");
-/** An Organization-wide thread both people take part in. */
-const OPEN_THREAD = asWorkstreamId("00000000-0000-4000-8000-000000000112");
+/** The owner's private Canvas: only its creator reads it. */
+const PRIVATE_CANVAS = asWorkstreamId("00000000-0000-4000-8000-000000000111");
+/** An Organization-wide Canvas both people read. */
+const OPEN_CANVAS = asWorkstreamId("00000000-0000-4000-8000-000000000112");
 const OWNER_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000121");
 const MEMBER_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000122");
 const OWNER_OPEN_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000123");
 /** A Sidekick whose runs act as the owner (`run_as_user`). */
 const SIDEKICK_ID = asAutomationId("00000000-0000-4000-8000-000000000131");
 const SIDEKICK_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000132");
-const SIDEKICK_THREAD_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000133");
+const SIDEKICK_CANVAS_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000133");
 
 class SqliteD1Statement {
   private values: unknown[] = [];
@@ -72,25 +72,7 @@ afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
-function seedThread(objectDatabase: DatabaseSync, workstreamId: string, scope: "workspace" | "personal", title: string, participants: string[]) {
-  objectDatabase.prepare(`INSERT INTO channels (
-      workstream_id, authority_generation, waterline, source_event_id, payload_hash,
-      title, description, preview, scope, exact_state, origin_type, title_status,
-      latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
-      source_created_at, source_updated_at, projected_at
-    ) VALUES (?, 1, 1, ?, 'hash', ?, '', '', ?, 'idle', 'ad_hoc', 'settled', 0, 0, 200, 200, 200, 200)`)
-    .run(workstreamId, `event-${workstreamId}`, title, scope);
-  for (const userId of participants) {
-    objectDatabase.prepare(`INSERT INTO channel_viewers (
-        workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash,
-        is_participant, unread_count, you_are_mentioned, listable, seen_attention_ordinal,
-        manual_unread_from_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at
-      ) VALUES (?, ?, 1, 1, ?, 'hash', 1, 0, 0, 1, 0, NULL, 0, 0, 200)`)
-      .run(workstreamId, userId, `event-${workstreamId}-${userId}`);
-  }
-}
-
-function fixture(): { env: Env; objectDatabase: DatabaseSync } {
+async function fixture(): Promise<{ env: Env; objectDatabase: DatabaseSync }> {
   // The current regional topology: the object reads a person's relationship
   // from `workspace_members`, and the conversations live in their own objects.
   const database = migratedSqliteDatabase();
@@ -106,11 +88,11 @@ function fixture(): { env: Env; objectDatabase: DatabaseSync } {
       ('${WORKSPACE_ID}', '${MEMBER_ID}', 'member', 'active', '2026-01-01');
   `);
   const runs: Array<[string, string, string, string]> = [
-    [PRIVATE_THREAD, OWNER_RUN, OWNER_ID, "lease-owner"],
-    [OPEN_THREAD, MEMBER_RUN, MEMBER_ID, "lease-member"],
-    [OPEN_THREAD, OWNER_OPEN_RUN, OWNER_ID, "lease-owner-open"],
+    [PRIVATE_CANVAS, OWNER_RUN, OWNER_ID, "lease-owner"],
+    [OPEN_CANVAS, MEMBER_RUN, MEMBER_ID, "lease-member"],
+    [OPEN_CANVAS, OWNER_OPEN_RUN, OWNER_ID, "lease-owner-open"],
     [SIDEKICK_ID, SIDEKICK_RUN, OWNER_ID, "lease-sidekick"],
-    [OPEN_THREAD, SIDEKICK_THREAD_RUN, OWNER_ID, "lease-sidekick-thread"],
+    [OPEN_CANVAS, SIDEKICK_CANVAS_RUN, OWNER_ID, "lease-sidekick-thread"],
   ];
   for (const [workstreamId, runId, userId, leaseOwner] of runs) {
     let store = objectStores.get(workstreamId);
@@ -129,8 +111,12 @@ function fixture(): { env: Env; objectDatabase: DatabaseSync } {
   const workspaceObject = createTestWorkspaceDO({
     workspaceId: WORKSPACE_ID, regionalDatabase: database, register: (created) => { openDatabases.push(created); },
   });
-  seedThread(workspaceObject.objectDatabase, PRIVATE_THREAD, "personal", "Side room", [OWNER_ID]);
-  seedThread(workspaceObject.objectDatabase, OPEN_THREAD, "workspace", "Launch", [OWNER_ID, MEMBER_ID]);
+  // Both made by the owner: the side room stays theirs alone, the launch Canvas opens to every member.
+  for (const [canvasId, title] of [[PRIVATE_CANVAS, "Side room"], [OPEN_CANVAS, "Launch"]] as const) {
+    await workspaceObject.instance.canvasCreate({ workspaceId: WORKSPACE_ID, canvasId, title,
+      createdByUserId: OWNER_ID, authorityGeneration: 1 });
+  }
+  workspaceObject.objectDatabase.prepare(`UPDATE canvas_directory SET visibility = 'workspace' WHERE canvas_id = ?`).run(OPEN_CANVAS);
   const rpcs = workspaceObjectRpcs(workspaceObject.instance, [
     "ensureMemoryScope", "recallMemoryFacts", "rememberMemoryFact", "forgetMemoryFact", "applyMemorySweep", "memorySweepCandidates",
   ]);
@@ -149,14 +135,14 @@ type Who = "owner-private" | "member-open" | "owner-open";
 
 function input(who: Who): WorkstreamWorkflowInput {
   const [parentId, runId, userId] = who === "owner-private"
-    ? [PRIVATE_THREAD, OWNER_RUN, OWNER_ID]
-    : who === "member-open" ? [OPEN_THREAD, MEMBER_RUN, MEMBER_ID] : [OPEN_THREAD, OWNER_OPEN_RUN, OWNER_ID];
+    ? [PRIVATE_CANVAS, OWNER_RUN, OWNER_ID]
+    : who === "member-open" ? [OPEN_CANVAS, MEMBER_RUN, MEMBER_ID] : [OPEN_CANVAS, OWNER_OPEN_RUN, OWNER_ID];
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    parentKind: "workstream",
+    parentKind: "canvas",
     parentId,
-    loopId: `workstream:${parentId}:substream:0:loop`,
+    loopId: `canvas:${parentId}:substream:0:loop`,
     harnessRunId: runId,
     triggerMessageId: null,
     activityId: null,
@@ -183,11 +169,11 @@ function tool(env: Env, who: Who, name: "recall" | "remember" | "forget") {
   return { execute: (args: unknown, receipt: string) => found.execute(args, context(input(who), receipt)), definition: found.definition };
 }
 
-/** A Sidekick run executing as the owner: in the Sidekick's own conversation, or posting into a thread. */
-function sidekickRunInput(where: "own" | "thread"): WorkstreamWorkflowInput {
+/** A Sidekick run executing as the owner: in the Sidekick's own conversation, or posting into a Canvas. */
+function sidekickRunInput(where: "own" | "canvas"): WorkstreamWorkflowInput {
   const [parentKind, parentId, runId] = where === "own"
     ? ["automation" as const, SIDEKICK_ID, SIDEKICK_RUN]
-    : ["workstream" as const, OPEN_THREAD, SIDEKICK_THREAD_RUN];
+    : ["canvas" as const, OPEN_CANVAS, SIDEKICK_CANVAS_RUN];
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
@@ -213,20 +199,20 @@ type Recalled = { facts: Array<{ factId: string; text: string; subject: { kind: 
 
 describe("the rally:memory tools", () => {
   it("remembers a fact about the person, recalls it for them wherever they act, and for nobody else", async () => {
-    const { env } = fixture();
+    const { env } = await fixture();
     const remembered = await tool(env, "owner-private", "remember").execute(
       { text: "Owner prefers release notes as bullets.", kind: "standing", about: "me" }, "receipt-remember-1",
     );
     expect(remembered.output).toMatchObject({ subject: { kind: "person" }, deduplicated: false, derivedFrom: "person" });
     const factId = (remembered.output as { factId: string }).factId;
 
-    // The owner's own fact follows them into the open thread.
+    // The owner's own fact follows them into the open Canvas.
     const ownerRecall = await tool(env, "owner-open", "recall").execute({ query: "release notes bullets" }, "receipt-recall-1");
     expect((ownerRecall.output as Recalled).facts).toEqual([expect.objectContaining({
       factId, subject: { kind: "person", label: "the person you are working for" },
-      source: { conversationId: PRIVATE_THREAD, title: "Side room" },
+      source: { conversationId: `canvas:${PRIVATE_CANVAS}`, title: "Side room" },
     })]);
-    // Another member in the same thread never sees it.
+    // Another member on the same Canvas never sees it.
     const memberRecall = await tool(env, "member-open", "recall").execute({ query: "release notes bullets" }, "receipt-recall-2");
     expect((memberRecall.output as Recalled).facts).toEqual([]);
 
@@ -243,13 +229,13 @@ describe("the rally:memory tools", () => {
   });
 
   it("writes the sentence again when its only match is a fact the person can no longer open", async () => {
-    const { env, objectDatabase } = fixture();
+    const { env, objectDatabase } = await fixture();
     const first = await tool(env, "owner-private", "remember").execute(
       { text: "Owner prefers release notes as bullets.", kind: "standing", about: "me" }, "receipt-remember-1",
     );
     const firstId = (first.output as { factId: string }).factId;
-    // The owner leaves the side room: the fact is still theirs, and out of reach.
-    objectDatabase.prepare(`DELETE FROM channel_viewers WHERE workstream_id = ? AND user_id = ?`).run(PRIVATE_THREAD, OWNER_ID);
+    // The side room is handed to the member: the fact is still the owner's, and out of their reach.
+    objectDatabase.prepare(`UPDATE canvas_directory SET created_by_user_id = ? WHERE canvas_id = ?`).run(MEMBER_ID, PRIVATE_CANVAS);
     const again = await tool(env, "owner-open", "remember").execute(
       { text: "Owner prefers release notes as bullets.", kind: "standing", about: "me" }, "receipt-remember-2",
     );
@@ -262,11 +248,11 @@ describe("the rally:memory tools", () => {
   });
 
   it("keeps a conversation's fact to the conversation and its readers", async () => {
-    const { env } = fixture();
+    const { env } = await fixture();
     await tool(env, "owner-private", "remember").execute(
       { text: "The side room decided to ship on Friday.", kind: "standing" }, "receipt-side-room",
     );
-    // Filed under the private thread, so a recall in the open thread does not
+    // Filed under the private Canvas, so a recall in the open Canvas does not
     // reach it: recall reads the subjects of where the run stands.
     const elsewhere = await tool(env, "owner-open", "recall").execute({ query: "ship Friday" }, "receipt-recall-3");
     expect((elsewhere.output as Recalled).facts).toEqual([]);
@@ -275,13 +261,13 @@ describe("the rally:memory tools", () => {
   });
 
   it("lets a member forget their own facts and the conversation's, and only an administrator forget the Organization's", async () => {
-    const { env } = fixture();
+    const { env } = await fixture();
     const member = tool(env, "member-open", "remember");
     const own = (await member.execute({ text: "Member likes short standups.", kind: "standing", about: "me" }, "receipt-member-own")).output as { factId: string };
-    const shared = (await member.execute({ text: "The launch thread meets on Tuesdays.", kind: "standing" }, "receipt-member-shared")).output as { factId: string };
-    // The sweep promotes an Organization fact from the open thread.
+    const shared = (await member.execute({ text: "The launch Canvas meets on Tuesdays.", kind: "standing" }, "receipt-member-shared")).output as { factId: string };
+    // The sweep promotes an Organization fact from the open Canvas.
     const applied = await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName("x")).applyMemorySweep({
-      workspaceId: WORKSPACE_ID, conversation: { parentKind: "workstream", parentId: OPEN_THREAD, substreamId: "0" },
+      workspaceId: WORKSPACE_ID, conversation: { parentKind: "canvas", parentId: OPEN_CANVAS, substreamId: "0" },
       fromSeq: 0, toSeq: 5, model: "test/model", inputTokens: null, outputTokens: null, now: Date.now(), factIds: ["fact-org"],
       speakerIds: [], candidateFactIds: [],
       operations: [{
@@ -310,12 +296,12 @@ describe("the rally:memory tools", () => {
   });
 
   it("reads a Sidekick run as the Sidekick, never as the person it runs as", async () => {
-    const { env, objectDatabase } = fixture();
+    const { env, objectDatabase } = await fixture();
     // The owner's own fact, which their Sidekick must not be handed.
     await tool(env, "owner-open", "remember").execute(
       { text: "Owner prefers release notes as bullets.", kind: "standing", about: "me" }, "receipt-owner-own",
     );
-    for (const where of ["own", "thread"] as const) {
+    for (const where of ["own", "canvas"] as const) {
       const runInput = sidekickRunInput(where);
       const found = createMemoryTools(env, runInput);
       const call = (name: string, args: unknown, receipt: string) =>
@@ -331,7 +317,7 @@ describe("the rally:memory tools", () => {
   });
 
   it("names the horizon mistakes a model makes, before any write", async () => {
-    const { env, objectDatabase } = fixture();
+    const { env, objectDatabase } = await fixture();
     const remember = tool(env, "owner-private", "remember");
     await expect(remember.execute({ text: "Owner is out next week.", kind: "situational" }, "receipt-h1"))
       .rejects.toMatchObject({ code: "memory_horizon_required" });

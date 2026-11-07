@@ -62,6 +62,12 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
+/** A Canvas's directory row, open to every member or to its creator (the owner) and its participants. */
+function seedCanvas(sql: SqlStorage, canvasId: string, visibility: "workspace" | "participants", title: string) {
+  sql.exec(`INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, visibility, authority_generation)
+    VALUES (?, ?, ?, ?, 0, 0, ?, 1)`, canvasId, WORKSPACE_ID, title, OWNER, visibility);
+}
+
 /** A thread row in the directory projection, open to every member or to its participants. */
 function seedThread(sql: SqlStorage, workstreamId: string, scope: "workspace" | "personal", title: string, participants: string[]) {
   sql.exec(`INSERT INTO channels (
@@ -177,15 +183,15 @@ describe("the fact store on workerd", () => {
       const sql = state.storage.sql;
       for (const table of [
         "memory_facts", "memory_sweep_receipts", "memory_fact_receipts", "memory_digest_holders", "memory_digest_holder_facts",
-        "channel_viewers", "channels", "workspace_member_status", "automation_directory",
+        "canvas_participants", "canvas_directory", "workspace_member_status", "automation_directory",
       ]) {
         sql.exec(`DELETE FROM ${table}`);
       }
       seedMember(sql, OWNER, "owner");
       seedMember(sql, MEMBER, "member");
-      seedThread(sql, THREAD_OPEN, "workspace", "Launch", [OWNER, MEMBER]);
-      seedThread(sql, THREAD_PRIVATE, "personal", "Owner's side room", [OWNER]);
-      seedThread(sql, THREAD_PRICING, "workspace", "Pricing", [OWNER, MEMBER]);
+      seedCanvas(sql, THREAD_OPEN, "workspace", "Launch");
+      seedCanvas(sql, THREAD_PRIVATE, "participants", "Owner's side room");
+      seedCanvas(sql, THREAD_PRICING, "workspace", "Pricing");
       sql.exec(`INSERT INTO automation_directory
           (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope, owning_workstream_id, title, description, next_run_at, projected_at)
         VALUES (?, ?, ?, 1, 'hash', 'active', 'workspace', NULL, 'Digest', '', NULL, 1)`, SIDEKICK, WORKSPACE_ID, OWNER);
@@ -197,8 +203,8 @@ describe("the fact store on workerd", () => {
     });
   }
 
-  const openThread = { parentKind: "workstream" as const, parentId: THREAD_OPEN, substreamId: "0" };
-  const privateThread = { parentKind: "workstream" as const, parentId: THREAD_PRIVATE, substreamId: "0" };
+  const openThread = { parentKind: "canvas" as const, parentId: THREAD_OPEN, substreamId: "0" };
+  const privateThread = { parentKind: "canvas" as const, parentId: THREAD_PRIVATE, substreamId: "0" };
 
   function add(subjectKind: "organization" | "thread", text: string) {
     return {
@@ -218,7 +224,7 @@ describe("the fact store on workerd", () => {
     }));
     expect(first).toEqual({
       outcome: "applied",
-      receipt: { conversation: THREAD_OPEN, fromSeq: 0, toSeq: 12, appliedAt: now, operationCount: 2 },
+      receipt: { conversation: `canvas:${THREAD_OPEN}`, fromSeq: 0, toSeq: 12, appliedAt: now, operationCount: 2 },
       refused: [],
       // One applied sweep, one advance of the ordering token, whatever it wrote.
       revision: 1,
@@ -232,7 +238,7 @@ describe("the fact store on workerd", () => {
     }));
     expect(replay).toEqual({
       outcome: "already_applied",
-      receipt: { conversation: THREAD_OPEN, fromSeq: 0, toSeq: 12, appliedAt: now, operationCount: 2 },
+      receipt: { conversation: `canvas:${THREAD_OPEN}`, fromSeq: 0, toSeq: 12, appliedAt: now, operationCount: 2 },
     });
     // A range starting past the store's cursor is a skipped sweep, not progress.
     expect(WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
@@ -330,7 +336,7 @@ describe("the fact store on workerd", () => {
       operations: [add("organization", "Release day is Thursday")],
       model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-release"], speakerIds: [], candidateFactIds: [], now,
     });
-    const pricing = { parentKind: "workstream" as const, parentId: THREAD_PRICING, substreamId: "0" };
+    const pricing = { parentKind: "canvas" as const, parentId: THREAD_PRICING, substreamId: "0" };
     const update = (evidence: number[]) => ({
       op: "update" as const, factId: "", text: "", validUntil: null, derivedFrom: "external" as const, evidence,
     });
@@ -350,9 +356,9 @@ describe("the fact store on workerd", () => {
       expect(state.storage.sql.exec<{ fact_id: string; derived_from: string; evidence_json: string; source_conversations_json: string }>(
         `SELECT fact_id, derived_from, evidence_json, source_conversations_json FROM memory_facts ORDER BY created_at`,
       ).toArray()).toEqual([
-        { fact_id: "fact-release", derived_from: "person", evidence_json: "[1]", source_conversations_json: JSON.stringify([THREAD_OPEN]) },
-        { fact_id: "fact-friday", derived_from: "mixed", evidence_json: "[7]", source_conversations_json: JSON.stringify([THREAD_PRICING, THREAD_OPEN]) },
-        { fact_id: "fact-afternoon", derived_from: "mixed", evidence_json: "[7]", source_conversations_json: JSON.stringify([THREAD_PRICING, THREAD_OPEN]) },
+        { fact_id: "fact-release", derived_from: "person", evidence_json: "[1]", source_conversations_json: JSON.stringify([`canvas:${THREAD_OPEN}`]) },
+        { fact_id: "fact-friday", derived_from: "mixed", evidence_json: "[7]", source_conversations_json: JSON.stringify([`canvas:${THREAD_PRICING}`, `canvas:${THREAD_OPEN}`]) },
+        { fact_id: "fact-afternoon", derived_from: "mixed", evidence_json: "[7]", source_conversations_json: JSON.stringify([`canvas:${THREAD_PRICING}`, `canvas:${THREAD_OPEN}`]) },
       ]);
     });
   });
@@ -363,7 +369,7 @@ describe("the fact store on workerd", () => {
     // An Organization fact learned in the owner's private room: promoted, but
     // sourced from a conversation the member cannot open.
     await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE channels SET scope = 'workspace' WHERE workstream_id = ?`, THREAD_PRIVATE);
+      state.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'workspace' WHERE canvas_id = ?`, THREAD_PRIVATE);
     });
     await workspace().applyMemorySweep({
       workspaceId: WORKSPACE_ID, conversation: privateThread, fromSeq: 0, toSeq: 3,
@@ -371,7 +377,7 @@ describe("the fact store on workerd", () => {
       model: "test/model", inputTokens: null, outputTokens: null, factIds: ["fact-release"], speakerIds: [], candidateFactIds: [], now,
     });
     await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE channels SET scope = 'personal' WHERE workstream_id = ?`, THREAD_PRIVATE);
+      state.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'participants' WHERE canvas_id = ?`, THREAD_PRIVATE);
     });
     const candidates = () => workspace().memorySweepCandidates({
       workspaceId: WORKSPACE_ID, conversation: openThread, terms: ["release", "thursday"], speakerIds: [OWNER, MEMBER], now, limit: 20,
@@ -392,7 +398,7 @@ describe("the fact store on workerd", () => {
     })).facts).toEqual([]);
     // Once the private room is opened to every member, the fact follows.
     await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE channels SET scope = 'workspace' WHERE workstream_id = ?`, THREAD_PRIVATE);
+      state.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'workspace' WHERE canvas_id = ?`, THREAD_PRIVATE);
     });
     expect(await candidates()).toMatchObject({
       outcome: "ready",
@@ -423,14 +429,14 @@ describe("the fact store on workerd", () => {
     const common = { workspaceId: WORKSPACE_ID, model: "test/model", inputTokens: null, outputTokens: null, candidateFactIds: [] };
     // An Organization fact learned in the owner's private room, while it was open.
     await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE channels SET scope = 'workspace' WHERE workstream_id = ?`, THREAD_PRIVATE);
+      state.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'workspace' WHERE canvas_id = ?`, THREAD_PRIVATE);
     });
     await workspace().applyMemorySweep({
       ...common, conversation: privateThread, fromSeq: 0, toSeq: 3, operations: [add("organization", "Release day is Thursday")],
       factIds: ["fact-release"], speakerIds: [], now,
     });
     await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE channels SET scope = 'personal' WHERE workstream_id = ?`, THREAD_PRIVATE);
+      state.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'participants' WHERE canvas_id = ?`, THREAD_PRIVATE);
     });
     await workspace().applyMemorySweep({
       ...common, conversation: openThread, fromSeq: 0, toSeq: 3, operations: [add("organization", "Standups are at ten")],
@@ -461,13 +467,13 @@ describe("the fact store on workerd", () => {
     await runInDurableObject(workspace(), (_instance, state) => {
       expect(state.storage.sql.exec(
         "SELECT conversation, parent_kind, parent_id, substream_id FROM memory_digest_holders",
-      ).toArray()).toEqual([{ conversation: THREAD_OPEN, parent_kind: "workstream", parent_id: THREAD_OPEN, substream_id: "0" }]);
+      ).toArray()).toEqual([{ conversation: `canvas:${THREAD_OPEN}`, parent_kind: "canvas", parent_id: THREAD_OPEN, substream_id: "0" }]);
       expect(state.storage.sql.exec(
         "SELECT conversation, principal, fact_id FROM memory_digest_holder_facts ORDER BY fact_id",
       ).toArray()).toEqual([
-        { conversation: THREAD_OPEN, principal: `user:${MEMBER}`, fact_id: "fact-codename" },
-        { conversation: THREAD_OPEN, principal: `user:${MEMBER}`, fact_id: "fact-standups" },
-        { conversation: THREAD_OPEN, principal: `user:${MEMBER}`, fact_id: "fact-updates" },
+        { conversation: `canvas:${THREAD_OPEN}`, principal: `user:${MEMBER}`, fact_id: "fact-codename" },
+        { conversation: `canvas:${THREAD_OPEN}`, principal: `user:${MEMBER}`, fact_id: "fact-standups" },
+        { conversation: `canvas:${THREAD_OPEN}`, principal: `user:${MEMBER}`, fact_id: "fact-updates" },
       ]);
     });
   });
@@ -492,7 +498,7 @@ describe("the fact store on workerd", () => {
     // without waiting on an unrelated wake. Its gate is a minute out.
     const claimed = await vi.waitFor(async () => {
       const rows = await runInDurableObject(workspace(), (_instance, state) => syncRow(state.storage.sql));
-      expect(rows).toMatchObject([{ conversation: THREAD_OPEN, revision: 1, attempts: 1, in_flight: 1 }]);
+      expect(rows).toMatchObject([{ conversation: `canvas:${THREAD_OPEN}`, revision: 1, attempts: 1, in_flight: 1 }]);
       return rows[0]!;
     }, { timeout: 10_000 });
 
@@ -506,23 +512,23 @@ describe("the fact store on workerd", () => {
       expect(await publish(claimed.not_before - 1)).toBe(0);
       expect(sent).toEqual([]);
       // Released, the row waits on its own gate and holds nothing back.
-      expect(releaseMemoryDigestSync(sql, THREAD_OPEN, 1)).toBe(true);
+      expect(releaseMemoryDigestSync(sql, `canvas:${THREAD_OPEN}`, 1)).toBe(true);
       expect(syncRow(sql)).toMatchObject([{ in_flight: 0 }]);
       expect(await publish(claimed.not_before - 1)).toBe(0);
       expect(await publish(claimed.not_before)).toBe(1);
-      expect(sent).toEqual([{ body: { type: "memory_digest_sync", region: "global", workspaceId: WORKSPACE_ID, conversation: THREAD_OPEN, revision: 1 } }]);
+      expect(sent).toEqual([{ body: { type: "memory_digest_sync", region: "global", workspaceId: WORKSPACE_ID, conversation: `canvas:${THREAD_OPEN}`, revision: 1 } }]);
       expect(syncRow(sql)).toMatchObject([{ attempts: 2, in_flight: 1 }]);
       // A second publish before that batch's gate sends nothing.
       expect(await publish(claimed.not_before + 1)).toBe(0);
       expect(sent).toHaveLength(1);
 
-      expect(memoryDigestSyncWork(sql, { conversation: THREAD_OPEN, revision: 1 })).toEqual(openThread);
-      expect(completeMemoryDigestSync(sql, THREAD_OPEN, 1)).toBe(true);
+      expect(memoryDigestSyncWork(sql, { conversation: `canvas:${THREAD_OPEN}`, revision: 1 })).toEqual(openThread);
+      expect(completeMemoryDigestSync(sql, `canvas:${THREAD_OPEN}`, 1)).toBe(true);
       expect(syncRow(sql)).toEqual([]);
 
       // A thread made private marks the holder again, numbered above the last.
-      sql.exec(`UPDATE channels SET scope = 'personal' WHERE workstream_id = ?`, THREAD_OPEN);
-      expect(syncRow(sql)).toMatchObject([{ conversation: THREAD_OPEN, revision: 2, attempts: 0, not_before: 0, in_flight: 0 }]);
+      sql.exec(`UPDATE canvas_directory SET visibility = 'participants' WHERE canvas_id = ?`, THREAD_OPEN);
+      expect(syncRow(sql)).toMatchObject([{ conversation: `canvas:${THREAD_OPEN}`, revision: 2, attempts: 0, not_before: 0, in_flight: 0 }]);
     });
   });
 
@@ -549,7 +555,7 @@ describe("the fact store on workerd", () => {
     await runInDurableObject(workspace(), (_instance, state) => expect(syncRow(state.storage.sql)).toEqual([]));
     expect(await forget(OWNER)).toBe("retracted");
     await runInDurableObject(workspace(), (_instance, state) => {
-      expect(syncRow(state.storage.sql)).toMatchObject([{ conversation: THREAD_OPEN, revision: 1 }]);
+      expect(syncRow(state.storage.sql)).toMatchObject([{ conversation: `canvas:${THREAD_OPEN}`, revision: 1 }]);
       expect(state.storage.sql.exec("SELECT retracted_by FROM memory_facts WHERE fact_id = 'fact-release'").toArray())
         .toEqual([{ retracted_by: `person:${OWNER}` }]);
     });
@@ -568,19 +574,19 @@ describe("the fact store on workerd", () => {
       expect(await publishMemoryDigestSync({
         sql, queue, workspaceId: WORKSPACE_ID, region: "global", now, retryAt: () => now + 60_000,
       })).toBe(1);
-      expect(releaseMemoryDigestSync(sql, THREAD_OPEN, 1)).toBe(true);
+      expect(releaseMemoryDigestSync(sql, `canvas:${THREAD_OPEN}`, 1)).toBe(true);
       expect(syncRow(sql)).toMatchObject([{ revision: 1, in_flight: 0, not_before: now + 60_000 }]);
 
-      // The member leaving the thread marks it again while revision 1 is out.
-      sql.exec(`UPDATE channel_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?`, THREAD_OPEN, MEMBER);
+      // The Canvas narrowing marks it again while revision 1 is out.
+      sql.exec(`UPDATE canvas_directory SET visibility = 'participants' WHERE canvas_id = ?`, THREAD_OPEN);
       expect(syncRow(sql)).toMatchObject([{ revision: 2, attempts: 0, not_before: 0, in_flight: 0 }]);
-      expect(memoryDigestSyncWork(sql, { conversation: THREAD_OPEN, revision: 1 })).toBeNull();
-      expect(completeMemoryDigestSync(sql, THREAD_OPEN, 1)).toBe(false);
-      expect(releaseMemoryDigestSync(sql, THREAD_OPEN, 1)).toBe(false);
+      expect(memoryDigestSyncWork(sql, { conversation: `canvas:${THREAD_OPEN}`, revision: 1 })).toBeNull();
+      expect(completeMemoryDigestSync(sql, `canvas:${THREAD_OPEN}`, 1)).toBe(false);
+      expect(releaseMemoryDigestSync(sql, `canvas:${THREAD_OPEN}`, 1)).toBe(false);
       expect(syncRow(sql)).toMatchObject([{ revision: 2 }]);
 
       sql.exec("DELETE FROM memory_digest_holders");
-      expect(memoryDigestSyncWork(sql, { conversation: THREAD_OPEN, revision: 2 })).toBeNull();
+      expect(memoryDigestSyncWork(sql, { conversation: `canvas:${THREAD_OPEN}`, revision: 2 })).toBeNull();
       expect(syncRow(sql)).toEqual([]);
     });
   });
@@ -615,7 +621,7 @@ describe("the fact store on workerd", () => {
     expect(await apply(9, { op: "retract", factId: "fact-codename", reason: "The codename was dropped", evidence: [10] }, "fact-codename"))
       .toMatchObject({ outcome: "applied", refused: [], markedHolders: true });
     await runInDurableObject(workspace(), (_instance, state) => {
-      expect(syncRow(state.storage.sql)).toMatchObject([{ conversation: THREAD_OPEN, revision: 1 }]);
+      expect(syncRow(state.storage.sql)).toMatchObject([{ conversation: `canvas:${THREAD_OPEN}`, revision: 1 }]);
     });
   });
 
@@ -657,33 +663,25 @@ describe("the fact store on workerd", () => {
       .toArray().map((row) => row.conversation);
   }
 
-  it("marks the holders of the thread a participant joins, and not another thread's", async () => {
+  it("marks the holders of the Canvas a participant joins, and not another Canvas's", async () => {
     await fresh();
     await twoHolders(Date.parse("2026-10-19T09:00:00.000Z"));
     await runInDurableObject(workspace(), (_instance, state) => {
       const sql = state.storage.sql;
-      sql.exec(`INSERT INTO channel_viewers (
-          workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash,
-          is_participant, unread_count, you_are_mentioned, listable, seen_attention_ordinal,
-          manual_unread_from_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at
-        ) VALUES (?, ?, 1, 1, 'event-join', 'hash', 1, 0, 0, 1, 0, NULL, 0, 0, 200)`, THREAD_PRIVATE, MEMBER);
-      expect(markedConversations(sql)).toEqual([THREAD_PRIVATE]);
+      sql.exec(`INSERT INTO canvas_participants (canvas_id, user_id, source, added_by_user_id, added_at) VALUES (?, ?, 'added', ?, 200)`, THREAD_PRIVATE, MEMBER, OWNER);
+      expect(markedConversations(sql)).toEqual([`canvas:${THREAD_PRIVATE}`]);
     });
   });
 
-  it("marks every copy holding a fact learned in a thread its person leaves, and no copy that never read one", async () => {
+  it("marks every copy holding a fact learned on a Canvas its person leaves, and no copy that never read one", async () => {
     await fresh();
     const now = Date.parse("2026-10-19T09:00:00.000Z");
     const THREAD_OTHER = "00000000-0000-7000-8000-000000000ada";
     await runInDurableObject(workspace(), (_instance, state) => {
       const sql = state.storage.sql;
       // The member joins the side room, and a third open thread has the owner alone.
-      sql.exec(`INSERT INTO channel_viewers (
-          workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash,
-          is_participant, unread_count, you_are_mentioned, listable, seen_attention_ordinal,
-          manual_unread_from_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at
-        ) VALUES (?, ?, 1, 1, 'event-join', 'hash', 1, 0, 0, 1, 0, NULL, 0, 0, 200)`, THREAD_PRIVATE, MEMBER);
-      seedThread(sql, THREAD_OTHER, "workspace", "Planning", [OWNER]);
+      sql.exec(`INSERT INTO canvas_participants (canvas_id, user_id, source, added_by_user_id, added_at) VALUES (?, ?, 'added', ?, 200)`, THREAD_PRIVATE, MEMBER, OWNER);
+      seedCanvas(sql, THREAD_OTHER, "workspace", "Planning");
     });
     // A fact about the member, learned in the side room.
     expect(WorkspaceMemoryApplySweepResultSchema.parse(await workspace().applyMemorySweep({
@@ -696,15 +694,15 @@ describe("the fact store on workerd", () => {
     // third thread never read it.
     const read = async (userId: string, workstreamId: string) => WorkspaceMemoryDigestResultSchema.parse(await workspace().memoryDigest({
       workspaceId: WORKSPACE_ID, reader: { kind: "person", userId },
-      conversation: { parentKind: "workstream", parentId: workstreamId, substreamId: "0" }, now, limit: 10,
+      conversation: { parentKind: "canvas", parentId: workstreamId, substreamId: "0" }, now, limit: 10,
     })).facts.map((fact) => fact.factId);
     expect(await read(MEMBER, THREAD_OPEN)).toEqual(["fact-interviewing"]);
     expect(await read(OWNER, THREAD_OTHER)).toEqual([]);
     await runInDurableObject(workspace(), (_instance, state) => {
       const sql = state.storage.sql;
       sql.exec("DELETE FROM memory_digest_sync");
-      sql.exec("UPDATE channel_viewers SET is_participant = 0 WHERE workstream_id = ? AND user_id = ?", THREAD_PRIVATE, MEMBER);
-      expect(markedConversations(sql)).toEqual([THREAD_OPEN]);
+      sql.exec("DELETE FROM canvas_participants WHERE canvas_id = ? AND user_id = ?", THREAD_PRIVATE, MEMBER);
+      expect(markedConversations(sql)).toEqual([`canvas:${THREAD_OPEN}`]);
     });
   });
 
@@ -719,22 +717,22 @@ describe("the fact store on workerd", () => {
       sql.exec("UPDATE workspace_member_status SET relationship_json = ? WHERE user_id = ?", relationship("member", 2), MEMBER);
       expect(markedConversations(sql)).toEqual([]);
       sql.exec("UPDATE workspace_member_status SET relationship_json = ? WHERE user_id = ?", relationship("guest", 3), MEMBER);
-      expect(markedConversations(sql)).toEqual([THREAD_OPEN, THREAD_PRIVATE].sort());
+      expect(markedConversations(sql)).toEqual([`canvas:${THREAD_OPEN}`, `canvas:${THREAD_PRIVATE}`].sort());
     });
   });
 
-  it("marks every holder when a source is archived", async () => {
+  it("marks every holder when a source Canvas is deleted", async () => {
     await fresh();
     const now = Date.parse("2026-10-19T09:00:00.000Z");
     await twoHolders(now);
     await runInDurableObject(workspace(), (_instance, state) => {
       const sql = state.storage.sql;
-      sql.exec("UPDATE channels SET archived_at = ? WHERE workstream_id = ?", now, THREAD_PRIVATE);
-      expect(markedConversations(sql)).toEqual([THREAD_OPEN, THREAD_PRIVATE].sort());
+      sql.exec("DELETE FROM canvas_directory WHERE canvas_id = ?", THREAD_PRIVATE);
+      expect(markedConversations(sql)).toEqual([`canvas:${THREAD_OPEN}`, `canvas:${THREAD_PRIVATE}`].sort());
     });
   });
 
-  it("drops the holder of an archived thread when its row comes up, so it stops being marked", async () => {
+  it("drops the holder of a deleted Canvas when its row comes up, so it stops being marked", async () => {
     await fresh();
     const now = Date.parse("2026-10-19T09:00:00.000Z");
     await workspace().memoryDigest({
@@ -742,10 +740,10 @@ describe("the fact store on workerd", () => {
     });
     await runInDurableObject(workspace(), (_instance, state) => {
       const sql = state.storage.sql;
-      // The archive marks the holder itself.
-      sql.exec(`UPDATE channels SET archived_at = ? WHERE workstream_id = ?`, now, THREAD_OPEN);
-      expect(syncRow(sql)).toMatchObject([{ conversation: THREAD_OPEN, revision: 1 }]);
-      expect(memoryDigestSyncWork(sql, { conversation: THREAD_OPEN, revision: 1 })).toBeNull();
+      // The deletion marks the holder itself.
+      sql.exec(`DELETE FROM canvas_directory WHERE canvas_id = ?`, THREAD_OPEN);
+      expect(syncRow(sql)).toMatchObject([{ conversation: `canvas:${THREAD_OPEN}`, revision: 1 }]);
+      expect(memoryDigestSyncWork(sql, { conversation: `canvas:${THREAD_OPEN}`, revision: 1 })).toBeNull();
       expect(syncRow(sql)).toEqual([]);
       expect(sql.exec("SELECT conversation FROM memory_digest_holders").toArray()).toEqual([]);
     });

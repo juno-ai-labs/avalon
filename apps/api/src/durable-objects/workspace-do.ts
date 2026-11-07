@@ -171,7 +171,7 @@ import {
 import { WorkspaceImpersonationStorage } from "./workspace-impersonation-storage";
 import {
   AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema,
-  connectionAdmits, sidekickAdmits,
+  admitsOrganizationWide, connectionAdmits, sidekickAdmits, type Viewer,
 } from '../services/authorization-policy';
 import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey, searchDecisionFingerprint } from '../services/search-authorization';
 import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
@@ -425,7 +425,7 @@ import {
   reviewMemoryFacts,
 } from "./workspace-memory-facts-storage";
 import {
-  MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION,
+  MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION, MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION,
   MEMORY_DIGEST_SYNC_MIGRATION,
   MemoryDigestSyncMessageSchema,
   MemoryDigestSyncWorkSchema,
@@ -462,10 +462,6 @@ import {
   workspaceNotificationIntentMaintenanceTarget as storedWorkspaceNotificationIntentMaintenanceTarget,
 } from "./workspace-notification-intent-storage";
 import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
-import {
-  admitsOrganizationWide,
-  type Viewer,
-} from "./listing-rules";
 
 import {
   WorkspacePinStorage,
@@ -4404,6 +4400,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "admit a Canvas's Chat among the conversations that hold a memory digest copy",
   // See MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION.
   statements: MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION,
+}, {
+  version: 144,
+  description: "refresh memory digest copies when who may open a Canvas or a Sidekick changes",
+  // See MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION and docs/agent-memory.md.
+  statements: MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
