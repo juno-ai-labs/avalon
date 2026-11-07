@@ -59,8 +59,11 @@ queued `space_*` messages are acknowledged as tombstones.
 
 **Why:** The [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
 removes Channels from the product, and after the client cutover (steps B-1 to
-B-6) nothing reached this code. Keeping a second container for conversations
-beside Canvases would leave two answers to "who may open this".
+B-6) nothing reached this code.
+
+**Considered and rejected:** Keeping the Space as a second container for
+conversations beside Canvases. That would leave two answers to "who may open
+this".
 
 **Consequences:** A new member lands on Canvases with nothing seated. The
 generation fences, the claim/send/accept publisher and the waterline survive in

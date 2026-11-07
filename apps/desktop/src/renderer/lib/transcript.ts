@@ -223,9 +223,9 @@ export function prepareDraftMentions(
 /**
  * Text the app kept without its mentions, such as a thread's description,
  * rendered the way a message is. A name already in durable
- * `[@Name](person://<id>)` form keeps that identity: the description loop
- * (`workstream-description-service.ts`) rewrites from transcript text, which
- * carries those links. Each typed `@Name` outside them that the send path
+ * `[@Name](person://<id>)` form keeps that identity: a description the retired
+ * description loop wrote came from transcript text, which carries those
+ * links. Each typed `@Name` outside them that the send path
  * would resolve becomes one too. A person who is not a member here stays as
  * written.
  */

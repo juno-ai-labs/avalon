@@ -537,8 +537,12 @@ conversations for the caller to close.
 
 **Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
 retired Threads and Channels and the conversations under them, so a hop queued
-before the deploy has nothing left to close. Acknowledging rather than failing
-keeps such a message from retrying to the dead-letter queue.
+before the deploy has nothing left to close, and acknowledging it ends the
+message where its work already ended.
+
+**Considered and rejected:** Failing the queued hop. A message that can never
+succeed retries to the dead-letter queue, which this module reads as the alarm
+that somebody kept access, so a retired target would raise it falsely.
 
 **Consequences:** The four target kinds stay in the message schema until no
 producer can have one in flight; plan step C-4 removes their producers' last
