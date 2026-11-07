@@ -293,11 +293,15 @@ On a prompt Rally:
 1. adds the acknowledgement reaction when the invocation has a source message;
 2. sets the Slack Agent thread status;
 3. creates or resumes the durable workstream;
-4. executes the ordinary authorized Rally harness;
-5. reloads the exact canonical final turn after terminal persistence;
-6. posts that complete saved turn in Slack's required 12,000-character chunks;
-7. swaps the reaction for the one naming the outcome;
-8. links to the canonical Rally workstream and offers feedback.
+4. executes the ordinary authorized Rally harness.
+
+Steps 5 to 8 of that path — reloading the final turn, posting it in
+12,000-character chunks, swapping the reaction for the outcome, and linking to
+the workstream with feedback controls (`deliverWorkstreamOutcome`,
+`applyOutcomeReaction`, `settleOutcomeReaction`, `responseActionBlocks`,
+`connectPromptBlocks`, `slackUserIsLinked`) — were deleted on 2026-11-07 with
+the last Thread delivery. A Sidekick run's results reach Slack through its
+own delivery ([`automation-lifecycle.md`](automation-lifecycle.md)).
 
 The persisted Rally run is canonical. A Slack delivery failure never rewrites a completed run as failed.
 Rally never streams model output to Slack. A fixed status or reaction may change
@@ -306,22 +310,15 @@ Slack result message.
 
 #### The status reaction
 
-A reaction on the triggering message is the only status a member sees without
-opening the thread, so it tracks the run rather than merely receipting it. **At
-most one Rally reaction sits on a message at a time**, and each transition
-removes the previous one:
-
-| State | Default | When |
-| --- | --- | --- |
-| Acknowledged | `eyes` | The prompt is admitted and authorized, and stays while the run is live. |
-| Outcome | `white_check_mark`, `question`, `warning`, `octagonal_sign` | The run reaches `completed`, `needs_input`, `failed`, or `stopped`. |
-
-A transition removes only the emoji Rally itself last placed, recorded in
-`slack_agent_sessions.reaction_current`, so a member's own reaction on the same
-message survives. The outcome transition re-reads that column immediately before
-acting and writes it back conditionally: removing a stale emoji answers
-`no_reaction`, which is a successful retry, and would otherwise leave two Rally
-reactions on the message — the one thing the single-slot rule exists to prevent.
+The one reaction writer left is the acknowledgement on a reply admitted into a
+bound Sidekick run's thread (`slack-agent-service.ts`): it places
+the acknowledgement emoji (`eyes` by default), or the stopped emoji
+(`octagonal_sign`) when the Sidekick is paused, and never removes anything.
+The outcome reactions (`white_check_mark`, `question`, `warning`,
+`octagonal_sign` on `completed`, `needs_input`, `failed`, `stopped`) and their
+conditional swap through `slack_agent_sessions.reaction_current` were written
+by the deleted Thread delivery path; the paragraphs below record how that path
+ran.
 The reaction sits on the *triggering* message rather than the thread root, and
 each new prompt in a thread moves it.
 
@@ -451,7 +448,7 @@ Every link Rally posts is a Canvas's or a Sidekick's canonical link,
 domain, with the id in its path, to be unfurled at all; `rallywithai://` links
 pasted by a member never produce an event and cannot be previewed. A
 notification about a Thread, which has no link now, is not sent, and the task
-controls under a Thread's reply carry no **Open task** button.
+controls Thread replies carried went with the Thread delivery path.
 
 Every other web button uses an allowlisted HTTPS-to-desktop handoff carrying the
 installation's region/workspace target. Workstream IDs may cross that boundary;
@@ -544,10 +541,9 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
 - **At most one Rally reaction sits on a source message**, and a transition
   removes only the emoji Rally itself last placed — never whatever it finds
   there, which would take a member's reaction with it.
-- **The outcome reaction is applied by the delivery path, not by the rotation.**
-  Delivery runs on every terminal status, so the message ends correct even when
-  the ticker never started or was lost; that is what makes the rotation
-  discardable.
+- **History: the outcome reaction was applied by the Thread delivery path,
+  not by the rotation.** That path is deleted; nothing writes an outcome
+  reaction now.
 - **Attribution is not authorization.** An unlinked author's task still runs with
   the workspace principal, and the opening message keeps its external Slack actor.
 - **Only connector ingress sets `principal: "connector"`, and only after
@@ -861,6 +857,15 @@ now.
 the PRD asks for it, and a Canvas made on someone's behalf from a Slack thread
 would need its own audience decision. Answering silently was rejected too: a
 person who mentions Rally and hears nothing will assume it is broken.
+
+**Consequences:** The Thread delivery path's last half went with it (11e82d0):
+`deliverWorkstreamOutcome`, the outcome reactions (`applyOutcomeReaction`,
+`settleOutcomeReaction`), the task controls (`responseActionBlocks`), the
+connect prompt (`connectPromptBlocks`) and `slackUserIsLinked`. The only
+reaction Rally still writes is the acknowledgement, or the stopped emoji for a
+paused Sidekick, on a reply admitted into a bound Sidekick run's thread; a
+future outcome reaction for Sidekick runs would be new work, not those helpers
+restored.
 
 **Open:** The retired-ingress copy is the agent's wording and needs product
 confirmation.
@@ -1799,7 +1804,8 @@ trades the failure for a longer-lived secret.
 **Consequences:** Connecting costs one extra click — button, then **Open Rally**
 in the modal — bought in exchange for a link that cannot be stale when it is
 clicked. Any future surface inviting a member to connect must use
-`connectPromptBlocks` and must not embed a handoff URL; the rule is stated under
+`connectPromptBlocks` (deleted on 2026-11-07 with its last caller; rebuild the
+same button-then-modal shape) and must not embed a handoff URL; the rule is stated under
 [Identity linking](#identity-linking) because a surface that breaks it will not
 fail any test. `createLink` now has exactly one caller, the `rally_connect`
 interaction, which is also where an unhealthy installation is refused before a

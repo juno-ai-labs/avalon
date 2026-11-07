@@ -1,7 +1,7 @@
 # Composer drafts
 
 Every Rally composer keeps what the user has entered on the device until it is
-sent or cleared. Closing a work stream, walking to another screen, or quitting
+sent or cleared. Closing a Canvas, walking to another screen, or quitting
 Rally mid-sentence does not cost the sentence, and it does not cost the files that
 were dropped next to it or confirmed artifact comments. Unconfirmed comment
 selections remain transient.
@@ -105,7 +105,7 @@ hours after upload (`DRAFT_ATTACHMENT_TTL_HOURS`). Local drafts therefore expire
 attachment never points at a resource that has already been swept.
 
 The clock runs from the last **edit**, not the last visit. Hydration deliberately
-does not write back what it just read; otherwise opening a work stream daily would
+does not write back what it just read; otherwise opening a Canvas daily would
 restamp its row forever and the draft would never expire.
 
 Reads filter expired rows. The first composer mounted in an application run also

@@ -17,7 +17,7 @@ drawing a second design.
   checklist both use it, so a new bar adds no CSS. The
   icon catalog's glyphs are `appearance-icons.ts` (`APPEARANCE_ICON_COMPONENTS`)
   and its sectioned grid is `icon-catalog.tsx` (`IconCatalog`), drawn by
-  `AppearancePicker`, the one picker a Space and a Channel both open.
+  `AppearancePicker`, which a Sidekick's header opens.
 - `packages/ui/src/lib`: browser-safe display helpers, theme application and
   device preferences. `packages/ui/src/styles` owns the shared styles/tokens.
 - Desktop renderer adapters retain routing, UI stores, IPC, telemetry and data
@@ -105,8 +105,8 @@ error copy without those markers.
 focusable; it sets `aria-disabled`, blocks activation and shows `Tip` only for
 that explanation. `MenuActionItem` in `components/menu-action-item.tsx` owns the
 equivalent dropdown behavior, keeping explained items in the arrow-key path and
-preventing disabled selections from closing the menu. Conversation Merge/Resolve
-and Sidekick actions use this same primitive. Ordinary disabled controls still
+preventing disabled selections from closing the menu. The account menu's
+member and Sidekick actions use this same primitive. Ordinary disabled controls still
 use native disabling, and enabled text controls add no redundant tooltip.
 
 Shared components receive presentation data and callbacks. They never import an
@@ -120,10 +120,8 @@ drives conversation activity and Jump to latest; native previews honour its
 `data-native-overlay` marker through the end of its exit. Operational failures
 use acknowledged error popups.
 
-The sidebar can omit Main without inventing an accessible Main route. Browser
-participants and resources belong to the selected authorized conversation; desktop
-can continue supplying parent-owned workstream context. Directory appearance comes
-from canonical reads and preserves the existing Main-label boundary.
+Browser participants and resources belong to the selected authorized
+conversation. Directory appearance comes from canonical reads.
 Desktop and browser both mount `ResizableSidebar`, which only resizes, and
 compose the plain `SidebarFooter` with an account slot
 ([`desktop-shell.md`](desktop-shell.md)). Its collapse toggle, compact layout
@@ -136,22 +134,16 @@ collapsed flag reads as expanded, and a refused write leaves the in-memory state
 standing.
 
 `SidebarRow` still accepts an optional count `badge`, but no host passes one:
-the Channel row's count badge was replaced by its unread treatment
-([`workstream-markers.md`](workstream-markers.md#channel-row)).
+an unread Canvas or Sidekick row says so by its unread treatment
+([`canvases.md`](canvases.md#in-the-client)).
 
-The desktop's pinned section marks itself `data-reorder-list`: a row finds the
-slots it is being measured against through that mark rather than by knowing
-whose list it is in. A drag's end reads the browser's `none` operation as a
-release nothing accepted, including Escape and release outside the list.
-
-The shared Breakout rail, `SpaceRow` and `SpacePlacementList` were removed with
-the shell redesign. Breakouts are listed in the Channel title menu
-(`ChannelMenu`'s Breakouts level), newest activity first with
-`compareAlphabeticalTitle` breaking ties. The Space pills and the Space
-dashboard were deleted with the navigation redesign; a Channel's row and screen
-are the desktop host's ([`desktop-shell.md`](desktop-shell.md)). Nothing here
-fetches, and no component infers a capability from an omitted prop: a Channel
-menu with no privacy switch is a host that decided not to draw one.
+The Pinned group of each list (`PinnedSection`, `useRowPinDrop`) is the
+desktop host's, in `navigation-rows.tsx`; a drag that ends without landing
+(Escape, or a release outside the list) clears its drop state. The rows and
+screens of the Canvases and Sidekicks lists are the desktop host's
+([`desktop-shell.md`](desktop-shell.md)). Nothing here fetches, and no
+component infers a capability from an omitted prop: a menu with no switch is a
+host that decided not to draw one.
 
 The guest browser supplies its bounded sharing projection to the same
 `ResizableSidebar`, rows, scroll regions and resize geometry as Electron. It
@@ -190,36 +182,14 @@ the applied canvas into any `theme-color` meta the host document carries. Deskto
 installs the native theme reporter/broadcast adapter; browser installs system
 appearance observation. Visual primitives share the same theme subscription.
 
-Sidekick management options are requested when management controls open. Transcript
-updates continue refreshing existing attachment/recommendation state, but do not
-fetch management choices. Canonical management denial hides the picker; unresolved management capability disables
-creation and shows a loading row menu only for eligible rows. Attachment updates
-seed the selected cache and invalidate siblings without discarding the new seed.
+### People picker
 
-### People picker order
-
-The People level keeps the current participants and pending conversation
-invitations first, then requests to join. A single **Suggested** list shows at
-most five people total. Its ranking tiers are the top five collaborators in
-this Channel, the top five other collaborators in the Organization, remaining
-Members alphabetically, then Guests alphabetically. The tiers are internal
-ordering rules, not separate visible sections. Deduplication and eligibility
-filtering happen before taking the final five: current participants, inactive
-accounts and people who asked to join are excluded. Pending Organization
-invitees follow registered Members, with their Invited label. Search exposes
-all matching names and email addresses in that order, without the suggestion cap.
-
-The server's people ranking (`GET /navigation/people-ranking`,
-`workspace-people-ranking.ts`) is deleted with Threads, and no host supplies a
-ranking read, so the collaborator tiers are empty and the list takes the
-directory fallback: Members alphabetically, then Guests.
-
-The title pill's `onMenuOpen` starts the host's optional ranking read before
-People is selected. People snapshots that order on entering the level: late
-responses apply on its next opening, so an Add button never moves under the
-pointer. Pending or failed reads silently keep the directory fallback usable.
-The host gates both automatic and manual reads on API, person and member
-eligibility, and shares any in-flight refresh on reopening.
+The People level and its ranked **Suggested** list were deleted with Threads
+(2026-11), with the server's people ranking (`GET /navigation/people-ranking`).
+Who is in a Canvas is chosen in its Share dialog, which is desktop host code
+([`canvases.md`](canvases.md)); nothing here ranks people. The title pill's
+`onMenuOpen` ranking read and the People level's ordering snapshot went with
+them.
 
 ## Invariants
 

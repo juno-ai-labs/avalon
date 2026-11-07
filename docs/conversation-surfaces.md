@@ -1,10 +1,10 @@
 # Shared conversation surfaces
 
 Rally has one conversation surface: the feed of a `SubstreamAgent`, under
-whichever kind of parent it has. A work stream's main feed and an automation's
-own chat are the same surface over the same wire, reached through
+whichever kind of parent it has. A Canvas's Chat and a Sidekick's shared
+conversation are the same surface over the same wire, reached through
 `/conversations/:parentId` and `/socket/conversations/:parentId/:substreamId`
-with a work-stream id or an automation id as the parent. The standalone
+with a Canvas id or an automation (Sidekick) id as the parent. The standalone
 automation draft wizard that used to be a second adapter over this family is
 gone, and so is the compiler it talked to; drafting an automation is a
 conversation in the automation's own substream `0`, with the drafting tools
@@ -19,8 +19,7 @@ A Canvas's Chat is this surface with `parentKind: "canvas"` and substream
 `"0"`, opened by `screens/canvas.tsx` at `/canvases/:id`
 ([`canvases.md`](canvases.md#in-the-client)). Nothing in the feed, composer,
 annotations or right rail is Canvas-specific: the artifacts the Chat publishes
-open in the inspector rail as a Thread's do, under the same per-conversation
-restore. The surface only words the Canvas as one: its opening and unavailable
+open in the inspector rail, under the same per-conversation restore. The surface only words the Canvas as one: its opening and unavailable
 states say "Canvas", its ready state invites a request to Rally, and its
 composer reads "Ask Rally or the people here…". The header is the host's
 `renderHeader`: the Canvas's pill, the people in it now and Share.
@@ -61,15 +60,12 @@ and availability changes visible without navigation.
 
 ## Sidekick conversations and attachments
 
-A Sidekick's shared conversation uses this surface in the main window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and keeps a **Sidekicks** section below it, including while the list is loading or empty. When present, its rows are this work stream's Sidekicks: the ones it owns and the ones its main conversation has loaded, with access-checked removal of an attachment affecting future executions. `ConversationSurface` owns both queries and hands the merged rows to the sidebar and the inspector rail, so the two rails cannot disagree about what a room has.
+A Sidekick's shared conversation uses this surface in the main window. Generated descriptions summarize instructions; ready submissions save immediately. The surface has no sidebar of its own: who is in a Canvas is the header's face pile, and a Sidekick's details are the column beside its conversation (`SidekickDetailLayout`).
 
 The composer shows no running count above the input; the indicators that did
 were fed only by Threads and Channels, and
 [`websocket-architecture.md`](websocket-architecture.md#sidekick-library-synchronization)
 records where a running signal would come from.
-Losing that socket or unmounting its owner resets both kinds of count to unknown;
-the labels stay hidden until fresh directory and Sidekick subscription answers
-arrive after reconnect.
 
 ## Where the code lives
 
@@ -130,9 +126,9 @@ arrive after reconnect.
   shell installs it itself because it mounts below `App`; `Tip` and the
   sidebar's row preview ask it, and anything else that opens on hover or focus
   should.
-- `apps/desktop/src/renderer/components/expanded-composer.tsx`,
-  `use-draft-text.ts`, and `use-file-attachments.ts` provide the common composer
-  shell, local text persistence, and staged-file lifecycle.
+- `apps/desktop/src/renderer/components/workstream-composer.tsx`,
+  `lib/use-draft-text.ts`, and `lib/use-file-attachments.ts` provide the common
+  composer host, local text persistence, and staged-file lifecycle.
 - `apps/desktop/src/renderer/lib/markdown-lists.ts` owns list editing in a
   draft: what Enter, Tab, Shift+Tab and the two list toggles do to a bulleted or
   numbered list, as pure functions over `(text, selectionStart, selectionEnd)`.
@@ -145,13 +141,10 @@ arrive after reconnect.
   renderHeader})` owns the transcript, composer, attachments, and the socket
   hooks for one conversation, keyed by the parent id and substream. Its
   composer draft is `workstreamDraftKey` over the parent id, whichever kind of
-  parent that is. `screens/workstream.tsx` renders it for a work stream;
+  parent that is. `screens/canvas.tsx` renders it for a Canvas's Chat;
   `screens/automation.tsx` renders `components/automation-header.tsx` in a sibling profile pane
   through `SidekickDetailLayout`, with a short conversation heading over the feed with `parentKind: "automation"` and `substreamId:
-  "0"`. `AddParticipantDialog` stays open after an add or a remove of someone
-  else so more than one membership can be changed in one sitting; it closes on
-  click-outside, Escape, the header close control, or when the current person
-  removes themselves. Tool rows are not rendered one per call: they collapse into one row per plugin, which
+  "0"`. Tool rows are not rendered one per call: they collapse into one row per plugin, which
   [`plugin-activity-rows.md`](plugin-activity-rows.md) owns entirely. The
   retired automation-draft adapter kept a row per call, which is the divergence
   that made the collapse a decision worth recording rather than an obvious one.
@@ -226,7 +219,7 @@ profile hue, so a bright dot cannot make the name unreadable.
 
 The adapter provides canonical ordered turns, loaded coverage, streaming
 blocks, activity timing, attachment actions, retry/stop state, and a stable
-conversation identity, for a work stream's conversation and an automation's
+conversation identity, for a Canvas's Chat and a Sidekick's conversation
 alike. The common viewport follows only while the reader owns
 the latest edge; scrolling transfers ownership to the reader until **Jump to
 latest** is selected. Programmatic repositioning is announced before changing
@@ -245,21 +238,21 @@ message capsule, keyed on `.has-message-capsule
 42px-tall field, the plus in the left column and the send or dictation control
 in the right. `ComposerInput` takes `layout: 'message-capsule'` on every
 surface, and no surface states a treatment of its own. The capsule rules apply
-only under a root carrying `has-message-capsule` (today `.workstream-screen`
-and `.channel-screen`), so a new screen that hosts the composer adds that class
-to its root, or its composer falls back to the toolbar layout. Every surface
-also draws it through the same host, `WorkstreamComposer`: the conversation,
-the new-breakout dock, the new-Channel launcher and the Channel's own composer.
+only under a root carrying `has-message-capsule` (today `.workstream-screen`,
+the conversation surface's root, and the message issue dialog), so a new
+screen that hosts the composer adds that class to its root, or its composer
+falls back to the toolbar layout. Every surface also draws it through the same
+host, `WorkstreamComposer`, whose one caller today is the conversation surface.
 The host reads only a `ComposerConversation` — participants, scope, run status and stop state — plus
 a `draftKey`, so a conversation that does not exist yet supplies those rather
 than a whole `WorkstreamDetail`. Wrapped
 text and staged attachments span the controls' own grid row, so the reserve at
 the foot of the field is what holds the two apart: the 28px control, the 7px of
 row padding under it, and 4px of air between the last line and the top of the
-plus. A
-launcher that dressed its field differently made the element a person types
-their first message into the odd one out on a screen already showing the
-conversation it becomes, and it made the hand-off a costume change.
+plus. The
+retired Thread and Breakout launchers dressed their field differently, which
+made the element a person types their first message into the odd one out on a
+screen already showing the conversation it becomes.
 
 `ComposerInput.renderSubmit` lets a host place its submit control outside the
 capsule while keeping the same stop-and-send finalization and disabled state.
@@ -272,8 +265,9 @@ The capsule's plus menu starts with **Attach files** when the host passes
 composer draws each and calls its `onSelect`. An entry with a `disabledReason`
 is disabled by hand (`aria-disabled`, with selection blocked) rather than with
 Radix's `disabled`, which would drop it from arrow-key focus, so a keyboard
-still reaches the tooltip that gives the reason. The Channel's composer uses it
-for **Import from Claude or ChatGPT** ([session import](session-import.md)).
+still reaches the tooltip that gives the reason. A Sidekick's screen passes one
+through `composerMenuActions` for a manager's **Edit Sidekick**, a mode
+(`ComposerMenuAction.checked`) that marks messages `intent: "edit_sidekick"`.
 
 A paste of `LONG_PASTE_CHARACTERS` or more (`lib/pasted-text.ts`) attaches
 as a file instead of landing at the caret, unless the message already holds
@@ -392,7 +386,7 @@ status event moves first and a held acknowledgement would otherwise sit in the
 dock saying the run stopped while the feed above it draws an agent visibly
 working. The run row says whether the thing that ended was a stop — and it is
 the only thing that says so. **The status frame for a member stop does not
-report `stopped`.** `settleWorkstreamState` leaves a stopped run's work stream
+report `stopped`.** `settleWorkstreamState` leaves a stopped run's conversation
 `idle` on purpose, because a stop is the member taking the conversation back
 rather than an outcome to report, and this client reads `idle` as `completed`.
 Driven against the running client, a real stop reports
@@ -434,29 +428,21 @@ across every surface that has a composer. A turn is capped at `--turn-width-cap`
 (640px, in `app.css`), except Rally's turns at 640px and narrower, which fill
 the column; `--composer-width` is three quarters of that, and the
 field is centred on it, so the field and the bubbles it produces read as one
-column rather than as a full-width row under a narrow transcript. Four rules read
-that property: the composer stack under `.has-message-capsule` — which is the
-settled conversation, the new-substream dock and the Channel, because a
-launcher is a conversation that has not happened yet — plus the two rows a launcher stacks over its field, the
-substream banner and the participant chips, which are centred siblings of the
-stack rather than children of it and so each state the measure for themselves.
-The draft moves from a launcher to the conversation on one keystroke without the
-element unmounting, so a width that differs across that handoff is a width that
-moves under the person typing. The cap is declared once for the same reason in
-the other direction: the composer cannot read it off the turns, sitting as it
+column rather than as a full-width row under a narrow transcript. Two rules read
+that property: the composer stack under `.has-message-capsule` and the opening
+skeleton's composer, so the placeholder a conversation opens on is the width
+of the field that replaces it. The cap is declared once: the composer cannot read it off the turns, sitting as it
 does outside the scroller, in a box the transcript column's percentages never
 reach.
 
 Below a 600px pane the field gives the inset up and takes the whole row inside
-the dock's gutters, and those two rows come with it. The dock is an inline-size
+the dock's gutters. The dock is an inline-size
 container named `composer-dock`, so that threshold follows the *pane*, which
 narrows when the sidebar is dragged wider or a pane opens beside it, where a viewport
 media query would have answered for a width nobody is looking at. A size query
 measures the container's content box, so the number in the query is that pane
 width less a dock's two 16px gutters. Every dock states the same gutter, because
-a dock that states a different one crosses at a different *pane* — and a launcher
-that crosses somewhere else puts the width change back into the hand-off, in a
-band of pane widths either side of the threshold. No automated test
+a dock that states a different one crosses at a different *pane*. No automated test
 holds the threshold and every dock's gutter to that one sum; verify them in a
 real window.
 
@@ -491,9 +477,9 @@ is a step of the `--space-N` scale `app.css` derives from `ref.space.unit`; a
 value off that scale is either a sub-unit optical nudge inside an inline
 control or a bleed derived from something else, and says which in a comment.
 
-Sharing stops at product semantics. Work streams retain participants, unread,
+Sharing stops at product semantics. A conversation retains participants, unread,
 resource, run, and steering controls. The in-flight pending queue is one of
-those: it attaches to the work-stream composer, not to the shared
+those: it attaches to the conversation's composer host, not to the shared
 `ComposerInput`. An answer to a question is not one of its rows. It is admitted
 as a pending input like any message, but it is projected as the answered
 question — the same UI identity the canonical turn will carry — so the card
@@ -594,11 +580,9 @@ opens wider than that, at an even split with the conversation
 narrow one. The key is
 the only keyboard route to that width: the arrows step by a fixed amount.
 
-The route host, not the feed, owns identity transitions. A new work stream
-begins with local composer keys; after durable admission its adapter rekeys
-text/files and adopts the server identity without remounting the conversation
-family. A new automation is created by `POST /automations` before its
-conversation is opened, so its page starts on a durable id. Socket snapshots remain authoritative after reconnect;
+The route host, not the feed, owns identity transitions. A new Canvas is
+created by `POST /canvases`, and a new automation by `POST /automations`,
+before its conversation is opened, so each page starts on a durable id. Socket snapshots remain authoritative after reconnect;
 local optimistic rows are reconciled by stable client turn IDs.
 
 Delivered attachments follow the message body and precede its action row. A
@@ -833,7 +817,7 @@ reconnect and protects fresh activity from a retired owner's delayed close.
 
 ## Slow model notice
 
-The shared work-stream and Sidekick conversation surface shows an inline status
+The shared Canvas and Sidekick conversation surface shows an inline status
 beside active response activity while the socket reports a delayed inference
 belonging to the displayed running harness run: “The model is currently slowed
 down. Responses might take longer.” It uses the semantic warning colour and
@@ -848,75 +832,63 @@ activation event without losing the warning; later clears replace that retained 
 ### Artifact annotation drafts
 
 Each conversation surface owns an in-memory annotation provider keyed by parent
-and breakout. Preview hosts hand Comment mode to the panel header, immediately
+and substream. Preview hosts hand Comment mode to the panel header, immediately
 before the always-visible Expand control. Composer chips and feed excerpts share
 that provider and canonical structured content. Only accepted sends clear the
-captured pin IDs. A breakout launcher opts out of its parent's draft so it cannot
-consume unrelated pins. [Artifact annotations](artifact-annotations.md) owns the
+captured pin IDs. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
 
-### 2026-11-07 — Breakouts, merge-back, suggestions and the Thread branches leave the surface
+### 2026-11-07 — The surface's two hosts are a Canvas's Chat and a Sidekick's conversation; Breakouts, merge-back, suggestions and the Thread branches leave it
 
-**What changed:** `ConversationSurface` loses every Breakout, merge and
-suggestion prop and the code behind them (the launch surface, the origin card,
-Breakout cards and ticks, the merge response card and target pill, the
-suggestion chips), the Thread-only behaviour (the access request on a refused
-Main, the participant and remove dialogs, the People level, rename over the
-Thread route, artifact pins and Thread links, Activity read events, the browser
-import composer action, the feed-open and send-ready telemetry), and the
-`renderSidebar`, `renderOpeningSidebar`, `workstreamContext`, `paneKey`,
-`parentCrumbs` and `honorsSearchTarget` props. `MessageFeed` and `MessageBlock`
-lose `onStartSubstream`, `merge`, `onOpenBreakout`, `onOpenMerge` and
-`breakoutCards`, and the New breakout and Merge hover actions go. The surface
-dials its conversation socket directly (`useWorkstreamSocket`); the
-`WorkstreamSocketPool` that kept Threads' sockets warm is deleted. A read-only
-conversation takes no dropped or pasted file. Only a Canvas's Chat hosts the
-embedded browser's links.
+**What changed:** `ConversationSurface` hosts a Canvas's Chat
+(`parentKind: "canvas"`) under a Canvas header, with the Canvas's wording in
+its opening, unavailable and ready states and its composer placeholder. A host
+can add entries to the composer's menu (`composerMenuActions`), one of which
+may be a mode (`ComposerMenuAction.checked`), and set its placeholder; a
+Sidekick's screen uses both for a manager's Edit Sidekick, which marks
+messages `intent: "edit_sidekick"`. A Sidekick run's row draws as a collapsed
+run that opens into the run's own conversation. The surface loses every
+Breakout, merge and suggestion prop and the code behind them (the launch
+surface, the origin card, Breakout cards and ticks, the merge response card
+and target pill, the suggestion chips), the Thread-only behaviour (the access
+request on a refused Main, the participant and remove dialogs, the People
+level, rename over the Thread route, artifact pins and Thread links, Activity
+read events, the browser import composer action, the feed-open and send-ready
+telemetry), and the `renderSidebar`, `renderOpeningSidebar`,
+`workstreamContext`, `paneKey`, `parentCrumbs` and `honorsSearchTarget` props.
+`MessageFeed` and `MessageBlock` lose `onStartSubstream`, `merge`,
+`onOpenBreakout`, `onOpenMerge` and `breakoutCards`, and the New breakout and
+Merge hover actions go. The surface dials its conversation socket directly
+(`useWorkstreamSocket`); the `WorkstreamSocketPool` that kept Threads' sockets
+warm is deleted. A read-only conversation takes no dropped or pasted file.
+Only a Canvas's Chat hosts the embedded browser's links.
 
-**Why:** Plan step B-3 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-the surface's two hosts are a Canvas's Chat and a Sidekick's conversation, and
-Threads, Breakouts and merge-back are deleted (decision log, 2026-11-06). The
-pool existed to warm pinned and recent Threads ahead of a click; with no Thread
-list there is nothing to warm, and a pool wrapper with one caller would be
-indirection with no second implementation. The read-only drop fix is from the
-review of the run view: a run's conversation had no composer, so a dropped
-file was a silent server upload.
+**Why:** Plan steps A-12, A-13 and B-3 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
+The decision log has an open Canvas reuse the conversation layout: the Chat in
+the main pane, its artifacts in the existing right rail; and Threads,
+Breakouts and merge-back are deleted (2026-11-06). The pool existed to warm
+pinned and recent Threads ahead of a click; with no Thread list there is
+nothing to warm, and a pool wrapper with one caller would be indirection with
+no second implementation. The read-only drop fix is from the review of the run
+view: a run's conversation had no composer, so a dropped file was a silent
+server upload.
+
+**Considered and rejected:** A tabbed artifact-first pane, or any
+Canvas-specific feed component: it would have been a second surface with its
+own composer, annotations and restore, and everything it needed is what this
+surface already does for any parent. For the edit mark, a second composer or a
+per-message prompt: the mark is a mode a manager holds while describing a
+change, and the composer menu already exists to carry it.
 
 **Consequences:** The generic capabilities stay: transcript, composer, drafts,
 attachments, dictation, annotations, elicitation and the right rail. The
 storage names (`WorkstreamDetail`, `workstreamDetailQueryKey`,
-`useWorkstreamSocket`) stay, per the storage-name rule. A host that needs a
-participant list or a title-pill menu builds it from its own detail, as the
-Canvas screen does with its Share dialog.
-
-### 2026-11-07 — A Canvas's Chat and a Sidekick's shared conversation are this surface
-
-**What changed:** `ConversationSurface` hosts a Canvas's Chat
-(`parentKind: "canvas"`) under a Canvas header, with the Canvas's wording in
-its opening, unavailable and ready states and its composer placeholder.
-A host can add entries to the composer's menu (`composerMenuActions`), one of
-which may be a mode (`ComposerMenuAction.checked`), and set its placeholder;
-a Sidekick's screen uses both for a manager's Edit Sidekick, which marks
-messages `intent: "edit_sidekick"`. A Sidekick run's row draws as a collapsed
-run that opens into the run's own conversation.
-
-**Why:** The Canvases and Sidekicks PRD's decision that an open Canvas reuses
-the conversation layout: the Chat in the main pane, its artifacts in the
-existing right rail. A tabbed artifact-first pane would have been a second
-surface with its own composer, annotations and restore.
-
-**Considered and rejected:** A Canvas-specific feed component; everything it
-needed — the composer, annotations as comments, the rail and its restore — is
-what this surface already does for any parent. For the edit mark, a second
-composer or a per-message prompt: the mark is a mode a manager holds while
-describing a change, and the composer menu already exists to carry it.
-
-**Consequences:** A branch here that means "an ordinary Thread" still tests
-`parentKind === 'workstream'`; a Canvas falls through every Thread-only branch
-(breakouts, merge, invitations) as a Sidekick's conversation does.
+`useWorkstreamSocket`, `WorkstreamComposer`) stay, per the storage-name rule.
+A host that needs a participant list or a title-pill menu builds it from its
+own detail, as the Canvas screen does with its Share dialog.
 
 ### 2026-10-23 — Keep running counts through navigation, discard them on disconnect
 

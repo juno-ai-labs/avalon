@@ -55,10 +55,8 @@ retention starts. It does not create empty entries, fetch, change values, or
 change their garbage-collection duration. On release, the ordinary cache
 collection rules resume. Multiple producers can hold the same entry.
 
-The workspace socket holds its directories, feature flags, access-recovery
-nudge and work-stream
-ordering ledgers, and each Channel's breakout list and the version stored
-with it, which arrive on that Channel's row. Each conversation socket holds its
+The workspace socket retains exactly three entries: the `canvases` and
+`automations` sidebar lists and the client feature flags. Each conversation socket holds its
 detail, transcript, inherited context, streaming overlays, feed source and
 snapshot generation. These leases follow the socket-owning effects, including
 background retention and reconnects, rather than the visible route.
@@ -100,8 +98,8 @@ rows, whatever order a wipe and a hydration run in. A guest's scope adds
 cached as a member; leaving the workspace deletes both ranges. A *kind* names the slice
 that owns the row's shape. The *subject* is what
 the row is about, for removal by identity rather than by key: every
-conversation under one work stream carries the work stream's id, so losing the
-work stream drops them all in one index scan. Two indexes, `[kind, subject]`
+conversation under one parent (a Canvas or a Sidekick) carries the parent's id,
+so losing the parent drops them all in one index scan. Two indexes, `[kind, subject]`
 and `[kind, key]`, are what let an eviction that knows only an id reach every
 scope.
 
@@ -203,9 +201,8 @@ and the hook's mirror starts persisting: every change to the three entries
 schedules one coalesced write of the detail (with presence emptied, since
 viewers are a live fact about other people's windows), the transcript trimmed
 by `openingTranscriptSnapshot`, and the child's context. The mirror lives for
-as long as the hook does, which for a pooled work stream is the pool's
-retention, so the rows of warm and recently viewed work streams stay fresh
-without anyone opening them.
+as long as the hook does, which is as long as its conversation is open; a
+conversation nobody opens keeps the row it last wrote.
 
 The transcript is persisted in its opening shape, never with the pages the
 reader scrolled into. The socket's first frame is an `initial` snapshot, which
@@ -220,9 +217,9 @@ swap is invisible and in every case it is never a collapse.
 `ConnectingCard` is one component with three states, and `ConnectingCardSlot`
 is where it floats. Over a conversation the slot is zero-height and sticky at
 the top of the transcript scroller, so the card floats over the first rows
-without pushing them down and leaves no layout jump when it goes; over a
-Space dashboard the slot is absolute, below the title bar's drag strip so the
-card never takes a window's drag handle. The slot is the `polite` live region
+without pushing them down and leaves no layout jump when it goes. A host that
+places the slot over something other than a scroller positions it below the
+title bar's drag strip so the card never takes a window's drag handle. The slot is the `polite` live region
 and stays mounted whether or not a card is in it: a live region that mounts
 with its text already present is generally not announced, only a change inside
 one is. The card lets the pointer through to the rows under it; only its
@@ -274,11 +271,10 @@ The bound on this cache is membership, not a number or an age:
 - **The lists prune parents.** A live subscribe answer keeps the
   conversations whose parent is a Canvas or a Sidekick in its lists, and
   removes the rest for that scope.
-- **The Channel row prunes children.** A Channel's row on the workspace socket
-  names the private children this reader may still open; a cached child that
-  left that roster is removed. The roster followed is the one the version guard
-  accepted into the query cache, so a stale frame the cache rejects prunes
-  nothing. The main conversation always stays.
+- **Children leave with their parent.** No list names a parent's children
+  since the Channel row went at the 2026-11 cutover, so a cached child, such as
+  a Sidekick run's conversation, is removed with its parent or by eviction.
+  `retainConversationChildren` remains for a roster that names them again.
 - **Eviction forgets the disk.** `evictCachedWorkstream` removes every row
   under the parent in every scope, and `evictCachedSubstream` one child, so an
   access revocation or an archive never leaves a transcript on disk that the
@@ -322,9 +318,6 @@ described in [attachment image caching](attachment-preview-cache.md).
   `GET /workspace/usage` answer or a `workspace_usage` push. Break it and a seed, or a launch surface's
   optimistic turn, becomes what the next launch paints, with no live frame
   having vouched for it.
-- **A seeded breakout list holds no version.** Break it and the first live
-  row for a Channel, numbered below what the device remembered from a room
-  rebuilt since, is dropped, and the Channel menu shows breakouts that are gone.
 - **Hydration lands only in empty caches.** Break it and a read that lands
   after the live snapshot puts the older state back over it.
 - **A seed moves no ledger.** The waterline ledgers stay untouched by
@@ -362,7 +355,7 @@ gate. It does not own:
 | --- | --- |
 | The draft the composer keeps, a different database with a different lifetime on the same `createIndexedDbStore` | [`composer-drafts.md`](composer-drafts.md) |
 | Which channel carries what, and the waterline ledgers a seed must not touch | [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) |
-| The socket pool, retention, and the pair a work stream opens | [`websocket-architecture.md`](websocket-architecture.md) |
+| Socket ownership, retention, and the pair a conversation opens | [`websocket-architecture.md`](websocket-architecture.md) |
 | Ticket admission and what the first frame carries | [`realtime-sockets.md`](realtime-sockets.md) |
 | The feed, the composer, and the surface the card sits in | [`conversation-surfaces.md`](conversation-surfaces.md) |
 | What the `local_cache` feed source means to the open-latency events | [`telemetry.md`](telemetry.md) |
@@ -386,7 +379,7 @@ lifetimes.
 
 - **No IndexedDB, no quota, a corrupt database:** every read answers null and
   every write reports false. Screens wait for the socket as they did before.
-- **A row for a work stream archived or revoked while the device was away:**
+- **A row for a conversation archived or revoked while the device was away:**
   the sidebar seed lists it and, if it is opened, its transcript paints. The
   live directory then retires the row, the ticket request answers 404 and the
   hook keeps retrying with backoff, and the opening deadline reports the
@@ -403,7 +396,7 @@ lifetimes.
   after the revocation seeds nothing, because the hook's `stillWanted` reads
   `accessRevoked` as well as its own teardown.
 - **The seed's run state and unread marks are stale until the snapshot lands.**
-  A work stream that was running when the row was written paints as running
+  A conversation that was running when the row was written paints as running
   for the second or two the socket takes. The card is what says so.
 - **A quit inside the coalescing window** loses at most that window of changes;
   the previous row stands.
@@ -488,43 +481,35 @@ scrolling.
 
 ## Changelog
 
-### 2026-11-07 — The Channel and Thread directory slice is no longer read
-
-**What changed:** The `directory` slice (`workspace-directory-cache.ts`), which
-seeded the Thread list, the Space directories, each Channel's breakouts and
-rail, pins and Channel stats, is deleted with the client code that read it
-(`channel-rails.ts`, `channel-viewer-state.ts`). The Canvases and Sidekicks
-lists paint from the `canvas-directory` slice alone, and the subscribe answer's
-two lists are what bound the conversation cache. A Space's read-only seed state
-and Breakout launch gating are gone with those surfaces.
-
-**Why:** Plan step B-3 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-deletes the Channel, Thread and Breakout surfaces, so nothing draws what the
-slice held. The 2026-11-07 entry below kept the Sidekick list on both rows only
-until this step.
-
-**Consequences:** Rows written under `directory` before this change stay on a
-device's disk, unread, until the workspace's rows are cleared; nothing migrates
-or deletes them, because a stale row costs a few kilobytes and a sweep would be
-code kept for one release.
-
-### 2026-11-07 — A slice for the Canvases and Sidekicks directory
+### 2026-11-07 — The Canvases and Sidekicks directory has its own slice; the Channel and Thread directory slice is no longer read
 
 **What changed:** A `canvas-directory` slice holds the Canvases and Sidekicks
 lists as the socket last applied them, seeded before the socket answers and
 mirrored after, under the sidebar-list waterline ledger rather than a `live`
-flag.
+flag. The `directory` slice (`workspace-directory-cache.ts`), which seeded the
+Thread list, the Space directories, each Channel's breakouts and rail, pins
+and Channel stats, is deleted with the client code that read it
+(`channel-rails.ts`, `channel-viewer-state.ts`), and the subscribe answer's two
+lists are what bound the conversation cache. A Space's read-only seed state,
+the Channel row's pruning of a parent's children, and Breakout launch gating
+are gone with those surfaces.
 
-**Why:** The pivot's lists ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md),
-"Loading") must paint before the socket as the Channel list does. A slice of its
-own rather than fields on the `directory` row, because that row is the Channel
-directory the cutover deletes and is only read back while the Channel list is
-unseeded.
+**Why:** Plan steps A-15 and B-3 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+the pivot's lists must paint before the socket as the Channel list did (PRD,
+"Loading"), and the Channel, Thread and Breakout surfaces are deleted, so
+nothing draws what the old slice held.
 
-**Consequences:** B-3 can drop the `directory` row's Channel parts, and its
-automation list, without touching this slice. A list missing from the row
-means never heard, not empty; keep the two apart.
+**Considered and rejected:** Fields for the new lists on the `directory` row.
+That row was the Channel directory the cutover deleted, read back only while
+the Channel list was unseeded, so a slice of its own let the old row go
+without touching the new one.
+
+**Consequences:** Rows written under `directory` before this change stay on a
+device's disk, unread, until the workspace's rows are cleared; nothing
+migrates or deletes them, because a stale row costs a few kilobytes and a
+sweep would be code kept for one release. A list missing from the
+`canvas-directory` row means never heard, not empty; keep the two apart.
 
 ### 2026-10-21 — Fence image saves across browser tabs
 

@@ -89,7 +89,6 @@ the old icon back. The route itself is [`spaces.md`](spaces.md)'s.
 | --- | --- |
 | `packages/contracts/src/appearance-icons.ts` | The one icon catalog for a Channel, a Breakout, a Space and a Sidekick: its eight sections, the pickable keys, the retired keys that stay storable, the id-derived default marks, and one short model-visible description per pickable key. |
 | `packages/contracts/src/workstream-appearance.ts` | The catalog under the names callers import (`WORKSTREAM_ICON_KEYS` for the menu, `WORKSTREAM_ICON_KEYS_STORABLE` for the schema), the default key, color keys, and partial updates. |
-| `apps/api/src/durable-objects/channel-color-sync.ts` | A thread's and its Breakouts' Channel colour: migration 99's table, triggers and backfill, the alarm lane's publish, and the two reads the Queue consumer settles through. `recolor` in `workstream-identity-storage.ts` is the write. |
 | `packages/ui/src/components/appearance-icons.ts` | `APPEARANCE_ICON_COMPONENTS`, the Lucide glyph for every storable key. |
 | `packages/ui/src/components/icon-catalog.tsx` | `IconCatalog`: section tabs over one scrolling grid with a heading per section. Both pickers render their cells through it. |
 | `packages/ui/src/components/appearance-picker.tsx` | `AppearancePicker`: palette, optimistic preview, ordered clicks, and failures, for every surface that has an appearance. The caller supplies the trigger's mark through `renderGlyph` and its accessible name through `label`; nothing else about it differs between a work stream and a Sidekick. |
@@ -214,12 +213,11 @@ until someone picks a hue.
   default. Older work streams retain their original appearance until edited.
 - A colour job carries its mark's revision to every conversation it writes,
   and a conversation never applies a revision at or below the one it holds.
-- After birth, a thread's or a Breakout's colour has one writer, `recolor`.
-  The birth write is `channelColor`, the same read the lane makes, and never
-  overwrites a stored appearance. A new path that sets one some other way is
-  overwritten the next time the thread is marked;
-  a new table whose change can move a thread's colour needs its own trigger in
-  `channel-color-sync.ts`.
+- History: after birth, a thread's or a Breakout's colour had one writer,
+  `recolor`, deleted on 2026-11-07 with the Channel colour lane it served. The
+  birth write was `channelColor`, the same read the lane made, and never
+  overwrote a stored appearance. A path that set one some other way was
+  overwritten the next time the thread was marked.
 - Every common projection carries the appearance. Dropping it makes identity
   differ between the header, sidebar, and reopening a work stream.
 
@@ -258,16 +256,10 @@ mutation must fail the reopened snapshot assertion. Client control/state tests
 cover the common cache path. The Sidekick's half is proved in the real-workerd
 `automation-directory.test.ts`, which drives `setAppearance` and the effect
 legs and asserts the merge, the refusal, and the value on both directory
-listings. The Channel colour is proved on real workerd in
-`channel-color-sync.test.ts` (which writes mark a thread and which do not, the
-revision fence, the rows settled with nothing to write, and the Queue consumer
-recolouring a real Main, and a later batch held until the one in flight
-settles or is released, and a Channel recolour reaching Main and a Breakout
-through the consumer, each keeping its icon) and `identity-authority.test.ts` (`recolor` keeps the
-icon, commits the projection, writes nothing on a repeat, and refuses an older
-revision); the
-`message-to-output-pipeline.test.ts` appearance case proves a client's colour
-is dropped. `workspace-channel-color-migration.test.ts` proves the backfill.
+listings. The Channel colour's suites (`channel-color-sync.test.ts`, and the
+`recolor` case of `identity-authority.test.ts`) were deleted with the lane and
+its writer; the `message-to-output-pipeline.test.ts` appearance case proves a
+client's colour is dropped. `workspace-channel-color-migration.test.ts` proves the backfill.
 `space-creation.test.ts` (deleted in plan step C-2) proves a thread is born in its Channel's colour on
 Main and on its directory row before the lane runs; `identity-authority.test.ts`
 proves `provision` stores it and keeps an appearance already stored; and the
@@ -280,14 +272,18 @@ including scrolling, and check another connected window and reopening.
 **What changed:** The receipt-time write (`patchCachedWorkstreamAppearance`)
 and the naming pass's (`patchCachedGeneratedIcon`) are deleted with the
 `['workstreams']` list they wrote. An appearance receipt now resolves the
-picker's choice and writes no cache.
+picker's choice and writes no cache. On the server, the identity operation
+`recolor`, the last writer of a thread's or Breakout's Channel colour, is
+deleted (11e82d0).
 
 **Why:** The Threads sidebar that read that list went with the Canvases and
 Sidekicks pivot ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)), and
 nothing reads it now. A Sidekick's row comes from the workspace socket's
 `automations` list and a Canvas's from `workspace_canvas_list`, both versioned
 by their own waterline, so an appearance reaches them through the projection
-alone.
+alone. `recolor` went because the last colour writer went with Threads:
+`channel-color-sync.ts`, the lane that dispatched it, was already deleted in
+0db0470, so the operation had no caller.
 
 **Considered and rejected:** Retargeting the two writes at the `automations`
 and `canvases` lists. Those lists are replaced whole by a waterlined push, so
@@ -297,7 +293,9 @@ put back by an older one; the projection lands within one push anyway.
 **Consequences:** A person's own icon or colour choice reaches the sidebar row
 when the projection does, not on the receipt. A future row-ahead-of-projection
 write has to target the list a surface actually reads, respect that list's
-waterline, and still leave the cached detail to the projection.
+waterline, and still leave the cached detail to the projection. Nothing
+writes a colour onto a conversation except its own picker and the birth
+default; a shared colour across conversations would be new work.
 
 ### 2026-10-13 — A new thread is born in its Channel's colour
 

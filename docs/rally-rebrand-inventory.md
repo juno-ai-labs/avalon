@@ -387,6 +387,23 @@ sentence is section 9 and moved; the variable it names is section 4 and stays,
 because renaming it is a coordinated change with the sandbox image rather than
 with this repository. The two halves of that line have different owners.
 
+## Product names that changed over unchanged storage
+
+Avalon to Rally is not the only rename the tree carries. The product's own
+nouns have changed several times while the storage under them kept its names,
+so a storage name is not a product name and must not be read back into copy.
+[`AGENTS.md`](../AGENTS.md) ("Rebranding Guide") keeps the short form for
+agents; this is the record of what each step left behind.
+
+| Step | Product name | Storage name that stayed |
+| --- | --- | --- |
+| Sidekicks | An **Automation** became a **Sidekick**. | `automation` (parent kind, `automation_directory`, `/automations` routes). |
+| Organizations | A **Workspace** became an **Organization**. | `workspace` (`WorkspaceDO`, `workspace_id`, `/workspace` routes). |
+| Spaces | A **Project** became a **Space** and grew in scope. | None: `projects` was retired with its mechanism ([`projects.md`](projects.md)). |
+| Channels | A **Work stream** became a **Channel**; a **Substream** became a **Breakout**. | `workstream`, `substream`. |
+| Navigation redesign ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) | A **Space** became a **Channel**, and a **Channel** became a **Thread**. | `spaces` held Channels; `channels` and `workstream` held Threads. |
+| Canvases and Sidekicks ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)) | A **Thread**, a **Channel** and a **Breakout** became nothing: they were deleted, not renamed. The product is two sections, **Canvases** and **Sidekicks**. | A Canvas id is a `workstream` id (`WorkstreamId`, `artifact_registry.workstream_id`, `artifact_state.workstream_id`); a Canvas's Chat is substream `"0"`; a Sidekick is an `automation`; the conversation Durable Object, renamed from `SubstreamAgent` to `AgentLoopDO`, keeps its `SUBSTREAM_AGENTS` binding and `workstream:<parent>:substream:<id>:loop` object names, since those are identities. Client names such as `WorkstreamDetail`, `useWorkstreamSocket` and `WorkstreamComposer` stay. The `spaces`, `channels` and Thread tables stay in storage. A few readers left over from plan step C-2 still query `channels` and `spaces` (`memory-digest-sync.ts`, `search-authorization-universe.ts`, `workspace-conversation-view.ts`, `workspace-do.ts`, `workspace-memory-facts-storage.ts` and `engineering-inspection-bridge.ts`); the tables are dropped once those readers go. |
+
 ## What this inventory does not settle
 
 - **Which Avalon references are permanent.** Three are now settled: the
@@ -397,6 +414,26 @@ with this repository. The two halves of that line have different owners.
   nothing in this repository can alias the old event names at the destination.
 - **Ordering and batching.** The categories above are ordered by coupling cost,
   which is not the same as the order the work should happen in.
+
+## Changelog
+
+### 2026-11-07 — The product-name renames are recorded beside the Avalon ones
+
+**What changed:** A section records each product-name rename the tree carries
+— Automation to Sidekick, Workspace to Organization, Project to Space, Work
+stream to Channel and Substream to Breakout, the navigation redesign, and the
+Canvases and Sidekicks pivot, which deleted Threads, Channels and Breakouts —
+with the storage name each one left in place.
+
+**Why:** The pivot made `workstream` the storage name of a Canvas, the third
+product noun it has stood for, and no document said so outside the agents'
+rule sheet. A reader meeting `workstream_id` on an artifact row, or
+`SUBSTREAM_AGENTS` beside `AgentLoopDO`, needs one place that says the name is
+storage and was kept on purpose.
+
+**Consequences:** A later rename of a product noun adds a row here and to the
+"Rebranding Guide" in `AGENTS.md`, in the same change. Renaming one of these
+storage names is a migration, not a sweep, for the reasons section 1 gives.
 
 ### 2026-08-25 — The person-notification emails and both Resend senders
 

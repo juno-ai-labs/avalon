@@ -27,7 +27,7 @@ properties without knowing which appearance is active.
 | `apps/desktop/src/renderer/lib/theme.ts` | Desktop native reporting and window synchronization adapter. |
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting, drawn with the shared `SegmentedControl` from `components/primitives.tsx`. |
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
-| `packages/contracts/src/palette.ts` | The palette keys and `PALETTE_INK` — which of the two absolute inks each fill carries, and the reasoning behind the rule that picks it. Which keys a Space, Channel, Project or person may hold is in `spaces.ts` and `projects.ts`, which draw from it. |
+| `packages/contracts/src/palette.ts` | The palette keys and `PALETTE_INK` — which of the two absolute inks each fill carries, and the reasoning behind the rule that picks it. Which keys an appearance or a person may hold is in `spaces.ts` and `projects.ts` (storage names kept from before the Canvases pivot), which draw from it. |
 | `packages/ui/src/lib/project-palette.ts` | `markColors()`, the pastel `project-tint`/`project-ink` pair a mark of a hue is painted in, and `glyphInk()`, resolving `PALETTE_INK` to the `palette-ink` token for the fills that have no pair. `apps/desktop/src/renderer/lib/project-palette.ts` only re-exports it. |
 | `apps/desktop/src/renderer/styles/palette.css.node.test.ts` | Recomputes the table from the tokens, and pins the WCAG 2 shortfall and the APCA ties. |
 
@@ -137,7 +137,7 @@ serves it through `rally-font://`.
   recorded rather than fixed — see the 2026-09-10 changelog entry for what is
   accepted and why.
 - **A mark is painted in its hue's pastel pair, a person in the hue itself.**
-  Channel and Breakout glyphs, Sidekick hexagons, Space icons and picker
+  Conversation glyphs (`WorkstreamGlyph`), Sidekick hexagons and picker
   swatches take `project-tint` under `project-ink` (`markColors()`), themed per
   appearance, every ink at least 5.3:1 on its tint in light and 7.25:1 in dark,
   and each family at one OKLab lightness so no hue stands out.

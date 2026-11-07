@@ -13,7 +13,7 @@ export type PeopleRanking = z.infer<typeof PeopleRankingSchema>;
 /**
  * What a person can pin: a thread (storage `workstream`), a Channel (storage
  * `space`) or a breakout (storage `substream`). One list per kind, each in the
- * person's own order. See `docs/workstream-pinning.md`.
+ * person's own order. See `docs/pinning.md`.
  */
 export const PinKindSchema = z.enum(["thread", "channel", "breakout"]);
 export type PinKind = z.infer<typeof PinKindSchema>;
@@ -55,7 +55,7 @@ export type PinRequest = z.infer<typeof PinRequestSchema>;
  * unknown kind in `pins` would fail the whole list; artifact pins travel as a
  * list of their own instead, beside `pins` on the same socket messages, where
  * an older build drops the key it does not know. They share the stored table,
- * order rules and limit with the other kinds (`docs/workstream-pinning.md`).
+ * order rules and limit with the other kinds (`docs/pinning.md`).
  */
 export const ArtifactPinSchema = z.strictObject({
   /** The resource. */
@@ -167,7 +167,7 @@ export type ChannelStatsList = z.infer<typeof ChannelStatsListSchema>;
  * - `artifact_updated`: an artifact the viewer pinned has a new version that
  *   somebody else made (`artifact` names it; `threadId` is the thread it was
  *   generated in). Served only to builds at `ARTIFACT_UPDATES_CLIENT_CONTRACT`
- *   or later; see docs/workstream-pinning.md#artifact-pins.
+ *   or later; see docs/pinning.md#artifact-pins.
  *
  * `breakout` is set when the row is about a breakout rather than its thread.
  * Titles are the conversation's current ones, read when the page is.
