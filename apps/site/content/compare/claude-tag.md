@@ -5,7 +5,7 @@ maker: Anthropic
 order: 1
 title: "Rally vs Claude Tag: a home for team & AI or @Claude in Slack"
 description: "Claude Tag brings Claude into your Slack channels. Rally gives your team and AI a shared place to work."
-updated: 2026-10-01
+updated: 2026-11-07
 kind: "Anthropic's Claude as a taggable teammate in Slack."
 edge: "Rally has a much simpler setup around connectors and a much less noisy behavior."
 ---
