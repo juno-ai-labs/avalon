@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { workspaceSyncPublicationsForMutation } from '../src/services/workspace-realtime-service';
 
-const connectionTopics = ['connector_connections', 'resources', 'digest_schedule'];
+const connectionTopics = ['connector_connections', 'resources'];
 const organization = { kind: 'organization' };
 const actor = { kind: 'actor' };
 
@@ -30,7 +30,7 @@ describe('workspaceSyncPublicationsForMutation', () => {
     ['POST', '/connections/custom-mcp/start', ['connector_oauth_attempts'], actor],
     ['POST', '/connections/connection-1/reconnect', ['connector_oauth_attempts'], actor],
     ['POST', '/connections/connection-1/resource-authorizations/start', ['connector_oauth_attempts'], actor],
-    ['POST', '/connections/slack/link', ['connector_connections', 'digest_schedule'], actor],
+    ['POST', '/connections/slack/link', ['connector_connections'], actor],
     ['PATCH', '/automations/automation-1', ['automations', 'workstream_directory'], organization],
     ['POST', '/automation-templates/template-1/subscribe', ['automations', 'workstream_directory'], organization],
     ['POST', '/notes', ['notes', 'resources'], organization],

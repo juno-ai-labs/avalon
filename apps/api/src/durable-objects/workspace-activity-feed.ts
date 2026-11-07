@@ -42,7 +42,7 @@ import { SPACE_CHANNEL_PAGE_SIZE, type WorkspaceSpaceStorage } from "./workspace
  * of the conversation page's gates, so neither a row nor the page cursor ever
  * names a conversation the viewer cannot list. A breakout's mention reaches
  * the shared log emptied and readable by its author alone
- * (`breakout-activity.ts`, `docs/digests.md`); the viewer's target edge is
+ * (`breakout-activity.ts`); the viewer's target edge is
  * what lists it here. Titles are read now, not from the event's snapshot, so a
  * renamed thread reads under its new name.
  *

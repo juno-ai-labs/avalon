@@ -1,6 +1,6 @@
 /**
- * Who is told about news in an Organization-wide Channel; the rule is
- * `docs/digests.md#who-is-told-about-channel-news`. Every fragment is
+ * Who is told about news in an Organization-wide Channel; the rule was
+ * recorded in the retired `docs/digests.md`. Every fragment is
  * code-owned SQL over caller-chosen aliases and reads the viewer's id from `?1`.
  */
 
