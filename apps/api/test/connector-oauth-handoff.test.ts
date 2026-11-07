@@ -188,6 +188,7 @@ function resourceAuthorizationRequest(connectionId: string) {
     capability: "sheets.write",
     operation: "edit",
     resource: { id: "sheet-1", type: "document", name: "Ellen Buckley Assessment" },
+    parentKind: "canvas",
     parentId: "00000000-0000-4000-8000-000000000020",
     substreamId: "0",
     failedToolInvocationId: "00000000-0000-4000-8000-000000000030:turn:1:tool:0",
