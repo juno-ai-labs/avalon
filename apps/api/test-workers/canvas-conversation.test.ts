@@ -9,7 +9,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
@@ -29,6 +29,8 @@ import { ConversationService } from "../src/services/conversation-service";
 import { verifySocketTicket } from "../src/services/socket-service";
 import { deliverChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { useOpenRouterDouble } from "./helpers/openrouter-double";
+import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000cb000");
@@ -39,6 +41,8 @@ const GUEST = asUserId("00000000-0000-7000-8000-0000000cb004");
 const NOW = "2026-11-07T10:00:00.000Z";
 const TEST_ENV: Env = env;
 useHeldEffectQueue();
+const provider = useOpenRouterDouble(() => ({ say: "Here is the plan." }));
+useSelectedModel();
 
 function auth(userId: string): AuthContext {
   return { sessionId: `session-${userId}`, userId: asUserId(userId), workspaceId: WORKSPACE_ID, region: "global",
@@ -83,6 +87,10 @@ beforeEach(async () => {
       source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
       source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
       verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_email_routes (
+      local_part TEXT PRIMARY KEY COLLATE NOCASE, region TEXT NOT NULL,
+      workspace_id TEXT NOT NULL, workstream_id TEXT, automation_subscription_id TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
   ]);
 });
 
@@ -301,6 +309,36 @@ describe("a Canvas's artifacts", () => {
     const { canvasId: elsewhere } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: elsewhere }))
       .rejects.toMatchObject({ code: "canvas_not_written_by_sidekick" });
+  });
+});
+
+describe("Rally in a Canvas's Chat", () => {
+  it("answers with the Canvas's current artifacts as context and the resource tools a Thread's Main has", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    const resourceId = crypto.randomUUID();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'generated_file', 'avalon_generated', 'plan.md', '{}', 'attached', ?, ?)`, resourceId, WORKSPACE_ID, NOW, NOW);
+    });
+    await workspace().canvasNoteArtifact({ workspaceId: WORKSPACE_ID, canvasId, resourceId, editor: { kind: "rally", id: null } });
+    await new ConversationService(TEST_ENV, auth(CREATOR)).authorizeViewer(canvasId);
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    const response = await chat.fetch("https://object.test/internal/product", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "create_message", parentKind: "canvas", auth: auth(CREATOR),
+        input: { text: "Tighten the plan.", clientMessageId: "canvas-ask-1", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } }),
+    });
+    expect(response.status, await response.clone().text()).toBe(200);
+    await runDurableObjectAlarm(chat);
+    await expect.poll(() => provider.calls.length, { timeout: 15_000 }).toBeGreaterThan(0);
+    const call = provider.calls.find((candidate) => candidate.messages.some((message) =>
+      typeof message.content === "string" && message.content.startsWith("CANVAS CONTEXT")))!;
+    const context = call.messages.find((message) => typeof message.content === "string" && message.content.startsWith("CANVAS CONTEXT"))!;
+    expect(JSON.parse(String(context.content).replace(/^CANVAS CONTEXT \(host-provided\):\n/u, ""))).toMatchObject({
+      canvasId, title: "Launch plan", artifacts: [{ resourceId, title: "plan.md", kind: "file", version: 1 }],
+    });
+    expect(call.toolNames).toEqual(expect.arrayContaining(["list_resources", "read_resource"]));
   });
 });
 

@@ -5204,6 +5204,35 @@ function principalSystemSectionFor(
  * re-rendered on every turn and must be byte-identical across a retry, and
  * SQLite is free to return two rows in either order.
  */
+/**
+ * What Rally in a Canvas's Chat is told about the Canvas: its title, its
+ * artifacts at their current versions, and how publishing works there. A
+ * derived user message, as a Sidekick run's activation context is, rather
+ * than system prompt text: the system prompt prefix is byte-stable and
+ * cached, and the artifact list changes with every publish. Keyed on the
+ * message that woke the run, so a recovered execution renders the same
+ * context. `docs/canvases.md#rally-in-a-canvas-chat`.
+ */
+async function canvasRunContextMessage(env: Env, input: WorkstreamWorkflowInput): Promise<ModelMessage | null> {
+  const canvas = await (await hostedParentStub(env, input.workspaceId)).canvasContext({
+    workspaceId: input.workspaceId, canvasId: input.parentId,
+  });
+  if (!canvas) return null;
+  return modelDerivative({
+    role: "user",
+    content: `CANVAS CONTEXT (host-provided):\n${JSON.stringify({
+      canvasId: canvas.canvasId,
+      title: canvas.title,
+      artifacts: canvas.artifacts.map((artifact) => ({
+        resourceId: artifact.resourceId, title: artifact.title, kind: artifact.kind, version: artifact.version,
+      })),
+      publishing: "This conversation is a Canvas's Chat, open to everyone in the Canvas. The artifacts above are the Canvas. "
+        + "To change one, read it (read_resource, view_resource, or import_resource into the Terminal), then publish_resource the same filePath: "
+        + "that is a new version of it, attributed to you. Publishing a different filePath adds another artifact to this Canvas.",
+    })}`,
+  }, "run_context", input.triggerMessageId ?? input.harnessRunId);
+}
+
 async function loadRunPromptContext(
   env: Env,
   input: WorkstreamWorkflowInput,
@@ -5328,6 +5357,10 @@ async function loadRunPromptContext(
     }), "scheduled_wakeup", input.scheduledWakeupId);
   }
   if (triggerMessage) additionalMessages.push(triggerMessage);
+  if (input.parentKind === "canvas") {
+    const canvas = await canvasRunContextMessage(env, input);
+    if (canvas) additionalMessages.push(canvas);
+  }
   if (input.automationRun && input.automationContinuation) {
     // After the input that continued the run, which is already in the
     // transcript above. Keyed on that input, so a recovered execution reuses
