@@ -12,7 +12,7 @@ const region = 'global';
 describe('isWorkspaceSyncRelayEvent', () => {
   it('admits the structure the inbox reads and nothing that would throw inside it', () => {
     expect(isWorkspaceSyncRelayEvent({ type: 'source', revision: 2, source: null })).toBe(true);
-    expect(isWorkspaceSyncRelayEvent({ type: 'topics', region, workspaceId, waterline: 4, topics: ['notes'] })).toBe(true);
+    expect(isWorkspaceSyncRelayEvent({ type: 'topics', region, workspaceId, waterline: 4, topics: ['resources'] })).toBe(true);
     for (const event of [
       { type: 'state', region, workspaceId, state: 'connected' },
       { type: 'source' },
@@ -42,9 +42,9 @@ describe('createWorkspaceSyncRelayInbox', () => {
     inbox.subscribe(later);
     await Promise.resolve();
     expect(later).not.toHaveBeenCalled();
-    inbox.receive({ type: 'topics', region, workspaceId, waterline: 6, topics: ['notes'] });
-    expect(later).toHaveBeenCalledWith({ type: 'topics', region, workspaceId, waterline: 6, topics: ['notes'] });
-    expect(received.at(-1)).toEqual({ type: 'topics', region, workspaceId, waterline: 6, topics: ['notes'] });
+    inbox.receive({ type: 'topics', region, workspaceId, waterline: 6, topics: ['resources'] });
+    expect(later).toHaveBeenCalledWith({ type: 'topics', region, workspaceId, waterline: 6, topics: ['resources'] });
+    expect(received.at(-1)).toEqual({ type: 'topics', region, workspaceId, waterline: 6, topics: ['resources'] });
   });
 
   it('keeps held news for the listener that replaces one unsubscribed before it could take it', async () => {
@@ -65,9 +65,9 @@ describe('createWorkspaceSyncRelayInbox', () => {
 
   it('drops held news about an Organization the session has left, telling regions apart', async () => {
     const inbox = createWorkspaceSyncRelayInbox();
-    inbox.receive({ type: 'topics', region, workspaceId: otherWorkspaceId, waterline: 9, topics: ['notes'] });
+    inbox.receive({ type: 'topics', region, workspaceId: otherWorkspaceId, waterline: 9, topics: ['resources'] });
     // The same UUID in another region is another Organization.
-    inbox.receive({ type: 'topics', region: 'enterprise', workspaceId, waterline: 8, topics: ['activity'] });
+    inbox.receive({ type: 'topics', region: 'enterprise', workspaceId, waterline: 8, topics: ['automations'] });
     inbox.receive({ type: 'topics', region, workspaceId, waterline: 2, topics: ['member_directory'] });
     const listener = vi.fn();
     inbox.subscribe(listener);

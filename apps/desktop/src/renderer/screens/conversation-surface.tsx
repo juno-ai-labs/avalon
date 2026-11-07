@@ -10,7 +10,7 @@ import { useWorkspaceMembers } from "../lib/workspace-members";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchThroughOwner } from '../lib/fetch-through-owner';
 import clsx from 'clsx';
 import { personalColor, personalColorInk } from '../components/personal-avatar';
@@ -1396,11 +1396,6 @@ function ConversationSurfaceContent({
     id,
     visibleMembers,
   ), [id, visibleMembers, orderedTranscript.data]);
-  const backgroundAgents = useQuery({
-    queryKey: ['workstream-background-agents', id], queryFn: skipToken,
-    initialData: null as Record<string, number> | null,
-    select: (counts) => counts === null ? null : counts[substreamId] ?? 0,
-  });
   const liveMessageIds = useMemo(() => new Set((transcriptOverlays.data ?? [])
     .filter((overlay) => overlay.provenance.source === 'client_command'
       || overlay.provenance.source === 'stream_event'
@@ -2532,7 +2527,6 @@ function ConversationSurfaceContent({
             onStop={async () => {
               await stop.mutateAsync();
             }}
-            backgroundAgentCount={backgroundAgents.data}
             sendBlocked={feedFromLocalCache}
             sending={sending}
             uploading={attachmentDraft.uploading}

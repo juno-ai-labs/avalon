@@ -63,11 +63,10 @@ and availability changes visible without navigation.
 
 A Sidekick's shared conversation uses this surface in the main window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and keeps a **Sidekicks** section below it, including while the list is loading or empty. When present, its rows are this work stream's Sidekicks: the ones it owns and the ones its main conversation has loaded, with access-checked removal of an attachment affecting future executions. `ConversationSurface` owns both queries and hands the merged rows to the sidebar and the inspector rail, so the two rails cannot disagree about what a room has.
 
-Running Sidekicks share background agents' animated indicator above the input.
-The host supplies independent counts to `WorkstreamComposer`, so both rows can
-stack and clear independently. [Sidekick lifecycle](automation-lifecycle.md#activity-above-the-composer)
-owns the activity read and update signal.
-The query client retains socket-owned counts and breakout lists across navigation.
+The composer shows no running count above the input; the indicators that did
+were fed only by Threads and Channels, and
+[`websocket-architecture.md`](websocket-architecture.md#sidekick-library-synchronization)
+records where a running signal would come from.
 Losing that socket or unmounting its owner resets both kinds of count to unknown;
 the labels stay hidden until fresh directory and Sidekick subscription answers
 arrive after reconnect.

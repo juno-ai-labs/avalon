@@ -445,15 +445,11 @@ conversation remains the editing surface, without a separate guidance section.
 
 ## Activity above the composer
 
-Channel, Thread, and Breakout composers show a distinct running Sidekick count,
-covering setup, manual, and triggered executions; idle, archived, and
-waiting-for-input executions do not count. The composer registers its exact
-target with `sidekick_activity` on the existing workspace socket; WorkspaceDO
-admits each target and pushes initial and changed `workspace_sidekick_activity`
-counts from accepted local child/run projections. Sources are exact homes,
-posting attachments, defaults, recommendations, and loaded instructions.
-Instruction links use the shared audience rule; posting consent exposes only
-activity, not Sidekick history.
+No composer shows a running Sidekick count. The count was kept for Channel,
+Thread and Breakout composers through the `sidekick_activity` workspace-socket
+command, and went with them (plan step C-2);
+[`websocket-architecture.md`](websocket-architecture.md#sidekick-library-synchronization)
+records where a running signal would come from.
 
 Execution, attachment, audience, visibility, and Channel-default changes use the durable
 post-commit lane to push watched counts. Subscription revisions and snapshot

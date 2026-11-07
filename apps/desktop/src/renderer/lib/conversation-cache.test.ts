@@ -11,7 +11,6 @@ import {
   hydrateConversation,
   seedWorkspaceConversation,
   mirrorConversation,
-  retainConversationChildren,
   retainConversationParents,
   type ConversationCacheKeys,
 } from './conversation-cache';
@@ -403,7 +402,7 @@ describe('conversation cache', () => {
     expect(hydrated.getQueryData(keys.initialContext)).toBeNull();
   });
 
-  it('keeps only the parents the directory lists, and only the children the roster lists', async () => {
+  it('keeps only the parents the directory lists, with every conversation under them', async () => {
     const other = '00000000-0000-7000-8000-000000000020';
     const row = { detail: detail(), transcript: transcript(), initialContext: null, cachedAt: '' };
     await conversationSlice.write(scope, conversationCacheKey(parentId, '0'), row, parentId);
@@ -411,13 +410,12 @@ describe('conversation cache', () => {
     await conversationSlice.write(scope, conversationCacheKey(parentId, 'gone'), row, parentId);
     await conversationSlice.write(scope, conversationCacheKey(other, '0'), { ...row, detail: detail({ id: other }) }, other);
 
-    await expect(retainConversationChildren(scope, parentId, new Set([childId]))).resolves
-      .toEqual([conversationCacheKey(parentId, 'gone')]);
     await expect(retainConversationParents(scope, new Set([parentId]))).resolves
       .toEqual([conversationCacheKey(other, '0')]);
     expect((await conversationSlice.entries(scope)).map((entry) => entry.key).sort()).toEqual([
       conversationCacheKey(parentId, '0'),
       conversationCacheKey(parentId, childId),
+      conversationCacheKey(parentId, 'gone'),
     ].sort());
   });
 

@@ -108,10 +108,6 @@ export function conversationCacheKey(parentId: string, substreamId: string): str
   return `${parentId}:${substreamId}`;
 }
 
-function substreamIdOfKey(key: string, parentId: string): string | null {
-  return key.startsWith(`${parentId}:`) ? key.slice(parentId.length + 1) : null;
-}
-
 /**
  * Put the cached conversation into empty query caches, marked as a seed.
  *
@@ -321,21 +317,6 @@ export function forgetConversation(parentId: string, substreamId: string): void 
 export async function retainConversationParents(scope: string, keep: ReadonlySet<string>): Promise<string[]> {
   const entries = await conversationSlice.entries(scope);
   const removed = entries.filter((entry) => !keep.has(entry.subject));
-  await Promise.all(removed.map((entry) => conversationSlice.remove(scope, entry.key)));
-  return removed.map((entry) => entry.key);
-}
-
-/** Keep only the children of one parent that its control socket still lists; the main conversation always stays. */
-export async function retainConversationChildren(
-  scope: string,
-  parentId: string,
-  keep: ReadonlySet<string>,
-): Promise<string[]> {
-  const entries = await conversationSlice.entriesForSubject(scope, parentId);
-  const removed = entries.filter((entry) => {
-    const substreamId = substreamIdOfKey(entry.key, parentId);
-    return substreamId !== null && substreamId !== '0' && !keep.has(substreamId);
-  });
   await Promise.all(removed.map((entry) => conversationSlice.remove(scope, entry.key)));
   return removed.map((entry) => entry.key);
 }
