@@ -5152,9 +5152,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const canvas = await this.hostedCanvas(envelope.parentId, envelope.workspaceId);
       return this.canvasWrite(() => ({ accepted: canvas.receiveChildEffects(request) }));
     }
-    // A Thread's or Channel's conversation was retired with it (plan step
-    // B-7); nothing here hosts its parent any more.
-    throw new ApiError(409, "conversation_parent_kind_retired", "This conversation's parent kind is retired",
+    // A Thread's or Space's effect: the envelope admits the retired kinds so
+    // the refusal is named here and the message dead-letters loudly, rather
+    // than being dropped at the Queue boundary. Nothing hosts those parents.
+    // The message is the code with the kind: an RPC hop keeps only the message.
+    throw new ApiError(409, "conversation_parent_kind_retired", `conversation_parent_kind_retired:${envelope.parentKind}`,
       undefined, `conversation_parent_kind_retired:${envelope.parentKind}`);
   }
 

@@ -19,11 +19,11 @@ socket filtering by client contract. `AgentLoopDO` migration 84 drops
 `conversation_suggestions` and `turn_disposition_judgements`. A stored
 `merge_suggestion` alarm is acknowledged and dropped.
 
-What survives until a later step: `ConversationSuggestionSchema`, the socket
-event and the snapshot's optional `suggestions` field in `@rally/contracts`,
-which the client contract reshape removes (the server sends none); the
-`suggestion_draft` model role and its Flagship key; WorkspaceDO's
-`suggestion_backfill` lane rows in `retired-workspace-schema.ts`. This document
+What survives: WorkspaceDO's `suggestion_backfill` lane rows in
+`retired-workspace-schema.ts`. The contracts (`ConversationSuggestionSchema`,
+the `conversation_suggestion_changed` event and the snapshot's `suggestions`
+field) were deleted in plan step B-8, and the `suggestion_draft` role and its
+Flagship key before that. This document
 is kept for its changelog. Do not build on anything it describes.
 
 ## Changelog

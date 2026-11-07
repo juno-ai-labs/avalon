@@ -217,7 +217,7 @@ let envelopeSeq = 0;
 
 /** What a child stamps on an effect, built the way `enqueueEffectsInCurrentTransaction` does. */
 function childEnvelope(input: {
-  parentKind: "canvas" | "automation";
+  parentKind: "canvas" | "automation" | "workstream";
   parentId: string;
   substreamId: string;
   sourceVersion: number;
@@ -366,6 +366,24 @@ describe("an automation's child", () => {
         `SELECT COUNT(*) AS count FROM parent_outbox WHERE parent_id = ?`, AUTOMATION_ID,
       ).one().count).toBe(0);
     });
+  });
+});
+
+describe("a retired parent's effect", () => {
+  it("still parses at the Queue boundary, is refused by name and retried toward the dead-letter queue", async () => {
+    // A Thread's effect is a defect to find, not traffic to drop
+    // (docs/hosted-conversation-parents.md): it is never acknowledged.
+    const envelope = childEnvelope({
+      parentKind: "workstream",
+      parentId: "00000000-0000-7000-8000-0000000000e9",
+      substreamId: "0",
+      sourceVersion: 1,
+      effect: activityEffect("retired-activity-1"),
+    });
+    expect(await consumeEffectBodies(env, [envelope])).toEqual({ acked: 0, retried: 1 });
+    // The refusal the retry carries, named by kind.
+    await expect(workspaceStub().receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] }))
+      .rejects.toThrow("conversation_parent_kind_retired:workstream");
   });
 });
 

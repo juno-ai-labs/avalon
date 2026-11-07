@@ -3252,11 +3252,7 @@ export async function runWorkstreamHarness(
       recordActivationDuration(pluginId, name, durationMs);
     }
   };
-  const runLimitsAtMs = Date.now();
-  const runLimits = workstreamRunLimits(
-    undefined,
-    initialRun.started_at > 0 ? Math.max(0, runLimitsAtMs - initialRun.started_at) : 0,
-  );
+  const runLimits = workstreamRunLimits();
   const runScopeLimits = {
     ...runLimits,
     maxCatalogTokens: numericEnv(env, "HARNESS_MAX_PLUGIN_CATALOG_TOKENS", 2_500),
@@ -3672,9 +3668,6 @@ export async function runWorkstreamHarness(
         expectedInputHash: inputHash,
         policyMatches,
         expectedPolicy,
-        ...(runLimits.maxWallClockMs !== undefined ? {
-          maxWallClockMs: Math.max(0, runLimits.maxWallClockMs - (Date.now() - runLimitsAtMs)),
-        } : {}),
         plugins: harnessTools.plugins,
         context: {
           workspaceId: input.workspaceId,
