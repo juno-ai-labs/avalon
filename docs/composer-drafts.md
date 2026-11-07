@@ -306,8 +306,9 @@ of those families take Canvas drafts with it.
 clears Canvas drafts with the rest. A popped-out artifact window reads the same
 scope to confine its actions (`main/artifact-window-actions.ts`): for a Canvas
 it renames and deletes through `/conversations/<canvasId>/resources/…` and
-refuses pin and link with a reason naming the Canvas, since a Canvas artifact's
-pin and link belong to the Canvas (its link form is plan step B-5).
+refuses pin with a reason naming the Canvas, since a Canvas artifact's pin
+belongs to the Canvas. (Its link, refused here at first, became the Canvas
+link onto the artifact on 2026-11-07; [`links.md`](links.md) owns it.)
 
 ### 2026-10-20 — Persist confirmed artifact comments with composer drafts
 

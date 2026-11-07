@@ -361,7 +361,7 @@ It does **not** own: the application menu bar at the top of the screen
 ([`desktop-icons.md`](desktop-icons.md)), suggested work, which this surface no
 longer shows at all ([`suggested-work.md`](suggested-work.md)), what a
 work-stream link means
-([`workstream-links.md`](workstream-links.md)), or session storage and refresh —
+([`links.md`](links.md)), or session storage and refresh —
 it borrows `loadStoredAuth` and the coalescing refresh and adds nothing to them.
 
 It depends on the `avalon://` deep-link vocabulary already handled in

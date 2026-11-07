@@ -152,12 +152,12 @@ in [`workstream-durable-object.md`](workstream-durable-object.md) and
 [`substream-creation.md`](substream-creation.md)), what the Activity tab lists
 otherwise ([`digests.md`](digests.md#the-activity-tab)), the menu bar
 ([`menu-bar.md`](menu-bar.md)), or link parsing
-([`workstream-links.md`](workstream-links.md)).
+([`links.md`](links.md)).
 
 ## Security and trust model
 
 A link is routing context, not a capability
-([`workstream-links.md`](workstream-links.md#why-the-id-is-in-the-path)). The
+([`links.md`](links.md#why-the-id-is-in-the-path)). The
 preview widens that one step on purpose: any active member who holds a Channel
 or Breakout id learns its title and mark. That is what a Slack unfurl already
 shows anyone in the Slack channel, and less than a Channel reached through a

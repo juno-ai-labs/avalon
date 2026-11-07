@@ -408,8 +408,8 @@ App Home is a personalized control surface published per user. Rally publishes o
 App Home adds a workspace-administration card for Rally owners and admins with installation health and a secure desktop handoff to Connections. The desktop Connections page is the full administration surface: installation health, team labels, granted surfaces, token health, reconnect, and disconnect.
 
 Home is updated on `app_home_opened`, after account linking, and after settings changes. Blocks contain user-specific data only after the Slack user has been linked and active membership is revalidated.
-Recent/pinned work-stream summaries and link unfurls come from the authoritative
-WorkspaceDO directory after cutover; installation, account-link, connection, and
+Recent/pinned work-stream summaries come from the authoritative
+WorkspaceDO directory after cutover, and an unfurl's name from `linkTitle`; installation, account-link, connection, and
 Slack delivery coordinates remain in regional D1. A WorkspaceDO failure withholds
 or delays that product summary rather than reading a frozen D1 work-stream row.
 
@@ -427,15 +427,18 @@ or delays that product summary rather than reading a frozen D1 work-stream row.
   to everyone; submission is accepted from any linked member of the installation, not only whoever
   started the thread.
 - Rally person mention: notify the matched member in the Rally Agent DM, falling back to email.
-- Rally links: unfurls that summarize the work stream — title, last activity, automation origin, and a status badge only while it is running, needs input, or failed — and require the viewer's normal Rally authorization for its contents.
+- Rally links: a Canvas or Sidekick link unfurls to a card naming it, with an
+  **Open in Rally** button; its contents need the viewer's normal Rally
+  authorization. A retired Thread link gets no card.
 
-Every work-stream link Rally posts is the canonical workspace-addressed
-`https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>` — see
-[`workstream-links.md`](workstream-links.md). Slack delivers `link_shared` only
-for the registered unfurl domain, so a link must be on that domain, with the id
-in its path, to be unfurled at all; `rallywithai://` links pasted by a member never
-produce an event and cannot be previewed. The unfurl handler also still accepts
-the legacy `/open#target=` handoff already sitting in channel history.
+Every link Rally posts is a Canvas's or a Sidekick's canonical link,
+`https://rallywith.ai/app/<region>/<organization-base58>/cv/<canvas-base58>/` or
+`.../sk/<sidekick-base58>/` — see [`links.md`](links.md). Slack delivers
+`link_shared` only for the registered unfurl domain, so a link must be on that
+domain, with the id in its path, to be unfurled at all; `rallywithai://` links
+pasted by a member never produce an event and cannot be previewed. A
+notification about a Thread, which has no link now, is not sent, and the task
+controls under a Thread's reply carry no **Open task** button.
 
 Every other web button uses an allowlisted HTTPS-to-desktop handoff carrying the
 installation's region/workspace target. Workstream IDs may cross that boundary;
@@ -605,7 +608,7 @@ not own:
 | The zero-copy definition this obeys | [`provider-apps.md`](provider-apps.md#the-zero-copy-connector-boundary) |
 | Connector-wide adapter rules and health semantics | [`connectors.md`](connectors.md) |
 | The shared actor-identity resolution behind attribution | [`connectors.md`](connectors.md#actor-identity-and-work-stream-attribution) |
-| The unfurl card, its audience rules, and the refresh sweep | [`workstream-links.md`](workstream-links.md) |
+| The unfurl card, its audience rules, and the refresh sweep | [`links.md`](links.md) |
 | Frozen automation delivery targets | [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) |
 | The configured deployment boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
 | The run a Slack prompt starts | [`agent-harness.md`](agent-harness.md) |
@@ -741,7 +744,7 @@ not own:
 | `apps/api/test/slack-connection-health.test.ts` | That a stored status diagnoses rather than gates. |
 | `apps/api/test/slack-notification-service.test.ts` | The lookup-based DM path and the cases it skips. |
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
-| `apps/api/test/slack-unfurl-refresh.test.ts` | The unfurl card and its refresh sweep — owned by [`workstream-links.md`](workstream-links.md). |
+| `apps/api/test/slack-unfurl-refresh.test.ts` | The unfurl card and its refresh sweep — owned by [`links.md`](links.md). |
 | `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant, the ingress re-drive, the link-challenge reap and the `slack_ingress` due time it clears, the operator notice an exhausted job posts, and the connector principal: a linked member's create and reply present exactly the marked auth to the object, and the object's refusal stays retryable without flipping the installation. |
 | `apps/api/test-workers/workspace-slack-ingress.test.ts` | The ingress spine on real workerd: admission and its dedupe, the claim lease and both settlement fences, the one-notice exhaustion episode, the maintenance sweep, thread claims, pending prompts, and the workspace identity fence. |
 
@@ -827,6 +830,25 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-11-07 — Unfurls and posted links name Canvases and Sidekicks
+
+**What changed:** The unfurl reads Canvas and Sidekick links and shows the
+name only; it no longer reads Thread links. Every link Rally posts in Slack —
+DMs about a mention, an add or Activity, task controls, App Home rows — comes
+from `conversationCanonicalUrl`, so it names the Canvas or the Sidekick, and a
+message about a Thread is skipped (`conversation_not_linkable`) or sent without
+its button.
+
+**Why:** Plan step B-5 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+Thread surfaces are gone, so a Thread link opens nothing.
+
+**Considered and rejected:** A status badge on a Canvas card. A Canvas has no
+harness status of its own; its Chat's would describe the conversation, not the
+Canvas.
+
+**Consequences:** A Canvas card is not recorded for the refresh sweep, so it
+keeps the name it was posted with. [`links.md`](links.md) owns the card.
 
 ### 2026-11-02 — The connector's send tool posts through the `markdown` block
 

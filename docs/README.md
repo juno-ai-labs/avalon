@@ -178,7 +178,7 @@ update it in the same change.
 | [`external-conversation-bindings.md`](external-conversation-bindings.md) | Where a place in a connected tool routes inside Rally: a Slack room linked to a Space by inviting the bot, a thread bound to an Agent Channel or a Sidekick run child, resolution of every reply, and the lifecycle events that suspend, move and reactivate a binding. Read before changing how a Slack message finds its Channel or how a run's Slack send becomes answerable. |
 | [`slack-permissions.md`](slack-permissions.md) | Every configured Slack OAuth scope and the behavior that depends on it. Read before adding a scope. |
 | [`workstream-email-addresses.md`](workstream-email-addresses.md) | The permanent per-work-stream and per-automation address format at `automation.rallywith.ai` and its derivation, the inbound path that starts a run from a mail through one `admitInboundEmail` call, its sender screen, and the notification sender. A run posts its own result into the room that owns its automation; [`automation-lifecycle.md`](automation-lifecycle.md) owns that. Read before changing how mail reaches an automation. |
-| [`workstream-links.md`](workstream-links.md) | Canonical Organization/Space/Channel/Breakout links with Base58 UUIDs, legacy readers, and the public-site handoff rewrite. Read before emitting or parsing a resource link anywhere. |
+| [`links.md`](links.md) | Canonical Canvas and Sidekick links with Base58 UUIDs, their deep links, the public-site handoff page (which answers a retired Space, Channel, Breakout or Thread link as gone), the web app's rewrite, server-minted notification links and the Slack unfurl. Read before emitting or parsing a link anywhere. |
 
 ## Development, verification, and operations
 
