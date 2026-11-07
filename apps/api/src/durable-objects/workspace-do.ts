@@ -6829,6 +6829,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.canvasWrite(() => canvas.create(input));
   }
 
+  /**
+   * One viewer's Canvas list as their socket's subscribe payload carries it,
+   * without anyone present: the read a caller with no workspace socket makes
+   * (the demo readiness barrier). See `canvasSidebarRows`.
+   */
+  async canvasListFor(input: { workspaceId: string; userId: string; member: boolean }) {
+    this.assertWorkspace(input.workspaceId);
+    return canvasSidebarRows(this.state.storage.sql, { userId: input.userId, member: input.member }, new Map(), SIDEBAR_LIST_LIMIT);
+  }
+
   /** A Canvas as one reader sees it; see `HostedCanvas.detail`. */
   async canvasDetail(input: Parameters<HostedCanvas["detail"]>[0]) {
     return (await this.hostedCanvas(input.canvasId, input.workspaceId)).detail(input);

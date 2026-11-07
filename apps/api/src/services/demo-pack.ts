@@ -2,26 +2,27 @@
  * The conversation pack, and the plan the seeder plays from it.
  *
  * A pack is versioned data behind a schema: a cast of roles, and an ordered
- * list of steps that create rooms, open private substreams inside them, say
- * things in either as cast members, attach documents, and publish Sidekicks.
- * Roles are bound to real accounts only when a demo is prepared, so one pack
- * serves every demo and the pack never names a user id. What Rally says in a
- * seeded room is part of the step that starts the run (`assistant`) — prose
- * that carries its findings itself, with no tool call behind it, because a
- * seeded transcript records nothing Rally did not do.
+ * list of steps in the product's two modes. A **Canvas** step makes a Canvas,
+ * says something in its Chat as a cast member (and, when the pack says so, has
+ * Rally answer), attaches a document to it, or has Rally publish a version of
+ * one of its artifacts. A **Sidekick** step publishes a Sidekick, shared with
+ * the people or the Organization the pack names, with a run that has already
+ * happened and, optionally, the Canvas that run wrote; a Sidekick message is
+ * something a cast member says in its shared conversation. Roles are bound to
+ * real accounts only when a demo is prepared, so one pack serves every demo
+ * and the pack never names a user id.
  *
- * A room step addresses a *conversation*, not a room: a room's main
- * conversation by naming the room alone, a substream by naming both. That
- * distinction is the whole of what substreams cost the rest of this module,
- * because a private child takes no directory row — `packRoomFacts` says why the
- * readiness barrier must not see one. A Sidekick step is in no room at all and
- * addresses no conversation.
+ * What Rally says is part of the step that starts its run (`assistant`), prose
+ * that carries its findings itself, because a seeded transcript records
+ * nothing Rally did not do. A `canvas_artifact` is therefore authored by the
+ * Canvas's most recent seeded run: Rally said it in that run, and the version
+ * is recorded as that run's.
  *
  * `planDemoSeed` turns a pack and a cast binding into the actions the seeder
- * applies one at a time: mentions resolved to user ids and offsets, seats
- * resolved to ids, every step carrying the seed the object reads addressing
- * from. The plan is pure — it reads nothing and writes nothing — which is what
- * lets a test prove a pack is playable before anything is written.
+ * applies one at a time: names resolved, audiences resolved to user ids, every
+ * step carrying the seed the object reads addressing from. The plan is pure —
+ * it reads nothing and writes nothing — which is what lets a test prove a pack
+ * is playable before anything is written.
  *
  * `docs/demo-workspaces.md` owns the feature and says which scenarios the
  * placeholder pack carries and why.
@@ -30,17 +31,12 @@ import { z } from "zod";
 
 import {
   DemoSeedSayTurnSchema,
-  SpaceIconKeySchema,
-  SpaceColorKeySchema,
   DemoSeedTurnSchema,
   IanaTimezoneSchema,
   MESSAGE_MAX_CHARACTERS,
   type DemoSeed,
   type DemoSeedTurn,
-  type Message,
 } from "@rally/contracts";
-
-type Mention = Message["mentions"][number];
 
 /** A role the cast plays. Bound to an account per demo, never in the pack. */
 export const DemoPackRoleSchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
@@ -66,90 +62,79 @@ export function demoCastRoles(roles: readonly DemoPackRole[]): DemoPackRole[] {
  * a client message id may be.
  */
 const StepIdSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,79}$/u);
-const RoomKeySchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
-/**
- * The pack's own name for a substream, unique across the pack. The main
- * conversation of a room has no name of its own: creating the room creates it,
- * and a step that names no substream is a step in it.
- */
-const SubstreamKeySchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
+/** The pack's own name for a Canvas or a Sidekick, which later steps address it by. */
+const KeySchema = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/u);
 const MessageTextSchema = z.string().min(1).max(MESSAGE_MAX_CHARACTERS);
 
 /**
- * `@{role}` in a message names a cast member. The planner replaces it with the
- * bound account's display name and records a mention at those offsets, which
- * is what makes the mention real: the object validates that the visible text
- * matches the person, and a confirmed mention seats them in the room.
+ * `@{role}` in prose names a cast member, and the planner writes the bound
+ * account's display name in its place. It records no mention: a Canvas or a
+ * Sidekick admits its readers by its audience, and a mention seats nobody in
+ * either, so the name is all the token is for.
  */
-const MENTION_TOKEN = /@\{([a-z][a-z0-9-]{0,39})\}/gu;
-
-const CreateWorkstreamStepSchema = z.strictObject({
-  kind: z.literal("create_workstream"),
-  execution: z.enum(["run", "history"]).optional(),
-  id: StepIdSchema,
-  room: RoomKeySchema,
-  as: DemoPackRoleSchema,
-  title: z.string().min(1),
-  space: RoomKeySchema.optional(),
-  /**
-   * Roles seated at creation, besides the author. May be empty: a person alone
-   * with Rally is an ordinary room, and whether a seeded line starts a run is
-   * the seed's decision rather than the room's size.
-   */
-  participants: z.array(DemoPackRoleSchema),
-  scope: z.enum(["workspace", "personal"]),
-  openingMessage: MessageTextSchema,
-  /** What Rally says: an opening message always starts a run. */
-  assistant: DemoSeedTurnSchema,
-});
+const NAME_TOKEN = /@\{([a-z][a-z0-9-]{0,39})\}/gu;
 
 /**
- * Open a substream: a private conversation inside a room the pack already
- * created. Only its participants ever see it — it is not a second work stream,
- * takes no row in anybody's sidebar, and changes nothing about how the room it
- * hangs off is listed.
- *
- * Two things the production flow decides for a person are the pack's here.
- * Membership, because a substream opens creator-only and everybody else is
- * added afterwards, so the pack says who ends up in it rather than leaving a
- * demo's private room with one person in it. And the starting context, because
- * Rally normally writes that by summarizing the parent conversation with a
- * model: scripting it keeps a seeded demo reproducible and keeps one more live
- * model call out of the minutes an operator spends waiting to present.
+ * Who a Canvas or a Sidekick is shared with: `"organization"`, or the people
+ * besides its creator. An empty list is its creator alone. One spelling for
+ * both modes because both are one audience rule (`audienceAdmits`); the
+ * planner turns it into each one's own vocabulary.
  */
-const CreateSubstreamStepSchema = z.strictObject({
-  kind: z.literal("create_substream"),
+const SharedWithSchema = z.union([z.literal("organization"), z.array(DemoPackRoleSchema)]);
+export type DemoPackSharedWith = z.infer<typeof SharedWithSchema>;
+
+/**
+ * Make a Canvas, through `CanvasService.create` as its creator, and share it.
+ * `prompt` is the "Start from a prompt" card's first message; `assistant` is
+ * what Rally answers it with, and is refused without a prompt to answer.
+ */
+const CreateCanvasStepSchema = z.strictObject({
+  kind: z.literal("create_canvas"),
   id: StepIdSchema,
-  /** The room this hangs off, which an earlier step must have created. */
-  room: RoomKeySchema,
-  substream: SubstreamKeySchema,
-  /** Who opens it. A substream is created by one person and starts idle. */
+  canvas: KeySchema,
   as: DemoPackRoleSchema,
-  title: z.string().min(1),
-  /** Everyone else in it, added by the creator once it is ready. */
-  participants: z.array(DemoPackRoleSchema),
-  /** What Rally's starting context says, in place of the summary a model would write. */
-  startingContext: z.string().min(1).max(20_000),
+  title: z.string().trim().min(1).max(300),
+  sharedWith: SharedWithSchema,
+  prompt: MessageTextSchema.optional(),
+  assistant: DemoSeedTurnSchema.optional(),
 });
 
-const MessageStepSchema = z.strictObject({
-  kind: z.literal("message"),
+/** A cast member's message in a Canvas's Chat, and what Rally answers when it starts a run. */
+const CanvasMessageStepSchema = z.strictObject({
+  kind: z.literal("canvas_message"),
   id: StepIdSchema,
-  room: RoomKeySchema,
-  /** Which conversation of the room. Absent: the main one. */
-  substream: SubstreamKeySchema.optional(),
+  canvas: KeySchema,
   as: DemoPackRoleSchema,
   text: MessageTextSchema,
   /** What Rally says when this message starts a run. Absent: it starts none. */
   assistant: DemoSeedTurnSchema.optional(),
 });
 
+/**
+ * A version of one of a Canvas's artifacts, published by Rally through the
+ * Terminal's resource bridge the Chat's `publish_resource` uses. The first
+ * publish of a `path` is a new artifact at version 1; a later one of the same
+ * path is its next version. It is the Canvas's latest seeded run's, which the
+ * schema requires to exist: Rally said it in that run.
+ *
+ * A document only. A site publish needs a served version and a hostname, which
+ * no seed has proved end to end yet; `docs/demo-workspaces.md` says so.
+ */
+const CanvasArtifactStepSchema = z.strictObject({
+  kind: z.literal("canvas_artifact"),
+  id: StepIdSchema,
+  canvas: KeySchema,
+  /** The path Rally published from; its identity across versions. */
+  path: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u),
+  title: z.string().trim().min(1).max(300),
+  content: z.string().min(1),
+});
+
+/** A document a cast member attaches to a message in a Canvas's Chat. */
 const UploadStepSchema = z.strictObject({
   kind: z.literal("upload"),
   id: StepIdSchema,
-  room: RoomKeySchema,
-  /** Which conversation of the room. Absent: the main one. */
-  substream: SubstreamKeySchema.optional(),
+  canvas: KeySchema,
   as: DemoPackRoleSchema,
   title: z.string().min(1),
   fileName: z.string().min(1),
@@ -158,26 +143,25 @@ const UploadStepSchema = z.strictObject({
 });
 
 /**
- * A Sidekick the demo already has, published and on a schedule.
- *
- * It belongs to no room: it is created by `createAutomation` like the one a
- * person makes from the Sidekicks library, it owns its own authoring
- * conversation, and no later step refers back to it. That is why this step
- * carries no `room` key while every other step does.
+ * A Sidekick the demo already has: published, on a schedule, shared with the
+ * people the pack names, and — with `firstRun` — one run behind it, whose row
+ * sits in its shared conversation like every run's. With `canvas` that run
+ * also wrote a Canvas: made the way a run's first publish makes one, with the
+ * run's principal as its creator and the Sidekick as its writer, and holding
+ * the document as its first artifact.
  *
  * The definition's four prose fields are the ones a drafting conversation would
  * have produced, written here instead so a demo does not depend on a live model
- * to have a Sidekick in it. `schedule` is the recurrence, and its `timezone` is
- * always named: a demo is presented in a zone somebody chose, and leaving it
- * null would resolve it against whichever colleague happens to be cast as the
- * author, whose own zone is not the one the demo is being shown in.
+ * to have a Sidekick in it. `schedule.timezone` is always named: a demo is
+ * presented in a zone somebody chose, and leaving it null would resolve it
+ * against whichever colleague happens to be cast as the author.
  */
 const SidekickStepSchema = z.strictObject({
   kind: z.literal("sidekick"),
   id: StepIdSchema,
+  sidekick: KeySchema,
   as: DemoPackRoleSchema,
-  /** `personal` is the author's alone; `workspace` is offered to every member. */
-  scope: z.enum(["personal", "workspace"]),
+  sharedWith: SharedWithSchema,
   name: z.string().min(1).max(140),
   description: z.string().min(1).max(1200),
   overview: z.string().min(1).max(3000),
@@ -187,286 +171,172 @@ const SidekickStepSchema = z.strictObject({
     timezone: IanaTimezoneSchema,
     summary: z.string().min(1),
   }),
-  /**
-   * One run it has already made, so the demo has something to look at before
-   * the schedule first fires. Absent: it is published and has never run. Only
-   * a `say`, because a Sidekick run has no room to park a question in.
-   */
+  /** Only a `say`: a run that ended in a question would park on it with nobody asked. */
   firstRun: DemoSeedSayTurnSchema.optional(),
+  canvas: z.strictObject({
+    title: z.string().trim().min(1).max(300),
+    path: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u),
+    content: z.string().min(1),
+  }).optional(),
+});
+
+/**
+ * Something a cast member says in a Sidekick's shared conversation, to the
+ * people there. It starts no run: a Sidekick's answer is a run, and a demo's
+ * one run is the Sidekick step's `firstRun`.
+ */
+const SidekickMessageStepSchema = z.strictObject({
+  kind: z.literal("sidekick_message"),
+  id: StepIdSchema,
+  sidekick: KeySchema,
+  as: DemoPackRoleSchema,
+  text: MessageTextSchema,
 });
 
 export const DemoPackStepSchema = z.discriminatedUnion("kind", [
-  CreateWorkstreamStepSchema,
-  CreateSubstreamStepSchema,
-  MessageStepSchema,
+  CreateCanvasStepSchema,
+  CanvasMessageStepSchema,
+  CanvasArtifactStepSchema,
   UploadStepSchema,
   SidekickStepSchema,
+  SidekickMessageStepSchema,
 ]);
 export type DemoPackStep = z.infer<typeof DemoPackStepSchema>;
 
-/** The steps that happen inside a room, which is every step but a Sidekick's. */
-type DemoPackRoomStep = Exclude<DemoPackStep, { kind: "sidekick" }>;
-function isRoomStep(step: DemoPackStep): step is DemoPackRoomStep {
-  return step.kind !== "sidekick";
+type CanvasStep = Extract<DemoPackStep, { kind: "create_canvas" | "canvas_message" | "canvas_artifact" | "upload" }>;
+function isCanvasStep(step: DemoPackStep): step is CanvasStep {
+  return step.kind === "create_canvas" || step.kind === "canvas_message"
+    || step.kind === "canvas_artifact" || step.kind === "upload";
 }
 
-/**
- * Which conversation a room step writes to, as one key. A room's main
- * conversation is the room's own key; a substream is the room's key and its
- * own. Seating, the one-question rule and the planner all address conversations
- * rather than rooms, because a room now has more than one.
- *
- * A Sidekick is in no room and so addresses no conversation, which is why this
- * takes a room step: `isRoomStep` has to answer first.
- */
-function conversationKey(step: DemoPackRoomStep): string {
-  if (step.kind === "create_workstream") return step.room;
-  if (step.kind === "create_substream") return `${step.room}/${step.substream}`;
-  return step.substream === undefined ? step.room : `${step.room}/${step.substream}`;
+function namedRoles(text: string): string[] {
+  return [...text.matchAll(NAME_TOKEN)].map((match) => match[1]!);
 }
 
-/**
- * Whether a room step writes to a room's main conversation, which is what the
- * directory shows. Same reason as above for taking a room step: a Sidekick is
- * neither a main-conversation step nor a substream one.
- */
-function isMainConversationStep(step: DemoPackRoomStep): boolean {
-  if (step.kind === "create_workstream") return true;
-  if (step.kind === "create_substream") return false;
-  return step.substream === undefined;
+/** Whether an audience admits a role, given who made the thing. The one rule, `audienceAdmits`, read over pack facts. */
+function admits(sharedWith: DemoPackSharedWith, creator: DemoPackRole, role: DemoPackRole): boolean {
+  return role === creator || sharedWith === "organization" || sharedWith.includes(role);
 }
 
-function mentionedRoles(text: string): string[] {
-  return [...text.matchAll(MENTION_TOKEN)].map((match) => match[1]!);
-}
-
-/**
- * What one viewer should find in one room once the demo is Ready — the flags
- * the directory answers per viewer and nothing can derive from the steps
- * alone, because they depend on who opened what: the seeder reads a room as
- * the cast member who acted in it, and that read opens it for them.
- */
-const ViewerRoomExpectationSchema = z.strictObject({
-  /** In the room and never opened it. */
-  unseen: z.boolean(),
-  hasUnread: z.boolean(),
-  /** A mention of this viewer sits above what they have seen. */
-  mentioned: z.boolean(),
-});
-
-/**
- * One viewer the readiness barrier verifies. The rooms listed must be exactly
- * the rooms the pack makes visible to them — every workspace-scoped room, and
- * every room they were seated in — which the schema checks, so a pack cannot
- * expect a room a viewer will never see or forget one they will.
- */
-const ViewerExpectationSchema = z.strictObject({
-  viewer: DemoPackRoleSchema,
-  /** The home screen's attention summary for this viewer. */
-  attention: z.strictObject({
-    waitingForYou: z.number().int().nonnegative(),
-    waitingReason: z.enum(["mentioned", "needs_input", "unseen"]).nullable(),
-  }),
-  rooms: z.record(RoomKeySchema, ViewerRoomExpectationSchema),
-});
-export type DemoViewerExpectation = z.infer<typeof ViewerExpectationSchema>;
-
-/** What the steps say about one room, once every step has been applied. */
-export interface DemoPackRoomFacts {
-  room: string;
+/** What the steps say about one Canvas, once every step has been applied. */
+export interface DemoPackCanvasFacts {
+  canvas: string;
   title: string;
-  scope: "workspace" | "personal";
   creator: DemoPackRole;
-  /** Everyone in the room at the end: the creator, the seated, and the mentioned. */
-  seated: DemoPackRole[];
-  /** Roles a step in this room mentions. */
-  mentioned: DemoPackRole[];
-  /** Index of the room's last step in `steps`; recency order follows it. */
-  lastStepIndex: number;
-  /** How the room's loop ends: parked on a question, or completed. */
-  finalState: "idle" | "needs_input" | "completed";
-  /** Step ids of the room's uploads. */
+  sharedWith: DemoPackSharedWith;
+  /** The Sidekick key whose run wrote it; null for a Canvas a person made. */
+  writer: string | null;
+  /** Each artifact path, and how many versions the pack publishes of it. */
+  artifacts: Map<string, number>;
+  /** Step ids of the Chat's uploads. */
   uploads: string[];
+  /** Roles who wrote in the Chat, the creator among them. */
+  actors: DemoPackRole[];
+  /** Index of the Canvas's last step; recency order follows it. */
+  lastStepIndex: number;
+  /** How the Chat's loop ends: never run, parked on a question, or completed. */
+  finalState: "idle" | "needs_input" | "completed";
 }
 
-/**
- * The rooms a pack builds, from its steps alone. Assumes a pack the schema
- * accepted; the readiness manifest and the schema's own viewer check both read
- * from this so there is one statement of who ends up in a room.
- *
- * **Substreams are not rooms and are deliberately invisible here.** A private
- * child takes no directory row, and the parent object aggregates only its main
- * conversation into the row the sidebar and the home screen read — so a
- * substream changes neither the parent's seats, its state, its attachments nor
- * where it sorts. Counting substream steps would make the barrier expect a
- * projection the platform never produces, and it would wait forever. A Sidekick
- * step is skipped for the plainer reason that it is in no room at all;
- * `packSidekickFacts` is what reads those.
- */
-export function packRoomFacts(steps: readonly DemoPackStep[]): Map<string, DemoPackRoomFacts> {
-  const rooms = new Map<string, DemoPackRoomFacts>();
-  steps.forEach((step, index) => {
-    if (!isRoomStep(step) || !isMainConversationStep(step)) return;
-    const text = step.kind === "create_workstream" ? step.openingMessage : step.kind === "message" ? step.text : "";
-    const mentions = mentionedRoles(text);
-    if (step.kind === "create_workstream") {
-      rooms.set(step.room, {
-        room: step.room,
-        title: step.title,
-        scope: step.scope,
-        creator: step.as,
-        seated: [...new Set([step.as, ...step.participants, ...mentions])],
-        mentioned: [...new Set(mentions)],
-        lastStepIndex: index,
-        finalState: step.execution === "history" ? "idle" : step.assistant.kind === "ask" ? "needs_input" : "completed",
-        uploads: [],
-      });
-      return;
-    }
-    const facts = rooms.get(step.room);
-    if (!facts) return;
-    facts.lastStepIndex = index;
-    facts.seated = [...new Set([...facts.seated, ...mentions])];
-    facts.mentioned = [...new Set([...facts.mentioned, ...mentions])];
-    if (step.kind === "upload") facts.uploads.push(step.id);
-    if (step.kind === "message" && step.assistant) {
-      facts.finalState = step.assistant.kind === "ask" ? "needs_input" : "completed";
-    }
-  });
-  return rooms;
-}
-
-/** The rooms one viewer is offered: every workspace-scoped one, and every one they are in. */
-export function visibleRoomsFor(role: DemoPackRole, rooms: Iterable<DemoPackRoomFacts>): DemoPackRoomFacts[] {
-  return [...rooms].filter((facts) => facts.scope === "workspace" || facts.seated.includes(role));
-}
-
-/** What the steps say about one Sidekick, once every step has been applied. */
+/** What the steps say about one Sidekick. */
 export interface DemoPackSidekickFacts {
+  sidekick: string;
   /** The step's id, which is also its action id on the receipt. */
   stepId: string;
   name: string;
-  scope: "personal" | "workspace";
   author: DemoPackRole;
-  /** Whether the pack seeded a first run for it. */
+  sharedWith: DemoPackSharedWith;
   hasFirstRun: boolean;
+  /** The Canvas its run wrote, as a Canvas fact keyed by the Sidekick's key. */
+  writesCanvas: boolean;
 }
 
 /** The Sidekicks a pack publishes, in pack order. */
 export function packSidekickFacts(steps: readonly DemoPackStep[]): DemoPackSidekickFacts[] {
-  return steps.filter((step) => step.kind === "sidekick").map((step) => ({
+  return steps.flatMap((step) => step.kind !== "sidekick" ? [] : [{
+    sidekick: step.sidekick,
     stepId: step.id,
     name: step.name,
-    scope: step.scope,
     author: step.as,
+    sharedWith: step.sharedWith,
     hasFirstRun: step.firstRun !== undefined,
-  }));
+    writesCanvas: step.canvas !== undefined,
+  }]);
 }
 
 /**
- * The Sidekicks one viewer is offered: every workspace-scoped one, and every
- * personal one they authored. The same shape as `visibleRoomsFor`, and the same
- * reason: the readiness barrier compares against what this viewer will actually
- * be shown, not against everything the pack made.
+ * The Canvases a pack makes, from its steps alone, keyed by the pack's name
+ * for each. A Sidekick's Canvas is keyed by the Sidekick's key, which the
+ * schema keeps distinct from every Canvas key. Assumes a pack the schema
+ * accepted.
  */
+export function packCanvasFacts(steps: readonly DemoPackStep[]): Map<string, DemoPackCanvasFacts> {
+  const canvases = new Map<string, DemoPackCanvasFacts>();
+  steps.forEach((step, index) => {
+    if (step.kind === "sidekick") {
+      if (!step.canvas) return;
+      canvases.set(step.sidekick, {
+        canvas: step.sidekick, title: step.canvas.title, creator: step.as, sharedWith: step.sharedWith,
+        writer: step.sidekick, artifacts: new Map([[step.canvas.path, 1]]), uploads: [], actors: [],
+        lastStepIndex: index, finalState: "idle",
+      });
+      return;
+    }
+    if (!isCanvasStep(step)) return;
+    if (step.kind === "create_canvas") {
+      canvases.set(step.canvas, {
+        canvas: step.canvas, title: step.title, creator: step.as, sharedWith: step.sharedWith, writer: null,
+        artifacts: new Map(), uploads: [], actors: [step.as], lastStepIndex: index,
+        finalState: step.assistant === undefined ? "idle" : step.assistant.kind === "ask" ? "needs_input" : "completed",
+      });
+      return;
+    }
+    const facts = canvases.get(step.canvas);
+    if (!facts) return;
+    facts.lastStepIndex = index;
+    if (step.kind === "canvas_artifact") {
+      facts.artifacts.set(step.path, (facts.artifacts.get(step.path) ?? 0) + 1);
+      return;
+    }
+    if (!facts.actors.includes(step.as)) facts.actors.push(step.as);
+    if (step.kind === "upload") facts.uploads.push(step.id);
+    if (step.kind === "canvas_message" && step.assistant) {
+      facts.finalState = step.assistant.kind === "ask" ? "needs_input" : "completed";
+    }
+  });
+  return canvases;
+}
+
+/**
+ * The Canvases one viewer is offered. A person's Canvas by its own audience; a
+ * Sidekick's by the Sidekick's, read live, which is the rule `canvasAdmits`
+ * applies to a writer Sidekick.
+ */
+export function visibleCanvasesFor(
+  role: DemoPackRole,
+  canvases: Iterable<DemoPackCanvasFacts>,
+): DemoPackCanvasFacts[] {
+  return [...canvases].filter((facts) => admits(facts.sharedWith, facts.creator, role));
+}
+
+/** The Sidekicks one viewer is offered: its author, and whoever it is shared with. */
 export function visibleSidekicksFor(
   role: DemoPackRole,
   sidekicks: readonly DemoPackSidekickFacts[],
 ): DemoPackSidekickFacts[] {
-  return sidekicks.filter((facts) => facts.scope === "workspace" || facts.author === role);
+  return sidekicks.filter((facts) => admits(facts.sharedWith, facts.author, role));
 }
 
-/**
- * What one viewer's `expect` block has to say, for a viewer who never acts.
- *
- * `expect` exists because the per-viewer flags depend on who opened what, and
- * the seeder opens a room for whoever acted in it. For a viewer who acts in no
- * room that dependency is gone and every flag follows from the steps, so this
- * derives the block rather than leaving an author to reason it out — a wrong
- * flag is not a test failure, it is a demo that sits in **Waiting for
- * workspace** until the operator gives up, because the barrier is comparing
- * against something the platform will never produce.
- *
- * The three flags and the count are the directory's and the home screen's own
- * rules, read back for a viewer with nothing seen:
- *
- * - **unseen** is "in the room and never opened it", so for this viewer it is
- *   exactly whether the pack seats them.
- * - **hasUnread** is activity above what they have seen, and they have seen
- *   nothing, so every room they are offered is unread. A room always carries a
- *   message — creating one is a message — so there is no empty-room case.
- * - **mentioned** is a mention above what they have seen, so it is whether any
- *   step in the room's *main* conversation names them.
- * - **waitingForYou** counts the rooms they are *in* — a workspace room nobody
- *   seated them in never counts, however it ends — and every such room counts,
- *   because being seated and never opening it is already `unseen`. The reason
- *   is the strongest one across those rooms: a mention beats an unanswered
- *   question beats merely never having opened it.
- *
- * A substream is invisible here for the same reason it is invisible to
- * `packRoomFacts`: it takes no directory row, and being in one seats nobody in
- * its parent.
- *
- * Refused for a viewer who authors a step in a room's main conversation,
- * because acting there opened it and the flags are then a fact about the
- * seeding order rather than about the pack. Authoring a substream step or a
- * Sidekick is not acting in a room and does not refuse: neither touches the
- * directory row this reads.
- */
-export function demoIdleViewerExpectation(
-  steps: readonly DemoPackStep[],
-  viewer: DemoPackRole,
-): DemoViewerExpectation {
-  const acted = steps.some((step) => isRoomStep(step) && isMainConversationStep(step) && step.as === viewer);
-  if (acted) throw new Error(`demo_pack_viewer_is_not_idle:${viewer}`);
-  const visible = visibleRoomsFor(viewer, packRoomFacts(steps).values());
-  const seated = visible.filter((room) => room.seated.includes(viewer));
-  return {
-    viewer,
-    attention: {
-      waitingForYou: seated.length,
-      waitingReason: seated.some((room) => room.mentioned.includes(viewer))
-        ? "mentioned"
-        : seated.some((room) => room.finalState === "needs_input")
-          ? "needs_input"
-          : seated.length > 0 ? "unseen" : null,
-    },
-    rooms: Object.fromEntries(visible.map((room) => [room.room, {
-      unseen: seated.includes(room),
-      hasUnread: true,
-      mentioned: room.mentioned.includes(viewer),
-    }])),
-  };
-}
-
-/**
- * The rules a pack has to satisfy to be playable at all, checked at parse time
- * so a bad pack stops preparation before the first write rather than after
- * the third.
- */
 export const DemoPackSchema = z.strictObject({
   version: z.string().min(1),
   roles: z.array(DemoPackRoleSchema).min(1),
-  spaces: z.record(RoomKeySchema, z.strictObject({
-    as: DemoPackRoleSchema, name: z.string().trim().min(1),
-    iconKey: SpaceIconKeySchema, colorKey: SpaceColorKeySchema,
-  })).optional(),
   steps: z.array(DemoPackStepSchema).min(1),
   /**
-   * The viewers the readiness barrier verifies, and what each should find.
-   * Usually the presenter alone: a cast member who acted in a room opened it
-   * by acting, and a pack that lists them has to say so in their flags. The
-   * barrier refuses a pack that lists nobody, so Ready never means nothing
-   * was checked.
+   * The viewers the readiness barrier reads the demo as. Each one's Canvas and
+   * Sidekick lists must hold exactly what the steps make visible to them; the
+   * steps say what that is, so a pack names only who is checked.
    */
-  expect: z.array(ViewerExpectationSchema).default([]),
-  /**
-   * What each cast role is, in a word or two — the part the operator is
-   * casting somebody into. The form labels its dropdowns with these, because
-   * a role token reads as this pack's own character and says nothing about
-   * who should play it: a colleague seated in the wrong part has the pack's
-   * scripted words attributed to them under their real name.
-   */
+  verify: z.array(DemoPackRoleSchema).min(1),
   roleLabels: z.record(DemoPackRoleSchema, z.string().trim().min(1).max(40)).default({}),
 }).superRefine((pack, context) => {
   const roles = new Set(pack.roles);
@@ -487,229 +357,123 @@ export const DemoPackSchema = z.strictObject({
   if (roles.size !== pack.roles.length) {
     context.addIssue({ code: "custom", path: ["roles"], message: "Roles must be unique" });
   }
-  for (const [key, space] of Object.entries(pack.spaces ?? {})) {
-    if (!roles.has(space.as)) context.addIssue({ code: "custom", path: ["spaces", key, "as"], message: "Space creator is not in the cast" });
-  }
   const ids = new Set<string>();
-  /**
-   * Who is in each conversation so far, keyed by `conversationKey`: a room's
-   * main conversation under the room's name, a substream under both. A room
-   * and its substreams have separate rosters — being in the work stream is not
-   * being in its private child, and the parent object says so explicitly.
-   */
-  const seated = new Map<string, Set<string>>();
-  /** A room's scope, which is what decides who may be put in its substreams. */
-  const roomScope = new Map<string, "workspace" | "personal">();
-  /** Every substream name the pack has used, and the room it named it in. */
-  const substreams = new Map<string, string>();
-  const asked = new Set<string>();
-  /** Sidekick names, folded, so two cannot collide in the directory. */
+  const keys = new Set<string>();
+  /** Per Canvas: who made it, its audience, whether a seeded run is behind it, and whether it parked on a question. */
+  const canvases = new Map<string, { creator: string; sharedWith: DemoPackSharedWith; ran: boolean; asked: boolean }>();
+  const sidekicks = new Map<string, { author: string; sharedWith: DemoPackSharedWith }>();
   const sidekickNames = new Set<string>();
+  const role = (name: string, path: (string | number)[], what: string) => {
+    if (!roles.has(name)) context.addIssue({ code: "custom", path, message: `${what} "${name}" is not in the cast` });
+  };
   pack.steps.forEach((step, index) => {
     const path = ["steps", index];
-    if (step.kind === "create_workstream" && step.space && !pack.spaces?.[step.space]) {
-      context.addIssue({ code: "custom", path: [...path, "space"], message: "Space is not declared in the pack" });
-    }
     if (ids.has(step.id)) {
       context.addIssue({ code: "custom", path: [...path, "id"], message: `Step id "${step.id}" is used twice` });
     }
     ids.add(step.id);
-    const named = [step.as, ...(step.kind === "create_workstream" || step.kind === "create_substream" ? step.participants : [])];
-    for (const role of named) {
-      if (!roles.has(role)) {
-        context.addIssue({ code: "custom", path, message: `Role "${role}" is not in the cast` });
+    if ("as" in step) role(step.as, [...path, "as"], "Role");
+    if ("sharedWith" in step && step.sharedWith !== "organization") {
+      for (const person of step.sharedWith) role(person, [...path, "sharedWith"], "Shared-with role");
+      if (step.sharedWith.includes(step.as)) {
+        context.addIssue({ code: "custom", path: [...path, "sharedWith"], message: "The creator is in it already" });
       }
     }
-    if (step.kind === "sidekick") {
-      // A Sidekick is in no room, so none of the room rules below apply to it.
-      // Its own prose names people the same way Rally's does — by token,
-      // expanded when the cast is bound — so an unbound one is refused here for
-      // the same reason: it is dereferenced mid-seeding, long after the last
-      // point at which refusing costs nothing.
-      const spoken = [step.description, step.overview, step.instructions, step.firstRun?.text ?? ""];
-      for (const role of spoken.flatMap(mentionedRoles)) {
-        if (!roles.has(role)) {
-          context.addIssue({ code: "custom", path, message: `The Sidekick's prose names role "${role}", which is not in the cast` });
-        }
+    // Prose names people by token, expanded when the cast is bound. An unbound
+    // one is dereferenced mid-seeding, long after the last point at which
+    // refusing costs nothing, so it is refused here.
+    const assistant = "assistant" in step ? step.assistant : undefined;
+    const prose = [
+      ...("text" in step ? [step.text] : []),
+      ...(step.kind === "create_canvas" && step.prompt ? [step.prompt] : []),
+      ...(assistant === undefined ? [] : assistant.kind === "say" ? [assistant.text] : [assistant.prompt, ...assistant.options]),
+      ...(step.kind === "sidekick" ? [step.description, step.overview, step.instructions, step.firstRun?.text ?? "", step.canvas?.content ?? ""] : []),
+      ...(step.kind === "canvas_artifact" || step.kind === "upload" ? [step.content] : []),
+    ];
+    for (const named of prose.flatMap(namedRoles)) role(named, path, "Named role");
+
+    if (step.kind === "create_canvas" || step.kind === "sidekick") {
+      const key = step.kind === "create_canvas" ? step.canvas : step.sidekick;
+      if (keys.has(key)) {
+        context.addIssue({ code: "custom", path, message: `"${key}" names two Canvases or Sidekicks` });
       }
+      keys.add(key);
+    }
+    if (step.kind === "create_canvas") {
+      if (step.assistant && !step.prompt) {
+        context.addIssue({ code: "custom", path: [...path, "assistant"], message: "Rally answers a prompt, and there is none" });
+      }
+      canvases.set(step.canvas, {
+        creator: step.as, sharedWith: step.sharedWith, ran: step.assistant !== undefined,
+        asked: step.assistant?.kind === "ask",
+      });
+      return;
+    }
+    if (step.kind === "sidekick") {
       const name = step.name.trim().toLowerCase();
       if (sidekickNames.has(name)) {
-        // The directory lists Sidekicks by title and the barrier matches a
-        // viewer's row by name, so two under one name would make one of them
-        // unverifiable.
+        // The list shows Sidekicks by name and the barrier names one in a gap
+        // by it, so two under one name would make one of them unverifiable.
         context.addIssue({ code: "custom", path: [...path, "name"], message: `Two Sidekicks are named "${step.name}"` });
       }
       sidekickNames.add(name);
+      if (step.canvas && !step.firstRun) {
+        context.addIssue({ code: "custom", path: [...path, "canvas"], message: "A Sidekick's Canvas is written by a run, and it has none" });
+      }
+      sidekicks.set(step.sidekick, { author: step.as, sharedWith: step.sharedWith });
       return;
     }
-    // Everything below is about a conversation, which only a room step has.
-    const conversation = conversationKey(step);
-    const text = step.kind === "create_workstream" ? step.openingMessage : step.kind === "message" ? step.text : null;
-    const mentions = text === null ? [] : mentionedRoles(text);
-    for (const role of mentions) {
-      if (!roles.has(role)) {
-        context.addIssue({ code: "custom", path, message: `Mentioned role "${role}" is not in the cast` });
-      }
-    }
-    // Rally's own prose names people with the same tokens, expanded to bare
-    // names when played. An unbound one there seats nobody, but it is
-    // dereferenced when the seed is planned — mid-seeding, after the
-    // workspace exists and the connections are copied — so it is refused here,
-    // with the rest.
-    const assistant = "assistant" in step ? step.assistant : undefined;
-    const spoken = assistant === undefined
-      ? []
-      : assistant.kind === "say" ? [assistant.text] : [assistant.prompt, ...assistant.options];
-    for (const role of spoken.flatMap(mentionedRoles)) {
-      if (!roles.has(role)) {
-        context.addIssue({ code: "custom", path: [...path, "assistant"], message: `Rally's turn names role "${role}", which is not in the cast` });
-      }
-    }
-    // A substream's starting context is Rally's prose too, and it names people
-    // with the same tokens. Unbound there it would throw mid-seed, after the
-    // work stream it hangs off already exists.
-    if (step.kind === "create_substream") {
-      for (const role of mentionedRoles(step.startingContext)) {
-        if (!roles.has(role)) {
-          context.addIssue({ code: "custom", path: [...path, "startingContext"], message: `The starting context names role "${role}", which is not in the cast` });
-        }
-      }
-    }
-    if (step.kind === "create_workstream") {
-      if (step.execution === "history" && (step.assistant.kind !== "say" || mentions.length)) {
-        context.addIssue({ code: "custom", path, message: "Prepared history requires prose without live mention effects" });
-      }
-      if (seated.has(step.room)) {
-        context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${step.room}" is created twice` });
-      }
-      if (step.participants.includes(step.as)) {
-        context.addIssue({ code: "custom", path: [...path, "participants"], message: "The author is seated already" });
-      }
-      roomScope.set(step.room, step.scope);
-      seated.set(step.room, new Set([step.as, ...step.participants, ...mentions]));
-      return;
-    }
-    if (step.kind === "create_substream") {
-      const parent = seated.get(step.room);
-      if (!parent) {
-        context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${step.room}" is used before it is created` });
-        return;
-      }
-      const owner = substreams.get(step.substream);
-      if (owner !== undefined) {
-        context.addIssue({ code: "custom", path: [...path, "substream"], message: `Substream "${step.substream}" is created twice` });
-      }
-      if (step.participants.includes(step.as)) {
-        context.addIssue({ code: "custom", path: [...path, "participants"], message: "The creator is in it already" });
-      }
-      // The parent refuses anybody it would not let read the work stream —
-      // a workspace room lets every member in, a personal one only its own
-      // participants. Refused here rather than at the add, which happens
-      // after the child is already open and half its roster seated.
-      const readable = roomScope.get(step.room) === "workspace";
-      for (const role of new Set([step.as, ...step.participants])) {
-        if (!readable && !parent.has(role)) {
-          context.addIssue({
-            code: "custom",
-            path,
-            message: `Role "${role}" cannot be put in a substream of personal room "${step.room}" without being in it`,
-          });
-        }
-      }
-      substreams.set(step.substream, step.room);
-      seated.set(conversation, new Set([step.as, ...step.participants]));
-      return;
-    }
-    const room = seated.get(conversation);
-    if (!room) {
-      if (step.substream !== undefined && substreams.get(step.substream) !== step.room) {
-        context.addIssue({ code: "custom", path: [...path, "substream"], message: `Substream "${step.substream}" is not a substream of room "${step.room}"` });
-      } else {
-        context.addIssue({ code: "custom", path: [...path, "room"], message: `Room "${conversation}" is used before it is created` });
+    if (step.kind === "sidekick_message") {
+      const sidekick = sidekicks.get(step.sidekick);
+      if (!sidekick) {
+        context.addIssue({ code: "custom", path: [...path, "sidekick"], message: `Sidekick "${step.sidekick}" is used before it is published` });
+      } else if (!admits(sidekick.sharedWith, sidekick.author, step.as)) {
+        context.addIssue({ code: "custom", path: [...path, "as"], message: `Role "${step.as}" cannot open Sidekick "${step.sidekick}"` });
       }
       return;
     }
-    if (asked.has(conversation)) {
-      // The `ask` parked its run on a real open elicitation. Anything said in
-      // the room after that is said into a question nobody has answered, and
-      // the presenter is the one who is meant to answer it.
-      context.addIssue({ code: "custom", path, message: `Room "${conversation}" continues after its question` });
+    const canvas = canvases.get(step.canvas);
+    if (!canvas) {
+      context.addIssue({ code: "custom", path: [...path, "canvas"], message: `Canvas "${step.canvas}" is used before it is made` });
+      return;
     }
-    if (!room.has(step.as)) {
-      // The production path admits a message from a workspace member who is
-      // not in the room only by seating them, which is a fact the pack would
-      // be relying on by accident. Say who is in the room instead.
-      context.addIssue({ code: "custom", path: [...path, "as"], message: `Role "${step.as}" is not in room "${conversation}"` });
+    if (canvas.asked) {
+      // The `ask` parked its run on a real open elicitation. Anything after it
+      // is said into a question nobody has answered, and the presenter is the
+      // one who is meant to answer it.
+      context.addIssue({ code: "custom", path, message: `Canvas "${step.canvas}" continues after its question` });
     }
-    for (const role of mentions) {
-      if (step.substream === undefined) {
-        room.add(role);
-        continue;
+    if (step.kind === "canvas_artifact") {
+      if (!canvas.ran) {
+        context.addIssue({ code: "custom", path, message: `Rally has not run in Canvas "${step.canvas}" to publish this` });
       }
-      // A confirmed mention seats somebody in a work stream, but a substream's
-      // roster is the parent object's and a message cannot add to it. The
-      // client adds the person before sending; a pack says so up front.
-      if (!room.has(role)) {
-        context.addIssue({
-          code: "custom",
-          path,
-          message: `Role "${role}" is mentioned in substream "${conversation}" without being in it`,
-        });
-      }
+      return;
     }
-    if (step.kind === "message" && step.assistant?.kind === "ask") asked.add(conversation);
+    if (!admits(canvas.sharedWith, canvas.creator, step.as)) {
+      context.addIssue({ code: "custom", path: [...path, "as"], message: `Role "${step.as}" cannot open Canvas "${step.canvas}"` });
+    }
+    if (step.kind === "canvas_message" && step.assistant) {
+      canvas.ran = true;
+      canvas.asked = step.assistant.kind === "ask";
+    }
   });
-  const facts = packRoomFacts(pack.steps);
-  const viewers = new Set<string>();
-  pack.expect.forEach((expectation, index) => {
-    const path = ["expect", index];
-    if (viewers.has(expectation.viewer)) {
-      context.addIssue({ code: "custom", path, message: `Viewer "${expectation.viewer}" is expected twice` });
-    }
-    viewers.add(expectation.viewer);
-    if (!roles.has(expectation.viewer)) {
-      context.addIssue({ code: "custom", path, message: `Viewer "${expectation.viewer}" is not in the cast` });
-      return;
-    }
-    const visible = new Set(visibleRoomsFor(expectation.viewer, facts.values()).map((room) => room.room));
-    const listed = new Set(Object.keys(expectation.rooms));
-    for (const room of visible) {
-      if (!listed.has(room)) {
-        context.addIssue({ code: "custom", path: [...path, "rooms"], message: `Viewer "${expectation.viewer}" will see room "${room}", which is not expected` });
-      }
-    }
-    for (const room of listed) {
-      if (!visible.has(room)) {
-        context.addIssue({ code: "custom", path: [...path, "rooms", room], message: `Viewer "${expectation.viewer}" will not see room "${room}"` });
-      }
-    }
+  const verified = new Set<string>();
+  pack.verify.forEach((viewer, index) => {
+    if (verified.has(viewer)) context.addIssue({ code: "custom", path: ["verify", index], message: `Viewer "${viewer}" is verified twice` });
+    verified.add(viewer);
+    role(viewer, ["verify", index], "Viewer");
   });
 });
 export type DemoPack = z.infer<typeof DemoPackSchema>;
 
-/** Who plays each role in one demo: a workspace member, by id and by name. */
 export interface DemoCastMember {
   userId: string;
-  /** The name the workspace directory has for them; a mention's visible text. */
   displayName: string;
 }
 export type DemoCast = Readonly<Record<DemoPackRole, DemoCastMember>>;
 
-interface ResolvedText {
-  text: string;
-  mentions: Mention[];
-  /** The mentioned members, who a confirmed mention seats in the room. */
-  mentionedUserIds: string[];
-}
-
-/**
- * Expand every `@{role}` in Rally's own prose to the bound name, with no
- * mention: an assistant turn names people the way the model would, and the
- * pack cannot know who is cast until it is played. The schema has already
- * refused a role the cast does not bind, so the lookup cannot miss.
- */
-function resolveRoleNames(text: string, cast: DemoCast): string {
-  return text.replaceAll(MENTION_TOKEN, (_token, role: string) => {
+function resolveNames(text: string, cast: DemoCast): string {
+  return text.replaceAll(NAME_TOKEN, (_token, role: string) => {
     const member = cast[role];
     if (!member) throw new Error(`demo_pack_role_unbound:${role}`);
     return member.displayName;
@@ -718,90 +482,43 @@ function resolveRoleNames(text: string, cast: DemoCast): string {
 
 function resolveTurn(turn: DemoSeedTurn, cast: DemoCast): DemoSeedTurn {
   return turn.kind === "say"
-    ? { kind: "say", text: resolveRoleNames(turn.text, cast) }
+    ? { kind: "say", text: resolveNames(turn.text, cast) }
     : {
         kind: "ask",
-        prompt: resolveRoleNames(turn.prompt, cast),
-        options: turn.options.map((option) => resolveRoleNames(option, cast)),
+        prompt: resolveNames(turn.prompt, cast),
+        options: turn.options.map((option) => resolveNames(option, cast)),
       };
 }
 
-/**
- * Expand every `@{role}` to the bound name and record where it landed. Offsets
- * are on the expanded text, which is the text the object receives.
- */
-function resolveMentions(text: string, cast: DemoCast): ResolvedText {
-  const mentions: Mention[] = [];
-  const mentionedUserIds: string[] = [];
-  let resolved = "";
-  let cursor = 0;
-  for (const match of text.matchAll(MENTION_TOKEN)) {
-    const member = cast[match[1]!]!;
-    resolved += text.slice(cursor, match.index);
-    const label = `@${member.displayName}`;
-    mentions.push({
-      type: "person",
-      userId: member.userId,
-      connectorType: null,
-      startOffset: resolved.length,
-      endOffset: resolved.length + label.length,
-    });
-    if (!mentionedUserIds.includes(member.userId)) mentionedUserIds.push(member.userId);
-    resolved += label;
-    cursor = match.index + match[0].length;
-  }
-  resolved += text.slice(cursor);
-  return { text: resolved, mentions, mentionedUserIds };
-}
+/** An audience in user ids: Organization-wide, or the people named besides the creator. */
+export type DemoSeedAudience = "organization" | { userIds: string[] };
 
 interface ActionBase {
   actionId: string;
-  /** The cast member who does this, by user id. */
   actorUserId: string;
 }
 
-/** An action inside a room, which is every action but a Sidekick's. */
-interface RoomActionBase extends ActionBase {
-  room: string;
-  /**
-   * The pack's name for the conversation within the room, or `null` for its
-   * main one. The seeder turns this into the substream id the receipts of an
-   * earlier action recorded.
-   */
-  substream: string | null;
-}
-
 export type DemoSeedAction =
-  | (RoomActionBase & {
-      kind: "create_workstream";
-      execution: "run" | "history";
-      space?: string;
-      substream: null;
+  | (ActionBase & {
+      kind: "create_canvas";
+      canvas: string;
       title: string;
-      scope: "workspace" | "personal";
-      participantUserIds: string[];
-      openingMessage: string;
-      mentions: Mention[];
-      seed: DemoSeed;
+      audience: DemoSeedAudience;
+      /** The first message and its seed; null for a Canvas made empty. */
+      prompt: { text: string; seed: DemoSeed } | null;
     })
-  | (RoomActionBase & {
-      kind: "create_substream";
-      substream: string;
+  | (ActionBase & { kind: "canvas_message"; canvas: string; text: string; seed: DemoSeed })
+  | (ActionBase & {
+      /** `actorUserId` is who asked for the run that publishes it: its execution principal. */
+      kind: "canvas_artifact";
+      canvas: string;
+      path: string;
       title: string;
-      /** Added by the creator once the child is ready; never includes them. */
-      participantUserIds: string[];
-      /** Rally's starting context, with every role token expanded to a name. */
-      startingContext: string;
+      content: string;
     })
-  | (RoomActionBase & {
-      kind: "message";
-      text: string;
-      mentions: Mention[];
-      confirmedParticipantUserIds: string[];
-      seed: DemoSeed;
-    })
-  | (RoomActionBase & {
+  | (ActionBase & {
       kind: "upload";
+      canvas: string;
       title: string;
       fileName: string;
       mimeType: "text/markdown" | "text/plain";
@@ -809,32 +526,14 @@ export type DemoSeedAction =
     })
   | (ActionBase & {
       kind: "sidekick";
-      scope: "personal" | "workspace";
-      /** The definition to publish, with every role token expanded to a name. */
-      definition: {
-        name: string;
-        description: string;
-        overview: string;
-        instructions: string;
-      };
+      sidekick: string;
+      audience: DemoSeedAudience;
+      definition: { name: string; description: string; overview: string; instructions: string };
       schedule: { rrule: string; timezone: string; summary: string };
-      /** The one run to seed, or null when the pack seeded none. */
       firstRun: DemoSeed | null;
-    });
-
-/**
- * The actions a pack plays as, once its roles are bound.
- *
- * Every role the pack names must be bound: a pack that plays a role nobody is
- * cast in is not playable, and that is found here rather than at the message
- * that needed them.
- */
-/**
- * The actions that happen inside a room, which is every action but a
- * Sidekick's — the action-side twin of `DemoPackRoomStep`. Only these address a
- * conversation, so only these carry `room` and `substream`.
- */
-export type DemoSeedRoomAction = Exclude<DemoSeedAction, { kind: "sidekick" }>;
+      canvas: { title: string; path: string; content: string } | null;
+    })
+  | (ActionBase & { kind: "sidekick_message"; sidekick: string; text: string; seed: DemoSeed });
 
 export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
   for (const role of pack.roles) {
@@ -845,557 +544,251 @@ export function planDemoSeed(pack: DemoPack, cast: DemoCast): DemoSeedAction[] {
     actionId: step.id,
     assistant: assistant ? resolveTurn(assistant, cast) : null,
   });
+  const audience = (sharedWith: DemoPackSharedWith): DemoSeedAudience => sharedWith === "organization"
+    ? "organization"
+    : { userIds: [...new Set(sharedWith.map((role) => cast[role]!.userId))] };
+  // Who asked for each Canvas's latest seeded run, which is the run a
+  // `canvas_artifact` publishes from; the schema has proved there is one.
+  const runner = new Map<string, string>();
   return pack.steps.map((step): DemoSeedAction => {
-    const actor = cast[step.as]!;
+    if ((step.kind === "create_canvas" || step.kind === "canvas_message") && step.assistant) {
+      runner.set(step.canvas, cast[step.as]!.userId);
+    }
     switch (step.kind) {
-      case "create_workstream": {
-        const resolved = resolveMentions(step.openingMessage, cast);
+      case "create_canvas":
         return {
-          kind: "create_workstream",
-          execution: step.execution ?? "run",
-          ...(step.space ? { space: step.space } : {}),
+          kind: "create_canvas",
           actionId: step.id,
-          room: step.room,
-          substream: null,
-          actorUserId: actor.userId,
-          title: step.title,
-          scope: step.scope,
-          participantUserIds: [
-            ...new Set([
-              ...step.participants.map((role) => cast[role]!.userId),
-              ...resolved.mentionedUserIds,
-            ]),
-          ],
-          openingMessage: resolved.text,
-          mentions: resolved.mentions,
-          seed: seed(step, step.assistant),
+          actorUserId: cast[step.as]!.userId,
+          canvas: step.canvas,
+          title: resolveNames(step.title, cast),
+          audience: audience(step.sharedWith),
+          prompt: step.prompt === undefined
+            ? null
+            : { text: resolveNames(step.prompt, cast), seed: seed(step, step.assistant ?? null) },
         };
-      }
-      case "create_substream":
+      case "canvas_message":
         return {
-          kind: "create_substream",
+          kind: "canvas_message",
           actionId: step.id,
-          room: step.room,
-          substream: step.substream,
-          actorUserId: actor.userId,
-          title: step.title,
-          participantUserIds: [...new Set(step.participants.map((role) => cast[role]!.userId))],
-          startingContext: resolveRoleNames(step.startingContext, cast),
-        };
-      case "message": {
-        const resolved = resolveMentions(step.text, cast);
-        return {
-          kind: "message",
-          actionId: step.id,
-          room: step.room,
-          substream: step.substream ?? null,
-          actorUserId: actor.userId,
-          text: resolved.text,
-          mentions: resolved.mentions,
-          // Confirming a participant is what seats a mentioned person in a
-          // work stream. A substream's roster belongs to the parent object and
-          // a message cannot add to it, so the schema has already refused a
-          // mention of anybody who is not in the child, and there is nobody
-          // left for this to seat.
-          confirmedParticipantUserIds: step.substream === undefined ? resolved.mentionedUserIds : [],
+          actorUserId: cast[step.as]!.userId,
+          canvas: step.canvas,
+          text: resolveNames(step.text, cast),
           seed: seed(step, step.assistant ?? null),
         };
-      }
+      case "canvas_artifact":
+        return {
+          kind: "canvas_artifact",
+          actionId: step.id,
+          actorUserId: runner.get(step.canvas)!,
+          canvas: step.canvas,
+          path: step.path,
+          title: resolveNames(step.title, cast),
+          content: resolveNames(step.content, cast),
+        };
       case "upload":
         return {
           kind: "upload",
           actionId: step.id,
-          room: step.room,
-          substream: step.substream ?? null,
-          actorUserId: actor.userId,
+          actorUserId: cast[step.as]!.userId,
+          canvas: step.canvas,
           title: step.title,
           fileName: step.fileName,
           mimeType: step.mimeType,
-          content: step.content,
+          content: resolveNames(step.content, cast),
         };
       case "sidekick":
         return {
           kind: "sidekick",
           actionId: step.id,
-          actorUserId: actor.userId,
-          scope: step.scope,
+          actorUserId: cast[step.as]!.userId,
+          sidekick: step.sidekick,
+          audience: audience(step.sharedWith),
           definition: {
             name: step.name,
-            description: resolveRoleNames(step.description, cast),
-            overview: resolveRoleNames(step.overview, cast),
-            instructions: resolveRoleNames(step.instructions, cast),
+            description: resolveNames(step.description, cast),
+            overview: resolveNames(step.overview, cast),
+            instructions: resolveNames(step.instructions, cast),
           },
           schedule: step.schedule,
           firstRun: step.firstRun ? seed(step, step.firstRun) : null,
+          canvas: step.canvas
+            ? { title: resolveNames(step.canvas.title, cast), path: step.canvas.path, content: resolveNames(step.canvas.content, cast) }
+            : null,
+        };
+      case "sidekick_message":
+        return {
+          kind: "sidekick_message",
+          actionId: step.id,
+          actorUserId: cast[step.as]!.userId,
+          sidekick: step.sidekick,
+          text: resolveNames(step.text, cast),
+          seed: seed(step, null),
         };
     }
   });
 }
 
+const Q4_REVIEW_V1 = [
+  "# Q4 revenue review",
+  "",
+  "Draft for Monday's board prep.",
+  "",
+  "| Metric | Q4 | Change |",
+  "| --- | ---: | --- |",
+  "| Net revenue | $4.82M | +18% QoQ |",
+  "| Gross margin | 71.4% | +2.1 pts |",
+  "| Net retention | 118% | +4 pts |",
+  "",
+  "## What moved",
+  "",
+  "Enterprise expansion drove most of the quarter, led by three accounts that moved to annual plans in October. Self-serve held flat after the September price change.",
+  "",
+  "## Open questions",
+  "",
+  "Do we restate the September cohort, or footnote the price change?",
+].join("\n");
+
+const Q4_REVIEW_V2 = Q4_REVIEW_V1.replace(
+  "Self-serve held flat after the September price change.",
+  "Self-serve held flat after the September price change.\n\nChurn fell to 1.9% in the October cohort, the lowest since launch, with two of three lost accounts citing budget rather than product.",
+);
+
 /**
- * Three independent collaboration stories: teammate expertise changes an Acme
- * proposal, an approver changes vendor criteria and decides, and a demo review
- * becomes owned follow-up. The last main-channel beat makes Acme proposal the
- * default entry. Prepared history is illustrative, and no seeded connector
- * delivery is claimed. Version changes require a fresh demo Organization.
- * Every assistant turn uses only facts explicitly shared in its conversation;
- * seeded runs make no tool calls and cannot fetch private or external context.
- * Keep this literal unparsed at module load: a bad pack must not stop the API.
+ * The placeholder pack: the mockup's Organization. Maya (the presenter) and
+ * Theo are working on the board's Q4 revenue review with Rally; Theo's launch
+ * plan is open to the whole Organization, where Priya has attached the
+ * checklist; the Weekly changelog Sidekick has already run once and written
+ * this week's changelog Canvas; and Incident triage, shared with the three of
+ * them, has made its morning pass, which Priya answers in its conversation.
+ * `docs/demo-workspaces.md#the-placeholder-pack` says why each piece is there.
  */
 export const PLACEHOLDER_DEMO_PACK = {
-  version: "multiplayer-2026-09",
-  // Stable role tokens identify parts; roleLabels describes their current jobs.
-  roles: ["presenter", "priya", "marcus", "dana"],
+  version: "canvases-2026-11",
+  roles: ["presenter", "theo", "priya"],
   roleLabels: {
-    priya: "Solutions engineer / IT",
-    marcus: "Sales lead / business owner",
-    dana: "Manager / finance approver",
-  },
-  spaces: {
-    acme: { as: "marcus", name: "Customer: Acme", iconKey: "handshake", colorKey: "blue" },
-    vendors: { as: "marcus", name: "Vendor selection: Customer support platform", iconKey: "list-checks", colorKey: "purple" },
-    sales: { as: "marcus", name: "Sales", iconKey: "chart-no-axes-combined", colorKey: "green" },
+    theo: "Finance lead",
+    priya: "Engineering lead",
   },
   steps: [
     {
-      kind: "create_workstream",
-      id: "vendor-open",
-      room: "vendor-selection",
-      as: "marcus",
-      title: "Evaluation & decision",
-      space: "vendors",
-      participants: ["priya"],
-      scope: "workspace",
-      openingMessage: "We need a support platform for 25 agents: SSO, EU data hosting and migration included. Budget is $45k in year one. ClearDesk: $24k + $6k setup, eight weeks. HelpHarbor: $30k + $9k, three weeks. SupportLane: $27k + $15k, six weeks. All meet the requirements. Start with cost.",
+      kind: "create_canvas",
+      id: "q4-open",
+      canvas: "q4-review",
+      as: "presenter",
+      title: "Q4 revenue review",
+      sharedWith: ["theo"],
+      prompt: "Draft the Q4 revenue review for Monday's board prep: revenue, margin and retention against Q3, what moved, and what is still open.",
       assistant: {
         kind: "say",
-        text: "**Provisional choice: ClearDesk.** $30k in year one, versus HelpHarbor at $39k and SupportLane at $42k. The trade-off is eight weeks to launch.",
+        text: "Here is a first draft. Net revenue was $4.82M, up 18% on Q3, with gross margin at 71.4% and net retention at 118%. Enterprise expansion carried the quarter; self-serve held flat after the September price change.",
+      },
+    },
+    { kind: "canvas_artifact", id: "q4-v1", canvas: "q4-review", path: "q4-revenue-review.md", title: "Q4 revenue review", content: Q4_REVIEW_V1 },
+    {
+      kind: "canvas_message",
+      id: "q4-churn",
+      canvas: "q4-review",
+      as: "theo",
+      text: "Rally, add churn to \"What moved\". Use the October cohort, not the blended number.",
+      assistant: { kind: "say", text: "Adding it after the expansion line. The October cohort churned 1.9%." },
+    },
+    { kind: "canvas_artifact", id: "q4-v2", canvas: "q4-review", path: "q4-revenue-review.md", title: "Q4 revenue review", content: Q4_REVIEW_V2 },
+    {
+      kind: "canvas_message",
+      id: "q4-accounts",
+      canvas: "q4-review",
+      as: "theo",
+      text: "The three accounts stay board-only. Keep them out of this one.",
+    },
+    {
+      kind: "create_canvas",
+      id: "launch-open",
+      canvas: "launch-plan",
+      as: "theo",
+      title: "Launch plan",
+      sharedWith: "organization",
+      prompt: "Turn the pricing launch into a plan: the date, who owns each step, and what has to be true before we announce.",
+      assistant: {
+        kind: "say",
+        text: "The launch is set for December 3. Three things gate the announcement: billing migrates existing annual plans, the help center pages are live, and support has the new macros. I have put owners against each.",
       },
     },
     {
-      kind: "upload",
-      id: "vendor-requirements",
-      room: "vendor-selection",
-      as: "marcus",
-      title: "Requirements & budget",
-      fileName: "vendor-requirements.md",
-      mimeType: "text/markdown",
-      content: "# Requirements & budget\n\nFictional evaluation. 25 support agents. Required: SSO, EU data hosting, existing-ticket migration. First-year cash budget: $45,000 including setup. Initial preference: lowest qualifying first-year cost. No deadline agreed yet.",
+      kind: "canvas_artifact",
+      id: "launch-v1",
+      canvas: "launch-plan",
+      path: "launch-plan.md",
+      title: "Launch plan",
+      content: "# Launch plan\n\nLaunch: December 3.\n\n| Step | Owner | Due |\n| --- | --- | --- |\n| Migrate annual plans in billing | @{priya} | Nov 26 |\n| Publish the help center pages | @{theo} | Nov 28 |\n| Support macros and training | @{theo} | Dec 1 |\n\nAnnounce only when all three are done.",
     },
     {
       kind: "upload",
-      id: "vendor-cleardesk",
-      room: "vendor-selection",
-      as: "marcus",
-      title: "ClearDesk — sample proposal",
-      fileName: "vendor-cleardesk.md",
-      mimeType: "text/markdown",
-      content: "# ClearDesk — sample proposal\n\nFictional quote for 25 agents. Annual subscription: $24,000. One-time implementation: $6,000. Year-one total: $30,000. Implementation: 8 weeks from approval. Includes SSO, EU data hosting and ticket migration. Taxes excluded consistently; internal staff time excluded.",
-    },
-    {
-      kind: "upload",
-      id: "vendor-helpharbor",
-      room: "vendor-selection",
-      as: "marcus",
-      title: "HelpHarbor — sample proposal",
-      fileName: "vendor-helpharbor.md",
-      mimeType: "text/markdown",
-      content: "# HelpHarbor — sample proposal\n\nFictional quote for 25 agents. Annual subscription: $30,000. One-time implementation: $9,000. Year-one total: $39,000. Implementation: 3 weeks from approval. Includes SSO, EU data hosting and ticket migration. Taxes excluded consistently; internal staff time excluded.",
-    },
-    {
-      kind: "upload",
-      id: "vendor-supportlane",
-      room: "vendor-selection",
-      as: "marcus",
-      title: "SupportLane — sample proposal",
-      fileName: "vendor-supportlane.md",
-      mimeType: "text/markdown",
-      content: "# SupportLane — sample proposal\n\nFictional quote for 25 agents. Annual subscription: $27,000. One-time implementation: $15,000. Year-one total: $42,000. Implementation: 6 weeks from approval. Includes SSO, EU data hosting and ticket migration. Taxes excluded consistently; internal staff time excluded.",
-    },
-    {
-      kind: "upload",
-      id: "vendor-comparison-v1",
-      room: "vendor-selection",
-      as: "marcus",
-      title: "Vendor comparison — v1",
-      fileName: "vendor-comparison-v1.md",
-      mimeType: "text/markdown",
-      content: "# Vendor comparison — v1\n\nProvisional: ClearDesk, lowest qualifying cost.\n\n| Vendor | Annual | Setup | Year one | Launch |\n| --- | ---: | ---: | ---: | --- |\n| ClearDesk | $24,000 | $6,000 | $30,000 | 8 weeks |\n| HelpHarbor | $30,000 | $9,000 | $39,000 | 3 weeks |\n| SupportLane | $27,000 | $15,000 | $42,000 | 6 weeks |\n\nDecision pending reviewer criteria.",
-    },
-    {
-      kind: "message",
-      id: "vendor-invite",
-      room: "vendor-selection",
-      as: "marcus",
-      text: "@{dana}, can you make the call? The cheapest option takes eight weeks.",
-    },
-    {
-      kind: "message",
-      id: "vendor-criteria",
-      room: "vendor-selection",
-      as: "dana",
-      text: "We must launch within four weeks. Speed matters more than the $9k difference. Keep the $45k ceiling.",
-      assistant: {
-        kind: "say",
-        text: "**Recommendation changes to HelpHarbor.** Three weeks and $39k meet both constraints, leaving $6k. ClearDesk saves $9k but misses the deadline; SupportLane is slower and costs $3k more. Confirm setup is included before approval.",
-      },
-    },
-    {
-      kind: "create_substream",
-      id: "vendor-costs-open",
-      room: "vendor-selection",
-      as: "dana",
-      substream: "implementation-costs",
-      title: "Implementation costs",
-      participants: ["priya", "presenter"],
-      startingContext: "HelpHarbor is the only quote within four weeks. Confirm the $39k first-year total includes migration before approval.",
-    },
-    {
-      kind: "message",
-      id: "vendor-it",
-      room: "vendor-selection",
+      id: "launch-checklist",
+      canvas: "launch-plan",
       as: "priya",
-      text: "The $9k setup includes ticket migration and SSO. IT can staff the three-week plan; internal time is outside the cash budget.",
-      substream: "implementation-costs",
-    },
-    {
-      kind: "message",
-      id: "vendor-finance",
-      room: "vendor-selection",
-      as: "dana",
-      text: "$30k + $9k = $39k. That leaves $6k against our $45k cash ceiling.",
-      substream: "implementation-costs",
-    },
-    {
-      kind: "message",
-      id: "vendor-costs-shared",
-      room: "vendor-selection",
-      as: "priya",
-      text: "Sharing the cost check: setup includes SSO and migration. IT can staff three weeks. $39k is the full first-year cash quote; internal time is separate.",
-    },
-    {
-      kind: "upload",
-      id: "vendor-comparison-v2",
-      room: "vendor-selection",
-      as: "marcus",
-      title: "Vendor comparison — v2",
-      fileName: "vendor-comparison-v2.md",
+      title: "Billing migration checklist",
+      fileName: "billing-migration-checklist.md",
       mimeType: "text/markdown",
-      content: "# Vendor comparison — v2\n\nUpdated criteria: required capabilities first, launch within four weeks, then first-year cash cost at or below $45,000.\n\n| Vendor | Year one | Launch | Result |\n| --- | ---: | --- | --- |\n| ClearDesk | $30,000 | 8 weeks | Misses deadline |\n| HelpHarbor | $39,000 | 3 weeks | Recommended; $6,000 headroom |\n| SupportLane | $42,000 | 6 weeks | Misses deadline |\n\nChanged from v1: speed is now a hard constraint. HelpHarbor costs $9,000 more than ClearDesk and launches five weeks sooner. Setup includes SSO and migration; IT confirmed staffing. Pending human approval in the Channel.",
+      content: "# Billing migration checklist\n\n1. Freeze plan edits on Nov 25.\n2. Migrate annual plans in batches of 200.\n3. Reconcile invoices against the old plans.\n4. Lift the freeze.",
     },
     {
-      kind: "message",
-      id: "vendor-approval",
-      room: "vendor-selection",
-      as: "dana",
-      text: "Approved: HelpHarbor at $39k in year one. @{marcus}, own procurement; @{priya}, own the migration kickoff. This approves the choice, not a signed contract.",
-    },
-    {
-      kind: "create_workstream",
-      id: "review-open",
-      room: "acme-review",
-      as: "marcus",
-      title: "Demo & follow-up",
-      space: "acme",
-      participants: ["priya", "dana"],
-      scope: "workspace",
-      openingMessage: "Acme demo recap, from a sample Granola-style note: Maya Chen liked the workflow but asked whether NetSuite orders sync automatically. We left that unresolved on the call. Review guide: evidence, open concern, owner, next step.",
+      kind: "canvas_message",
+      id: "launch-billing",
+      canvas: "launch-plan",
+      as: "priya",
+      text: "Billing can migrate annual plans by the 26th; the checklist is attached. Rally, does that still leave room before the announcement?",
       assistant: {
         kind: "say",
-        text: "**Needs follow-up:** NetSuite sync is unresolved in this call record. Name a technical owner and a validation step before calling the demo a success.",
+        text: "Yes. The 26th leaves a week before December 3, and the help center pages are the later dependency now.",
       },
-    },
-    {
-      kind: "upload",
-      id: "review-transcript",
-      room: "acme-review",
-      as: "marcus",
-      title: "Acme demo call — sample transcript",
-      fileName: "review-transcript.md",
-      mimeType: "text/markdown",
-      content: "# Acme demo call — sample transcript\n\nFictional Granola-style note; no live Granola import. Folder example: Demo Calls.\n\nMaya Chen, Acme operations: The handoff looks useful. Do NetSuite orders sync automatically?\nSales: Let us verify the connector and get back to you.\nMaya: We need order updates without CSV exports.\nSales: Understood. We will follow up.\n\nCall ends with connector availability unresolved. Off-call conversations are not in this note.",
-    },
-    {
-      kind: "upload",
-      id: "review-guide",
-      room: "acme-review",
-      as: "marcus",
-      title: "Demo Call Review Guide",
-      fileName: "review-guide.md",
-      mimeType: "text/markdown",
-      content: "# Demo Call Review Guide\n\nEvaluate only supplied evidence. Separate facts, unknowns and decisions. State the customer concern, evidence, owner and next action. Accept explicitly shared off-call context as an attributed correction. Never infer agreement from silence. Draft follow-up; do not send it. Distinguish a sample distribution record from a successful connector receipt.",
     },
     {
       kind: "sidekick",
-      id: "demo-call-review",
-      as: "marcus",
-      scope: "workspace",
-      name: "Demo Call Review",
-      description: "Reviews supplied demo notes and surfaces the next team action.",
-      overview: "Review new demo notes with the Demo Call Review Guide. Keep concerns, evidence and ownership together. The seeded example is illustrative; no external distribution occurred.",
-      instructions: "Review supplied demo-call notes against the attached Demo Call Review Guide when those sources are available. Report evidence, unresolved concern, owner and next step. Do not infer private context. If no new note is available, say so. Prepare a review and a short distribution draft; do not send or write to external services. Example intended workflow: Granola Demo Calls → review → Drive Demo Reviews → Slack #demos. Those destinations require actual authorized connector configuration; the seeded sample is not a delivery receipt.",
+      id: "changelog-sidekick",
+      sidekick: "weekly-changelog",
+      as: "theo",
+      sharedWith: "organization",
+      name: "Weekly changelog",
+      description: "Prepares a concise changelog Canvas from completed work every Friday.",
+      overview: "Every Friday afternoon it reads what shipped that week and writes one changelog the whole Organization can read.",
+      instructions: "Each Friday, write a changelog of the work completed this week: what shipped, what it changes for customers, and anything held back. Keep it to one page.",
       schedule: {
-        rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0;BYSECOND=0",
+        rrule: "FREQ=WEEKLY;BYDAY=FR;BYHOUR=14;BYMINUTE=0;BYSECOND=0",
         timezone: "America/Los_Angeles",
-        summary: "Weekdays at 9:00am Pacific",
+        summary: "Every Friday at 2:00 PM",
       },
-      firstRun: {
-        kind: "say",
-        text: "**Sample review — Acme:** NetSuite sync was unresolved in the supplied call excerpt. Technical validation needs an owner.\n\n**Distribution draft:** Acme needs a connector check before follow-up. No Drive file or Slack message was sent.",
-      },
-    },
-    {
-      kind: "message",
-      id: "review-sample-share",
-      room: "acme-review",
-      as: "marcus",
-      text: "Sample Sidekick review: “NetSuite sync unresolved; technical owner needed.” Distribution preview: Drive / Demo Reviews and Slack #demos. Nothing was delivered externally.",
-    },
-    {
-      kind: "upload",
-      id: "review-v1",
-      room: "acme-review",
-      as: "marcus",
-      title: "Acme demo review — v1",
-      fileName: "review-v1.md",
-      mimeType: "text/markdown",
-      content: "# Acme demo review — v1\n\nSample Sidekick output.\n\nConcern: automatic NetSuite order sync.\nEvidence: unresolved in the demo transcript.\nStatus: technical owner and validation step needed.\nDistribution: preview only; no Drive write or Slack post.",
-    },
-    {
-      kind: "message",
-      id: "review-context",
-      room: "acme-review",
-      as: "marcus",
-      text: "After the call, Maya confirmed NetSuite is mandatory. @{priya} already verified the connector needs our Integration package. That context was missing from the transcript.",
-      assistant: {
-        kind: "say",
-        text: "**Correction:** package availability is now known; customer validation is still open. Replace “research connector availability” with “validate Acme’s order flow.” The proposal needs the Integration package.",
+      firstRun: { kind: "say", text: "This week's changelog is up: annual plan pricing, faster Canvas loading, and two fixes to email delivery." },
+      canvas: {
+        title: "Weekly changelog · Nov 6",
+        path: "weekly-changelog.md",
+        content: "# Weekly changelog · Nov 6\n\n## Shipped\n\n- Annual plan pricing on the billing page.\n- Canvases open faster on a slow connection.\n- Two fixes to email delivery for long threads.\n\n## Held back\n\n- The new invoice layout waits on the billing migration.",
       },
     },
     {
-      kind: "message",
-      id: "review-manager",
-      room: "acme-review",
-      as: "dana",
-      text: "Change one thing: do not promise a launch date yet. @{marcus}, own the customer reply tomorrow; @{priya}, validate the order flow first.",
-    },
-    {
-      kind: "upload",
-      id: "review-v2",
-      room: "acme-review",
-      as: "marcus",
-      title: "Acme demo review — v2",
-      fileName: "review-v2.md",
-      mimeType: "text/markdown",
-      content: "# Acme demo review — v2\n\nCorrected from v1 using explicitly shared off-call context: NetSuite is mandatory and the connector requires the Integration package.\n\nResolved: package availability. Still open: Acme order-flow validation. Sales owns tomorrow’s reply; solutions engineering owns the validation. Manager requested no launch-date promise. Draft only; no external distribution.",
-    },
-    {
-      kind: "create_substream",
-      id: "review-response-open",
-      room: "acme-review",
-      as: "marcus",
-      substream: "customer-response",
-      title: "Customer response",
-      participants: ["priya", "dana", "presenter"],
-      startingContext: "Draft the Acme reply. NetSuite needs the Integration package; order-flow validation is open. Do not promise a launch date or send the message.",
-    },
-    {
-      kind: "message",
-      id: "review-draft",
-      room: "acme-review",
-      as: "marcus",
-      text: "Draft the reply with the package correction and a validation step.",
-      assistant: {
-        kind: "say",
-        text: "Hi Maya — NetSuite order sync requires the Integration package, so we are updating the proposal. Could you share one example order flow for our solutions engineer to validate? We will confirm scope and timing after that check.",
-      },
-      substream: "customer-response",
-    },
-    {
-      kind: "message",
-      id: "review-draft-check",
-      room: "acme-review",
+      kind: "sidekick",
+      id: "triage-sidekick",
+      sidekick: "incident-triage",
       as: "priya",
-      text: "Yes. Ask for an order update as well as a new order; both paths need validation.",
-      substream: "customer-response",
-    },
-    {
-      kind: "upload",
-      id: "review-follow-up-draft",
-      room: "acme-review",
-      as: "marcus",
-      title: "Acme follow-up — draft",
-      fileName: "review-follow-up-draft.md",
-      mimeType: "text/markdown",
-      content: "# Acme follow-up — draft\n\nHi Maya,\n\nNetSuite order sync requires the Integration package, so we are updating the proposal. Could you share an example new order and an order update for our solutions engineer to validate? We will confirm scope and timing after that check.\n\nStatus: draft, not sent. Sales owns the reply; solutions engineering owns validation.",
-      substream: "customer-response",
-    },
-    {
-      kind: "message",
-      id: "review-next-step",
-      room: "acme-review",
-      as: "marcus",
-      text: "I will send the reviewed draft tomorrow after the order-flow check. It is still a draft.",
-      substream: "customer-response",
-    },
-    {
-      kind: "create_workstream",
-      id: "sales-open",
-      room: "sales-reviews",
-      as: "marcus",
-      title: "Demo reviews",
-      space: "sales",
-      participants: [],
-      scope: "workspace",
-      openingMessage: "Acme review is in Customer: Acme → Demo & follow-up. Correction: NetSuite needs the Integration package. I own tomorrow’s reply; solutions engineering owns validation. Draft is in Customer response. No launch date promised.",
-      assistant: {
-        kind: "say",
-        text: "**Next action:** finish the Acme order-flow check, then use the customer-response draft. The detailed review stays with the account.",
+      sharedWith: ["presenter", "theo"],
+      name: "Incident triage",
+      description: "Watches deploys and alerts, and keeps the team current on anything that breaks.",
+      overview: "Each weekday morning it reviews the night's alerts and deploys and says what needs a person.",
+      instructions: "Each weekday morning, review the alerts and deploys since the last run. Say what broke, what was rolled back, and what still needs an owner. Say plainly when nothing did.",
+      schedule: {
+        rrule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=8;BYMINUTE=0;BYSECOND=0",
+        timezone: "America/Los_Angeles",
+        summary: "Every weekday at 8:00 AM",
       },
+      firstRun: { kind: "say", text: "One alert overnight: checkout latency rose after the 11:40 PM deploy, and the deploy was rolled back at 11:52. Latency is normal again. The fix needs an owner before it ships again." },
     },
     {
-      kind: "create_workstream",
-      id: "proposal-open",
-      room: "acme-proposal",
-      as: "marcus",
-      title: "Proposal & solution design",
-      space: "acme",
-      participants: [],
-      scope: "workspace",
-      openingMessage: "Continuing my earlier proposal work here (sample history). Acme needs order handoffs for 40 staff. The brief says CRM sync; Growth is $24k/year and includes CRM sync. Draft a Growth proposal.",
-      assistant: {
-        kind: "say",
-        text: "**Draft v1:** Growth at $24k/year, assuming CRM sync covers Acme’s order handoff. Confirm the system of record before sending.",
-      },
-      execution: "history",
-    },
-    {
-      kind: "upload",
-      id: "proposal-brief",
-      room: "acme-proposal",
-      as: "marcus",
-      title: "Acme customer brief",
-      fileName: "proposal-brief.md",
-      mimeType: "text/markdown",
-      content: "# Acme customer brief\n\nFictional customer. Maya Chen, Operations Lead. 40 staff need order handoffs without CSV exports. Initial brief says “CRM sync”; order system not specified. Proposed Growth package: $24,000/year, CRM connector included. Internal working material; no customer guest has access.",
-    },
-    {
-      kind: "upload",
-      id: "proposal-v1",
-      room: "acme-proposal",
-      as: "marcus",
-      title: "Acme proposal — v1",
-      fileName: "proposal-v1.md",
-      mimeType: "text/markdown",
-      content: "# Acme proposal — v1\n\nProvisional recommendation: Growth, $24,000/year. CRM sync included. Assumption: CRM is the order system of record. Integration scope and timing require confirmation. Internal draft; not sent.",
-    },
-    {
-      kind: "message",
-      id: "proposal-invite",
-      room: "acme-proposal",
-      as: "marcus",
-      text: "@{priya}, joining you to the proposal. Does Growth cover their integration?",
-    },
-    {
-      kind: "message",
-      id: "proposal-expert",
-      room: "acme-proposal",
+      kind: "sidekick_message",
+      id: "triage-owner",
+      sidekick: "incident-triage",
       as: "priya",
-      text: "Maya told me separately that orders live in NetSuite, not the CRM. Sharing my technical note now: the NetSuite connector needs the $6k/year Integration package. Growth alone will not cover it.",
-    },
-    {
-      kind: "upload",
-      id: "proposal-technical-note",
-      room: "acme-proposal",
-      as: "priya",
-      title: "Acme integration note",
-      fileName: "proposal-technical-note.md",
-      mimeType: "text/markdown",
-      content: "# Acme integration note\n\nExplicitly shared technical context. Maya confirmed NetSuite is the order system of record. Growth covers CRM only. NetSuite connector requires Integration at $6,000/year in addition to Growth at $24,000/year. Validate new-order and order-update flows before committing scope or timing. This note was contributed by the solutions engineer; joining alone did not disclose it.",
-    },
-    {
-      kind: "create_substream",
-      id: "proposal-integration-open",
-      room: "acme-proposal",
-      as: "priya",
-      substream: "integration-requirements",
-      title: "Integration requirements",
-      participants: ["marcus", "presenter"],
-      startingContext: "Validate Acme’s NetSuite order integration. Growth alone is insufficient; Integration is $6k/year. New-order and order-update flows still need validation.",
-    },
-    {
-      kind: "message",
-      id: "proposal-integration-check",
-      room: "acme-proposal",
-      as: "priya",
-      text: "We need a sample new order and an update. No custom connector promised; use the supported NetSuite connector.",
-      substream: "integration-requirements",
-    },
-    {
-      kind: "message",
-      id: "proposal-integration-share",
-      room: "acme-proposal",
-      as: "priya",
-      text: "Sharing the breakout conclusion here: use the supported NetSuite connector; validate a new order and an update. We have not confirmed timing.",
-    },
-    {
-      kind: "message",
-      id: "proposal-revise",
-      room: "acme-proposal",
-      as: "marcus",
-      text: "Revise the proposal using the technical note. Make the changed assumption clear.",
-      assistant: {
-        kind: "say",
-        text: "**Changed assumption:** orders live in NetSuite, not the CRM.\n\n**Draft v2:** Growth $24k + Integration $6k = $30k/year. Growth alone is insufficient. Validate both order flows before committing timing.",
-      },
-    },
-    {
-      kind: "upload",
-      id: "proposal-v2",
-      room: "acme-proposal",
-      as: "marcus",
-      title: "Acme proposal — v2",
-      fileName: "proposal-v2.md",
-      mimeType: "text/markdown",
-      content: "# Acme proposal — v2\n\nReplaces v1 for internal review.\n\nRecommendation: Growth ($24,000/year) plus Integration ($6,000/year), totaling $30,000/year. Increase from v1: $6,000/year.\n\nChanged assumption: NetSuite is the order system of record; CRM sync alone does not satisfy the requirement. Source: explicitly shared Acme integration note.\n\nNext: validate a new order and an order update with the solutions engineer. Scope and launch timing remain uncommitted. Internal draft; not sent.",
-    },
-    {
-      kind: "message",
-      id: "proposal-presenter",
-      room: "acme-proposal",
-      as: "marcus",
-      text: "@{presenter}, v2 now covers NetSuite at $30k/year. The customer draft is ready for review; technical validation is the remaining step.",
+      text: "I'll take the checkout fix. @{theo}, nothing customer-facing to announce; it was twelve minutes.",
     },
   ],
-  expect: [
-    {
-      viewer: "presenter",
-      attention: {
-        waitingForYou: 1,
-        waitingReason: "mentioned",
-      },
-      rooms: {
-        "vendor-selection": {
-          unseen: false,
-          hasUnread: true,
-          mentioned: false,
-        },
-        "acme-review": {
-          unseen: false,
-          hasUnread: true,
-          mentioned: false,
-        },
-        "sales-reviews": {
-          unseen: false,
-          hasUnread: true,
-          mentioned: false,
-        },
-        "acme-proposal": {
-          unseen: true,
-          hasUnread: true,
-          mentioned: true,
-        },
-      },
-    },
-  ],
+  verify: ["presenter"],
 } satisfies z.input<typeof DemoPackSchema>;
