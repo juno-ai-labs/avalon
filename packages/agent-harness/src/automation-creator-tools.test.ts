@@ -220,20 +220,18 @@ describe("the automations plugin", () => {
   it("preserves the existing Sidekick scope while explaining its authority", () => {
     const { systemMessage } = createAutomationsPlugin(host());
 
-    // The three scopes, and what each one means for who can manage the result.
-    expect(systemMessage).toContain("personal");
-    expect(systemMessage).toContain("workspace");
-    expect(systemMessage).toContain("workstream");
+    // The two scopes, and what each one means for who can manage the result.
+    expect(systemMessage).toContain('- "personal" belongs to the requester.');
+    expect(systemMessage).toContain('- "workspace" belongs to the Organization and is managed by its admins.');
+    // A Thread no longer owns a Sidekick, so the prompt offers no room scope.
+    expect(systemMessage).not.toContain('"workstream"');
     expect(systemMessage).toContain("Published scope cannot change");
     expect(systemMessage).toContain("Use the scope already selected");
     expect(systemMessage).toContain("Every scope can use eligible delegates' personal connections");
     expect(systemMessage).toContain("Eligible delegates can use");
     expect(systemMessage).not.toContain("Only the run-as person can use");
     expect(systemMessage).toContain("Do not ask participants to choose it again");
-    // The room an automation belongs to is the one it was written in, so an
-    // agent offering to deliver somewhere else is offering something that does
-    // not exist.
-    expect(systemMessage).toContain("Scheduled result delivery to a workstream is limited to the owning workstream");
+    expect(systemMessage).not.toContain("owning workstream");
   });
 
   it("stages a scheduled self-review and tells it to report to the absent owner", () => {

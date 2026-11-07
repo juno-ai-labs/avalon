@@ -11,7 +11,7 @@ import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmen
 import { AutomationLifecycleStateSchema,
   AutomationRunReferenceV1Schema,
   AutomationRunTriggerV1Schema,
-  AutomationScopeSchema, SidekickAudienceSchema } from "./automation-agent";
+  AutomationScopeSchema, SidekickAudienceSchema, StoredAutomationScopeSchema } from "./automation-agent";
 import { ConnectorInstallationSchema } from "./connector-installation";
 export * from "./conversation-attention";
 export * from "./conversation-source";
@@ -1585,11 +1585,10 @@ export const AutomationDraftSchema = z.object({
   customTools: z.array(SidekickCustomToolSchema).default([]),
   /**
    * Who will be able to see and change this automation, asked before it is
-   * submitted because it cannot be changed afterwards. `workstream` is the room
-   * the authoring run happened in — there is no ID to name here and none can
-   * be, because no other room is reachable.
+   * submitted because it cannot be changed afterwards. A revision stored while
+   * the retired `workstream` scope existed reads as `workspace`.
    */
-  suggestedScope: AutomationScopeSchema,
+  suggestedScope: StoredAutomationScopeSchema,
   followUpQuestion: z.string().nullable(),
   elicitation: AutomationDraftElicitationSchema.nullable().default(null),
   ready: z.boolean()
@@ -1805,14 +1804,6 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
   activitySourcePluginIds: ActivitySourcePluginIdsSchema,
   connectorBindings: z.record(z.string(), z.string()),
   scope: AutomationScopeSchema,
-  /** The Channel that owns a `workstream`-scoped automation; null for the other two scopes. */
-  owningWorkstreamId: IdSchema.nullable(),
-  /**
-   * The home conversation under `owningWorkstreamId`: `"0"` for the Channel's
-   * Main conversation, a Breakout id otherwise. The home is where a run posts
-   * by default with `conversation_post`.
-   */
-  owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   runAsUserId: IdSchema,
   /** Per-run coordination is independent of the legacy human access entitlement. */
   coordinatorUserId: IdSchema.nullable().optional(),
@@ -1837,19 +1828,6 @@ export const AutomationRunStatusSchema = z.enum([
   "pending", "running", "needs_input", "completed", "failed", "stopped",
 ]);
 
-/**
- * The Thread that owns a `workstream`-scoped Sidekick, as the library and the
- * detail header name it: its title and the glyph it chose. Sent only to a
- * reader who is a participant of that Thread, so a Sidekick someone still
- * reads as its author never reveals a Thread they have left.
- */
-export const AutomationOwningThreadSchema = z.object({
-  id: IdSchema,
-  title: z.string(),
-  appearance: WorkstreamAppearanceSchema.optional(),
-});
-export type AutomationOwningThread = z.infer<typeof AutomationOwningThreadSchema>;
-
 export const AutomationSummarySchema = z.object({
   loadable: z.boolean().default(false),
   /**
@@ -1863,10 +1841,6 @@ export const AutomationSummarySchema = z.object({
   description: z.string(),
   emailAddress: z.string().email().nullable().default(null),
   scope: AutomationScopeSchema,
-  /** The room that owns a `workstream`-scoped automation; null for the other two. */
-  owningWorkstreamId: IdSchema.nullable().default(null),
-  /** The owning Thread's name and glyph; null for the other scopes and when the reader is not in it. */
-  owningThread: AutomationOwningThreadSchema.nullable().default(null),
   status: z.enum(["draft", "active", "paused"]),
   nextRunAt: TimestampSchema.nullable(),
   lastRunAt: TimestampSchema.nullable(),
@@ -1883,13 +1857,12 @@ export const AutomationSummarySchema = z.object({
 });
 
 /**
- * One automation in a work stream's rail: the summary without its scope and
- * owner, because every row in that list is owned by the work stream showing it.
+ * One automation in a work stream's rail: the summary without its scope. No
+ * Thread owns a Sidekick any more, so the rail's `owned` list is always empty;
+ * the schema stays because released clients parse that list.
  */
 export const WorkstreamAutomationSummarySchema = AutomationSummarySchema.omit({
   scope: true,
-  owningWorkstreamId: true,
-  owningThread: true,
 });
 export type WorkstreamAutomationSummary = z.infer<typeof WorkstreamAutomationSummarySchema>;
 

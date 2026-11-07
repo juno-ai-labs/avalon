@@ -241,7 +241,6 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
       workspaceId,
       authorUserId: automation.authorUserId,
       scope: automation.scope,
-      owningWorkstreamId: null,
       automationId: automation.id,
     });
     const workspace = await hostedParentStub(env, workspaceId);

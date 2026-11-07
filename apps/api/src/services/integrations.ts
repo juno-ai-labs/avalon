@@ -89,7 +89,6 @@ import {
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
   AutomationDetailSchema,
-  IdSchema,
   ConnectorResourceAuthorizationHintSchema,
   ConnectorResourceAuthorizationRequestSchema,
   ModelPluginIdSchema,
@@ -158,7 +157,6 @@ import { connectorTextPages } from "./connector-text-pages";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { PERSONAL_SYSTEM_PROMPT_REASONS } from "../durable-objects/personal-system-prompt";
 import { AutomationService } from "./automation-service";
-import { WorkstreamService } from "./workstream-service";
 import { ResourceService } from "./resource-service";
 import { DEMO_SEED_PROVIDER_KEY, demoSeedModelRoute, demoSeedProviderFetch } from "./demo-seed-provider";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
@@ -323,7 +321,6 @@ import {
   conversationToolPorts,
   createConversationsPlugin,
 } from "./conversation-tools";
-import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import { CODE_PROGRAM_TOOL_TIMEOUT_MS, createCodePlugin, createCustomToolsPlugin, type CodePlugin } from "./code-mode";
 import { TerminalToolError } from "./terminal/tools";
@@ -1845,59 +1842,16 @@ function createAvalonAutomationsPlugin(
   const authorUserId = input.executionPrincipal?.type === "user"
     ? input.executionPrincipal.userId
     : null;
-  const attachmentAuth = async () => {
-    if (!authorUserId) throw new Error("sidekick_attachment_principal_required");
-    const membership = await env.DB.prepare(`SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`)
-      .bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" | null }>();
-    if (!membership) throw new Error("sidekick_attachment_membership_required");
-    return { sessionId: `run:${input.harnessRunId}`, userId: asUserId(authorUserId), workspaceId: input.workspaceId,
-      region: input.region, role: membership.role, analyticsWorkspaceId: null };
-  };
+
   if (input.parentKind === "workstream") {
-    const tools: HarnessTool[] = [{
-      definition: {
-        name: "list_skill_recommendations",
-        description: "List reusable skills that can be recommended for this thread, with skillId, availability and recommendation state. This does not list agents to configure. Use load_skill with a name from the Skills catalog to load instructions now.",
-        capability: "rally.sidekick.list", mode: "read", idempotency: "safe",
-        inputSchema: z.toJSONSchema(z.strictObject({})),
-      },
-      execute: async () => {
-        const options = await new WorkstreamService(env, await attachmentAuth()).sidekickRecommendationOptions(
-          input.parentId, input.backgroundAgent ? "0" : input.substreamId ?? "0");
-        return { output: { skills: options.items.filter((item) => item.available || item.attached).map((item) => ({
-          skillId: item.id, name: item.name, description: item.description, available: item.available,
-          canRecommend: options.canManage, recommended: item.attached,
-        })) }, summary: "Listed skill recommendations" };
-      },
-    }, ...([true, false] as const).map((recommended): HarnessTool => {
-      const schema = z.strictObject({ skillId: IdSchema });
-      return {
-        definition: {
-          name: recommended ? "recommend_skill" : "unrecommend_skill",
-          description: `${recommended ? "Recommend" : "Stop recommending"} a reusable skill for this thread's future executions. Use a skillId from list_skill_recommendations. Loading instructions now still requires load_skill.`,
-          capability: `rally.sidekick.${recommended ? "attach" : "detach"}`, mode: "write", idempotency: "record_before_execute",
-          inputSchema: z.toJSONSchema(schema),
-        },
-        serial: true,
-        validateInput: (raw) => { const parsed = schema.safeParse(raw); return parsed.success ? null : parsed.error; },
-        execute: async (raw) => {
-          const { skillId } = schema.parse(raw);
-          const result = await new WorkstreamService(env, await attachmentAuth()).setSidekickRecommendation(
-            input.parentId, skillId, recommended, input.substreamId ?? "0", input.backgroundAgent ? input : undefined);
-          return { output: { skills: result.items.map((item) => ({ skillId: item.id, name: item.name,
-            description: item.description, available: item.available })),
-            note: "Recommendations apply to future executions. Call load_skill to use instructions in this execution." },
-          summary: recommended ? "Recommended a skill" : "Removed a skill recommendation" };
-        },
-      };
-    })];
-    if (delegationUser) tools.push(...sidekickDelegationTools(env, input, delegationUser, true));
-    return { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_skill_recommendations", shortWireName: "",
-      displayName: "Skill recommendations",
-      description: `Choose which reusable skills to recommend for future runs in this thread. To use a skill now, call load_skill.${delegationUser ? " Inspect and manage Sidekick delegates for Organization users." : ""}`,
-      searchAliases: ["skill", "instructions", "knowledge", "recommend", "procedure",
-        ...(delegationUser ? ["sidekick", "delegate", "delegation", "account", "consent", "allow", "withdraw"] : [])],
-      systemMessage: `Use list_skill_recommendations, recommend_skill and unrecommend_skill to manage this thread's skill recommendations. Recommendations affect future executions; call load_skill with a name from the Skills catalog to use instructions now. To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.${delegationUser ? ` ${sidekickDelegationGuidance()}` : ""}`,
+    // A Thread no longer owns or recommends a Sidekick; what is left here is
+    // managing Sidekick delegation, for a person.
+    const tools = delegationUser ? sidekickDelegationTools(env, input, delegationUser, true) : [];
+    return { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekick_delegation", shortWireName: "",
+      displayName: "Sidekick delegation",
+      description: "Inspect and manage Sidekick delegates for Organization users.",
+      searchAliases: ["sidekick", "delegate", "delegation", "account", "consent", "allow", "withdraw"],
+      systemMessage: `To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.${delegationUser ? ` ${sidekickDelegationGuidance()}` : ""}`,
       tools, preload: false, explicit: false };
   }
   /**
@@ -5282,11 +5236,10 @@ async function loadRunPromptContext(
     // immutable, so nothing is frozen into the loop input beyond the reference.
     const definition = await runDefinitionPreparation.get();
     if (!definition) throw new Error("sidekick_run_reference_missing");
-    // The home, as the conversation tools name it: the Channel's Main
-    // conversation or a Breakout. Null tells the run nobody reads it in Rally.
-    const homeConversationId = definition.owningWorkstreamId === null ? null
-      : conversationIdOf({ parentId: definition.owningWorkstreamId, substreamId: definition.owningSubstreamId });
-    automationSendsOutward = definition.owningWorkstreamId === null;
+    // No Thread is a Sidekick's home any more: the run delivers its result
+    // itself, and its reply reaches the Sidekick's own conversation as its row.
+    const homeConversationId = null;
+    automationSendsOutward = true;
     automationContext = {
       sidekickId: input.automationRun.automationId,
       name: definition.definition.name,

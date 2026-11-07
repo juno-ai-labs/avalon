@@ -12,7 +12,6 @@ vi.mock('../lib/platform', async (importOriginal) => ({
   ...await importOriginal<typeof PlatformModule>(),
   desktopBridge: () => ({ openThread }),
 }));
-const THREAD_ID = '0191c0de-0000-7000-8000-00000000cafe';
 
 beforeEach(() => {
   getSidekicks.mockReset().mockResolvedValue([
@@ -46,28 +45,6 @@ describe('SidekicksLibraryScreen', () => {
     expect(screen.getByRole('link', { name: /Daily brief/ })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Team brief/ })).toBeNull();
     expect(within(screen.getByRole('group', { name: 'Sidekick ownership' })).getByRole('button', { name: 'Everyone' })).toHaveAttribute('aria-pressed', 'true');
-  });
-
-  it('names the owning Thread and opens it without opening the Sidekick', async () => {
-    getSidekicks.mockResolvedValue([
-      { id: 'notes', name: 'Release notes', description: 'Draft the notes.', scope: 'workstream', status: 'active',
-        owningWorkstreamId: THREAD_ID, owningThread: { id: THREAD_ID, title: 'Release room', appearance: { icon: 'rocket', color: 'purple' } } },
-      { id: 'left', name: 'Standup', description: 'Collect updates.', scope: 'workstream', status: 'draft', owningWorkstreamId: THREAD_ID },
-    ]);
-    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
-
-    const notes = (await screen.findByRole('link', { name: 'Release notes' })).closest('li')!;
-    const thread = within(notes).getByRole('button', { name: 'Release room' });
-    // A sibling of the row's link, never inside it: a button in an anchor is
-    // invalid markup and reads as one control to a screen reader.
-    expect(thread.closest('a')).toBeNull();
-    fireEvent.click(thread);
-    expect(openThread).toHaveBeenCalledWith(THREAD_ID);
-
-    // A row whose Thread the reader is not in keeps the plain word.
-    const standup = screen.getByRole('link', { name: 'Standup' }).closest('li')!;
-    expect(within(standup).getByText('Thread').closest('small')).toHaveTextContent('Draft · Thread');
-    expect(within(standup).queryByRole('button')).toBeNull();
   });
 });
 

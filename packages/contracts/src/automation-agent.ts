@@ -19,8 +19,16 @@ export const asAutomationId = (value: string): AutomationId => AutomationIdSchem
  * automation *is* is the room that owns a `workstream`-scoped one, and a run
  * sends there with its own tool.
  */
-export const AutomationScopeSchema = z.enum(["personal", "workspace", "workstream"]);
+export const AutomationScopeSchema = z.enum(["personal", "workspace"]);
 export type AutomationScope = z.infer<typeof AutomationScopeSchema>;
+/**
+ * A scope as stored before the `workstream` (Thread-owned) scope was retired:
+ * `workstream` reads as `workspace`, the conversion WorkspaceDO migration 137
+ * made to every directory row. For stored drafts and transcript rows, which
+ * no migration rewrites; anything written now uses `AutomationScopeSchema`.
+ */
+export const StoredAutomationScopeSchema = z.enum(["personal", "workspace", "workstream"])
+  .transform((scope): AutomationScope => scope === "workstream" ? "workspace" : scope);
 
 /**
  * Who a Sidekick is shared with: its author alone (`personal`), every member
@@ -221,7 +229,7 @@ export const AutomationDraftProposedV1Schema = z.strictObject({
   description: z.string().min(1).max(1200),
   /** One line per trigger, already rendered: the card shows them, not parses them. */
   triggerSummaries: z.array(z.string().min(1).max(300)).max(10),
-  suggestedScope: AutomationScopeSchema,
+  suggestedScope: StoredAutomationScopeSchema,
   /** False when the agent still has a blocking question. */
   ready: z.boolean(),
 });

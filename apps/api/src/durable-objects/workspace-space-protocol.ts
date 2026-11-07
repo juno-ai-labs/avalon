@@ -26,7 +26,6 @@ import {
   SpaceDirectorySchema,
   SpaceErrorCodeSchema,
   SpaceIconKeySchema,
-  AutomationIdSchema,
   SpaceIdSchema,
   asSpaceId,
   type SpaceId,
@@ -427,25 +426,6 @@ export const WorkspaceSpaceChannelPageRequestSchema = SpaceActorSchema.extend({
   cursor: z.string().min(1).max(200).nullable(),
 }).strict();
 export type WorkspaceSpaceChannelPageRequest = z.infer<typeof WorkspaceSpaceChannelPageRequestSchema>;
-
-/**
- * A Sidekick's review announcing a change in the one Channel it announces in
- * (General, or the author's Personal Channel). `key` is the post's client
- * message id, so a retried tool call writes nothing.
- */
-export const WorkspaceSidekickChannelPostRequestSchema = SpaceActorSchema.extend({
-  spaceId: SpaceIdSchema,
-  automationId: AutomationIdSchema,
-  key: z.string().min(1).max(300),
-  text: z.string().trim().min(1).max(MESSAGE_MAX_CHARACTERS),
-}).strict();
-export type WorkspaceSidekickChannelPostRequest = z.infer<typeof WorkspaceSidekickChannelPostRequestSchema>;
-
-export const WorkspaceSidekickChannelPostResultSchema = z.union([
-  z.strictObject({ ok: z.literal(true), messageId: z.string().uuid(), replayed: z.boolean() }),
-  SpaceFailureSchema,
-]);
-export type WorkspaceSidekickChannelPostResult = z.infer<typeof WorkspaceSidekickChannelPostResultSchema>;
 
 /** The dashboard remains attention-only; other callers can list all visible rows. */
 export const WorkspaceSpaceConversationPageRequestSchema = WorkspaceSpaceChannelPageRequestSchema.extend({

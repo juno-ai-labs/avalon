@@ -3,7 +3,6 @@ import { AutomationScreen } from './automation';
 import { SpeechPlaybackProvider } from '../components/speech-playback';
 import { useEscapeClosesWindow } from '../lib/window-escape';
 import { AutomationGlyph } from '../components/workstream-glyph';
-import { OwningThreadLabel } from '../components/owning-thread-label';
 import { SidebarSearch } from '../components/sidebar-search';
 import { desktopBridge } from '../lib/platform';
 import { useEffect, useState } from 'react';
@@ -30,18 +29,16 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
       <SidebarSearch mode="input" aria-label="Search Sidekicks" placeholder="Search Sidekicks" value={search} onChange={(event) => setSearch(event.target.value)} />
     </div>
     <div className="sidekick-filters" role="group" aria-label="Sidekick ownership">
-      {([['all', 'Everyone'], ['you', 'Only you'], ['workspace', 'Organization'], ['workstream', 'Threads']] as const).map(([value, label]) =>
+      {([['all', 'Everyone'], ['you', 'Only you'], ['workspace', 'Organization']] as const).map(([value, label]) =>
         <button key={value} type="button" aria-pressed={scope === value} onClick={() => setScope(value)}>{label}</button>)}
     </div>
     <section aria-labelledby="sidekick-results-title">
     <div className="sidekick-results-heading"><h2 id="sidekick-results-title">{search ? 'Search results' : 'Your Sidekicks'}</h2><span role="status" aria-label="Sidekick count">{query.isSuccess ? `${items.length} Sidekicks` : ''}</span></div>
     {query.isLoading ? <OpeningState label="Loading Sidekicks…" /> : query.error ? <ErrorNotice occurrence={query.error}>{query.error.message}</ErrorNotice> : items.length === 0 ? <EmptyState title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
-      // The row's link is its title, stretched over the whole card in CSS, so
-      // the owning Thread's button can sit in the row without nesting a button
-      // inside a link.
+      // The row's link is its title, stretched over the whole card in CSS.
       <ul className="sidekicks-library-list">{items.map((item) => <li key={item.id}>
         <span className="sidekick-list-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>
-        <div className="sidekick-list-copy"><h3><Link className="sidekick-list-link" to={`/sidekicks/${item.id}`}>{item.name}</Link></h3><p>{item.description}</p><small>{item.status === 'draft' ? 'Draft' : item.status === 'paused' ? 'Paused' : item.loadable ? 'Available in conversations' : 'Delegated work'} · {item.scope === 'you' ? 'Only you' : item.scope === 'workspace' ? 'Organization' : <OwningThreadLabel thread={item.owningThread} />}</small></div>
+        <div className="sidekick-list-copy"><h3><Link className="sidekick-list-link" to={`/sidekicks/${item.id}`}>{item.name}</Link></h3><p>{item.description}</p><small>{item.status === 'draft' ? 'Draft' : item.status === 'paused' ? 'Paused' : item.loadable ? 'Available in conversations' : 'Delegated work'} · {item.scope === 'you' ? 'Only you' : 'Organization'}</small></div>
         <ChevronRight className="sidekick-list-chevron" aria-hidden="true" size={18} />
       </li>)}</ul>}
     </section>

@@ -7253,13 +7253,6 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .sidekick-list-link { color: inherit; text-decoration: none; }
 .sidekick-list-link:focus-visible { outline: none; }
 .sidekick-list-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
-.sidekick-list-copy .owning-thread-link { position: relative; z-index: 1; }
-/* The owning Thread, named by its glyph and title, in the library row and the
-   Sidekick's header badge. It reads as text until pointed at. */
-.owning-thread-link { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; vertical-align: bottom; cursor: pointer; }
-.owning-thread-link-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.owning-thread-link:hover .owning-thread-link-title { color: var(--av-sys-color-text-default); text-decoration: underline; text-underline-offset: 2px; }
-.automation-header .owning-thread-badge { max-width: 100%; padding: 2px 9px 2px 3px; font-size: var(--av-sys-font-size-meta); }
 .sidekick-list-glyph { width: 56px; height: 56px; flex-shrink: 0; }
 .sidekick-list-copy { flex: 1; min-width: 0; }
 .sidekick-list-copy h3 { font-size: 16px; font-weight: 500; margin: 0 0 5px; overflow-wrap: anywhere; }
