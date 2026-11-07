@@ -5,9 +5,11 @@ import {
 } from "@rally/contracts";
 import type {
   DumpThreadTranscriptsResult,
+  RetireThreadsResult,
 } from "@rally/contracts/engineering-inspection";
 
 import type { Env } from "../env";
+import { ApiError } from "../lib/api-error";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
@@ -120,6 +122,74 @@ export async function dumpThreadTranscripts(
   logInfo(env, "thread_transcript_dump_pass", {
     workspace_id: workspaceId, operation_id: input.operationId, operator_subject: input.operatorSubject,
     conversations: result.conversations, dumped: result.dumped, skipped: result.skipped, failed: result.failed.length,
+  });
+  return result;
+}
+
+/**
+ * Retire every Thread, Breakout and Channel of one Organization: each
+ * conversation object is tombstoned through `retireObject`, the walk's own
+ * close, and only then are its parent's rows deleted
+ * (`WorkspaceDO.deleteRetiredThreadParent`). Children before parents for the
+ * walk's reason: a parent deleted first would leave its conversations open and
+ * unnamed by anything a later pass could find.
+ *
+ * Refused, before anything is touched, unless every conversation it would
+ * retire has its dump in R2: the dump is the only copy once this runs.
+ *
+ * Resumable without a receipt table. A parent whose rows are gone is not in
+ * the next inventory; one interrupted between its conversations and its rows
+ * is, and its conversations' first tombstone stands. A finished Organization
+ * reruns as a pass over nothing.
+ */
+export async function retireThreads(
+  env: Env,
+  input: { workspaceId: string; operationId: string; operatorSubject: string },
+): Promise<RetireThreadsResult> {
+  const workspaceId = asWorkspaceId(input.workspaceId);
+  const parents = await threadRetirementInventory(env, workspaceId);
+  let undumped = 0;
+  for (const parent of parents) {
+    for (const substreamId of parent.substreamIds) {
+      if (!await env.PAYLOADS.head(retiredConversationKey(workspaceId, parent.parentId, substreamId))) undumped += 1;
+    }
+  }
+  if (undumped > 0) {
+    throw new ApiError(409, "thread_retirement_dump_incomplete",
+      `${undumped} conversations have no transcript dump; run dump_thread_transcripts until nothing fails`);
+  }
+  const tombstone = { retiredAt: Date.now(), operationId: input.operationId, actorUserId: null, reason: "thread_retirement" };
+  const result: RetireThreadsResult = {
+    region: env.AVALON_REGION, orgId: workspaceId, parents: parents.length,
+    conversations: parents.reduce((total, parent) => total + parent.substreamIds.length, 0),
+    retiredParents: 0, retiredConversations: 0, retainedOutbox: 0, failed: [],
+  };
+  const workspace = await organizationObject(env, workspaceId);
+  for (const parent of parents) {
+    let substreamId: string | null = null;
+    try {
+      for (const child of parent.substreamIds) {
+        substreamId = child;
+        const receipt = await (await conversationObject(env, workspaceId, parent.parentId, child)).retireObject(tombstone);
+        result.retainedOutbox += receipt.retainedOutbox;
+        result.retiredConversations += 1;
+      }
+      substreamId = null;
+      await workspace.deleteRetiredThreadParent({ parentKind: parent.parentKind, parentId: parent.parentId });
+      result.retiredParents += 1;
+    } catch (error) {
+      const reason = diagnosticErrorCode(error, "thread_retirement_node_failed");
+      result.failed.push({ parentKind: parent.parentKind, parentId: parent.parentId, substreamId, error: reason });
+      logWarn(env, "thread_retirement_node_failed", {
+        workspace_id: workspaceId, operation_id: input.operationId, parent_kind: parent.parentKind,
+        parent_id: parent.parentId, substream_id: substreamId, reason,
+      });
+    }
+  }
+  logInfo(env, "thread_retirement_pass", {
+    workspace_id: workspaceId, operation_id: input.operationId, operator_subject: input.operatorSubject,
+    parents: result.parents, conversations: result.conversations, retired_parents: result.retiredParents,
+    retired_conversations: result.retiredConversations, retained_outbox: result.retainedOutbox, failed: result.failed.length,
   });
   return result;
 }

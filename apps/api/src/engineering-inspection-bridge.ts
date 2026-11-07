@@ -22,6 +22,8 @@ import {
   type ThreadRetirementOperationInput,
   DumpThreadTranscriptsResultSchema,
   type DumpThreadTranscriptsResult,
+  RetireThreadsResultSchema,
+  type RetireThreadsResult,
   type EngineeringTextResult,
   CreateEngineeringOrgInputSchema,
   CreateEngineeringOrgResultSchema,
@@ -102,7 +104,7 @@ import { sendEngineeringMessage, readEngineeringChannel, readEngineeringConversa
 import { auditedEngineeringWrite } from "./services/engineering-audit";
 import { setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
 import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
-import { dumpThreadTranscripts } from "./services/thread-retirement-service";
+import { dumpThreadTranscripts, retireThreads } from "./services/thread-retirement-service";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
   id: z.string(),
@@ -332,6 +334,25 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workspaceId: request.orgId, operationId, operatorSubject: trusted.subject,
       })), (result) => ({ conversations: result.conversations, dumped: result.dumped, skipped: result.skipped,
         failed: result.failed.length }));
+    });
+  }
+
+  /**
+   * B-7: every Thread, Breakout and Channel of one Organization retired,
+   * refused until the dump covers each of their conversations. Canvases,
+   * Sidekicks and resources stay. Resumable, and a no-op once done.
+   */
+  async retireThreads(input: unknown, operator: unknown): Promise<RetireThreadsResult> {
+    return this.productOperation("retireThreads", async () => {
+      const request = await this.confirmedThreadRetirement(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      const operationId = crypto.randomUUID();
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "retire_threads", orgId: request.orgId, operationId,
+      }, async () => RetireThreadsResultSchema.parse(await retireThreads(this.env, {
+        workspaceId: request.orgId, operationId, operatorSubject: trusted.subject,
+      })), (result) => ({ parents: result.parents, retiredParents: result.retiredParents,
+        retiredConversations: result.retiredConversations, failed: result.failed.length }));
     });
   }
 
