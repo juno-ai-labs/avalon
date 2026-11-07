@@ -1749,6 +1749,8 @@ a rule stated once in the guide is not applied when the plan does not ask for it
 **Consequences:** The plan grows by one question per review; a review that finds
 no hand-settled exceptions answers it in a clause.
 
+Shipped in juno-ai-labs/avalon#1488.
+
 ### 2026-11-07 — A run's first page says what it spent
 
 **What changed:** `sidekick_runs_read` adds each tool call's `ms` and a `usage`
