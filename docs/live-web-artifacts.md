@@ -117,9 +117,10 @@ refreshing a site to load Terminal for file editing, import and publication.
 Loading the skill supplies instructions without activating those tools. Each
 refresh imports the published source because local files may be stale. Preserving
 identity requires both the original publication conversation and directory path.
-For a thread's site, only a workstream-scoped Sidekick owned by that thread
-redirects publication there; personal and workspace Sidekicks publish in their
-own conversation. Importing the source does not change that target.
+A Sidekick run publishes into the Canvas it was asked to update, or creates a
+new Canvas with the Sidekick as its writer; a Canvas's Chat publishes into its
+own Canvas ([`canvases.md`](canvases.md)). Importing the source does not change
+that target.
 
 A run asked to change a site it did not build — or built in a session that has
 since ended — brings the files back first, through `import_resource`
@@ -445,10 +446,10 @@ is the only place that can forward into it.
   failure — a component that used one flashes an unavailable message on every
   open of a page that is about to work.
 - **A preview presentation cannot outlive the detail that requested it.** The
-  initial artifact open crosses the API and can settle after a Channel switch
-  has unmounted the detail. A cancelled detail must refuse to
+  initial artifact open crosses the API and can settle after the person has
+  opened another Canvas and unmounted the detail. A cancelled detail must refuse to
   call the main process after cleanup, or it recreates an ownerless old preview
-  over the newly selected Channel. The presentation's artifact ID and open URL
+  over the newly opened Canvas. The presentation's artifact ID and open URL
   must also come from that same response: the ID selects its isolated
   storage partition while the URL selects its confined origin.
 - **Everything the renderer measures is a request, not an instruction.** The
@@ -745,7 +746,7 @@ shows its saved quote and image. The script and trust boundaries are owned by
 
 ## Changelog
 
-### 2026-11-07 — A Canvas's artifact is opened by whoever opens the Canvas
+### 2026-11-07 — A Canvas's artifact is opened by whoever opens the Canvas, and the site surfaces are no longer flagged
 
 **What changed:** An artifact generated in a Canvas's Chat is admitted at the
 identity door by the Canvas's audience (`canvasAdmits`): its creator,
@@ -754,29 +755,25 @@ it, and owners and administrators. `artifact_registry.workstream_id` holds the
 Canvas id, which is the conversation's parent id, so no column changes
 meaning. A publish from a Canvas's Chat, or from a Sidekick run into the
 Canvas it writes, keeps the `(conversation, path)` identity with the Canvas as
-the conversation, and tells the Canvas which artifact it made.
+the conversation, and tells the Canvas which artifact it made. A Thread's site
+redirect for its own workstream-scoped Sidekick went with that scope.
+`useSiteArtifacts` no longer reads `liveArtifactsEnabled`, and that flag is
+removed (see [`feature-flags.md`](feature-flags.md)): the rail's site detail,
+the preview pane, the Data view and the artifact window appear for every
+signed-in Electron or browser window, and a site falls back to the ordinary
+resource card only where no API session or bridge exists.
 
-**Why:** A Canvas, not a Thread, is each artifact's owner and audience (the
-Canvases and Sidekicks decision log).
-
-**Consequences:** The serving Worker's public-by-default rules are unchanged;
-only the protected door's admission moved. See [`canvases.md`](canvases.md).
-
-### 2026-11-06 — The site surfaces are no longer flagged
-
-**What changed:** `useSiteArtifacts` no longer reads `liveArtifactsEnabled`,
-and that flag is removed (see [`feature-flags.md`](feature-flags.md)). The
-rail's site detail, the preview pane, the Data view and the artifact window
-appear for every signed-in Electron or browser window; a site falls back to
-the ordinary resource card only where no API session or bridge exists.
-
-**Why:** The Canvases and Sidekicks PRD turns a live artifact into a Canvas,
+**Why:** Plan steps A-7, A-9 and B-14 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
+A Canvas, not a Thread, is each artifact's owner and audience (decision log),
 and a Canvas is opened through these surfaces, so they cannot be off for
 anyone. The flag was always presentation-only — authorization is structural —
 so removing it changes what is drawn and nothing about who may read a site.
 
-**Consequences:** A future change that wants to hide a site surface needs a
-reason specific to that surface, not a product-wide toggle.
+**Consequences:** The serving Worker's public-by-default rules are unchanged;
+only the protected door's admission moved. See [`canvases.md`](canvases.md). A
+future change that wants to hide a site surface needs a reason specific to
+that surface, not a product-wide toggle.
 
 ### 2026-11-03 — Per-viewer rows, sign-in from a site's link, public submissions
 

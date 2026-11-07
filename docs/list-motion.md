@@ -1,19 +1,19 @@
 # List motion
 
 How a row that changes place in a list travels there instead of reappearing.
-The sidebar's rows move constantly and for reasons the reader did not cause —
-activity re-sorts a Thread or a Channel, a pin moves a row into **Pinned**, a
-drag or an `Alt`+`Arrow` rearranges the pinned list, new Activity pushes the
-day's rows down — and a row that simply vanishes from one slot and materialises in another
-reads as two events rather than one move. This module makes it one: the row
+The sidebar's rows move for reasons the reader did not cause — someone else's
+change lifts a Canvas to the top of **All Canvases**, a pin moves a row into
+**Pinned**, a Sidekick waiting on input moves into **Needs input** — and a row
+that simply vanishes from one slot and materialises in another reads as two
+events rather than one move. This module makes it one: the row
 slides out of frame to the left, the rows between its two slots close the gap,
 and it slides back in from the left at its new slot. A row whose arrival or
-departure is itself the change — a thread still starting, or a request to
-join that is answered — plays the same two halves on their own: in from the left when it appears, and out to the
+departure is itself the change, which a list marks `data-motion-insert`, plays
+the same two halves on their own: in from the left when it appears, and out to the
 left, through a stand-in, when it is removed.
 
-Nothing in it knows what a thread is: the sidebar's three tabs are its
-callers, and it is written against a small contract — keyed rows under a
+Nothing in it knows what a Canvas is: the sidebar's Canvases and Sidekicks
+lists are its callers, and it is written against a small contract — keyed rows under a
 scroll box — so another list could take it without a second implementation. The
 transcript's own arrival motion in `message-feed.tsx` (`data-arrival-id`) is a
 different thing, an entrance for a new message rather than a move, and stays
@@ -30,39 +30,38 @@ choreography takes, or before adding motion to another list.
 | Path | Responsibility |
 | --- | --- |
 | [`apps/desktop/src/renderer/lib/list-motion.ts`](../apps/desktop/src/renderer/lib/list-motion.ts) | The arithmetic, pure over measured positions: `planListMotion` decides which rows moved and which were displaced, `exitKeyframes` and `enterKeyframes` are the two halves a removed and an inserted row play, `moverKeyframes` composes them for a row that did both, `shifterKeyframes` is what a displaced row plays, `LIST_MOTION` holds every duration, stagger, and easing, and `layoutRowAt` answers which row is laid out under a pointer while rows are in motion. Owns no timer. |
-| [`apps/desktop/src/renderer/components/navigation-sidebar.tsx`](../apps/desktop/src/renderer/components/navigation-sidebar.tsx) | Each tab (Pinned, Threads, Channels, Activity) attaches the hook to the shared scroll box, so a tab's first render plays nothing and switching tabs is never read as a move. Rows are keyed `thread:`, `channel:`, `activity:` and `request:` with their id; a pinned row and its list row are never drawn together, so a pin is one row moving between sections without a scope. Every section heading is a held row. A thread still starting and a request to join are marked `data-motion-insert`. A Pinned drag holds the dragged row and resolves its target through `layoutRowAt`. The Pinned tab draws two sections that each re-render alone, so it owns one `useListMotionPass` and each section runs it. |
+| [`apps/desktop/src/renderer/components/navigation-rows.tsx`](../apps/desktop/src/renderer/components/navigation-rows.tsx), `canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx` | Each list attaches the hook to the sidebar's shared scroll box through `useSectionMotion`, so a list's first render plays nothing and switching sections is never read as a move. Rows are keyed `canvas:` and `sidekick:` with their id; a pinned row and its list row are never drawn together, so a pin is one row moving between sections without a scope. Every section heading (`SectionHeading`) is a held row. |
 | [`apps/desktop/src/renderer/lib/use-list-motion.ts`](../apps/desktop/src/renderer/lib/use-list-motion.ts) | `useListMotion(containerRef, layoutKey?, layoutSettling?)`: measures the rows after every commit, plans against the positions it last saw, and plays the plan through the Web Animations API; plays a marked row's entrance, its exit on a stand-in, and honors `data-motion-move` when the product action identifies a mover whose old and new boxes coincide. Owns the interruption handling. `useListMotionPass` is the same pass handed back instead of run, for a list drawn by several components that each re-render alone: each runs it from a layout effect, and a second run in one commit plays nothing. |
 
 ### The contract a list makes
 
 A row is any element under the container that carries `data-motion-key`. The
-key is what makes a row *the same row* across renders: a work stream keeps its
-key while it moves from the recent list to the **Pinned** section, or from the
-**Yesterday** group to **Today** when it is touched, even though each of those
-is a separate subtree and React unmounts one element and mounts another; that
+key is what makes a row *the same row* across renders: a Canvas keeps its
+key while it moves from **All Canvases** to the **Pinned** section, even
+though each of those is a separate subtree and React unmounts one element and mounts another; that
 is what lets the hook follow it. Any container under the scroll box is the same
-to the hook — a section, a recency group, a project's member list — so a row
-moving between two of them is one row moving. Two rows that would share a key are told apart by
-`data-motion-scope` on any ancestor — a work stream listed under its project and
-again in the recent list is two rows, and each moves within its own list. A
-scope is also the list its rows are ranked within: two projects trading places
-carry their expanded members past each other, and the members, whose order
-among themselves is unchanged, shift with their project rather than leaving
-the frame as if each had been moved on its own. The project row itself is a
-held row for the same reason, on the row rather than the item that contains
-the members, because the members animate themselves and a moving container
-would carry them a second time. A row is
+to the hook — a section, a group, a nested member list — so a row moving
+between two of them is one row moving. Two rows that would share a key are told apart by
+`data-motion-scope` on any ancestor — an item listed under a group and again in
+a flat list is two rows, and each moves within its own list. A scope is also
+the list its rows are ranked within: two groups trading places carry their
+expanded members past each other, and the members, whose order among
+themselves is unchanged, shift with their group rather than leaving the frame
+as if each had been moved on its own. A group's own row is a held row for the
+same reason, on the row rather than the item that contains the members,
+because the members animate themselves and a moving container would carry them
+a second time. No list in the app uses a scope today; the retired Projects
+sidebar was its caller. A row is
 *held* — placed rather than moved: shifted into its slot like a neighbour
 instead of leaving and re-entering, and taking no part in deciding which rows
-moved — in two cases. One is `data-motion-hold`: the sidebar holds the row
-under the pointer during a drag, each project's own row, the **Pinned**
-heading, and every recency-group heading, so a heading travels with the rows
-under it and the whole column glides, and so a row leaving the pinned section
-for the top of the recent list passes that list's heading without the heading
-being the thing seen to leave. The other is focus: a row that kept its element
-and has focus inside it is one the reader is acting on — an `Alt`+`Arrow` move,
-or the click that opened a work stream and lifted its row — and it stays under
-them rather than flying off through the slot they are looking at. A remounted
+moved — in two cases. One is `data-motion-hold`: the sidebar holds every
+section heading (**Needs input**, **Pinned**, **All Canvases**, **All
+Sidekicks**), so a heading travels with the rows under it and the whole column
+glides, and so a row leaving the pinned section for the top of the list below
+passes that list's heading without the heading being the thing seen to leave. The other is focus: a row that kept its element
+and has focus inside it is one the reader is acting on, such as the click that
+opened it, and it stays under them rather than flying off through the slot
+they are looking at. A remounted
 row with focus is not the reader's doing, since the sidebar repairs focus onto
 a pinned row, and it travels.
 
@@ -105,8 +104,8 @@ no old slot to leave from. Rows that are gone cannot be animated.
 
 The hook takes a `layoutKey` naming the layout the rows are in. When it
 changes, every row is measured afresh and nothing plays, because a relayout
-moves every row's position for a reason that is not a reorder. The sidebar
-passes `compact`, which is now always false.
+moves every row's position for a reason that is not a reorder. No caller
+passes one now; the collapsing sidebar passed `compact`.
 
 It also takes `layoutSettling`, which says the rows are still travelling to
 that layout. The sidebar's rows change shape under CSS transitions for as long
@@ -114,14 +113,14 @@ as its box's width does, and a move planned against positions still in flight
 would fight that travel: every render while the flag holds measures afresh and
 plays nothing, and so does the first render after it clears, so that the last
 positions measured mid-flight are not the ones the next change is planned
-from. The sidebar raises the flag in the render that changes the layout, and
-then follows the platform's own transition events for `--sidebar-compact` on
-the aside: `transitionrun` keeps it raised, `transitionend` and
+from. The collapsing sidebar raised the flag in the render that changed the
+layout, and then followed the platform's own transition events for
+`--sidebar-compact` on the aside, which is how a caller should drive it: `transitionrun` keeps it raised, `transitionend` and
 `transitioncancel` clear it — counted rather than last-event-wins, because a
 toggle reversed mid-flight cancels one transition and starts another in the
 same style change and nothing pins which event arrives first — and a frame
 after the change — once those events
-have had their chance — the sidebar clears it itself if no transition started,
+have had their chance — the caller clears it itself if no transition started,
 as under a drag, which turns them off. The toggle raises it first because
 `transitionrun` is dispatched with the first frame after the change, and a
 render landing before it would plan against rows a frame into their travel. A
@@ -223,13 +222,14 @@ load.
 
 A row in motion keeps its pointer events: a click on a row that is sliding
 lands on that row, and nothing it needs is taken away for the length of an
-animation. What that leaves to solve is a list that reorders on `dragover`.
-The pinned list moves the dragged row to the slot of whichever row the event
-reaches, and mid-motion the row drawn under the pointer is not the row that
+animation. What that leaves to solve is a list that reorders on `dragover`,
+which no sidebar list does today (neither Pinned group reorders; the retired
+Threads Pinned list did). Such a list moves the dragged row to the slot of
+whichever row the event reaches, and mid-motion the row drawn under the pointer is not the row that
 belongs there — after one reorder, the row the dragged row displaced glides
 out through the pointer's position, an event on it would move the dragged row
-back, and the two would trade places until the pointer moved. The sidebar
-therefore resolves a drag's target with `layoutRowAt`: the row whose *layout*
+back, and the two would trade places until the pointer moved. It therefore
+resolves a drag's target with `layoutRowAt`: the row whose *layout*
 box, net of any translation it is playing, contains the pointer. A row gliding
 through a slot resolves to the slot's layout owner, which after the reorder is
 the dragged row itself, and a drag reversed mid-motion resolves to the rows'
@@ -274,8 +274,8 @@ event reached is the slot.
   The motion's first frame puts a moved row back where it came from, and the
   platform scrolls to the transformed box. A scroll made after the effect, from
   a later-declared layout effect or a passive effect, reads the row as still on
-  screen and does nothing. The sidebar's reveal is a layout effect declared
-  ahead of the hook for exactly this reason.
+  screen and does nothing. The retired Pinned reveal was a layout effect
+  declared ahead of the hook for exactly this reason.
 - **Nothing here runs per frame.** The hook does its work once per commit and
   hands the frames to the compositor. A change that animates `top`, `height`, or
   anything but `transform` and `opacity` would move the work back to the main
@@ -301,12 +301,11 @@ event reached is the slot.
 The module owns which rows move, how, and for how long. It exposes one hook,
 the four data attributes, and `LIST_MOTION`.
 
-It does not decide *where* rows go — the sidebar's ordering functions and
-`orderPinnedWorkstreams` do that, and [`workstream-pinning.md`](workstream-pinning.md)
-owns them. It does not scroll: the sidebar's own reveal, described in that same
-document, still brings a pinned row into view. The two compose on two
-conditions: the hook measures against the scroll box's content rather than the
-viewport, so the scroll does not read as movement, and the reveal runs as a
+It does not decide *where* rows go — the server's list order and `splitPinned`
+do that, and [`workstream-pinning.md`](workstream-pinning.md) owns the Pinned
+group. It does not scroll; no sidebar list scrolls a pinned row into view
+today, and one that does composes with the hook on two conditions: the hook measures against the scroll box's content rather than the
+viewport, so the scroll does not read as movement, and the scroll runs as a
 layout effect declared *before* the hook, so the row is scrolled to before its
 first frame translates it back to the slot it left — `scrollIntoView` scrolls
 to the box as transformed, and `nearest` would otherwise find the row still on
@@ -358,20 +357,17 @@ step.
   about half a second — long enough to follow, short enough that a row moved
   by somebody else's message is not an interruption — and no measurement of
   reader behaviour informed them.
-- **Opening a work stream lifts its row, and that lift is a shift.** The
-  recent list is ordered by the reader's own visits, so the click that opens a
-  row also moves it to the top of its group. The row has focus and kept its
-  element, so it is held and glides up rather than leaving the frame under the
-  cursor that just clicked it. A row that crosses into another group on the
-  same click is remounted and travels, which is the motion the reader asked
-  for between groups.
+- **A focused row that moves is held.** A row the reader just clicked keeps
+  focus and its element, so if the list re-sorts it at that moment it glides
+  rather than leaving the frame under the cursor that clicked it. The retired
+  Threads list, ordered by the reader's own visits, made this the common case;
+  the Canvases list is ordered by the Canvas's activity, so it is rarer now.
 
 ## Testing
 
 | Suite | What it covers |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/list-motion.test.ts` | The planner's classification — one mover, two movers together, a held row, a heading never being the mover, scopes ranked apart so a block shifts as one, a row that moved between containers, an interrupted offset — and the exact keyframes and options each kind plays, the exit and the entrance on their own included. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.test.tsx` (`list motion`) | That the sidebar wires it: a pin moves the Channel's animation with it into **Pinned** and shifts the rows it passed, and a Pinned drag holds the dragged row and drops it in the slot laid out under the pointer rather than the row the event reached. |
 | `apps/desktop/src/renderer/lib/use-list-motion.test.tsx` | The hook under jsdom: the exit distance measured against the container, shifters starting on the first frame, a row followed across a remount, a held row shifted instead of moved, a render that moved nothing leaving every animation alone, interruption touching only the rows that moved and reading a pending animation's own start, a late cancel not clearing its successor's record, reduced motion and a hidden window both remembering positions while playing nothing, measurement through the container's scroll, a focused row held only while it keeps its element, a row with no layout neither measured nor remembered, a changed layout key measuring afresh, scopes keeping shared keys apart, nothing playing on the first commit, a marked row entering after the gap opens and leaving through a stand-in whose inherited grid placement is cleared and which is removed when its exit settles, reduced motion leaving no stand-in, a settling layout measuring afresh until the render after it settles, and an entrance surviving a relayout that cancels a move. |
 
 jsdom lays nothing out and implements neither `Element.prototype.animate` nor
