@@ -533,6 +533,8 @@ and so stopped earlier, would meet a recorded call at that index with other
 input and halt as ambiguous, never writing twice. The guide's sizing no longer
 names the deadline, so moving `CODE_PROGRAM_DEADLINE_MS` needs no guide edit.
 
+Shipped in juno-ai-labs/avalon#1484.
+
 ### 2026-11-06 — Size a tool's share by time, and let a program's writes run together
 
 **What changed:** The guide has a tool size its share by elapsed time, reading
@@ -599,6 +601,8 @@ index with other input and halt as ambiguous; the system message tells the
 model to start calls that run together in a fixed order. Bind's direct path
 still runs a turn's write calls one at a time.
 
+Shipped in juno-ai-labs/avalon#1483.
+
 ### 2026-11-06 — A custom tool takes its tables as input
 
 **What changed:** The guide has a tool take the IDs of the Sidekick's tables as
@@ -624,6 +628,8 @@ would mark real items done that no run reported.
 changes. Scratch tables persist, since nothing drops a table; the fixed
 " (test)" name keeps it to one per real table, and invalidating test rows keeps
 them out of searches.
+
+Shipped in juno-ai-labs/avalon#1482.
 
 ### 2026-11-06 — One tool runs the whole procedure; the run handles the exceptions
 
@@ -661,6 +667,8 @@ model misreading a wide contract, is now carried by the result shape: the tool
 decides only what code can decide and hands every case it cannot to the run as
 an exception. A future change should keep exceptions in the result rather than
 thrown, and keep delivery out of tools.
+
+Shipped in juno-ai-labs/avalon#1481.
 
 ### 2026-10-31 — A program is checked before it runs
 

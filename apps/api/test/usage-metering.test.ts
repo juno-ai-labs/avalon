@@ -357,3 +357,17 @@ describe("pruneUsageEvents", () => {
       .toEqual([{ organization_microusd: 3_000_000 }]);
   });
 });
+
+describe("usage ledger indexes", () => {
+  it("reads one Sidekick's events, and one of its runs, through the Sidekick index", () => {
+    const usage = migratedUsageSqliteDatabase();
+    try {
+      const plan = (sql: string) => (usage.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("sidekick-1", "2026-11-01", "run-1") as Array<{ detail: string }>)
+        .map((row) => row.detail).join(" | ");
+      expect(plan("SELECT sum(cost_microusd) FROM usage_events WHERE sidekick_id = ? AND occurred_at >= ? AND substream_id = ?"))
+        .toContain("USING INDEX usage_events_sidekick_occurred (sidekick_id=? AND occurred_at>?)");
+    } finally {
+      usage.close();
+    }
+  });
+});
