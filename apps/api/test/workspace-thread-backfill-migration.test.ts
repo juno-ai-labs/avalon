@@ -80,13 +80,20 @@ describe("WorkspaceDO migration 124", () => {
       source_created_at, source_updated_at, projected_at
     ) VALUES ('legacy-main', 1, 1, 'legacy-event', 'hash', 'Legacy', '', '',
       'workspace', 'idle', 'ad_hoc', 'settled', 0, 0, 1, 1, 1, 1)`);
+    database.exec(`INSERT INTO spaces(space_id, title, scope, authority_generation, source_version,
+      payload_hash, revision, created_at, updated_at)
+      VALUES ('space-only', 'Channel', 'workspace', 1, 1, 'hash', 1, 1, 1)`);
+    database.exec(`INSERT INTO parent_metadata(parent_id, parent_kind, workspace_id, region,
+      authority_generation, created_at, updated_at)
+      VALUES ('metadata-only', 'workstream', 'workspace', 'global', 1, 1, 1)`);
 
     apply(database, 124, 123);
 
     expect(database.prepare(
       "SELECT workstream_id FROM thread_backfill WHERE job = 'conversation_view' ORDER BY workstream_id",
     ).all()).toEqual([{ workstream_id: "channel" }, { workstream_id: "legacy-main" },
-      { workstream_id: "sidekick" }, { workstream_id: "thread" }]);
+      { workstream_id: "metadata-only" }, { workstream_id: "sidekick" }, { workstream_id: "space-only" },
+      { workstream_id: "thread" }]);
   });
 });
 

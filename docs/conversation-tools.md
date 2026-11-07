@@ -299,10 +299,7 @@ whole rather than splitting it.
   current placement and access, opaque peer titles (including UUID-shaped ones),
   and specific own/parent refusal codes.
   A Breakout member outside its Channel: listed Main and admitted to it from the
-  Breakout's scope, and refused it from the Channel's own. A Breakout's merge
-  into its Thread (the service the tool calls): once in Main with the
-  server-written tags and no run in a room of two, refused whole when one embed
-  cannot be shared, and refused for a Breakout that is not the Thread's.
+  Breakout's scope, and refused it from the Channel's own.
 - `apps/api/test-workers/channels-threads-navigation.test.ts` (workerd): a
   thread's Channel listed as a parent and resolved by id and by name, from the
   Thread and from one of its Breakouts, and a
