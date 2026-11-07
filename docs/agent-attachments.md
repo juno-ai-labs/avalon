@@ -170,11 +170,13 @@ set, while model tools use bounded point, batch, aggregate, and keyset-page
 queries. A workspace principal never inherits a user's private-note view.
 Knowledge of a resource ID or cursor does not bypass this query.
 
-**A Breakout sees its Thread's resources.** `ConversationResourceLinks`
-combines the conversation's own links with its Thread's Main links. The
-object's `inheritanceContext` identifies a Breakout or a Sidekick without
-trusting a model-supplied relationship. An ordinary background agent still
-sees only resources explicitly passed to it.
+**A conversation sees its own resources, and a Sidekick's also its Canvases'.**
+`ConversationResourceLinks` combines the conversation's own links with those of
+the conversations its Sidekick reaches. The object's `inheritanceContext`
+identifies a Sidekick without trusting a model-supplied relationship; every
+other conversation answers `none`. An ordinary background agent still sees only
+resources explicitly passed to it. (A Breakout once inherited its Thread's
+Main links; that arm went with Threads.)
 
 **A Sidekick sees its home and explicitly attached conversations' resources.**
 Its wizard, activations and background agents share this default. Each read
@@ -755,6 +757,17 @@ existing ten-file cap. Target read/version authorization is independent from
 attachment reservation, since a pin usually names an already-sent resource.
 
 ## Changelog
+
+### 2026-11-07 — No conversation inherits a Thread's links
+
+**What changed:** `inheritanceContext` loses its `breakout` answer, and
+`conversationResourceLinks` its Channel-Main port and the fingerprint arm that
+folded a Thread's revision into a Breakout's.
+
+**Why:** Plan step C-2 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+the arm answered only for a `workstream` parent, which the conversation object
+refuses to host now, so it was unreachable.
 
 ### 2026-11-07 — `publish_resource` lands in a Canvas
 

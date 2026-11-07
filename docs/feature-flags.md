@@ -64,12 +64,10 @@ inherit the source conversation's model override:
 | Agent | Flag key | Default model | Fallback models |
 | --- | --- | --- | --- |
 | Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Work-stream naming | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
+| Pasted-text naming (role `workstream_naming`) | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Work-stream description | `agent-model-workstream-description` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Conversation import | `agent-model-session-import` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Suggestion draft | `agent-model-suggestion-draft` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Memory sweep | `agent-model-memory-sweep` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Sidekick wizard | `agent-model-sidekick-authoring` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
@@ -108,12 +106,13 @@ Admission and ranking get separate flags because admission turns connector
 activity into prompts while ranking orders them per user, and pinning one should
 not move the other.
 
-The `workstream_description` role has no caller. The description loop that read
-it was deleted in plan step C-2 with the Thread naming pass, and the role and
-its key, `agent-model-workstream-description`, stay in the catalog only until
-that key is retired in Flagship, as
-[`workstream-naming.md`](workstream-naming.md) records. Retargeting the flag
-changes nothing. The loop read a window of up to 600 messages to judge whether
+The `workstream_description` and `suggestion_draft` roles are retired: their
+callers (the description loop, the conversation suggestions) were deleted in
+plan step C-2, and the Ace deploy retires `agent-model-workstream-description`
+and `agent-model-suggestion-draft` through `retireFlag`. `workstream_naming`
+keeps its Thread-era name because it is a Flagship key, and now titles pasted
+text (`pasted-text-service.ts`); a rename would be a flag migration for no
+change in behaviour. The loop read a window of up to 600 messages to judge whether
 a Thread's purpose had moved, which is why it once wanted a stronger default
 than the classifiers it shared one with;
 [`workstream-descriptions.md`](workstream-descriptions.md) (retired) keeps its
@@ -1070,6 +1069,25 @@ both intent enqueue and delivery. Turning it off stops queued sends as well as
 hiding the Notifications section.
 
 ## Changelog
+
+### 2026-11-07 — The description and suggestion-draft model roles are retired
+
+**What changed:** `workstream_description` and `suggestion_draft` left
+`AGENT_MODEL_ROLES`, the structured-inference roles, the route defaults and
+Ace's catalog; the Ace deploy retires their Flagship keys.
+`workstream_naming` stays, relabelled in Ace as pasted-text naming.
+
+**Why:** Plan step C-2 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+deleted both roles' only callers. A key left in Flagship can still be served
+and edited in Ace for nothing.
+
+**Considered and rejected:** Renaming `workstream_naming` to a pasted-text
+role. It is a Flagship key, so the rename is a flag migration with no change
+in what runs. The `turn_disposition_classifier` and `suggestion_draft` metered
+activities stay in the usage contract: a usage event queued before the deploy
+must still parse, or the consumer drops it as invalid and the call goes
+unbilled.
 
 ### 2026-11-06 — `live-artifacts-enabled` is retired; site surfaces are always on
 

@@ -164,18 +164,14 @@ the preparation timestamp.
 
 The same row carries raw elapsed durations for the operations inside those
 regions: `initial_identity_run_ms`, `persisted_outcome_ms`,
-`initial_run_authority_ms`, `sidekick_authority_ms`,
-`sidekick_recommendations_ms`, `lease_heartbeat_ms`,
+`initial_run_authority_ms`, `sidekick_authority_ms`, `lease_heartbeat_ms`,
 `run_context_ms`,
 `transcript_bootstrap_ms`, `tool_inventory_ms`, `tool_construction_ms`, and
 `attachment_replay_ms`.
 `transcript_bootstrap_required` distinguishes a fresh canonical projection from
 a resident persistent-loop projection, and `sidekick_snapshot_reused`
-distinguishes a pinned Sidekick snapshot from fresh discovery.
-`sidekick_recommendations_read` distinguishes a
-skipped conditional dependency from a real `0 ms` result. These durations also
-overlap: recommendation discovery may be nested inside guest Sidekick authority,
-tool inventory begins before the lease heartbeat, while tool construction begins
+distinguishes a pinned Sidekick snapshot from fresh discovery. These durations
+also overlap: tool inventory begins before the lease heartbeat, while tool construction begins
 after it, and run context, tools, transcript, and attachment replay then proceed
 concurrently. Use each field to identify the slow dependency, never add them
 together.
@@ -809,6 +805,16 @@ destination is account configuration; the **attachment is per Worker**, through
 a Worker exports when its own config names one.
 
 ## Changelog
+
+### 2026-11-07 — `sidekick_recommendations_ms` and `_read` leave the preparation row
+
+**What changed:** The inference-preparation log row no longer carries
+`sidekick_recommendations_ms` or `sidekick_recommendations_read`.
+
+**Why:** They timed reading a Channel's default Sidekicks, which the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+deleted; both were constant (`0`, `false`) since, which reads as a measurement
+that is not one.
 
 ### 2026-09-23 — Keep first-dispatch timing accurate after removing repeated checks
 

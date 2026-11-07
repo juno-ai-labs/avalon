@@ -360,20 +360,11 @@ describe("a Breakout's resource links", () => {
     return store;
   }
 
-  it("keeps its own link where it and its Channel both hold one", async ({ onTestFinished }) => {
-    const close = (fn: () => void) => onTestFinished(fn);
-    const channel = conversationStore(close, [[PUBLISHED, "generated", 1], [BACKUP, "generated", 2]]);
-    const breakout = conversationStore(close, [[PUBLISHED, "attachment", 3]], BREAKOUT);
-
-    const { links } = await testConversationResourceLinks(breakout, channel).links({});
-    expect(links.map((row) => [row.resource_id, row.relationship_type]))
-      .toEqual([[PUBLISHED, "attachment"], [BACKUP, "generated"]]);
-  });
-
-  it("identifies Breakouts, Sidekicks and ordinary workers for resource inheritance", async ({ onTestFinished }) => {
+  it("identifies Sidekick runs and ordinary workers for resource inheritance", async ({ onTestFinished }) => {
     const close = (fn: () => void) => onTestFinished(fn);
     const inherits = (store: DatabaseSync) => testResourcePort(store).inheritanceContext();
-    await expect(inherits(conversationStore(close, [], BREAKOUT))).resolves.toEqual({ kind: "breakout" });
+    // A retired Thread's Breakout no longer inherits its Thread's links.
+    await expect(inherits(conversationStore(close, [], BREAKOUT))).resolves.toEqual({ kind: "none" });
     // A Channel's own conversation.
     await expect(inherits(conversationStore(close, []))).resolves.toEqual({ kind: "none" });
     // A Sidekick's run child is a substream of an automation parent.

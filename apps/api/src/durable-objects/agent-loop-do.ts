@@ -1898,9 +1898,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * A Sidekick's `conversation_post`, appended to this conversation as a
    * message from the Sidekick, and nothing else.
    *
-   * It accepts a Thread's Main or a Breakout, or a Sidekick's own shared
-   * conversation (parent kind `automation`, substream `"0"`, never a run's,
-   * which no post may reach), and it does not
+   * It accepts a Canvas's chat or a Sidekick's own shared conversation
+   * (parent kind `automation`, substream `"0"`, never a run's, which no post
+   * may reach), and it does not
    * wake this conversation's agent: a post is something people here read, not
    * a request to the agent here. The agent's next run still reads it: the
    * gap-fill appends it to the model's context, attributed to the Sidekick.
@@ -2126,9 +2126,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     if (boot.status !== 200) return boot;
     // Marked before provision, because provision publishes this conversation's
     // first directory projection and the parent classifies it by the
-    // `backgroundAgent` flag that projection carries. Marked after, the first
-    // projection said "breakout", the Channel forwarded it, and the
-    // Organization kept an unseen breakout row nobody could open or clear.
+    // `backgroundAgent` flag that projection carries; marked after, the first
+    // projection would describe it as an ordinary child conversation.
     await this.initializeBackgroundAgent({ executionPrincipal: input.executionPrincipal, rootSubstreamId: input.rootSubstreamId });
     return this.executeIdentityOperation({
       workspaceId: input.bootstrap.workspaceId, workstreamId: input.bootstrap.parentId,
@@ -5050,8 +5049,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         ).toArray()[0];
         return row ? SidekickSkillSnapshotSchema.parse(JSON.parse(row.snapshot_json)) : null;
       },
-      // Only a Thread's conversation attached Sidekicks to itself.
-      attachedSidekickIds: () => [],
       saveSidekickSkills: (snapshot) => {
         fence();
         this.state.storage.sql.exec(`INSERT OR IGNORE INTO sidekick_execution_skills (execution_id, snapshot_json) VALUES (?, ?)`,
@@ -7160,8 +7157,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    *
    * The port names this object's substream. `this.env` carries no installed
    * authorities, so a port without one reaches the parent's Main, which in a
-   * Breakout or a Sidekick run child is a different object holding no such
-   * row.
+   * Sidekick run child or a background agent is a different object holding no
+   * such row.
    *
    * Every way this returns leaves the row out of `pending` or throws a named
    * code, so a timer that cannot fire is a reported failure rather than a
