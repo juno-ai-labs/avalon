@@ -60,7 +60,8 @@ log against the measured numbers.
 
 1. **A longer program deadline.** Rejected: a running program holds the object's
    I/O context, and the platform allows ten Dynamic Workers per object.
-   Continuation keeps each program inside the existing deadline.
+   Continuation keeps each program inside the existing deadline. (Revisited:
+   see the decision log, 2026-11-07.)
 2. **Continuation for `code_execute`.** Deferred: an ad hoc program has no tested
    contract for its own continuation input. Saved tools have one, tested by
    `sidekick_tool_test`.
@@ -120,7 +121,16 @@ principal and receipts as the tool's single program does today.
 
 ## Decision log
 
-None yet.
+- **2026-11-07: Not built yet. Page within the budget first, then move
+  `CODE_PROGRAM_DEADLINE_MS` if a run still needs more than three calls.** Two
+  reasons. Segments run back to back hold the object as long as one longer
+  program, so non-goal 1's rejection of a longer deadline does not hold. And the
+  segment cap cannot ship open: root runs have no wall clock and Stop does not
+  reach a running tool call (`docs/agent-harness.md`, "Loop stop"), so a tool
+  that always continues would loop silently. Building this later needs a set
+  cap, the run's deadline in place of Bind's tool timer (which the cap would
+  push past its ceiling), a host seam that reads a requested stop, and the loop
+  in `executeProgram` so `code_execute` gets it too.
 
 ## Key design decisions
 

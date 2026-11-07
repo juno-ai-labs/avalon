@@ -961,30 +961,43 @@ The tool returns what the run reports and decides with, compactly: totals and th
 to report, not the raw rows it read. It does not stop for one item that fails or does
 not fit the rule: it finishes the rest and lists each such item under exceptions, with
 its identifier, what was wrong and what is known, for the run to handle. It throws only
-when it cannot do the job at all. A program has two minutes; when the work can outgrow
-that, the tool does a bounded share, records where it stopped in the Sidekick's own
+when it cannot do the job at all. A program has a time limit; when the work can outgrow
+it, the tool does a bounded share, records where it stopped in the Sidekick's own
 table, and returns what remains, and the instructions call it again until nothing
-remains. Size the share by elapsed time, never a fixed count: the tool reads
-current_time when it starts and again after each group of reads (a program that writes
-may not use Date.now() or new Date()), and keeps taking groups until about three
-quarters of the two minutes have passed. After each group it records that group's
-finished items with one update_rows, so a call that overruns loses at most the group in
-flight. When a write is refused, it lists the row the error names under exceptions and
-writes the rest, so one bad item never stalls the share. Items it did not reach stay
-pending for the next call: claim only the group about to be read, and take each row's
-new revision from the claim write's result, not a re-read. A run's rule to re-read after every write does not carry
+remains. Size the share by time, never a fixed count: msLeft() in the program returns
+the milliseconds left before its deadline, and the tool keeps taking groups while
+msLeft() is more than its slowest group has taken, with room for its last write, or
+until no work is left. Use msLeft() only for that decision, never as data to write. A
+page is not a share: when one page of items is done and time remains, it reads the
+next page. After each group it records that group's finished items with one
+update_rows, so a call that overruns loses at most the group in flight. When a write is
+refused, it lists the row the error names under exceptions and writes the rest, so one
+bad item never stalls the share. Items it did not reach stay pending for the next call:
+claim only the group about to be read, and take each row's new revision from the claim
+write's result, not a re-read. A run's rule to re-read after every write does not carry
 into the code. Independent calls may run side by side in Promise.all, writes included;
-read a group together, then write it. Tune by measurement, not by
-guess: the aim is the most finished items per call, so the run needs the fewest calls
-and turns. Have the tool return how many items it finished, the seconds it took and
-the errors it met, take the concurrency and group size as inputs while you tune, and
-run sidekick_tool_test on a representative share of real items at a few settings (for
-example 4, 8 and 16 calls at once). Keep the setting with the most items per second
-that adds no errors and no slowdown per item, then fix it in the tool. A limit a person
-asked for, or a source's documented rate limit, caps the setting; a number an earlier
-revision wrote without a measurement is a guess to re-measure, not a limit. Write the
-measured numbers and the chosen setting in the instructions. When no real items exist
-yet, time a few scratch items instead; never hold up setup to ask for data to time.
+read a group together, then write it.
+Tune by measurement, not by guess. The one measure is finished items per call: the
+more each call finishes, the fewer calls and turns a run needs. Four things raise it,
+in this order. Fewer requests per item: one read that covers a group of items where the
+source allows it, rather than one per item, and no read the program already has the
+answer to. More results per request: where a read takes a page size, limit or batch
+size, use the largest the source accepts that does not slow the call or fail. More
+requests at once. And the whole time budget used, never a fixed count or a single page.
+Have the tool return how many items it finished, the requests it made (its tool calls,
+reads and writes), the seconds it took and the errors it met, and take the page size,
+concurrency and group size as inputs while you tune. Run sidekick_tool_test on a
+representative share of real items, enough that the time budget, not the work, ends
+the call. Raise the page size to the source's documented maximum, or double it while
+items per call keep rising. Then start at 4 at once and double (8, 16, 32 and on) while
+items per call keep rising and no errors or failed reads appear. Keep the last setting
+of each that raised it, then fix them in the tool. A limit a person asked for, or a
+source's documented limit, caps a setting; a number an earlier revision wrote without
+a measurement is a guess to re-measure, not a limit. Write the measured numbers (items
+per call, requests per item, results per request, seconds, errors at each setting) and
+the chosen settings in the instructions. When
+no real items exist yet, time a few scratch items instead; never hold up setup to ask
+for data to time.
 Calling it again after a failure or a partial call is safe: it skips work it already
 recorded. What it records is the facts it found, not only that an item is
 done, and it returns every recorded fact and exception the run has not yet marked
