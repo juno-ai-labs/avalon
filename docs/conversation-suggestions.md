@@ -12,7 +12,7 @@ the design and the evidence behind the classifier's question, its threshold and
 its context are in that folder's `design.md`. Related:
 `conversation-merge.md` (retired) (the response card every merge
 now uses, and the marker that resolves a suggestion),
-[`substream-creation.md`](substream-creation.md) (the launch pane a Breakout
+`substream-creation.md` (retired) (the launch pane a Breakout
 suggestion opens), [`agent-harness.md`](agent-harness.md) (the JEV primitives
 and the settlement lane), [`jev-best-practices.md`](jev-best-practices.md).
 

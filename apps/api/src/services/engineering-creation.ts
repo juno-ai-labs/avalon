@@ -1,16 +1,13 @@
-import { asSpaceId, asWorkspaceId, asWorkstreamId, type UserId, type WorkspaceId } from "@rally/contracts";
+import { asWorkspaceId, type UserId, type WorkspaceId } from "@rally/contracts";
 import type {
-  CreateEngineeringChannelInput, CreateEngineeringChannelResult,
-  CreateEngineeringOrgInput, CreateEngineeringOrgResult,
-  CreateEngineeringThreadInput, CreateEngineeringThreadResult,
+  CreateEngineeringOrgInput,
+  CreateEngineeringOrgResult,
 } from "@rally/contracts/engineering-inspection";
 
 import type { AuthContext, Env } from "../env";
 import { resolveInspectionWorkspaceRoute } from "../engineering-inspection-routes";
 import { ApiError } from "../lib/api-error";
 import { RegionalOnboardingService } from "./platform-onboarding-service";
-import { SpaceService } from "./space-service";
-import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
 
 /** Access authorizes the operator; product services still verify the named member or guest. */
 export async function engineeringUserAuth(env: Env, orgId: WorkspaceId, userId: UserId, operationId = "engineering-read"): Promise<AuthContext> {
@@ -33,28 +30,4 @@ export async function createEngineeringOrg(env: Env, input: CreateEngineeringOrg
     operationId: input.operationId, workspaceId: orgId, name: input.name, userId: input.creatorUserId, memberUserIds: input.userIds,
   });
   return { region: env.AVALON_REGION, orgId, userIds };
-}
-
-export async function createEngineeringChannel(env: Env, input: CreateEngineeringChannelInput, defer: (work: Promise<void>) => void): Promise<CreateEngineeringChannelResult> {
-  const auth = await engineeringUserAuth(env, input.orgId, input.creatorUserId, input.operationId);
-  const participantUserIds = [...new Set([input.creatorUserId, ...input.participantUserIds])];
-  const spaces = new SpaceService(env, auth);
-  const channelId = asSpaceId(input.operationId);
-  const channel = await spaces.create({ name: input.name, scope: "workspace", colorKey: "blue", participantUserIds }, channelId, defer);
-  return { region: env.AVALON_REGION, orgId: input.orgId, channelId, channel };
-}
-
-export async function createEngineeringThread(
-  env: Env, input: CreateEngineeringThreadInput, defer: (work: Promise<unknown>) => void,
-): Promise<CreateEngineeringThreadResult> {
-  const auth = await engineeringUserAuth(env, input.orgId, input.creatorUserId, input.operationId);
-  const created = await new WorkstreamObjectCreationService(env, auth, defer).create({
-    workstreamId: asWorkstreamId(input.operationId),
-    spaceIds: [input.channelId],
-    openingMessage: input.prompt,
-    clientMessageId: input.operationId,
-    participantUserIds: [], attachmentIds: [], scope: "workspace",
-  }, { narrowInPrivateSpaces: true, notifyParticipants: true });
-  return { region: env.AVALON_REGION, orgId: input.orgId, channelId: input.channelId,
-    threadId: asWorkstreamId(created.workstream.id), turnId: created.turnId, harnessRunId: created.harnessRunId };
 }
