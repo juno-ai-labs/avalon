@@ -27,8 +27,7 @@ regional API service binding. It returns the source upgrade directly, without
 accepting a socket or relaying frames. The shared API client maps browser ticket
 URLs to that route and preserves the ticket subprotocol. This implements the
 transport boundary. A guest tab opens a standalone feed for the visible
-conversation, plus one workspace socket per tab that it reads only for
-`workspace_reach_changed`. A member tab runs the desktop shell and so opens the
+conversation, plus one workspace socket per tab. A member tab runs the desktop shell and so opens the
 same set the desktop does — the full workspace socket and the open
 conversation's feed — over native `WebSocket`s, with presence from page visibility and focus.
 See [browser-client.md](browser-client.md).
@@ -889,9 +888,11 @@ platform resources.
 ### 2026-11-07 — The workspace socket carries only what Canvases and Sidekicks use
 
 **What changed:** The subscribe answer's sidebar is the Sidekick and Canvas
-lists alone: `workstreams`, `notes`, `spaces`, `ordering`, `pinnedOrder`,
-`pins`, `artifactPins`, `channelStats`, `spacesReady` and `channelsBySpace`
-leave `WorkspaceSidebarSchema`, and `accessRequests` leaves the sync event.
+lists: `spaces`, `ordering`, `pinnedOrder`, `pins`, `artifactPins`,
+`channelStats`, `spacesReady` and `channelsBySpace` leave
+`WorkspaceSidebarSchema`, and `accessRequests` leaves the sync event.
+`workstreams` (an empty page) and `notes` (an empty list) stay for one release
+as optional compatibility fields the current renderer ignores.
 The client commands `list_workstreams`, `channel_rails`, `space_channels` and
 `sidekick_activity`, the sync topics `digest_schedule`, `sidekick_activity`,
 `notes`, `projects`, `activity`, `work_opportunities` and
@@ -919,9 +920,14 @@ body records where a running signal would come from.
 **Consequences:** A sync event or follow-up WorkspaceDO stored before this
 change can still name a retired topic, so the stored-topic reader drops those
 names (`RETIRED_SYNC_TOPICS`) and still fails on any other unknown topic;
-`workspace-socket-fanout.test.ts` replays such a row. A desktop released
-before the pivot that sends a retired command is closed as invalid, which is
-what its retired routes already meant.
+`workspace-socket-fanout.test.ts` replays such a row, and each drop is logged
+as `workspace_sync_retired_topics_dropped`. A retired command from a desktop
+released before the pivot is an unknown type, which WorkspaceDO ignores under
+the socket's ignore-protocol-additions rule, logging
+`workspace_socket_retired_command_ignored`; refusing would close its socket
+for good. Such a desktop parses the subscribe answer only because the empty
+`workstreams` page and `notes` list are still sent: the compatibility window,
+which ends in the release after every desktop has updated.
 
 ### 2026-11-07 — A new version is announced to a Canvas's readers, and narrowing a Canvas clears presence
 

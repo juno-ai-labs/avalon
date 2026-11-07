@@ -18,7 +18,6 @@ import {
   WorkstreamResourceSchema,
   resourceDirectionForRelationship,
   UpdateWorkstreamRequestSchema,
-  WorkstreamBatchUpdateSchema,
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
   WorkstreamDetailSchema,
   WorkstreamSchema,
@@ -33,7 +32,6 @@ import {
   type ResourceRelationshipType,
   type WorkstreamResource,
   type Workstream,
-  type WorkstreamBatchUpdate,
   type WorkstreamDetail,
   type WorkstreamWorkflowInput,
   type WorkstreamMessageAdmissionReceipt,
@@ -1531,110 +1529,6 @@ export class WorkstreamObjectProductService {
       () => [{ partitionKey: `user:${auth.userId}`, effect: this.userEffect(this.root(), auth.userId) }],
     );
     return this.summary(this.root(), auth.userId);
-  }
-
-  /**
-   * Apply one event from the generic regional batch-update queue.
-   *
-   * The receipt shares the transaction with the product rows and the regional
-   * outbox, so Queue redelivery cannot repeat the mutation or publish another
-   * projection waterline. A mass read settles the state that exists when the
-   * event reaches this authority without first loading a per-work-stream cursor.
-   */
-  async applyQueuedBatchUpdate(
-    auth: AuthContext,
-    input: {
-      operationId: string;
-      requestHash: string;
-      update: WorkstreamBatchUpdate;
-    },
-  ): Promise<"applied" | "replayed"> {
-    const update = WorkstreamBatchUpdateSchema.parse(input.update);
-    const before = await this.authorize(auth, update.kind === "archive");
-    const now = Date.now();
-    const committed = await this.objectStore.commitWithRegionalEffects(
-      (sql) => {
-        const receipt = first(sql.exec<{ request_hash: string }>(
-          `SELECT request_hash FROM durable_inbox_receipts
-            WHERE channel = 'workstream_batch_update'
-              AND source_kind = 'regional_service'
-              AND source_id = 'regional_worker'
-              AND source_generation = 1 AND message_id = ?`,
-          input.operationId,
-        ));
-        if (receipt) {
-          if (receipt.request_hash !== input.requestHash) {
-            throw new Error("workstream_batch_update_idempotency_conflict");
-          }
-          return "replayed" as const;
-        }
-
-        if (update.kind === "mark_read") {
-          const latest = Math.max(0, before.next_attention_ordinal - 1);
-          sql.exec(
-            `UPDATE participants SET first_opened_at = ?, updated_at = ?
-              WHERE user_id = ? AND status = 'active' AND first_opened_at IS NULL`,
-            now,
-            now,
-            auth.userId,
-          );
-          sql.exec(
-            `INSERT INTO member_attention
-               (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
-                manual_unread_from_ordinal, latest_mention_attention_ordinal,
-                last_seen_at, version, updated_at)
-             VALUES (?, ?, ?, NULL, 0, ?, 0, ?)
-             ON CONFLICT(user_id) DO UPDATE SET
-               seen_attention_ordinal = MAX(member_attention.seen_attention_ordinal,
-                                            excluded.seen_attention_ordinal),
-               manual_unread_from_ordinal = NULL,
-               version = member_attention.version + 1,
-               last_seen_at = excluded.last_seen_at,
-               updated_at = excluded.updated_at`,
-            auth.userId,
-            before.unread_tracking_start_ordinal,
-            latest,
-            now,
-            now,
-          );
-        } else if (before.archived_at === null) {
-          this.requestArchiveStopInTransaction(sql, now);
-          sql.exec(
-            `UPDATE workstream SET archived_at = ?, exact_state = 'archived',
-                    listing_epoch = listing_epoch + 1, updated_at = ?
-              WHERE id = 1`,
-            now,
-            now,
-          );
-        }
-
-        sql.exec(
-          `INSERT INTO durable_inbox_receipts
-             (channel, source_kind, source_id, source_generation, message_id,
-              partition_key, source_version, source_epoch, request_hash,
-              result_code, result_hash, received_at)
-           VALUES ('workstream_batch_update', 'regional_service', 'regional_worker', 1, ?,
-                   ?, 1, 0, ?, 'applied', ?, ?)`,
-          input.operationId,
-          update.kind,
-          input.requestHash,
-          input.requestHash,
-          now,
-        );
-        return "applied" as const;
-      },
-      (_sql, outcome) => {
-        if (outcome === "replayed") return [];
-        const root = this.root();
-        return update.kind === "mark_read"
-          ? [{ partitionKey: `user:${auth.userId}`, effect: this.userEffect(root, auth.userId) }]
-          : [
-              { partitionKey: "common", effect: this.commonEffect(root) },
-              { partitionKey: `user:${auth.userId}`, effect: this.userEffect(root, auth.userId) },
-            ];
-      },
-    );
-    return committed.result;
   }
 
   /** Detail for the canonical transcript snapshot assembled by AgentLoopDO. */

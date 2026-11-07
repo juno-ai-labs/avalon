@@ -669,7 +669,7 @@ export function WorkspaceSocketProvider({
           // `type` a schema *did* match and whose body it then rejected is a
           // contract skew between two of our own components, and dropping it
           // without a word is how a desktop built ahead of its API would show
-          // no Spaces at all with nothing anywhere saying `reach`.
+          // an empty sidebar with nothing anywhere saying why.
           //
           // The message's own `type` is what picks the schema that should have
           // read it; `describeZodIssues` then names the field it rejected,

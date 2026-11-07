@@ -68,8 +68,8 @@ ones made without a mounted socket. New socket-owned entries use the lease;
 the sidebar ledger's explicit eviction still applies.
 
 `retainQueryData` holds in-memory entries. The adjacent
-`retainConversationParents` / `retainConversationChildren` calls instead prune
-the persisted cache to a keep-set; they do not supply these in-memory leases.
+`retainConversationParents` call instead prunes the persisted cache to a
+keep-set; it does not supply these in-memory leases.
 
 Explicit removal still wins: the lease releases the removed entry without
 recreating it or restoring its old data. If the producer later writes a new
@@ -274,7 +274,6 @@ The bound on this cache is membership, not a number or an age:
 - **Children leave with their parent.** No list names a parent's children
   since the Channel row went at the 2026-11 cutover, so a cached child, such as
   a Sidekick run's conversation, is removed with its parent or by eviction.
-  `retainConversationChildren` remains for a roster that names them again.
 - **Eviction forgets the disk.** `evictCachedWorkstream` removes every row
   under the parent in every scope, and `evictCachedSubstream` one child, so an
   access revocation or an archive never leaves a transcript on disk that the

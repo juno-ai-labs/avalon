@@ -348,7 +348,8 @@ the Organization's.
 `channel_rails` (`workspace_channel_rails`) and the foreground-visit
 `workspace_workstream_recency` frame listed Threads and Channels, which the
 Canvases and Sidekicks pivot removed. The contract no longer has them, and the
-sidebar is the Sidekick and Canvas lists alone (see
+sidebar is the Sidekick and Canvas lists, plus an empty `workstreams` page and
+`notes` list kept for one release so a pre-pivot desktop still parses it (see
 [`websocket-architecture.md`](websocket-architecture.md#changelog), 2026-11-07).
 
 A guest's socket is shaped by the same rules as a member's, with
@@ -929,8 +930,11 @@ rules apply to the Canvas list and presence alone.
 **Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
 deleted the Channel directory these frames read, and no client asks for them
 after B-1 to B-6. An ignored command keeps an old desktop's socket open. The
-empty page stays only until the contract drops `workstreams` from the sidebar,
-so an older renderer still parses the subscribe answer.
+empty page stays, now with an empty `notes` list beside it, as optional
+compatibility fields the current renderer ignores: a desktop released before
+the pivot requires both to parse the subscribe answer, and without them it
+reconnects forever without painting. They are removed in the release after
+every desktop has updated.
 
 **Considered and rejected:** Refusing the retired commands. A refusal on this
 socket is a permanent close, so an old desktop that still sends one would lose

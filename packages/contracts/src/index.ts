@@ -2763,6 +2763,24 @@ export const WorkspaceSidebarSchema = z.strictObject({
    * client reading a payload from a server that predates Canvases draws none.
    */
   canvases: CanvasSidebarListSchema.optional(),
+  /**
+   * Compatibility for one release: an always-empty Thread directory page and
+   * notes list, which a desktop released before the Canvases and Sidekicks
+   * pivot requires to parse this answer. The current renderer ignores both;
+   * they go in the release after every desktop has updated
+   * (`docs/websocket-architecture.md`, 2026-11-07).
+   */
+  workstreams: z.strictObject({
+    directoryWaterline: z.literal(0),
+    items: z.array(z.never()).max(0),
+    stateVersions: z.array(z.never()).max(0),
+    nextCursor: z.null(),
+  }).optional(),
+  notes: z.strictObject({
+    waterline: z.literal(0),
+    items: z.array(z.never()).max(0),
+    nextCursor: z.null(),
+  }).optional(),
 });
 
 /**

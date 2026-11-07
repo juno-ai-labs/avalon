@@ -56,10 +56,9 @@ order:
 2. An **active conversation** binding on the exact path: `deliver` to it.
 3. A **pending** exact path that is not this attempt's own claim and is younger
    than the claim lease: `hold`. The ingress answers 503 and the queue retries.
-4. An **addressed** message (an `app_mention`) whose nearest active ancestor
-   is a **Space** binding, with no exact row or a reclaimable one: `spawn` in
-   that Space.
-5. Otherwise `none`, reporting whether any ancestor row exists.
+4. Otherwise `none`. A room bound to a Space routes nowhere: the `spawn`
+   answer that opened a Channel in it is retired with Spaces and Channels
+   (see the 2026-11-07 changelog entry).
 
 `none` falls through to the Agent path that predates bindings; a DM with no
 binding is today's one-to-one Agent conversation.
@@ -359,6 +358,24 @@ not as a member request. Only a Sidekick's config conversation can add a Slack
 source, so a run cannot widen what the bot joins.
 
 ## Changelog
+
+### 2026-11-07 — A room binding opens nothing, and rooms are no longer linked
+
+**What changed:** `resolve` no longer answers `spawn` (an addressed message
+under a room bound to a Space created a Channel there) and its `none` no
+longer carries `roomBound`. `linkRoom`, `ExternalRoomLinkRequestSchema` and
+`ExternalRoomSpaceMatchRequestSchema` are deleted. Room rows (`target_kind =
+'space'`) stay in the table until plan step C-7's migration removes them; until
+then they resolve as `none`.
+
+**Why:** Plan step C-4 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+Spaces and Channels are retired, the Slack ingress already answered every
+addressed message with where work starts now, and nothing called the link.
+Run-child bindings, the binding that lets a Slack reply continue a Sidekick
+run, are unchanged.
+
+**Consequences:** The room half of this document below describes the retired
+mechanism and is kept as its record until the documentation pass rewrites it.
 
 ### 2026-10-06 — A room's privacy belongs to its Channels, not its Space
 
