@@ -31,14 +31,13 @@ export interface CollaborationSessionValue {
   host: 'desktop' | 'browser';
   /** Absent where a host cannot start a connection; existing connectors still work. */
   connectorSetup: ConnectorSetupCapability | null;
-  createSidekick: (() => Promise<void>) | null;
 }
 
 const CollaborationSessionContext = createContext<CollaborationSessionValue | null>(null);
 
-export function CollaborationSessionProvider({ api, session, host = 'desktop', connectorSetup = null, createSidekick = null, children }:
-  PropsWithChildren<Pick<CollaborationSessionValue, 'api' | 'session'> & Partial<Pick<CollaborationSessionValue, 'host' | 'connectorSetup' | 'createSidekick'>>>): React.JSX.Element {
-  const value = useMemo(() => ({ api, session, host, connectorSetup, createSidekick }), [api, session, host, connectorSetup, createSidekick]);
+export function CollaborationSessionProvider({ api, session, host = 'desktop', connectorSetup = null, children }:
+  PropsWithChildren<Pick<CollaborationSessionValue, 'api' | 'session'> & Partial<Pick<CollaborationSessionValue, 'host' | 'connectorSetup'>>>): React.JSX.Element {
+  const value = useMemo(() => ({ api, session, host, connectorSetup }), [api, session, host, connectorSetup]);
   return <CollaborationSessionContext.Provider value={value}>{children}</CollaborationSessionContext.Provider>;
 }
 

@@ -698,12 +698,11 @@ const browserBridge: RallyDesktopBridge = {
     }
     return opened.length > 1;
   },
-  // A tab cannot keep a second window, so Sidekicks is a route of this one,
-  // as Settings is. See `window-surface.ts`.
-  async openSidekicks(requested) {
-    window.location.hash = requested ? `#/sidekicks/${encodeURIComponent(requested)}` : '#/sidekicks';
+  // Settings is a route of this tab, so opening a Sidekick from it is
+  // navigating to the Sidekick. See `window-surface.ts`.
+  async openSidekick(sidekickId) {
+    window.location.hash = `#/sidekicks/${encodeURIComponent(sidekickId)}`;
   },
-  // The library is a route of this tab, so opening a Thread is navigating to it.
   async openThread(workstreamId) {
     window.location.hash = `#/workstreams/${encodeURIComponent(workstreamId)}`;
   },

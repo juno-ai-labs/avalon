@@ -718,7 +718,7 @@ one, so it never meets the member-only paths above. A push registration belongs
 to the account in a deployment, so a guest workspace's notifications still reach
 a device a membership there registered. A new Electron path that calls a
 member-only route must check guest first; `desktop-guest-collaboration.test.tsx` mounts the real `App` for a guest in
-the main, Settings and Sidekicks windows and fails on any such request. The
+the main and Settings windows and fails on any such request. The
 browser's list of other deployments' workspaces uses the same discovery, so it
 now includes guest relationships there too.
 

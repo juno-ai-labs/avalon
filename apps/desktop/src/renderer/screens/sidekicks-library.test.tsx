@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import type { AutomationSummary } from '../lib/types';
-import { SidekicksLibraryRoute, SidekicksLibraryScreen, SidekicksWindow } from './sidekicks-library';
+import { SidekicksLibraryRoute, SidekicksLibraryScreen } from './sidekicks-library';
 
 const getSidekicks = vi.hoisted(() => vi.fn());
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api: { getSidekicks } }) }));
@@ -98,43 +98,10 @@ describe('the Sidekicks home', () => {
     expect(screen.getAllByRole('link', { name: 'New Sidekick' })).toHaveLength(2);
   });
 
-  it.each(['desktop', 'browser'] as const)('renders in the main window rather than handing off to the Sidekicks window (%s)', async (host) => {
+  it.each(['desktop', 'browser'] as const)('renders in the main window (%s)', async (host) => {
     shell.host = host;
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SidekicksLibraryRoute /></MemoryRouter></QueryClientProvider>);
     expect(await screen.findByRole('link', { name: /Daily brief/ })).toHaveAttribute('href', '/sidekicks/personal');
     expect(screen.queryByText('Opening Sidekicks…')).toBeNull();
-  });
-});
-
-describe('SidekicksWindow', () => {
-  function renderWindow(): void {
-    render(<QueryClientProvider client={new QueryClient()}><SidekicksWindow /></QueryClientProvider>);
-  }
-
-  it('closes the window on Escape', async () => {
-    const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
-    renderWindow();
-    await screen.findByRole('link', { name: /Daily brief/ });
-
-    fireEvent.keyDown(document.body, { key: 'Escape' });
-
-    expect(close).toHaveBeenCalledOnce();
-  });
-
-  it('leaves the keystroke to a search box that still holds a filter', async () => {
-    const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
-    renderWindow();
-    const search = await screen.findByRole('searchbox', { name: 'Search Sidekicks' });
-    fireEvent.change(search, { target: { value: 'morning' } });
-
-    // Chromium answers Escape in a `type="search"` field by clearing it. A
-    // window that vanished on the same keystroke would never let anyone see the
-    // filter come off.
-    fireEvent.keyDown(search, { key: 'Escape' });
-    expect(close).not.toHaveBeenCalled();
-
-    fireEvent.change(search, { target: { value: '' } });
-    fireEvent.keyDown(search, { key: 'Escape' });
-    expect(close).toHaveBeenCalledOnce();
   });
 });

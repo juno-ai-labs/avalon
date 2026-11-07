@@ -425,7 +425,7 @@ describe('SessionGate identity-first ordering', () => {
       workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
     };
 
-    it.each(['sidekicks', 'settings'] as const)(
+    it.each(['settings'] as const)(
       'closes the %s window while the organization profile is still in flight',
       async (surface) => {
         const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
@@ -443,7 +443,7 @@ describe('SessionGate identity-first ordering', () => {
 
     it('closes the window from the service-setup error, which is the same dead end', async () => {
       const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
-      window.history.replaceState({}, '', '/?surface=sidekicks');
+      window.history.replaceState({}, '', '/?surface=settings');
       sessionState.session = workspaceSession;
       sessionState.api.getWorkspace.mockRejectedValueOnce(new Error('Regional service unavailable.'));
       renderGate();
@@ -456,7 +456,7 @@ describe('SessionGate identity-first ordering', () => {
 
     it('ends a Pong game on Escape before closing the window, and closes it on the next', async () => {
       const close = vi.spyOn(window, 'close').mockImplementation(() => undefined);
-      window.history.replaceState({}, '', '/?surface=sidekicks');
+      window.history.replaceState({}, '', '/?surface=settings');
       sessionState.session = workspaceSession;
       sessionState.api.getWorkspace.mockRejectedValueOnce(new Error('Regional service unavailable.'));
       renderGate();

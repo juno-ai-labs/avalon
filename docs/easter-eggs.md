@@ -67,7 +67,7 @@ or configuration file: the person who sees it cannot act on those.
 - **An egg is client-only and visual.** No egg calls the API, a tool, or the
   main process, and none stores anything. Hidden code that reaches a server is
   hidden attack surface; one that only draws is not. No automated guard.
-- **Pong takes Escape from the window.** Settings and the Sidekicks window close
+- **Pong takes Escape from the window.** Settings closes
   on Escape from a bubble-phase `window` listener installed before Pong mounts
   (`lib/window-escape.ts`). Pong listens in the capture phase so it runs first,
   and calls `preventDefault()`, which that hook honours, so Escape ends the game

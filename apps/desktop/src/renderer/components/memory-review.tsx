@@ -91,19 +91,16 @@ function refusalCopy(error: unknown): string {
 }
 
 /** Where a fact's source opens in the main window. A Breakout opens inside its Thread. */
-export function memorySourceRoute(source: Exclude<MemoryReviewSource, { kind: 'sidekick' }>): string {
+export function memorySourceRoute(source: MemoryReviewSource): string {
+  if (source.kind === 'sidekick') return `/sidekicks/${encodeURIComponent(source.automationId)}`;
   if (source.kind === 'thread') return threadRoute(source.workstreamId, null);
   if (source.kind === 'breakout') return threadRoute(source.workstreamId, null, source.substreamId);
   return channelRoute(source.spaceId);
 }
 
-/**
- * Opens a fact's source from the main window: a conversation by its route, a
- * Sidekick in its own window (a route of the tab in a browser).
- */
+/** Opens a fact's source from the main window, by its route. */
 export function openMemorySource(source: MemoryReviewSource, navigate: (to: string) => void): void {
-  if (source.kind === 'sidekick') void desktopBridge().openSidekicks(source.automationId);
-  else navigate(memorySourceRoute(source));
+  navigate(memorySourceRoute(source));
 }
 
 /**
@@ -115,7 +112,7 @@ export function openMemorySource(source: MemoryReviewSource, navigate: (to: stri
 function SurfaceSourceLink({ source, title }: { source: MemoryReviewSource; title: string }): React.JSX.Element {
   if (source.kind === 'channel') return <span>{title}</span>;
   const open = (): void => {
-    if (source.kind === 'sidekick') void desktopBridge().openSidekicks(source.automationId);
+    if (source.kind === 'sidekick') void desktopBridge().openSidekick(source.automationId);
     else void desktopBridge().openThread(source.workstreamId);
   };
   return <button className="memory-review-source" onClick={open} type="button">{title}</button>;

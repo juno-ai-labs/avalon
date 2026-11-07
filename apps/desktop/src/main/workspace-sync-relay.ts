@@ -48,8 +48,8 @@ const ConversationViewRelayRequestSchema = z.discriminatedUnion('type', [
  * consuming it.
  *
  * No Electron import. `workspace-sync-relay-ipc.ts` decides who may publish
- * (the main window only) and who may read the source (the Settings and
- * Sidekicks windows only); `index.ts` decides who receives and when the publishing renderer is
+ * (the main window only) and who may read the source (the Settings window
+ * only); `index.ts` decides who receives and when the publishing renderer is
  * gone (closed, crashed or navigating). This class holds the one piece of
  * state those decisions share.
  *
