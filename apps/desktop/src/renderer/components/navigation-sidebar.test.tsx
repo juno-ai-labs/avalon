@@ -46,7 +46,7 @@ function Location(): React.JSX.Element {
   return <div data-testid="location">{useLocation().pathname}</div>;
 }
 
-function renderSidebar(person: Workspace = workspace): void {
+function renderSidebar(person: Workspace = workspace, route = '/'): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   applyVersionedSidebarList(client, 'canvases', 1, [
     canvas('00000000-0000-7000-8000-0000000000c1', 'Q4 revenue review', { unread: true }),
@@ -59,7 +59,7 @@ function renderSidebar(person: Workspace = workspace): void {
   ]);
   render(<QueryClientProvider client={client}><Tooltip.Provider>
     <CollaborationSessionProvider api={api as never} session={{ user: { id: ME } } as never}>
-      <MemoryRouter initialEntries={['/']}>
+      <MemoryRouter initialEntries={[route]}>
         <NavigationSidebar
           accountMenu={<span>account</span>}
           downloadedUpdate={null}
@@ -173,6 +173,12 @@ describe('the Canvases and Sidekicks sections', () => {
     useUiStore.getState().setSidebarSection('canvases');
     renderSidebar({ ...workspace, currentUser: { ...workspace.currentUser, accessClass: 'guest' } });
     expect(screen.queryByRole('button', { name: 'New Canvas' })).toBeNull();
+  });
+
+  it('shows the section of whatever was opened, however it was opened', () => {
+    renderSidebar(workspace, '/sidekicks/triage');
+    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
+    expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
   });
 
   it('remembers either section across launches', async () => {

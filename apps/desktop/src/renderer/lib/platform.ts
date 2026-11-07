@@ -590,21 +590,7 @@ const browserBridge: RallyDesktopBridge = {
   onEmbeddedBrowserHostRequest() {
     return () => undefined;
   },
-  async openBrowserImport() {
-    throw new Error('The import browser needs the Rally desktop application.');
-  },
-  async getBrowserImportContext() {
-    return null;
-  },
-  onBrowserImportContextChanged() {
-    return () => undefined;
-  },
   onOrganizationListRefreshRequested() {
-    return () => undefined;
-  },
-  async completeBrowserImport() {},
-  async reportBrowserImport() {},
-  onBrowserImportProgress() {
     return () => undefined;
   },
   async exportMessage() {

@@ -110,6 +110,14 @@ export function NavigationSidebar({
     if (sheetAfterNavigation) setSheetAfterNavigation(false);
     setSidebarOpen(sheetAfterNavigation);
   }, [pathname, setSidebarOpen]);
+  // Whatever opened it (a row, a deep link, a memory source, the account
+  // menu), arriving at a Canvas or a Sidekick shows its section, so the list
+  // beside it holds the row that is open. Only a navigation moves it:
+  // switching sections while one is open does not navigate.
+  useEffect(() => {
+    const opened = sectionForPath(pathname);
+    if (opened && opened !== useUiStore.getState().sidebarSection) setSection(opened);
+  }, [pathname, setSection]);
   const panel = useRef<HTMLElement>(null);
   const scroll = useRef<HTMLElement | null>(null);
   const guest = workspace.currentUser.accessClass === 'guest';
@@ -184,6 +192,13 @@ export function NavigationSidebar({
       </div>
     </div>
   </ResizableSidebar>;
+}
+
+/** The section a route belongs to, or null for one that belongs to neither. */
+export function sectionForPath(pathname: string): SidebarSection | null {
+  if (/^\/canvases(\/|$)/.test(pathname)) return 'canvases';
+  if (/^\/(sidekicks|automations)(\/|$)/.test(pathname)) return 'sidekicks';
+  return null;
 }
 
 /** What a section's count says it counts, for its accessible name. */

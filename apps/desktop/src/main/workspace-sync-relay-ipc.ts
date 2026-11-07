@@ -33,14 +33,14 @@ export function registerWorkspaceSyncRelayIpc({
   ipc.handle(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, (event) => {
     assertTrustedSender(event);
     if (!event.sender || !consumerWindowContents().includes(event.sender)) {
-      throw new Error('Only the Settings window consume the relayed organization sync');
+      throw new Error('Only the Settings window consumes the relayed organization sync');
     }
     return relay.snapshot();
   });
   ipc.handle(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.conversationView, (event, raw: unknown) => {
     assertTrustedSender(event);
     if (!event.sender || !consumerWindowContents().includes(event.sender)) {
-      throw new Error('Only the Settings window request relayed conversation views');
+      throw new Error('Only the Settings window requests relayed conversation views');
     }
     const request = relay.conversationViewRequest(raw);
     if (request) mainWindowContents()?.send(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, request);
