@@ -19,6 +19,7 @@ import { applyWorkstreamObjectSchema } from "./workstream-object-schema";
 import {
   ConversationEffectEnvelopeSchema,
   ConversationEffectSchema,
+  EffectParentKindSchema,
   conversationEffectHash,
   isPersonNotificationEffect,
   type ConversationEffect,
@@ -103,9 +104,10 @@ export const HostedConversationParentKindSchema = z.enum(["automation", "canvas"
 /**
  * Every kind a stored root row may name: the hosted two and the retired
  * Thread (`workstream`) and Space parents, which only the retirement readers
- * see. Wider than `ConversationParentKindSchema` on purpose.
+ * see. Wider than `ConversationParentKindSchema` on purpose, and the same set
+ * an effect envelope may carry, since a stored root is what addresses one.
  */
-const StoredConversationParentKindSchema = z.enum(["workstream", "automation", "space", "canvas"]);
+const StoredConversationParentKindSchema = EffectParentKindSchema;
 type StoredConversationParentKind = z.infer<typeof StoredConversationParentKindSchema>;
 export type HostedConversationParentKind = z.infer<typeof HostedConversationParentKindSchema>;
 

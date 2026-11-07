@@ -209,11 +209,12 @@ export class AgentCommunicationService {
     noticeReason?: string,
   ) {
     const owner = await (await this.workspace()).agentOwner({ workspaceId: this.input.workspaceId, agentId: this.senderId });
-    if (!owner.agentId) return;
+    if (!owner.ok) throw new AgentCommunicationError(owner.code);
+    if (!owner.value.agentId) return;
     try {
       // The run supplies the delivery identity, so a settlement retry cannot
       // deliver the same notice twice.
-      await this.deliver({ agentId: owner.agentId, message, attachmentIds: [] },
+      await this.deliver({ agentId: owner.value.agentId, message, attachmentIds: [] },
         await this.messageId({ effectIntentId: effectKey }), false, undefined, notice, noticeReason);
     } catch (error) {
       // Archival closes admission; it must not prevent the run settling.

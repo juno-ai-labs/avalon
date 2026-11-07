@@ -73,4 +73,24 @@ describe("durable agent teams", () => {
     expect(await workspace().registerAgentDelegation({ ...address, teamId, ownerAgentId: nested, agentId: root }))
       .toEqual({ ok: false, code: "agent_ownership_cycle" });
   });
+
+  it("leaves a Thread-era teammate out of the roster, and names the retired kind for its owner and its message", async () => {
+    const { teamId } = await workspace().ensureAgentTeam({ ...address, originAgentId: root });
+    await workspace().registerAgentDelegation({ ...address, teamId, ownerAgentId: root, agentId: worker });
+    const thread = "workstream/00000000-0000-7000-8000-000000000f76/0";
+    const messageId = crypto.randomUUID();
+    // Rows a Thread wrote before Threads were retired; no current writer can.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec("INSERT INTO agent_team_members VALUES (?, ?)", teamId, thread);
+      state.storage.sql.exec("UPDATE agent_delegations SET owner_agent_id = ? WHERE agent_id = ?", thread, worker);
+      state.storage.sql.exec("INSERT INTO agent_message_routes VALUES (?, ?, ?, ?)", messageId, teamId, thread, root);
+    });
+
+    expect(await workspace().listAgentTeammates({ ...address, teamId, requesterAgentId: root }))
+      .toEqual({ ok: true, value: { agentIds: [root, worker].sort() } });
+    expect(await workspace().agentOwner({ ...address, agentId: worker }))
+      .toEqual({ ok: false, code: "conversation_parent_kind_retired:workstream" });
+    expect(await workspace().resolveAgentMessage({ ...address, messageId: crypto.randomUUID(), senderAgentId: root, replyToMessageId: messageId }))
+      .toEqual({ ok: false, code: "conversation_parent_kind_retired:workstream" });
+  });
 });

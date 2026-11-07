@@ -4916,11 +4916,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  async agentOwner(input: { workspaceId: string; agentId: AgentId }): Promise<{ agentId: AgentId | null }> {
+  async agentOwner(input: { workspaceId: string; agentId: AgentId }): Promise<AgentTeamResult<{ agentId: AgentId | null }>> {
     await this.initialized;
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, agentId: AgentIdSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
-    return { agentId: new AgentTeamStorage(this.state.storage).owner(request.agentId) };
+    return agentTeamResult(() => ({ agentId: new AgentTeamStorage(this.state.storage).owner(request.agentId) }));
   }
 
   async ownedAgentDescendants(input: { workspaceId: string; agentId: AgentId }): Promise<{ agentIds: AgentId[] }> {
