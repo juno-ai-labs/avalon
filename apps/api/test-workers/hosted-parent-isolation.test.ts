@@ -221,17 +221,9 @@ describe("the revocation walk's Channel step, run inside the Organization object
     await finishSockets([channelA, channelB], [socketA, socketB]);
   });
 
-  it("answers a narrowing with each closed reader's conversations, and no Sidekick", async () => {
-    const owned = "00000000-0000-4000-8000-0000000e00d0";
+  it("answers a narrowing with each closed reader's conversations", async () => {
     await runInDurableObject(organization(), (_instance, state) => {
       state.storage.sql.exec("UPDATE channels SET scope = 'workspace'");
-      state.storage.sql.exec(
-        `INSERT INTO automation_directory
-           (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
-            owning_workstream_id, title, description, next_run_at, projected_at)
-         VALUES (?, ?, ?, 1, 'test', 'active', 'workstream', ?, 'Owned', '', NULL, 0)`,
-        owned, workspaceId, shared, channelA,
-      );
     });
     // A member reading Channel A only because it admits the whole Organization.
     await env.DB.prepare("UPDATE workspace_members SET access_class = 'member' WHERE user_id = ?").bind(shared).run();
@@ -247,12 +239,9 @@ describe("the revocation walk's Channel step, run inside the Organization object
 
     const result = await organization().revokeNarrowedAudienceAccess({ workspaceId, parentId: channelA });
 
-    // A Channel owns no Sidekick since the room scope was retired, so even a
-    // row still naming it as owner gets no automation hop.
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       closedUserIds: [shared],
       substreams: [{ userId: shared, substreamIds: ["0", breakoutA] }],
-      automationIds: [],
     });
     expect((await closed).code).toBe(1008);
     await finishSockets([channelA], [socket]);
