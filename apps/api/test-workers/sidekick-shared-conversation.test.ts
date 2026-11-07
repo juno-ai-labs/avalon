@@ -630,6 +630,8 @@ describe("a Sidekick's shared conversation", () => {
     // Never opened: unread, as an unopened Channel is unseen.
     await deliverChildEffects(TEST_ENV, conversationStub());
     expect(await unread(ADMIN_ID)).toBe(true);
+    // Its sender's own message is not news to them.
+    expect(await unread(MEMBER_ID)).toBe(false);
     await read(MEMBER_ID);
     expect(await unread(MEMBER_ID)).toBe(false);
     await say(AUTHOR_ID, "Morning! The release went out.", "unread-0002");

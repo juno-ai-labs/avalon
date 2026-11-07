@@ -645,7 +645,7 @@ describe("conversation parent contract", () => {
     });
     await projectAuthorization(TEST_ENV, { type: 'authorization_projection_v1', region: 'global',
       workspaceId: WORKSPACE_ID, parentId, substreamId: asSubstreamId('0') });
-    const automations = vi.spyOn(WorkspaceDO.prototype, 'sidekickReadAuthorizationFacts');
+    const automations = vi.spyOn(WorkspaceDO.prototype, 'hostedConversationAuthorizationFacts');
     const access = createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID });
     const addresses = ids.map(resourceId => ({ kind: 'resource' as const, workspaceId: WORKSPACE_ID, resourceId }));
     expect((await access.checkMany(addresses)).map(decision => decision.status)).toEqual(['allowed', 'allowed']);

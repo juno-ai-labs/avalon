@@ -745,6 +745,21 @@ shows its saved quote and image. The script and trust boundaries are owned by
 
 ## Changelog
 
+### 2026-11-07 — A Canvas's artifact is opened by whoever opens the Canvas
+
+**What changed:** An artifact generated in a Canvas's Chat is admitted at the
+identity door by the Canvas's audience (`canvasAdmits`): its creator,
+participants, writer Sidekick's audience, the Organization when it is open to
+it, and owners and administrators. `artifact_registry.workstream_id` holds the
+Canvas id, which is the conversation's parent id, so no column changes
+meaning.
+
+**Why:** A Canvas, not a Thread, is each artifact's owner and audience (the
+Canvases and Sidekicks decision log).
+
+**Consequences:** The serving Worker's public-by-default rules are unchanged;
+only the protected door's admission moved. See [`canvases.md`](canvases.md).
+
 ### 2026-11-06 — The site surfaces are no longer flagged
 
 **What changed:** `useSiteArtifacts` no longer reads `liveArtifactsEnabled`,

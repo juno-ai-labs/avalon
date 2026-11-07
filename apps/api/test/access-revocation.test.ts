@@ -638,7 +638,7 @@ describe("carrying one revocation to the objects", () => {
     narrowedUserIds?: string[];
     /** What an Organization object that runs the Channel step itself answers with. */
     channels?: Array<{ workstreamId: string; substreamIds: string[] }>;
-    narrowedLeaves?: { substreams: Array<{ userId: string; substreamIds: string[] }>; automationIds: string[] };
+    narrowedLeaves?: { substreams: Array<{ userId: string; substreamIds: string[] }> };
     failAt?: boolean;
   } = {}) {
     const visits: Visit[] = [];
@@ -862,10 +862,9 @@ describe("carrying one revocation to the objects", () => {
 
   it("publishes only the leaves of a narrowing when the workspace ran each reader's Channel step", async () => {
     const READER = "00000000-0000-7000-8000-0000000000b1";
-    const OWNED = "00000000-0000-7000-8000-0000000000d2";
     const { env, sent } = fanOut({
       narrowedUserIds: [READER],
-      narrowedLeaves: { substreams: [{ userId: READER, substreamIds: ["0"] }], automationIds: [OWNED] },
+      narrowedLeaves: { substreams: [{ userId: READER, substreamIds: ["0"] }] },
     });
     await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
       kind: "access_revoked",
@@ -879,10 +878,9 @@ describe("carrying one revocation to the objects", () => {
 
     expect(targetsOf(sent)).toEqual([
       { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
-      { scope: "automation", automationId: OWNED },
     ]);
     expect(sent.map((published) => AccessRevocationMessageSchema.parse(published.body).userId))
-      .toEqual([READER, READER]);
+      .toEqual([READER]);
   });
 
   it("publishes nothing for a narrowing nobody was reading through", async () => {

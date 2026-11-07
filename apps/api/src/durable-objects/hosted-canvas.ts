@@ -23,9 +23,12 @@ import {
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { parseRpcInput } from "../lib/rpc-input";
-import { listedResourceVisibilitySql } from "../services/resource-listing";
 import { canvasAdmits, canvasManages } from "../services/authorization-policy";
-import { sidekickReaderAllows } from "./hosted-sidekick";
+import type { ConversationParentAuthorizeViewerRequest } from "@rally/contracts/conversation-parent";
+import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from "../services/authorization-policy";
+import type { DirectoryCommonEffect } from "./conversation-parent-object";
+import { assertAudienceInOrganization, HostedConversation, type HostedConversationHost, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
+import { sidekickManagerAllows, sidekickReaderAllows } from "./hosted-sidekick";
 import { ScopeInvitationService } from "./scope-invitation-service";
 
 /** Who is asking: their id and, for a member, their Organization role; a guest has none. */
@@ -72,9 +75,11 @@ export interface CanvasRow extends Record<string, SqlStorageValue> {
 }
 
 /** What a hosted Canvas needs from the Organization object that holds it. */
-export interface HostedCanvasHost {
+export interface HostedCanvasHost extends HostedConversationHost {
   env: Env;
   storage: DurableObjectStorage;
+  /** Inside the transaction that changed one person's read of a Canvas's Chat: their Canvas list, sent only to them. */
+  noteCanvasReadChanged(userId: string): void;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   noteRelationship(relationship: WorkspaceRelationship): void;
   /** Inside the transaction that changed a Canvas's row or its participants: the sidebar list's waterline. */
@@ -111,16 +116,18 @@ export function canvasParticipant(sql: SqlStorage, canvasId: string, userId: str
 
 /**
  * The read rule over a directory row: `canvasAdmits` over its visibility, its
- * creator, its participant list and its writer Sidekick's audience. A guest
- * has no `actorRole`, so Organization visibility never admits one.
+ * creator, its participant list, its writer Sidekick's audience as it stands
+ * now, and the actor's role (an owner or administrator manages, so opens,
+ * every Canvas). A guest has no `actorRole`, so Organization visibility never
+ * admits one.
  */
-export function canvasReaderAllows(row: CanvasRow, actor: CanvasActor, sql: SqlStorage): boolean {
+export function canvasReaderAllows(row: CanvasRow, actor: { userId: string; actorRole: CanvasActor["actorRole"] }, sql: SqlStorage): boolean {
   return canvasAdmits({
     visibility: row.visibility,
     creator: row.created_by_user_id === actor.userId,
     participant: canvasParticipant(sql, row.canvas_id, actor.userId),
     writerAudience: row.writer_sidekick_id !== null && writerSidekickAdmits(sql, row.writer_sidekick_id, actor),
-  }, actor.actorRole !== null);
+  }, actor.actorRole !== null, actor.actorRole === "owner" || actor.actorRole === "admin");
 }
 
 function writerSidekick(sql: SqlStorage, sidekickId: string) {
@@ -132,7 +139,7 @@ function writerSidekick(sql: SqlStorage, sidekickId: string) {
   ).toArray()[0] ?? null;
 }
 
-function writerSidekickAdmits(sql: SqlStorage, sidekickId: string, actor: CanvasActor): boolean {
+function writerSidekickAdmits(sql: SqlStorage, sidekickId: string, actor: { userId: string; actorRole: CanvasActor["actorRole"] }): boolean {
   const sidekick = writerSidekick(sql, sidekickId);
   return sidekick !== null && sidekickReaderAllows(sidekick, actor, sql);
 }
@@ -142,11 +149,80 @@ function writerSidekickAdmits(sql: SqlStorage, sidekickId: string, actor: Canvas
  * SQLite: its directory row, who may open it, and the share invitations that
  * add guests to it. Constructed per call, like `HostedSidekick`.
  */
-export class HostedCanvas {
-  constructor(private readonly host: HostedCanvasHost, readonly canvasId: string) {}
+export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
+  constructor(host: HostedCanvasHost, canvasId: string) {
+    super(host, canvasId, "canvas");
+  }
 
-  private get sql(): SqlStorage {
-    return this.host.storage.sql;
+  get canvasId(): string {
+    return this.parentId;
+  }
+
+  protected identity(): HostedConversationIdentity | null {
+    const row = this.row();
+    return row ? { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: false } : null;
+  }
+
+  protected assertParent(workspaceId: string, parentId: string): HostedConversationIdentity {
+    const row = this.assertCanvas(workspaceId, parentId);
+    return { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: false };
+  }
+
+  /**
+   * `canvasReaderAllows`, with the person's role from their Organization
+   * relationship: an owner or administrator opens every Canvas, and a guest
+   * (who asks with `requireGrantAuthority`) is never admitted by Organization
+   * visibility.
+   */
+  protected async admitsViewer(request: ConversationParentAuthorizeViewerRequest): Promise<boolean> {
+    const row = this.row()!;
+    const relationship = request.requireGrantAuthority ? null : await this.host.readRelationship(row.workspace_id, request.userId);
+    const actorRole = request.requireGrantAuthority || relationship?.accessClass === "guest" ? null
+      : relationship?.status === "active" ? relationship.role ?? "member" : "member";
+    return canvasReaderAllows(this.row() ?? row, { userId: request.userId, actorRole }, this.sql);
+  }
+
+  protected onViewerReadChanged(userId: string): void {
+    this.host.noteCanvasReadChanged(userId);
+  }
+
+  /**
+   * A new message in the Chat is activity: the Canvas moves up the recency
+   * list, and its row's unread state moves for anyone who has read it.
+   */
+  protected onChildProjection(substreamId: string, effect: DirectoryCommonEffect,
+    prior: PriorChildProjection | null, now: number): void {
+    if (substreamId !== "0") return;
+    if ((prior?.latestAttentionOrdinal ?? null) === (effect.latestAttentionOrdinal ?? null)) return;
+    this.sql.exec(`UPDATE canvas_directory SET updated_at = MAX(updated_at, ?) WHERE canvas_id = ?`, now, this.canvasId);
+    this.host.noteCanvasDirectoryChanged(this.canvasId);
+  }
+
+  /** What resource and search authorization decide a Canvas reader from (`canvasAdmits`). */
+  async readAuthorizationFacts(input: ConversationAuthorizationRequest) {
+    const request = parseRpcInput(ConversationAuthorizationRequestSchema, input, "canvas_read_authorization_facts");
+    const initial = this.row();
+    if (!initial) return { exists: false as const, validatedAt: Date.now() };
+    this.assertCanvas(request.workspaceId, request.parentId);
+    const relationship = request.relationship ?? await this.host.readRelationship(initial.workspace_id, request.userId);
+    // Read again after the await: the row is what the facts describe.
+    const row = this.row() ?? initial;
+    const writer = (actorRole: "member" | null) => row.writer_sidekick_id !== null
+      && writerSidekickAdmits(this.sql, row.writer_sidekick_id, { userId: request.userId, actorRole });
+    return {
+      exists: true as const,
+      visibility: row.visibility,
+      creator: row.created_by_user_id === request.userId,
+      participant: canvasParticipant(this.sql, this.canvasId, request.userId),
+      // A Sidekick's Organization scope admits a member and no guest, so the
+      // caller, which knows which this person is, picks one.
+      writerAudience: { member: writer("member"), guest: writer(null) },
+      administrator: relationship?.status === "active" && relationship.accessClass === "member"
+        && (relationship.role === "owner" || relationship.role === "admin"),
+      children: this.childRegistry().map((child) => child.substreamId),
+      revision: JSON.stringify([row.authority_generation, row.updated_at]),
+      validatedAt: Date.now(),
+    };
   }
 
   row(): CanvasRow | null {
@@ -166,11 +242,10 @@ export class HostedCanvas {
   }
 
   /**
-   * Bring a Canvas into existence with no artifacts: its creator alone can
-   * open it, or, for one a Sidekick run makes, whoever the Sidekick is shared
-   * with (an Organization Sidekick's Canvas is open to the Organization; any
-   * other's starts with the Sidekick's people list). A replay answers
-   * `created: false`.
+   * Bring a Canvas into existence with no artifacts, open to its creator
+   * alone; one a Sidekick run makes also admits whoever the Sidekick is
+   * shared with, read live from the Sidekick, so nothing is copied. A replay
+   * answers `created: false`.
    */
   create(input: z.input<typeof CanvasCreateRequestSchema>): { created: boolean } {
     const request = parseRpcInput(CanvasCreateRequestSchema, input, "canvas_create");
@@ -182,27 +257,16 @@ export class HostedCanvas {
         if (existing.workspace_id !== request.workspaceId) throw notFound();
         return { created: false };
       }
-      const sidekick = request.writer ? writerSidekick(this.sql, request.writer.sidekickId) : null;
-      if (request.writer && !sidekick) throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
-      const people = sidekick && sidekick.scope !== "workspace"
-        ? [...new Set([sidekick.author_user_id, sidekick.run_as_user_id, ...this.sql.exec<{ user_id: string }>(
-          `SELECT user_id FROM sidekick_audience WHERE sidekick_id = ?`, sidekick.automation_id,
-        ).toArray().map((row) => row.user_id)].filter((userId): userId is string => !!userId && userId !== request.createdByUserId))]
-        : [];
-      const visibility = sidekick?.scope === "workspace" ? "workspace" : people.length > 0 ? "participants" : "creator";
+      if (request.writer && !writerSidekick(this.sql, request.writer.sidekickId)) {
+        throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
+      }
       this.sql.exec(
         `INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at,
            last_editor_kind, last_editor_id, writer_sidekick_id, writer_run_id, visibility, authority_generation)
-         VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 'creator', ?)`,
         this.canvasId, request.workspaceId, request.title, request.createdByUserId, now, now,
-        request.writer?.sidekickId ?? null, request.writer?.runId ?? null, visibility, request.authorityGeneration,
+        request.writer?.sidekickId ?? null, request.writer?.runId ?? null, request.authorityGeneration,
       );
-      for (const userId of people) {
-        this.sql.exec(
-          `INSERT INTO canvas_participants (canvas_id, user_id, source, added_by_user_id, added_at) VALUES (?, ?, 'sidekick', NULL, ?)`,
-          this.canvasId, userId, now,
-        );
-      }
       this.host.noteCanvasDirectoryChanged(this.canvasId);
       return { created: true };
     });
@@ -214,12 +278,12 @@ export class HostedCanvas {
     return row !== null && canvasReaderAllows(row, actor, this.sql);
   }
 
-  /** Whether this person changes who can open it (`canvasManages`). */
+  /** Whether this person changes who can open it (`canvasManages`; a writer Sidekick's managers by `sidekickManagerAllows`). */
   manages(row: CanvasRow, actor: CanvasActor): boolean {
     const sidekick = row.writer_sidekick_id ? writerSidekick(this.sql, row.writer_sidekick_id) : null;
     return canvasManages({
       creator: row.created_by_user_id === actor.userId,
-      writerManager: sidekick !== null && (sidekick.author_user_id === actor.userId || sidekick.run_as_user_id === actor.userId),
+      writerManager: sidekick !== null && sidekickManagerAllows(sidekick, actor),
     }, actor.actorRole);
   }
 
@@ -229,26 +293,9 @@ export class HostedCanvas {
     ).toArray().map((row) => row.user_id);
   }
 
-  /** The Canvas's artifacts at their current versions, the most recently changed first. */
+  /** The Canvas's artifacts at their current versions; none until its Chat publishes one. */
   artifacts(): CanvasArtifact[] {
-    return this.sql.exec<{
-      id: string; title: string; mime_type: string | null; resource_type: string; current_version: number; updated_at: number;
-    }>(
-      `SELECT resource.id, resource.title, resource.mime_type, resource.resource_type, resource.current_version,
-              artifact.updated_at
-         FROM canvas_artifacts artifact JOIN resources resource ON resource.id = artifact.resource_id
-        WHERE artifact.canvas_id = ? AND ${listedResourceVisibilitySql("resource")}
-        ORDER BY artifact.updated_at DESC, resource.id`,
-      this.canvasId,
-    ).toArray().map((row) => ({
-      resourceId: row.id,
-      title: row.title.slice(0, 300),
-      mimeType: row.mime_type === null ? null : row.mime_type.slice(0, 160),
-      kind: row.resource_type === "generated_site" ? "site" as const
-        : row.mime_type === "application/zip" ? "archive" as const : "file" as const,
-      version: Math.max(1, Number(row.current_version)),
-      updatedAt: new Date(row.updated_at).toISOString(),
-    }));
+    return [];
   }
 
   /** The Canvas as this reader sees it; not found to anyone it does not admit. */
@@ -273,16 +320,14 @@ export class HostedCanvas {
   async setAudience(input: CanvasSetAudienceRequest): Promise<CanvasDetail> {
     const request = parseRpcInput(CanvasSetAudienceRequestSchema, input, "canvas_set_audience");
     const row = this.assertCanvas(request.workspaceId, request.canvasId);
-    if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
-    if (!this.manages(row, request.actor)) throw forbidden();
+    // A manager may always open it; anyone else it does not admit is told it does not exist.
+    if (!this.manages(row, request.actor)) throw canvasReaderAllows(row, request.actor, this.sql) ? forbidden() : notFound();
     const userIds = [...new Set(request.update.userIds)].filter((userId) => userId !== row.created_by_user_id);
     if (request.update.visibility === "participants" && userIds.length === 0) {
       throw new ApiError(422, "canvas_audience_participants_empty", "Name someone other than the creator to share a Canvas with");
     }
-    const relationships = await Promise.all(userIds.map((userId) => this.host.readRelationship(row.workspace_id, userId)));
-    if (relationships.some((relationship) => relationship?.status !== "active")) {
-      throw new ApiError(422, "canvas_audience_not_member", "Everyone a Canvas is shared with must be in the Organization");
-    }
+    await assertAudienceInOrganization((workspaceId, userId) => this.host.readRelationship(workspaceId, userId), row.workspace_id,
+      userIds, () => new ApiError(422, "canvas_audience_not_member", "Everyone a Canvas is shared with must be in the Organization"));
     const now = Date.now();
     this.host.storage.transactionSync(() => {
       const kept = new Set<string>(userIds);
@@ -318,10 +363,10 @@ export class HostedCanvas {
         const actor = relationship?.status === "active" && relationship.userId === request.userId
           ? { userId: relationship.userId, actorRole: relationship.accessClass === "guest" ? null : relationship.role } : null;
         if (!current || !actor || request.target.kind !== "workstream") return { allowed: false, reason: "grant_required" };
-        if (!canvasReaderAllows(current, actor, this.sql) || !this.manages(current, actor)) {
-          return { allowed: false, reason: "grant_required" };
-        }
-        return { allowed: true, writable: true, grantIds: [this.canvasId], workspaceMemberAccess: actor.actorRole !== null };
+        if (!this.manages(current, actor)) return { allowed: false, reason: "grant_required" };
+        // Whether this person reads it as a member of an Organization-wide Canvas, as a Channel answers.
+        return { allowed: true, writable: true, grantIds: [this.canvasId],
+          workspaceMemberAccess: current.visibility === "workspace" && actor.actorRole !== null };
       },
       () => true,
       (grant, now) => this.applyGrant(grant, now),

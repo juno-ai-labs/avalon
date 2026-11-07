@@ -1,6 +1,7 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 
+import { canvasReaderAllows, type CanvasRow } from "./hosted-canvas";
 import { sidekickAdmits } from "../services/authorization-policy";
 import {
   currentMemoryRevision,
@@ -286,6 +287,11 @@ function conversationSubject(conversation: MemoryConversation): { kind: MemorySu
       return { kind: "sidekick", id: conversation.parentId };
     case "space":
       return { kind: "channel", id: conversation.parentId };
+    // A Canvas's Chat is stored under the subject kind its conversation
+    // shape shares with a Thread's Main, keyed by the Canvas id; renaming the
+    // stored kind means rebuilding `memory_facts` for its CHECK.
+    case "canvas":
+      return { kind: "thread", id: conversation.parentId };
   }
 }
 
@@ -295,11 +301,13 @@ type ParsedSource =
   | { kind: "thread"; workstreamId: string }
   | { kind: "breakout"; workstreamId: string; substreamId: string }
   | { kind: "space"; spaceId: string }
-  | { kind: "sidekick"; automationId: string };
+  | { kind: "sidekick"; automationId: string }
+  | { kind: "canvas"; canvasId: string };
 
 export function parseMemorySource(source: string): ParsedSource {
   if (source.startsWith("sidekick:")) return { kind: "sidekick", automationId: source.slice("sidekick:".length) };
   if (source.startsWith("space:")) return { kind: "space", spaceId: source.slice("space:".length) };
+  if (source.startsWith("canvas:")) return { kind: "canvas", canvasId: source.slice("canvas:".length) };
   const slash = source.indexOf("/");
   if (slash > 0) return { kind: "breakout", workstreamId: source.slice(0, slash), substreamId: source.slice(slash + 1) };
   return { kind: "thread", workstreamId: source };
@@ -393,11 +401,13 @@ function openableByPerson(sql: SqlStorage, person: ResolvedPerson, sources: Read
   const breakouts: string[] = [];
   const spaces: string[] = [];
   const sidekicks: string[] = [];
+  const canvases: string[] = [];
   for (const source of sources) {
     const parsed = parseMemorySource(source);
     if (parsed.kind === "thread") threads.push(parsed.workstreamId);
     else if (parsed.kind === "breakout") breakouts.push(source);
     else if (parsed.kind === "space") spaces.push(parsed.spaceId);
+    else if (parsed.kind === "canvas") canvases.push(parsed.canvasId);
     else sidekicks.push(parsed.automationId);
   }
   if (threads.length > 0) {
@@ -458,7 +468,20 @@ function openableByPerson(sql: SqlStorage, person: ResolvedPerson, sources: Read
       }, member)) open.add(`sidekick:${row.automation_id}`);
     }
   }
+  // Whoever the Canvas admits, the rule its canonical reads apply.
+  for (const row of canvasRows(sql, canvases)) {
+    if (canvasReaderAllows(row, {
+      userId: person.userId, actorRole: admitsOrganizationWide(person.accessClass) ? "member" : null,
+    }, sql)) open.add(`canvas:${row.canvas_id}`);
+  }
   return open;
+}
+
+function canvasRows(sql: SqlStorage, canvasIds: readonly string[]): CanvasRow[] {
+  if (canvasIds.length === 0) return [];
+  return sql.exec<CanvasRow>(
+    `SELECT * FROM canvas_directory WHERE ${inJsonList("canvas_id")}`, JSON.stringify(canvasIds),
+  ).toArray();
 }
 
 /** What a Sidekick may open: itself and its home conversation. */
@@ -480,11 +503,13 @@ function openableByEveryMember(sql: SqlStorage, sources: ReadonlySet<string>): S
   const breakouts: string[] = [];
   const spaces: string[] = [];
   const sidekicks: string[] = [];
+  const canvases: string[] = [];
   for (const source of sources) {
     const parsed = parseMemorySource(source);
     if (parsed.kind === "thread") threads.push(parsed.workstreamId);
     else if (parsed.kind === "breakout") breakouts.push(source);
     else if (parsed.kind === "space") spaces.push(parsed.spaceId);
+    else if (parsed.kind === "canvas") canvases.push(parsed.canvasId);
     else sidekicks.push(parsed.automationId);
   }
   if (threads.length > 0) {
@@ -512,6 +537,9 @@ function openableByEveryMember(sql: SqlStorage, sources: ReadonlySet<string>): S
   }
   for (const row of sidekickRows(sql, sidekicks)) {
     if (row.scope === "workspace") open.add(`sidekick:${row.automation_id}`);
+  }
+  for (const row of canvasRows(sql, canvases)) {
+    if (row.visibility === "workspace") open.add(`canvas:${row.canvas_id}`);
   }
   return open;
 }
@@ -582,6 +610,22 @@ function conversationAudience(sql: SqlStorage, conversation: MemoryConversation)
       return sidekickRows(sql, [conversation.parentId]).length === 1
         ? { kind: "sidekick", automationId: conversation.parentId }
         : null;
+    case "canvas": {
+      const row = canvasRows(sql, [conversation.parentId])[0];
+      if (!row) return null;
+      if (row.visibility === "workspace") return { kind: "members" };
+      const writer = row.writer_sidekick_id ? sidekickRows(sql, [row.writer_sidekick_id])[0] : undefined;
+      if (writer?.scope === "workspace") return { kind: "members" };
+      return {
+        kind: "people",
+        userIds: [...new Set([row.created_by_user_id,
+          ...sql.exec<{ user_id: string }>(`SELECT user_id FROM canvas_participants WHERE canvas_id = ?`, row.canvas_id)
+            .toArray().map((participant) => participant.user_id),
+          ...(writer ? [writer.author_user_id, ...(writer.run_as_user_id ? [writer.run_as_user_id] : []),
+            ...sql.exec<{ user_id: string }>(`SELECT user_id FROM sidekick_audience WHERE sidekick_id = ?`, writer.automation_id)
+              .toArray().map((reader) => reader.user_id)] : [])])],
+      };
+    }
     case "space": {
       const space = sql.exec<{ scope: string; archived_at: number | null }>(
         `SELECT scope, archived_at FROM spaces WHERE space_id = ?`, conversation.parentId,
@@ -691,6 +735,8 @@ function conversationSubjects(sql: SqlStorage, workspaceId: string, conversation
       channels = sql.exec<{ space_id: string; title: string }>(
         `SELECT space_id, title FROM spaces WHERE space_id = ? AND archived_at IS NULL`, conversation.parentId,
       ).toArray().map((row) => ({ id: row.space_id, title: row.title }));
+      break;
+    case "canvas":
       break;
   }
   for (const channel of channels) keys.push(subjectKey("channel", channel.id));
@@ -953,6 +999,7 @@ function titlesFor(sql: SqlStorage, facts: readonly MemoryFact[]): Array<{ key: 
       if (parsed.kind === "thread") want(threads, parsed.workstreamId, source);
       else if (parsed.kind === "breakout") want(breakouts, source, source);
       else if (parsed.kind === "space") want(spaces, parsed.spaceId, source);
+      else if (parsed.kind === "canvas") want(threads, parsed.canvasId, source);
       else want(sidekicks, parsed.automationId, source);
     }
   }
@@ -977,6 +1024,8 @@ function titlesFor(sql: SqlStorage, facts: readonly MemoryFact[]): Array<{ key: 
     ).toArray()) emit(spaces, row.space_id, row.title);
   }
   for (const row of sidekickRows(sql, [...sidekicks.keys()])) emit(sidekicks, row.automation_id, row.title);
+  // A Canvas's facts sit in the `thread` bucket, keyed by the Canvas id.
+  for (const row of canvasRows(sql, [...threads.keys()])) emit(threads, row.canvas_id, row.title);
   return titles;
 }
 
@@ -1357,6 +1406,12 @@ function sweepPlacement(
       const row = sql.exec<{ title: string }>(`SELECT title FROM spaces WHERE space_id = ?`, conversation.parentId).toArray()[0];
       if (!row) return null;
       subject = { kind: "channel", id: conversation.parentId, title: row.title };
+      break;
+    }
+    case "canvas": {
+      const row = canvasRows(sql, [conversation.parentId])[0];
+      if (!row) return null;
+      subject = { kind: "thread", id: conversation.parentId, title: row.title };
       break;
     }
   }
