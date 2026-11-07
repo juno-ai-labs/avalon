@@ -344,9 +344,9 @@ search until those loops go with Threads.
 
 **Why:** No Thread or Breakout remains to merge from after the Canvases and
 Sidekicks cutover, and the merge route went with the Thread routes. The prompt
-vocabulary that still names merging (`conversationsSystemMessage`'s `merges`
-line, now always off) is left to plan step C-5, which rewrites that vocabulary
-under its golden hashes.
+vocabulary that named merging (`conversationsSystemMessage`'s `merges`
+line, always off since then, and `mergeInstruction`) was deleted in plan step
+C-2; no golden hash covered it, because no loop could turn it on.
 
 ### 2026-11-06 — A post that names no conversation lands in the Sidekick's own conversation
 
