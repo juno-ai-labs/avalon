@@ -528,6 +528,8 @@ correct, so only repeated reads without `msLeft()` are evidence.
 **Consequences:** `TEST_WARNING_DEADLINE_SHARE` follows the guide's "about three
 quarters"; a change to one should change the other.
 
+Shipped in juno-ai-labs/avalon#1488.
+
 ### 2026-11-07 — A program reads its own time left
 
 **What changed:** The entry module passes the program `msLeft()`, the
