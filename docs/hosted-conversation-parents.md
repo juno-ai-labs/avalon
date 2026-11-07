@@ -213,7 +213,7 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 
 | Condition | Behavior |
 | --- | --- |
-| A child reports an effect for a retired Thread or Space parent | 409 `conversation_parent_kind_retired:<kind>`; the Queue retries and dead-letters it, which is the signal. |
+| A child reports an effect for a retired Thread or Space parent, or such a parent's own `parent_effect` arrives late | 409 `conversation_parent_kind_retired:<kind>` (the consumer throws the same name for a `parent_effect`); the Queue retries and dead-letters it, which is the signal. |
 | A child is reserved under an id the Organization does not host | 404 `conversation_parent_not_found`. |
 | A mention or an add arrives under an identity already recorded with another intent id or other bytes | `notification_intent_identity_conflict`; the Queue retries and dead-letters it. A producer that reuses an identity is the defect. |
 | A stored Sidekick appearance no longer parses | The Sidekick is listed without one and logged `automation_directory_appearance_invalid`. |
