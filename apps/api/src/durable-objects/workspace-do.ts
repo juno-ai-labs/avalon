@@ -509,11 +509,7 @@ import {
   WorkspaceConnectorResourceResolveRequestSchema,
   WorkspaceDiscoveredResourcesRequestSchema,
   WorkspaceExpiredDraftReapRequestSchema,
-  WorkspaceInboundEmailClaimRequestSchema,
-  WorkspaceInboundEmailFailureRequestSchema,
-  WorkspaceInboundEmailLeaseRequestSchema,
   WorkspaceInboundEmailResourceRequestSchema,
-  WorkspaceInboundEmailSettleRequestSchema,
   WorkspaceReapableResourceObjectListRequestSchema,
   WorkspaceResourceDescriptorsRequestSchema,
   WorkspaceResourceExistsRequestSchema,
@@ -534,15 +530,8 @@ import {
   type WorkspaceDiscoveredResourcesRequest,
   type WorkspaceExpiredDraftReapRequest,
   type WorkspaceExpiredDraftReapResult,
-  type WorkspaceInboundEmailClaimRequest,
-  type WorkspaceInboundEmailClaimResult,
-  type WorkspaceInboundEmailFailureRequest,
-  type WorkspaceInboundEmailLeaseRequest,
-  type WorkspaceInboundEmailLeaseResult,
   type WorkspaceInboundEmailResourceRequest,
   type WorkspaceInboundEmailResourceResult,
-  type WorkspaceInboundEmailSettleRequest,
-  type WorkspaceInboundEmailSettleResult,
   type WorkspaceReapableResourceObjectList,
   type WorkspaceReapableResourceObjectListRequest,
   type WorkspaceResourceDescriptorList,
@@ -572,7 +561,6 @@ import {
   type WorkspaceUploadDraftDeleteResult,
 } from "./workspace-resources-protocol";
 import {
-  claimWorkspaceInboundEmailReceipt,
   claimWorkspaceResourceObjectRemoval,
   claimWorkspaceResourceSlug,
   createWorkspaceUploadDraft,
@@ -584,14 +572,11 @@ import {
   listWorkspaceResourceVersions,
   publishWorkspaceResourceHydration,
   reapWorkspaceExpiredDraftResources,
-  recordWorkspaceInboundEmailFailure,
   recordWorkspaceResourceObjectCleanupFailure,
   refreshWorkspaceResourceHydration,
   renameWorkspaceResource,
-  renewWorkspaceInboundEmailLease,
   resolveWorkspaceConnectorResource,
   retireWorkspaceResourceObjectStaging,
-  settleWorkspaceInboundEmailProcessed,
   upsertWorkspaceDiscoveredResources,
   upsertWorkspaceInboundEmailResource,
   workspaceResourceDescriptors,
@@ -5464,7 +5449,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (input.pinned && !visible) return { ok: false };
     const pins = new WorkspacePinStorage(this.state.storage);
     const now = Date.now();
-    const changed = input.pinned ? pins.pin(input.userId, input.kind, input.itemId, null, now) : pins.unpin(input.userId, input.kind, input.itemId);
+    const changed = input.pinned ? pins.pin(input.userId, input.kind, input.itemId, now) : pins.unpin(input.userId, input.kind, input.itemId);
     if (changed) this.publishPinnedList(input.kind, input.userId);
     return { ok: true };
   }
@@ -10007,50 +9992,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceResourceSlugBacklogRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return listWorkspaceResourcesAwaitingSlug(this.state.storage, request.workspaceId);
-  }
-
-  /**
-   * Claim — or reclaim after an expired lease — one inbound email's
-   * processing. The insert, the duplicate read and the expired-lease takeover
-   * used to be three separate round trips through the runtime facade.
-   */
-  async claimInboundEmailReceipt(
-    input: WorkspaceInboundEmailClaimRequest,
-  ): Promise<WorkspaceInboundEmailClaimResult> {
-    await this.initialized;
-    const request = WorkspaceInboundEmailClaimRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return claimWorkspaceInboundEmailReceipt(this.state.storage, request);
-  }
-
-  /** Extend a held inbound-email lease, or report that it was lost. */
-  async renewInboundEmailLease(
-    input: WorkspaceInboundEmailLeaseRequest,
-  ): Promise<WorkspaceInboundEmailLeaseResult> {
-    await this.initialized;
-    const request = WorkspaceInboundEmailLeaseRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return renewWorkspaceInboundEmailLease(this.state.storage, request);
-  }
-
-  /** Settle a processed inbound email under its lease, releasing the lease. */
-  async settleInboundEmailProcessed(
-    input: WorkspaceInboundEmailSettleRequest,
-  ): Promise<WorkspaceInboundEmailSettleResult> {
-    await this.initialized;
-    const request = WorkspaceInboundEmailSettleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return settleWorkspaceInboundEmailProcessed(this.state.storage, request);
-  }
-
-  /** Record an inbound-email processing failure and release its lease. */
-  async recordInboundEmailFailure(
-    input: WorkspaceInboundEmailFailureRequest,
-  ): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceInboundEmailFailureRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    recordWorkspaceInboundEmailFailure(this.state.storage, request);
   }
 
   /**
