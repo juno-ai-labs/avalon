@@ -112,7 +112,7 @@ export const SidekickRunNotificationSchema = z.strictObject({
   kind: z.enum(["needs_input", "run_finished"]),
   sidekickId: z.string().min(1),
   runId: z.string().min(1),
-  sidekickName: z.string().max(300),
+  sidekickName: z.string(),
   state: z.enum(["needs_input", "completed", "failed", "stopped"]),
   reply: z.string().nullable(),
   occurredAt: z.number().int().nonnegative(),

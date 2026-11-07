@@ -860,6 +860,86 @@ describe("Durable Objects in the Workers runtime", () => {
     return socket;
   }
 
+  it("orders presence across hibernation and clears it when a Canvas is narrowed", async () => {
+    await seedOpenAuthority();
+    const otherUserId = asUserId("00000000-0000-7000-8000-00000000040a");
+    const otherSessionId = `${SESSION_ID}-presence`;
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+        VALUES (?, ?, 'active', 'member', '2026-08-26T20:00:00.000Z')`).bind(WORKSPACE_ID, otherUserId),
+      env.DB.prepare(`INSERT INTO sessions
+        (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(otherSessionId, otherUserId, WORKSPACE_ID),
+    ]);
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
+    // A Canvas every member opens, made by the first viewer.
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO canvas_directory
+          (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, visibility, authority_generation)
+        VALUES (?, ?, 'Foreground presence', ?, 0, 0, 'workspace', 1)`, WORKSTREAM_ID, WORKSPACE_ID, USER_ID);
+    });
+
+    const first = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-00000000040c");
+    const second = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-00000000040d", otherSessionId, otherUserId);
+    try {
+      const firstUpdate = nextMessageOfType(first, "workspace_presence");
+      first.send(JSON.stringify({
+        type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      expect(await firstUpdate).toMatchObject({ type: "workspace_presence", workstreamId: WORKSTREAM_ID, userIds: [] });
+      await evictDurableObject(workspace);
+      // An auth query yields the DO input gate. A newer revision must fence an
+      // older handler that resumes later, even when the newer state itself did
+      // not change and therefore emitted no snapshot.
+      first.send(JSON.stringify({
+        type: "set_presence", revision: 2, applicationState: "foreground", foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      first.send(JSON.stringify({
+        type: "set_presence", revision: 1, applicationState: "background", foregroundWorkstreamId: null,
+      }));
+      const firstAfterWake = nextMessageOfType(first, "workspace_presence");
+      const secondAfterWake = nextMessageOfType(second, "workspace_presence");
+      second.send(JSON.stringify({
+        type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      expect(await firstAfterWake).toMatchObject({ workstreamId: WORKSTREAM_ID, userIds: [otherUserId] });
+      expect(await secondAfterWake).toMatchObject({ workstreamId: WORKSTREAM_ID, userIds: [USER_ID] });
+
+      // Narrowing the Canvas to its creator removes the other viewer. The
+      // creator gets a canonical empty set while the removed socket stays
+      // connected but backgrounded.
+      const afterNarrowing = nextMessageOfType(first, "workspace_presence");
+      await workspace.canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: WORKSTREAM_ID,
+        actor: { userId: USER_ID, actorRole: "member" }, update: { visibility: "creator", userIds: [] } });
+      expect(await afterNarrowing).toMatchObject({ workstreamId: WORKSTREAM_ID, userIds: [] });
+      expect(second.readyState).toBe(WebSocket.OPEN);
+      await runInDurableObject(workspace, (_instance, state) => {
+        const removed = state.getWebSockets()
+          .map((socket) => socket.deserializeAttachment() as Record<string, unknown>)
+          .find((candidate) => candidate.userId === otherUserId);
+        expect(removed).toMatchObject({ applicationState: "background", foregroundWorkstreamId: null });
+      });
+
+      // Opening it again alone does not put them back: they are present again
+      // only once their window says so.
+      await workspace.canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: WORKSTREAM_ID,
+        actor: { userId: USER_ID, actorRole: "member" }, update: { visibility: "workspace", userIds: [] } });
+      await runInDurableObject(workspace, (_instance, state) => {
+        const restored = state.getWebSockets()
+          .map((socket) => socket.deserializeAttachment() as Record<string, unknown>)
+          .find((candidate) => candidate.userId === otherUserId);
+        expect(restored).toMatchObject({ applicationState: "background", foregroundWorkstreamId: null });
+      });
+    } finally {
+      first.close();
+      second.close();
+    }
+  });
+
   it("re-evaluates a changed product flag privately for subscribed users", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
@@ -1344,6 +1424,60 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(state.storage.sql.exec<{ event_id: string }>(
         "SELECT event_id FROM workspace_connector_events ORDER BY event_id",
       ).toArray().map((row) => row.event_id)).toEqual([ids.recent, ids.pendingOld, ids.failedOld]);
+    });
+  });
+
+  it("arms the alarm for a connector event's expiry when it settles as processed", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const eventId = "00000000-0000-7000-8000-000000000316";
+    const processingOwnerId = "00000000-0000-7000-8000-000000000317";
+    await stub.ingestConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      ingressEventId: eventId,
+      payloadHash: `sha256:${"e".repeat(64)}`,
+      event: connectorEvent(eventId),
+    });
+    // Due an hour from now: late enough that workerd does not fire it before
+    // the assertion reads it, and later than anything else this object waits on.
+    const expiresAt = Date.now() + 60 * 60_000;
+    await runInDurableObject(stub, async (_instance, state) => {
+      state.storage.sql.exec(
+        "UPDATE workspace_connector_events SET received_at = ? WHERE event_id = ?",
+        expiresAt - 90 * 24 * 60 * 60_000, eventId,
+      );
+      await state.storage.deleteAlarm();
+    });
+    const claim = WorkspaceConnectorEventClaimResultSchema.parse(await stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId,
+      processingOwnerId,
+      attempt: 0,
+      orchestrator: "queue",
+    }));
+    if (claim.outcome !== "claimed") throw new Error("expected the connector event to be claimed");
+    const settle = () => stub.settleConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId,
+      processingOwnerId,
+      processingLeaseId: claim.processingLeaseId,
+      outcome: "processed",
+      error: null,
+    });
+    await settle();
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).toBe(expiresAt);
+      // As if the first settle committed its row and died before arming.
+      await state.storage.deleteAlarm();
+    });
+    await settle();
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).toBe(expiresAt);
     });
   });
 

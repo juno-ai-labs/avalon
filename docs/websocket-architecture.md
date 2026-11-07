@@ -463,13 +463,11 @@ audience, are in
 [`realtime-sockets.md`](realtime-sockets.md#electron-connection-topology).
 
 **A resource's new version** (`workspace_resource_versions`) goes to every
-socket whose person may open the Main of a thread that links the resource, the
-gate an artifact pin reads under, or who reads a Channel a merge shared it
-with, the gate the resource read check applies
-([`authorization.md`](authorization.md)). Only a thread's directory projection writes
-those links, so a resource only a Channel's own conversation holds is not
-announced here; that conversation's socket still sends `resource_updated`. An
-unlisted resource is never named. It covers every resource
+socket whose person may open a Canvas the resource is an artifact of
+(`canvas_artifacts`, written by the publish that attached it;
+`canvasReaderAllows` decides who may open it). A resource no Canvas lists is
+not announced here; its conversation's socket still sends `resource_updated`.
+An unlisted resource is never named. It covers every resource
 type and every producer, because versions are only ever written by the
 `resources` triggers: a trigger on `resource_versions` notes each new version
 in `workspace_resource_version_changes` (WorkspaceDO migration 114), and the
@@ -930,6 +928,22 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-11-07 — A new version is announced to a Canvas's readers, and narrowing a Canvas clears presence
+
+**What changed:** `workspace_resource_versions` reads which Canvases list a
+resource from `canvas_artifacts` instead of `workspace_workstream_resource_links`,
+and `canvasSetAudience` re-broadcasts presence, so someone a narrowed Canvas
+no longer admits stops being shown in it and is backgrounded. The unused
+`publishNavigationState` (the `workspace_navigation_state` sender) is gone.
+
+**Why:** Only the retired Thread directory projection wrote
+`workspace_workstream_resource_links`, so after plan step C-2 no Canvas
+artifact's new version reached an open preview. Presence was re-checked only on
+socket changes and revocations, never on a Canvas's audience, so a person
+removed from a Canvas stayed listed in it. The restored runtime tests
+(`workspace-resource-versions.test.ts`, the presence case in
+`durable-object-runtime.test.ts`) were what showed both.
 
 ### 2026-11-07 — Settings is the relay's only consumer
 
