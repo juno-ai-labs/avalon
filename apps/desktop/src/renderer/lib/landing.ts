@@ -10,12 +10,14 @@ export const LANDING_ROUTE = '/canvases';
 
 /**
  * Whether a route saved as `last-route` may be reopened at launch: a Canvas or
- * a Sidekick, or either home. Anything else, including a Channel or Thread
- * route saved before the 2026-11 cutover, opens the landing instead.
+ * a Sidekick by its id, or either home. Anything else opens the landing
+ * instead: a Channel or Thread route saved before the 2026-11 cutover, and
+ * `/sidekicks/new`, whose screen creates a Sidekick as it mounts, so reopening
+ * it would make one on every launch.
  */
 export function restorableRoute(saved: string | null): string | null {
   if (!saved) return null;
-  return /^\/(canvases|sidekicks)(\/[^/?#]+)?$/.test(saved) ? saved : null;
+  return /^\/(canvases|sidekicks)(\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/i.test(saved) ? saved : null;
 }
 
 /** Leave for the landing. Replaces, so Back cannot return to a screen the API no longer serves. */
