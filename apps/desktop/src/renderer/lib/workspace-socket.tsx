@@ -295,10 +295,6 @@ function invalidateTopic(
     // longer names them — it carries REST details and the broader Sidekick library.
     automations: [
       ['automation'], ['automation-draft'], ['automation-runs'], ['sidekicks-library'],
-      // The workstream's owned and recommended Sidekicks, plus what its
-      // conversation loaded. A room's row never travels in the
-      // pushed sidebar list, so this topic is what tells its rails to re-read.
-      ['attached-sidekicks'], ['workstream-sidekicks'], ['recommended-sidekicks'],
     ],
     sidekick_activity: [],
     notes: [['note']],
@@ -1364,8 +1360,6 @@ export function WorkspaceSocketProvider({
               void queryClient.invalidateQueries({ queryKey: ['automation'] });
               void queryClient.invalidateQueries({ queryKey: ['automation-runs'] });
               void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
-              void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks'] });
-              void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks'] });
               // Relayed as the `automations` topic it amounts to, so the
               // Sidekicks window, which reads these surfaces and not the list,
               // hears it without a socket of its own.
