@@ -1218,8 +1218,8 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS } from "./canvas-schema";
-import { canvasReaderAllows, canvasSidebarRows, HostedCanvas, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
+import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS } from "./canvas-schema";
+import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
@@ -1284,7 +1284,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_reviews",
   "sidekick_audience", "sidekick_viewer_reads",
   // A hosted Canvas's own rows: `HostedCanvas` is their only writer.
-  "canvas_directory", "canvas_participants",
+  "canvas_directory", "canvas_participants", "canvas_artifacts",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
@@ -4901,6 +4901,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "pin a Canvas or a Sidekick in its list's Pinned group",
   // See CANVAS_SIDEKICK_PINS_STATEMENTS and docs/canvases.md#the-canvas-list.
   statements: CANVAS_SIDEKICK_PINS_STATEMENTS,
+}, {
+  version: 142,
+  description: "record the artifacts each Canvas's conversation generated",
+  // See CANVAS_ARTIFACTS_STATEMENTS and docs/canvases.md#artifacts-and-versions.
+  statements: CANVAS_ARTIFACTS_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -6736,6 +6741,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return (await this.hostedCanvas(input.canvasId, input.workspaceId)).detail(input);
   }
 
+  /** Record an artifact a publish attached to a Canvas; `noted: false` for an id that is no Canvas. See `HostedCanvas.noteArtifact`. */
+  async canvasNoteArtifact(input: Parameters<HostedCanvas["noteArtifact"]>[0]) {
+    const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
+    if (!canvas) return { noted: false };
+    return this.canvasWrite(() => canvas.noteArtifact(input));
+  }
+
+  /**
+   * Which Canvas a Sidekick run publishes into: the one named, which must be
+   * one this Sidekick writes, or the one this run already made; `null` when
+   * the run has made none yet, and its caller creates it.
+   */
+  async canvasForSidekickRun(input: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null }): Promise<{ canvasId: string | null }> {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    if (input.canvasId !== null) {
+      const row = this.state.storage.sql.exec<{ writer_sidekick_id: string | null }>(
+        `SELECT writer_sidekick_id FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
+      ).toArray()[0];
+      if (row?.writer_sidekick_id !== input.sidekickId) {
+        throw new ApiError(404, "canvas_not_written_by_sidekick", "This Sidekick does not write that Canvas");
+      }
+      return { canvasId: input.canvasId };
+    }
+    return { canvasId: this.state.storage.sql.exec<{ canvas_id: string }>(
+      `SELECT canvas_id FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`, input.sidekickId, input.runId,
+    ).toArray()[0]?.canvas_id ?? null };
+  }
+
+  /** The Canvases a Sidekick writes that this viewer may open; see `canvasesWrittenBy`. */
+  async canvasesWrittenBySidekick(input: { workspaceId: string; sidekickId: string; actor: { userId: string; actorRole: "owner" | "admin" | "member" | null } }) {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    return canvasesWrittenBy(this.state.storage.sql, input.sidekickId, input.actor);
+  }
+
   /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */
   async canvasSetAudience(input: Parameters<HostedCanvas["setAudience"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
@@ -7119,8 +7160,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.reconcileLoadable(input));
   }
 
-  async sidekickReadDetail(input: Parameters<HostedSidekick["readDetail"]>[0]) {
-    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readDetail(input));
+  async sidekickReadDetail(input: Parameters<HostedSidekick["readDetail"]>[0]): Promise<AutomationDetail> {
+    const detail = await this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readDetail(input));
+    // "The Canvases it writes to": a query on the Canvas directory, in the same call.
+    return { ...detail, canvases: canvasesWrittenBy(this.state.storage.sql, input.automationId,
+      { userId: input.actor.userId, actorRole: input.actor.actorRole ?? null }) };
   }
 
   async sidekickSetAppearance(input: Parameters<HostedSidekick["setAppearance"]>[0]) {

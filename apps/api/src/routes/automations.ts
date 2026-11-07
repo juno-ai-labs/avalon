@@ -16,6 +16,8 @@ import type { HonoAppEnv } from "../env";
 import { getAuth, getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime";
 import { AutomationService } from "../services/automation-service";
+import { CanvasService } from "../services/canvas-service";
+import { SidebarPinRequestSchema } from "@rally/contracts/canvases";
 import { SidekickDelegationService } from "../services/sidekick-delegation-service";
 
 const idParam = z.object({ id: IdSchema });
@@ -104,6 +106,11 @@ automationRoutes.post("/:id/audience", zValidator("param", idParam),
     await new AutomationService(c.env, getWorkspaceAuth(c))
       .setAudience(c.req.valid("param").id, c.req.valid("json")),
   ))));
+// Pin in, or out of, the Sidekick list's Pinned group; the viewer's own.
+automationRoutes.post("/:id/pin", zValidator("param", idParam), zValidator("json", SidebarPinRequestSchema), async (c) => {
+  await new CanvasService(c.env, getWorkspaceAuth(c)).pin("sidekick", c.req.valid("param").id, c.req.valid("json").pinned);
+  return c.body(null, 204);
+});
 automationRoutes.post("/:id/pause", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getWorkspaceAuth(c)).pause(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.post("/:id/resume", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getWorkspaceAuth(c)).resume(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.post("/:id/archive", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getWorkspaceAuth(c)).archive(c.req.valid("param").id); return c.body(null, 204); });

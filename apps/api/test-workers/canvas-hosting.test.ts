@@ -17,6 +17,7 @@ import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { workspaceDOName } from "../src/durable-objects/names";
+import { claimScopeInvitations } from "../src/services/scope-invitation-claims";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 
 let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000ca000");
@@ -28,6 +29,8 @@ const ADMIN = asUserId("00000000-0000-7000-8000-0000000ca004");
 const GUEST = asUserId("00000000-0000-7000-8000-0000000ca005");
 /** A guest of the Organization through some other share, never invited here. */
 const OUTSIDER = asUserId("00000000-0000-7000-8000-0000000ca006");
+/** Someone with no account yet: a share to them waits for their first sign-in. */
+const NEWCOMER = asUserId("00000000-0000-7000-8000-0000000ca007");
 let CANVAS_ID = asWorkstreamId("00000000-0000-7000-8000-0000000ca100");
 
 const member = (userId: string) => ({ userId: asUserId(userId), actorRole: "member" as const });
@@ -116,6 +119,23 @@ describe("who can open a Canvas", () => {
     expect(await opens(guest(OUTSIDER))).toBe(false);
     const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) });
     expect(detail).toMatchObject({ visibility: "participants", participantUserIds: [GUEST] });
+  });
+
+  it("waits for a recipient without an account, and opens to them once they sign in", async () => {
+    const result = await workspace().createScopeInvitations({
+      operationId: crypto.randomUUID(), workspaceId: WORKSPACE_ID, parentId: CANVAS_ID, actorUserId: CREATOR,
+      emails: ["newcomer@example.test"], targets: [{ kind: "workstream", workspaceId: WORKSPACE_ID, parentId: CANVAS_ID }],
+      expiresAt: null,
+    });
+    expect(result).toMatchObject({ status: "created", invitations: [{ status: "pending", acceptedByUserId: null }] });
+    // They verify their mailbox and sign in: signing in claims what waits for it.
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO users (id, name) VALUES (?, NULL)").bind(NEWCOMER),
+      env.DB.prepare("INSERT INTO user_verified_emails VALUES ('newcomer@example.test', ?)").bind(NEWCOMER),
+    ]);
+    expect(await opens(guest(NEWCOMER))).toBe(false);
+    await claimScopeInvitations(env, NEWCOMER);
+    expect(await opens(guest(NEWCOMER))).toBe(true);
   });
 
   it("refuses an invitation from someone who does not manage the Canvas", async () => {

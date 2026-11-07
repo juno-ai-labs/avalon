@@ -1,7 +1,10 @@
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import type { CanvasAudienceUpdate, CanvasDetail, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
 
 import { workspaceDOName } from "../durable-objects/names";
-import type { Env } from "../env";
+import type { AuthContext, Env } from "../env";
+import { ApiError } from "../lib/api-error";
+import { ConversationService } from "./conversation-service";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
@@ -28,16 +31,19 @@ export async function createCanvas(env: Env, input: {
   writer?: { sidekickId: string; runId: string };
 }): Promise<{ canvasId: string; created: boolean }> {
   const workspaceId = asWorkspaceId(input.workspaceId);
-  const canvasId = input.canvasId ?? uuidV7();
+  const requestedId = input.canvasId ?? uuidV7();
   const title = input.title?.trim() || UNTITLED_CANVAS;
   const authority = await readWorkstreamAuthorityControl(env);
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
     workspaceDOName(env.AVALON_REGION, workspaceId));
-  const { created } = await workspace.canvasCreate({
-    workspaceId, canvasId, title, createdByUserId: asUserId(input.creatorUserId),
+  const made = await workspace.canvasCreate({
+    workspaceId, canvasId: requestedId, title, createdByUserId: asUserId(input.creatorUserId),
     authorityGeneration: authority.generation,
     ...(input.writer ? { writer: input.writer } : {}),
   });
+  // A run's second create answers with the Canvas its first made.
+  const canvasId = made.canvasId;
+  const created = made.created;
   await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, canvasId, "canvas");
   await provisionWorkstreamObject(env, {
     workspaceId,
@@ -56,4 +62,55 @@ export async function createCanvas(env: Env, input: {
     now: Date.now(),
   });
   return { canvasId, created };
+}
+
+/** A Canvas on behalf of an authenticated member or guest. */
+export class CanvasService {
+  constructor(private readonly env: Env, private readonly auth: AuthContext) {}
+
+  private workspace() {
+    return durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
+  }
+
+  private actor() {
+    return { userId: asUserId(this.auth.userId), actorRole: this.auth.role };
+  }
+
+  /**
+   * A new Canvas, and for the "Start from a prompt" card its first message,
+   * sent to the Chat as the creator's through the ordinary message admission.
+   * A guest makes none: a Canvas is the Organization's.
+   */
+  async create(request: CreateCanvasRequest): Promise<CreatedCanvas> {
+    if (this.auth.role === null) throw new ApiError(403, "canvas_create_member_required", "Only a member of the Organization can make a Canvas");
+    const { canvasId } = await createCanvas(this.env, {
+      workspaceId: this.auth.workspaceId, creatorUserId: this.auth.userId,
+      ...(request.title ? { title: request.title } : {}),
+    });
+    if (!request.prompt) return { canvasId: asWorkstreamId(canvasId), turnId: null };
+    const client = await new ConversationService(this.env, this.auth).writableClient(canvasId, "0");
+    const receipt = await client.createMessage({
+      text: request.prompt.text, clientMessageId: request.prompt.clientMessageId,
+      mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+    });
+    return { canvasId: asWorkstreamId(canvasId), turnId: receipt.turn.turnId };
+  }
+
+  async detail(canvasId: string): Promise<CanvasDetail> {
+    return (await this.workspace()).canvasDetail({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor() });
+  }
+
+  async setAudience(canvasId: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
+    return (await this.workspace()).canvasSetAudience({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), update });
+  }
+
+  /** Pin a Canvas or a Sidekick in, or out of, its list's Pinned group; refused for one the viewer may not open. */
+  async pin(kind: "canvas" | "sidekick", itemId: string, pinned: boolean): Promise<void> {
+    const result = await (await this.workspace()).setSidebarPin({
+      workspaceId: this.auth.workspaceId, userId: this.auth.userId, accessClass: this.auth.role === null ? "guest" : "member",
+      kind, itemId, pinned,
+    });
+    if (!result.ok) throw new ApiError(404, kind === "canvas" ? "canvas_not_found" : "sidekick_not_found", "That cannot be pinned here");
+  }
 }

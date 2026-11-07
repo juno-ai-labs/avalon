@@ -20,6 +20,11 @@ import type { AuthContext, Env } from "../src/env";
 import { createAccessContext } from "../src/services/authorization-service";
 import { projectAuthorization } from "../src/services/authorization-projection-service";
 import { createCanvas } from "../src/services/canvas-service";
+import { createAutomation } from "../src/services/automation-service";
+import { canvasArtifactNoter, resolveTerminalPublicationHome } from "../src/services/terminal/authority";
+import { createTerminalPortFactory } from "../src/services/terminal/object-port";
+import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { ConversationService } from "../src/services/conversation-service";
 import { verifySocketTicket } from "../src/services/socket-service";
 import { deliverChildEffects } from "./helpers/conversation-effects";
@@ -230,6 +235,72 @@ describe("the Canvas list", () => {
     expect(await workspace().setSidebarPin({ workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member",
       kind: "canvas", itemId: canvasId, pinned: true })).toEqual({ ok: false });
     for (const { socket } of [creator, outsider]) socket.close(1000, "done");
+  });
+});
+
+describe("a Canvas's artifacts", () => {
+  /** Publish a file from the Canvas's Chat through the Terminal's resource bridge, as Rally's publish_resource does. */
+  async function publish(canvasId: string, filePath: string, text: string) {
+    const bridge = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID),
+      createTerminalPortFactory(TEST_ENV, undefined, "0"), undefined, null, null, null, "0",
+      canvasArtifactNoter(TEST_ENV, { workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: canvasId, substreamId: asSubstreamId("0") }));
+    return bridge.publishResource({ workspaceId: WORKSPACE_ID, workstreamId: canvasId, harnessRunId: crypto.randomUUID(),
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(), executionPrincipal: { type: "user", userId: CREATOR },
+      signal: new AbortController().signal }, { filePath }, new TextEncoder().encode(text));
+  }
+
+  it("makes the first publish version 1 by Rally, a republish of the path a new version, and another path another artifact", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const detail = () => workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" } });
+    const first = await publish(canvasId, "plan.md", "# Launch plan");
+    expect(await detail()).toMatchObject({ lastEditor: { kind: "rally", id: null },
+      artifacts: [{ resourceId: first.resourceId, kind: "file", version: 1 }] });
+    const again = await publish(canvasId, "plan.md", "# Launch plan, revised");
+    expect(again.resourceId).toBe(first.resourceId);
+    expect((await detail()).artifacts).toMatchObject([{ resourceId: first.resourceId, version: 2 }]);
+    const other = await publish(canvasId, "budget.csv", "line,amount");
+    expect((await detail()).artifacts.map((artifact) => artifact.resourceId).sort())
+      .toEqual([first.resourceId, other.resourceId].sort());
+  });
+
+  it("publishes a Sidekick run into a Canvas it makes, open to whoever the Sidekick is shared with", async () => {
+    const sidekickId = crypto.randomUUID();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    await workspace().sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: sidekickId,
+      actor: { userId: CREATOR, actorRole: "member", participantOfOwningWorkstream: false },
+      update: { audience: "people", userIds: [MEMBER] } });
+    const runId = crypto.randomUUID();
+    const run = { workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId: sidekickId,
+      substreamId: asSubstreamId(runId), executionPrincipal: { type: "user" as const, userId: CREATOR } };
+    const home = await resolveTerminalPublicationHome(TEST_ENV, run, { title: "Weekly report" });
+    // The run's later publishes land in the same Canvas.
+    expect(await resolveTerminalPublicationHome(TEST_ENV, run)).toEqual(home);
+    const canvasId = home!.parentId;
+    const read = (userId: string, actorRole: "member" | "admin" = "member") => runInDurableObject(workspace(), async (instance: WorkspaceDO) => {
+      try {
+        return await instance.canvasDetail({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: asUserId(userId), actorRole } });
+      } catch (error) {
+        if ((error as { code?: string }).code === "canvas_not_found") return null;
+        throw error;
+      }
+    });
+    expect(await read(MEMBER)).toMatchObject({ title: "Weekly report", writerSidekickId: sidekickId, visibility: "creator",
+      participantUserIds: [] });
+    expect(await read(ADMIN, "admin")).not.toBeNull();
+    // Read live: the Sidekick shared with nobody else no longer opens its Canvas to them.
+    await workspace().sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: sidekickId,
+      actor: { userId: CREATOR, actorRole: "member", participantOfOwningWorkstream: false },
+      update: { audience: "personal", userIds: [] } });
+    expect(await read(MEMBER)).toBeNull();
+    // "The Canvases it writes to" is on the Sidekick's detail.
+    const sidekick = await runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.sidekickReadDetail({
+      workspaceId: WORKSPACE_ID, automationId: sidekickId,
+      actor: { userId: CREATOR, actorRole: "member", participantOfOwningWorkstream: false } }));
+    expect(sidekick.canvases).toMatchObject([{ id: canvasId }]);
+    // A Canvas another Sidekick never wrote cannot be named.
+    const { canvasId: elsewhere } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: elsewhere }))
+      .rejects.toMatchObject({ code: "canvas_not_written_by_sidekick" });
   });
 });
 
