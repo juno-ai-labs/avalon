@@ -11045,10 +11045,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * with this list.
    *
    * Everything is read from this object's own tables. A Canvas's Chat is
-   * decided by `canvasReaderAllows`; a Sidekick and a connection by the predicates canonical
-   * authorization shares (`sidekickAdmits`, `connectionAdmits`), and a
-   * Canvas's Chat by `canvasReaderAllows`, the rule opening the Canvas
-   * applies. One narrowing is search's own, from the PRD: a guest never holds
+   * decided by `canvasReaderAllows`, the rule opening the Canvas applies; a
+   * Sidekick and a connection by the predicates canonical authorization
+   * shares (`sidekickAdmits`, `connectionAdmits`). One narrowing is search's own, from the PRD: a guest never holds
    * a workspace connection. A person who is not an active member of the
    * Organization holds no groups.
    */
