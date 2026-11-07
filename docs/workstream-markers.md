@@ -1,5 +1,17 @@
 # Work-stream markers
 
+**Mostly retired (2026-11-07).** The ranking this document describes went with
+the Thread client (plan step C-2): `workstreamMarkerStatus`,
+`attention-ranking.ts` with `MARKER_PRECEDENCE` and `readerMarkerStatus`, the
+work-stream header and the Threads-tab rows are deleted, so no surface ranks
+the run's states against a reader's **unread**, **mentioned** or **unseen**.
+What survives is the vocabulary and the one drawing component:
+`WorkstreamMarkerStatus`, `statusLabel`, `statusDescription` and
+`harnessMarkerStatus` in `packages/ui/src/lib/format.ts`, `StatusDot`, the
+`sys.color.workstream` tokens, and the Sidekick run history in
+`automation-header.tsx`, the one surface that still draws a marker. The
+sections below are the record of the retired ranking.
+
 Some work-stream surfaces show a person one coloured dot, and this is what decides
 which colour it is. Eight states compete for that dot: five belong to the run
 (`running`, `needs_input`, `completed`, `stopped`, `failed`) and three belong
@@ -300,6 +312,23 @@ Schema migrations: work-stream object v18, WorkspaceDO v10. Both backfill
 existing rows as seen.
 
 ## Changelog
+
+### 2026-11-07 — The ranked marker is retired with the Thread client
+
+**What changed:** Plan step C-2 deleted the Thread, Breakout and Channel
+client surfaces, and with them `workstreamMarkerStatus`,
+`attention-ranking.ts` and every reader of the ranking. `StatusDot`, the state
+vocabulary and its tokens stay, read by the Sidekick run history.
+
+**Why:** The Canvases and Sidekicks PRD retires Threads, Breakouts and
+Channels; the ranking existed to give each of them one dot per reader, and no
+surface that remains draws one.
+
+**Consequences:** A new surface that needs a ranked dot starts from the
+record below rather than from code: the precedence it describes no longer has
+an implementation.
+
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-09-23 — Put conversation attention on shared count badges
 

@@ -1,8 +1,18 @@
 # Work-stream appearance
 
-**Retired server half (2026-11-07).** The identity operation `recolor`, the
-only writer of a thread's or Breakout's Channel colour, is deleted with the
-Thread it coloured; the sections below that describe it are history.
+**Mostly retired (2026-11-07).** Threads, Breakouts and Channels are deleted,
+and with them everything below that gives one an appearance: the header
+picker on the conversation socket, the Channel colour the server wrote into
+every thread and Breakout (`recolor`, `channel_color_sync`, dropped by
+WorkspaceDO migration 147), the sidebar-row reads
+(`use-workstreams-query.ts`, `channel-viewer-state.ts`), and the cache
+writers. What survives is shared catalog and drawing code: the icon catalog
+(`packages/contracts/src/appearance-icons.ts`, re-exported from
+`workstream-appearance.ts`), `IconCatalog`, `AppearancePicker`, and the
+resolver and glyphs in `packages/ui/src/components/workstream-glyph.tsx`. A
+Sidekick is the one surface that still picks an appearance
+(`automation-header.tsx`); [`automation-lifecycle.md`](automation-lifecycle.md#choosing-what-a-sidekick-looks-like)
+owns that. The sections below are the record of the retired mechanism.
 
 A Channel or Breakout has one icon and color shared by everyone who can read it. Clicking
 its header icon opens a compact palette: fixed colors above a scrolling icon grid.
