@@ -20,6 +20,7 @@ acknowledges the save, and conversational completion requires a persisted final
 assistant turn. The generic `completedByTool` harness outcome does not exempt a
 SubstreamAgent run from that terminalization requirement.
 
+
 `runRallyEvaluation` uses the production `runHarnessWithBind` assembly from an
 initial prepared scenario or a settled checkpoint. Bind owns checkpoint advancement
 and forks; Rally captures its flat projection and plugin/skill activation hints.
@@ -152,24 +153,24 @@ The host resolves stored-loadable Sidekicks against execution and conversation a
 
 ## Where the code lives
 
-| Path                                                                                     | Responsibility                                                                                                                                                                                                                                     |
-| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/agent-harness/src/bind-runtime.ts`                                             | The Bind adapter itself — registry construction, the tool loop's hooks, streaming.                                                                                                                                                                 |
-| `packages/agent-harness/src/tool-arguments.ts`                                           | Schema-guided numeric-string normalization, blanked-optional-argument stripping, and bounded model-visible argument errors.                                                                                                                        |
-| `scripts/eslint-rules/tool-input-boundaries.mjs`                                         | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions.                                                                                                                  |
-| `packages/agent-harness/src/prompts/`                                                    | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first.                                                                                                                                         |
-| `packages/agent-harness/src/skills.ts`, `built-in-skills.ts`, `task-skills/`             | The skill registry, its three bounds, and the built-in skill catalog, including procedures scoped by `ownerPlugin` and the task skills.                                                                                                            |
-| `packages/agent-harness/src/tool-activity.ts`                                            | `toolActivityName` — the prose every transcript row is labelled with.                                                                                                                                                                              |
-| `packages/agent-harness/src/tool-schema-safety.ts`                                       | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer _emits_, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
-| `apps/api/src/runtime/harness-run-runtime.ts`                                            | The host side: admission, the lease, run scope, receipts, terminal state.                                                                                                                                                                          |
-| `apps/api/src/durable-objects/substream-agent.ts`                                        | The post-cutover full-loop host, durable dispatcher, keep-alive, stream feed, steering, and child-local timers.                                                                                                                                    |
-| `apps/api/src/services/integrations.ts`                                                  | Context assembly and `loadRunPromptContext`.                                                                                                                                                                                                       |
-| `apps/api/src/services/sidekick-operation-accounts.ts`                                   | Per-operation delegate selection, safe fallback and private debug checkpoints.                                                                                                                                                                     |
-| `apps/api/src/services/completed-tool-replay.ts`                                         | Read-only tool-owned validation before a historical completed result is presented again.                                                                                                                                                           |
-| `apps/api/src/durable-objects/tool-execution-account.ts`                                 | Private account checkpoints in the existing receipt ledger.                                                                                                                                                                                        |
-| `apps/api/src/services/memory-table-service.ts`                                          | Table tool schemas, scoped access, actionable conflicts and preparation of declared tables.                                                                                                                                                        |
-| `apps/api/src/durable-objects/workspace-memory-storage.ts`, `memory-table-definition.ts` | Atomic table/metadata receipts, structural compatibility and the shared public table projection.                                                                                                                                                   |
-| `packages/contracts` — `readStructuredFailure`                                           | The shape a tool's machine-readable failure half is read through.                                                                                                                                                                                  |
+| Path | Responsibility |
+| --- | --- |
+| `packages/agent-harness/src/bind-runtime.ts` | The Bind adapter itself — registry construction, the tool loop's hooks, streaming. |
+| `packages/agent-harness/src/tool-arguments.ts` | Schema-guided numeric-string normalization, blanked-optional-argument stripping, and bounded model-visible argument errors. |
+| `scripts/eslint-rules/tool-input-boundaries.mjs` | Prevents individual tools from replacing the exact shared numeric-string policy with permissive coercion or compatibility unions. |
+| `packages/agent-harness/src/prompts/` | Every stable prompt. Byte-stable and golden-hashed; read [`writing-prompts.md`](writing-prompts.md) first. |
+| `packages/agent-harness/src/skills.ts`, `built-in-skills.ts`, `task-skills/` | The skill registry, its three bounds, and the built-in skill catalog, including procedures scoped by `ownerPlugin` and the task skills. |
+| `packages/agent-harness/src/tool-activity.ts` | `toolActivityName` — the prose every transcript row is labelled with. |
+| `packages/agent-harness/src/tool-schema-safety.ts` | The measured rule for what xAI reads as an object, two build-time checks over what Bind's sanitizer *emits*, and the run-time repair gated on one of them — that repair is the piece with the blast radius, since it rewrites third-party schemas. |
+| `apps/api/src/runtime/harness-run-runtime.ts` | The host side: admission, the lease, run scope, receipts, terminal state. |
+| `apps/api/src/durable-objects/substream-agent.ts` | The post-cutover full-loop host, durable dispatcher, keep-alive, stream feed, steering, and child-local timers. |
+| `apps/api/src/services/integrations.ts` | Context assembly and `loadRunPromptContext`. |
+| `apps/api/src/services/sidekick-operation-accounts.ts` | Per-operation delegate selection, safe fallback and private debug checkpoints. |
+| `apps/api/src/services/completed-tool-replay.ts` | Read-only tool-owned validation before a historical completed result is presented again. |
+| `apps/api/src/durable-objects/tool-execution-account.ts` | Private account checkpoints in the existing receipt ledger. |
+| `apps/api/src/services/memory-table-service.ts` | Table tool schemas, scoped access, actionable conflicts and preparation of declared tables. |
+| `apps/api/src/durable-objects/workspace-memory-storage.ts`, `memory-table-definition.ts` | Atomic table/metadata receipts, structural compatibility and the shared public table projection. |
+| `packages/contracts` — `readStructuredFailure` | The shape a tool's machine-readable failure half is read through. |
 
 ### Completion verification before stopping
 
@@ -383,7 +384,7 @@ For subsequent messages that need addressing classification, a lightweight class
 
 A message that invokes nothing is still a turn the model reads. The conversation object appends every such human or external text turn, and every Sidekick `conversation_post`, to the loop's projection at the next text admission, in transcript order, ahead of the input that follows it — rendered with a header saying it was said to the room, not to Rally, and naming its author (a member's `person_id`, or a Sidekick's `sidekick_id`), so the model reads it as context rather than as a request ([`workstream-durable-object.md`](workstream-durable-object.md)). An elicitation answer carries no such fill; the turns said while the question was open wait for the next text input.
 
-In a Sidekick's own conversation (substream `"0"` under the Sidekick) the classifier's answer decides only whether an agent answers. Which agent is the Sidekick's to say when the loop takes the message: the wizard for a sender who manages the Sidekick, otherwise a run under the Sidekick's definition with the message as its opening, which answers in its own conversation ([`automation-lifecycle.md`](automation-lifecycle.md#the-shared-conversation)). The conversation's own loop therefore runs only for a manager, and a message there always queues rather than steering.
+In a Sidekick's own conversation (substream `"0"` under the Sidekick) the classifier's answer decides only whether an agent answers. Which agent is the Sidekick's to say when the loop takes the message: a message its sender marked as a wizard edit (`intent: "edit_sidekick"`), or an answer to what the wizard asked, is the wizard's when the sender manages the Sidekick and is refused otherwise; every other message addressed there starts a run under the Sidekick's definition with the message as its opening, from a manager as much as from anyone, and the run answers in its own conversation ([`automation-lifecycle.md`](automation-lifecycle.md#the-shared-conversation)). A marked edit needs no classifier: the mark addresses it. The conversation's own loop therefore runs only the wizard, only for a manager, and a message there always queues rather than steering.
 
 A record-only message from the engineering bridge ([`engineering-mcp.md`](engineering-mcp.md#messages-and-text-reads)) never reaches either classifier: like a Breakout merge, it starts no run whatever the room's size. Apart from it, a demo seed action is the one message the classifier never sees. It carries a `seed` ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)) whose `assistant` turn says whether the line starts a run — present means yes, `null` means no — and the object takes that answer over the room's size and the message's attachments alike. The pack is the authority on which of its lines address Rally, and seeding a scripted conversation cannot wait on a live model's guess about each one. The field reaches the object only over its internal RPC; the message route has none.
 
@@ -431,7 +432,7 @@ work; there is no new wait registration, alarm, or task lifecycle.
 
 ### Naming
 
-A work stream is created under a provisional title — the first non-empty line of its objective — and named by a separate one-shot structured call a moment afterwards. The naming agent gets the objective and the opening message as bounded user-role data: the request is what is being named, never an instruction it follows, and a request asking for a particular name has no more authority than any other outside content. Reasoning is switched off rather than left to the model's default, because the model is relabelling text it has already been handed in full — asking for the lowest _effort_ would switch thinking on for a model that does none.
+A work stream is created under a provisional title — the first non-empty line of its objective — and named by a separate one-shot structured call a moment afterwards. The naming agent gets the objective and the opening message as bounded user-role data: the request is what is being named, never an instruction it follows, and a request asking for a particular name has no more authority than any other outside content. Reasoning is switched off rather than left to the model's default, because the model is relabelling text it has already been handed in full — asking for the lowest *effort* would switch thinking on for a model that does none.
 
 Naming sits outside the creation path deliberately. The person who typed the request is waiting on that response, the run starts against the unchanged objective, and the name arrives over the socket as `workstream_renamed`; a person renaming from the header publishes the same event. Until it arrives the title is a placeholder, so `workstreams.title_status` says so and the sidebar row and header render a skeleton rather than showing the request as though it were a name.
 
@@ -553,13 +554,13 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Substantial interactive work starts with a brief approach; updates then focus on changes to participants' expectations or decisions they need to make. Headless runs skip progress narration. Final responses lead with the result and omit padding while retaining requested detail and material caveats. The prompt owns the writing rules; its preference for natural language applies to style only and does not relax platform policy. Private reasoning is never emitted.
 
-A run of a room's Sidekick posts its result itself, with `conversation_post` from the preloaded `rally:conversations` plugin, which defaults to the home named by the task context's `sidekick.homeConversationId`; the plugin's system message, not standing policy, names the tool. Nothing posts after the run. A Sidekick no room owns runs on the `self_delivery` surface, whose section tells the run that any sending its instructions ask for is its own work, done with its tools inside the run, and that it sends nothing when they ask for no delivery; left silent, a run that _describes_ emailing a summary has not emailed it. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the home.
+A run of a room's Sidekick posts its result itself, with `conversation_post` from the preloaded `rally:conversations` plugin, which defaults to the home named by the task context's `sidekick.homeConversationId`; the plugin's system message, not standing policy, names the tool. Nothing posts after the run. A Sidekick no room owns runs on the `self_delivery` surface, whose section tells the run that any sending its instructions ask for is its own work, done with its tools inside the run, and that it sends nothing when they ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the home.
 
 A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
 
-The same module's **Sites** section is the site-shaped equivalent: a request whose natural output is a page or a small app becomes a _directory_ of files, published as a live artifact people open. It carries only the trigger and the two rules a model gets wrong without it — publish the directory rather than a file inside it, and a request for a new thing is a new site at a new path — plus the pointer to the skill. The build craft is hundreds of lines and would be charged to every request, so it ships as the loadable `building-live-sites` skill and is read at the moment it matters. Like the document half it is standing rather than gated, and falls back the same way when the sandbox cannot be reached. [`live-web-artifacts.md`](live-web-artifacts.md) owns what a published directory becomes and how it is served.
+The same module's **Sites** section is the site-shaped equivalent: a request whose natural output is a page or a small app becomes a *directory* of files, published as a live artifact people open. It carries only the trigger and the two rules a model gets wrong without it — publish the directory rather than a file inside it, and a request for a new thing is a new site at a new path — plus the pointer to the skill. The build craft is hundreds of lines and would be charged to every request, so it ships as the loadable `building-live-sites` skill and is read at the moment it matters. Like the document half it is standing rather than gated, and falls back the same way when the sandbox cannot be reached. [`live-web-artifacts.md`](live-web-artifacts.md) owns what a published directory becomes and how it is served.
 
-An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. The _announcement_ rule — the embed form for a document the run just published — lives in `DOCUMENT_GENERATION_POLICY` so there is one rule for that act. Rendered for every work-stream run, interactive and automation alike, since they share one system prompt; the meeting prompts compose `RESPONSE_FORMATTING_POLICY` separately and correctly do not get it. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`digests.md`](digests.md) and [`slack-integration.md`](slack-integration.md) own the reductions the two non-renderer delivery surfaces apply.
+An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. The *announcement* rule — the embed form for a document the run just published — lives in `DOCUMENT_GENERATION_POLICY` so there is one rule for that act. Rendered for every work-stream run, interactive and automation alike, since they share one system prompt; the meeting prompts compose `RESPONSE_FORMATTING_POLICY` separately and correctly do not get it. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`digests.md`](digests.md) and [`slack-integration.md`](slack-integration.md) own the reductions the two non-renderer delivery surfaces apply.
 
 Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — Unicode or plain words are used instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). Elicitation questions and option labels are plain text because their surface does not render Markdown. The TeX rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
 
@@ -766,7 +767,7 @@ The deferred `rally_skill_recommendations` plugin manages recommendations throug
 
 The always-active `rally_skills` plugin owns two globally named controls. `load_skill` takes an exact name from the `# Skills` catalog and adds the skill's body to `# Active Skill Instructions` for the rest of the run. `read_skill_resource` reads a bundled reference file, and refuses until its skill has been loaded — that gate is what stops a model pulling every catalog skill's references without taking on the instructions they belong to.
 
-**Loading a skill grants no authority.** Where a skill declares an owner plugin it is offered only to a run whose scope already includes that plugin — the eligible plugin ids are handed to the skill registry, which drops the rest before the catalog is built — and loading it _names_ the plugin for the model to load separately rather than activating it: an auto-activation would let a document issue a capability grant. Skill bodies are also not trusted prose about the world — they are workspace-authored instructions, and are wrapped in a `<skill_content name=…>` element so the model can tell them apart from platform policy and from one another.
+**Loading a skill grants no authority.** Where a skill declares an owner plugin it is offered only to a run whose scope already includes that plugin — the eligible plugin ids are handed to the skill registry, which drops the rest before the catalog is built — and loading it *names* the plugin for the model to load separately rather than activating it: an auto-activation would let a document issue a capability grant. Skill bodies are also not trusted prose about the world — they are workspace-authored instructions, and are wrapped in a `<skill_content name=…>` element so the model can tell them apart from platform policy and from one another.
 
 Three bounds keep a looping model from loading its way into a context-limit error: a count cap, a budget over the total tokens of loaded bodies, and a byte cap on a single `read_skill_resource` response. Bind judges the first two (`admitSkillLoad`); Rally measures the token half by resolving the bodies the load would actually inject, and applies the third itself — an unbounded Tier-3 read would otherwise route around the Tier-2 budget, since a skill whose body fits can bundle a reference that does not. All three are configurable, through `maxActiveSkills`, `maxActiveSkillBodyTokens`, and `maxSkillResourceBytes`.
 
@@ -827,7 +828,7 @@ rather than `rally:sidekicks` so execution runs can load it without authoring
 tools. The skill bodies are the procedures; this document records their scope.
 
 All of them are offered to every production run the API starts, subject to the owner filter. Nothing is withheld by surface. A skill
-is advice, and what a surface may _do_ is settled in the tool loop. Offering is
+is advice, and what a surface may *do* is settled in the tool loop. Offering is
 not activation: a run sees only the catalog line until it loads one, and loading
 grants no authority. It is an ordinary `HarnessSkill` and not a second source:
 a host still chooses to put it in `skills`, and the frozen-scope rule is
@@ -918,7 +919,7 @@ If the object is evicted after `assistant_accepted` but before every
 provider request or pending input can cross the loop boundary, the host walks
 the missing call positions against their durable receipts. A completed or
 failed receipt becomes the corresponding exact tool result; an admitted call is
-terminalized as `not_run`; an executing _read_ is failed. An executing **write**
+terminalized as `not_run`; an executing *read* is failed. An executing **write**
 is not classified from its status: the host re-enters the tool over that same
 receipt, through `reenterInterruptedWriteForRecovery`. Terminal and consent
 recovery build their owning plugin directly. Authored connector writes with
@@ -1025,14 +1026,14 @@ Receipt IDs are positional, so a re-executed pass of the same run mints the same
 coordinates again — that is what lets it replay the first pass's results instead
 of repeating them. A pass that restarts is given the transcript window up to its
 own trigger and cannot see the calls the earlier pass made, so it will not
-reliably reproduce them, and a _different_ call landing on an occupied
+reliably reproduce them, and a *different* call landing on an occupied
 coordinate is the expected consequence. When both sides of such a collision are
 reads and the recorded receipt has settled, the receipt is **rebound** to the
 call in hand: nothing external moved, the recorded result belongs to a pass that
 is gone, and the row is replanned in place under an `execution_replanned`
 checkpoint. Identical input replays as before, a receipt whose recorded identity
 cannot be proven compatible still fails closed, and `record_before_execute`
-writes never rebind — for them the coordinate _is_ the idempotency key.
+writes never rebind — for them the coordinate *is* the idempotency key.
 
 A receipt is not always the only record of its call, and one that owns durable
 state elsewhere does not rebind either: a delegated child run keyed by the
@@ -1090,7 +1091,7 @@ and executes traversal. `x-ai/grok-4.3` and `x-ai/grok-4.6` are Azure-bound:
 their same-model route is Azure first and OpenRouter second.
 `openai/gpt-5.6-sol` is hard-fenced to Azure only; an Azure outage or missing
 price fails that model stage instead of sending the expensive same-model call
-to OpenRouter. That fence has no slack in it, so a request Azure _rejects_ ends
+to OpenRouter. That fence has no slack in it, so a request Azure *rejects* ends
 the run rather than degrading: every tool schema is corrected to a plain object
 root at `toModelToolDefinitions` for that reason, and
 [`agent-tools.md`](agent-tools.md) carries the rule an author has to follow. Other canonical models remain OpenRouter-only. A file-parser request, audio input, or another
@@ -1128,11 +1129,11 @@ The checked-in Monad production bindings were verified against the live
 `monad-prod-resource` deployment details on 2026-08-30 for Grok and on
 2026-09-02 for Sol:
 
-| Canonical model      | Azure deployment | Version / lifecycle                | Deployment      | Live quota                | Guardrail |
-| -------------------- | ---------------- | ---------------------------------- | --------------- | ------------------------- | --------- |
-| `x-ai/grok-4.3`      | `grok-4.3`       | `1` / Preview                      | Global Standard | 250,000 TPM / 250 RPM     | DefaultV2 |
-| `x-ai/grok-4.6`      | `grok-4.6`       | `1` / Preview                      | Global Standard | 2,250,000 TPM / 2,250 RPM | DefaultV2 |
-| `openai/gpt-5.6-sol` | `gpt-5.6-sol`    | `2026-07-09` / Generally Available | Global Standard | 2,500,000 TPM / 2,500 RPM | DefaultV2 |
+| Canonical model | Azure deployment | Version / lifecycle | Deployment | Live quota | Guardrail |
+| --- | --- | --- | --- | --- | --- |
+| `x-ai/grok-4.3` | `grok-4.3` | `1` / Preview | Global Standard | 250,000 TPM / 250 RPM | DefaultV2 |
+| `x-ai/grok-4.6` | `grok-4.6` | `1` / Preview | Global Standard | 2,250,000 TPM / 2,250 RPM | DefaultV2 |
+| `openai/gpt-5.6-sol` | `gpt-5.6-sol` | `2026-07-09` / Generally Available | Global Standard | 2,500,000 TPM / 2,500 RPM | DefaultV2 |
 
 All three accept Chat Completions at
 `https://monad-prod-resource.services.ai.azure.com/openai/v1/chat/completions`.
@@ -1223,7 +1224,7 @@ else. It is resolved from `tool_invocations.connection_id`, which already
 records the connector that ran the tool. Tools Rally owns — web research, plugin discovery, memory, tables,
 work-stream reads — have no connector behind them and carry no plugin icon.
 The contract's `ToolInvocation.plugin` holds a single nullable plugin, so a
-row with several icons cannot be represented. A discovery row may still _name_ several plugins in its label
+row with several icons cannot be represented. A discovery row may still *name* several plugins in its label
 without claiming any of them ran the tool.
 
 A row's label is prose from `toolActivityName` in
@@ -1337,12 +1338,12 @@ it. **A work stream's runs never reach an automation's scope**, whoever started
 them and whatever posted into the room.
 
 **The union is not the whole story, and in one direction it currently overstates
-what is withheld.** The protocol projector reauthorizes replayed _attachment_
+what is withheld.** The protocol projector reauthorizes replayed *attachment*
 results and nothing else, so a completed `memory_table_query` receipt from an
 earlier run in the same transcript window is replayed to the next run verbatim,
 out of R2, whatever that run's own union is. Until the projector filters a
 replayed result against the current union, the scope union is the authority for
-what a run may _search_, not a guarantee about everything in its context.
+what a run may *search*, not a guarantee about everything in its context.
 
 Root runs receive the stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose. Tables inherit the work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records.
 
@@ -1428,7 +1429,7 @@ each receipt as its tool returned, so one still open at that point is a defect,
 and one whose only symptom is a permanently spinning tool card. A run that wrote
 its own terminal row says so — its residual receipts carry `run_terminated`,
 never the reaper's `parent_run_terminated`, because no lease was observed to be
-lost. Both retry paths _derive_ that from the terminal row rather than from who
+lost. Both retry paths *derive* that from the terminal row rather than from who
 is asking: the reaper keeps `attempt_id` and clears only the lease, so a reaped
 root whose settlement was lost matches every predicate the returning original
 executor tests, and assuming `direct` there would relabel the reaper's own work.
@@ -1467,8 +1468,8 @@ participants remain deferred product work.
   never the provider's. So is OpenRouter's 404 when its routing funnel names an
   input filter (`failed_routing_step` of `Filter by Image Support`, `File` or
   `Audio`): `model_input_unsupported`, kind `context`, because the model
-  cannot read an input the request carries. The invariant above is about _who owns_ a failure; this
-  one is about _what it was_, and answering the first by discarding the second
+  cannot read an input the request carries. The invariant above is about *who owns* a failure; this
+  one is about *what it was*, and answering the first by discarding the second
   is how a run that crossed a known token limit reached a member as "Rally
   could not complete this run. Retrying is unlikely to help."
 - **A retry never replays output a reader has already seen.** The transport retry
@@ -1511,7 +1512,7 @@ participants remain deferred product work.
   a freshly assembled tool surface, not against the stored fields, so live
   reauthorization rather than the record is what bounds it.
 - **Loading never widens the frozen scope.** Bound connections, attached
-  resources, and previously used plugins are activation _hints_, filtered through
+  resources, and previously used plugins are activation *hints*, filtered through
   the frozen scope and reauthorized before restoration.
 - **Activation is durably recorded before a plugin's tools or trusted guidance
   become visible.**
@@ -1538,9 +1539,9 @@ participants remain deferred product work.
   into the system prompt. It carries no trust label of its own. The same holds for
   a naming request and a skill body, which is wrapped in `<skill_content name=…>`
   so the model can tell it from platform policy.
-- **The trigger's two jobs stay separate on a retry.** As _identity_ it admits a
-  brief or an inbound email to the model at all; as _bound_
-  (`transcriptFenceMessageId`) it is the newest _turn_ the run may see — a turn,
+- **The trigger's two jobs stay separate on a retry.** As *identity* it admits a
+  brief or an inbound email to the model at all; as *bound*
+  (`transcriptFenceMessageId`) it is the newest *turn* the run may see — a turn,
   because the newest one is usually the agent's and an assistant turn's id is
   `<loopId>:turn:<ordinal>` rather than a UUID. The fence
   is resolved once at launch and travels in the durable workflow input, never
@@ -1610,18 +1611,18 @@ terminal state.
 
 It does not own:
 
-| For                                                           | Read                                                       |
-| ------------------------------------------------------------- | ---------------------------------------------------------- |
-| What a run remembers once its window fills                    | [`context-compaction.md`](context-compaction.md)           |
-| How to _design_ a tool so a small model uses it right         | [`agent-tools.md`](agent-tools.md)                         |
-| How to _author_ a skill                                       | [`writing-skills.md`](writing-skills.md)                   |
-| How to _write_ a prompt in `prompts/`                         | [`writing-prompts.md`](writing-prompts.md)                 |
-| Which model each agent runs on, and the pin that overrides it | [`feature-flags.md`](feature-flags.md)                     |
-| Connector adapters, grants, and health semantics              | [`connectors.md`](connectors.md)                           |
-| The create path a run is launched from                        | [`workstream-creation.md`](workstream-creation.md)         |
-| The description pass that runs after a terminal run           | [`workstream-descriptions.md`](workstream-descriptions.md) |
-| Reading a captured inference record back                      | [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) |
-| Regional analytical inference capture and retention           | [`inference-lakehouse.md`](inference-lakehouse.md)         |
+| For | Read |
+| --- | --- |
+| What a run remembers once its window fills | [`context-compaction.md`](context-compaction.md) |
+| How to *design* a tool so a small model uses it right | [`agent-tools.md`](agent-tools.md) |
+| How to *author* a skill | [`writing-skills.md`](writing-skills.md) |
+| How to *write* a prompt in `prompts/` | [`writing-prompts.md`](writing-prompts.md) |
+| Which model each agent runs on, and the pin that overrides it | [`feature-flags.md`](feature-flags.md) |
+| Connector adapters, grants, and health semantics | [`connectors.md`](connectors.md) |
+| The create path a run is launched from | [`workstream-creation.md`](workstream-creation.md) |
+| The description pass that runs after a terminal run | [`workstream-descriptions.md`](workstream-descriptions.md) |
+| Reading a captured inference record back | [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) |
+| Regional analytical inference capture and retention | [`inference-lakehouse.md`](inference-lakehouse.md) |
 
 A substream owns one server-side, tool-using loop. A run is an execution receipt.
 Neither is a participant, a separate persona, a terminal, or a general code-execution
@@ -1636,7 +1637,7 @@ the current message is not truncated.
 
 Root ordinary work-stream runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. A work-stream loop otherwise continues until completion, elicitation, its safe-boundary stop, ambiguous write, lease or authority loss, context failure, or provider failure. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Deliberately bounded one-shot callers such as meeting notes retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, and replay payload bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to complete durable transcript replay. The first request must fit the selected model because automatic compaction depends on usage from a completed turn. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
-A published document is readable in the desktop client, and was not until 2026-08-27. A generated resource appears in the work-stream rail under **Artifacts**, and its detail panel now renders the resource's readable content beneath the metadata, through `/resources/:id/preview` — the same authorized route `AttachmentLightbox` uses, which materializes extracted text for a file that is not already text. The gap that remains is narrower: the rail resolves an inspector target only from the loaded work stream's own resources, so a document cited from _another_ work stream still has nowhere to open. [`markdown-rendering.md`](markdown-rendering.md) owns the citation half of this and records the same limit.
+A published document is readable in the desktop client, and was not until 2026-08-27. A generated resource appears in the work-stream rail under **Artifacts**, and its detail panel now renders the resource's readable content beneath the metadata, through `/resources/:id/preview` — the same authorized route `AttachmentLightbox` uses, which materializes extracted text for a file that is not already text. The gap that remains is narrower: the rail resolves an inspector target only from the loaded work stream's own resources, so a document cited from *another* work stream still has nowhere to open. [`markdown-rendering.md`](markdown-rendering.md) owns the citation half of this and records the same limit.
 
 Host-owned receipt operations may set `HarnessTool.deadline: "run"` to use the
 parent run signal without a second per-tool timer. Conversation import saves
@@ -1659,7 +1660,7 @@ whole-file read.
 
 Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceeded`, `run_tool_call_limit_exceeded`, and `run_cost_limit_exceeded` when one of their explicit ceilings is reached. Those codes remain in the public failure contract so historical runs and bounded subsystems stay readable. A limit never silently reinterprets a write as successful.
 
-When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, a 5xx, or a successful HTTP stream whose bounded provider error code is `unavailable`, `service_unavailable`, or a numeric 408/429/5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. An OpenAI-compatible endpoint can accept the HTTP request and disclose an outage only in a later SSE error envelope. The two named machine codes classify as `server_error`; numeric codes reuse Bind's HTTP taxonomy but admit only timeout, rate-limit, and server-error categories. The same provider traversal and whole-plan retry rules then apply despite the successful surrounding status. Other statusless stream codes, including numeric request, credential, and credit failures, stay terminal because a blanket retry would hide the owner of the fault. When the circuit breaker had already opened and no request went out at all, the run fails as `provider_circuit_open`, kind `routing`: Bind's executor reports that as `no_viable_endpoints` carrying no error, and letting that emptiness fall through to the generic bucket reinstated the misattribution during exactly the minute an outage was worst — the first run in a workspace named accurately, every run behind it blamed on Rally. The two codes stay separate because the breaker opens on 401/402/403 as readily as on a 5xx, so a refusal cannot be attributed to the provider without knowing why it opened, which the breaker does not record. The distinction is the whole point of the code: `harness_execution_failed` means Rally’s own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. One 400 is the exception, and it is an exception about the _reason_ rather than the owner: an OpenAI-compatible endpoint refusing a prompt longer than it accepts says so in a bounded machine code, `context_length_exceeded`, and that run fails under that name with kind `context`. Azure and OpenAI set it as `error.code`, which is read directly; OpenRouter does not adopt it, reporting its own numeric 400 and forwarding the endpoint's envelope in `metadata.raw`, which `isProviderContextLengthRejection` parses to read that endpoint's own `error.code`. It parses rather than pattern-matches because `openRouterProviderError` sets `detail` to the _whole_ response body and not to `metadata.raw` alone: a substring search there also sees the provider's free-text `message`, so a provider that echoes the rejected request back or names codes in prose would have an unrelated 400 relabelled as a context refusal and its member told to start a new work stream over a schema fault. The first revision of this shipped with exactly that search, under a comment claiming it did not do it, and review caught it; the negative case is now pinned by a test. The rejection is still Rally's request and is never reported as the provider's; what changed is only that Rally stopped throwing away a reason it had been handed. A run died on 2026-09-17 with compaction sized from OpenRouter's catalog `context_length` of 1,050,000 for a model whose Azure deployment accepts 922,000, and the 400 that said so arrived as `harness_execution_failed` — Rally's own defect, with no remedy and no next step — which is the generic-code defect `CLAUDE.md` names, on a path that had the reason in hand. It traverses before it is named: another endpoint for the same model may have a larger window, so the code is what is left once every candidate has refused, read from the last attempt's error. Note that it says the endpoint disagreed with Rally's sizing, which `context_limit_exceeded` — Rally's own accounting declining to send a run it cannot make fit — does not; the two are near-namesakes and mean opposite things about who was wrong, so neither may be used for the other. A refusal from the platform Rally runs _on_ is neither: Cloudflare bounds how deep one request may recurse through Workers and how many subrequests one invocation may make, and enforces both by refusing whichever call asks next — a D1 read, a Durable Object hop, a fetch. That run fails as `platform_limit_exceeded`, kind `platform`, decided in `FatalHarnessPortError` from the platform's own wording rather than at the call site, because the port that happened to ask is in no position to know. Filing it under that port's code is not a naming quibble: on 2026-08-24 a work stream died reporting `tool_receipt_persistence_failed` when nothing about the receipt had failed, and the investigation started in the receipt authority. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
+When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, a 5xx, or a successful HTTP stream whose bounded provider error code is `unavailable`, `service_unavailable`, or a numeric 408/429/5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. An OpenAI-compatible endpoint can accept the HTTP request and disclose an outage only in a later SSE error envelope. The two named machine codes classify as `server_error`; numeric codes reuse Bind's HTTP taxonomy but admit only timeout, rate-limit, and server-error categories. The same provider traversal and whole-plan retry rules then apply despite the successful surrounding status. Other statusless stream codes, including numeric request, credential, and credit failures, stay terminal because a blanket retry would hide the owner of the fault. When the circuit breaker had already opened and no request went out at all, the run fails as `provider_circuit_open`, kind `routing`: Bind's executor reports that as `no_viable_endpoints` carrying no error, and letting that emptiness fall through to the generic bucket reinstated the misattribution during exactly the minute an outage was worst — the first run in a workspace named accurately, every run behind it blamed on Rally. The two codes stay separate because the breaker opens on 401/402/403 as readily as on a 5xx, so a refusal cannot be attributed to the provider without knowing why it opened, which the breaker does not record. The distinction is the whole point of the code: `harness_execution_failed` means Rally’s own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. One 400 is the exception, and it is an exception about the *reason* rather than the owner: an OpenAI-compatible endpoint refusing a prompt longer than it accepts says so in a bounded machine code, `context_length_exceeded`, and that run fails under that name with kind `context`. Azure and OpenAI set it as `error.code`, which is read directly; OpenRouter does not adopt it, reporting its own numeric 400 and forwarding the endpoint's envelope in `metadata.raw`, which `isProviderContextLengthRejection` parses to read that endpoint's own `error.code`. It parses rather than pattern-matches because `openRouterProviderError` sets `detail` to the *whole* response body and not to `metadata.raw` alone: a substring search there also sees the provider's free-text `message`, so a provider that echoes the rejected request back or names codes in prose would have an unrelated 400 relabelled as a context refusal and its member told to start a new work stream over a schema fault. The first revision of this shipped with exactly that search, under a comment claiming it did not do it, and review caught it; the negative case is now pinned by a test. The rejection is still Rally's request and is never reported as the provider's; what changed is only that Rally stopped throwing away a reason it had been handed. A run died on 2026-09-17 with compaction sized from OpenRouter's catalog `context_length` of 1,050,000 for a model whose Azure deployment accepts 922,000, and the 400 that said so arrived as `harness_execution_failed` — Rally's own defect, with no remedy and no next step — which is the generic-code defect `CLAUDE.md` names, on a path that had the reason in hand. It traverses before it is named: another endpoint for the same model may have a larger window, so the code is what is left once every candidate has refused, read from the last attempt's error. Note that it says the endpoint disagreed with Rally's sizing, which `context_limit_exceeded` — Rally's own accounting declining to send a run it cannot make fit — does not; the two are near-namesakes and mean opposite things about who was wrong, so neither may be used for the other. A refusal from the platform Rally runs *on* is neither: Cloudflare bounds how deep one request may recurse through Workers and how many subrequests one invocation may make, and enforces both by refusing whichever call asks next — a D1 read, a Durable Object hop, a fetch. That run fails as `platform_limit_exceeded`, kind `platform`, decided in `FatalHarnessPortError` from the platform's own wording rather than at the call site, because the port that happened to ask is in no position to know. Filing it under that port's code is not a naming quibble: on 2026-08-24 a work stream died reporting `tool_receipt_persistence_failed` when nothing about the receipt had failed, and the investigation started in the receipt authority. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
 
 Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the work-stream host sets from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in both regional Wrangler configs; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus a **worst-case replay of the whole plan** — every candidate, each able to spend its establishment timeout and then its time-to-first-token timeout, because the stream watchdog only opens once the response head lands. Reserving less lets a bounded caller's retry manufacture the deadline it defers to, and the outage is then reported as `run_wall_time_limit_exceeded`. Root work-stream runs set no wall clock and are unaffected. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output or an external effect has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt appends to the owning execution object's `inference_attempts` ledger and emits its own lakehouse terminal record, so a retried turn is visible as more than one attempt sharing a `turn_id`.
 
@@ -1669,7 +1670,7 @@ When an executor throws a Zod error and its normalized arguments also fail the
 provider-facing schema or its code-authored refinement, the model sees
 `kind: "validation"`, at most five actionable issues from the closest union
 branch, and no raw `invalid_union` tree. The message is capped at 1,200
-characters and echoes no submitted _value_. It does name up to five rejected
+characters and echoes no submitted *value*. It does name up to five rejected
 **key** names on an `unrecognized_keys` issue, which is the one thing the model
 wrote that comes back to it: "remove these fields" is not actionable without
 them. Keep that in view when widening what the message carries, because a model
@@ -1766,33 +1767,33 @@ the repository's deliberate-break practice remain the acceptance proof. This
 documentation pass ran no suites and recorded no deliberate-break failure
 proof.
 
-| Suite                                                                                         | Covers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apps/api/test/harness-run-runtime.test.ts`                                                   | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, successful/failure/stop receipt settlement across a mid-batch lease deadline, residual settlement on every terminal status and the marker-driven repair of a directly-failed root that lost its settlement response, healing an occupied checkpoint index, bulk residual-receipt settlement for stop/steering, descendant receipt settlement during child reaping, attachment dependency ordering, and dependency/replan interleavings. |
-| `apps/api/test-workers/agent-run-dispatch-reliability.test.ts`, `agent-run-lifecycle.test.ts` | The real-workerd stable-loop state machine: singleton identity, pending-input FIFO and delivery mode, activation replay, alarm recovery after eviction, live-lease exclusion, expired-owner takeover, deferred retry on the same cycle and receipt, and exact execution fences through terminal settlement.                                                                                                                                                                                                                                      |
-| `apps/api/test-workers/message-to-output-pipeline.test.ts`                                    | The real-workerd product-to-provider path, including provider-failure reservation settlement into a canonical error pill, a scheduled activation-only input on an already-initialized Bind projection, exact provider-body inclusion, pre-execution launch replay after eviction, and terminal replay without a second source fact, execution receipt, provider boundary, or inference attempt.                                                                                                                                                  |
-| `apps/api/test-workers/substream-message-queue.test.ts`                                       | The real-workerd multi-input queue, including proof that a deliberately blocked external settlement does not prevent the next queued input from reaching the provider and that the independent settlement lane subsequently drains.                                                                                                                                                                                                                                                                                                              |
-| `apps/api/test/tool-transcript-durability.test.ts`                                            | That a successful result is durable before Bind observes it, and that receipts replay.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `apps/api/test/core-tool-idempotency.test.ts`                                                 | Receipt identity, plan hashes, and the `ambiguous_external_write` path.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `apps/api/test/workstream-tool-receipt-storage.test.ts`                                       | `admit`'s decisions against real migrations, including `resume_write` for an unsettled `provider_key` write and the two guards that keep it narrow: the declared class, and the admitted provider key.                                                                                                                                                                                                                                                                                                                                           |
-| `apps/api/test/terminal-command-recovery.test.ts`                                             | That re-entry follows `HarnessTool.reenterable` rather than a tool name, re-enters over the receipt's own effect identity, re-submits a `provider_key` write under the key it was admitted with, and consults `reconcileEffect` first — running the executor only on `not_landed`.                                                                                                                                                                                                                                                               |
-| `apps/api/test/terminal-resource-bridge.test.ts`                                              | The publication reconciler against real WorkspaceDO resource schema and its capture triggers: a publication this run made in the window, one that predates it, one revised away by a later run, another run's revision inside the window, and a path never published.                                                                                                                                                                                                                                                                            |
-| `apps/api/test-workers/workstream-transcript-runtime.test.ts`                                 | Crash repair of an interrupted tool batch on real workerd, including a write that could not be asked what it did: the receipt, its error, and the model's tool result all name the tool, and the batch is repaired rather than abandoned. Also the repair that holds no lease, which settles `no_repair_lease` rather than asking a question it could not record the answer to.                                                                                                                                                                  |
-| `apps/api/test/tool-usage-telemetry.test.ts`, `run-outcome-telemetry.test.ts`                 | Started/terminal tool and root-run outcomes, person/workspace attribution, replay/idempotency, bounded performance dimensions, and prohibited content.                                                                                                                                                                                                                                                                                                                                                                                           |
-| `apps/api/test/bind-tool-failure-classification.test.ts`                                      | The structured-failure allowlist and its size bound.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts`                     | Every registry tool reaching a non-generic row, and no `write` described in passive words.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `apps/api/test/scoped-memory.test.ts`                                                         | The host-derived scope union and the typed tables' post-read revision races, against a real `WorkspaceDO` standing in for the memory authority. `apps/api/test-workers/workspace-memory.test.ts` proves the tables' transactional receipts and witnesses on real workerd. The fact store's suites are in [`agent-memory.md`](agent-memory.md#testing).                                                                                                                                                                                           |
-| `apps/api/test/message-run-context.test.ts`                                                   | The personal system prompt travels only on a turn the member started.                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `apps/api/test/model-protocol-transcript.test.ts`                                             | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `apps/api/test/workstream-transcript-storage.test.ts`                                         | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input.                                                                                                                                                                                                                             |
-| `apps/api/test/workstream-wakeup.test.ts`                                                     | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, claim-before-launch, and that a Breakout's or a Sidekick run child's wake-up starts in its own loop, the latter only as the Sidekick allows.                                                                                                                                                                                                                                                                                          |
-| `apps/api/test/bind-host-durability.test.ts`                                                  | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse.                                                                                                                                                                                                                                                                                                                                              |
-| `apps/api/test/attachment-tool-receipts.test.ts`                                              | Exact derivative and completed-output-reference dependency fencing, replay reauthorization, all-or-nothing multi-image registration, and successor-safe mismatch cleanup.                                                                                                                                                                                                                                                                                                                                                                        |
-| `apps/desktop/src/renderer/components/sidebar.test.tsx`                                       | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip.                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `apps/api/test/agent-inference-logging.test.ts`                                               | That no legacy D1/R2 path remains and provider refusals stay content-free in Workers Logs.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `apps/api/test/inference-lakehouse.test.ts`                                                   | Exact request/attempt archival, pointer integrity, Pipeline delivery, and oversized-record preservation.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `packages/db/test/agent-inference-retirement-migration.test.ts`                               | Migration 0094 removes the regional payload-log table and workspace preference while preserving workspace rows and foreign-key integrity.                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `packages/agent-harness/src/*.test.ts`                                                        | Persistent-loop projection and activation boundaries, including resumed-history preservation, empty system activations, takeover replay, and fail-closed ordering before model-catalog or inference I/O; plus prompt golden hashes, skill bounds, `toolActivityName`, transport retry/fallback behavior, and the automation drafting tools.                                                                                                                                                                                                      |
+| Suite | Covers |
+| --- | --- |
+| `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, successful/failure/stop receipt settlement across a mid-batch lease deadline, residual settlement on every terminal status and the marker-driven repair of a directly-failed root that lost its settlement response, healing an occupied checkpoint index, bulk residual-receipt settlement for stop/steering, descendant receipt settlement during child reaping, attachment dependency ordering, and dependency/replan interleavings. |
+| `apps/api/test-workers/agent-run-dispatch-reliability.test.ts`, `agent-run-lifecycle.test.ts` | The real-workerd stable-loop state machine: singleton identity, pending-input FIFO and delivery mode, activation replay, alarm recovery after eviction, live-lease exclusion, expired-owner takeover, deferred retry on the same cycle and receipt, and exact execution fences through terminal settlement. |
+| `apps/api/test-workers/message-to-output-pipeline.test.ts` | The real-workerd product-to-provider path, including provider-failure reservation settlement into a canonical error pill, a scheduled activation-only input on an already-initialized Bind projection, exact provider-body inclusion, pre-execution launch replay after eviction, and terminal replay without a second source fact, execution receipt, provider boundary, or inference attempt. |
+| `apps/api/test-workers/substream-message-queue.test.ts` | The real-workerd multi-input queue, including proof that a deliberately blocked external settlement does not prevent the next queued input from reaching the provider and that the independent settlement lane subsequently drains. |
+| `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
+| `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
+| `apps/api/test/workstream-tool-receipt-storage.test.ts` | `admit`'s decisions against real migrations, including `resume_write` for an unsettled `provider_key` write and the two guards that keep it narrow: the declared class, and the admitted provider key. |
+| `apps/api/test/terminal-command-recovery.test.ts` | That re-entry follows `HarnessTool.reenterable` rather than a tool name, re-enters over the receipt's own effect identity, re-submits a `provider_key` write under the key it was admitted with, and consults `reconcileEffect` first — running the executor only on `not_landed`. |
+| `apps/api/test/terminal-resource-bridge.test.ts` | The publication reconciler against real WorkspaceDO resource schema and its capture triggers: a publication this run made in the window, one that predates it, one revised away by a later run, another run's revision inside the window, and a path never published. |
+| `apps/api/test-workers/workstream-transcript-runtime.test.ts` | Crash repair of an interrupted tool batch on real workerd, including a write that could not be asked what it did: the receipt, its error, and the model's tool result all name the tool, and the batch is repaired rather than abandoned. Also the repair that holds no lease, which settles `no_repair_lease` rather than asking a question it could not record the answer to. |
+| `apps/api/test/tool-usage-telemetry.test.ts`, `run-outcome-telemetry.test.ts` | Started/terminal tool and root-run outcomes, person/workspace attribution, replay/idempotency, bounded performance dimensions, and prohibited content. |
+| `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
+| `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
+| `apps/api/test/scoped-memory.test.ts` | The host-derived scope union and the typed tables' post-read revision races, against a real `WorkspaceDO` standing in for the memory authority. `apps/api/test-workers/workspace-memory.test.ts` proves the tables' transactional receipts and witnesses on real workerd. The fact store's suites are in [`agent-memory.md`](agent-memory.md#testing). |
+| `apps/api/test/message-run-context.test.ts` | The personal system prompt travels only on a turn the member started. |
+| `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
+| `apps/api/test/workstream-transcript-storage.test.ts` | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input. |
+| `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, claim-before-launch, and that a Breakout's or a Sidekick run child's wake-up starts in its own loop, the latter only as the Sidekick allows. |
+| `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
+| `apps/api/test/attachment-tool-receipts.test.ts` | Exact derivative and completed-output-reference dependency fencing, replay reauthorization, all-or-nothing multi-image registration, and successor-safe mismatch cleanup. |
+| `apps/desktop/src/renderer/components/sidebar.test.tsx` | The pending-wake-up clock appears only on marked work streams, with the next due time and bounded prompt in its tooltip. |
+| `apps/api/test/agent-inference-logging.test.ts` | That no legacy D1/R2 path remains and provider refusals stay content-free in Workers Logs. |
+| `apps/api/test/inference-lakehouse.test.ts` | Exact request/attempt archival, pointer integrity, Pipeline delivery, and oversized-record preservation. |
+| `packages/db/test/agent-inference-retirement-migration.test.ts` | Migration 0094 removes the regional payload-log table and workspace preference while preserving workspace rows and foreign-key integrity. |
+| `packages/agent-harness/src/*.test.ts` | Persistent-loop projection and activation boundaries, including resumed-history preservation, empty system activations, takeover replay, and fail-closed ordering before model-catalog or inference I/O; plus prompt golden hashes, skill bounds, `toolActivityName`, transport retry/fallback behavior, and the automation drafting tools. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/harness-run-runtime.test.ts` — the
@@ -1873,23 +1874,25 @@ reconstructs them. There is no timer, persistent cache, or global readiness gate
 
 ## Changelog
 
-### 2026-11-06 — An addressed message in a Sidekick's conversation goes to the wizard or to a run
+### 2026-11-07 — Addressing in a Sidekick's conversation goes to the wizard only on a manager's marked edit
 
-**What changed:** In a Sidekick's conversation (`"0"`), a message the
-addressing classifier sends to an agent is the wizard's only when its sender
-manages the Sidekick; anyone else's starts a run of the Sidekick instead, and
-`"0"`'s loop takes no turn for it. The classifier and its prompt are unchanged.
+**What changed:** In a Sidekick's conversation (`"0"`), a message addressed to
+an agent starts a run of the Sidekick, whoever sent it; `"0"`'s loop takes no
+turn for it. A message marked `intent: "edit_sidekick"` on `create_message`, an
+elicitation answer and a resource authorization are the wizard's, and only from
+a manager. A marked edit skips the classifier. The classifier and its prompt are
+unchanged.
 
 **Why:** The Canvases and Sidekicks decision log keeps the wizard and run
 separation in a conversation now open to everyone the Sidekick is shared with,
-so the conversation's loop must not answer, with the authoring tools, whoever
-types. The classifier already answered "for an agent or for the people"; which
-agent follows from the sender's management right, which the Sidekick holds, so
-no new prompt or model call was added.
+and its 2026-11-07 entry has a manager mark a wizard edit explicitly. The first
+build sent every manager's message to the wizard, so a manager could never ask
+the Sidekick for work there. Rejected: telling an edit from a request by the
+text, which would be a second classifier with its own way to misroute.
 
 **Consequences:** Addressing in a Sidekick's conversation has two stages, the
-classifier and the Sidekick's routing; a change that wants a manager to reach a
-run by message needs a signal the classifier does not produce today.
+classifier (or the mark) and the Sidekick's routing. Anything that adds a new
+kind of human input to `"0"` must say whether it is the wizard's.
 
 ### 2026-11-03 — Task skills: reporting on data and creating an app
 
@@ -2139,6 +2142,7 @@ changes before the first timer or compare against missing files. The builder als
 copied rows manually despite loading the skill. Explicit input and completion
 boundaries address those concrete failures without adding a second sync system.
 
+
 ### 2026-10-21 — Carry trigger decisions and site recovery into saved runs
 
 **What changed:** The event skill branches explicitly between requested schedules,
@@ -2266,6 +2270,7 @@ synthetic regressions evaluated again.
 
 PR: [#1376](https://github.com/juno-ai-labs/avalon/pull/1376).
 
+
 ### 2026-10-20 — Resume verified settled history after a loop relocation
 
 **What changed:** Added host validation for historical accepted, failed, and
@@ -2323,6 +2328,7 @@ would duplicate the same catalog entry when Mail and Drive are separate presets.
 **Consequences:** Connection selection stays in the host's frozen authorization
 scope. Loading instructions grants no tools. Future guidance should extend the
 shared skill and its sourced reference rather than expanding standing prompts.
+
 
 ### 2026-10-19 — A wake-up fires in the conversation that scheduled it
 
@@ -2555,7 +2561,7 @@ or that every Canva generation failure has the same cause.
 
 **What changed:** Crash repair of an interrupted tool batch no longer classifies
 an unsettled write on `mode` alone. A receipt now carries the idempotency class
-its plan already recorded, and the repair walk _re-enters_ the tool over that
+its plan already recorded, and the repair walk *re-enters* the tool over that
 same receipt — through `reenterInterruptedWriteForRecovery`, which builds the
 one plugin owning the call — before considering the outcome unknown. Only a tool
 that cannot be asked, or an attempt to ask that failed, still settles
@@ -2567,7 +2573,7 @@ Four mechanisms moved with it. `reconcileRecoverableTerminalWrite` became
 rather than three hard-coded Terminal names; `publish_resource` declares it, and
 so does every tool the old list held. `HarnessTool.reconcileEffect` is the
 second half of that decision, for a tool whose executor resolves its effect by
-_subject_ rather than by receipt. `ToolReceiptStorage.admit` gained
+*subject* rather than by receipt. `ToolReceiptStorage.admit` gained
 `resume_write`: an unsettled `provider_key` write whose plan, request hash and
 provider key all match the call asking to run is resumed rather than settled
 ambiguous. And a residual ambiguity no longer fails the cycle — the repair
@@ -2594,7 +2600,7 @@ Two were about what the repair says. The model-facing result for a residual
 ambiguity carried the bare code while the tool name and the instruction went
 only to the participant lifecycle: the generic-code defect, on the one path
 where continuing instead of stopping depends on the reader being told. And the
-settlement failure was caught with the re-entry, so a tool that _answered_ and
+settlement failure was caught with the re-entry, so a tool that *answered* and
 whose answer could not be written to R2 reported "could not confirm" while
 holding the confirmation — the same defect one line further down, now
 `reentry_result_not_durable`.
@@ -2650,7 +2656,7 @@ and the repair path bypasses the hook entirely, so it calls
 membership between the interruption and the repair would still have their write
 executed.
 
-Re-entry also needs a _lease_, not just the fence a settlement runs under, and
+Re-entry also needs a *lease*, not just the fence a settlement runs under, and
 the two are separate parameters because one caller has only the fence. The
 loop-failure settlement path reconstructs an owner rather than minting a lease,
 deliberately — handing a lease back to `ToolReceiptStorage#fence` would be
@@ -2666,7 +2672,7 @@ Next, a `null` idempotency class — an
 unparseable plan, or a receipt written before the class was read back — is
 treated as `record_before_execute`, the class that assumes least. A `completed`
 or `failed` receipt is never re-entered: the first has a durable result to
-replay and the second may already have been read. An `ambiguous` one _is_, and
+replay and the second may already have been read. An `ambiguous` one *is*, and
 that is not an exception to a rule about settled receipts — it is what the state
 is for, being what a previous re-entry attempt left behind, and
 `findCompletedToolResult` reaches it deliberately through
@@ -2681,14 +2687,14 @@ and aborts on when it cannot renew — `run_command`'s 900 seconds outlives a
 human-escalation the live path already has at `halt: "needs_input"`. It would
 preserve the batch's completed calls without letting the model near the
 ambiguous call, which is the better of the two on its face. It is rejected
-because crash repair has no question to escalate _with_: `needs_input` reached
+because crash repair has no question to escalate *with*: `needs_input` reached
 without a durable `elicitation_requests` row is the state the 2026-08-15 entry
 below records as a production defect — a run stopped with nothing to answer, no
 failed tool row, and a null error. Restoring it here would mean minting a
 question on the member's behalf about a write they did not make, which is a
 larger change than this one and a product decision rather than a repair.
 
-Also rejected: a per-tool `reconcile()` hook as the _primary_ mechanism, which
+Also rejected: a per-tool `reconcile()` hook as the *primary* mechanism, which
 was the first design. Re-entry is better where the executor already resolves its
 own effect, because a reconciler there is a second copy of a lookup free to
 drift. `reconcileEffect` exists for the case where that reasoning does not hold,
@@ -2699,7 +2705,7 @@ is safe because every one of them in this tree — memory `add`/`update`
 /`invalidate`, the four table writes, `schedule_wakeup`/`cancel_wakeup`,
 `request_elicitation` — writes to a Rally-owned authority and begins with a
 replay lookup keyed on that same provider key. What none of them has is
-`reenterable`, so _crash repair_ still cannot ask them and an interrupted
+`reenterable`, so *crash repair* still cannot ask them and an interrupted
 attempt of one stays ambiguous. Picking it up means declaring the property on
 those tools and teaching `reenterInterruptedWriteForRecovery` to build their
 plugins, which are core rather than Terminal and are constructed differently —
@@ -2745,24 +2751,24 @@ That is the generic-code defect `CLAUDE.md` names, on a path that had the reason
 in hand, and the cost is that the sizing bug underneath it reads as an
 unexplained outage in every run that hits it.
 
-**Considered and rejected:** _reporting it as `context_limit_exceeded`_, the
+**Considered and rejected:** *reporting it as `context_limit_exceeded`*, the
 code that already exists, which avoids a second near-identical name. It says the
 opposite thing about who was wrong: that one is Rally's own accounting declining
 to send a run it cannot make fit, and reusing it here would file "the window
 Rally sized against is wrong" under "Rally correctly refused", which is the one
-distinction an operator needs. _Matching the provider's message text_, which
+distinction an operator needs. *Matching the provider's message text*, which
 would have caught more providers and also any rejection that happened to mention
-a length; the machine code is bounded and the prose is not. _Making the
-rejection terminal so it stops traversing_: a second endpoint for the same model
+a length; the machine code is bounded and the prose is not. *Making the
+rejection terminal so it stops traversing*: a second endpoint for the same model
 may have a larger window, and one that does turns this into a recovery.
 
 **What a future change has to respect:** the invariant that a request Rally owns
-is never named as the provider's is about _ownership_, and this code does not
+is never named as the provider's is about *ownership*, and this code does not
 weaken it — the kind is `context`, not `provider`. Read the forwarded envelope
 by parsing it, never by searching `providerError.detail`, which holds the whole
 response body including the provider's free-text `message`: the first revision
 searched it and would have relabelled any 400 whose prose named the code. Cover
-each transport on a model whose route policy _terminates_ on it — the terminal
+each transport on a model whose route policy *terminates* on it — the terminal
 catch classifies the last attempt's error, so an ordered model proves only the
 provider it traversed to. The fix for the sizing itself
 belongs in [`context-compaction.md`](context-compaction.md), and this code is
@@ -2790,10 +2796,10 @@ names the failure to expect from that — "`>=` in one service and `>` in
 another" — and the same applies to whether a timeout is reported as an abort,
 which decides whether a cascade spends its fallback.
 
-**Considered and rejected:** _leaving the transport where it was and writing the
-second classifier beside it_, which is cheaper today and pays for itself once the
-two spellings of a threshold disagree in production. _Giving the request a
-default timeout_, so a caller could omit one: a deadline is a number somebody has
+**Considered and rejected:** *leaving the transport where it was and writing the
+second classifier beside it*, which is cheaper today and pays for itself once the
+two spellings of a threshold disagree in production. *Giving the request a
+default timeout*, so a caller could omit one: a deadline is a number somebody has
 to justify for the path it bounds, and a shared default silently applies one
 decision's latency budget to another's.
 
@@ -2836,7 +2842,7 @@ keeps the skill out of an automation occurrence's catalog; a change that drops
 it offers a run holding a frozen trigger context a procedure for drafting
 Sidekicks it cannot draft. The body's claims about which connectors announce
 what are checkable against the manifests, so a connector that gains or loses an
-activity trigger is a reason to re-read the opening paragraph. This skill teaches the model to _ask_ for a poller
+activity trigger is a reason to re-read the opening paragraph. This skill teaches the model to *ask* for a poller
 through the Sidekick it drafts; the developer-written, high-water-line poller
 that emits internal events (the Google connector's) is a different mechanism and
 is not what this describes.
@@ -3008,7 +3014,6 @@ configuration and isolated resource/tool state. Reexporting checkpoint functions
 alone left evals to reconstruct a different agent; a second loop was rejected.
 Canonical bootstrap no longer rejects complete history by an unrelated message/byte
 ceiling before Bind can apply its context preparation policy.
-
 ### 2026-09-14 — Independent background conversations keep Rally available
 
 Tool definitions can flag long-running work without making that flag a dispatch
@@ -3398,7 +3403,7 @@ with more than one person in it.
 message is written — the loop may be executing, and the pending-input queue
 exists precisely so nothing appends to a projection an attempt is mid-way
 through. Making every such message an activation input of the next run — the
-trigger is a pending input the object drains, so those would land _after_ the
+trigger is a pending input the object drains, so those would land *after* the
 question they preceded. Re-reading the transcript on every activation — that is
 the bootstrap path, and it exists once for a reason: the projection is the exact
 hash-verified provider-boundary value, and rebuilding it from the transcript
@@ -3530,7 +3535,7 @@ now describes them.
 
 Two corrections landed on review before this merged. `outputSurface` gained a
 fourth value, `self_delivery`, for an automation run no room owns: the
-`external_delivery` section says the final message _is delivered_ outside the
+`external_delivery` section says the final message *is delivered* outside the
 work stream, which for a run whose delivery section says nothing sends for it
 would license leaving the result in the final message; the new section keeps
 the outside-reader guidance and says the run's own sends are the only delivery.
@@ -3662,7 +3667,7 @@ Shipped in #541.
 `MEMORY_RECALL_QUERY_LIMIT` before recall, hashing or persistence. That constant
 moved to `@rally/contracts`, the one dependency the memory service, the memory
 tools and `AutomationAgent` all share, and every recall-query bound now reads it
-instead of repeating the literal. `workstream_harness_threw` logs stack _frames_
+instead of repeating the literal. `workstream_harness_threw` logs stack *frames*
 rather than the first six lines of `stack`, and `table_search` declares the
 `minLength`/`maxLength` its executor enforces.
 
@@ -3677,8 +3682,8 @@ any tool. The run failed on every attempt and stayed failed.
 The logging change is why that took days to attribute. `stack` is the message
 followed by the frames, and a `ZodError`'s message is multi-line JSON: twelve
 lines of message and five frames for this error, so the first six lines were
-message only — on the one log written to record _where_ a run died, while
-`reason` already carried _what_.
+message only — on the one log written to record *where* a run died, while
+`reason` already carried *what*.
 
 **What a future change has to respect:** the clamp belongs in
 `freezeRunMemoryContext` rather than at the call site, because that is where the
@@ -3715,8 +3720,8 @@ routing policy version, limits — into the authority it was meant to be about,
 and `stableRunToolSurfaceHash` hashes every tool's `inputSchema` verbatim. The
 deployed diff added `minLength: 1` to some Linear and X cursor properties. That
 was the whole distance from a JSON-schema tweak to a terminal
-`harness_execution_failed`, whose member copy reads _"Retrying is unlikely to
-help"_ when retrying was precisely what worked. The comparison was unsound
+`harness_execution_failed`, whose member copy reads *"Retrying is unlikely to
+help"* when retrying was precisely what worked. The comparison was unsound
 rather than merely unlucky: the stored hash is what the run was admitted with,
 the incoming one is recomputed from whatever code the current attempt runs, and
 those are only equal when no deploy intervened. The team already knew half of
@@ -3737,7 +3742,7 @@ activations to the attempt, so a fresh identity re-runs external writes the dead
 instance already made; the resumption path already restarts the loop without
 that cost.
 
-Raised in review and also rejected: _filtering_ the freshly assembled tool
+Raised in review and also rejected: *filtering* the freshly assembled tool
 surface against the stored eligible connection and capability fields. It is
 strictly better than the two rejected checks above — it restores the admitted
 bound without reinstating any comparison, so a run still restarts rather than
@@ -3775,7 +3780,7 @@ durable receipt, cannot be rebound, and `admit` reports
 inline-child path `integrations.ts` throws `tool_receipt_execution_plan_mismatch`,
 which is uncoded and becomes the same terminal `harness_execution_failed` this
 entry set out to remove. So read this entry's title narrowly: a deploy no longer
-kills an interrupted run _through the scope and activation writes_. Fixing the
+kills an interrupted run *through the scope and activation writes*. Fixing the
 receipt path was deliberately left out of this change because it moves what
 counts as "the same plan" for replay, which is the machinery that keeps a
 completed external write from being re-sent, and that deserves its own change
@@ -3788,10 +3793,10 @@ which fenced it; `persistPluginActivation` had no other ownership assertion at
 all, since `persistRunPluginActivation` does not call
 `assertHarnessAttemptOwned`. Reusing on the row alone would have handed a
 zombie executor a false success and let it keep building context against a run
-it no longer holds. Both writes therefore run `attemptOwnership` _before_ the
+it no longer holds. Both writes therefore run `attemptOwnership` *before* the
 reuse path, which keeps the deploy fix and still reports a lost lease. The child binding is untouched and still has teeth,
 because `persistInlineChildScope` compares the child's `inherited_scope_hash`
-against the parent's _stored_ hash — two stored values, neither recomputed, so a
+against the parent's *stored* hash — two stored values, neither recomputed, so a
 deploy cannot separate them. `run_scopes.scope_hash` and
 `run_plugin_activations.tool_surface_hash` survive as a forensic record of the
 build a run was admitted on; no migration was needed and none of the columns
@@ -3904,7 +3909,7 @@ credential is absent, required capabilities do not match, or the scheduled
 price record cannot be trusted. PDF/file-parser and audio turns therefore fail
 before provider I/O on a Sol-pinned work stream; the immutable pin requires a
 new work stream to choose another model. Ace admits Sol only for roles whose
-complete path is wired to Azure. Configured fallback _models_ remain independent
+complete path is wired to Azure. Configured fallback *models* remain independent
 stages, but Bind never invokes the Sol model itself through OpenRouter.
 
 ### 2026-09-02 — Model defaults and parallel tools are provider-boundary policy
@@ -3962,7 +3967,6 @@ named transient codes must be added to the bounded allowlist with provider
 evidence and a traversal test. Numeric 4xx codes outside 408 and 429 remain
 terminal. Bind's existing produced-output fence remains the authority that
 prevents replay after a partial answer.
-
 ### 2026-09-01 — Message admission and independent settlement close their cancellation gaps
 
 **What changed:** An admitted room socket now uses its existing transport
@@ -4055,7 +4059,7 @@ an unusable vector result.
 
 **Why:** A site-shaped request has the same shape as a document-shaped one —
 write files, publish, announce, revise the same path — so the trigger belongs
-beside the document trigger rather than in a second mechanism. What does _not_
+beside the document trigger rather than in a second mechanism. What does *not*
 belong there is how to build one: the entry-file rule, the handler shape, the
 storage class, the viewer headers and the polling manners run to hundreds of
 lines, and the standing policy is charged to every interactive run in a
@@ -4397,7 +4401,7 @@ bare code into a sentence naming the shortest next call.
 a work stream without inheriting child-run identity, participants, or
 work-stream controls, and the harness is already the thing that provides them.
 The `validateInput` half is a defect this host found: the runtime consults
-`validateInput` only _after_ an executor has thrown a `ZodError`, so a semantic
+`validateInput` only *after* an executor has thrown a `ZodError`, so a semantic
 refinement that lived only in the hook never ran at all — the rule reached
 durable storage unchecked, and the hook's whole purpose, turning an external
 fault into a named field, was silently inverted. `automation_plugin_not_inspected`
@@ -4413,7 +4417,7 @@ change the meaning of a hook other tools already declare.
 **Consequences:** Changes to shared loop semantics need conformance coverage in
 both hosts, and `BlockDashboardAgent` remains independent. The rule for any tool
 whose executor parses more strictly than its advertised schema is now sharper
-than the 2026-08-25 entry below states: `validateInput` is the _reporting_ path,
+than the 2026-08-25 entry below states: `validateInput` is the *reporting* path,
 not the enforcement one. **A refinement that must not be bypassed belongs in the
 executor**, with `validateInput` pointing at the same function so the two cannot
 drift.
@@ -4731,7 +4735,6 @@ stream turn ID. Host-authored terminal guidance cannot borrow that ID and uses
 a system-notice identity instead. Inline child callers receive the terminal
 assistant response as their tool result; they do not concatenate narration from
 earlier tool-bearing turns into that response.
-
 ### 2026-08-27 — A third standing policy: an answer cites what it rests on
 
 **What changed:** `CITATION_POLICY` joins the work-stream system prompt,
@@ -4743,7 +4746,7 @@ The three work-stream golden hashes moved.
 **Why:** The renderer learned to turn `resource://` links and qualifying
 footnotes into chips and pills, and none of it happens unless a model writes the
 syntax. Two placements were rejected. A skill would pay a load round trip for a
-rule that applies to any run with an attachment. Keeping the _announcement_
+rule that applies to any run with an attachment. Keeping the *announcement*
 bullet here — where the first draft put it — charged every automation, scheduled
 digest, inbound-email and Slack-origin run to announce documents they were
 deliberately never told to make; it also left two rules for one act with no
@@ -4795,8 +4798,8 @@ flag is the recorded escalation if staged rollout is later wanted.
 **Consequences:** `WORKSTREAM_PROMPT_VERSION` is deliberately not bumped. It is
 hashed into the recorded run scope, and at the time of this change bumping it
 failed every in-flight run resuming across the deploy with
-`immutable_run_scope_mismatch`. That hazard is gone as of _A deploy no longer
-kills the runs it interrupts_ above, which stopped comparing a recomputed scope
+`immutable_run_scope_mismatch`. That hazard is gone as of *A deploy no longer
+kills the runs it interrupts* above, which stopped comparing a recomputed scope
 against the recorded one; the reasoning that follows stands on its own. The section
 grants no capability and moves no authority — eligible capabilities and the tool
 surface hash are unchanged — and its flag derives from environment and run input
@@ -4938,7 +4941,6 @@ is only the admitted input; the ledger follows every later accepted mutation.
 **Consequences:** A run cannot continue when transcript persistence or boundary
 equality fails. The system prompt remains a deterministic runtime projection,
 but its rendered bytes and revision participate in every equality check.
-
 ### 2026-08-26 — The addressing classifier is told who a message mentions
 
 **What changed:** `classifyAddressing` and its prompt gained a `humanMentions`
@@ -4951,7 +4953,7 @@ is that person's to act on — `human_only` even during an active task, even whe
 Rally spoke last, and even when it states facts or times Rally could act on —
 with two stated tie-breaks: naming a person never cancels a request aimed at
 Rally, and `addressesRally` reports only that the text contains the product's
-name, which the model must read as addressing only when the message speaks _to_
+name, which the model must read as addressing only when the message speaks *to*
 Rally. The deterministic imperative fast path no longer fires when the message
 mentions a person; it hands those to the model instead. The work-stream object
 also now labels the agent's own turns "Rally" rather than "Avalon" in the
@@ -4973,7 +4975,7 @@ the pending question.
 
 **Consequences:** an imperative message that mentions a person now costs a model
 call where it used to classify deterministically at 0.9 — the price of not
-answering work that was handed to a teammate. A message that only _names_ a
+answering work that was handed to a teammate. A message that only *names* a
 person mid-sentence without a mention chip carries no `humanMentions` entry and
 is covered only by the prompt's addressed-by-name clause, so plain-text
 addressing remains a judgment call for the model. `docs/rally-rebrand-inventory.md`
@@ -5005,16 +5007,16 @@ subscription as a non-automation run in any work stream, and that field is the
 run's authority claim rather than a description of its container; the memory
 union was the only layer disagreeing.
 
-**Considered and rejected:** _Passing the work stream's
-`automation_subscription_id` into a follow-up's run input._ It resolves
+**Considered and rejected:** *Passing the work stream's
+`automation_subscription_id` into a follow-up's run input.* It resolves
 differently by subscription scope — a personal automation's owner would succeed
 where a workspace automation's replier fails
 `memory_workspace_automation_principal_mismatch` — so the same member action
 would work in one automation and not another, and it would hand the
 subscription's accumulated memory to anyone who can see the work stream. Making
 it work would mean running a member's reply under the automation's stored
-principal, which is an authorization change, not a repair. _Restating migration
-0036's predicate verbatim_ — `origin_type = 'ad_hoc' AND
+principal, which is an authorization change, not a repair. *Restating migration
+0036's predicate verbatim* — `origin_type = 'ad_hoc' AND
 automation_subscription_id IS NULL` — was also rejected: the label is a second
 name for the same bit, and the weaker one, since the identity root declares
 `origin_type TEXT NOT NULL DEFAULT 'ad_hoc'` with no CHECK and would silently
@@ -5036,7 +5038,7 @@ protocol projector reauthorizes only replayed attachment results, a reply's mode
 context can still carry the memory items the automation's own run recalled, which
 is a projector defect this change makes reachable with automation-scope content
 rather than one it introduces. Gating delivery
-on the _work stream's_ subscription instead would mail a member's casual reply to
+on the *work stream's* subscription instead would mail a member's casual reply to
 the automation's destination, so this stays open with the two product questions
 in the section above rather than being decided here.
 
@@ -5080,7 +5082,7 @@ supplied they never did, so a `ZodError` raised by the draft's own contract was
 filed as downstream data validation and the model was handed "retry once; if it
 fails again, report that the tool could not validate its data instead of
 changing the arguments" — advice that is correct for a provider response and
-exactly wrong here, since the model _is_ the author of the rejected value. On
+exactly wrong here, since the model *is* the author of the rejected value. On
 request `8592b3f1` it did as it was told: four submissions, byte-identical
 rejections of one missing `deterministicPrefilter.eventType`, then
 `automation_draft_not_submitted`, and a `502` whose only member-facing advice was
@@ -5089,12 +5091,12 @@ this tool had simply never been given one.
 
 **How it is proved:** `packages/agent-harness/src/index.test.ts` compiles a draft
 whose ready semantic trigger declares an empty prefilter, and asserts the tool
-result the _next_ provider request carries names
+result the *next* provider request carries names
 `triggers[0].deterministicPrefilter.eventType` with the refinement's own
 sentence, arrives as `kind: "validation"`, and does not carry the
 "instead of changing the arguments" advice — then that the corrected
 resubmission compiles. Removing the hook fails it on `kind`, then on that text.
-`packages/contracts/src/index.test.ts` pins the path _and_ the message of all
+`packages/contracts/src/index.test.ts` pins the path *and* the message of all
 six readiness refinements, which became the compiler's correction vocabulary the
 moment this change made them reachable; a refinement whose path is wrong names a
 field the model cannot find, which is this same loop under another name. The
@@ -5110,25 +5112,25 @@ must stay the same parse the executor runs; two parses that can disagree would
 name a field in the correction that the executor does not reject, or accept one
 it does.
 
-**Considered and rejected:** _Broadening the runtime's classifier_ to treat any
+**Considered and rejected:** *Broadening the runtime's classifier* to treat any
 executor `ZodError` as an argument error — the distinction is load-bearing, and a
-provider response that fails validation is not the model's to fix. _Loosening
-`AutomationDraftSchema`_ so the submission is accepted and the missing event type
+provider response that fails validation is not the model's to fix. *Loosening
+`AutomationDraftSchema`* so the submission is accepted and the missing event type
 surfaces later — `POST /automations` refuses the same draft with
 `activity_trigger_event_required`, so this only moves the dead end behind a
-Create button. _Leaving the submission schema's wording alone_ now that
+Create button. *Leaving the submission schema's wording alone* now that
 the correction loop works — one recoverable round trip per draft is still a round
 trip, and the requirement was invisible to a model reading the field's own
-contract. _Adding_ the rule to the compiler policy as a second sentence: that
+contract. *Adding* the rule to the compiler policy as a second sentence: that
 was written and reverted at +124 bytes against 63 of headroom. What went in
 instead is a correction, not an addition. Policy already carried a vaguer first
 copy — "a declared deterministic prefilter", which beside its
-`connector_activity` sibling's "only declared deterministic filter _fields_"
-reads as _declared by the plugin_, so `{}` satisfied it. Two statements of one
+`connector_activity` sibling's "only declared deterministic filter *fields*"
+reads as *declared by the plugin*, so `{}` satisfied it. Two statements of one
 rule drift into a contradiction, and this pair already had; the fix is to
 correct the stale one, at +22 bytes, not to leave it standing beside an accurate
-one elsewhere. _Throwing `formatToolArgumentValidationError`'s text from the
-executor_ instead of declaring the hook — one line, and the model would see the
+one elsewhere. *Throwing `formatToolArgumentValidationError`'s text from the
+executor* instead of declaring the hook — one line, and the model would see the
 same field names, but it routes around the classifier: the failure would still
 be reported as `kind: "external"`, so the wire contract and the telemetry would
 both say the provider's data was bad.
@@ -5144,7 +5146,7 @@ the attribution without knowing to ask for it. The member-safe message says
 limit is per invocation and a fresh run starts a fresh one.
 
 Two things the new arm exposed came with it. `kind` tested `FatalHarnessPortError`
-_below_ `timedOut` while `code` tested it above, so a platform refusal landing
+*below* `timedOut` while `code` tested it above, so a platform refusal landing
 during a timed-out run reported `deadline` beside `platform_limit_exceeded`; the
 arms are now in one order in both chains. And `HarnessLimitError`'s constructor
 excludes the codes that are not limits, so `platform_limit_exceeded` is added to
@@ -5177,8 +5179,8 @@ same position in both. Both chains have been wrong about that once, in opposite
 directions, and neither cost anything until a code arrived whose kind was not
 already `execution`.
 
-**Considered and rejected:** _Matching on the port that failed_ — the refusal
-lands anywhere. _Adding a retry_ for it inside the harness: the invocation is
+**Considered and rejected:** *Matching on the port that failed* — the refusal
+lands anywhere. *Adding a retry* for it inside the harness: the invocation is
 already spent, so a retry inside it fails identically; the honest recovery is
 the next run, which is what the member-facing message says.
 
@@ -5196,7 +5198,7 @@ both of which the rendered submit schema already states per field.
 
 **Why:** the rule referred to a fact the model was never given. Asked to
 schedule in a timezone it could not read, a model supplies a popular one, and a
-New York account got a 9:00 AM briefing on Pacific time — in the field _and_ in
+New York account got a 9:00 AM briefing on Pacific time — in the field *and* in
 the summary sentence the person reads on the automation, which is model prose
 and would still have named the wrong zone had only the field been repaired.
 The defaults are a user-role message rather than an interpolation into the
@@ -5209,7 +5211,7 @@ every turn.
 so the byte cap held without being raised. The field is now expected to be null
 in the ordinary case, and the normalizer no longer substitutes a default for it —
 `AutomationService` resolves it where the `schedules` row is derived. A zone the
-model _writes_ is still honoured, deliberately: a shared template naming an
+model *writes* is still honoured, deliberately: a shared template naming an
 American market open must not follow its adopter. So the policy line is what
 keeps a model from deciding when an automation runs, not a server-side guard, and
 `prompts.test.ts` asserts its wording for that reason. The
@@ -5372,7 +5374,7 @@ prose is plain text.
 surface renders it. The display-side normalizer
 ([`model-text-normalization.md`](model-text-normalization.md)) repairs what
 arrives anyway; the prompt half is the only half that also fixes the copy that
-is _stored_ — exported, quoted into a later run, read back by the next model —
+is *stored* — exported, quoted into a later run, read back by the next model —
 so both halves exist. The dollar-sign clause is deliberately scoped: an early
 draft said a dollar sign belongs in backticks, which instructs a model to
 code-format every price — the exact output the normalizer's money rule was
@@ -5416,7 +5418,7 @@ charged to every compile.
 built-in formatting recipe; if that guidance is wanted back it belongs in a
 skill, which needs the compiler given a skill surface first — `compileAutomation`
 does not pass `skills` to `runHarness` today. Anything reading `requestedDelivery`
-must keep treating it as a _request_: it is model output, it selects among
+must keep treating it as a *request*: it is model output, it selects among
 Rally's own fixed channels, and it never carries an address.
 
 ### 2026-08-23 — Terminal receipt reconciliation survives a transient object failure
@@ -5496,7 +5498,7 @@ lifecycle row in a single D1 batch, receipts first, and fenced the terminal even
 on there being none still open. Those two writes are now in different stores —
 the lifecycle row in the regional database, the receipts in the work stream's
 object — and no transaction spans them, so one of the two orderings had to be
-chosen rather than avoided. The settlement runs _after_ the terminal write, in
+chosen rather than avoided. The settlement runs *after* the terminal write, in
 `settleResidualReceipts`, fenced on the exact `terminalized_at` that write
 stamped.
 
@@ -5823,7 +5825,7 @@ sanitization. `readableRootUnionBranch` is exported and asserted directly.
 The bump itself is the upstream fix specified from here, verified against the
 published package before pinning. The gap shape is now dropped; the over-reach
 that a careless version of that fix would have caused is absent — a composition
-under a branch's _property_, one and two levels down, survives untouched, which
+under a branch's *property*, one and two levels down, survives untouched, which
 matters because all nine models accept it and destroying it would trade a real
 constraint for nothing. Every 12.0.0 behaviour re-verified: headline repair with
 `required` intact, idempotence, the Gemini dangling-`required` pruning, the
@@ -5882,7 +5884,7 @@ rather than fixing a live failure.
 **Why:** the original rule was written from a matrix that never tested a branch
 whose `type` and `properties` disagree. Both shapes 400 on grok-4.3/4.5/4.6 with
 the same root-union error as the incident, and both were being passed — by the
-guard _and_ by the run-time repair, which is the worse half: a hosted MCP server
+guard *and* by the run-time repair, which is the worse half: a hosted MCP server
 serving either one would have had it forwarded untouched and failed the whole
 request, which is the exact outcome that repair exists to prevent.
 
@@ -5909,7 +5911,7 @@ composition of bare `required` branches — `memory_search`, Notion
 declare it in `inputSchema`. Each states it in its `description` and enforces it
 where it always held, in the executor's zod parse.
 `packages/agent-harness/src/tool-schema-safety.ts` adds two checks over what
-Bind's real `sanitizeToolSchema` _emits_: `nonObjectRootUnionBranches` for a root
+Bind's real `sanitizeToolSchema` *emits*: `nonObjectRootUnionBranches` for a root
 `anyOf`/`oneOf` branch xAI will not read as an object, and
 `weakenedCompositionBranches`, which compares the authored schema against the
 sanitized one and reports any branch that lost a `required` or came out
@@ -5938,14 +5940,14 @@ while a work stream pinned to Grok from the composer's model picker got
 
 The **silent** one is the sanitizer. It prunes a `required` against the same
 node's own `properties` — correct for Gemini, whose validator resolves neither
-composition nor parent scope — so a branch that is _only_ a `required` prunes to
+composition nor parent scope — so a branch that is *only* a `required` prunes to
 `{}` and the constraint is gone on every provider. Gemini and OpenAI accept the
 emptied schema and let the model send both parameters or neither.
 
 The first cut of this change assumed the emptied branch was the xAI trigger. It
 is not, and the measurement is why the guard is now two checks rather than one:
 the authored branches 400 identically to the sanitized ones, restoring the
-`required` does not help, and the same union _nested_ under a property is
+`required` does not help, and the same union *nested* under a property is
 accepted by all nine models. A single "no empty branches" rule would have
 flagged harmless nested cases while missing an author who writes
 `oneOf: [{ required: [...] }]` at the root and never trips the sanitizer.
@@ -5957,7 +5959,7 @@ accepted by all nine models including every Grok, so the root check reads only
 objects to. "Emptied" was too narrow in the other direction: `{ description,
 required }` prunes to `{ description }` and `{ type: "object", required }` to
 `{ type: "object" }`, so the check now compares authored against sanitized and
-reports a dropped `required` wherever it lands — the annotation form is _also_ a
+reports a dropped `required` wherever it lands — the annotation form is *also* a
 hard 400 on Grok, while the `type: "object"` form is the silent one and would
 otherwise have passed both checks. And the walk missed `dependentSchemas`, the
 2019-09 successor to draft-07's `dependencies`, which Bind's sanitizer does
@@ -5970,7 +5972,7 @@ passes xAI but the sanitizer then strips the `required` anyway, so the constrain
 is lost silently — the only structural form that both passes and survives is a
 full object schema per branch, which is what the attachment tools already use;
 teaching Rally to post-process Bind's output would fork the sanitizer. The
-weakened-branch check asserts _constraint removed_ rather than _unsatisfiable_
+weakened-branch check asserts *constraint removed* rather than *unsatisfiable*
 deliberately — satisfiability needs a solver, and a branch the sanitizer weakened
 is a discarded constraint whether or not some instance still validates.
 
@@ -5995,7 +5997,7 @@ repairs rather than rejects.
 
 ### 2026-08-15 — A settled read receipt rebinds instead of halting the run
 
-**What changed:** A completed _read_ receipt whose positional coordinates are
+**What changed:** A completed *read* receipt whose positional coordinates are
 reused by a demonstrably different read is now replanned in place and executed,
 under an `execution_replanned` checkpoint, rather than classified
 `ambiguous_external_write`. A receipt that has already settled is never handed to
@@ -6067,7 +6069,7 @@ exists to prompt.
 
 The pin itself was not relaxed, and must not be: an override is a request to
 observe one specific model, and quietly answering from another would invalidate
-the comparison it was created to make. Retrying _the same pinned model_ keeps
+the comparison it was created to make. Retrying *the same pinned model* keeps
 that promise, which is why the retry lives at the plan level rather than in the
 route.
 
@@ -6075,7 +6077,7 @@ The second half is a diagnostic debt the first half would otherwise have hidden.
 The exhaustion path rethrew the transport's own error verbatim — right for
 preserving a message, but it dropped the classification, so the outer catch saw
 an unrecognized error and filed an upstream outage as `harness_execution_failed`:
-_"The Rally harness could not complete this run."_ The member was told Rally
+*"The Rally harness could not complete this run."* The member was told Rally
 broke, and the only way to learn otherwise was the raw-inference runbook. One
 predicate now decides both the retry and the code, so the failures Rally retries
 are exactly the failures it names as the provider's, and the two lists cannot
@@ -6142,7 +6144,6 @@ misstate agency, or make observation part of product correctness.
 replayed terminal receipt is explicitly labeled. The regional runtime—not
 desktop ingest—owns workspace-only events. Any future run/tool dimension must
 remain a bounded canonical taxonomy and must not add content.
-
 ### 2026-08-13 — Terminal activation stays allocation-free and authority-neutral
 
 **What changed:** Supported regional work-stream runtimes register
@@ -6622,14 +6623,14 @@ as text, as a resource, or through a connector write. The workstream prompt's
 "create the requested durable artifact" clause went with it.
 
 **Why:** Nothing read artifacts back. The scheduled digest is the case that
-proved it: `settleDigestRun` mails the run's _final message_, so a digest run
+proved it: `settleDigestRun` mails the run's *final message*, so a digest run
 that wrote its summary into an artifact and closed with "Outcome: Digest artifact
 created (id …)" mailed that sentence — and because the sentence is non-empty and
 the run completed, the delivery settled as delivered and advanced the cursor, so
 the window it covered could never be re-digested. The model was not
 misbehaving: the workstream prompt told it to prefer a durable artifact, the tool
 was preloaded on every workstream run, and the digest brief never said the final
-message _is_ the deliverable. A write destination that no consumer reads is a
+message *is* the deliverable. A write destination that no consumer reads is a
 trap for exactly this, and it had one consumer-shaped surface — the context panel
 — that made it look otherwise.
 
@@ -6648,7 +6649,7 @@ that tries one aborts loudly.
 
 **The retirement is unfinished on purpose, and owes two more steps.** The deploy
 job migrates configured deployments before it deploys either Worker, so the Worker still
-live during a migration is the _previous_ one — and it calls `loadArtifacts` on
+live during a migration is the *previous* one — and it calls `loadArtifacts` on
 every `GET /workstreams/:id/context`. Dropping the table alongside this code
 removal would fail every context request in configured deployments for the length of the
 rollout, and indefinitely if the deploy failed after the migration step. So
@@ -6678,7 +6679,7 @@ row is worded from its stored `tool_name` every time it is read, so deleting the
 entry would re-word every row the tool ever wrote as "Workstream create
 artifact" — the raw-name fallback that module exists to prevent. And
 `WorkstreamContextSchema` still carries an always-empty `artifacts`, because a
-released desktop build bundles the schema that _required_ it and would fail the
+released desktop build bundles the schema that *required* it and would fail the
 whole context response without it. That one is temporary and dated in place;
 the prose entry is removed only when the rows are.
 
@@ -6705,7 +6706,7 @@ shape was already reachable for any work stream whose last human message was
 older than the run being retried.
 
 Storing the trigger alone then broke the same thing from the other side, and
-review caught it before it landed. Because the trigger is _also_ the bound, a
+review caught it before it landed. Because the trigger is *also* the bound, a
 retry pinned to the failed run's trigger could no longer see anything posted
 after that run started — and the message most likely to be sitting there is a
 correction explaining why the run was wrong, which `sendMessage` stores without
@@ -6714,17 +6715,17 @@ was not addressed to the agent. Retrying right after a teammate says "you used
 the wrong account" would have re-issued the identical failing request. Splitting
 identity from bound is what makes both cases right at once.
 
-**Considered and rejected:** _Deriving the trigger from the failed run's
-`origin`_ — no migration, but `manual_retry` has no origin of its own to derive
+**Considered and rejected:** *Deriving the trigger from the failed run's
+`origin`* — no migration, but `manual_retry` has no origin of its own to derive
 from, so retrying a retry has to walk backwards through runs to find the last
-one that meant something. _Leaving `retry` alone and special-casing
-suggested-work work streams_ — the wrong shape was reachable without them.
-_Resolving the retry's trigger as `MAX(stored trigger, newest human message)`_ —
+one that meant something. *Leaving `retry` alone and special-casing
+suggested-work work streams* — the wrong shape was reachable without them.
+*Resolving the retry's trigger as `MAX(stored trigger, newest human message)`* —
 one line, and it restores the correction case, but the brief is admitted to the
-model only _as_ the trigger, so moving the trigger forward silently drops it
+model only *as* the trigger, so moving the trigger forward silently drops it
 from the run that most needs it. That trade is what the fence/identity split
-exists to avoid. _Reading the newest message at projection time instead of
-storing a fence_ — an attempt that replays would read a different window than
+exists to avoid. *Reading the newest message at projection time instead of
+storing a fence* — an attempt that replays would read a different window than
 the one it read first, which is the whole reason the transcript is fenced.
 
 **Consequences:** NULL keeps its existing meaning, which is what makes the
@@ -6764,9 +6765,9 @@ now lives in the harness and both surfaces call it. Unbatched, a narrating
 compile is on the order of a thousand frames, each one an SSE write, a schema
 parse, a React state update, and a forced reflow from the composer's
 follow-to-bottom. The retraction rule the sequenced batcher carries had to be
-generalized rather than copied: that one _flushes_ before a reset because its
+generalized rather than copied: that one *flushes* before a reset because its
 reset clears only the active turn, while the compiler's reset frame carries the
-whole replacement buffer, so pending text is _discarded_. Both callers state
+whole replacement buffer, so pending text is *discarded*. Both callers state
 which they need at the call site; the batcher itself knows nothing about
 retraction.
 
@@ -6820,7 +6821,7 @@ deliberation line — a tool name, a "wait, let me check" — against explicit r
 forbidding both, most often while repairing a rejected submission. The rules are
 stated with a discriminating example rather than enforced host-side: filtering
 model text by pattern would censor the connector and event names that legitimate
-narration is _supposed_ to contain. A future model swap should look at this
+narration is *supposed* to contain. A future model swap should look at this
 again rather than assume it is settled.
 
 Narration spends output tokens on every research turn, which lengthens a compile
