@@ -187,6 +187,33 @@ published. "The Canvases it writes to" is `canvasesWrittenBy`, a query on the
 directory by writer, on the Sidekick's detail as `canvases`, filtered to what
 the reader may open.
 
+### Rally in a Canvas Chat
+
+A message in a Canvas's Chat reaches Rally the way one in a Thread's Main does:
+alone in the Canvas, every message is for Rally; with others there, the
+addressing classifier (`classifyWorkstreamMessage`) decides whether a message
+is for Rally or for the people. The run has the resource tools a Thread's Main
+has (`list_resources`, `read_resource`, `view_resource`, the artifact data
+tools keyed by the Canvas id) and the Terminal's `publish_resource`, which
+publishes into the Canvas.
+
+Rally is told about the Canvas in a host-provided message, `CANVAS CONTEXT`
+(`canvasRunContextMessage`, from `WorkspaceDO.canvasContext`): the Canvas's
+title, its artifacts at their current versions, and that republishing a path
+is a new version attributed to Rally while a new path adds an artifact. It is a
+derived user message, as a Sidekick run's activation context is, not system
+prompt text, because the system prompt prefix is byte-stable and cached and
+the artifact list changes with every publish; it is keyed on the message that
+woke the run, so a recovered execution renders the same context.
+
+Memory a Canvas's Chat learns is sourced `canvas:<canvasId>` and filed under
+the stored subject kind `thread` with the Canvas id, the kind its
+conversation shape shares with a Thread's Main: renaming the stored kind means
+rebuilding `memory_facts` for its CHECK, which the plan's memory step (C-5)
+does with the other subject kinds. Who may read such a fact is the Canvas's
+audience (`canvasReaderAllows` for a person, Organization-wide for
+`workspace` visibility or an Organization Sidekick's Canvas).
+
 ### The Canvas list
 
 The workspace socket carries each viewer's Canvas list: `canvases` on the
@@ -301,6 +328,9 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   of the same artifact, another path another artifact; and a Sidekick run's
   publish makes a Canvas its Sidekick's audience opens, read live, listed on
   the Sidekick's detail, refusing a Canvas the Sidekick does not write.
+- `canvas-conversation.test.ts` also runs Rally in a Canvas's Chat against the
+  OpenRouter double: the model is given the Canvas's context with its artifact
+  and the resource tools.
 - `canvas-hosting.test.ts` also claims a share at sign-in for a recipient who
   had no account.
 - `apps/api/test/canvas-routes.test.ts` — the routes' validation and the guest
@@ -337,7 +367,8 @@ artifacts are admitted to whoever opens it. `audienceAdmits` is the one rule
 under both `canvasAdmits` and `sidekickAdmits`. Each viewer's Canvas list,
 with unread, presence and pins, rides the workspace socket. A Canvas is made
 with `POST /canvases`; its Chat's publishes are its artifacts, and a Sidekick
-run publishes into a Canvas it makes or one it writes.
+run publishes into a Canvas it makes or one it writes. Rally in the Chat is
+told the Canvas's artifacts, and what it learns is the Canvas's memory.
 
 **Why:** The Canvases and Sidekicks decisions: a Canvas is identified by its
 conversation and starts empty, so it can generate many artifacts; it has its
