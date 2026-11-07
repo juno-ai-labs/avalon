@@ -172,3 +172,23 @@ Do not rebuild: `ConversationSurface`, `lib/transcript.ts`, `lib/use-workstream-
 
 Rough PR counts: Phase A 12 to 15; Phase B 10 to 12 landed within days of each
 other; Phase C 10 to 12; Phase D alongside each. The team sets the calendar.
+
+## 9. Follow-ups after this pull request
+
+Recorded as the build went, from the reviews of each step. None blocks the merge; each names where it lives.
+
+**Deploy order.**
+
+- `retire_threads` (and `dump_thread_transcripts` first) must have run in every Organization before this deploys: `receiveChildEffects` answers 409 `conversation_parent_kind_retired:<kind>` for any live Thread, and the Queue dead-letters those effects by design.
+- Ace deploys with or after the API: `WorkspaceRetirementResult.failed[].parentKind` admits `canvas` (6389dd2).
+- The subscribe answer keeps an empty `workstreams` page and `notes: []` for one release so pre-pivot desktops still parse it; remove once every desktop has updated (realtime-sockets.md).
+
+**A later migration, after the operator's run everywhere.** Drop `channels`, `spaces`, `breakouts`, their viewer tables, `parent_*`, their memory-digest and search triggers, `digest_schedules` (remove the `schedules` foreign key first), `slack_agent_sessions`, `slack_agent_feedback`, `external_registration_generations`, `workspace_workstream_effect_receipts`, and the D1 Thread authority tables once Canvas and Sidekick creation no longer read them. `authorization_locations` Thread rows and Thread `conversation_view_*` rows stay (they cannot be told apart safely). Any cleanup that drops Thread rows from D1 `workstreams` must bump the Turbopuffer namespace first (text-search.md).
+
+**Product calls open to the owner.** Anyone a Canvas admits may retitle it (decision log). The Slack reply to a mention or DM: "Rally no longer starts work from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack for you." A run blocked on permissions ends `completed` after saying what is blocked; routing it through the elicitation path would make the Sidekick row show Needs input. `conversation_search` does not find a Sidekick's run messages. The privacy policy's effective date and version, and its Customer Content row's "work streams", were left for the team.
+
+**Mechanisms.** `attention()` returns zeros: Canvas and Sidekick unread is not summarized into the Organization badge. The memory subject kinds stay `thread`/`channel`/`breakout` in storage (the `memory_facts` rebuild), and the memory tools' model-facing text still names them. A "Working" state on the Sidekicks home needs a running flag on the directory row; a Canvas card cannot sit at the run that made it until the summary carries `writerRunId`; pin reorder in the client is not wired (`PUT /workspace/pinned-order` exists). A Sidekick's mention push title can read "in New Sidekick" because the conversation snapshots its title before the definition names the Sidekick. A failed revocation publish on audience narrowing is logged only. The authorization projection has no Canvas or Sidekick audience trigger and no read-path consumer. A Sidekick child's Terminal deadline never reached the workspace schedule (workspace-retirement.md).
+
+**Code kept until a later pass.** The provider webhook service's `!WORKSPACE_DOS` legacy branch (its Node suite drives only that branch); the non-producer legacy route branches in connection-service.ts; `OPENROUTER_STRUCTURED_MODEL` has no reader (removing the Worker var is deploy-affecting); `substream-creation.ts`'s `SubstreamInitialContext` and the session-import desktop-action kinds (stored rows still parse); `ArtifactPinListSchema` and the empty `/artifact-pins` route; `membershipVersion` on socket tickets; `announceTo` on the review notice (write-only); `RetirementParentKindSchema`, `EffectParentKindSchema` and `StoredConversationParentKindSchema` as separate four-kind enums; stale code comments describing Threads, Channels, Spaces or Breakouts as live in about 85 files (none change behaviour; the largest are workspace-do.ts, workspace-memory-facts-storage.ts, workspace-pin-storage.ts, agent-loop-do.ts, workspace-memory-facts-protocol.ts).
+
+**Tests and lanes.** The e2e lane killed the local workerd in 2 of 8 full runs at the current chaos burst sizes (e2e.md records the sizes as the team's to set). No renderer test covers the Canvas restored-route fallback (checked in a real window). The prepareApply malformed-evaluator 422 case has no cheap fixture. `test/provider-webhooks.test.ts` must move onto WorkspaceDO before its legacy branch goes.
