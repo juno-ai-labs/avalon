@@ -65,7 +65,9 @@ export function workspaceAgentOwnerLookup(env: Env, workspaceId: string): AgentO
       asWorkspaceId(workspaceId),
       workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
     );
-    return (await workspace.agentOwner({ workspaceId, agentId })).agentId;
+    const owner = await workspace.agentOwner({ workspaceId, agentId });
+    if (!owner.ok) throw new Error(owner.code);
+    return owner.value.agentId;
   };
 }
 

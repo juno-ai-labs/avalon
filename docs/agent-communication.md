@@ -52,7 +52,10 @@ preserve revoked domain access or reveal inaccessible names and descriptions.
 Recording a route does not prove a recipient accepted a message: recipient
 input admission owns delivery. Replays cannot change the original route.
 Recursive ownership queries return descendants, not teammates; reparenting and
-cycles are refused.
+cycles are refused. A Thread-era row (an agent id under a `workstream` or
+`space` parent) is skipped by name in a roster or a descendant list, and an
+owner or a message route that names one answers
+`conversation_parent_kind_retired:<kind>` as a team result.
 
 The host derives a stable UUID from the durable tool effect identity for creation
 and delivery replay. Start reserves an ordinary child under the same conversation

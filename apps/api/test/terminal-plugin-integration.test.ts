@@ -55,7 +55,7 @@ function fixture(
   emergencyDisabled = false,
   options: {
     /** What WorkspaceDO answers when composition asks who owns an agent. */
-    agentOwner?: (input: { workspaceId: string; agentId: string }) => Promise<{ agentId: string | null }>;
+    agentOwner?: (input: { workspaceId: string; agentId: string }) => Promise<{ ok: true; value: { agentId: string | null } }>;
   } = {},
 ) {
   const database = preRetirementProductSqliteDatabase();
@@ -345,11 +345,11 @@ describe("Terminal Bind integration", () => {
     // The agent's owner is under another work stream: a routing defect the
     // resolver refuses. The refusal takes Terminal away, named, and nothing else.
     const { env, input } = fixture("supported", false, {
-      agentOwner: async ({ agentId }) => ({
+      agentOwner: async ({ agentId }) => ({ ok: true, value: {
         agentId: agentId === agentIdForAddress({ parentKind: "canvas", parentId: S, substreamId: asSubstreamId(worker) })
           ? agentIdForAddress({ parentKind: "canvas", parentId: otherWorkstream, substreamId: asSubstreamId("0") })
           : null,
-      }),
+      } }),
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
@@ -371,12 +371,12 @@ describe("Terminal Bind integration", () => {
   it("gives a background agent its owner's sandbox, in the owner's object", async () => {
     const worker = "30000000-0000-4000-8000-000000000077";
     const { objectStore, objectStores, env, input } = fixture("supported", false, {
-      agentOwner: async ({ agentId }) => ({
+      agentOwner: async ({ agentId }) => ({ ok: true, value: {
         // The worker is owned by the main conversation; the main conversation by nobody.
         agentId: agentId === agentIdForAddress({ parentKind: "canvas", parentId: S, substreamId: asSubstreamId(worker) })
           ? agentIdForAddress({ parentKind: "canvas", parentId: S, substreamId: asSubstreamId("0") })
           : null,
-      }),
+      } }),
     });
     // The agent's conversation is its own object, where its run lives.
     const workerStore = testWorkstreamObjectStore();

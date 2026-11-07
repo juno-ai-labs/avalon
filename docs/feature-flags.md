@@ -63,7 +63,7 @@ inherit the source conversation's model override:
 
 | Agent | Flag key | Default model | Fallback models |
 | --- | --- | --- | --- |
-| Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
+| Conversation agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Pasted-text naming (role `workstream_naming`) | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Memory sweep | `agent-model-memory-sweep` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Sidekick wizard | `agent-model-sidekick-authoring` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
