@@ -3,7 +3,7 @@
 A Sidekick lets a person delegate work or knowledge. Its Organization's
 `WorkspaceDO` holds its identity, immutable definitions, optional triggers, and
 runs, through `HostedSidekick`; how it got there and how it is stored are
-[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them)'s.
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick)'s.
 The legacy `SidekickDO` that held them before is deleted.
 Substream `0` is the Sidekick's shared conversation, where everyone it is
 shared with reads and asks for runs and where a manager edits it through the
@@ -410,7 +410,7 @@ records where a running signal would come from.
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The request shapes and aggregation helpers every hosted parent shares. |
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by an agent's `create_sidekick`; and `AutomationService`, the Worker-side access every route goes through. It passes who is asking; whether they manage the Sidekick is decided where the Sidekick lives. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /:id`, `GET /:id/delegation`, `POST /:id/delegation`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/audience`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
-| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; the history projection's `sidekick_review_due` branch, which admits the notice row as the model's user turn; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a Canvas's Chat. |
+| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; the history projection's `sidekick_review_due` branch, which admits the notice row as the model's user turn; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names no home conversation (`homeConversationId` is `null`: the run delivers its own result); and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a Canvas's Chat. |
 | `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | `sidekick_conversation_attachments` (WorkspaceDO migration 86) and the conversation scope a Sidekick reaches: its own conversation, the Canvases it writes, and its attached Canvases. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), `SidekickReviewNoticeV1` (the review row's structured content: counts and the sampled run ids), and `AutomationDraftProposedV1` (the card). |
@@ -1599,7 +1599,7 @@ notice it carried and when it was delivered; the same migration adds
 `sidekick_revisions.review_id`, the review a revision answered, null for a
 person's), the child
 tables, and alarm entries keyed `<sidekickId>:<key>`;
-[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick-is-hosted-beside-them)
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-sidekick)
 maps them to the tables of the deleted `SidekickDO`.
 
 `WorkspaceDO` migration 32 rebuilt `automation_directory` (automation id,

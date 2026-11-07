@@ -45,11 +45,6 @@ data belongs on a socket; and
 [`workstream-durable-object.md`](workstream-durable-object.md) owns the state and
 protocol inside each Durable Object.
 
-Conversation socket tickets also sign the contract-10 resolution-suggestion
-capability. The room persists it across hibernation and adapts snapshot,
-broadcast and replay delivery for older enum decoders; see
-[conversation suggestions](conversation-suggestions.md#resolution-delivery-and-acceptance).
-
 ## Where the code lives
 
 | Path | Responsibility |
