@@ -1296,6 +1296,8 @@ measurable saving.
 **Consequences:** `/parent-socket`, `WorkstreamControlSocketService` and
 `GET /workstreams/:id/control-socket` stay for desktops released before this
 change and for the iOS client, whose child directory is still that socket.
+(The Worker half was deleted on 2026-11-07 with the Thread routes; see
+[`realtime-sockets.md`](realtime-sockets.md#changelog).)
 They can be removed once the oldest supported desktop is this one and iOS
 reads the breakout list from its workspace socket. A new per-viewer Channel
 fact belongs on the row, not on a new socket.

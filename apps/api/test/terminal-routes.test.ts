@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Env, HonoAppEnv } from "../src/env";
 import { errorHandler } from "../src/middleware/errors";
 import { workspaceRoutes } from "../src/routes/workspace";
-import { workstreamRoutes } from "../src/routes/workstreams";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   createTestWorkspaceDO,
@@ -128,7 +127,6 @@ function fixture(options: { authenticated?: boolean; role?: "owner" | "member" }
     await next();
   });
   app.route("/workspace", workspaceRoutes);
-  app.route("/workstreams", workstreamRoutes);
   app.onError(errorHandler);
   return { app, env };
 }
@@ -166,25 +164,6 @@ describe("Terminal HTTP route contracts", () => {
     expect(TerminalWorkspaceSettingsSchema.parse(await applyResponse.json())).toMatchObject({
       mode: "full_internet", revision: 2, verificationState: "verified",
     });
-  });
-
-  it("exposes no per-work-stream Terminal surface at all", async () => {
-    // Terminal is how the agent executes, not something a reader is shown, so
-    // the work stream serves nothing about it. The workspace-level policy
-    // endpoints above are a different thing: an administrator sets those.
-    const { app, env } = fixture();
-    for (const path of [
-      `/workstreams/${S}/terminal`,
-      `/workstreams/${S}/terminal/repositories`,
-      `/workstreams/${S}/terminal/repository`,
-    ]) {
-      expect((await app.request(path, undefined, env)).status).toBe(404);
-    }
-    expect((await app.request(
-      `/workstreams/${S}/terminal/start-fresh`,
-      { method: "POST" },
-      env,
-    )).status).toBe(404);
   });
 
   it("rejects unauthenticated, non-admin, malformed, and invalid-id requests", async () => {

@@ -60,11 +60,8 @@ admission is split in two.
    `GET /workspace/socket` for workspace sync/commands (members and guests: it
    is mounted with the workspace-relationship check, not the member-only
    `requireAuth`, because WorkspaceDO shapes a guest's socket itself),
-   `GET /workstreams/:id/control-socket` for the retired Channel control socket
-   (still served for installed desktops; the current desktop
-   never asks for it),
    `GET /conversations/:parentId/substreams/:substreamId/socket` for the feed
-   of a work stream's or an automation's conversation, or
+   of a Canvas's Chat or a Sidekick's conversation, or
    `GET /realtime/transcription/socket`. The Worker checks the caller may open
    that exact purpose and mints a 60-second HS256 JWT binding user, workspace,
    region, one-time `jti`, audience, only the target IDs that purpose requires,
@@ -1028,6 +1025,19 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-11-07 — The Channel control socket's Worker half is gone
+
+**What changed:** `GET /workstreams/:id/control-socket`, `/socket/workstreams/:id`,
+`WorkstreamControlSocketService` and its ticket audience
+(`avalon-workstream-control-socket`) were deleted with the Thread routes.
+The Organization object's `/parent-socket` that served it goes with the
+hosted Thread parent.
+
+**Why:** Channels and Threads are gone from every client (the Canvases and
+Sidekicks pivot), so nothing can name a Channel to open; the socket was kept
+only for desktops released before the workspace socket carried a Channel's
+state, and those desktops have nothing left to open.
 
 ### 2026-11-07 — A Canvas's Chat is a conversation feed with ticket kind `canvas`
 

@@ -7,11 +7,9 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
-  asWorkstreamId,
   type SubstreamId,
   type UserId,
   type WorkspaceId,
-  type WorkstreamId,
 } from "@rally/contracts";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
@@ -85,10 +83,6 @@ interface WorkspaceSocketClaims {
   impersonatorUserId?: UserId;
   /** Whether the build that asked for this ticket reads a Space scoped `individual`. */
   readsIndividualSpaces?: boolean;
-}
-
-interface WorkstreamControlSocketClaims extends WorkspaceSocketClaims {
-  workstreamId: WorkstreamId;
 }
 
 export interface TranscriptionSocketClaims {
@@ -298,58 +292,6 @@ export async function verifyWorkspaceSocketTicket(
       expiresAt: payload.exp,
       ...(typeof payload.imp === "string" ? { impersonatorUserId: asUserId(payload.imp) } : {}),
       readsIndividualSpaces: payload.ind === true,
-    };
-  } catch {
-    throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
-  }
-}
-
-export async function issueWorkstreamControlSocketTicket(
-  env: Env,
-  auth: AuthContext,
-  workstreamId: string,
-): Promise<string> {
-  assertSessionPrincipal(auth);
-  const now = Math.floor(Date.now() / 1_000);
-  return new SignJWT({
-    purpose: "workstream_control_socket",
-    sid: auth.sessionId,
-    wid: auth.workspaceId,
-    wsid: workstreamId,
-    region: auth.region,
-  })
-    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-    .setSubject(auth.userId)
-    .setJti(uuidV7())
-    .setIssuer("avalon-api")
-    .setAudience("avalon-workstream-control-socket")
-    .setIssuedAt(now)
-    .setExpirationTime(now + 60)
-    .sign(signingKey(env));
-}
-
-export async function verifyWorkstreamControlSocketTicket(
-  env: Env,
-  ticket: string,
-): Promise<WorkstreamControlSocketClaims> {
-  try {
-    const { payload } = await jwtVerify(ticket, signingKey(env), {
-      algorithms: ["HS256"], issuer: "avalon-api", audience: "avalon-workstream-control-socket",
-    });
-    if (
-      payload.purpose !== "workstream_control_socket" || typeof payload.sub !== "string" ||
-      typeof payload.sid !== "string" || typeof payload.wid !== "string" ||
-      typeof payload.wsid !== "string" || typeof payload.jti !== "string" ||
-      typeof payload.exp !== "number" || !isConfiguredRegion(payload.region)
-    ) throw new Error("Incomplete workstream control socket claims");
-    return {
-      sessionId: payload.sid,
-      userId: asUserId(payload.sub),
-      workspaceId: asWorkspaceId(payload.wid),
-      workstreamId: asWorkstreamId(payload.wsid),
-      region: payload.region,
-      ticketId: payload.jti,
-      expiresAt: payload.exp,
     };
   } catch {
     throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
@@ -677,56 +619,3 @@ export class WorkspaceSocketService {
   }
 }
 
-/**
- * Edge authentication and regional routing for one Channel's control socket,
- * served by its hosted parent.
- *
- * Retired for the current desktop, which reads a Channel's state from its row
- * on the workspace socket. Kept for desktops released before that and for the
- * iOS client; `docs/hosted-conversation-parents.md` says when it can go.
- */
-export class WorkstreamControlSocketService {
-  constructor(private readonly env: Env) {}
-
-  async upgrade(
-    workstreamId: string,
-    queryTicket: string | undefined,
-    request: Request,
-  ): Promise<Response> {
-    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
-      throw new ApiError(426, "websocket_upgrade_required", "A WebSocket upgrade is required");
-    }
-    if (!isAllowedSocketOrigin(this.env, request.headers.get("origin"))) {
-      throw new ApiError(403, "socket_origin_forbidden", "The realtime origin is not allowed");
-    }
-    const claims = await verifyWorkstreamControlSocketTicket(
-      this.env,
-      socketTicketFromRequest(request, queryTicket),
-    );
-    if (claims.region !== this.env.AVALON_REGION || claims.workstreamId !== workstreamId) {
-      throw new ApiError(403, "socket_ticket_scope_mismatch", "The ticket does not authorize this thread");
-    }
-    // The Channel's parent is hosted by the Organization object, which holds
-    // the Channel's control sockets beside its own; see
-    // `docs/hosted-conversation-parents.md`.
-    const stub = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      claims.workspaceId,
-      workspaceDOName(claims.region, claims.workspaceId),
-    );
-    const headers = new Headers(request.headers);
-    headers.delete("sec-websocket-protocol");
-    headers.set(RALLY_HEADERS.WORKSPACE_ID, claims.workspaceId);
-    headers.set(RALLY_HEADERS.WORKSTREAM_ID, claims.workstreamId);
-    headers.set(RALLY_HEADERS.SESSION_ID, claims.sessionId);
-    headers.set(RALLY_HEADERS.USER_ID, claims.userId);
-    headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
-    headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
-    const internalUrl = new URL("https://workspace.internal/parent-socket");
-    const response = await stub.fetch(
-      new Request(internalUrl, { method: "GET", headers }),
-    );
-    return withNegotiatedSubprotocol(request, response);
-  }
-}
