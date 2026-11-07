@@ -83,7 +83,7 @@ it('opens a guest in the shared shell without asking for anything a guest is ref
     }
     if (path.endsWith('/sidekicks') || path.endsWith('/recommended-sidekicks')) return Response.json({ items: [] });
     if (path.endsWith('/navigation/threads')) return Response.json({ items: [], pinned: [], nextCursor: null });
-    if (path.endsWith('/feature-flags')) return Response.json({ liveArtifactsEnabled: false });
+    if (path.endsWith('/feature-flags')) return Response.json({});
     return Response.json({ error: { message: 'Unexpected request: ' + path } }, { status: 404 });
   };
   history.replaceState(null, '', '/app/workspaces/global/' + workspace.id + '/workstreams/' + parent + '/substreams/' + child);
