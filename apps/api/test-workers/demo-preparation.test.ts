@@ -6,7 +6,7 @@
  * This is the operation the Demos page drives, minus the Workflow that
  * schedules its steps: each phase is the function the Workflow's step calls,
  * run here in order against the real onboarding service, workspace object,
- * connection copy, seeder, room objects and readiness barrier. What is asserted
+ * connection copy, seeder, Canvas and Sidekick objects and readiness barrier. What is asserted
  * is what the operator and the presenter get: a workspace owned by the
  * presenter with the cast seated, the template's connection copied under its
  * own identity, every seed action confirmed, a wait that names what has not
@@ -18,10 +18,9 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { reset, runDurableObjectAlarm } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import type { ParentEffectEnvelope } from "@rally/contracts/conversation-effects";
 import { asWorkspaceId } from "@rally/contracts";
 
 import type { Env } from "../src/env";
@@ -32,12 +31,8 @@ import { demoOperationStatus, demoPreparationInstanceId, runDemoPreparationPhase
 import { demoSeedReceipts } from "../src/services/demo-seeder";
 import { DEMO_TEMPLATE_WORKSPACE_ID } from "../src/services/demo-workspace-visibility";
 import { workspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
-import {
-  consumeEffectBodies,
-  deliverChildEffects,
-  parentStubFor,
-  pendingParentEffects,
-} from "./helpers/conversation-effects";
+import { deliverChildEffects } from "./helpers/conversation-effects";
+import { DEMO_SEED_RECEIPTS_TABLE } from "./helpers/demo-workspace-fixture";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
@@ -45,12 +40,11 @@ import { useSelectedModel } from "./helpers/selected-model";
 import { useSidekickRunProvisionConsumer } from "./helpers/sidekick";
 
 const PRESENTER_ID = "00000000-0000-7000-8000-00000000d6a1";
-const PRIYA_ID = "00000000-0000-7000-8000-00000000d6a2";
-const MARCUS_ID = "00000000-0000-7000-8000-00000000d6a3";
-const DANA_ID = "00000000-0000-7000-8000-00000000d6a4";
+const THEO_ID = "00000000-0000-7000-8000-00000000d6a2";
+const PRIYA_ID = "00000000-0000-7000-8000-00000000d6a3";
 /** The colleagues the operator casts, by account. */
-const CAST = { priya: PRIYA_ID, marcus: MARCUS_ID, dana: DANA_ID };
-const CAST_NAMES = { priya: "Priya Raman", marcus: "Michael Holliway", dana: "Max Bender" };
+const CAST = { theo: THEO_ID, priya: PRIYA_ID };
+const CAST_NAMES = { theo: "Theo Park", priya: "Priya Raman" };
 const OPERATION_ID = "00000000-0000-7000-8000-00000000d6b1";
 const TEMPLATE_CONNECTION_ID = "00000000-0000-7000-8000-00000000d6c1";
 const CREDENTIALS_KEY = "active-connector-credentials-key-for-tests";
@@ -114,14 +108,12 @@ async function seedControlPlane(): Promise<void> {
     // what makes them castable at all.
     env.DB.prepare(`INSERT INTO users (id, google_subject, platform_user_id, email, name, avatar_url, timezone, created_at, updated_at)
       VALUES (?, 'sub-presenter', ?, 'adam@rallywith.ai', 'Adam', NULL, 'UTC', ?, ?),
-             (?, 'sub-priya', ?, 'priya@rallywith.ai', ?, NULL, 'UTC', ?, ?),
-             (?, 'sub-marcus', ?, 'kb@rallywith.ai', ?, NULL, 'UTC', ?, ?),
-             (?, 'sub-dana', ?, 'max@rallywith.ai', ?, NULL, 'UTC', ?, ?)`)
+             (?, 'sub-theo', ?, 'theo@rallywith.ai', ?, NULL, 'UTC', ?, ?),
+             (?, 'sub-priya', ?, 'priya@rallywith.ai', ?, NULL, 'UTC', ?, ?)`)
       .bind(
         PRESENTER_ID, PRESENTER_ID, NOW, NOW,
+        THEO_ID, THEO_ID, CAST_NAMES.theo, NOW, NOW,
         PRIYA_ID, PRIYA_ID, CAST_NAMES.priya, NOW, NOW,
-        MARCUS_ID, MARCUS_ID, CAST_NAMES.marcus, NOW, NOW,
-        DANA_ID, DANA_ID, CAST_NAMES.dana, NOW, NOW,
       ),
     env.DB.prepare(`CREATE TABLE workspaces (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL, region TEXT NOT NULL,
@@ -172,25 +164,7 @@ async function seedControlPlane(): Promise<void> {
       automation_subscription_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
       UNIQUE (region, workspace_id, workstream_id)
     )`),
-    env.DB.prepare(`CREATE TABLE demo_seed_receipts (
-      operation_id TEXT NOT NULL, action_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
-      kind TEXT NOT NULL, room TEXT, workstream_id TEXT, substream TEXT, substream_id TEXT,
-      sidekick_id TEXT, sidekick_run_id TEXT, turn_id TEXT,
-      harness_run_id TEXT, run_outcome TEXT, elicitation_id TEXT, resource_id TEXT,
-      completed_at TEXT NOT NULL, PRIMARY KEY (operation_id, action_id),
-      CHECK (
-        CASE kind
-          WHEN 'sidekick' THEN room IS NULL AND workstream_id IS NULL
-            AND substream IS NULL AND substream_id IS NULL AND sidekick_id IS NOT NULL
-          ELSE room IS NOT NULL AND workstream_id IS NOT NULL
-            AND substream_id IS NOT NULL AND sidekick_id IS NULL
-        END
-      )
-    )`),
-    // The same columns and constraints as `0100`, minus the references to
-    // `users` and `workspaces` this suite does not need — and, as in
-    // production, no foreign key on `workspace_id`: the creating phase writes
-    // it before the workspace row exists.
+    env.DB.prepare(DEMO_SEED_RECEIPTS_TABLE),
     env.DB.prepare(`CREATE TABLE demo_operations (
       operation_id TEXT PRIMARY KEY, company_name TEXT NOT NULL, presenter_user_id TEXT NOT NULL,
       pack_version TEXT NOT NULL, cast_json TEXT NOT NULL, workspace_id TEXT UNIQUE,
@@ -223,34 +197,18 @@ async function seedControlPlane(): Promise<void> {
   ).bind(TEMPLATE_CONNECTION_ID, DEMO_TEMPLATE_WORKSPACE_ID, sealed.ciphertext, sealed.iv, NOW, NOW).run();
 }
 
-function directoryRank(kind: ParentEffectEnvelope["effect"]["kind"]): number {
-  return kind === "directory_common" ? 0 : 1;
-}
-
 /**
- * The directory effects of one seeded conversation parent, through the real
- * consumer; see demo-readiness.test.ts. `substreamId` names the child whose
- * effects report up to it: a room's own conversation, or a Sidekick's one
- * seeded run.
+ * Every seeded conversation's held effects, through the real consumer, then
+ * the Organization object's alarm, which projects a Sidekick's run into its
+ * shared conversation. See demo-readiness.test.ts.
  */
-async function deliverDirectoryEffects(
-  workspaceId: string,
-  parents: { parentKind: "workstream" | "automation"; parentId: string; substreamId?: string }[],
-): Promise<void> {
-  for (const { parentKind, parentId, substreamId } of parents) {
-    const childStub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      conversationObjectName("global", asWorkspaceId(workspaceId), parentId, (substreamId ?? "0") as never),
-    ));
-    await deliverChildEffects(env, childStub);
-    const parent = parentStubFor(env, "global", { workspaceId, parentKind, parentId });
-    const directory = (await pendingParentEffects(parent))
-      .filter((envelope) => envelope.effect.kind.startsWith("directory_"))
-      .sort((left, right) => directoryRank(left.effect.kind) - directoryRank(right.effect.kind));
-    for (const envelope of directory) {
-      const result = await consumeEffectBodies(env, [envelope]);
-      if (result.retried > 0) throw new Error(`directory effect retried: ${envelope.effect.kind}`);
-    }
+async function deliverSeededEffects(workspaceId: string, conversations: { parentId: string; substreamId: string }[]): Promise<void> {
+  for (const { parentId, substreamId } of conversations) {
+    await deliverChildEffects(env, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName("global", asWorkspaceId(workspaceId), parentId, substreamId as never),
+    )));
   }
+  await runDurableObjectAlarm(workspaceStub(workspaceId));
 }
 
 beforeEach(async () => {
@@ -272,7 +230,7 @@ describe("preparing a demo", () => {
     // The colleagues the operator cast, under the names the directory has.
     expect(started.cast).toEqual({ presenter: PRESENTER_ID, ...CAST });
     expect(started.castNames).toEqual({ presenter: "Adam", ...CAST_NAMES });
-    const [priya, marcus, dana] = [started.cast.priya!, started.cast.marcus!, started.cast.dana!];
+    const [theo, priya] = [started.cast.theo!, started.cast.priya!];
     expect(launched).toHaveLength(1);
     const options = { attempt: 1, deadlineAt: Date.now() + 120_000 };
 
@@ -286,23 +244,11 @@ describe("preparing a demo", () => {
       `SELECT user_id, role FROM workspace_members WHERE workspace_id = ? AND status = 'active' ORDER BY role, user_id`,
     ).bind(workspaceId).all<{ user_id: string; role: string }>();
     expect(members.results).toEqual(expect.arrayContaining([
+      { user_id: theo, role: "member" },
       { user_id: priya, role: "member" },
-      { user_id: marcus, role: "member" },
-      { user_id: dana, role: "member" },
       { user_id: PRESENTER_ID, role: "owner" },
     ]));
-    expect(members.results).toHaveLength(4);
-    // Everyone seated is in General and owns a Personal Channel before seeding
-    // starts, not when the relationship dispatch next runs.
-    const everyone = [PRESENTER_ID, priya, marcus, dana].sort();
-    await runInDurableObject(workspaceStub(workspaceId), (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT viewer.user_id FROM space_viewers viewer
-          JOIN spaces space ON space.space_id = viewer.space_id
-         WHERE space.system_role = 'general' AND viewer.is_participant = 1 ORDER BY viewer.user_id`)
-        .toArray().map((row) => row.user_id)).toEqual(everyone);
-      expect(state.storage.sql.exec(`SELECT created_by_user_id FROM spaces WHERE scope = 'individual' ORDER BY created_by_user_id`)
-        .toArray().map((row) => row.created_by_user_id)).toEqual(everyone);
-    });
+    expect(members.results).toHaveLength(3);
     expect(await env.DB.prepare(`SELECT name FROM workspaces WHERE id = ?`).bind(workspaceId).first<{ name: string }>())
       .toEqual({ name: "Alto Capital-demo" });
     expect(await env.DB.prepare(`SELECT action FROM regional_onboarding_operations WHERE operation_id = ?`).bind(OPERATION_ID).first())
@@ -325,7 +271,7 @@ describe("preparing a demo", () => {
     // register still unpublished.
     const waiting = await runDemoPreparationPhase(prepEnv, OPERATION_ID, "waiting_for_workspace", options);
     expect(waiting.outcome).toBe("waiting");
-    expect((waiting.detail.gaps as { code: string }[]).map((gap) => gap.code)).toContain("mentioned");
+    expect((waiting.detail.gaps as { code: string }[]).map((gap) => gap.code)).toContain("sidekick_run_state");
     expect((await demoOperationStatus(prepEnv, OPERATION_ID))!).toMatchObject({
       status: "running",
       readyAt: null,
@@ -335,18 +281,16 @@ describe("preparing a demo", () => {
       ]),
     });
 
-    await deliverDirectoryEffects(workspaceId, [
-      ...new Set(receipts.flatMap((receipt) => receipt.workstreamId ?? [])),
-    ].map((parentId) => ({ parentKind: "workstream" as const, parentId })));
-    // The pack's Sidekick reports up the same two legs: its seeded run to the
-    // Sidekick, and the Sidekick to the workspace.
-    await deliverDirectoryEffects(workspaceId, receipts
+    // Each Canvas's Chat, each Sidekick's run and shared conversation report
+    // up through the Queue; then the Organization projects each run's row.
+    await deliverSeededEffects(workspaceId, [
+      ...new Set(receipts.flatMap((receipt) => receipt.canvas ? [receipt.canvasId!] : [])),
+    ].map((parentId) => ({ parentId, substreamId: "0" })).concat(receipts
       .filter((receipt) => receipt.kind === "sidekick")
-      .map((receipt) => ({
-        parentKind: "automation" as const,
-        parentId: receipt.sidekickId!,
-        ...(receipt.sidekickRunId ? { substreamId: receipt.sidekickRunId } : {}),
-      })));
+      .flatMap((receipt) => [
+        ...(receipt.sidekickRunId ? [{ parentId: receipt.sidekickId!, substreamId: receipt.sidekickRunId }] : []),
+        { parentId: receipt.sidekickId!, substreamId: "0" },
+      ])));
 
     const ready = await runDemoPreparationPhase(prepEnv, OPERATION_ID, "waiting_for_workspace", options);
     expect(ready.outcome).toBe("ready");

@@ -1,50 +1,51 @@
-# Multiplayer demo presenter guide
+# Demo presenter guide
 
-Choose the recognizable collaboration problem from discovery. Start with the
-Acme proposal by default, then show at most one other example matched to the
-prospect's pain. These routes are presentation guidance, not measured popularity.
-Do not put the discovery questions or this taxonomy into customer-facing Channels.
+You present as **Maya**, signed in as yourself; the demo's other two people
+are **Theo** (finance) and **Priya** (engineering), cast as colleagues or as
+personas who cannot sign in. The Organization opens on the Canvases home, the
+way the [Canvases and Sidekicks mockup](PRDs/2026-11-06_canvases-and-sidekicks/design.html)
+draws it. Choose the story from discovery: start with the Q4 revenue review by
+default, then show at most one other matched to the prospect's pain. These are
+presentation guidance, not measured popularity. Do not put the discovery
+questions or this table into the demo's Canvases.
 
-| Pain | Where to open | Human intervention and visible result |
+| Pain | Where to open | What the presenter shows |
 | --- | --- | --- |
-| Fragmented expertise, context sharing, getting unstuck | **Customer: Acme → Proposal & solution design** | Sales continues sample prior AI work. An engineer explicitly shares that orders live in NetSuite. Growth alone at $24k becomes Growth + Integration at $30k; v1 and v2 attachments make the assumption change visible. **Integration requirements** holds the focused flow validation. |
-| Trust, review, approval, revision | **Vendor selection: Customer support platform → Evaluation & decision** | The provisional $30k ClearDesk recommendation changes when the manager requires launch within four weeks. HelpHarbor costs $39k, launches in three weeks and leaves $6k of the $45k ceiling. **Implementation costs** confirms setup and staffing; the manager explicitly approves and assigns procurement and migration. |
-| Repetitive reviews, distribution, follow-through | **Customer: Acme → Demo & follow-up** | A sample call review flags unresolved NetSuite sync. Sales shares missing off-call context; the corrected review distinguishes package availability from remaining validation. The manager removes a launch-date promise and assigns owners. **Customer response** holds the unsent follow-up draft. |
-| Cross-account visibility | **Sales → Demo reviews** | One short pointer to the Acme review and its next action, without repeating the account conversation. |
+| Shared work with an AI that everyone can see and steer | **Q4 revenue review** (Canvas, Maya and Theo) | Maya asked Rally for the board draft; Theo asked for churn from the October cohort, and Rally published version 2 of the review with it. The versions menu shows v1 and v2. Theo's last line keeps the three accounts board-only. Continue by asking Rally for a change and watch version 3 land. |
+| Planning across a team | **Launch plan** (Canvas, the whole Organization) | Theo's plan with owners and a December 3 launch; Priya attached the billing migration checklist and Rally confirmed the dates still hold. Open to everyone, so it is unread to Maya until she opens it. |
+| Repetitive reports | **Weekly changelog** (Sidekick, the Organization) and **Weekly changelog · Nov 6** (its Canvas) | A published Sidekick on a Friday 2 PM schedule, with one run in its conversation and the changelog Canvas that run wrote. **Open run** shows the run's own conversation. |
+| Watching for things that break | **Incident triage** (Sidekick, shared with Maya, Theo and Priya) | Its morning run reported a rolled-back deploy; Priya took the fix in the Sidekick's conversation. Ask it something there to start the next run. |
 
-The presenter speaks in none of the seeded history. They are mentioned only in
-the proposal Channel's closing beat and included in all three Breakouts. The
-proposal is the newest main conversation and the default demo entry. No example
-ends in an artificial pending poll: the human approval and follow-up commitments
-are already visible, and the presenter can continue normally.
+Maya speaks first in the Q4 review and nowhere else. Nothing ends in an
+artificial pending question: every seeded run completed, and the presenter can
+continue normally.
 
-Each example stands alone. Business names, customer contact Maya Chen, prices,
-quotes and transcript are fictional. Three cast parts play compatible roles
-across scenarios. The casting form accepts fictional names as personas, or can
-seat real colleagues from its suggestions; the presenter remains a signed-in
-template member. Personas cannot sign in. No real customer or guest is seeded.
+Business names, figures and the changelog are fictional. Personas cannot sign
+in. No real customer or guest is seeded.
 
 ## Demonstration boundaries
 
-- **Knowledge:** joining does not disclose someone's private context. The engineer
-  contributes a separate note and explicitly repeats the private Breakout's
-  relevant conclusion in the parent Channel before Rally uses it.
-- **Audience:** the three named Spaces and their Channels are Organization-wide,
-  inside an internal demo Organization. Breakouts use explicit participants. No
-  external guest is seated, so internal proposal pricing is not presented as
-  customer-shared. Adding a guest later requires normal scoped access; do not
-  share the whole account Space as a shortcut.
-- **Import:** the proposal opening is prepared sample history, not a claimed live
-  import. Real Claude/ChatGPT URL import exists through the sidebar and requires
-  Firecrawl configuration; seeding does not contact either provider.
-- **Artifacts:** v1/v2 are separately uploaded Markdown snapshots, the existing
-  demo convention, not a claim that a live editor tracked a revision.
-- **Sidekick:** Demo Call Review is a real published Organization Sidekick with
-  a weekday schedule and one manually seeded sample run. The Granola-style note,
-  review guide, review outputs and distribution preview are illustrative. No
-  Granola event fired, no Drive file was written, and no Slack message was sent.
-  The desired Granola Demo Calls → guide → Drive Demo Reviews → Slack #demos
-  workflow needs real source/destination configuration; this pack binds none.
-  Scheduled runs prepare drafts only and must say when no source is available.
-  The customer reply remains unsent.
+- **Audience:** the Q4 review is shared with Theo alone; Launch plan and the
+  Weekly changelog are Organization-wide; Incident triage is shared with the
+  three named people, and so is nothing else. No external guest is seated.
+- **Artifacts:** each version is a real publication through Rally's publish
+  path, attributed to the run that announced it, not an upload pretending to
+  be one. A seeded run makes no tool call, so the version is published right
+  after the run rather than from inside it.
+- **Sidekicks:** both are real published Sidekicks with real schedules and one
+  seeded run each, answered from the pack rather than a model. No connector is
+  bound: the changelog's contents and the overnight alert are illustrative,
+  and the first scheduled run is the demo's own and must say when it has no
+  source.
 
+## Changelog
+
+### 2026-11-07 — The guide follows the Canvases and Sidekicks pack
+
+The stories are now the mockup's Canvases and Sidekicks — Q4 revenue review,
+Launch plan, Weekly changelog and Incident triage, with Maya, Theo and Priya —
+replacing the Acme, vendor-selection and call-review Channels and their
+Breakouts. Why: the pack was rewritten around the two modes when Threads,
+Channels and Breakouts were retired
+([`demo-workspaces.md`](demo-workspaces.md#2026-11-07--the-pack-seeds-canvases-and-sidekicks)),
+and a guide that sends the presenter to a Channel sends them nowhere.

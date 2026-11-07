@@ -17,8 +17,6 @@
 import type { DemoSeed, DemoSeedTurn } from "@rally/contracts";
 import { isAzureBoundModel } from "@rally/agent-harness";
 
-import type { SubstreamSummaryGateway } from "./substream-context-summary";
-
 /**
  * The endpoint a streamed OpenRouter turn goes to. The seed never answers an
  * Azure turn (`demoSeedModelRoute` keeps the run off Azure), so Azure's Chat
@@ -151,30 +149,4 @@ export function demoSeedProviderFetch(seed: DemoSeed): typeof globalThis.fetch {
     // which a seeded message skips by construction.
     return streamed(turn, seed);
   }) as typeof globalThis.fetch;
-}
-
-/**
- * The starting context a seeded substream opens on.
- *
- * Creating a substream normally ends in one structured inference: the parent
- * conversation is captured, and a model writes the handoff summary the child
- * starts from. A seeded demo cannot have that. The summary is prose a presenter
- * reads, so an unscripted one is content nobody approved; it is a live call in
- * the middle of preparing a workspace an operator is waiting on; and it makes
- * two preparations of the same pack differ. So the pack carries the text and
- * this stands in for the gateway, returning it unchanged.
- *
- * The model names are what the operation records about itself, and the token
- * counts are zero because none were spent. Everything else about creation is
- * the production path: the same capture, recipe, checkpoints, provisioning and
- * membership.
- */
-export function demoSeedSummaryGateway(startingContext: string): SubstreamSummaryGateway {
-  return async (input) => ({
-    summary: startingContext,
-    requestedModel: input.model,
-    resolvedModel: input.model,
-    inputTokens: 0,
-    outputTokens: 0,
-  });
 }

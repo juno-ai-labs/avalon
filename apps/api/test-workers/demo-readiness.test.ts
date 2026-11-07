@@ -1,45 +1,32 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * Ready is the presenter's projection matching the pack, not the seeder
- * finishing.
+ * Ready is every verified viewer's lists and every seeded Canvas and Sidekick
+ * matching the pack, not the seeder finishing.
  *
- * The seeder writes through the room objects; what the presenter sees arrives
- * later, when the rooms' effects cross the Queue to the Organization object,
- * and this file holds that Queue so the two moments can be told apart. Seeding completes with every room's provisional
- * directory row in place — the room *exists* to the presenter — but the mention,
- * the "new" marker, the open question's state and the home screen's count have
- * not arrived, and the barrier says so by name. Delivering the effects through
- * the real consumer is what makes it Ready, and nothing else does: a fixed wait,
- * an empty outbox, or a first-page count would all have said yes too early.
+ * The seeder writes through the conversation objects; what the presenter sees
+ * of a Sidekick's run — its state in the run history, and its row in the
+ * shared conversation — arrives later, when the run's conversation reports up
+ * through the effect Queue and the Organization object projects the run. This
+ * file holds that Queue so the two moments can be told apart: seeding is done
+ * and every Canvas is listed, but the run has not landed, and the barrier says
+ * so by name. Delivering the effects through the real consumer is what makes
+ * it Ready, and nothing else does.
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asUserId, asWorkstreamId } from "@rally/contracts";
-import { DemoPackSchema, PLACEHOLDER_DEMO_PACK } from "../src/services/demo-pack";
-import { seatOrganizationMember } from "../src/services/space-bootstrap-service";
-import { SpaceService } from "../src/services/space-service";
-
-import { demoReadinessManifest, checkDemoReadiness } from "../src/services/demo-readiness";
-import { demoSeedReceipts, demoSeedSpaceId, openDemoSeedSession } from "../src/services/demo-seeder";
-import {
-  deliverChildEffects,
-  parentStubFor,
-  pendingParentEffects,
-} from "./helpers/conversation-effects";
+import { checkDemoReadiness, demoReadinessManifest } from "../src/services/demo-readiness";
+import { demoSeedReceipts } from "../src/services/demo-seeder";
+import { deliverChildEffects } from "./helpers/conversation-effects";
 import {
   DEMO_OPERATION_ID,
-  DEMO_PRESENTER_ID,
-  DEMO_PRIYA_ID,
-  DEMO_MARCUS_ID,
   DEMO_SIDEKICK_PACK,
-  DEMO_TWO_ROOM_PACK,
+  DEMO_TEST_PACK,
   DEMO_WORKSPACE_ID,
-  demoRoomStub,
-  demoRunStub,
+  demoConversationStub,
   demoSeedEnv,
   demoWorkspaceStub,
   openDemoTestSession,
@@ -63,167 +50,71 @@ beforeEach(async () => {
   await seedDemoWorkspaceControlPlane();
 }, 30_000);
 
-/**
- * A room's held effects to its parent, through the real consumer. Returns how
- * many were held.
- *
- * The Organization object hosts the Channel's parent and applies the parent's
- * directory effects to its own `channels` and `channel_viewers` rows straight
- * after the write, so that one leg is the whole projection: no directory
- * effect may still be waiting in `parent_outbox` once it returns. The parent
- * also queues the presenter's mention notification, whose consumer reaches
- * Slack or email, which this Worker has neither of. Readiness never reads a
- * notification, so those rows stay pending, exactly as an outage would leave
- * them.
- */
-async function deliverRoomEffects(workstreamId: string): Promise<number> {
-  const held = await deliverChildEffects(env, demoRoomStub(workstreamId));
-  const parent = parentStubFor(env, "global", {
-    workspaceId: DEMO_WORKSPACE_ID,
-    parentKind: "workstream",
-    parentId: workstreamId,
-  });
-  const waiting = (await pendingParentEffects(parent))
-    .filter((envelope) => envelope.effect.kind.startsWith("directory_"))
-    .map((envelope) => [envelope.parentId, envelope.effect.kind, envelope.messageId]);
-  expect(waiting).toEqual([]);
-  return held.length;
-}
+const check = (manifest: ReturnType<typeof demoReadinessManifest>) =>
+  checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
 
-/** The presenter's `channel_viewers` row for a room, or null before it is projected. */
-async function presenterView(workstreamId: string): Promise<{ you_are_mentioned: number } | null> {
-  const workspace = parentStubFor(env, "global", {
-    workspaceId: DEMO_WORKSPACE_ID,
-    parentKind: "workstream",
-    parentId: workstreamId,
-  });
-  return runInDurableObject(workspace, (_instance, state) => state.storage.sql.exec<{ you_are_mentioned: number }>(
-    "SELECT you_are_mentioned FROM channel_viewers WHERE workstream_id = ? AND user_id = ?",
-    workstreamId, DEMO_PRESENTER_ID,
-  ).toArray()[0] ?? null);
+/** Every seeded conversation's held effects, through the real consumer. */
+async function deliverEverything(receipts: Awaited<ReturnType<typeof demoSeedReceipts>>): Promise<void> {
+  for (const canvasId of new Set(receipts.flatMap((receipt) => receipt.canvas ? [receipt.canvasId!] : []))) {
+    await deliverChildEffects(env, demoConversationStub(canvasId));
+  }
+  for (const receipt of receipts.filter((row) => row.kind === "sidekick")) {
+    if (receipt.sidekickRunId) await deliverChildEffects(env, demoConversationStub(receipt.sidekickId!, receipt.sidekickRunId));
+    await deliverChildEffects(env, demoConversationStub(receipt.sidekickId!));
+  }
+  // The run row's projection into the shared conversation is the
+  // Organization object's alarm.
+  await runDurableObjectAlarm(demoWorkspaceStub());
 }
 
 describe("the readiness barrier", () => {
-  it("plays the shipped pack and rejects wrong Space placement and state until repaired", async () => {
-    const danaId = asUserId("00000000-0000-7000-8000-00000000d5a7");
-    await env.DB.prepare(`INSERT INTO users (id, email, name, timezone, created_at)
-      VALUES (?, 'dana@example.com', 'Dana Park', 'UTC', '2026-01-01T00:00:00.000Z')`).bind(danaId).run();
-    await env.DB.prepare(`INSERT INTO workspace_members (workspace_id, user_id, status, role)
-      VALUES (?, ?, 'active', 'member')`).bind(DEMO_WORKSPACE_ID, danaId).run();
-    const pack = DemoPackSchema.parse(PLACEHOLDER_DEMO_PACK);
-    const seed = await openDemoSeedSession(demoSeedEnv(), {
-      operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, pack,
-      roles: { presenter: DEMO_PRESENTER_ID, priya: DEMO_PRIYA_ID, marcus: DEMO_MARCUS_ID, dana: danaId },
-    });
+  it("lists the presenter's Canvases as the pack says and names one it should not see, or an artifact a version behind", async () => {
+    const seed = await openDemoTestSession(DEMO_TEST_PACK);
     for (const action of seed.actions) await playDemoAction(seed, action);
     const receipts = await demoSeedReceipts(env.DB, DEMO_OPERATION_ID);
-    expect(receipts).toHaveLength(pack.steps.length);
-    const manifest = demoReadinessManifest(pack, seed.cast, receipts);
-    for (const receipt of receipts.filter((item) => item.kind === "create_substream")) {
-      await deliverChildEffects(env, demoRoomStub(receipt.workstreamId!, receipt.substreamId!));
-    }
-    for (const room of manifest.views[0]!.rooms) await deliverRoomEffects(room.workstreamId);
-    const published = receipts.find((receipt) => receipt.kind === "sidekick")!;
-    await deliverChildEffects(env, demoRunStub(published.sidekickId!, published.sidekickRunId!));
-    const check = () => checkDemoReadiness(demoSeedEnv(), {
-      operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest,
-    });
-    expect((await check()).gaps).toEqual([]);
-    const service = new SpaceService(demoSeedEnv(), seed.auth.get(DEMO_MARCUS_ID)!);
-    const acmeId = await demoSeedSpaceId(DEMO_OPERATION_ID, "acme");
-    const proposalId = asWorkstreamId(receipts.find((receipt) => receipt.actionId === "proposal-open")!.workstreamId!);
-    const general = await service.ensureGeneral();
-    await service.addChannel(general.id, proposalId);
-    await service.removeChannel(acmeId, proposalId);
-    expect((await check()).gaps).toEqual(expect.arrayContaining([
-      expect.objectContaining({ room: "acme-proposal", code: "space_membership" }),
-    ]));
-    await service.addChannel(acmeId, proposalId);
-    await service.removeChannel(general.id, proposalId);
-    await service.updatePresentation(acmeId, { name: "Wrong account", iconKey: "handshake", colorKey: "blue" });
-    expect((await check()).gaps.filter((gap) => gap.code === "space_state").map((gap) => gap.room).sort())
-      .toEqual(["acme-proposal", "acme-review"]);
-    await service.updatePresentation(acmeId, { name: "Customer: Acme", iconKey: "handshake", colorKey: "blue" });
-    expect(await check()).toMatchObject({ ready: true, gaps: [] });
-  }, 90_000);
+    const manifest = demoReadinessManifest(DEMO_TEST_PACK, seed.cast, receipts);
+    // The presenter is offered the Organization's Canvas and not the private one.
+    expect(manifest.views[0]!.canvases.map((canvas) => [canvas.canvas, canvas.unread])).toEqual([["plan", true]]);
+    await deliverEverything(receipts);
+    expect((await check(manifest)).gaps).toEqual([]);
 
-  it("waits for the presenter's projection and is Ready only once the effects have landed", async () => {
-    const seed = await openDemoTestSession(DEMO_TWO_ROOM_PACK);
-    for (const action of seed.actions) await playDemoAction(seed, action);
-    const manifest = demoReadinessManifest(
-      DEMO_TWO_ROOM_PACK,
-      seed.cast,
-      await demoSeedReceipts(env.DB, DEMO_OPERATION_ID),
-    );
-    // Newest first: the memo room's last step comes after the aside's only step.
-    expect(manifest.views[0]!.rooms.map((expected) => expected.room)).toEqual(["memo", "aside"]);
-    const [room, aside] = manifest.views[0]!.rooms;
-
-    // Seeding is done and the room is listed — its provisional row arrived
-    // through the creation service's own RPC — but nothing that rides the
-    // Queue has: the presenter is not yet mentioned, the room is not yet new to
-    // them, the question has not parked it, and the home screen counts nothing.
-    const before = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
-    expect(before.ready).toBe(false);
-    expect(before.gaps.map((gap) => gap.code)).not.toContain("room_missing");
-    expect(before.gaps.map((gap) => [gap.room, gap.code])).toEqual(expect.arrayContaining([
-      [room!.room, "mentioned"],
-      [room!.room, "unseen"],
-      [null, "attention"],
-    ]));
-
-    // The rooms' effects, through the real consumer. The Organization applies
-    // the directory step in the same call, so the projection is what was held.
-    expect((await presenterView(room!.workstreamId))?.you_are_mentioned ?? 0).toBe(0);
-    expect(await deliverRoomEffects(room!.workstreamId)).toBeGreaterThan(0);
-    expect(await deliverRoomEffects(aside!.workstreamId)).toBeGreaterThan(0);
-    expect(await presenterView(room!.workstreamId)).toMatchObject({ you_are_mentioned: 1 });
-
-    const after = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
-    expect(after.gaps).toEqual([]);
-    expect(after.ready).toBe(true);
-
-    // Ready also means seated: the presenter out of General and their Personal
-    // Channel, as a member who left would be, is named, and seating them
-    // again (what preparation does) clears it.
+    // A Canvas shared with the presenter that the pack never shared with them
+    // is a listing the barrier names, as is an artifact short of a version.
+    const memo = manifest.canvases.find((canvas) => canvas.canvas === "memo")!;
     await runInDurableObject(demoWorkspaceStub(), (_instance, state) => {
-      state.storage.sql.exec("DELETE FROM space_viewers WHERE user_id = ?", DEMO_PRESENTER_ID);
+      state.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'workspace' WHERE canvas_id = ?`, memo.canvasId);
     });
-    const unseated = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
-    expect(unseated.gaps.map((gap) => gap.code)).toEqual(["general_not_seated", "personal_channel_missing"]);
-    await seatOrganizationMember(demoSeedEnv(), DEMO_WORKSPACE_ID, DEMO_PRESENTER_ID);
-    expect((await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest })).gaps)
-      .toEqual([]);
-  }, 60_000);
+    const wrong = await check({ ...manifest, canvases: manifest.canvases.map((canvas) => canvas === memo
+      ? { ...canvas, artifacts: canvas.artifacts.map((artifact) => ({ ...artifact, version: 3 })) }
+      : canvas) });
+    expect(wrong.ready).toBe(false);
+    expect(wrong.gaps.map((gap) => [gap.room, gap.code])).toEqual(expect.arrayContaining([
+      [null, "canvas_unexpected"],
+      ["memo", "artifact_version"],
+    ]));
+  }, 120_000);
 
-  it("waits for a seeded Sidekick to reach the presenter's library and its briefing to reach its history", async () => {
+  it("waits for a seeded Sidekick's run to reach its history and its row to reach its conversation", async () => {
     const seed = await openDemoTestSession(DEMO_SIDEKICK_PACK);
     for (const action of seed.actions) await playDemoAction(seed, action);
     const receipts = await demoSeedReceipts(env.DB, DEMO_OPERATION_ID);
     const manifest = demoReadinessManifest(DEMO_SIDEKICK_PACK, seed.cast, receipts);
-    const published = receipts.find((receipt) => receipt.kind === "sidekick")!;
-    // The presenter is neither its author nor in any room with it; it is on
-    // their list because it is the workspace's.
-    expect(manifest.views[0]!.sidekicks.map((sidekick) => [sidekick.name, sidekick.scope])).toEqual([
-      ["Morning briefing", "workspace"],
-    ]);
+    // Shared with the presenter, so it and its Canvas are on their lists.
+    expect(manifest.views[0]!.sidekicks.map((sidekick) => [sidekick.name, sidekick.audience])).toEqual([["Morning briefing", "people"]]);
+    expect(manifest.views[0]!.canvases.map((canvas) => canvas.canvas)).toEqual(["briefing", "plan"]);
 
-    // Publication and the briefing are both done. The Sidekick is listed at
-    // once, since its directory row is the definition its Organization object
-    // holds, but its history still shows the briefing running.
-    const before = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
+    // Seeding is done and the Sidekick is listed, but its run's report has not
+    // crossed the Queue.
+    const before = await check(manifest);
     expect(before.ready).toBe(false);
     const codes = before.gaps.map((gap) => gap.code);
     expect(codes).not.toContain("sidekick_missing");
+    expect(codes).not.toContain("canvas_missing");
     expect(codes).toContain("sidekick_run_state");
 
-    // The run's own conversation reports up to the Sidekick, in the same
-    // object that answers the library, so there is no second Queue leg.
-    await deliverChildEffects(env, demoRunStub(published.sidekickId!, published.sidekickRunId!));
-    for (const room of manifest.views[0]!.rooms) await deliverRoomEffects(room.workstreamId);
-
-    const after = await checkDemoReadiness(demoSeedEnv(), { operationId: DEMO_OPERATION_ID, workspaceId: DEMO_WORKSPACE_ID, manifest });
+    await deliverEverything(receipts);
+    const after = await check(manifest);
     expect(after.gaps).toEqual([]);
     expect(after.ready).toBe(true);
-  }, 90_000);
+  }, 120_000);
 });
