@@ -112,7 +112,7 @@ The description loop is the one role whose default is most likely to want
 raising. It reads a window of up to 600 messages and decides whether a work
 stream's purpose has moved, which is a harder judgment than the classifiers it
 shares a default with — see
-[`workstream-descriptions.md`](workstream-descriptions.md). Retarget the flag
+[`workstream-naming.md`](workstream-naming.md) (retired). Retarget the flag
 rather than changing the shared `OPENROUTER_STRUCTURED_MODEL` variable, which
 would move the classifiers with it.
 
@@ -696,7 +696,7 @@ what they do with the model they are handed:
 | The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
 | Why **Debug enabled** crosses no trust boundary | [`security.md`](security.md) |
 | Why `userPlatformId` is the stable per-person id | [`regionalization.md`](regionalization.md) |
-| The description loop that most wants its default raised | [`workstream-descriptions.md`](workstream-descriptions.md) |
+| The description loop that most wants its default raised | [`workstream-naming.md`](workstream-naming.md) (retired) |
 | Provisioning credentials and the release health gate | [`runbook.md`](runbook.md) |
 
 A subsystem that wants a rollout adds a flag here and reads it through the

@@ -151,10 +151,8 @@ import {
 import { CODE_PLUGIN_ID, CUSTOM_TOOLS_PLUGIN_ID } from "../services/code-mode";
 import { canonicalExternalResultText } from "../services/external-result-delivery";
 import { SlackAgentService } from "../services/slack-agent-service";
-import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { attemptMemorySweep } from "../services/memory-sweep-service";
 import { digestReaderFor, refreshMemoryDigestCopy } from "../services/memory-digest-service";
-import { refreshWorkstreamName, summarizeExistingDescription } from "../services/workstream-naming-service";
 import { loadOpenRouterContextWindows } from "../services/openrouter-context-windows";
 import {
   objectOwnsWorkstreamAuthorities,
@@ -5885,51 +5883,11 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
       ? await this.deliverAgentRunResult(input, outcome)
       : null;
-    // An automation's conversations are named by the automation, not by a
-    // naming pass over their transcripts, and nothing outside Rally is
-    // waiting on a run's outcome the way Slack waits on a room's. A Space's
-    // hidden conversation has no surface that shows a title or a description at
-    // all, so it is excluded for the stronger version of the same reason —
-    // positively, `=== "workstream"`, so a fourth parent kind has to opt in.
+    // A Thread's turn may call for carrying up or breaking out; plan step C-3
+    // removes this with the suggestion operations. Never throws. A Canvas's
+    // and a Sidekick's conversations are titled by the person and by the
+    // Sidekick, so no naming or description pass follows a run.
     if (input.parentKind === "workstream") {
-      // Addressed at the conversation that ran, not at its parent. A private
-      // child is named from its own transcript now that it is created with an
-      // instruction and starts in `naming`; before that it was born settled,
-      // so a pass addressed here at the parent found nothing to do and the
-      // misaddressing was invisible.
-      await refreshWorkstreamName(executionEnv, {
-        workspaceId: input.workspaceId,
-        workstreamId: input.parentId,
-        substreamId: input.substreamId,
-      });
-      // The description is the work stream's own — what the sidebar and the
-      // directory say it is about — and a private child has no surface that
-      // shows one, so this stays addressed at the main conversation.
-      await refreshWorkstreamDescription(executionEnv, {
-        workspaceId: input.workspaceId,
-        workstreamId: input.parentId,
-      });
-      // A Breakout keeps a description of its own even where nothing shows it
-      // yet. One opened without a message was provisioned with none, and gets
-      // one here, after the run that gave it something to summarize. Only an
-      // empty one: an opening line the first pass left standing stays, as a
-      // thread's does, or every later run would ask the model again. Every
-      // other Breakout costs one read.
-      if (input.substreamId !== "0") {
-        await summarizeExistingDescription(executionEnv, {
-          workspaceId: input.workspaceId,
-          workstreamId: input.parentId,
-          substreamId: input.substreamId,
-          onlyWhenEmpty: true,
-        }).catch((error: unknown) => {
-          logWarn(executionEnv, "breakout_description_summary_failed", {
-            workspace_id: input.workspaceId,
-            workstream_id: input.parentId,
-            substream_id: input.substreamId,
-            reason: diagnosticErrorCode(error, "breakout_description_summary_failed"),
-          });
-        });
-      }
       // Last, so it reads the freshest purpose and delays nothing in front of
       // it: does this turn call for carrying up or breaking out? One JEV
       // call behind gates that are each cheaper than it; never throws.

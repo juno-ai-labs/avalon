@@ -19,17 +19,13 @@ import {
   CreateMessageRequestSchema,
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
-  WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
 } from "@rally/contracts";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 
 import type { HonoAppEnv } from "../src/env";
-import { InitializeWorkstreamObjectInputSchema } from "../src/durable-objects/workstream-object-product";
 import { errorHandler } from "../src/middleware/errors";
 import { conversationRoutes } from "../src/routes/conversations";
-import { provisionalWorkstreamDescription } from "../src/services/workstream-description-service";
-import { provisionalWorkstreamTitle } from "../src/services/workstream-naming-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 /**
@@ -128,59 +124,5 @@ describe("the message ceiling", () => {
 
     expect(CreateMessageRequestSchema.safeParse(messageBody(atCeiling)).success).toBe(true);
     expect(CreateMessageRequestSchema.safeParse(messageBody(overCeiling)).success).toBe(false);
-  });
-});
-
-describe("the description a long message opens with", () => {
-  it("is the opening line, not the opening message", () => {
-    const message = [
-      "Create an agenda for the pricing meeting today. Use the format below.",
-      "",
-      "# Decision Meeting: [Decision name]",
-      "**Date:**",
-    ].join("\n");
-
-    expect(provisionalWorkstreamDescription(message, "Review the attached files"))
-      .toBe("Create an agenda for the pricing meeting today. Use the format below.");
-  });
-
-  it("stays inside the description ceiling for a message at the message ceiling", () => {
-    // The incident in one assertion: a one-line message of the largest size the
-    // composer now accepts, and the description derived from it. Before this
-    // change the derivation was the message itself, and everything below was
-    // the 4,000-character bound it had already broken.
-    const description = provisionalWorkstreamDescription("x".repeat(MESSAGE_MAX_CHARACTERS), "Review the attached files");
-
-    expect(description.length).toBe(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS);
-    expect(InitializeWorkstreamObjectInputSchema.safeParse({
-      workspaceId: "00000000-0000-7000-8000-0000000000b0",
-      workstreamId,
-      generation: 1,
-      title: provisionalWorkstreamTitle(description, "New work stream"),
-      objective: description,
-      descriptionSource: "derived",
-      titleStatus: "naming",
-      emailAddress: "route@automation.with-avalon.com",
-      creatorUserId: "00000000-0000-7000-8000-0000000000a1",
-      openingMessage: "x".repeat(MESSAGE_MAX_CHARACTERS),
-      openingStructuredContent: null,
-      clientMessageId: "client-1",
-      participantUserIds: [],
-      attachmentIds: [],
-      originResourceIds: [],
-      modelOverride: null,
-      systemKind: null,
-      createdFromOpportunityId: null,
-      opportunityVersion: null,
-      opportunityDisplayPromptHash: null,
-      opportunityExecutionPromptHash: null,
-      executionPrincipal: { type: "user", userId: "00000000-0000-7000-8000-0000000000a1" },
-      reason: "opening_message",
-    }).success).toBe(true);
-  });
-
-  it("falls back rather than describing a work stream with nothing", () => {
-    expect(provisionalWorkstreamDescription("   \n\n  ", "Review the attached files"))
-      .toBe("Review the attached files");
   });
 });
