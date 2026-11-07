@@ -11,6 +11,13 @@
  * The seeded `parent_imports` rows were the list of parents that still lived in
  * a legacy object: every Channel and Space the directory knew when this ran.
  * Migration 75 drops the ledger once every import had run.
+ *
+ * Every `parent_*` table with a `parent_id` column is one parent's state, and
+ * retiring a Thread or Channel (`WorkspaceDO.deleteRetiredThreadParent`)
+ * sweeps that parent's rows from each table `HOSTED_PARENT_STATE_TABLES`
+ * names. A Canvas keys its invitation and grant rows here by its own id, so a
+ * Thread's sweep never reaches them. A new `parent_*` table joins that list,
+ * or a retired Thread leaves its rows in it.
  */
 export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
   `ALTER TABLE workspace_workstream_directory RENAME TO channels`,
@@ -396,4 +403,39 @@ export const HOSTED_PARENT_SCHEMA_STATEMENTS: readonly string[] = [
     sequence INTEGER NOT NULL CHECK (sequence >= 0),
     updated_at INTEGER NOT NULL
   ) STRICT`,
+];
+
+/**
+ * Every live `parent_*` table keyed by `parent_id`, in definition order: what
+ * `WorkspaceDO.deleteRetiredThreadParent` sweeps for a retired Thread or
+ * Channel. The closed, code-owned allowlist its dynamic table names come from
+ * (docs/durable-object-sqlite.md); it is intersected with the schema, so a
+ * table phase C drops first is skipped rather than failed on. Tables earlier
+ * migrations dropped (`parent_imports`, and the four `parent_*_access` and
+ * Space-source tables migration 94 dropped) are not listed.
+ */
+export const HOSTED_PARENT_STATE_TABLES: readonly string[] = [
+  "parent_metadata",
+  "parent_children",
+  "parent_child_projections",
+  "parent_child_viewer_projections",
+  "parent_child_receipts",
+  "parent_projection_keys",
+  "parent_state_clock",
+  "parent_state_changes",
+  "parent_outbox",
+  "parent_breakout_preparations",
+  "parent_breakout_members",
+  "parent_breakout_member_effects",
+  "parent_grant_revision",
+  "parent_grants",
+  "parent_grant_operations",
+  "parent_grant_imports",
+  "parent_participant_targets",
+  "parent_participant_migrations",
+  "parent_participant_deliveries",
+  "parent_invitation_operations",
+  "parent_invitations",
+  "parent_connector_admissions",
+  "parent_sidekicks",
 ];

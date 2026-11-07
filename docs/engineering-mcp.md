@@ -296,6 +296,16 @@ Organization (`target_type = 'workspace'`). The walk, its receipts and its
 failure codes are
 [`workspace-retirement.md`](workspace-retirement.md#retiring-threads-breakouts-and-channels)'s.
 
+**Who may call them.** These two tools sit behind the `confirm === orgId` gate
+and nothing else, with the same standing as `run_workspace_sql`: this server
+has no roles, and every principal its Access application admits is an
+operator who could already delete the same rows by hand. The confirmation is a
+consistency check on the request, not an authorization. So an agent-driven
+caller — a scheduled agent, a bot, or any MCP client acting without an operator
+reading each call — must not be given this server with these tools enabled; the
+decision was the reviewing engineer's on 2026-11-07, and a role split is the
+change to make if that ever has to differ.
+
 ### User-visible lists
 
 `list_channels` takes `orgId` and `userId` and returns the active Channel

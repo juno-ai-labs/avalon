@@ -297,11 +297,18 @@ sockets with `1008` exactly as the workspace walk does, and only once all of
 them confirm does `WorkspaceDO.deleteRetiredThreadParent` delete the parent's
 rows in one transaction:
 
-- every `parent_*` table keyed by `parent_id`, found from the schema rather than
-  named, so a table phase C drops first is not a reference left behind;
+- every `parent_*` table keyed by `parent_id`, from the code-owned list
+  `HOSTED_PARENT_STATE_TABLES` (`hosted-parent-schema.ts`) intersected with the
+  schema, so a table phase C drops first is skipped rather than failed on, and
+  a new `parent_*` table has to join the list or it is left behind;
   `parent_participant_migrations` goes first, because while it stands a
   Breakout's member rows refuse deletion, and foreign keys are deferred to the
-  commit so the order among the rest does not matter;
+  commit so the order among the rest does not matter. That deferral is load
+  bearing: `parent_invitations` references `parent_invitation_operations` with
+  no ON DELETE, and the list deletes the operations first. Inside
+  `transactionSync` a deferred violation is raised at the commit of the whole
+  event, after the method returns, so it would fail the RPC rather than reach
+  the service's per-parent catch;
 - a Thread's `channels`, `channel_viewers`, `breakouts` and `breakout_viewers`
   rows, or a Channel's `spaces` and `space_viewers` rows, and with them what
   cascades from those (pins, resource links, Channel access rows).
@@ -422,7 +429,7 @@ included.
 | --- | --- | --- |
 | `apps/api/test-workers/object-retirement.test.ts` | `pnpm --filter @rally/api test:workers` | The gate on real workerd: refusal on every class, a refusal that crosses the RPC boundary with its code, `canReadWorkstream` answering `false`, sockets closed with `1008`, drop-and-acknowledge in the shapes the consumers parse, alarm clearing, a rebuilt retired agent not refilling its alarm index, that all three socket-holding object classes rebuild themselves after eviction and revoke access while retired, and that the gate's function is installed on every callable method. |
 | `apps/api/test-workers/workspace-retirement-graph.test.ts` | `pnpm --filter @rally/api test:workers` | The graph is captured before the tombstone, is idempotent and resumable — including over a parent retired but never receipted — an empty workspace reports closed, an identity mismatch leaves a node failed with a stable code, the walk closes children before parents, and a pass cut off inside a parent leaves the next pass only the children still open. |
-| `apps/api/test-workers/thread-retirement.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/thread-retirement.test.ts` | On real objects: the dump writes every Thread, Breakout and Channel conversation under its key with the room-visible text, never a Canvas's or Sidekick's, writes nothing on a rerun even after a conversation moved, and refuses a confirmation that names another Organization; the retirement is refused before the dump and touches nothing, then retires every Thread, Breakout and Channel conversation and deletes their rows while the Canvas, the Sidekick and a resource survive, and reruns as a no-op. |
+| `apps/api/test-workers/thread-retirement.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/thread-retirement.test.ts` | On real objects: the dump writes every Thread, Breakout and Channel conversation under its key with the room-visible text, never a Canvas's or Sidekick's, writes nothing on a rerun even after a conversation moved, refuses a confirmation that names another Organization, and reports a conversation holding another identity or parent kind by its code, unwritten, which keeps the retirement refused; the retirement is refused before the dump and touches nothing, then retires every Thread, Breakout and Channel conversation and deletes their rows, a pending invitation and its operation included, while the Canvas, the Sidekick and a resource survive, and reruns as a no-op. |
 | `apps/api/test/workspace-retirement-children-migration.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-retirement-children-migration.test.ts` | Against the real migrations: a retired v134 workspace with a partly receipted graph upgrades to 135 with its tombstone and receipts intact, and a replayed child receipt stays one row. |
 | `apps/api/test/workspace-operations.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-operations.test.ts` | Against the real migrations: the route admits only the `demos` role, refuses a confirmation naming another workspace, refuses an id this region does not own even when its row is present, writes `abandoned_at` before walking, and answers the contract's receipt. |
 | `apps/api/test/retirement-background-callers.test.ts` | `pnpm --filter @rally/api exec vitest run test/retirement-background-callers.test.ts` | Each background caller acknowledges a refusal: the flag fan-out, the revocation hop, and the digest pass, which also proves the pass finishes and writes its cursor. |
@@ -630,8 +637,10 @@ tombstone, which this walk never writes.
 Deleting the parent rows rather than only tombstoning, as the workspace walk
 does: the Organization stays open and keeps serving its sidebar and its
 directory reads, so a Thread whose row survived would still be listed, opened
-and refused. Naming each `parent_*` table in the delete: phase C drops them
-over several migrations, and a list would name tables that are gone.
+and refused. Reading the `parent_*` tables from the schema alone: dynamic
+table names have to come from a closed code-owned list
+([`durable-object-sqlite.md`](durable-object-sqlite.md)); intersecting the list
+with the schema keeps the tolerance for tables phase C drops.
 
 **Consequences:** A dump is a snapshot: what lands in a conversation after it is
 not in it, and a rerun does not refresh it, so the two run back to back after
