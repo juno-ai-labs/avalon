@@ -60,7 +60,7 @@ import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { readDraftText, writeDraftText } from '../lib/draft-cache';
 import { IconCheck, IconChevronDown, IconCloudDownload, IconCornerDownRight, IconCornerUpLeft, IconLock } from '@tabler/icons-react';
-import { workstreamDraftKey } from '../lib/draft-keys';
+import { conversationAnnotationScope, conversationDraftKey, workstreamDraftKey } from '../lib/draft-keys';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
@@ -1395,7 +1395,7 @@ export interface ConversationSurfaceProps {
  */
 export function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element {
   const { api, session } = useCollaborationSession();
-  return <AnnotationDraftProvider draftKey={workstreamDraftKey(session?.workspace?.region ?? 'global', session?.workspace?.id ?? 'unbound', props.parentId, props.substreamId)} scopeKey={`${props.parentId}:${props.substreamId}`} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal,annotation,mimeType) => readAnnotationVersion(api,id,version,signal,annotation,mimeType) : undefined} upload={api ? async (file) => (await api.uploadResource(file, crypto.randomUUID())).id : undefined}><ConversationSurfaceContent {...props} /></AnnotationDraftProvider>;
+  return <AnnotationDraftProvider draftKey={conversationDraftKey(session?.workspace?.region ?? 'global', session?.workspace?.id ?? 'unbound', props.parentKind, props.parentId, props.substreamId)} scopeKey={conversationAnnotationScope(props.parentKind, props.parentId, props.substreamId)} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal,annotation,mimeType) => readAnnotationVersion(api,id,version,signal,annotation,mimeType) : undefined} upload={api ? async (file) => (await api.uploadResource(file, crypto.randomUUID())).id : undefined}><ConversationSurfaceContent {...props} /></AnnotationDraftProvider>;
 }
 
 function ConversationSurfaceContent({
@@ -1594,7 +1594,7 @@ function ConversationSurfaceContent({
   const accessRequests = useAccessRequests(workspaceId);
   const decideAccessRequest = useDecideAccessRequest(api ?? null, workspaceId);
   const workspaceRegion = session?.workspace?.region ?? 'global';
-  const attachmentDraft = useFileAttachments(api, workstreamDraftKey(workspaceRegion, workspaceId, id, substreamId));
+  const attachmentDraft = useFileAttachments(api, conversationDraftKey(workspaceRegion, workspaceId, parentKind, id, substreamId));
   const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
   const railDrop = useFileDrop(attachmentDraft.addFiles);
   // The composer does not take focus when a work stream opens, so a paste that
@@ -3834,7 +3834,7 @@ function ConversationSurfaceContent({
             uploading={attachmentDraft.uploading}
             key={conversationAddress}
             workstream={displayedDetail}
-            draftKey={workstreamDraftKey(workspaceRegion, workspaceId, displayedDetail.id, substreamId)}
+            draftKey={conversationDraftKey(workspaceRegion, workspaceId, parentKind, displayedDetail.id, substreamId)}
             substreamId={substreamId}
             {...(composerMenuActions || hostMenuActions ? { menuActions: [...composerMenuActions ?? [], ...hostMenuActions ?? []] } : {})}
           />
