@@ -783,7 +783,6 @@ correctly provisioned flag.
 | `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | The selector's **Debug enabled** gate, that an untouched control sends no override, and that an explicit pin to the flag's own default is still sent. |
 | `apps/desktop/src/renderer/components/workstream-composer.test.tsx` | The locked pill inside a conversation: the same gate, the exact id and the claim each of `pinned`'s two states may make, and that it opens no menu. |
 | `apps/desktop/src/renderer/components/substream-launch.test.tsx` | The substream launcher's selector: the same gate, the chosen pin reaching creation, and that it stays on **Default** under a pinned parent rather than inheriting. |
-| `apps/api/test-workers/substream-creation-runtime.test.ts` | A substream created pinned: the column on the child's row and not the parent's, the pin on the wire in `WorkstreamDetail`, and the run reaching the provider on that model. |
 | `apps/api/test/workstream-row-contracts.test.ts` | That the stored pin is re-validated on read, and that a retired model reads as unpinned rather than failing the response. |
 
 Run one with

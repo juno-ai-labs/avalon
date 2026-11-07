@@ -18,11 +18,12 @@ available to Rally users by virtue of product membership.
   tool registry, deployment provisioner, and its tests.
 - `apps/api/src/engineering-inspection-bridge.ts` is the private named
   `WorkerEntrypoint` exported by each regional API Worker.
-- `apps/api/src/services/engineering-creation.ts` adapts operator creation to
-  regional onboarding, Channel audience changes and ordinary Thread creation.
-- `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer,
-  Channel feed and transcript range reader; `conversation-text.ts`
-  formats participant prose with shared display and plaintext helpers.
+- `apps/api/src/services/engineering-creation.ts` adapts operator Organization
+  creation to regional onboarding, and resolves the selected user's
+  authority (`engineeringUserAuth`).
+- `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer
+  and transcript range reader; `conversation-text.ts` formats participant
+  prose with shared display and plaintext helpers.
 - `apps/api/src/services/engineering-audit.ts` records content-free attempt and
   result events in the existing independent audit database before/after writes.
 - `apps/api/src/durable-objects/internally-inspectable-durable-object.ts` owns
@@ -473,11 +474,15 @@ Access identity is never silently mapped to a product user.
 ## Testing
 
 `apps/api/test-workers/engineering-creation.test.ts` drives the regional bridge
-against real D1 and Durable Objects: initial membership and seating, stable-ID
-retries, Channel participants, private-Channel narrowing, opening-prompt
-persistence, member and guest sends with normal execution, author snapshots,
-ordinary guest creation refusals, exact Breakout access, default and fenced history paging and
-user-scoped lists after delivering the ordinary directory effects.
+against real D1 and Durable Objects: Organization creation with its initial
+membership and seating and stable-ID retries, unknown users and a mismatched
+region refused, and the rejected field kept across the RPC boundary; then, in a
+Canvas's Chat, member and guest sends with normal execution, retry dedupe and
+author snapshots, a send and a read refused to somebody the Canvas does not
+admit, a record-only message that starts no run, and default and fenced history
+paging. `send_message`, `read_thread` and `read_breakout` still take a
+`threadId`; a Canvas id is one, and their retargeting at named Canvas and
+Sidekick conversation tools is plan step B-8.
 Audit coverage reads operator and receipt attribution from the real audit
 database and refuses product writes when the attempt cannot be persisted.
 Only the external model provider is doubled. The text formatter's unit tests
@@ -485,8 +490,6 @@ cover bylines, display text, attachments, elicitation, annotations and hidden
 internal content; the desktop transcript suite covers the extracted display helper.
 The MCP transport suite checks annotations, regional routing, ambiguous-target
 refusal, plain-text results, trusted operator forwarding and content-free logging.
-`space-conversation-page.test.ts` covers the unchanged dashboard default,
-all-visible mode, per-kind pagination and independent child visibility.
 
 `apps/api/test-workers/engineering-inspection.test.ts` calls the inherited RPC
 on real WorkspaceDO and SubstreamAgent instances under workerd.

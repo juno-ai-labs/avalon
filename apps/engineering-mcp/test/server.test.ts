@@ -123,7 +123,7 @@ describe("Rally engineering MCP tools", () => {
     });
     expect(response.result).toMatchObject({ serverInfo: {
       name: "Rally engineering",
-      description: "Inspect and administer Rally organizations, Channels, Threads, Breakouts, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and conversations and send messages as a selected Rally user.",
+      description: "Inspect and administer Rally organizations, Channels, Threads, Breakouts, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and send messages as a selected Rally user.",
     } });
     const instructions = (response.result as { instructions: string }).instructions;
     expect(instructions).toContain("Main is substream 0.");
