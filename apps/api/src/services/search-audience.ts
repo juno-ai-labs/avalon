@@ -18,13 +18,11 @@ export const searchAudienceGroup = {
   user: (userId: string) => `user:${userId}`,
   /** Every active member whose access class is `member`; never a guest. */
   members: (workspaceId: string) => `members:${workspaceId}`,
-  /** A Channel's or Space's conversation: Main is substream `0`, a Breakout its own. */
+  /** A Canvas's Chat: substream `0` of the Canvas. */
   conversation: (parentId: string, substreamId: string) => `conversation:${parentId}/${substreamId}`,
   /** Every conversation of a Sidekick shares one reader set. */
   sidekick: (automationId: string) => `sidekick:${automationId}`,
   connection: (connectionId: string) => `connection:${connectionId}`,
-  /** Everyone who reads a Channel, for the resources a merge shared with it. */
-  space: (spaceId: string) => `space:${spaceId}`,
 } as const;
 
 /** The group a conversation's turns and captured links carry. */
@@ -39,9 +37,8 @@ export function conversationSearchAudience(conversation: {
 /**
  * The groups a resource's rows carry. Mirrors the canonical resource check:
  * a connector resource is its connection's; a draft upload is its uploader's;
- * otherwise the uploader, every member where the provider allows it, every
- * conversation the canonical inventory places it in, and every Channel a merge
- * shared it with.
+ * otherwise the uploader, every member where the provider allows it, and every
+ * conversation the canonical inventory places it in.
  */
 export function resourceSearchAudience(workspaceId: string, row: ResourceReadRow,
   locations: readonly { parentId: string; substreamId: string; parentKind: string }[]): SearchAudience {
@@ -53,8 +50,7 @@ export function resourceSearchAudience(workspaceId: string, row: ResourceReadRow
   if (!requiresAttachment(row, false)) groups.add(searchAudienceGroup.members(workspaceId));
   for (const location of locations) {
     groups.add(location.parentKind === 'automation' ? searchAudienceGroup.sidekick(location.parentId)
-      : location.parentKind === 'space' ? searchAudienceGroup.space(location.parentId)
-        : searchAudienceGroup.conversation(location.parentId, location.substreamId));
+      : searchAudienceGroup.conversation(location.parentId, location.substreamId));
   }
   return [...groups];
 }
