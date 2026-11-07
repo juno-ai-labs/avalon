@@ -442,8 +442,6 @@ describe("Durable Objects in the Workers runtime", () => {
           "workspace_identity",
           "channels",
           "workspace_workstream_effect_receipts",
-          "workspace_workstream_pins",
-          "workspace_workstream_resource_links",
           "pending_attachment_reservations",
           "channel_viewers",
           // Every Channel's and Space's parent state, keyed by parent id.
@@ -455,27 +453,14 @@ describe("Durable Objects in the Workers runtime", () => {
           "parent_grants",
           "workspace_sync_events",
           "workspace_socket_ticket_receipts",
-          "workspace_batch_dispatches",
-          "workspace_batch_dispatch_targets",
-          "workspace_activity_events",
-          "workspace_activity_event_targets",
-          "opportunity_batch_windows",
-          "opportunity_batch_events",
-          "work_opportunities",
-          "opportunity_provenance_nodes",
-          "opportunity_provenance_edges",
-          "work_opportunity_provenance_roots",
-          "work_opportunity_user_links",
-          "work_opportunity_user_states",
-          "suggested_work_sets",
-          "suggested_work_ranking_rounds",
-          "work_opportunity_snapshots",
           ...WORKSPACE_LOCAL_TABLES,
         ],
         // Retired in schema version 3. Version 1 still creates them and always
         // will — its statements are hashed into the migration receipt — so a
         // fresh object proves the drop only by not having them at the end.
-        absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist", "notes", "note_transcript_segments", "note_privacy_change_outbox", "note_resource_deletion_outbox", "workspace_batch_dispatch_note_targets"],
+        absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist", "notes", "note_transcript_segments", "note_privacy_change_outbox", "note_resource_deletion_outbox", "workspace_batch_dispatch_note_targets",
+          // Dropped by migration 147 (docs/workspace-retirement.md).
+          "workspace_activity_event_targets", "workspace_activity_events", "work_opportunity_provenance_roots", "work_opportunity_snapshots", "work_opportunity_user_links", "work_opportunity_user_states", "work_opportunities", "opportunity_batch_events", "opportunity_batch_windows", "opportunity_provenance_edges", "opportunity_provenance_nodes", "suggested_work_ranking_rounds", "suggested_work_sets", "workspace_workstream_pins", "workspace_workstream_resource_links", "workspace_batch_dispatch_targets", "workspace_batch_dispatches"],
       },
     ] as const;
 
