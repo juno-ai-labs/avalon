@@ -325,7 +325,7 @@ import {
 } from "./conversation-tools";
 import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
-import { CODE_PROGRAM_TOOL_TIMEOUT_MS, createCodePlugin, createCustomToolsPlugin, type CodePlugin } from "./code-mode";
+import { CODE_PROGRAM_TOOL_TIMEOUT_MS, createCodePlugin, createCustomToolsPlugin, programTestWarnings, type CodePlugin } from "./code-mode";
 import { TerminalToolError } from "./terminal/tools";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 
@@ -2246,7 +2246,10 @@ function createAvalonAutomationsPlugin(
             loader: env.CODE_LOADER!,
             input,
           });
-          return { output: result.output };
+          // What the guide asks the author to avoid, read off this test's calls.
+          const calls = (result.output as { calls?: Array<{ tool: string }> } | undefined)?.calls ?? [];
+          const warnings = programTestWarnings({ code: tool.code, calls });
+          return { output: warnings.length ? { ...(result.output as Record<string, unknown>), warnings } : result.output };
         },
       } : {}),
     },

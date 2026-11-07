@@ -1,4 +1,4 @@
-export { checkProgram, writeToolKeys, type CheckProgramOptions, type ProgramIssue, type ProgramIssueCode } from "./check";
+export { checkProgram, programCalls, writeToolKeys, type CheckProgramOptions, type ProgramIssue, type ProgramIssueCode } from "./check";
 export { CodeModeToolError } from "./errors";
 export {
   CODE_PLUGIN_ID,
@@ -32,3 +32,4 @@ export {
   type ProgramRun,
 } from "./plugin";
 export * from "./limits";
+export { programTestWarnings } from "./test-warnings";
