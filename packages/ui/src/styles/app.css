@@ -3954,6 +3954,7 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
    it takes to appear, a click would land on a control the reader cannot yet
    read. */
 .message-actions { align-items: center; display: flex; gap: var(--space-2); margin-top: var(--space-2); opacity: 0; pointer-events: none; transition: opacity 120ms; }
+.message-block:is(:hover, :focus-within) .message-actions,
 .message-actions.is-speaking,
 .message-actions:has(button:disabled) { opacity: 1; pointer-events: auto; }
 /* One set of metrics for every row, because the same controls appear under
