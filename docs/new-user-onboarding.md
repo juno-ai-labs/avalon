@@ -371,7 +371,7 @@ Finishing used to set the hash to `/workstreams/new`. It now leaves through
 the first sidebar work stream, so a member joining a workspace that already
 has conversations enters one rather than an empty draft; a creator's empty
 workspace still opens the composer. The rule and the reason are in
-[`pinning.md`](pinning.md#leaving-for-the-first-work-stream).
+[`pinning.md`](pinning.md#2026-09-09--every-leaving-screen-opens-the-first-work-stream).
 
 ### 2026-09-08 — Save profile changes immediately and move personal appearance to Account
 

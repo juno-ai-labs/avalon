@@ -183,7 +183,9 @@ the PRD keeps "a Pinned group in each list" and removes the Pinned section,
 and the pinnable kinds other than Canvases and Sidekicks are deleted with
 Threads, Channels and Breakouts (decision log, 2026-11-06). An artifact pin was
 listed only while its Thread's Main could be opened, so no stored one can be
-listed now.
+listed now. In plan step C-2, `WorkspacePinStorage`'s `list`,
+`artifactPinners`, `listArtifacts` and `count` reads lost their last callers
+with the Thread routes and the old sidebar sections, so they were deleted.
 
 **Considered and rejected:** Widening `PinKind` and carrying the new kinds in
 `pins`: a released client parsed `PinKind` as a closed enum, so every released
