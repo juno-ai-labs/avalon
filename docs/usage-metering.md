@@ -91,6 +91,14 @@ scanned, checked 2026-10-03). Readers there deduplicate by `event_id`.
 
 ### Reading
 
+`usage_events_sidekick_occurred` (`sidekick_id, occurred_at`, partial on
+Sidekick rows) serves a Sidekick's cost over a window and one run's (the same
+read narrowed by `substream_id`). Without it, the Organization index reads every
+event the Organization logged in the window to find one Sidekick's. No product
+path reads it yet; it serves operator reads through the engineering MCP's
+`run_d1_sql`, and a self-review that needs a run's cost reads it from the run's
+own `inference_attempts` instead.
+
 `readOrganizationUsage` reads the workspace row and the rollups from seven days
 before the current period's start (a week that straddles the boundary) to now,
 and `deriveOrganizationUsage` computes:
@@ -302,6 +310,25 @@ workspace.
 - `usage_unpriced` and `usage_emit_failed` name what was not metered.
 
 ## Changelog
+
+### 2026-11-07 — Index the ledger by Sidekick
+
+**What changed:** Migration `0002_usage_events_sidekick.sql` adds a partial
+index on `usage_events(sidekick_id, occurred_at)` for Sidekick rows.
+
+**Why:** Finding which Sidekicks cost the most, and what one run cost, read one
+Organization's whole window through `usage_events_workspace_occurred`: 266,973
+rows to group one Sidekick's runs over three days. Those reads come back
+whenever a Sidekick's cost is in question.
+
+**Considered and rejected:** An index on `substream_id` alone: it serves one run
+but not a Sidekick over time, and a run's rows sit inside its Sidekick's.
+A full index: most events are not a Sidekick's, so the partial one is smaller
+for the same reads.
+
+**Consequences:** Every insert of a Sidekick event also writes the index. A
+query must say `sidekick_id = ?` to use it; one by `substream_id` alone still
+scans.
 
 ### 2026-10-08 — A plan change pushes the new meter to every member
 
