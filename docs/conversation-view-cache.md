@@ -2,7 +2,7 @@
 
 WorkspaceDO keeps a compact display projection of its conversations. A client
 opening a conversation requests its compact feed over the Organization socket
-it already holds, while the authoritative SubstreamAgent socket connects.
+it already holds, while the authoritative `AgentLoopDO` socket connects.
 The preview is read-only and the live snapshot replaces it unconditionally.
 
 ## Where the code lives
@@ -11,7 +11,7 @@ The preview is read-only and the live snapshot replaces it unconditionally.
 | --- | --- |
 | `packages/contracts/src/conversation-view.ts` | Display allowlist, projection function, request and response contracts. |
 | `apps/api/src/durable-objects/conversation-view-projection.ts` | Source change ledger, SQL triggers, migration 78, and reference-only Queue publication. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Reloads current source content for delivery and schedules publication through its existing alarm coordinator. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Reloads current source content for delivery and schedules publication through its existing alarm coordinator. |
 | `apps/api/src/durable-objects/workspace-conversation-view.ts` | Destination tables, migration 124, version fences, and opening-page reads. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Admits each socket request through the conversation's own viewer authorization. |
 | `apps/api/src/queues/activity-consumer.ts` | Reloads the source and commits the projection before acknowledging delivery. |
@@ -105,18 +105,12 @@ navigation is ignored, and any live conversation snapshot replaces the seed.
 
 ### Backfill and rollout
 
-SubstreamAgent migration 78 queues every historical turn and the conversation
-header. WorkspaceDO migration 124 also fills the existing
-`thread_backfill` (retired) lane from `parent_children` and
-`sidekick_children`, plus `channels`, `spaces`, and `parent_metadata`
-for legacy parents without a materialized Main child. Work lookup supplies
-the implicit Main, matching the hosted parent registry. Its `conversation_view`
-job includes Channel, Thread, Breakout, and Sidekick conversations, including
-archived conversations. Unlike
-the older summary jobs, this job does not use the open-thread directory as its
-universe.
+`AgentLoopDO` migration 78 queues every historical turn and the conversation
+header. The WorkspaceDO lane that woke each historical conversation
+(`thread_backfill`, filled by migration 124) is retired: WorkspaceDO migration
+147 dropped it.
 
-Each backfill delivery wakes a listed SubstreamAgent and arms any pending
+A backfill delivery woke a listed conversation object and armed any pending
 projection work seeded by migration 78. It does not re-mark delivered history.
 The parent remains claimed and later children wait until the current source
 has confirmed delivery of its pending rows to WorkspaceDO; the next pass
@@ -146,8 +140,8 @@ do not themselves deploy a release or force a production fleet.
   an older, still-needed delivery for another.
 - Deletion fences survive content removal. Dropping them would permit delayed
   writes to resurrect deleted messages.
-- Every read is authorized for its exact conversation. Sidebar visibility is
-  insufficient for a private Breakout.
+- Every read is authorized for its exact conversation, by its Canvas's or
+  Sidekick's audience. A sidebar row is not an authorization.
 - The cache marker never becomes a live snapshot marker. Otherwise the preview
   could enable writes or prevent the authoritative snapshot from applying.
 
@@ -186,8 +180,6 @@ retention policy or a different storage boundary is required.
   projection, plugin timing, deletion and generation fences, Queue publication,
   historical upgrades, fenced-source backfill/activation recovery, and complete
   opening feeds across plugin-only turns within the realtime frame budget.
-- `apps/api/test-workers/thread-backfill.test.ts`: the Queue consumer keeps a
-  backfill claimed until the source projection reaches WorkspaceDO.
 - `apps/api/test-workers/workspace-socket-fanout.test.ts`: cached reads over a
   real socket, private-child admission, and membership removal.
 - `apps/desktop/src/renderer/lib/conversation-cache.test.ts` and
