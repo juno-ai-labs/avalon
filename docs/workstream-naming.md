@@ -20,7 +20,8 @@ matching description loop (`workstream-description-service.ts`,
 empty-description summary), was retired in the same step: Canvases and
 Sidekicks carry no model-written description. It is kept, cut to its
 changelog, as its own retired record. The `workstream_description` model role
-stays in the catalog until its Flagship key is retired.
+and its Flagship key were retired on 2026-11-07
+([`feature-flags.md`](feature-flags.md)).
 
 ## Changelog
 

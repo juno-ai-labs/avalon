@@ -1,7 +1,7 @@
 # Scoped invitations
 
-Scoped invitations share Main, individual children or a workstream with email
-addresses. A share belongs to the address: whoever signs in with that verified
+Scoped invitations share a Canvas (target kind `workstream`, its storage name)
+with email addresses. A share belongs to the address: whoever signs in with that verified
 address holds it, and there is no acceptance step, link secret or confirmation
 screen. The share and the grants it becomes live in the same Channel parent,
 hosted in `WorkspaceDO`
@@ -49,7 +49,7 @@ existing conversation authority unchanged.
 `POST /sharing` takes a caller-generated operation ID, one parent, explicit
 targets, recipient emails and an explicit nullable expiry. The authenticated
 workspace and actor override no caller-provided identity fields: such fields are
-rejected by the public schema. Every target must be in that workstream, and
+rejected by the public schema. Every target must be in that Canvas, and
 current direct/inherited collaborator grants must authorize sharing it. Its
 participant-authority handoff must complete before an invitation is recorded.
 Grants are the only serving authority for Channels and Breakouts. New Main
@@ -206,10 +206,8 @@ was created, and the claim service for one made at sign-in.
 
 The email's link is the Canvas's canonical link on the web app,
 `<browser origin>/app/<region>/<organization-base58>/cv/<canvas-base58>/`
-([`links.md`](links.md)), which hands it to the desktop app from there. A
-share of a Thread, still possible server-side until the Thread routes go, has
-no link form and links to its Organization's shell,
-`<browser origin>/app/workspaces/<region>/<workspace>`. Either carries nothing a holder could present,
+([`links.md`](links.md)), which hands it to the desktop app from there. It
+carries nothing a holder could present,
 so a forwarded copy opens a sign-in page and nothing more. Signing in with the
 right address lands in the conversation; any other address finds no access.
 Only one deployment exists today; if a second one serves Organizations, an
@@ -531,15 +529,21 @@ nonparticipant and reconciliation of a stale child roster.
 ### 2026-11-07 — A Canvas invitation links to the Canvas
 
 **What changed:** A Canvas share's email carries the Canvas's canonical link
-(`/cv/`) instead of the addressed Channel path; a Thread share's carries its
-Organization's shell.
+(`/cv/`) instead of the addressed Channel path. Later the same day the
+service's Thread branch was deleted: `parent` is required, readiness and the
+invitation's title come from it alone, and the participant-migration gate,
+the `channels` title read and the Organization-shell link a Thread share
+carried are gone.
 
 **Why:** The Thread link forms were deleted in plan step B-5 of the
 [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md), and a Canvas share was sending
 a Thread-shaped address the web app no longer opens.
 
-**Consequences:** The service tells a Canvas from a Thread by the `parent`
-argument a Canvas host passes; a new kind of shared parent passes its own link.
+**Why the Thread branch went:** nothing opens a Thread any more, and the
+Canvas host is the service's only constructor, so the branch was unreachable.
+
+**Consequences:** The `parent` a Canvas host passes is the whole description
+of what is shared; a new kind of shared parent passes its own hook and link.
 
 ### 2026-11-07 — A Canvas is shared through the same invitations
 

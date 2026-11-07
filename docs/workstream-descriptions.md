@@ -16,9 +16,9 @@ This document is kept for its changelog: why the provisional description is the
 opening line rather than the whole message, why a proposal is repaired before it
 is judged, and why the refresh lease shares the owning object's transaction were
 each learned here, and other documents cite them. The `description_refresh_state`
-table and the `workstream_description` model role remain (the role has no caller
-and stays in the catalog only until its Flagship key,
-`agent-model-workstream-description`, is retired). Do not build on anything else
+table remains; the `workstream_description` model role and its Flagship key,
+`agent-model-workstream-description`, were retired on 2026-11-07
+([`feature-flags.md`](feature-flags.md)). Do not build on anything else
 it describes; the code is gone. The body that described the loop was cut on
 retirement, and with it the 2026-10-12 entry's pointer to its section on the
 first summary; `git show 82f2db7:docs/workstream-descriptions.md` has it whole.

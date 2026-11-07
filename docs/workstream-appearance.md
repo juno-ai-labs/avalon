@@ -1,5 +1,9 @@
 # Work-stream appearance
 
+**Retired server half (2026-11-07).** The identity operation `recolor`, the
+only writer of a thread's or Breakout's Channel colour, is deleted with the
+Thread it coloured; the sections below that describe it are history.
+
 A Channel or Breakout has one icon and color shared by everyone who can read it. Clicking
 its header icon opens a compact palette: fixed colors above a scrolling icon grid.
 Each choice saves immediately and keeps the palette open. A conversation nobody

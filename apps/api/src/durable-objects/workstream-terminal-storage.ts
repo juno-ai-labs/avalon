@@ -423,25 +423,6 @@ export class WorkstreamTerminalStorage {
   }
 
   /**
-   * When this conversation's sandbox is next due a provider observation;
-   * `null` when it has none to observe.
-   *
-   * This is the owning object's own alarm input, and deliberately not the
-   * directory's: the observation deadline moves on every check, and projecting
-   * it made every check a directory write. A sandbox never observed is due now.
-   */
-  nextProviderObservationAt(): number | null {
-    const row = first<{ next_observe_at: number | null }>(this.sql.exec<{ next_observe_at: number | null }>(
-      `SELECT o.next_observe_at
-         FROM terminal_workspace w
-         LEFT JOIN terminal_provider_observation o
-           ON o.id = w.id AND o.sandbox_id = w.sandbox_id AND o.generation = w.generation
-        WHERE w.id = 1 AND w.sandbox_id IS NOT NULL AND w.lifecycle_state <> 'expired'`,
-    ));
-    return row ? row.next_observe_at ?? 0 : null;
-  }
-
-  /**
    * Change nothing, so the endpoint's commit republishes this sandbox's
    * lifecycle deadline to the directory.
    *
