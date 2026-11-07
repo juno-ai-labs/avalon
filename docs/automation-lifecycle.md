@@ -226,7 +226,21 @@ run summaries and original definition revisions, using a `created_at DESC, run_i
 keyset to reach history beyond the UI's recent runs. Read takes a listed `runId`
 and returns its original definition and trigger, current status, chronological
 participant transcript (including output links, attachments and feedback recorded
-there), and matching tool arguments/results/errors across its activations.
+there), and matching tool arguments/results/errors across its activations, each
+with its duration (`ms`, from the receipt's start and settlement). The first page
+also carries the run's `usage`, read from the run's own object. Its `model` part
+comes from `inference_attempts`, the provider's counts per attempt: calls (one
+per accepted response, compactions included), failed attempts, input, output
+and cached tokens, cost, time, and the first, last and largest call's input.
+Its `tools` part gives each tool's calls, definite failures, ambiguous writes
+and milliseconds, with a program's own requests (`<id>:call:<n>`) counted apart;
+the program's own call's time already includes theirs. Time, there and in each
+call's `ms`, counts completed calls only: a sweep or a retry settles a call
+when it runs, not when the call stopped. Both cover the run's
+whole conversation, so tool calls from later chat in it are counted too. A
+fixed `note` beside it says every model call sends the whole conversation: a
+transcript shows each turn's new message, and a reader that weighs only those
+undercounts the cost of a turn.
 Exact results use the existing R2 replay reader. Resource receipts are first
 reauthorized against the inspecting principal, selected run's attachment scope,
 and recorded derivative dependencies; denied results omit input, summary and
@@ -1713,6 +1727,30 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-11-07 — A run's first page says what it spent
+
+**What changed:** `sidekick_runs_read` adds each tool call's `ms` and a `usage`
+summary with a context-growth note on a run's first page (above).
+
+**Why:** The self-review now treats routine cost as evidence, but the reader had
+only the transcript: 965 turns to count by hand for Daily Active's run of
+2026-11-05, no tool times, and no tokens. A transcript also hides the cost of a
+turn: Daily Active's run of 2026-11-06 made 195 calls whose input grew from
+30,652 to 333,822 tokens, 42.8 million in all, for $17.20, and no message in it
+looked large.
+
+**Considered and rejected:** The usage ledger: it has no index by run, and
+`inference_attempts` holds the same costs in the run's own object (the
+2026-11-05 run sums to $197.09, what it was billed). Counting assistant turns:
+it carries no tokens and misses retries. A per-call token series: the first,
+last and largest call show the growth at a fraction of the size. Fencing the
+tool counts to the run's own activations: receipts carry no transcript
+sequence, and chat after a Sidekick run is rare.
+
+**Consequences:** `usage` is in the first page's content hash, so a receipt or
+attempt that settles between fragments of that page is refused as changed
+evidence, even when its turns did not move.
 
 ### 2026-11-07 — A self-review counts cost, not only failure
 
