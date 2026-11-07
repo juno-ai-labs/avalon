@@ -5257,7 +5257,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
      holding the window's own buttons clear of anything readable. These headers
      inherit that job for as long as it is gone. Off macOS the inset is 0 and
      this stays the 8px it has always been — `docs/assumptions.md` item 25. */
-  
+
   .automation-overview-header { padding-left: max(8px, var(--window-controls-inset)); }
 }
 
@@ -5296,7 +5296,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 @media (max-width: 560px) {
   .dialog-content { min-width: 0; width: calc(100vw - 24px); }
-  
+
   .waiting-workstream-row { grid-template-columns: auto auto minmax(0, 1fr) 15px; }
   .waiting-workstream-row > svg { grid-column: 4; }
   .waiting-workstream-source,
@@ -6642,87 +6642,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   }
 }
 
-/* Starting a work stream.
-
-   One element tree carries both the launcher and the work stream being created,
-   so the change between them is a change of geometry rather than a change of
-   screen. The composer is the fixed point: it never unmounts, and every rule
-   below that moves it does so with a transition, which is what lets the eye
-   follow one object from the middle of the launcher down into the dock instead
-   of watching one screen replace another.
-
-   The launching state deliberately states no geometry of its own. Its root also
-   carries `.workstream-screen`, so it inherits that screen's dock padding,
-   column width, and composer treatment from the same rules the real screen uses.
-   Anything restyled for the launcher is therefore written under
-   `:not(.is-launching)` — the moment the class lands, the element is already
-   dressed exactly as the screen it is about to become, and the navigation that
-   follows changes only the data. */
-
-/* Both layers share one grid cell, so the home content can fade out over the
-   transcript that replaced it without being taken out of flow first. */
-
-.launch-transcript-layer {
-  z-index: 1;
-}
-
-/* The turn and the work timer settle in behind the home content rather than
-   with it, so the transcript reads as being assembled instead of revealed. */
-.launch-arrival {
-  animation: launch-arrival 240ms cubic-bezier(.32, .72, 0, 1) both;
-  animation-delay: calc(var(--arrival-index, 0) * 70ms + 60ms);
-}
-
-/* The launch surfaces draw the feed's rows outside `.virtual-message-row`, so
-   the row rhythm does not reach them and the base rules give a row no margin
-   of its own; they state the same two gaps here. A turn after a turn (the
-   provenance turns) takes the turn gap; a row after the opening turn (the work
-   timer) takes the turn-to-event gap.
-
-   Nothing is stated between the branch turns and the opening turn: the opening
-   turn exists only while launching, and by then the block above it is on its
-   way out, so a gap to it would be a gap to nothing that never eased away. */
-.launch-arrival + .launch-arrival { margin-top: var(--av-sys-space-block-gap); }
-
-@keyframes launch-arrival {
-  from { opacity: 0; transform: translateY(7px); }
-}
-
-/* The substream banner is only true before the substream exists, so the row
-   leaves rather than moves. */
-.launch-modifiers {
-  max-height: 46px;
-  overflow: hidden;
-  transition: max-height 220ms cubic-bezier(.32, .72, 0, 1), opacity 140ms ease;
-}
-
-/* The fade is the whole statement: these turns are where this came from, not
-   what this is. A mask rather than an opacity ramp per row, because the turns
-   are different heights and a per-row ramp would step — and because the top of
-   the oldest turn has to reach zero wherever it happens to be cut off by the
-   scroll.
-
-   `pointer-events: none` for the same reason: a copy button or a New substream
-   control on a turn nobody is reading here would act on the main conversation,
-   from a surface that has already left it. */
-
-/* Says what pressing enter will do, and offers the one way out that is not
-   navigating somewhere else. It rides `.launch-modifiers`, so it leaves on the
-   keystroke that submits rather than staying above a substream being created. */
-
-/* The first thing to go when the window is narrow: the label beside it names
-   the surface, and this only explains it. */
-
-/* The setup rows above the new-Channel composer. Optical left edge: a round
-   end reads 2–3px inside its box, so the pill sits 1px and the label 2px in
-   from the composer. 9px between rows is the composer stack's own gap. */
-
-/* One box for both states, so the widening is the box's own width easing
-   rather than one control swapped for another. */
-
-/* Both lists open upward; `fitAbove` in new-channel-participants.tsx caps
-   each at the room above it, which depends on the draft's height. */
-
 /* The shared Space picker, drawn as a pill inline with the name. */
 .dropdown-select-trigger-pill {
   background: var(--av-sys-color-surface-elevated-hover);
@@ -7405,7 +7324,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
     transition: opacity var(--phone-sheet-motion), transform var(--phone-sheet-motion), visibility 0s;
     visibility: visible;
   }
-  
+
   .app-shell .single-sidebar .sidebar-resizer { display: none; }
   /* The same raised round fill as the actions opposite. Its glyph is a
      menu while the sheet is shut and a close mark while it is open: on a
@@ -7807,13 +7726,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 }
 .title-menu-search > input { background: transparent; border: 0; color: var(--av-sys-color-text-default); flex: 1; font: inherit; font-size: 13px; min-width: 0; outline: 0; }
 
-/* The transcript makes room for the ticks only when there are ticks. */
-
-/* Phone: the ticks would cover text (chips and the Channel menu still reach
-   Breakouts), and Rally's turns and their placeholder fill the column. Must
-   follow the rule above, which has the same weight. */
+/* Phone: Rally's turns and their placeholder fill the column. */
 @media (max-width: 640px) {
-
   .workstream-screen :is(.agent-message, .conversation-opening-message:not(.is-human)) { max-width: 100%; }
 }
 
@@ -8197,16 +8111,8 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   .app-shell .navigation-sidebar .navigation-rail-spacer { display: none; }
 }
 
-/* ── A Channel: its feed of threads and the composer that starts one ─────── */
-/* An auto column can keep the feed wider than its pane across the split divider. */
-
-/* The header's pill floats over the feed, which fades out beneath it. */
-
-/* "Thursday", "Today": a hairline either side of the day's name. */
-
 /* What Rally remembers (docs/agent-memory.md): one scope's facts, drawn by
-   `MemoryFactRows` in a settings card (`.memory-review`) and in a title menu's
-   Memory level (`.title-menu-memory`). */
+   `MemoryFactRows` in a settings card (`.memory-review`). */
 .memory-review { display: flex; flex-direction: column; }
 .memory-review .center-state { height: auto; padding: 8px 0; }
 .memory-review-empty { color: var(--av-sys-color-text-muted); margin: 0; }
