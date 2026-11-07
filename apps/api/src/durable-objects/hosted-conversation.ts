@@ -100,6 +100,9 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
     return this.host.storage.sql;
   }
 
+  /** The noun this parent's failure codes start with (`<noun>_missing`, `<noun>_effect_…`). */
+  protected abstract readonly codeNoun: string;
+
   /** The parent's own row as the contract reads it; null when there is none. */
   protected abstract identity(): HostedConversationIdentity | null;
 
@@ -209,16 +212,16 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
     // The parent's identity does not change inside a batch, so it is read
     // once; each envelope is still its own transaction.
     const identity = this.identity();
-    if (!identity) throw new Error(`${this.parentKind === "automation" ? "sidekick" : this.parentKind}_missing`);
+    if (!identity) throw new Error(`${this.codeNoun}_missing`);
     const accepted: { messageId: string; payloadHash: string }[] = [];
     for (const envelope of request.envelopes) {
       if (envelope.region !== this.env.AVALON_REGION) throw new Error("conversation_effect_region_mismatch");
       if (envelope.substreamId !== request.substreamId) throw new Error("conversation_effect_substream_mismatch");
       if (envelope.parentKind !== this.parentKind) {
-        throw new Error(this.parentKind === "automation" ? "sidekick_effect_parent_kind_mismatch" : "canvas_effect_parent_kind_mismatch");
+        throw new Error(`${this.codeNoun}_effect_parent_kind_mismatch`);
       }
       if (identity.workspaceId !== envelope.workspaceId || this.parentId !== envelope.parentId) {
-        throw new Error(this.parentKind === "automation" ? "sidekick_effect_identity_mismatch" : "canvas_effect_identity_mismatch");
+        throw new Error(`${this.codeNoun}_effect_identity_mismatch`);
       }
       this.applyChildEnvelope(request.substreamId, envelope);
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });

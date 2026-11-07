@@ -808,13 +808,25 @@ describe("the registry schema", () => {
       for (const table of ["durable_objects", "migration_events", "component_versions"]) {
         state.storage.sql.exec(`UPDATE ${table} SET class_name = 'SubstreamAgent'`);
       }
+      state.storage.sql.exec(
+        `INSERT INTO durable_object_namespaces
+           (namespace_id, script_name, class_name, uses_sqlite, object_count, first_seen_at, last_swept_at)
+         VALUES ('namespace-before-rename', 'avalon-api', 'SubstreamAgent', 1, 1, 1000, 1000)`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO migration_runs
+           (run_id, class_name, region, requested_by, requested_at, matched_count, dispatched_count,
+            unroutable_count, truncated, status)
+         VALUES ('run-before-rename', 'SubstreamAgent', NULL, 'operator@example.com', 1000, 1, 1, 0, 0, 'dispatched')`,
+      );
       state.storage.sql.exec(`DELETE FROM _sql_schema_migrations WHERE version = 6`);
       return applyRegistrySchema(state.storage);
     });
     expect(applied).toEqual([6]);
-    const classes = await withRegistry((_registry, state) => ["durable_objects", "migration_events", "component_versions"]
+    const tables = ["durable_objects", "migration_events", "component_versions", "durable_object_namespaces", "migration_runs"];
+    const classes = await withRegistry((_registry, state) => tables
       .map((table) => state.storage.sql.exec<{ class_name: string }>(`SELECT DISTINCT class_name FROM ${table}`).toArray()));
-    expect(classes).toEqual([[{ class_name: "AgentLoopDO" }], [{ class_name: "AgentLoopDO" }], [{ class_name: "AgentLoopDO" }]]);
+    expect(classes).toEqual(tables.map(() => [{ class_name: "AgentLoopDO" }]));
   });
 
   it("files a report the outgoing build sends under the old class name under the new one", async () => {

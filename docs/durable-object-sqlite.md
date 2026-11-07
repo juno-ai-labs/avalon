@@ -118,7 +118,7 @@ production lifecycle and because a forward migration must begin from the
 committed graph a deployed object actually contains.
 
 This behavior is shared by every Rally object with an implementation-hash
-receipt: `SubstreamAgent`,
+receipt: `AgentLoopDO`,
 `WorkspaceDO`, and `ArtifactHostDO` all call
 this runner. The migration tracker's `MigrationRegistry` uses a separate
 version-only bootstrap, `MigrationProbeDO` is intentionally empty, and an
