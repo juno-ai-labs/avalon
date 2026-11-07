@@ -15,6 +15,8 @@ import type {
   WorkstreamTranscriptSnapshot,
   ResourceDirection,
   ResourceRelationshipType,
+  CanvasSummary,
+  SidekickAudience,
 } from '@rally/contracts';
 import type { PluginGroupIcon } from './plugin-groups';
 
@@ -114,6 +116,8 @@ export interface AutomationSummary {
   unread?: boolean;
   needsInput?: boolean;
   pinnedPosition?: number | null;
+  /** Who it is shared with; absent from a server that predates it. */
+  audience?: SidekickAudience;
 }
 
 export interface WorkstreamSummary {
@@ -646,6 +650,15 @@ export interface Message {
   automationActivation?: {
     automationId: string;
     automationName: string;
+    /** The run behind it, which is also its substream under the Sidekick. */
+    runId?: string;
+    trigger?: 'manual' | 'schedule' | 'external_event' | 'inbound_email';
+    /** Present on a run's own row in its Sidekick's shared conversation: the run as it stands. */
+    run?: {
+      state: 'pending' | 'running' | 'needs_input' | 'completed' | 'failed' | 'stopped';
+      stepCount: number;
+      reply: string | null;
+    };
   };
   /**
    * Durable Object events and D1 transcript rows have independent sequence
@@ -832,6 +845,10 @@ export interface AutomationDetail extends AutomationSummary {
   /** One line per trigger of the current definition, or empty before one exists. */
   triggerSummaries: string[];
   recentRuns: AutomationRun[];
+  /** The people a `people` Sidekick is shared with besides its author; empty otherwise. */
+  sharedWithUserIds?: string[];
+  /** The Canvases it writes that this reader may open, most recently active first. */
+  canvases?: CanvasSummary[];
 }
 
 export interface SocketTicket {

@@ -86,6 +86,7 @@ import { useCopy } from '../lib/use-copy';
 import { useEmailMentionTarget } from '../lib/workspace-invitees';
 import { SidekickMentionContext, useSidekickMentions } from '../lib/sidekick-mentions';
 import { AutomationGlyph } from './workstream-glyph';
+import { SidekickRunRow } from './sidekick-run-row';
 import { bareAddressAutolink, EMAIL_MENTION, EMAIL_MENTION_AT } from '@rally/contracts/email-mentions';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
 import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
@@ -2972,6 +2973,10 @@ export function MessageBlock({
   // with a machine author and would otherwise fall into the row that means
   // "Rally is noting something that happened *to* this work stream". It is not
   // that. It is what an automation found, for the people in the room to read.
+  // A run's own row in its Sidekick's shared conversation: collapsed to the
+  // run's state and reply, ahead of the authored row an activation otherwise
+  // draws, since the run's work lives in its own conversation.
+  if (message.automationActivation?.run) return <SidekickRunRow message={message} />;
   // Ahead of the system branch for the same reason as the card below: a
   // clamped paragraph would bury what the room is being asked to decide.
   if (message.draftProposed) {

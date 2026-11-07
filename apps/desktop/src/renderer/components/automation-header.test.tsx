@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import type * as PlatformModule from '../lib/platform';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -404,5 +405,30 @@ describe('AutomationHeader', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close dialog' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Run history' })).toBeNull());
     expect(screen.queryByRole('list', { name: 'Runs' })).toBeNull();
+  });
+});
+
+describe('what a Sidekick profile says it reaches', () => {
+  it('names who it is shared with, the connections it uses and the Canvases it writes to', () => {
+    render(
+      <Tooltip.Provider><MemoryRouter>
+        <AutomationHeader
+          automation={{
+            ...draft, lifecycle: 'active', status: 'active', audience: 'people', sharedWithUserIds: ['user-2', 'user-3'],
+            currentDefinition: { ...definition, recommendedPlugins: [{ pluginId: 'plugin_pagerduty', recommendedTools: [], reason: 'Alerts' }] },
+            canvases: [{
+              id: '00000000-0000-7000-8000-0000000000c1', title: 'Checkout latency · Nov 6', createdByUserId: '00000000-0000-7000-8000-0000000000a1',
+              createdAt: '2026-11-06T10:00:00.000Z', updatedAt: '2026-11-06T10:34:00.000Z', lastEditor: { kind: 'sidekick', id: 'automation-1' },
+              writerSidekickId: 'automation-1', visibility: 'creator',
+            }] as NonNullable<AutomationDetail['canvases']>,
+          }}
+          {...actions()}
+        />
+      </MemoryRouter></Tooltip.Provider>,
+    );
+    expect(screen.getByText('Shared · 3 people')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Connections it uses' })).getByText('Pagerduty')).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Canvases it writes to' })).getByRole('link', { name: 'Checkout latency · Nov 6' }))
+      .toHaveAttribute('href', '/canvases/00000000-0000-7000-8000-0000000000c1');
   });
 });

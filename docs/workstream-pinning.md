@@ -443,6 +443,9 @@ section's Pinned group. That drag is `useRowPinDrop`
 for a list whose pins are a flag on its own rows; it pins at the end of the
 group, since no route exposes `reorderSidebarPins` yet, so the group does not
 offer reordering.
+A Sidekick is pinned the same way through `POST /sidekicks/:id/pin` from the
+Sidekicks section; a Sidekick that needs input is drawn in that section's
+Needs input group, above Pinned, rather than twice.
 
 ### 2026-10-17 — Generated artifacts can be pinned
 
