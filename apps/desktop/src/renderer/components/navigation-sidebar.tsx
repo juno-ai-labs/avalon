@@ -4,12 +4,14 @@ import clsx from 'clsx';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { canvasNeedsAttention, sidekickNeedsAttention } from '../../common/sidebar-attention';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { useCreateCanvas } from '../lib/canvases';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace } from '../lib/types';
 import { useUiStore, type SidebarSection } from '../lib/ui-store';
 import { useCanvasList } from '../lib/canvases';
+import { useDockBadge } from '../lib/dock-badge';
 import { CanvasesSection } from './canvas-sidebar-section';
 import { ErrorNotice, IconButton } from './primitives';
 import { RailItem } from './rail-item';
@@ -32,20 +34,26 @@ const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNo
 /**
  * Each section's count, and whether both lists have arrived so the counts are
  * whole. Canvases counts each Canvas holding something this person has not
- * read; Sidekicks each Sidekick waiting on input or holding something unread.
- * The rail draws these and the dock badge adds them up, so the two cannot
- * disagree.
+ * read; Sidekicks each Sidekick waiting on input or holding something unread
+ * (`common/sidebar-attention.ts`, which the menu bar counts by too). The rail
+ * draws these and the dock badge adds them up, so the two cannot disagree.
  */
 export function useSectionCounts(): { counts: Record<SidebarSection, number>; complete: boolean } {
   const canvases = useCanvasList();
   const sidekicks = useSidekickList();
   return {
     counts: {
-      canvases: (canvases ?? []).filter((row) => row.unread).length,
-      sidekicks: (sidekicks ?? []).filter((row) => row.needsInput || row.unread).length,
+      canvases: (canvases ?? []).filter((row) => canvasNeedsAttention(row)).length,
+      sidekicks: (sidekicks ?? []).filter((row) => sidekickNeedsAttention(row)).length,
     },
     complete: canvases !== undefined && sidekicks !== undefined,
   };
+}
+
+/** The dock badge, or an installed browser app's icon badge: the rail's two counts added up. */
+export function useRailDockBadge(): void {
+  const { counts, complete } = useSectionCounts();
+  useDockBadge(counts.canvases + counts.sidekicks, complete);
 }
 
 /**

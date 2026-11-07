@@ -27,16 +27,19 @@ function subscribeAnswer(): Record<string, unknown> {
   };
 }
 
-async function harness(): Promise<{ watch: SidebarListsWatch; handlers: Handlers; onChange: ReturnType<typeof vi.fn> }> {
+async function harness(): Promise<{
+  watch: SidebarListsWatch; handlers: Handlers; onChange: ReturnType<typeof vi.fn>; logWarning: ReturnType<typeof vi.fn>;
+}> {
   let handlers!: Handlers;
   const onChange = vi.fn();
+  const logWarning = vi.fn();
   const watch = new SidebarListsWatch({
     socket: (given) => { handlers = given; return vi.fn(); },
     onChange,
-    logWarning: vi.fn(),
+    logWarning,
   });
   watch.start();
-  return { watch, handlers, onChange };
+  return { watch, handlers, onChange, logWarning };
 }
 
 const connection = {} as Parameters<Handlers['onSubscribed']>[1];
@@ -64,6 +67,24 @@ describe('the menu bar\'s Canvases and Sidekicks lists', () => {
     expect(watch.snapshot().sidekicks).toEqual([{ id: SIDEKICK.id, name: 'Incident triage', needsInput: false, unread: true }]);
     await Promise.resolve();
     expect(onChange).toHaveBeenCalled();
+  });
+
+  it('names the field a list push failed on, and stays silent on a frame that is not a list', async () => {
+    const { watch, handlers, logWarning } = await harness();
+    handlers.onSubscribed(subscribeAnswer(), connection);
+
+    handlers.onMessage?.({ type: 'workspace_presence', userIds: [] }, connection);
+    handlers.onMessage?.({ type: 'workspace_sidebar_list', list: 'notes', waterline: 9, items: 'skewed' }, connection);
+    expect(logWarning).not.toHaveBeenCalled();
+
+    handlers.onMessage?.({ type: 'workspace_canvas_list', occurredAt: '2026-11-07T09:01:00.000Z', waterline: 'six', items: [] }, connection);
+    expect(logWarning).toHaveBeenLastCalledWith('could not read a Canvases list push for the menu bar', new Error('waterline:invalid_type'));
+    handlers.onMessage?.({
+      type: 'workspace_sidebar_list', occurredAt: '2026-11-07T09:02:00.000Z', list: 'automations', waterline: 7, items: [{ id: SIDEKICK.id }],
+    }, connection);
+    expect(logWarning).toHaveBeenCalledTimes(2);
+    expect(String(logWarning.mock.calls[1]?.[1])).toMatch(/^Error: items\.0\.name:invalid_type/);
+    expect(watch.snapshot().canvases).toHaveLength(1);
   });
 
   it('forgets both lists when stopped', async () => {

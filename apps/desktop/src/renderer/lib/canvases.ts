@@ -20,6 +20,11 @@ export function canvasRoute(canvasId: string): string {
   return `${CANVASES_ROUTE}/${encodeURIComponent(canvasId)}`;
 }
 
+/** A Canvas opened on one turn of its Chat, as a search result for a message opens it. */
+export function canvasTurnRoute(canvasId: string, turnId: string, transcriptSequence: number): string {
+  return `${canvasRoute(canvasId)}?turn=${encodeURIComponent(turnId)}&sequence=${transcriptSequence}`;
+}
+
 /** The Canvas a route has open, or null; a malformed segment is returned raw, as React Router decodes a param. */
 export function openCanvasId(pathname: string): string | null {
   const id = /^\/canvases\/([^/]+)$/.exec(pathname)?.[1];
