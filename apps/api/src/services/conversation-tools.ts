@@ -777,8 +777,7 @@ export function createConversationsPlugin(
     description: "List, read, search, and post to the Rally conversations this agent can reach.",
     systemMessage: conversationsSystemMessage({ posts, attaches, run: input.automationRun !== undefined,
       parents: scope.kind === "conversation", breakout: inBreakout,
-      reads: access.tools.includes("read"),
-      merges: null }),
+      reads: access.tools.includes("read") }),
     tools,
     preload: true,
     explicit: true,
@@ -805,12 +804,6 @@ export const PEER_CONVERSATION_INSTRUCTION = "Use conversation_list to discover 
 /** A Breakout also sees its Thread's resources; a Thread's Main is the one that holds them. */
 export const BREAKOUT_RESOURCES_INSTRUCTION = "Resources attached to the conversation this one branched from are in list_resources too.";
 
-/** When to merge, for a Breakout loop (into its thread) or a Thread Main loop (into every Channel it is in). */
-export function mergeInstruction(target: "thread" | "channels"): string {
-  const where = target === "thread" ? "the thread" : "its Channels";
-  return `When a person asks you to merge, merge it back, or send the result to ${where}, call conversation_merge once with a short message for ${target === "thread" ? "the thread's" : "their"} readers. Merge only when a person asked; never on your own judgement.`;
-}
-
 /** The plugin's standing instructions; the tool-naming lines are pinned by a test. */
 export function conversationsSystemMessage(options: {
   posts: boolean;
@@ -822,8 +815,6 @@ export function conversationsSystemMessage(options: {
   breakout?: boolean;
   /** Whether the loop lists and reads. Defaults to true. */
   reads?: boolean;
-  /** Where this loop's merge goes, or null when it has no merge. */
-  merges?: "thread" | "channels" | null;
 }): string {
   return [
     ...(options.reads !== false
@@ -845,9 +836,6 @@ export function conversationsSystemMessage(options: {
       : []),
     ...(options.attaches
       ? ["Use conversation_attach when the person asks this Sidekick to read or post somewhere new; pass the link or id they give you."]
-      : []),
-    ...(options.merges
-      ? [mergeInstruction(options.merges)]
       : []),
   ].join(" ");
 }
