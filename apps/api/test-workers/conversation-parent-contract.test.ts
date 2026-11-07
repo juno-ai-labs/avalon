@@ -2,7 +2,6 @@
 import { WorkstreamDirectoryService } from '../src/services/workstream-directory-service';
 import { createResourceObjectPort } from '../src/runtime/resource-port';
 import { ResourceService } from '../src/services/resource-service';
-import { WorkstreamIdentityStorage } from '../src/durable-objects/workstream-identity-storage';
 import { WorkspaceDO } from '../src/durable-objects/workspace-do';
 import { SubstreamAgent } from '../src/durable-objects/substream-agent';
 import { WorkstreamResourceStorage } from '../src/durable-objects/workstream-resource-storage';
@@ -629,9 +628,11 @@ describe("conversation parent contract", () => {
     expect(attachments).toHaveBeenCalledTimes(1);
   });
 
-  it("shares automation and inherited identity facts within a resource batch", async () => {
-    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
-    const parentId = await seedAutomation("workstream", PERSONAL_ROOM_ID);
+  it("shares automation facts within a resource batch", async () => {
+    const parentId = await seedAutomation("personal", null);
+    await automationStub(parentId).sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: parentId,
+      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },
+      update: { audience: "people", userIds: [PARTICIPANT_ID] } });
     const ids = [crypto.randomUUID(), crypto.randomUUID()];
     await runInDurableObject(workspaceStub(), (_instance, state) => {
       for (const id of ids) state.storage.sql.exec(`INSERT INTO resources
@@ -646,15 +647,12 @@ describe("conversation parent contract", () => {
     await projectAuthorization(TEST_ENV, { type: 'authorization_projection_v1', region: 'global',
       workspaceId: WORKSPACE_ID, parentId, substreamId: asSubstreamId('0') });
     const automations = vi.spyOn(WorkspaceDO.prototype, 'sidekickReadAuthorizationFacts');
-    const identities = vi.spyOn(WorkstreamIdentityStorage.prototype, 'readAuthorizationFacts');
     const access = createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID });
     const addresses = ids.map(resourceId => ({ kind: 'resource' as const, workspaceId: WORKSPACE_ID, resourceId }));
     expect((await access.checkMany(addresses)).map(decision => decision.status)).toEqual(['allowed', 'allowed']);
     expect(automations).toHaveBeenCalledTimes(1);
-    expect(identities).toHaveBeenCalledTimes(1);
     expect((await access.checkMany(addresses)).map(decision => decision.status)).toEqual(['allowed', 'allowed']);
     expect(automations).toHaveBeenCalledTimes(2);
-    expect(identities).toHaveBeenCalledTimes(2);
   });
 
   it("stops returning a private room's rows on the search after its reader is removed", async () => {
@@ -1239,7 +1237,7 @@ describe("conversation parent contract", () => {
       .toEqual({ exists: true, authorityGeneration: 1, archived: true });
   });
 
-  it("a hosted Sidekick admits the author, every member of a workspace automation, and a room automation's participants", async () => {
+  it("a hosted Sidekick admits the author, every member of a workspace automation, and the people a personal one is shared with", async () => {
     await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
     const personal = await seedAutomation("personal", null);
     const shared = await seedAutomation("workspace", null);
@@ -1251,10 +1249,18 @@ describe("conversation parent contract", () => {
       .toMatchObject({ authorized: false, archived: false });
     expect(await automationStub(shared).authorizeViewer(viewer(shared, MEMBER_ID)))
       .toMatchObject({ authorized: true, archived: false });
-    // The room's automation is the room's: a participant who never wrote it
-    // may open it, a member outside the room may not.
-    expect(await automationStub(owned).authorizeViewer(viewer(owned, PARTICIPANT_ID)))
+    // A personal Sidekick shared with named people admits them, and nobody else.
+    await automationStub(personal).sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: personal,
+      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: false },
+      update: { audience: "people", userIds: [MEMBER_ID] } });
+    expect(await automationStub(personal).authorizeViewer(viewer(personal, MEMBER_ID)))
       .toMatchObject({ authorized: true, archived: false });
+    expect(await automationStub(personal).authorizeViewer(viewer(personal, PARTICIPANT_ID)))
+      .toMatchObject({ authorized: false, archived: false });
+    // Its owning room's participants no longer read a room's automation: who
+    // it is shared with does.
+    expect(await automationStub(owned).authorizeViewer(viewer(owned, PARTICIPANT_ID)))
+      .toMatchObject({ authorized: false, archived: false });
     expect(await automationStub(owned).authorizeViewer(viewer(owned, MEMBER_ID)))
       .toMatchObject({ authorized: false, archived: false });
     expect(await automationStub(owned).listChildren({ workspaceId: WORKSPACE_ID, parentId: owned }))
@@ -1263,7 +1269,7 @@ describe("conversation parent contract", () => {
     // Archiving the room archives its owned Sidekick. Neither authorship nor
     // participation keeps access to the Sidekick's retained conversations.
     const address = { kind: 'conversation' as const, workspaceId: WORKSPACE_ID, parentId: owned, substreamId: asSubstreamId('0') };
-    expect(await createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'allowed' });
+    expect(await createAccessContext(TEST_ENV, AUTH).check(address)).toMatchObject({ status: 'allowed' });
     await archiveRoom(PERSONAL_ROOM_ID);
     expect(await createAccessContext(TEST_ENV, { ...AUTH, userId: PARTICIPANT_ID }).check(address)).toMatchObject({ status: 'not_found' });
     expect(await createAccessContext(TEST_ENV, AUTH).check(address)).toMatchObject({ status: 'not_found' });

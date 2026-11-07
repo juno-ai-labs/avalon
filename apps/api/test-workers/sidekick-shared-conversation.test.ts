@@ -145,13 +145,14 @@ async function seedRegionalDatabase(): Promise<void> {
 }
 
 /** An active Organization Sidekick the author manages and the second member does not. */
-async function activeSidekick(): Promise<void> {
+async function activeSidekick(scope: "personal" | "workspace" = "workspace"): Promise<void> {
   const created = await createAutomation(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workspace", owningWorkstreamId: null,
+    workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope, owningWorkstreamId: null,
     automationId: AUTOMATION_ID,
   });
   expect(created).toEqual({ automationId: AUTOMATION_ID, created: true });
-  await workspaceStub().sidekickSubmitDefinition({ ...addressed(), draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
+  await workspaceStub().sidekickSubmitDefinition({ ...addressed(), draft: { ...DEFINITION, suggestedScope: scope },
+    evaluatorRules: null, submittedByRunId: null });
   const detail = await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) =>
     instance.sidekickApply({ ...addressed(), actor: actor() }));
   expect(detail.lifecycle).toBe("active");
@@ -534,5 +535,56 @@ describe("a Sidekick's shared conversation", () => {
       type: "automation_activation", automationId: AUTOMATION_ID, runId: started.runId, trigger: { kind: "manual" },
     });
     expect(await wizardExecutions()).toEqual([]);
+  });
+
+  it("opens a personal Sidekick's conversation only to its author and the people it is shared with", async () => {
+    await activeSidekick("personal");
+    const opens = (userId: string) => new ConversationService(TEST_ENV, auth(userId)).authorizeViewer(AUTOMATION_ID)
+      .then(() => true, () => false);
+    expect(await opens(AUTHOR_ID)).toBe(true);
+    expect(await opens(MEMBER_ID)).toBe(false);
+    const setAudience = (update: { audience: "personal" | "workspace" | "people"; userIds: string[] }) =>
+      runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickSetAudience({
+        ...addressed(), actor: actor(), update }));
+    const shared = await setAudience({ audience: "people", userIds: [MEMBER_ID] });
+    expect({ audience: shared.audience, sharedWithUserIds: shared.sharedWithUserIds })
+      .toEqual({ audience: "people", sharedWithUserIds: [MEMBER_ID] });
+    expect(await opens(MEMBER_ID)).toBe(true);
+    // An admin who is not on the list does not read a personal Sidekick.
+    expect(await opens(ADMIN_ID)).toBe(false);
+    // The Organization audience admits any member, and clears the list.
+    const opened = await setAudience({ audience: "workspace", userIds: [] });
+    expect({ audience: opened.audience, sharedWithUserIds: opened.sharedWithUserIds })
+      .toEqual({ audience: "workspace", sharedWithUserIds: [] });
+    expect(await opens(ADMIN_ID)).toBe(true);
+    // Someone it is shared with does not manage it.
+    await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickSetAudience({
+      ...addressed(), actor: actor(MEMBER_ID), update: { audience: "personal", userIds: [] },
+    }))).rejects.toMatchObject({ code: "sidekick_forbidden" });
+  });
+
+  it("marks a Sidekick's sidebar row unread for a reader until they read its shared conversation", async () => {
+    await activeSidekick();
+    const unread = async (userId: string) => (await workspaceStub().listAutomationDirectory({
+      workspaceId: WORKSPACE_ID, userId })).items.find((item) => item.id === AUTOMATION_ID)?.unread;
+    const latest = () => runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{ latest: number }>(
+      `SELECT next_attention_ordinal - 1 AS latest FROM workstream WHERE id = 1`).one().latest);
+    const read = async (userId: string) => {
+      const response = await conversationStub().fetch("https://object.test/internal/product", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "acknowledge_read", parentKind: "automation", auth: auth(userId),
+          input: { readThroughSequenceNumber: await latest(), observedManualUnreadGeneration: 0 } }),
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      await deliverChildEffects(TEST_ENV, conversationStub());
+    };
+    await say(MEMBER_ID, "Morning, everyone.", "unread-0001");
+    await read(MEMBER_ID);
+    expect(await unread(MEMBER_ID)).toBe(false);
+    await say(AUTHOR_ID, "Morning! The release went out.", "unread-0002");
+    await deliverChildEffects(TEST_ENV, conversationStub());
+    expect(await unread(MEMBER_ID)).toBe(true);
+    await read(MEMBER_ID);
+    expect(await unread(MEMBER_ID)).toBe(false);
   });
 });

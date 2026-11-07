@@ -35,7 +35,7 @@ it, is [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method now answers here, dispatching to `HostedParent` for its `parentId`. Also the Channel rows on the workspace socket (with each viewer's breakouts and running background agents), the retired Channel control socket kept for older clients, the in-transaction apply of what a parent publishes, the outbox drain, and the workspace relationship table. |
 | `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts` | The grant and invitation repositories, now scoped by `parent_id`. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: one Sidekick's parent and lifecycle, scoped to a `sidekick_id` inside `WorkspaceDO`'s SQLite. The port of what `SidekickDO` did for one object. Also `sidekickReaderAllows`, the read rule the library listing shares. |
-| `apps/api/src/durable-objects/hosted-sidekick-schema.ts` | `WorkspaceDO` migration 91: the definition columns on `automation_directory`, the `sidekick_*` tables and the `sidekick_imports` ledger, which migration 92 drops; and migration 132: the self-review columns and `sidekick_reviews`; and migration 135: `sidekick_runs.step_count` and the triggers that arm a run's `sidekick_run_row` entry. |
+| `apps/api/src/durable-objects/hosted-sidekick-schema.ts` | `WorkspaceDO` migration 91: the definition columns on `automation_directory`, the `sidekick_*` tables and the `sidekick_imports` ledger, which migration 92 drops; and migration 132: the self-review columns and `sidekick_reviews`; and migration 135: `sidekick_runs.step_count` and the triggers that arm a run's `sidekick_run_row` entry; and migration 136: `sidekick_audience` and `sidekick_viewer_reads`. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: the Queue consumer step that opens a run's conversation and starts its loop, off the Organization's alarm. |
 | `apps/api/src/services/conversation-parent-client.ts` | `hostedParentStub` and `conversationParentStub`: `WorkspaceDO` for every parent. |
 | `apps/api/src/queues/activity-consumer.ts` | A `conversation_effect` for any parent goes to `WorkspaceDO.receiveChildEffects`; a `sidekick_run_provision` message to `provisionSidekickRun`; a `sidekick_review` message to `deliverSidekickReview`. |
@@ -421,19 +421,20 @@ a projection of its `sidekick_runs` row: triggers on that table arm a
 `sidekick_run_row` entry on every change (WorkspaceDO migration 135), and the
 entry reads the run when it runs and hands the whole row to `"0"`'s
 `projectSidekickRunRow`, which drops a projection older than the one it holds
-unless a replay armed it. The call is made from the alarm rather than through the Queue, unlike a run's
-provisioning, because it is one small idempotent write to a conversation that
-already exists, not a cold conversation's bootstrap; a throw is retried on the
-scheduler's backoff. [Runs in the shared
+unless a replay armed it. The call is made from the alarm rather than through
+the Queue, unlike a run's provisioning, because it is one small idempotent
+write to a conversation that already exists, not a cold conversation's
+bootstrap; a throw is retried on the scheduler's backoff. [Runs in the shared
 conversation](automation-lifecycle.md#runs-in-the-shared-conversation) owns
 what the row says.
 
-A Channel-scoped Sidekick keeps the two access rules it had: who may manage the
-owning Channel (its grants and an archive included) manages it and reads its
-detail, and the Channel's participant rows decide who views it and sees it
-listed, which costs no read beyond this object's. A Breakout-homed one admits
-the Breakout's members for both. The library listing takes the caller's access
-class and role from its authentication rather than reading them again.
+Who reads a Sidekick is its own audience (`sidekickReaderAllows`): its author,
+the person it runs as, the people on its `people` list (`sidekick_audience`,
+WorkspaceDO migration 136) and, for an Organization one, every member; a
+guest only from the list. A home Channel or Breakout admits nobody any more.
+Who may manage the owning Channel still manages a Channel-scoped Sidekick until
+that scope is converted (plan step A-5). The library listing takes the caller's
+access class and role from its authentication rather than reading them again.
 
 **How Sidekicks moved.** Migration 91 put every Sidekick the directory held on
 a `sidekick_imports` ledger, and each one was imported from its legacy
@@ -666,6 +667,20 @@ an alarm-driven RPC, not an outbox row: the write is idempotent and versioned
 by the run's `updated_at`, so the alarm's retry is all the delivery guarantee
 it needs. A change that moves this onto the Queue must keep the handler
 reading the run at delivery time, never carrying a copy.
+
+The same change gives a Sidekick its own audience, so `authorizeViewer` no
+longer asks a home Channel or Breakout (`homeAdmits`, `sidekickGrantViewer`
+and the host's `channelViewer` are gone): Threads are being retired, and an
+audience borrowed from one would outlive it. It also keeps each reader's read
+state of `"0"` (`sidekick_viewer_reads`, from `"0"`'s `directory_user`
+effects), which the Sidekick parent ignored before, so the sidebar row can
+say what that reader has not read.
+
+### 2026-11-06 — The iOS client is deleted
+
+The Channel control socket was kept partly for the iOS client's child directory;
+with `apps/ios` deleted, only released desktops hold it open, and the socket is
+removed in a later phase of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
 
 ### 2026-10-23 — Read historical directory projections without retaining obsolete fields
 

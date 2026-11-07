@@ -101,7 +101,14 @@ export function owningThreads(
 
 /** A directory row as a summary; an appearance that no longer parses is left out and reported. */
 export function automationSummary(
-  row: AutomationDirectoryRow & { last_run_at?: number | null },
+  row: AutomationDirectoryRow & {
+    last_run_at?: number | null;
+    /** Rows on the `people` list (`AUTOMATION_AUDIENCE_SQL`); absent from a read that did not ask. */
+    shared_count?: number;
+    /** The viewer's read state of the shared conversation (`AUTOMATION_VIEWER_SQL`); sidebar reads only. */
+    unread?: number;
+    needs_input?: number;
+  },
   report: InvalidAppearanceReport,
   owningThread: AutomationOwningThread | null = null,
 ): AutomationSummary {
@@ -120,8 +127,42 @@ export function automationSummary(
     nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
     lastRunAt: row.last_run_at == null ? null : new Date(row.last_run_at).toISOString(),
     updatedAt: new Date(row.projected_at).toISOString(),
+    ...(row.shared_count === undefined ? {} : {
+      audience: row.shared_count > 0 ? "people" as const : row.scope === "workspace" ? "workspace" as const : "personal" as const,
+    }),
+    ...(row.unread === undefined ? {} : { unread: row.unread === 1 }),
+    ...(row.needs_input === undefined ? {} : { needsInput: row.needs_input === 1 }),
   };
 }
+
+/** `shared_count` for `automationSummary`, over an `automation_directory` aliased `directory`. */
+export const AUTOMATION_AUDIENCE_SQL = `(SELECT COUNT(*) FROM sidekick_audience shared
+   WHERE shared.sidekick_id = directory.automation_id) AS shared_count`;
+
+/**
+ * `unread` and `needs_input` for `automationSummary`, for the viewer bound to
+ * `?1`, over an `automation_directory` aliased `directory`.
+ *
+ * Unread is the shared conversation's own read state as it last reported it
+ * for this viewer (`sidekick_viewer_reads`) against its latest attention
+ * ordinal (its `directory_common` projection): a manual unread mark, or a
+ * message past what they saw. A viewer who never opened the conversation has
+ * no read state there and nothing unread. Needs input is the delegation
+ * attention or the conversation waiting on input.
+ */
+export const AUTOMATION_VIEWER_SQL = `CASE
+     WHEN reads.user_id IS NULL THEN 0
+     WHEN reads.manual_unread_from_ordinal IS NOT NULL THEN 1
+     WHEN COALESCE(json_extract(main.effect_json, '$.latestAttentionOrdinal'), 0) > reads.seen_attention_ordinal THEN 1
+     ELSE 0 END AS unread,
+   CASE WHEN directory.delegation_attention_code IS NOT NULL
+          OR json_extract(main.effect_json, '$.state') = 'needs_input' THEN 1 ELSE 0 END AS needs_input`;
+
+/** The joins `AUTOMATION_VIEWER_SQL` reads, for the viewer bound to `?1`. */
+export const AUTOMATION_VIEWER_JOINS = `LEFT JOIN sidekick_viewer_reads reads
+     ON reads.sidekick_id = directory.automation_id AND reads.user_id = ?1
+   LEFT JOIN sidekick_child_projections main
+     ON main.sidekick_id = directory.automation_id AND main.substream_id = '0'`;
 
 /**
  * The automations each of these rooms owns, newest projection first, as the

@@ -1133,6 +1133,42 @@ them: appended now, they would land at the bottom of the conversation, out of
 order with what was said around them. A replay is how a person who wants them
 gets them.
 
+### Who a Sidekick is shared with
+
+A Sidekick's audience is `personal` (its author), `workspace` (every member of
+the Organization) or `people` (its author and the people named). The author,
+the person it runs as and anyone named read its conversations whatever their
+access class; Organization scope admits members and never a guest. One function
+decides it (`sidekickAdmits` in `services/authorization-policy.ts`) for the
+conversation parent's `authorizeViewer`, the management and library reads
+(`sidekickReaderAllows`), resource authorization, search audience and memory
+facts. A home Channel or Breakout admits nobody.
+
+- **Storage.** `people` is stored as scope `personal` with its list in
+  `sidekick_audience` (WorkspaceDO migration 136), so the released scope CHECK
+  and every reader of `scope` are unchanged. The wire carries it as `audience`
+  beside `scope` on the summary and the detail, and the detail lists
+  `sharedWithUserIds`: a third `scope` value would fail a released client's
+  whole sidebar parse.
+- **Changing it.** A manager's `POST /automations/:id/audience` with
+  `{audience, userIds}` (`HostedSidekick.setAudience`); `userIds` is required
+  exactly for `people`, and everyone named must be an active member or guest
+  (`sidekick_audience_not_member` otherwise). The other two audiences clear the
+  list, and so does a draft's suggested scope that moves the audience.
+- **Unread.** The shared conversation's own read state (`member_attention`,
+  `acknowledgeRead`, `markUnread`) stays the authority. `"0"`'s `directory_user`
+  effect for each reader is kept in `sidekick_viewer_reads`, and the sidebar row
+  is `unread` when that reader marked it unread or `"0"`'s latest attention
+  ordinal (its `directory_common` projection) is past what they saw. Someone who
+  never opened the conversation has no read state there and nothing unread. A
+  change to either republishes the Sidekick list.
+- **Needs input.** `needsInput` on the sidebar row is the delegation attention
+  or `"0"` waiting on input.
+
+A run a non-delegate's message asks for is still refused
+(`run_no_eligible_delegate`); running it under the requester's own access is
+not built yet.
+
 ### Scheduled self-review
 
 The wizard is the model that can reason about a run; a run is the model that
@@ -1869,7 +1905,11 @@ every row. A `conversation_post` that names no conversation now lands in
 `"0"` rather than the Sidekick's home Thread
 ([`conversation-tools.md`](conversation-tools.md)). See
 [the shared conversation](#the-shared-conversation) and
-[runs in the shared conversation](#runs-in-the-shared-conversation).
+[runs in the shared conversation](#runs-in-the-shared-conversation). A Sidekick
+is shared with a `people` list as well as its author or the Organization, a
+home Thread or Breakout no longer admits anyone, and its sidebar row says what
+the viewer has not read in `"0"` ([who a Sidekick is shared
+with](#who-a-sidekick-is-shared-with)).
 
 **Why:** The Canvases and Sidekicks pivot opens a Sidekick's conversation to
 everyone it is shared with, and its decision log keeps the wizard and run
@@ -1891,7 +1931,10 @@ which turns one run into a column of status lines; arming the row at each of
 the seven places that write a run, where a writer added later would leave its
 row behind (the cost of the triggers is that the arming is in SQL). A post
 defaults to `"0"` because that is now where the people who asked are reading;
-the home Thread is being retired.
+the home Thread is being retired, and so the audience is the Sidekick's own
+rather than its Thread's. `people` sits beside `scope` on the wire, not in it,
+because released clients parse `scope` as a closed enum. Unread is a projection
+of `"0"`'s own read state, so nothing new decides it.
 
 **Consequences:** Any new kind of human input in `"0"` must say whether it is
 the wizard's; the claim routes it as a run otherwise. Authoring tools in `"0"`
@@ -1904,7 +1947,8 @@ longer steer a running turn. The row is a projection: anything that needs a
 run's truth reads `sidekick_runs`, and a row that drifted is rebuilt by a
 replay, and a replay is the only delivery that overrides a newer version. A
 run's summary is now its last reply rather than empty, so run history and the
-self-review read it too. Runs from before the change have no row. An
+self-review read it too. Runs from before the change have no row until a
+manager's replay appends one, at the end of the conversation. An
 already-installed desktop renders a run row under the generic "Sidekick" label
 rather than its name: `AutomationActivationV1Schema` is a `strictObject`, and
 that client's `safeParse` of content with the new optional `run` key fails and
