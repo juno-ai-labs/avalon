@@ -4888,7 +4888,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
 }, {
   version: 139,
-  description: "record each Canvas: its directory row, who besides its creator may open it, and the artifacts it generated",
+  description: "record each Canvas: its directory row and who besides its creator may open it",
   // See CANVAS_SCHEMA_STATEMENTS and docs/canvases.md#data-model.
   statements: CANVAS_SCHEMA_STATEMENTS,
 }, {

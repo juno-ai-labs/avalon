@@ -24,7 +24,6 @@ import {
   type WorkspaceRelationship,
 } from "@rally/contracts/scope-grants";
 
-import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { parseRpcInput } from "../lib/rpc-input";
 import { canvasAdmits, canvasManages } from "../services/authorization-policy";
@@ -92,11 +91,8 @@ export interface CanvasRow extends Record<string, SqlStorageValue> {
 
 /** What a hosted Canvas needs from the Organization object that holds it. */
 export interface HostedCanvasHost extends HostedConversationHost {
-  env: Env;
-  storage: DurableObjectStorage;
   /** Inside the transaction that changed one person's read of a Canvas's Chat: their Canvas list, sent only to them. */
   noteCanvasReadChanged(userId: string): void;
-  readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   noteRelationship(relationship: WorkspaceRelationship): void;
   /** Inside the transaction that changed a Canvas's row or its participants: the sidebar list's waterline. */
   noteCanvasDirectoryChanged(canvasId: string): void;
@@ -170,6 +166,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     super(host, canvasId, "canvas");
   }
 
+  protected readonly codeNoun = "canvas";
+
   get canvasId(): string {
     return this.parentId;
   }
@@ -193,8 +191,10 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   protected async admitsViewer(request: ConversationParentAuthorizeViewerRequest): Promise<boolean> {
     const row = this.row()!;
     const relationship = request.requireGrantAuthority ? null : await this.host.readRelationship(row.workspace_id, request.userId);
-    const actorRole = request.requireGrantAuthority || relationship?.accessClass === "guest" ? null
-      : relationship?.status === "active" ? relationship.role ?? "member" : "member";
+    // Only an active member has a role: a guest asks on the grant path, and
+    // a missing or inactive relationship is no membership at all.
+    const actorRole = relationship?.status === "active" && relationship.accessClass === "member"
+      ? relationship.role ?? "member" : null;
     return canvasReaderAllows(this.row() ?? row, { userId: request.userId, actorRole }, this.sql);
   }
 
@@ -223,18 +223,17 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     const relationship = request.relationship ?? await this.host.readRelationship(initial.workspace_id, request.userId);
     // Read again after the await: the row is what the facts describe.
     const row = this.row() ?? initial;
-    const writer = (actorRole: "member" | null) => row.writer_sidekick_id !== null
-      && writerSidekickAdmits(this.sql, row.writer_sidekick_id, { userId: request.userId, actorRole });
+    // A Sidekick's Organization scope admits a member and no guest, so the
+    // writer's audience is decided for the relationship in hand.
+    const member = relationship?.status === "active" && relationship.accessClass === "member";
     return {
       exists: true as const,
       visibility: row.visibility,
       creator: row.created_by_user_id === request.userId,
       participant: canvasParticipant(this.sql, this.canvasId, request.userId),
-      // A Sidekick's Organization scope admits a member and no guest, so the
-      // caller, which knows which this person is, picks one.
-      writerAudience: { member: writer("member"), guest: writer(null) },
-      administrator: relationship?.status === "active" && relationship.accessClass === "member"
-        && (relationship.role === "owner" || relationship.role === "admin"),
+      writerAudience: row.writer_sidekick_id !== null && writerSidekickAdmits(this.sql, row.writer_sidekick_id,
+        { userId: request.userId, actorRole: member ? "member" : null }),
+      administrator: member && (relationship.role === "owner" || relationship.role === "admin"),
       children: this.childRegistry().map((child) => child.substreamId),
       revision: JSON.stringify([row.authority_generation, row.updated_at]),
       validatedAt: Date.now(),
