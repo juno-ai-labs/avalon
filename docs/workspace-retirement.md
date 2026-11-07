@@ -266,7 +266,7 @@ read.
 committed transcript to `PAYLOADS` as text, under
 `retired-conversations/<workspaceId>/<parentId>/<substreamId>.txt`, through
 `AgentLoopDO.conversationTranscriptText`: the same `conversationAsText` the
-operator `read_thread` tool formats with, over every committed turn, so tool
+operator conversation reads format with, over every committed turn, so tool
 payloads, thinking and internal agent messages are left out. It is the only
 copy once the retirement runs, and it is for operators, not a product surface.
 It is the one read that sees a retired parent kind: the object's product reads

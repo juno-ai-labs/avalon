@@ -392,6 +392,21 @@ Shared DB runtime sources and package exports are deployment inputs alongside
 contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only changes
 do not publish a new Ace bundle.
 
+### 2026-11-07 — The import and suggested-work model roles leave the catalog
+
+**What changed:** The managed model catalog loses the conversation-import,
+suggested-work admission and suggested-work ranking rows, and the deploy
+retires `agent-model-session-import`,
+`agent-model-work-opportunity-admission` and
+`agent-model-work-opportunity-ranking` instead of ensuring them. The
+remaining five rows are ranked 1 to 5.
+
+**Why:** Plan step B-8 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+session import made Channels and suggested work made Threads, both retired,
+and nothing calls the roles any more. As the 2026-10-16 entry requires, each
+removed row moves to a `retireFlag` call in the same change.
+
 ### 2026-11-07 — Two Thread-era model roles leave the catalog
 
 **What changed:** The managed model catalog loses the work-stream

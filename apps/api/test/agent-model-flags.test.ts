@@ -402,7 +402,7 @@ describe("agent model flags", () => {
 
   it("preserves reasoning effort from a model flag", async () => {
     const env = envWithFlags(serving({ model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "medium" }));
-    await expect(resolveAgentModelRouting(env, "session_import")).resolves.toEqual({
+    await expect(resolveAgentModelRouting(env, "sidekick_authoring")).resolves.toEqual({
       model: "openai/gpt-6.1-sol", fallbackModels: [], reasoningEffort: "medium",
     });
   });

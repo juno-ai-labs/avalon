@@ -161,9 +161,10 @@ async function resolveInspectionConversationRoute(
 ): Promise<InspectionWorkstreamRoute | null> {
   const route = await resolveInspectionWorkstreamRoute(env, input.conversationId, expectedGeneration);
   if (!route || route.workspace_id !== input.workspaceId) return null;
-  if ((input.substreamId ?? "0") === "0") return route;
+  const substreamId = input.substreamId ?? "0";
+  if (substreamId === "0") return route;
   const known = await inspectionSubstreamIds(env, route);
-  return known.includes(input.substreamId!) ? route : null;
+  return known.includes(substreamId) ? route : null;
 }
 
 /**
