@@ -248,7 +248,7 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("Pass no run ids: the\nagent's reader already has them.");
     // The scout names the deterministic misses, and step 2 counts one as a reason to change.
     expect(systemMessage).toContain("and each deterministic step the run repeated, skipped or got\nwrong");
-    expect(systemMessage).toContain("or a deterministic step the\nruns repeated, skipped or got wrong.");
+    expect(systemMessage).toContain("a deterministic step the\nruns repeated, skipped or got wrong, or routine work that cost more turns or tool calls\nthan the work needs.");
     expect(systemMessage).toContain("one run that repeated, skipped or got wrong a deterministic step is\nevidence enough: the step either ran as written or it did not.");
     // The wizard ends no turn with nothing: the harness reads that as a defect and falls back.
     expect(systemMessage).toContain("Then say one line here that the agent is reading the runs");

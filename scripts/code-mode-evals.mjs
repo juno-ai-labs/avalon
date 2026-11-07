@@ -266,6 +266,12 @@ const fixedWriters = (sk) => toolsOf(sk).filter((t) => TABLE_WRITES.test(t.code)
 const shaped = (sk) => singlePurpose(sk) && posters(sk).length === 0 && fixedWriters(sk).length === 0 && toolsOf(sk).length <= MAX_TOOLS;
 const shapeNotes = (sk) => `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} count=${toolsOf(sk).length} flags=${flagged(sk).join(",")} posters=${posters(sk).join(",")} fixedTables=${fixedWriters(sk).join(",")}`;
 
+// A tool that does a share of a large job sizes it by msLeft() and follows pages, so a
+// run finishes the job in as few calls as the budget allows.
+const BUDGETED = /\bmsLeft\s*\(/;
+const PAGED = /nextPageId|cursor/;
+const budgeted = (sk) => toolsOf(sk).some((t) => BUDGETED.test(t.code) && PAGED.test(t.code));
+
 const PROD = [
   { id: "P01", level: "daily activity report", message: "Set up a Sidekick that every day at 9am Pacific reports how many rows were added to memory table 'org_messages' (columns org text, sent_at text ISO timestamp) during the preceding Pacific calendar day, DST-aware, and how many distinct orgs sent them. Keep a checkpoint in a second table so a day a run missed is covered by the next run. During setup create the tables and insert 8 rows spread over yesterday and today across three orgs. Put the counting in a saved tool that takes the day to count as input. Report in the run's own conversation; do not post to another conversation.",
     gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_tables") && Object.keys(t.inputSchema.properties ?? {}).length >= 1) && tested(w), notes: `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} triggers=${(sk.definition?.triggers ?? []).map((t) => t.type).join(",")}` }), run: true,
@@ -300,6 +306,9 @@ const PROD = [
   { id: "P12", level: "research dedup", message: "Set up a Sidekick that every weekday at 9am Pacific searches the web for three fixed queries ('AI agent harness design', 'LLM tool calling sandbox', 'agent runtime idempotency receipts'), skips any result URL already in memory table 'research_findings' (url text, title text, found_at text ISO), inserts the new ones, and reports only the new findings. Put the search, dedup and insert in a saved tool.",
     gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => t.requiredPlugins.includes("rally_web") && t.requiredPlugins.includes("rally_tables")) && tested(w), notes: `tools=${toolsOf(sk).map((t) => `${t.name}[${t.requiredPlugins.join("+")}]`).join(",")}` }), run: true,
     gradeRun: (r) => ({ pass: ranCustom(r) && /\b\d+\b|new/i.test(r.finalText), notes: `custom=${customCalls(r).map((t) => t.status).join(",")} loads=${called(r, "load_plugin").length} text=${r.finalText.slice(0, 160)}` }) },
+  { id: "P13", level: "large repeated scan", message: "Set up a Sidekick that every day at 9am Pacific reports, for the previous Pacific calendar day, which conversations had messages from people and who sent them. Conversations are listed in memory table 'conversations' (conversation_id text, org text) and messages in 'messages' (conversation_id text, sender text, sent_at text ISO). Track which conversations are done in a ledger table, so a run that stops partway resumes where it left off. During setup create the tables and insert 150 conversations across five orgs and 300 messages spread over yesterday and today. Put the scan in a saved tool. Report in the run's own conversation; do not post to another conversation.",
+    gradeWizard: (w, sk) => ({ pass: active(sk) && shaped(sk) && budgeted(sk) && tested(w), notes: `${shapeNotes(sk)} budgeted=${budgeted(sk)}` }), run: true,
+    gradeRun: (r) => ({ pass: ranCustom(r) && customCalls(r).length <= 2 && /\b\d+\b/.test(r.finalText), notes: `custom=${customCalls(r).length} text=${r.finalText.slice(0, 160)}` }) },
 ];
 const only = args.only ? new Set(args.only.split(",")) : null;
 const models = (args.models ?? "sol,terra").split(",");

@@ -853,7 +853,8 @@ sidekick_runs_read_next until none remains; send nothing while reading; then sen
 report covering every run: when it ran, what started it, what it did, what went wrong, any
 feedback a person left in it, and each deterministic step the run repeated, skipped or got
 wrong (a dedupe after the reads it was meant to spare, a page not followed, a date bound, a
-union or a count worked by hand). Pass no run ids: the
+union or a count worked by hand), and what its routine work cost: model turns, calls to
+each saved tool, and the items, requests and seconds each call reported. Pass no run ids: the
 agent's reader already has them. Then say one line here that the agent is reading the runs
 and you will report when it replies, and end the turn; its report wakes you. Acknowledge a
 progress message from the agent with one short line here. Answer a question from it with
@@ -867,8 +868,9 @@ yourself. Post nothing elsewhere before these reads.
 what started it; whether anything justifies a change; and if so, exactly what you will
 change in the definition and nothing else. Only a procedure problem seen in the runs
 justifies one: wrong format or time, posted when it should have stayed silent, silent when
-it should have posted, an instruction the run could not follow, or a deterministic step the
-runs repeated, skipped or got wrong. An instruction a run did not follow is not covered by
+it should have posted, an instruction the run could not follow, a deterministic step the
+runs repeated, skipped or got wrong, or routine work that cost more turns or tool calls
+than the work needs. An instruction a run did not follow is not covered by
 being written, and one run that repeated, skipped or got wrong a deterministic step is
 evidence enough: the step either ran as written or it did not. A platform failure (the
 model provider returned nothing, the run failed before its first step) never does. A run
@@ -979,9 +981,14 @@ into the code. Independent calls may run side by side in Promise.all, writes inc
 read a group together, then write it.
 Tune by measurement, not by guess. The one measure is finished items per call: the
 more each call finishes, the fewer calls and turns a run needs. Four things raise it,
-in this order. Fewer requests per item: one read that covers a group of items where the
-source allows it, rather than one per item, and no read the program already has the
-answer to. More results per request: where a read takes a page size, limit or batch
+in this order. Fewer requests per item: look first for a source that answers for many
+items in one request (an index, a log or a table that spans them) before reading each
+item where it lives; otherwise one read that covers a group of items where the source
+allows it, rather than one per item; and no read the program already has the answer
+to. Each read returns every fact the next step needs, not only whether there is one
+(who sent, not just how many), and the tool decides in code what code can decide
+against a list it reads once per call, so an item never comes back as an exception
+only for the run to look it up again. More results per request: where a read takes a page size, limit or batch
 size, use the largest the source accepts that does not slow the call or fail. More
 requests at once. And the whole time budget used, never a fixed count or a single page.
 Have the tool return how many items it finished, the requests it made (its tool calls,
@@ -1023,7 +1030,13 @@ In a self-review, tools change with the procedure, using only plugins already
 recommended. The plan takes each deterministic step the report says a run repeated,
 skipped or got wrong (a dedupe after the reads, a page not followed, date bounds, a
 union, a count) and says whether it moves into the tool or why it stays in the
-instructions; a plan that leaves that unanswered is incomplete. A run that spent many
+instructions; a plan that leaves that unanswered is incomplete. It also takes how much
+each run spent on routine work: model turns, calls to each custom tool, and the items,
+requests and seconds each call reported. A run that called the same tool several times
+to finish, or handled by hand items a tool returned as exceptions, is the case for
+re-tuning the tool as above (requests per item, results per request, requests at once,
+the whole budget) and timing it again; so is a tool that times its share against a
+fixed number instead of msLeft(). A run that spent many
 turns on routine steps is the case for moving them into the tool, and tools the runs
 always call one after another become one. "The instructions already say so" is not a
 reason a step stays: an instruction the run did not follow is the case for code the
