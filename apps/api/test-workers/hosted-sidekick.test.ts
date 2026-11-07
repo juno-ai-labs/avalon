@@ -334,7 +334,7 @@ async function submit(draft: AutomationDraft = DEFINITION): Promise<{ definition
 
 /** Legacy event watches still publish a real registration before delivery. */
 async function registerSlackWatcher(): Promise<void> {
-  await runDurableObjectAlarm(workspaceStub());
+  // The object's own alarm runs the entry; forcing a pass on top of it could run it twice.
   await expect.poll(async () => (await alarms()).filter((entry) => entry.kind === "sidekick_delegation_sources").length,
     { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
   await workspaceStub().applyExternalEventRegistrations({
@@ -1133,6 +1133,28 @@ describe("a hosted Sidekick", () => {
     expect(await scheduledRuns()).toBe(1);
   });
 
+  it("admits no run from a schedule entry whose schedule has moved its next occurrence into the future", async () => {
+    await activeAutomation({
+      ...DEFINITION,
+      triggers: [{ type: "manual" }, { type: "interval", intervalSeconds: 3_600, summary: "Every hour" }],
+    });
+    // The entry is due, but a pause and resume (or an apply keeping the
+    // schedule) moved the schedule's next occurrence an hour out meanwhile.
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      const now = Date.now();
+      state.storage.sql.exec(`UPDATE sidekick_schedules SET next_due_at = ? WHERE sidekick_id = ?`, now + 3_600_000, AUTOMATION_ID);
+      state.storage.sql.exec(
+        `UPDATE _internal_durable_alarms SET due_at = ?, retry_at = 0 WHERE kind = ? AND substr(alarm_key, 1, ?) = ?`,
+        now - 1, AUTOMATION_SCHEDULE_ALARM_KIND, `${AUTOMATION_ID}:`.length, `${AUTOMATION_ID}:`,
+      );
+    });
+    await runDurableObjectAlarm(workspaceStub());
+    expect(await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM sidekick_runs WHERE sidekick_id = ? AND json_extract(trigger_json, '$.kind') = 'schedule'`,
+      AUTOMATION_ID,
+    ).one().count)).toBe(0);
+  });
+
   it("removes: tombstones the row, reports archived, and is gone from the sidebar", async () => {
     await activeAutomation();
     expect((await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
@@ -1747,7 +1769,7 @@ describe("a hosted Sidekick", () => {
     try {
       const resumedAt = Date.now();
       await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
-      await runDurableObjectAlarm(workspaceStub());
+      // The resume armed the object's alarm; a forced pass on top of it could send twice.
       await expect.poll(() => sent, { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([owed]);
       const resent = (await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND);
       expect(resent!.due_at).toBeGreaterThan(resumedAt);
