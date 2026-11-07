@@ -101,8 +101,8 @@ the existing composed-message and attachment limits, also enforced at admission.
 `sidekick_attach_resource({ sidekickId, resourceId })` shares one resource
 without a message, team membership or activation. Use the Sidekick UUID from
 creation or discovery and a Rally resource UUID visible to the calling
-conversation. The service applies the same Sidekick access and owning-thread
-rules as contacting its wizard, then uses the normal `attach_resources` product
+conversation. The service applies the same Sidekick access rule as contacting
+its wizard, then uses the normal `attach_resources` product
 operation on the wizard's conversation with its existing sharing rules.
 It returns `{ sidekickId, resourceId, alreadyAttached }`; repeats keep one link.
 The wizard and its runs use the
@@ -230,25 +230,24 @@ Agent tools are preloaded through the existing persisted plugin-activation path,
 so they are available on the first model call. Bind still validates live execution
 authority before every tool invocation. The Sidekick directory tool reuses that
 command's active-member authorization through an internal WorkspaceDO read; it
-still filters personal ownership and workstream participation. Ordinary directory
+still filters personal ownership. Ordinary directory
 callers perform their own active-member check. This is a host-selected execution
 path, not a model argument, durable grant, or run-long authorization cache.
 
-Sidekick setup discovery filters the existing authorized directory to Sidekicks
-owned by the current thread and includes the current Sidekick even when it is
-personal or organization-scoped. Every item carries `isCurrentSidekick`: true
-only for the Sidekick this conversation configures or executes. Thread-owned
-candidates have `ownedByThisWorkstream` and `canEdit` set to true: eligibility
-reuses the existing access filter and
-`sidekickOwnership`, not a new permission model or per-candidate RPC. Actual
-messages and mutations retain their existing authorization checks. Another
-thread's, personal, and organization Sidekicks are not setup fallbacks. An empty
-list in ordinary setup tells the agent to create one here with `scope=workstream`
-and send setup instructions to its authoring agent. An execution with no listed
-candidates instead identifies the existing Sidekick and tells the agent to
-complete that activation; it never treats an empty list as a missing installation.
-A conversation acting for no thread instead
-receives guidance to set up from the intended thread. The returned authoring
+Sidekick setup discovery filters the existing authorized directory to the
+Sidekick this conversation belongs to, the one it configures or executes, marked
+`isCurrentSidekick: true` with `canEdit` true. A Thread owns no Sidekick, so
+setup from a Thread lists nothing. Eligibility reuses the existing access
+filter, not a new permission model or per-candidate RPC. Actual messages and
+mutations retain their existing authorization checks. Other personal and
+organization Sidekicks are not setup fallbacks; `find_sidekick` reaches one only
+by the exact name the person asked to change. An empty list in ordinary setup
+tells the agent to create one with `create_sidekick`, whose `scope` is
+`personal` (the default) or `workspace` (the Organization, only when the person
+asks), and send setup instructions to its authoring agent. An execution with no
+listed candidates instead identifies the existing Sidekick and tells the agent to
+complete that activation; it never treats an empty list as a missing
+installation. The returned authoring
 agent is the Sidekick wizard: the coordinator contacts it directly rather than
 creating a relay worker. Shared role guidance applies before and after plugin
 loading and limits exchanges to new results, blockers, questions and changed
@@ -337,11 +336,11 @@ else.
   comes from the run's `automationRun`, never from a model argument; a field
   for it would let a run's model, steered by a Slack reply, address another
   Sidekick's wizard.
-- Only the owning thread may message a thread-owned Sidekick's authoring agent,
-  and ownership is per thread, Breakouts included. The host answers it; a
-  conversation that acts for no thread owns nothing. Returning a raw owner id to
-  the model, or letting a `null` thread match a `null` owner, brings back the
-  wrong-thread rewrite. Guarded by `automation-post-result.test.ts`.
+- Any conversation whose principal may view a Sidekick may message its
+  authoring agent. The one check is the Sidekick's own viewer authorization
+  (grant-only for a guest), not which Thread or Breakout the message comes
+  from: no Thread owns a Sidekick, so no Thread-based rule may refuse one.
+  Guarded by `conversation-tools.test.ts`.
 
 ## Boundary
 
@@ -385,10 +384,9 @@ missing loop capability to Bind itself rather than bypassing it in Rally.
 ## Failure modes and limits
 
 Expected membership, received-message, ownership, and route conflicts return
-typed refusals. A Sidekick another thread owns refuses its authoring messages
-with `sidekick_owned_by_another_thread`. Within one thread, any conversation the
-person can reach may change a Sidekick made in another of its Breakouts; that
-is the per-thread rule, not a gap. Old tool results and stored notice text
+typed refusals. A Sidekick the principal may not view, or one archived, refuses
+its authoring messages with `sidekick_contact_forbidden`; nothing refuses by
+Thread any longer. Old tool results and stored notice text
 still show `automation/…` ids, which keep parsing. Storage and transport errors remain failures. Tool integration
 must translate domain codes into actionable model-facing explanations.
 No new membership or descendant-depth caps are introduced. Message contracts
@@ -404,11 +402,30 @@ exercises real WorkspaceDO migrations and RPCs for multi-team Sidekicks, scoped
 rosters, reply routes, replay, and descendant ownership. The latter clears only
 its own dedicated workspace's new tables between tests. The execution suite also covers hidden idempotent creation, inherited principal,
 stop/replay/continuation, a worker reply to the foreground, and independently
-owned Sidekick contact, the refusal from a thread that does not own a Sidekick,
-the ownership flags from a conversation that acts for no thread, and a guest's
-grant-only contact. Complete desktop behavior remains an implementation gate.
+owned Sidekick contact, the refusal of an inaccessible personal Sidekick, and a
+guest's grant-only contact. Complete desktop behavior remains an implementation gate.
 
 ## Changelog
+
+### 2026-11-07 — A Thread no longer owns a Sidekick
+
+**What changed:** The owning-thread rule is gone. Any conversation whose
+principal may view a Sidekick may message its wizard or attach a resource to
+it; `sidekick_owned_by_another_thread` is no longer raised. `create_sidekick`
+offers `personal` (the default) or `workspace`, not `workstream`, and
+`sidekicks_list` names only the Sidekick the conversation belongs to, so its
+items lose `ownedByThisWorkstream` and a Thread's list is empty.
+
+**Why:** The Canvases and Sidekicks PRD decided that Thread-scoped Sidekicks
+convert to Organization scope, so the people who used one keep it. With no
+Thread owner left, a rule keyed on the owning Thread would refuse nothing and
+mislead whoever reads it.
+
+**Consequences:** Who may change a Sidekick is now its own access (audience,
+grants, manager rules), checked by the Sidekick's viewer authorization. A rule
+that narrows contact again belongs in that check, not in where the message comes
+from. Setup from a Thread always creates a Sidekick; an existing one is reached
+by its exact name through `find_sidekick`.
 
 ### 2026-11-02 — A Sidekick run asks its own wizard for a change
 
