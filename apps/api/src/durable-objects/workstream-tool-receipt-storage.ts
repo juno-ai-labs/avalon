@@ -834,13 +834,16 @@ export class WorkstreamToolReceiptStorage {
    * Every tool this conversation called: calls, definite failures, writes left
    * ambiguous, and time. A call a program made (`<id>:call:<n>`) is counted
    * apart from one the model made; the program's own call's time includes it.
+   * Time counts completed calls only: a call settled by a sweep or a retry is
+   * stamped when that ran, not when the call stopped.
    */
   toolUsage(): ToolUsage[] {
     return this.sql.exec<{ tool_name: string; nested: number; calls: number; failed: number; ambiguous: number;
       ms: number | null; max_ms: number | null } & Record<string, SqlStorageValue>>(
       `SELECT tool_name, tool_call_id LIKE '%:call:%' AS nested, count(*) AS calls,
               sum(status = 'failed') AS failed, sum(status = 'ambiguous') AS ambiguous,
-              sum(settled_at - started_at) AS ms, max(settled_at - started_at) AS max_ms
+              sum(CASE WHEN status = 'completed' THEN settled_at - started_at END) AS ms,
+              max(CASE WHEN status = 'completed' THEN settled_at - started_at END) AS max_ms
          FROM tool_effects GROUP BY tool_name, nested ORDER BY ms DESC, tool_name`,
     ).toArray().map((row) => ({ toolName: row.tool_name, fromProgram: row.nested === 1, calls: row.calls,
       failed: row.failed, ambiguous: row.ambiguous, ms: row.ms, maxMs: row.max_ms }));
