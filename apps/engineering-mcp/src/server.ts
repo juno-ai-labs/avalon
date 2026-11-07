@@ -189,7 +189,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   const server = new McpServer({
     name: "Rally engineering",
     version: "1.0.0",
-    description: "Inspect and administer Rally organizations, Channels, Threads, Breakouts, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and conversations and send messages as a selected Rally user.",
+    description: "Inspect and administer Rally organizations, Channels, Threads, Breakouts, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and send messages as a selected Rally user.",
   }, {
     instructions: [
       "Use these tools for Rally engineering investigations and requested administration.",

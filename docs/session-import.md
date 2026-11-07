@@ -486,8 +486,6 @@ HTML/code artifacts remain stored files; importing does not launch a site.
   after Rally turns, source revision, and provider continuation with history.
 - `test-workers/space-routes.test.ts`: the start and complete routes, Space
   placement, and a mismatched source refused before any upload.
-- `test-workers/substream-creation-runtime.test.ts`: private-child materialization,
-  publication and conflicting replay.
 - `test-workers/workspace-draft-attachment-reservation.test.ts`: existing draft holds
   and canonical projection release.
 - `packages/agent-harness/src/evaluation.test.ts`: production runtime from an initial
