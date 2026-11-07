@@ -159,16 +159,30 @@ describe("engineering inspection of a Sidekick", () => {
     const inspection = bridge();
     const query = { sql: "SELECT 1 AS one", bindings: [] };
 
-    expect(await inspection.runSubstreamSql({
-      workspaceId: WORKSPACE_ID, workstreamId: SIDEKICK_ID, substreamId: runId, authorityGeneration: 1, query,
+    expect(await inspection.runConversationSql({
+      workspaceId: WORKSPACE_ID, conversationId: SIDEKICK_ID, substreamId: runId, authorityGeneration: 1, query,
     })).toMatchObject({ found: true, value: { workstreamId: SIDEKICK_ID, substreamId: runId, result: { rows: [{ one: 1 }] } } });
-    expect(await inspection.runSubstreamSql({
-      workspaceId: WORKSPACE_ID, workstreamId: SIDEKICK_ID, substreamId: "00000000-0000-7000-8000-00000000ef17", authorityGeneration: 1, query,
+    expect(await inspection.runConversationSql({
+      workspaceId: WORKSPACE_ID, conversationId: SIDEKICK_ID, substreamId: "00000000-0000-7000-8000-00000000ef17", authorityGeneration: 1, query,
     })).toEqual({ found: false });
     // A room's unregistered conversation is not looked up as a Sidekick's.
-    expect(await inspection.runSubstreamSql({
-      workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId: runId, authorityGeneration: 1, query,
+    expect(await inspection.runConversationSql({
+      workspaceId: WORKSPACE_ID, conversationId: ROOM_ID, substreamId: runId, authorityGeneration: 1, query,
     })).toEqual({ found: false });
+  });
+
+  it("posts to and reads a Sidekick's shared conversation by the Sidekick's id, and refuses it read as a Canvas", async () => {
+    await createSidekick();
+    const inspection = bridge();
+    const text = "Operator note for the Sidekick's readers.";
+    const sent = await inspection.sendMessage({ orgId: WORKSPACE_ID, userId: AUTHOR_ID, conversationId: SIDEKICK_ID,
+      operationId: "00000000-0000-7000-8000-00000000ef19", text, recordOnly: true }, OPERATOR);
+    expect(sent.receipt.turn.clientMessageId).toBe("00000000-0000-7000-8000-00000000ef19");
+    const read = await inspection.readConversation({ orgId: WORKSPACE_ID, userId: AUTHOR_ID, kind: "sidekick", conversationId: SIDEKICK_ID });
+    expect(read.text).toMatch(/^Sidekick: /u);
+    expect(read.text).toContain(text);
+    await expect(inspection.readConversation({ orgId: WORKSPACE_ID, userId: AUTHOR_ID, kind: "canvas", conversationId: SIDEKICK_ID }))
+      .rejects.toThrow("engineering_operation_failed:conversation_kind_mismatch");
   });
 
   it("pauses and resumes a Sidekick as a user who manages it, through the app's own path", async () => {
