@@ -222,7 +222,8 @@ function hostingWorkstreamParent(
   });
 }
 
-function workspaceSyncNamespace(listable = true, mentionChannels: NotificationChannel[] = ["push", "slack_agent_dm", "email"]) {
+function workspaceSyncNamespace(listable = true, mentionChannels: NotificationChannel[] = ["push", "slack_agent_dm", "email"],
+  parentKind: "canvas" | null = "canvas") {
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys = ON");
   for (const migration of WORKSPACE_DO_SCHEMA_MIGRATIONS) {
@@ -311,13 +312,12 @@ function workspaceSyncNamespace(listable = true, mentionChannels: NotificationCh
       })),
       notificationDirectoryState: vi.fn(async () => ({
         authorityGeneration: 1,
-        viewerVersion: 1,
         listable,
         title: "Regional effects",
         emailAddress: "regional-effects@example.com",
       })),
       // The conversation is a Canvas's Chat, so each transport carries its link.
-      resolveHostedParent: vi.fn(async () => ({ kind: "canvas", authority: { exists: true } })),
+      resolveHostedParent: vi.fn(async () => (parentKind ? { kind: parentKind, authority: { exists: true } } : { kind: null })),
       // Every channel chosen, so each transport's path runs.
       memberPreferences: vi.fn(async () => ({
         ...DEFAULT_MEMBER_PREFERENCES,
@@ -552,6 +552,31 @@ describe("a parent's effects on the regional delivery plane", () => {
         slack_outcome: "skipped",
         email_outcome: null,
       }));
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
+  it("settles a mention whose conversation has no link, and names why Slack and email sent nothing", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace(true, ["push", "slack_agent_dm", "email"], null);
+    const env = regionalEnv(database, workspace);
+    try {
+      const mention = mentionEffect(":linkless");
+      await applyWorkstreamRegionalEffect(env, message(mention, {
+        messageId: `notification:${MESSAGE_ID}:${USER_ID}:linkless`,
+        partitionKey: `notification:${MESSAGE_ID}:${USER_ID}:linkless`,
+        sourceVersion: 3,
+      }));
+      const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+      await expect(processWorkstreamNotificationIntent(env, WORKSPACE_ID, mention.intentId)).resolves.toBe("delivered");
+      for (const channel of ["slack", "email"]) {
+        expect(info).toHaveBeenCalledWith(expect.objectContaining({
+          event: "workstream_notification_transport_terminal", channel, outcome: "skipped",
+          reason: "conversation_not_linkable", parent_kind: "missing",
+        }));
+      }
     } finally {
       database.close();
       workspace.database.close();

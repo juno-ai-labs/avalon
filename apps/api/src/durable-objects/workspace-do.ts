@@ -789,6 +789,7 @@ import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, S
 import {
   HostedSidekick,
   hostedSidekickAlarmTarget,
+  sidekickReaderAllows,
   skillSource,
   skillSummary,
   type HostedSidekickRow,
@@ -10902,37 +10903,44 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return invalidateWorkspaceMemoryTableRows(this.state.storage, request);
   }
 
+  /**
+   * Whether a notification about a conversation may still reach this person,
+   * read where the parent lives: a Canvas's row and who it admits, or a
+   * Sidekick's row and who it is shared with. Both are written in this object,
+   * so there is no projection to wait for. `null` for any other id: a Thread
+   * or Channel retired with the rest (plan step B-7) has nobody to tell.
+   */
   async notificationDirectoryState(
     input: WorkspaceDirectoryNotificationRequest,
   ): Promise<WorkspaceDirectoryNotificationState | null> {
     await this.initialized;
     const request = WorkspaceDirectoryNotificationRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const row = this.state.storage.sql.exec<{
-      authority_generation: number;
-      waterline: number;
-      listable: number;
-      title: string;
-      email_address: string | null;
-    }>(
-      `SELECT directory.authority_generation, viewer.waterline,
-              viewer.listable, directory.title, directory.email_address
-         FROM channels directory
-         JOIN channel_viewers viewer
-           ON viewer.workstream_id = directory.workstream_id
-          AND viewer.user_id = ?
-          AND viewer.authority_generation = directory.authority_generation
-        WHERE directory.workstream_id = ? AND directory.archived_at IS NULL`,
-      request.userId,
-      request.workstreamId,
+    const sql = this.state.storage.sql;
+    const accessClass = sql.exec<{ access_class: string | null }>(
+      `SELECT json_extract(relationship_json, '$.accessClass') AS access_class
+         FROM workspace_member_status WHERE user_id = ? AND active = 1`, request.userId,
+    ).toArray()[0]?.access_class ?? null;
+    const actorRole = accessClass === "member" ? "member" as const : null;
+    const canvas = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, request.workstreamId).toArray()[0];
+    if (canvas) {
+      return WorkspaceDirectoryNotificationStateSchema.parse({
+        authorityGeneration: canvas.authority_generation,
+        listable: canvasReaderAllows(canvas, { userId: request.userId, actorRole }, sql),
+        title: canvas.title, emailAddress: null,
+      });
+    }
+    const sidekick = sql.exec<{ automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null;
+      lifecycle: string; title: string; authority_generation: number }>(
+      `SELECT automation_id, scope, author_user_id, run_as_user_id, lifecycle, title, authority_generation
+         FROM automation_directory WHERE automation_id = ?`, request.workstreamId,
     ).toArray()[0];
-    return row ? WorkspaceDirectoryNotificationStateSchema.parse({
-      authorityGeneration: row.authority_generation,
-      viewerVersion: row.waterline,
-      listable: row.listable === 1,
-      title: row.title,
-      emailAddress: row.email_address,
-    }) : null;
+    if (!sidekick) return null;
+    return WorkspaceDirectoryNotificationStateSchema.parse({
+      authorityGeneration: sidekick.authority_generation,
+      listable: sidekickReaderAllows(sidekick, { userId: request.userId, actorRole }, sql),
+      title: sidekick.title, emailAddress: null,
+    });
   }
 
   /**
