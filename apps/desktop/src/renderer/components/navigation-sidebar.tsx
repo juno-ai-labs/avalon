@@ -220,7 +220,7 @@ function RailBadge({ count, label }: { count: number; label: string }): React.JS
   if (count <= 0) return null;
   return <span
     aria-label={label}
-    className={count > 99 ? 'navigation-rail-badge is-capped' : 'navigation-rail-badge'}
+    className="navigation-rail-badge"
     role="img"
   >{count > 99 ? '99+' : count}</span>;
 }
