@@ -7,9 +7,10 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { CanvasMark } from '../components/canvas-mark';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
-import { AvatarStack, Button, EmptyState, ErrorNotice } from '../components/primitives';
+import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
 import { canvasDetailQueryKey, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { copyLink } from '../lib/copy-link';
+import { useRestoredRouteFallback } from '../lib/landing';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { layoutKey, readArtifactPanel } from '../lib/desktop-layout';
 import { openResourceRequest, openResourceState } from '../lib/navigation-routes';
@@ -42,6 +43,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   });
   // The list row paints the name before the detail answers.
   const row = useCanvasList()?.find((candidate) => candidate.id === id);
+  const leaving = useRestoredRouteFallback(canvas.error, '/canvases');
   const { membersById } = useCanvasNameSources(api);
   const [sharing, setSharing] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
@@ -70,6 +72,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     setPinError(null);
     api.setCanvasPinned(id, !pinned).catch((cause: unknown) => setPinError(cause instanceof Error ? cause : new Error('The Canvas could not be pinned.')));
   };
+  if (leaving) return <OpeningState label="Opening Canvases…" />;
   if (canvas.error && !row) {
     return <div className="screen-error-state screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
