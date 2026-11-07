@@ -30,7 +30,7 @@ const authHeaders = {
   "content-type": "application/json",
 };
 
-const protectedPaths = ["/workspace", "/workstreams", "/automations", "/connections"];
+const protectedPaths = ["/workspace", "/automations", "/connections"];
 for (const path of protectedPaths) {
   const result = await jsonRequest(path, { headers: authHeaders });
   assert(result.response.ok, `${path} returned ${result.response.status}`);

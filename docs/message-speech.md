@@ -84,7 +84,7 @@ This module owns on-demand playback of an existing assistant message. It does
 not create a durable audio resource; the agent's `generate_audio` tool and
 resource lifecycle are documented in [`agent-attachments.md`](agent-attachments.md).
 It borrows the plain-text Markdown reduction owned by the digest/email renderer
-([`digests.md`](digests.md)), asking it to drop link addresses, but neither
+(`digests.md` (retired)), asking it to drop link addresses, but neither
 changes stored markdown nor owns how it is displayed; that remains
 [`markdown-rendering.md`](markdown-rendering.md).
 
