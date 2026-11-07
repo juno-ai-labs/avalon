@@ -57,7 +57,7 @@ describe("Sidekick consent authority in real workerd", () => {
       const parentId = room ? crypto.randomUUID() : sidekickId;
       const triggerMessageId = crypto.randomUUID();
       const child = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", workspaceId, parentId));
-      const input = runInput(crypto.randomUUID(), { workspaceId, parentId, parentKind: room ? "workstream" : "automation",
+      const input = runInput(crypto.randomUUID(), { workspaceId, parentId, parentKind: room ? "canvas" : "automation",
         triggerMessageId, executionPrincipal: { type: "user", userId: other } });
       await runInDurableObject(child, async (_instance, state) => {
         seedWorkstreamRoot(state, Date.now(), { workspaceId, workstreamId: parentId });
