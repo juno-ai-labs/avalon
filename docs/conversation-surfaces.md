@@ -648,7 +648,7 @@ above it. A settled turn carrying
 attachments and no prose still shows the row, holding the cutoff alone: copy,
 speech and the exports each act on the response text and are withheld when there
 is none. Both placements are described in
-[`substream-creation.md`](substream-creation.md). The row owns the hover fade —
+`substream-creation.md` (retired). The row owns the hover fade —
 a control inside it must not carry its own — and both rows share one set of
 button metrics, because the same control appears in each. The corner is
 `--turn-bubble-radius`, set on the human turn and read by the bubble, the header

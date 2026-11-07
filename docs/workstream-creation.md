@@ -19,7 +19,7 @@ deliberately, and after one attempt at the opposite that the changelog records.
 | `apps/desktop/src/renderer/components/channel-composer.tsx` | `ChannelComposer`, the one place a person starts a thread: the composer at the foot of a Channel screen, the create mutation, and `launchedThreadDetail`, the one place a launched thread's cached detail is built. |
 | `apps/desktop/src/renderer/lib/workstreams-cache.ts` | The pending-row rule on the shared list: `addPendingWorkstream`, `confirmPendingWorkstream`, `discardPendingWorkstream`, `keepPendingWorkstreams` (applied by every write that replaces the list), and `releasePendingWorkstreams`, the one path that may remove a pending row. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | `optimisticOpeningTranscript`, the one place either launcher's optimistic turn is built, and the detail a launched substream is seeded with. |
-| `packages/ui/src/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. Shared with the substream launcher, which renders the same three rows inside a work stream's own column ([`substream-creation.md`](substream-creation.md)). |
+| `packages/ui/src/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. Shared with the substream launcher, which renders the same three rows inside a work stream's own column (`substream-creation.md` (retired)). |
 | `apps/desktop/src/renderer/components/composer-input.tsx` | `ComposerInput`, the single composer element the hand-off is built around. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageBlock`, which renders the optimistic opening turn exactly as the work-stream screen will render the persisted one. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | `AgentWorkTiming`, the work timer the optimistic surface starts and the created work stream keeps counting from. |
@@ -1070,7 +1070,7 @@ shown.
 **What changed:** `optimisticOpeningTranscript` moved out of this screen into
 `lib/launched-conversation.ts`, unchanged, and `.workstream-launch-screen` gained
 `grid-template-columns: minmax(0, 1fr)`. Starting a substream now renders the
-same three rows through the same block; [`substream-creation.md`](substream-creation.md)
+same three rows through the same block; `substream-creation.md` (retired)
 owns that surface.
 
 **Why:** The substream launcher needed exactly this screen's optimistic turn —
