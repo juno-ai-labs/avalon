@@ -1,46 +1,39 @@
 # Desktop and web shell
 
-The shell is everything around a conversation's feed: the navigation sidebar
-(a section switcher beside one list), the floating title pills and their
-menus, and the pane stack that puts a Channel and its open thread, or a thread
-and its open breakout, side by side. The Electron client and the browser web
-app mount the same shell, the desktop renderer's `WorkspaceApp`, for members
-and guests alike; each host supplies its session and its native services. What
-differs by host or by guest is read from `useShellCapabilities()`.
+The shell is everything around a pane: the navigation sidebar (a rail of two
+sections beside one list), the floating title pills and their menus, and the
+one right slot a pane's artifact or attachment opens in. The Electron client
+and the browser web app mount the same shell, the desktop renderer's
+`WorkspaceApp`, for members and guests alike; each host supplies its session
+and its native services. What differs by host or by guest is read from
+`useShellCapabilities()`.
 
-The product words and the code's differ: a **Channel** is a stored Space, a
-**thread** is a stored Channel (`workstream`), and a **breakout** is a
-substream ([the navigation PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)).
-This document uses the product words except where it names code.
+The product has two sections, **Canvases** and **Sidekicks**
+([the Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)).
+Channels, Threads, Breakouts, Activity and the Pinned and Artifacts sections
+were removed at the 2026-11 cutover; the changelog below records them.
 
-Read this before changing the sidebar, what a row shows, either title menu, how
-a thread or a breakout opens, or who owns the right panel.
+Read this before changing the rail, a list, what a row shows, the landing, the
+routes the shell serves, or who owns the right panel.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
+| `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/settings`, `/opening`, and the redirects of the removed routes. |
+| `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: the restorable `last-route`, else `/canvases`. `LANDING_ROUTE`, `restorableRoute`, `useOpenLanding`. |
+| `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
-| `packages/ui/src/components/title-pill.tsx` | `TitlePill`, `TitlePillHeader` (ancestors attached to the centred current pill, trailing right), the menu building blocks, `TitlePillAction` and `TitlePillClose`. |
-| `packages/ui/src/components/conversation-menus.tsx` | `ChannelMenu` and `BreakoutMenu`: everything the deleted Channel sidebar held, as title-pill menus. Also `ConversationRowActions` and `PENDING_SUBSTREAM_DRAFT_ID`. |
-| `packages/ui/src/components/breakout-marks.tsx` | `BreakoutMark`, `breakoutsByOrigin`, `orderBreakoutsForTicks`, `breakoutHasActivity`, `BreakoutTickBar`. |
-| `packages/ui/src/components/conversation-card.tsx` | `ConversationCard`: one thread or Breakout as a feed entry. The Channel feed draws its threads with it, and a thread's feed its Breakouts. |
-| `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
-| `apps/desktop/src/renderer/lib/thread-lifecycle.ts` | Shared archive/resolve commands, confirmed archive receipts and thread-page reconciliation, and resolution refusal copy. |
-| `apps/desktop/src/renderer/components/archive-conversation-modal.tsx` | The shared thread and breakout archive confirmation. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Pinned, Channels, Threads, Activity, Artifacts; Canvases and Sidekicks are sections no rail tile selects until cutover), the account menu under it, the phone row's More tab (`MoreSections`), and the lists with their Pinned sections, sort, and drag to reorder. |
-| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx` | `CanvasesSection` and `SidekicksSection`, the two lists the rail switches to at cutover, and the counts their tiles will carry (`useUnreadCanvasCount`, `useSidekickAttentionCount`). |
-| `apps/desktop/src/renderer/components/navigation-rows.tsx` | The row primitives every list draws: `RowLayout`, `SectionHeading`, `PinnedSection`, `useSectionMotion`, and for a list whose pins are a flag on its rows `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
-| `apps/desktop/src/renderer/screens/canvases-home.tsx`, `canvas.tsx` | `/canvases` and `/canvases/:id` ([`canvases.md`](canvases.md#client)). |
-| `apps/desktop/src/renderer/screens/sidekicks-library.tsx`, `automation.tsx` | `/sidekicks` and `/sidekicks/:id`, in the main window on both hosts ([`automation-lifecycle.md`](automation-lifecycle.md)). |
-| `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the section switcher, the account menu's trigger included. |
-| `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
-| `apps/desktop/src/renderer/components/channel-composer.tsx` | Starting a thread from a Channel. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` | The thread screen: the thread and breakout panes, both pills, the one-slot rule, breakout creation in the right pane, and the Channel breadcrumb once the thread has shifted left. |
-| `apps/desktop/src/renderer/lib/navigation-routes.ts` | `channelRoute`, `threadRoute`, `homeChannelId`, and the context a thread pane reads its Channel from. |
-| `packages/ui/src/styles/app.css` | The "Single sidebar", "Title pills", "Breakouts in the Channel" and "Split conversation" blocks. |
-| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation. Draws Breakout cards and ticks for Main, owns its right panel by conversation, honours a scroll-to-turn request. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the rail (Canvases, Sidekicks), the account menu under it, the list's header and its actions, and the phone sheet. |
+| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx` | `CanvasesSection` and `SidekicksSection`, and the counts their tiles carry (`useUnreadCanvasCount`, `useSidekickAttentionCount`). |
+| `apps/desktop/src/renderer/components/navigation-rows.tsx` | The row primitives both lists draw: `RowLayout`, `SectionHeading`, `PinnedSection`, `useSectionMotion`, `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
+| `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the rail, the account menu's trigger included. |
+| `apps/desktop/src/renderer/screens/canvases-home.tsx`, `canvas.tsx` | `/canvases` and `/canvases/:id` ([`canvases.md`](canvases.md#in-the-client)). |
+| `apps/desktop/src/renderer/screens/sidekicks-library.tsx`, `automation.tsx` | `/sidekicks` and `/sidekicks/:id` ([`automation-lifecycle.md`](automation-lifecycle.md)). |
+| `packages/ui/src/components/title-pill.tsx` | `TitlePill`, `TitlePillHeader`, the menu building blocks, `TitlePillAction` and `TitlePillClose`. |
+| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | One conversation: a Canvas's Chat or a Sidekick's conversation. Owns its right panel by conversation. |
 | `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Routes a clicked web link to the pane it was clicked in. |
+| `packages/ui/src/styles/app.css` | The "Single sidebar" and "Title pills" blocks. |
 | `apps/browser/src/shell.tsx` | The web app: this shell over the browser's cookie session ([`browser-client.md`](browser-client.md#the-shell)). |
 
 ## How it works
@@ -68,55 +61,33 @@ One `ResizableSidebar` on the left, at the width in `useUiStore.sidebarWidth`
 (`rally.sidebar-width`; 340px, `SINGLE_SIDEBAR_DEFAULT_WIDTH`, until the person
 drags it), clamped to the shared minimum and maximum. It holds two columns:
 
-- **The section switcher**, a 76px rail under the macOS window controls,
-  which the main window centers over it per macOS version (the width is
+- **The rail**, a 76px column under the macOS window controls, which the main
+  window centers over it per macOS version (the width is
   `--navigation-rail-width`; change it and the light position together):
-  **Pinned**, **Channels**, **Threads**, **Activity** and **Artifacts**, each an outline over
-  its name, and the account menu at the bottom, labelled Settings. Every
-  entry, the account menu's trigger included, is one `RailItem`: a 34px tile
-  around a 22px shape, so they share size, hover and the active tint, which a
-  menu's trigger also takes while its menu is open. The outlines are what each
-  list holds: a Channel is a squircle and a Thread is a circle, as their rows
-  draw them, and Activity, which holds neither, is a triangle. Artifacts is a
-  page, the outline its rows' sheet tiles stand for. Pinned holds every kind that can be pinned, so it
-  takes the Tabler pin a row's pin button draws, at the outlines' 1.8 stroke.
-  The choice is a device preference (`rally.sidebar-section`). Every section
-  carries a red count (`RailBadge`; nothing at zero, `99+` past two digits). **Threads**: every conversation waiting on this
-  person and every access request waiting on them, the same `attentionItems`
-  the dock badge counts. **Activity**: the access requests and every unread
-  Activity row, the macOS menu bar's number ([`menu-bar.md`](menu-bar.md)),
-  read from the same cached feed the tab lists, so Mark all read clears it
-  with the dots. **Channels**: each Channel whose row says "n new threads",
-  from the same stats the list reads; a guest has no Channels section and no
-  count. **Pinned**: each pinned Channel with new threads and each pinned
-  thread or breakout whose row reads unread (a mention, never opened, or
-  unread messages), from the copies the Pinned list draws.
-  The desktop host renders a top spacer for macOS window controls and a
-  window-drag region on Windows and Linux. The browser host omits it.
-- **One list**, titled with the section's name. Pinned's list is a section per
-  kind, **Channels**, **Threads** (threads, then breakouts) and **Artifacts**, each the same
-  Pinned part its own tab draws above everything else, reorderable the same
-  way, with nothing unpinned beside it. A guest gets no Channels section there
-  either. Each list has **Restart to update**
-  when one is downloaded, **New channel** on Channels or **Mark all read** on
-  Activity, and **Search organization** last, so it holds its place as the
-  person moves between the lists. Pinned and Threads have no section action: a
-  thread starts from a Channel's composer.
-
-**Canvases** and **Sidekicks** are two more `SidebarSection` values, the
-sections the rail becomes at cutover (plan step B-1 of the
-[Canvases and Sidekicks plan](PRDs/2026-11-06_canvases-and-sidekicks/plan.md)).
-Until then no rail tile selects them; `setSidebarSection` and the saved
-preference do, which is how they are tested and screenshotted. Canvases is a
-Pinned group, then every Canvas by recent activity, with **New Canvas**
-(`POST /canvases`, then the new Canvas's route) as its section action;
-Sidekicks is **Needs input**, then Pinned, then every Sidekick, with **New
-Sidekick** (`/sidekicks/new`). A guest gets neither New action. Both keep
-**Search organization** last like every list. Their counts are computed into
-the same record the other tiles read, each unread Canvas and each Sidekick that
-needs input or holds something unread, so a tile shows them the moment B-1
-adds it. The `/canvases` and `/sidekicks` screens render in the main window on
-both hosts; the separate Sidekicks window keeps its own entry until B-2.
+  **Canvases**, a page outline (the sheet every artifact tile draws), and
+  **Sidekicks**, the Tabler hexagon a Sidekick is drawn in, then the account
+  menu at the bottom, labelled Settings. Every entry, the account menu's
+  trigger included, is one `RailItem`: a 34px tile around a 22px shape, so they
+  share size, hover and the active tint, which a menu's trigger also takes
+  while its menu is open. The choice is a device preference
+  (`rally.sidebar-section`, default `canvases`); a value stored before the
+  cutover (`channels`, `threads`, `pinned`, `artifacts`, `activity`) reads as
+  the default. Each section carries a red count (`RailBadge`; nothing at zero,
+  `99+` past two digits): **Canvases**, each Canvas holding something this
+  person has not read; **Sidekicks**, each Sidekick that needs input or holds
+  something unread. Both are read from the lists the workspace socket keeps,
+  the same rows the lists draw. The desktop host renders a top spacer for
+  macOS window controls and a window-drag region on Windows and Linux. The
+  browser host omits it.
+- **One list**, titled with the section's name. **Canvases** is a Pinned
+  group, then every Canvas by recent activity; its action is **New Canvas**
+  (`POST /canvases`, then the new Canvas's route). **Sidekicks** is **Needs
+  input**, then Pinned, then every Sidekick; its action is **New Sidekick**
+  (`/sidekicks/new`). A guest gets neither New action. Each list has **Restart
+  to update** when one is downloaded, and **Search organization** last, so it
+  holds its place as the person moves between the two.
+  [`canvases.md`](canvases.md#in-the-client) says what a Canvas row shows, and
+  [`workstream-pinning.md`](workstream-pinning.md) owns the Pinned group.
 
 Every row in the lists is one layout (`RowLayout`): an `IdentityTile`
 (`packages/ui/src/components/identity-tile.tsx`), a name with a time, and a
@@ -132,191 +103,31 @@ nested badge opens only its own. A badge either draws a symbol in its own
 ink and fill, or holds `content` the caller draws, such as an avatar; an
 `.avatar` is sized to the badge.
 
-**Channels**: what the person pinned, in their order (drag to reorder), then
-every other Channel they may see, ordered **A–Z** (default), **Recent** (newest
-activity first, a Channel with none last) or **Needs attention** (unread first,
-then a Channel holding a thread that needs this person, each group by Recent),
-cycled from the same heading control the Threads tab uses and kept per device
-(`rally.sidebar-channel-sort`). Each row is the Channel's squircle tile, its
-name, a lock when it is private, and the time of its newest listable thread,
-from `channelStats`, seeded by the socket's snapshot and read again
-(`GET /navigation/channel-stats`) when a placement nudge names a Channel. The
-second line is empty unless a thread was placed in the Channel since this
-person last had it open (`hasUnread` on its stats row); then the name goes
-bold (the time stays muted) and the second line reads "N new threads" in the unread colour
-(`--av-sys-color-workstream-news`), with the same dot at its end a thread
-row has. N is the stats row's `newThreadCount`: the feed's rows above the
-read position, so a moved-out thread is not counted and neither is a private
-one this person is not in. A Channel whose new threads all moved out again, or
-are all private to others, draws as read.
-Hovering the time shows "Last update at" and the exact local time.
-Opening the Channel in a focused, visible window acknowledges the newest
-loaded placement's `attentionSequenceNumber` (`PATCH /spaces/:id/read-state`),
-under the same gate and debounce a conversation's read acknowledgement uses,
-and writes the answered stats row back over the cached one. A failed
-acknowledgement puts the count and dot back and is not retried until the Channel is
-opened again. **New channel** names one; every Channel starts
-Organization-wide.
+Every row is a link, so a modified click opens it elsewhere (a new tab, in the
+web app). Each list draws placeholder rows until the socket has said what it
+holds. A row that changes place travels to its new slot rather than
+reappearing there; [`list-motion.md`](list-motion.md) owns the motion.
 
-**Threads**: what the person pinned (threads, then breakouts), then every
-thread and breakout they take part in under **All threads**
-(`GET /navigation/threads`), ordered **Recent** (default), **A–Z** or
-**Needs attention** (`rally.sidebar-thread-sort`).
-Needs attention orders unresolved threads needing attention first, other
-unresolved threads next, and resolved threads last, each group newest first.
-A resolved thread stays in the final group even when unread or open.
-Under Needs attention, opening an unresolved thread or Breakout holds its
-current position while its unread state clears; selecting it never grants
-attention priority. The hold stays above the resolved group. Other rows continue
-sorting relative to one another by attention and activity, so the held row can
-sit between unread rows. Opening another row releases the
-previous one to its natural order, and changing the sort resets the hold. A
-Breakout's `substream` query identifies its held and highlighted row; the parent
-thread named in its pathname continues sorting normally.
-A row is the thread's circle tile with a squircle badge for each Channel it
-sits in (two at most, the room a tile has), its title, its last activity time, and the Channels' names. A
-breakout's tile carries its thread's circle badge instead, with the thread's
-first Channel nested on that badge's corner, and its second line starts with
-its thread's name, with no arrow: the nested tile already says it is a breakout.
-A Tabler right chevron, not a dot, separates the thread's name from its
-Channels', read as the thread inside them. The thread
-and Channel badges carry their names as tooltips. A row is unread
-(bold title, the time and a dot in the unread colour) when it has new
-messages, mentions the person, or was never opened, the three the Threads
-count is made of; what the run is doing is the thread's own header's to show.
-A row the socket holds is drawn from the socket, so its dot moves live.
-Resolved threads and breakouts use Activity's read-row treatment in All threads
-and both Pinned lists. Archived conversations are omitted by the navigation
-list. Accepted socket breakout rosters update resolution and remove conversations
-the viewer no longer reaches, including from an older REST page still arriving.
-A confirmed local thread archive removes its navigation rows before the socket
-evicts the temporary archive marker. Visibility tombstones refresh the list:
-membership loss alone does not imply that its breakouts were archived.
-Once the list loads, pins without a renderable row do not count or take a slot.
-Right-click pins or unpins. Thread rows also offer **Resolve thread**, disabled
-when already resolved, and members get a danger-styled **Archive thread**.
-These actions target the clicked thread, including from Pinned, without opening
-it first.
-Resolving or archiving a different thread leaves the open conversation in
-place. A failed resolve explains the refusal and can be dismissed. A row with
-a wake-up coming carries a clock whose
-tooltip says when and what. A thread Rally is still naming shows a shimmer in
-place of its title (`useNamingSkeleton`). Hovering a row for a second warms
-its thread's socket, and a plain click starts the open-latency measurement
-(`markWorkstreamFeedOpenStarted`); the open thread clicked again starts
-nothing. A thread opened from a desktop link is scrolled into view, loading
-further pages until its row is listed.
+### The landing and the routes
 
-**Artifacts**: the artifacts this person pinned, in their order, and nothing
-else yet. A row is a neutral sheet tile with the artifact's kind glyph,
-badged with its thread, its title and last update, and "kind · thread" below.
-A pin with a version this person has not seen is unread (bold, a dot), and the
-section's count is how many are. A row opens its thread with the artifact's
-panel expanded ([`pane-stack.md`](pane-stack.md)); right-click unpins or
-moves it.
-[`workstream-pinning.md`](workstream-pinning.md#artifact-pins) owns the pin.
+`/` is the landing (`LandingScreen`). It reopens the route this person last had
+open on this device, `rally.desktop-layout:<organization>:<user>:last-route`,
+when that is a Canvas, a Sidekick or either home (`restorableRoute`), and
+otherwise opens `/canvases`. The app shell writes `last-route` on every
+navigation to such a route. A screen that leaves because what it showed is gone
+uses `useOpenLanding`, which replaces the entry so Back cannot return to it.
 
-**Activity**: requests to join waiting on this person (approve or decline in
-place), then what happened to them, grouped Today, Yesterday and by day
-(`GET /navigation/activity`; [`digests.md`](digests.md#the-activity-tab)).
-A row is the Channel's tile badged with who acted, drawn with the same
-`RallyAvatar` and `Avatar` a conversation uses, the sentence, and the Channel with the time. Chips filter
-it: **All**, **Unread** and **Mentions**
-([`digests.md`](digests.md#the-activity-tab) says which side filters each).
-Showing it reads nothing: a row stays unread until **Mark all read**, which
-moves the read time to the newest row held and clears every held dot at once
-(the PRD's decision log, 2026-10-12).
+The removed surfaces' routes, `/channels/*`, `/spaces/*`, `/workstreams/*`,
+`/projects/*`, `/activity` and `/artifacts`, redirect to `/canvases`, so a
+stored route, a bookmark or an old link opens the Canvases home rather than a
+dead screen. A deep link that names Activity opens the Canvases section.
+`/opening` is inert: a deep link that changes organization parks the pane there
+while its destination resolves. Settings opens in its own window on the desktop
+and as `/settings` in the browser.
 
-A row opened from any list opens the thread under one of its Channels — the
-one already open when it sits there — expanded over it, so a Channel is always
-one step back ([`pane-stack.md`](pane-stack.md)).
-Every row in the lists is a link, so a modified click opens it
-elsewhere (a new tab, in the web app). Each list draws placeholder rows until
-its first page arrives. A guest has no Channels section, per the navigation
-PRD; a guest whose stored section is Channels sees Threads.
-
-A row in these lists that changes place (a pin, a new activity time, a
-re-sort, a restore) travels to its new slot rather than reappearing there.
-Each tab runs the list motion on the shared scroll box;
-[`list-motion.md`](list-motion.md) owns it.
-
-### Thread lifecycle actions
-
-The sidebar and thread header share `thread-lifecycle.ts` for archive and resolve
-commands, and `ArchiveConversationModal` for confirmation. An archive uses the
-existing directory cache's version decision before removing any sidebar row:
-a newer restore wins even when it arrived before the archive response. A
-session-local receipt survives tab changes and directory tombstones, so each
-later Threads page still excludes the archived thread and its Breakouts while
-the projection catches up. A newer active directory or list row releases the
-receipt; clearing the Organization's query cache clears the receipts too.
-
-A confirmed resolve patches the caches only if the owning conversation state
-has not changed during the request, so a newer reply can still reopen it.
-The sidebar's navigation guard advances for every route visit, including Back
-to an earlier history entry, and invalidates on section unmount. Completion
-can update shared caches after a section closes, but cannot redirect a later
-conversation or put an old error over it.
-
-### The Channel screen
-
-`screens/channel.tsx` draws a Channel: its pill and menu at the top, a feed of
-its threads and messages, and a composer at the foot.
-
-The feed and composer stay within the Channel pane when a Thread opens beside
-it or the divider is resized.
-
-- **Feed.** `GET /spaces/:id/feed`, newest nearest the composer; a visit opens
-  at the server's first unread row with one preceding row for context, or at
-  the newest row when caught up. The opening waterline is captured once per
-  visit; later acknowledgements and other windows' reads do not reposition it.
-  If the waterline is on an older page, the existing cursor loads earlier pages
-  until it and preceding context are present. Tall context yields enough room
-  to keep the first unread row visible. Stale or missing read state is refreshed
-  before entry positioning. An opening read-state or history failure exposes a
-  retry and shows the oldest loaded content without automatically advancing the
-  saved waterline; a deliberate scroll resumes reading.
-  At the end the feed follows new arrivals; elsewhere it
-  holds the reader's position, including when loading an earlier page.
-  Positioning waits until the pane is visible: returning from an expanded
-  thread restores the reader's position. Hidden panes' zero geometry and scroll events do not replace
-  that position. Switching Channels resets the visit even when the new feed
-  is empty or still loading. A hairline with the day's name ("Today",
-  "Yesterday", a weekday, then a date; `formatDayLabel`) sits above the first
-  thread of each day. Each thread is one button that opens it expanded over
-  the Channel ([`pane-stack.md`](pane-stack.md)): its title, its description,
-  and who started it and when, with the thread's own mark beside them. A row the socket holds is drawn from the
-  socket, so its dot and title move live, and a thread started here a moment
-  ago shows at once. **Show earlier** loads the next page.
-- **Messages.** A Channel's own messages
-  ([`spaces.md`](spaces.md#channel-messages)) sit in the same feed, in time
-  order with its threads: `MessageCard` draws the author (Rally's mark, or the
-  member's avatar), the markdown body and the time. They are not buttons; a
-  message opens nothing.
-- **Private threads.** A thread this person may not open is not in the feed
-  at all, for a member as for a guest. The server leaves it out
-  ([`listing-rules.md`](listing-rules.md)); only a link to it reaches the
-  access request screen ([`channel-access-requests.md`](channel-access-requests.md)).
-- **Composer.** `ChannelComposer` starts a thread
-  ([`workstream-creation.md`](workstream-creation.md)) and opens it expanded
-  over the Channel, as the feed does. A guest, and a reader
-  who reaches the Channel only through a thread in it, get no composer. In a
-  Channel that is not Organization-wide, a Personal Channel included, the
-  composer starts a private thread.
-- **A Personal Channel** ([`spaces.md`](spaces.md#the-personal-channel)) wears
-  the sidebar's lock like any private Channel. Its menu's **Add people** is
-  disabled, and it offers no audience switch and no archive: it is its
-  owner's alone.
-- **Empty and failed.** An empty feed explains Channels, Threads, Breakouts and
-  merging to people who can start a Thread, and says "No threads yet." to other
-  viewers. It opens at the top so long guidance starts with its first paragraph.
-  A failed page says "The threads in this channel couldn't be loaded."
-  A Channel the person cannot see (archived,
-  made private, or access lost) is "Channel not found".
-- **Menu.** The Channel menu above. **Archive channel** asks first and says
-  that exclusive threads are archived while threads in other Channels stay active
-  ([`spaces.md`](spaces.md#invariants)); then the window leaves for the
-  landing.
+The open Canvas is the shell's foreground conversation: the app shell passes
+its id to `setForegroundWorkstreamId`, which is how presence learns who is in a
+Canvas ([`canvases.md`](canvases.md#presence)).
 
 ### At phone width
 
@@ -325,137 +136,39 @@ the app shell provides `PhoneHeaderContext`, and at phone width the header
 leads its crumbs with a round menu button that opens the sheet, drawn like
 the trailing buttons and apart from the crumbs' glass `MarkBridge`, and puts
 **Search organization** first in its folded "⋯" menu. Loading skeletons draw
-the button alone (`TitlePillNavigation`).
-A right-slot panel fills the phone, so its header carries the same. Every
-pane header on a phone takes the narrow pane's columns, so a long title
-truncates in the middle and the crowding shift is off. A window surface in a
-browser tab draws no sidebar, so the app shell provides no context there.
+the button alone (`TitlePillNavigation`). A right-slot panel fills the phone,
+so its header carries the same. A window surface in a browser tab draws no
+sidebar, so the app shell provides no context there.
 
 The sidebar is a sheet behind the list's own header: the close button at the
-left, the section's title centred, its actions at the right, the sides never
-narrower than their buttons. The section switcher is a row of tabs under it:
-the first four sections (`PHONE_RAIL_SECTIONS`), then **More**, a "⋯" tab
-whose dropdown holds the rest (Artifacts, for a member) as radio rows, each
-with its own count and a check on the open one (`MoreSections`), then the
-account menu as a last tab labelled Settings. More carries the folded
-sections' counts added up, named count by count, and reads as selected while
-one of them is the open section; choosing one switches the section as its own
-tab would. A guest's four sections all fit, so no More is drawn. While a visible pane
-header carries the menu button (`PHONE_NAVIGATION_CONTROL`), the shut sheet
-keeps no bar and is hidden whole. A screen without one (the landing, Not
-found, an access request, a Breakout draft, whose header is collapsed to
-nothing so it hands over to the created Breakout without moving) and the
-browser panel, which draws no menu button, keep the sheet's header as their top bar. The sheet is clipped rather than moved,
-for the reasons the 2026-10-06 entry gives. Opening it from a pane header
-moves focus to its close button; closing hands focus back to the opener, or
-to the visible menu button when the opener is gone (`useSheetOpener`). Opening
-anything from it closes it, as do Escape and widening past 640px; switching
-sections does not navigate, so the sheet stays open on the list just picked.
-An open menu, dialog or error popup takes Escape before the sheet does.
-Code that navigates and wants the sheet open afterwards sets
-`sheetAfterNavigation` instead of `sidebarOpen`: the sidebar's reset on mount
-and route change reads it and opens the sheet once.
+left, the section's title centred, its actions at the right. The rail is a row
+of tabs under it: Canvases, Sidekicks, then the account menu as a last tab
+labelled Settings. While a visible pane header carries the menu button
+(`PHONE_NAVIGATION_CONTROL`), the shut sheet keeps no bar and is hidden whole;
+a screen without one keeps the sheet's header as its top bar. Opening the sheet
+from a pane header moves focus to its close button; closing hands focus back
+to the opener, or to the visible menu button when the opener is gone
+(`useSheetOpener`). Opening anything from it closes it, as do Escape and
+widening past 640px; switching sections does not navigate, so the sheet stays
+open on the list just picked. An open menu, dialog or error popup takes Escape
+before the sheet does. Code that navigates and wants the sheet open afterwards
+sets `sheetAfterNavigation` instead of `sidebarOpen`: the sidebar's reset on
+mount and route change reads it and opens the sheet once.
 
 ### Title pills
 
-A narrow conversation pane fits its pill between the leading and trailing
-controls and truncates the title. As on a phone, that layout disables the
-crowding shift: shifting a pill already sized by the grid can move it across
-the pane boundary.
-
 Every pane's header is a `TitlePillHeader`: its ancestors attached to its own
 pill as one centred glass control, and the pane's controls at the right. The
-header row is 64px in every pane, the Channel included, so pills sit level side
-by side.
-Each control at the right is a `TitlePillAction`, the raised circle the pills
-wear: a Channel's import, a thread's or Breakout's close. The phone's top bar
-gives its own actions (search, new Channel) the same circle as its menu
-button. A thread or Breakout pill's icon is its own glyph and its appearance
-picker, so the two pills match; the rest of the pill opens its menu, and every
-pill's chevron points down. A Breakout pill's menu's **Icon and color**
-(`AppearanceSubmenu`) sets the same appearance as its icon. An open pill fills solid and
-drops its lift to the bare ring.
+header row is 64px in every pane. Each control at the right is a
+`TitlePillAction`, the raised circle the pills wear. A narrow pane fits its
+pill between the leading and trailing controls and truncates the title, and
+that layout disables the crowding shift: shifting a pill already sized by the
+grid can move it across the pane boundary. An open pill fills solid and drops
+its lift to the bare ring. Each menu has a root and levels; a row opens its
+level in place (`useTitleMenuNav`), the title, Escape or the left arrow step
+back to the root, and `TitleMenuMorph` travels the popout's size between
+levels; reduced motion turns that off.
 
-Thread and Breakout menus place **Resolve Thread** or **Resolve Breakout** directly
-below Merge. The action marks the conversation resolved without publishing a result
-or removing it, then returns to its parent after the write succeeds: a Breakout
-returns to its Thread, and a Thread to the Channel it was opened from (or its
-first visible Channel). A Breakout-only reader stays in the resolved Breakout
-when Main is inaccessible. Failed writes and results arriving after navigation
-or unmount never redirect. Members and guests can resolve within their admitted
-conversation scope. Resolved conversations keep the Resolve item visible but
-disabled, with a tooltip explaining that the thread or Breakout is already resolved.
-Explained disabled actions stay reachable with the menu's arrow keys, so their
-tooltips also open on keyboard focus; activation keeps the menu open and changes nothing.
-Archived conversations offer no Resolve action. The Thread menu's Merge behavior
-is described in [conversation merge](conversation-merge.md#the-client).
-
-Each menu has a root and levels. The root is a row of action tiles (Add people,
-Rename, Copy link, More), under a header on a Breakout, followed by People,
-Sidekicks and Memory rows. A thread also has Artifacts directly below People
-and Breakouts below Sidekicks. Counts sit beside each row, including **0** for
-an empty list; an unknown count stays blank while loading. A row, or the
-Add people and More tiles, opens its level in place (`useTitleMenuNav`), and the
-pill becomes a breadcrumb, the title quietened and the level after it. The
-title, Escape or the left arrow step back to the root before anything closes,
-and the menu always reopens at its root. `TitleMenuMorph` measures each level
-and travels the popout's width and height between them over 320ms while the
-level's rows arrive on a 22ms stagger, sliding in from the side the move came
-from; reduced motion turns both off. A level with no enabled controls keeps
-keyboard focus on its frame, so ArrowLeft and Escape still return to the root.
-
-- **Thread menu** (`ChannelMenu` in code): no header; the tiles come first. People is a search, the
-  participants (members and guests), invitations still waiting, and
-  suggestions to add inline (`TitleMenuPeople`). Enter in the search takes
-  addresses separated by spaces, commas or semicolons: an address someone in
-  the Organization has adds them, any other is invited to the conversation as
-  a guest (`TitleMenuInvites`, backed by `useScopeInvitations`), and the menu
-  stays open for the next. Adds run one at a time, then the invite, and only
-  what failed stays in the box. A name narrowed to one person adds them; an
-  address whose Organization account is not active is refused rather than
-  invited. Pending invitations load only once People opens, and new addresses
-  wait for them, since they decide who is already invited; a failed load
-  shows **Try again**. Enter that finishes an input method's composition does
-  not submit. Each participant's dots menu offers
-  **Remove from thread**, or **Leave the thread** on the reader's own row,
-  disabled for the last participant; the host confirms in a Cancel/Continue
-  dialog before it removes. A waiting invitation's dots menu offers **Cancel
-  invite**. Sidekicks is the Sidekick section. Breakouts
-  is the list, newest activity first, filtered past six. **Artifacts** lists
-  the thread's artifacts and opens one in the existing artifact panel. It says
-  **Loading artifacts…**, with no count, until a snapshot or rail answers;
-  an answered empty list says **No artifacts yet.** More is **Icon and
-  color** (the same choice as the pill's icon), **Pinned in
-  my sidebar** (the sidebar's own pin action, lent through `useUiStore.pinChannel`),
-  **Public to organization** (a switch both ways; a refusal to make it private
-  names what holds it public), Import updates, host extras, other resources, and
-  **Archive thread** last.
-- **Channel menu** (`ChannelContainerMenu`, on the Channel screen): tiles for
-  Add people, Rename, Copy link (the Channel's `/s/` address) and More; People
-  (the Channel's members, with **Remove from channel** or **Leave the
-  channel**) and Sidekicks (the Channel's Sidekick defaults, each with
-  **Remove from this channel**). More is **Icon** (icon and colour, the same
-  picker as the pill's icon), **Pinned in my sidebar**, **Public to
-  organization** (the thread's switch, on while the Channel is open to the
-  Organization; off makes it private, keeping whoever turned it off), and
-  **Archive channel** last, which asks first. General can be
-  renamed and recoloured like any Channel; only archiving it or making it
-  private is refused (`space_protected`). The pill's
-  icon is its own control for whoever may edit the Channel: it opens the
-  shared icon-and-colour picker. Each pick and each rename saves the whole
-  presentation through `PATCH /spaces/:id`, one after another, each starting
-  from the last one sent for the same Channel.
-- **Breakout menu:** root header is the thread it belongs to (with **Show in
-  thread**) and the message it started from. People (inviting to the
-  Breakout alone) and Sidekicks as above;
-  More is Icon and color, **Public to organization**, and **Archive breakout** last.
-- **Memory** (thread, Breakout and Channel menus, `TitleMenuMemory`): what
-  Rally remembers about this conversation alone, newest first, drawn by
-  `MemoryFactRows` (`packages/ui`), the same renderer the Settings sections
-  use ([`agent-memory.md`](agent-memory.md#the-review-surface)). The host
-  reads the facts only once the level opens, through `useMemoryFacts` with
-  `lazy`, and every later open reads again; the row's count is empty until
-  then. A fact's source is a menu item, so opening it closes the menu.
 - **Artifact menu** (`InspectorRail`, shared by the side panel, expanded panel,
   and detached artifact windows): the root offers Download for available files,
   Rename and Copy link as tiles, plus More when archiving is available.
@@ -481,79 +194,19 @@ keyboard focus on its frame, so ArrowLeft and Escape still return to the root.
   `PATCH /conversations/:parentId/resources/:resourceId`. Download reads original
   bytes separately from readable previews, including files without a preview.
 
-### Breakouts
-
-A Breakout is still created only from a message: **New breakout** is the first
-of the actions that appear on hover, on every message, Rally's newest reply
-included, ahead of **Merge**. Its launch surface opens in the right pane: a second Main surface
-with `paneKey="launch"`, so it owns its own panel scope. Once created, the
-route's `?substream=` names it and it opens in the right pane beside Main. The
-route contract is unchanged: deep links, the restored last route and search
-hits land in the pane.
-
-Each Breakout row the thread receives carries `originTurnId` and
-`lastActivityAt` ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
-
-- **Origin card:** the top of a Breakout's feed shows the thread message it
-  started from as a card, with up to three messages before it, each a step
-  fainter the further back (`BreakoutOrigin`). It reads the thread's own
-  transcript cache, so it draws only when the origin is loaded there, and only
-  above the Breakout's first message, never above a window with earlier pages.
-- **Cards:** `MessageFeed` draws a `ConversationCard` for each Breakout after
-  the last row of its origin turn, on the trailing side because a person
-  started it: the same entry the Channel feed draws for a thread, with the Breakout's mark, its title, "N
-  new" when there is news, and who started it and when. The open Breakout's
-  card is pressed, its name ends in "Open", and it drops its news, as an open
-  thread's card in the Channel does. The byline waits for the
-  Breakout list to answer, since the rows drawn before it carry stand-in
-  authors and dates. While the Breakout's run waits on a question
-  (`harnessStatus` `needs_input`), a red **Needs input** badge takes the place
-  of the news, and the tick and its card say the same. Resolved cards use the
-  [merge-back presentation](conversation-merge.md#resolution-and-archiving).
-- **Tick bar:** down Main's leading edge, one tick per Breakout, in origin-turn
-  order for turns that are loaded and by creation time after them. Colour says
-  news and length says open, at the design's sizes: a quiet tick is 11×2 grey,
-  one with news 20×3 in `sys.color.workstream.news`, and the open one 26×4.
-  Hovering a tick names it; pressing it opens the Breakout and scrolls Main to
-  the origin. At phone width (640px and narrower) the bar is hidden, since it
-  would sit on the text, and the transcript keeps even 24px side padding.
-- **Show in thread:** the Breakout menu sends Main a `scrollToTurn` request,
-  which waits until that turn is in the loaded transcript.
-
 ### One right slot
 
-The right panel and the Breakout pane share one place. The panel holds the
-desktop's embedded browser, or whatever the conversation opened: a resource
-with its actions, an attachment, a citation's file, or a prior version. None of
-these opens as a modal. The panel's header is a pane header: the item's title
-pill, its actions in the pill's menu, and the round close button. At phone
-width (640px and under) the panel takes the whole width, with no resize edge.
-Above it, an attachment or artifact opens the panel at an even split with the
-conversation, and a browser tab splits its window in half;
-[`desktop-layout.md`](desktop-layout.md) owns the width and its resize edge.
-`ConversationSurface` scopes the panel to the
-conversation that opened it: `railScope` is the parent id for Main and
-`parentId:substreamId` for a Breakout, with `#launch` for the launch surface. A
-surface only closes, fades or restores a panel it owns.
-`SplitConversationLayout` reads the scope:
-
-| State | Panes |
-| --- | --- |
-| No Breakout open | `main` |
-| Breakout open, no panel | `split`: thread, resize edge, Breakout |
-| Breakout opened a panel | `breakout`: the Breakout takes the thread's place, the panel takes the right |
-| Thread opened a panel | `main`: the Breakout is hidden |
-| Reader cannot open Main | `breakout`, always, and no thread pill is stacked: a Breakout grant says nothing about Main |
-
-A hidden pane stays mounted, so returning to the split neither reconnects nor
-loses scroll. When the Breakout has the thread's place, the thread's pill
-stacks at the left of the Breakout's header, and pressing its title closes the
-panel to return to the split. Opening a Breakout, or starting one from a message, while the thread
-holds a panel closes that panel first. The split's width is device-local under
-`layoutKey(…, 'breakout-width')` and clamps both panes to the conversation
-minimum. A split too narrow for two minimums (under 848px of content) shows
-the Breakout alone instead, measured by `SplitConversationLayout` itself; its
-close button returns to the thread.
+The right panel holds the desktop's embedded browser, or whatever the
+conversation opened: a Canvas's artifact with its actions, an attachment, a
+citation's file, or a prior version. None of these opens as a modal. The
+panel's header is a pane header: the item's title pill, its actions in the
+pill's menu, and the round close button. At phone width (640px and under) the
+panel takes the whole width, with no resize edge. Above it, an attachment or
+artifact opens the panel at an even split with the conversation, and a browser
+tab splits its window in half; [`desktop-layout.md`](desktop-layout.md) owns
+the width and its resize edge. `ConversationSurface` scopes the panel to the
+conversation that opened it (`railScope`, the parent id), and a surface only
+closes, fades or restores a panel it owns.
 
 A pane header's trailing buttons are one `IconGroup`
 (`packages/ui/src/components/icon-group.tsx`), which spaces them. Its `actions`
@@ -583,70 +236,87 @@ panel of the pane it was clicked in, once.
 
 ## Invariants
 
-- **The Threads count is the dock's count.** Both read `attentionItems`; a
-  second definition would let the rail and the dock disagree. Guard:
-  `components/navigation-sidebar.test.tsx`.
-- **A surface touches only the panel scope it owns.** Two surfaces of one
-  Channel are mounted at once; one that closed the panel unconditionally would
-  close the other's on unmount. Guard: verified visually; the scope comparison
-  is in each close path of `conversation-surface.tsx`.
+- **A tile's count is its list's rows.** Both read the list the workspace
+  socket keeps; a second definition would let the rail and the list disagree.
+  Guard: `components/navigation-sidebar.test.tsx`.
+- **A surface touches only the panel scope it owns.** Guard: verified visually;
+  the scope comparison is in each close path of `conversation-surface.tsx`.
 - **One link listener, however many hosts.** Two listeners open a link twice,
   as two browser tabs. Guard: `lib/browser-rail-links.test.ts`.
-- **Main's search target and the Breakout's are exclusive.** When `?substream=`
-  names a Breakout, Main does not honour `?turn=&sequence=`, which only ever
-  names a turn in the open Breakout. Guard: `honorsSearchTarget`, verified by
-  route behaviour.
+- **A removed route never draws a dead screen.** Stored and linked addresses of
+  removed surfaces redirect to `/canvases`. Guard: `App.session-gate.test.tsx`,
+  `screens/landing.test.tsx`.
 - **The sidebar never collapses, and never stacks rails.** It is one list with a
-  switcher beside it; a second list column (a Space rail, a Channel rail) is
-  what the 2026-10-01 change removed, and the switcher answers the same need by
-  replacing the list rather than adding one. Guard: `collapsible={false}`; no
-  toggle exists to call. At phone width the sheet is a different layout, not a
-  collapse, and writes no width.
+  rail beside it. Guard: `collapsible={false}`; no toggle exists to call. At
+  phone width the sheet is a different layout, not a collapse, and writes no
+  width.
 
 ## Boundary
 
-The shell owns layout, navigation chrome and which pane is shown. It does not
-own:
+The shell owns layout, navigation chrome, the routes and which pane is shown.
+It does not own:
 
+- what a Canvas is and who may open it ([`canvases.md`](canvases.md));
+- a Sidekick's screens and lifecycle ([`automation-lifecycle.md`](automation-lifecycle.md));
 - pin authority ([`workstream-pinning.md`](workstream-pinning.md));
-- the marker ranking ([`workstream-markers.md`](workstream-markers.md));
-- Breakout creation and its row actions ([`substream-creation.md`](substream-creation.md));
 - the feed, composer and panels inside a pane ([`conversation-surfaces.md`](conversation-surfaces.md));
 - what the desktop restores after relaunch ([`desktop-layout.md`](desktop-layout.md)).
 
-A guest's sidebar reads each Breakout's `originTurnId` and each Space's
-`systemRole` from the same socket lists a member's does
-([`listing-rules.md`](listing-rules.md)).
-
 ## Failure modes and limits
 
-- **No `originTurnId`:** a Breakout made before origins were recorded, or a
-  server older than the field, has no card. Its tick sorts after the placed
-  ones, and it stays reachable from the thread menu.
-- **Origin turn not loaded:** the card draws once the page holding the turn
-  loads. Show in thread waits for it rather than fetching the range.
-- **Breakout list not answered yet:** the thread menu says "Loading
-  breakouts…", and there are no cards or ticks.
-- **Display counts:** the thread menu lists six Breakouts before "Show N
-  more", and the filter field appears past six. These are display choices, not
-  limits.
+- **No restorable route:** a device that saved none, or saved a route of a
+  removed surface, lands on `/canvases`.
+- **A saved Canvas that is gone:** the landing reopens it and the Canvas screen
+  shows its unavailable state ([`canvases.md`](canvases.md)).
+- **Lists not yet delivered:** both lists draw placeholder rows and both tiles
+  count nothing until the workspace socket answers.
 
 ## Testing
 
-- **Desktop component tests:** `components/navigation-sidebar.test.tsx`,
-  `components/title-pill-menu.test.tsx` (including keyboard focus and pending artifact inventory),
-  `screens/channel.test.tsx`, `lib/navigation-routes.test.ts`, `components/message-feed.test.tsx`,
-  `components/breakout-marks.test.tsx`, `lib/browser-rail-links.test.ts`. Run
-  with `pnpm --filter @rally/desktop exec vitest run <path>`.
+- **Desktop component tests:** `components/navigation-sidebar.test.tsx` (the
+  rail, both sections, the phone sheet), `screens/landing.test.tsx`,
+  `App.session-gate.test.tsx` (routes and redirects), `lib/ui-store.test.ts`
+  (the stored section), `lib/browser-rail-links.test.ts`. Run with
+  `pnpm --filter @rally/desktop exec vitest run <path>`.
 - **A guest in the shell:** `lib/browser-collaboration.test.tsx`.
-- **Channel positioning and read acknowledgements:** `screens/channel.test.tsx`.
-- **API side of the origin fields:**
-  `apps/api/test-workers/substream-creation-runtime.test.ts`.
-- **Window behaviour:** whether panes, pills and ticks are visible and placed
+- **Window behaviour:** whether the rail, lists and panes are visible and placed
   correctly is checked in a real window under Xvfb, per
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-07 — The rail becomes Canvases and Sidekicks
+
+**What changed:** The rail lists two sections, Canvases and Sidekicks, with
+Settings at the bottom as before; `SidebarSection` is `'canvases' |
+'sidekicks'` and a section stored before the cutover reads as Canvases. The
+phone row's More tab (`MoreSections`, `PHONE_RAIL_SECTIONS`) is gone: two
+sections always fit. The landing opens the restorable `last-route` or
+`/canvases`, replacing the Channel fallback chain (pinned Channel, General,
+A–Z); `last-route` is written only for Canvas and Sidekick routes. The
+Channel, Space, Thread, Project, Activity and Artifacts routes redirect to
+`/canvases`. The Pinned, Channels, Threads, Activity and Artifacts section
+bodies are deleted from `navigation-sidebar.tsx` with the per-device thread
+and Channel sorts. The open Canvas is the shell's foreground conversation for
+presence. This document is rewritten as the two-section shell.
+
+**Why:** Plan step B-1 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+Threads, Breakouts and Channels are deleted (decision log, 2026-11-06), and the
+PRD's rail is Canvases, Sidekicks, then Settings. Redirecting removed routes to
+`/canvases`, as `/projects/*` already went to the landing, keeps every stored
+route and old link landing somewhere real. The More tab existed only because
+five sections did not fit a phone row with Settings; with two it can never
+fold, so keeping it would be dead code. The app shell named only an open Thread
+as the foreground conversation, so a Canvas's face pile never saw anyone; a
+Canvas id is a conversation-parent id, so the same field carries it.
+
+**Consequences:** The screens and modules only the removed sections reached
+(the Channel and Thread screens, the old landing, the Activity and Pinned
+helpers) are unreachable after this change and are deleted in plan step B-3;
+until then they still compile. Adding a third section is a `SECTIONS` entry and
+a `SidebarSection` value; if a phone row ever overflows again, the fold has to
+be rebuilt rather than restored.
 
 ### 2026-11-07 — Canvases and Sidekicks as sidebar sections the rail can switch to
 
