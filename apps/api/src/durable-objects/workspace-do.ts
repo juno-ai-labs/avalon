@@ -602,55 +602,7 @@ import {
   transitionWorkspaceNotificationIntent as transitionStoredWorkspaceNotificationIntent,
   workspaceNotificationIntentMaintenanceTarget as storedWorkspaceNotificationIntentMaintenanceTarget,
 } from "./workspace-notification-intent-storage";
-import {
-  WorkspaceOpportunityBatchEventsRequestSchema,
-  WorkspaceOpportunityClaimStartRequestSchema,
-  WorkspaceOpportunityCompleteStartRequestSchema,
-  WorkspaceOpportunityDismissResultSchema,
-  WorkspaceOpportunityDismissRequestSchema,
-  WorkspaceOpportunityEnqueueRequestSchema,
-  WorkspaceOpportunityEnqueueResultSchema,
-  WorkspaceOpportunityExistingRequestSchema,
-  WorkspaceOpportunityGetRequestSchema,
-  WorkspaceOpportunityImpressionsRequestSchema,
-  WorkspaceOpportunityListRequestSchema,
-  WorkspaceOpportunityListResultSchema,
-  WorkspaceOpportunityOriginEventsRequestSchema,
-  WorkspaceOpportunityOriginEventsResultSchema,
-  WorkspaceOpportunityPersistRequestSchema,
-  WorkspaceOpportunityPersistResultSchema,
-  WorkspaceOpportunityRankingCandidatesRequestSchema,
-  WorkspaceOpportunityRankingRoundRequestSchema,
-  WorkspaceOpportunityRankingSettleRequestSchema,
-  WorkspaceOpportunityRankingStateSchema,
-  WorkspaceOpportunityReleaseStartRequestSchema,
-  WorkspaceOpportunityStoreRankingRequestSchema,
-  WorkspaceOpportunityTelemetryContextSchema,
-  WorkspaceOpportunityTelemetryContextsSchema,
-  WorkspaceOpportunityWindowRequestSchema,
-  WorkspaceOpportunityWindowSchema,
-  WorkspaceOpportunityWindowSettleRequestSchema,
-  WorkspaceOpportunityWorkflowInputSchema,
-  type WorkspaceOpportunityBatchEventsRequest,
-  type WorkspaceOpportunityClaimStartRequest,
-  type WorkspaceOpportunityCompleteStartRequest,
-  type WorkspaceOpportunityDismissRequest,
-  type WorkspaceOpportunityEnqueueRequest,
-  type WorkspaceOpportunityExistingRequest,
-  type WorkspaceOpportunityGetRequest,
-  type WorkspaceOpportunityImpressionsRequest,
-  type WorkspaceOpportunityListRequest,
-  type WorkspaceOpportunityOriginEventsRequest,
-  type WorkspaceOpportunityPersistRequest,
-  type WorkspaceOpportunityRankingCandidatesRequest,
-  type WorkspaceOpportunityRankingRoundRequest,
-  type WorkspaceOpportunityRankingSettleRequest,
-  type WorkspaceOpportunityStoreRankingRequest,
-  type WorkspaceOpportunityWindowRequest,
-  type WorkspaceOpportunityWindowSettleRequest,
-} from "./workspace-opportunity-protocol";
 import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
-import { WorkspaceProductStorage } from "./workspace-product-storage";
 import {
   publishSpaceBootstrapWork,
   publishSpaceDefaultTargets,
@@ -1525,7 +1477,6 @@ const CONNECTOR_EVENT_BODY_RETENTION_MS = 90 * 24 * 60 * 60_000;
  */
 const CONNECTOR_EVENT_REAP_PAGE = 50;
 const ACTIVITY_EVENT_RETENTION_MS = 90 * 24 * 60 * 60_000;
-const PRODUCT_ALARM_BATCH = 6;
 /** How often a workspace rechecks a region that is closed for maintenance. */
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 /**
@@ -1578,7 +1529,6 @@ export const WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS = 2 * 60_000;
 export const WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET = 2;
 /** `_internal_durable_alarms` identity for this workspace's opportunity and ranking work. */
 const PRODUCT_ALARM_KIND = "product";
-const PRODUCT_ALARM_KEY = "workspace";
 /** The one-shot entry a migrating object uses to reconcile itself once. */
 const SCHEDULE_BOOTSTRAP_ALARM_KIND = "schedule_bootstrap";
 /** One-shot, written by migration 103: seat every existing member. See docs/spaces.md#the-personal-channel. */
@@ -5113,10 +5063,6 @@ function iso(value: number | null): string | null {
   return value === null ? null : new Date(value).toISOString();
 }
 
-function workflowAlreadyExists(error: unknown): boolean {
-  return error instanceof Error && /(already exists|duplicate|conflict)/iu.test(error.message);
-}
-
 function connectorEventFromRow(
   sql: SqlStorage,
   row: WorkspaceConnectorEventRow,
@@ -5568,7 +5514,6 @@ const DirectoryFollowUpSchema = z.strictObject({
   directoryChanged: z.boolean(),
   /** Workspace sync topics an activity or notification record moved. */
   syncTopics: z.array(WorkspaceSyncTopicSchema),
-  refreshProductAlarm: z.boolean(),
   /**
    * Per Channel, the people this batch may have taken it from, named inside
    * the batch's transaction from the rows as they were before it. Each is owed
@@ -6143,7 +6088,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       );
       followUp.syncTopics.push(...(effect.kind === "activity_event"
         ? ["activity", "work_opportunities"] as const : ["activity", "workstream_directory"] as const));
-      if (effect.kind === "activity_event" && !applied.replayed) followUp.refreshProductAlarm = true;
       // A Breakout's merge into its thread is a `merged` Activity row, pushed
       // like a start once this batch commits.
       if (effect.kind === "activity_event" && !applied.replayed && mergedBreakoutId(effect.metadata) !== null) {
@@ -6177,7 +6121,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId, publishSnapshotAll: false, snapshotUsers: [], reachChangedUsers: [], commonChanges: [],
       viewerChanges: [], breakoutChanges: [], breakoutViewerChanges: [], reopenBootstrap: false,
       watchReconciliations: [], archivalChanges: [], breakoutArchivalChanges: [], refreshTerminal: false,
-      refreshWatchKinds: false, directoryChanged: false, syncTopics: [], refreshProductAlarm: false, channelLosses: [],
+      refreshWatchKinds: false, directoryChanged: false, syncTopics: [], channelLosses: [],
       activityPushSubjects: [],
     };
   }
@@ -8859,10 +8803,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           }
         }
         if (await this.runHostedParentAlarm(alarm)) return;
-        if (alarm.kind === PRODUCT_ALARM_KIND) {
-          await this.runProductAlarm(workspaceId);
-          return;
-        }
+        // Suggested work's scheduler is gone (plan step C-2); an alarm an
+        // object armed before that deploy has nothing left to start.
+        if (alarm.kind === PRODUCT_ALARM_KIND) return;
         if (alarm.kind === PERSONAL_CHANNEL_BACKFILL_ALARM_KIND) {
           await this.backfillPersonalChannels(workspaceId);
           return;
@@ -9090,91 +9033,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const results = executeWorkspaceRuntimeSql(this.state.storage, request, [...lists]);
     for (const list of lists) this.publishSidebarList(list);
     return results;
-  }
-
-  /**
-   * Workspace-local product scheduler.
-   *
-   * SQLite decides what is due and fences each claim. The alarm only starts a
-   * deterministic Workflow instance; inference and ranking never run in the
-   * object's single-threaded request path. A dormant member deliberately leaves
-   * a due request parked without another alarm. Their next authenticated read
-   * schedules the object again, avoiding an idle per-workspace polling loop.
-   */
-  private async runProductAlarm(workspaceId: string): Promise<void> {
-    const now = Date.now();
-    const product = this.productStorage();
-    product.reapCompletedOpportunityWindows(now - 30 * 24 * 60 * 60_000);
-    product.reapSettledSuggestedWork(now);
-    let launched = 0;
-
-    for (const row of product.dueOpportunityWindows(now, PRODUCT_ALARM_BATCH)) {
-      const claim = product.claimOpportunityWindow(row.window_id, now);
-      if (!claim) continue;
-      const input = WorkspaceOpportunityWorkflowInputSchema.parse({
-        kind: "admission",
-        region: this.env.AVALON_REGION,
-        workspaceId,
-        windowId: claim.windowId,
-        leaseId: claim.leaseId,
-        attempt: claim.attempt,
-      });
-      try {
-        await this.env.WORK_OPPORTUNITY_WORKFLOW.create({
-          id: `opportunity-admission-${claim.windowId}-${claim.attempt}`,
-          params: input,
-        });
-      } catch (error) {
-        if (!workflowAlreadyExists(error)) throw error;
-      }
-      launched += 1;
-    }
-
-    const dueRankings = product.dueRankingRows(now, PRODUCT_ALARM_BATCH);
-    if (dueRankings.length > 0) {
-      const ids = dueRankings.map((row) => row.user_id);
-      const members = await this.env.DB.prepare(
-        `SELECT user_id, last_seen_at FROM workspace_members
-          WHERE workspace_id = ? AND status = 'active'
-            AND user_id IN (SELECT value FROM json_each(?))`,
-      ).bind(workspaceId, JSON.stringify(ids)).all<{ user_id: string; last_seen_at: string | null }>();
-      const lastSeen = new Map(members.results.map((row) => [row.user_id, epoch(row.last_seen_at)]));
-      const dormantCutoff = now - 7 * 24 * 60 * 60_000;
-      const activeCutoff = now - 15 * 60_000;
-      const starvedCutoff = now - 30 * 60_000;
-      const eligible = dueRankings
-        .filter((row) => (lastSeen.get(row.user_id) ?? 0) > dormantCutoff)
-        .sort((left, right) => {
-          const leftUrgent = (lastSeen.get(left.user_id) ?? 0) > activeCutoff || left.due_at <= starvedCutoff;
-          const rightUrgent = (lastSeen.get(right.user_id) ?? 0) > activeCutoff || right.due_at <= starvedCutoff;
-          return Number(rightUrgent) - Number(leftUrgent) || left.due_at - right.due_at;
-        });
-      for (const row of eligible.slice(0, Math.max(0, PRODUCT_ALARM_BATCH - launched))) {
-        const claim = product.claimRanking(row.user_id, row.request_seq, now);
-        if (!claim) continue;
-        const input = WorkspaceOpportunityWorkflowInputSchema.parse({
-          kind: "ranking",
-          region: this.env.AVALON_REGION,
-          workspaceId,
-          userId: claim.userId,
-          requestSeq: claim.requestSeq,
-          leaseId: claim.leaseId,
-        });
-        try {
-          await this.env.WORK_OPPORTUNITY_WORKFLOW.create({
-            id: `opportunity-ranking-${workspaceId}-${claim.userId}-${claim.requestSeq}`,
-            params: input,
-          });
-        } catch (error) {
-          if (!workflowAlreadyExists(error)) throw error;
-        }
-        launched += 1;
-      }
-    }
-    // Suppressed when nothing launched: what is left is parked behind a
-    // dormant member, and re-arming for an instant already past is the one way
-    // this object turns into a polling loop.
-    await this.refreshProductAlarm({ suppressPastDue: launched === 0 });
   }
 
   /** Per-person learning progress stays inside the workspace authority. */
@@ -13499,7 +13357,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       return canonical;
     });
-    await this.refreshProductAlarm();
     return eventId;
   }
 
@@ -13534,232 +13391,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       audienceWorkstreamId: row.audience_workstream_id,
       occurredAt: iso(row.occurred_at),
     }) : null;
-  }
-
-  async enqueueOpportunitySource(input: WorkspaceOpportunityEnqueueRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityEnqueueRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = WorkspaceOpportunityEnqueueResultSchema.parse(
-      this.productStorage().enqueueOpportunitySource(request),
-    );
-    await this.refreshProductAlarm();
-    return result;
-  }
-
-  async opportunityWindow(input: WorkspaceOpportunityWindowRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityWindowRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return WorkspaceOpportunityWindowSchema.parse(this.productStorage().opportunityWindow(request));
-  }
-
-  async mutateOpportunityBatchEvents(input: WorkspaceOpportunityBatchEventsRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityBatchEventsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().mutateOpportunityBatchEvents(request);
-  }
-
-  async settleOpportunityWindow(input: WorkspaceOpportunityWindowSettleRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityWindowSettleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().settleOpportunityWindow(request);
-    await this.refreshProductAlarm();
-  }
-
-  async existingOpportunities(input: WorkspaceOpportunityExistingRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityExistingRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return this.productStorage().existingOpportunities(request);
-  }
-
-  async persistOpportunity(input: WorkspaceOpportunityPersistRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityPersistRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = WorkspaceOpportunityPersistResultSchema.parse(
-      this.productStorage().persistOpportunity(request),
-    );
-    await this.refreshProductAlarm();
-    return result;
-  }
-
-  async markOpportunityRankingDue(
-    workspaceId: string,
-    userIds: string[],
-    delayMs: number,
-    clearFingerprint = false,
-  ): Promise<void> {
-    await this.initialized;
-    this.assertWorkspace(IdSchema.parse(workspaceId));
-    const ids = z.array(IdSchema).max(10_000).parse([...new Set(userIds)]);
-    const delay = z.number().int().min(0).max(24 * 60 * 60_000).parse(delayMs);
-    const now = Date.now();
-    for (const userId of ids) {
-      this.productStorage().markRankingDue(userId, now + delay, now, clearFingerprint);
-    }
-    await this.refreshProductAlarm();
-  }
-
-  async markWorkspaceOpportunityRankingDue(workspaceId: string, delayMs: number): Promise<void> {
-    await this.initialized;
-    this.assertWorkspace(IdSchema.parse(workspaceId));
-    const members = await this.env.DB.prepare(
-      `SELECT user_id FROM workspace_members WHERE workspace_id = ? AND status = 'active'`,
-    ).bind(workspaceId).all<{ user_id: string }>();
-    await this.markOpportunityRankingDue(
-      workspaceId,
-      members.results.map((row) => row.user_id),
-      delayMs,
-    );
-  }
-
-  async opportunityRankingCandidates(input: WorkspaceOpportunityRankingCandidatesRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityRankingCandidatesRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return this.productStorage().rankingCandidates(request);
-  }
-
-  async opportunityRankingState(workspaceId: string, userId: string) {
-    await this.initialized;
-    this.assertWorkspace(IdSchema.parse(workspaceId));
-    return WorkspaceOpportunityRankingStateSchema.parse(
-      this.productStorage().rankingState(IdSchema.parse(userId)),
-    );
-  }
-
-  async recordOpportunityRankingRound(input: WorkspaceOpportunityRankingRoundRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityRankingRoundRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().recordRankingRound(request);
-  }
-
-  async storeOpportunityRanking(input: WorkspaceOpportunityStoreRankingRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityStoreRankingRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().storeRanking(request);
-  }
-
-  async settleOpportunityRanking(input: WorkspaceOpportunityRankingSettleRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityRankingSettleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().settleRanking(request);
-    await this.refreshProductAlarm();
-  }
-
-  async listOpportunities(input: WorkspaceOpportunityListRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityListRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = WorkspaceOpportunityListResultSchema.parse(
-      this.productStorage().listOpportunities(request),
-    );
-    await this.refreshProductAlarm();
-    return result;
-  }
-
-  async recordOpportunityImpressions(input: WorkspaceOpportunityImpressionsRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityImpressionsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = this.productStorage().recordImpressions(request);
-    const contexts = WorkspaceOpportunityTelemetryContextsSchema.safeParse(result.telemetryContexts);
-    if (result.telemetryContextReadFailed || !contexts.success) {
-      logWarn(this.env, "workspace_opportunity_telemetry_context_failed", {
-        workspace_id: request.workspaceId,
-        operation: "impression",
-      });
-    }
-    await this.refreshProductAlarm();
-    return contexts.success ? contexts.data : [];
-  }
-
-  async dismissOpportunity(input: WorkspaceOpportunityDismissRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityDismissRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = this.productStorage().dismissOpportunity(request);
-    const parsed = WorkspaceOpportunityDismissResultSchema.safeParse({
-      dismissed: result.dismissed,
-      telemetryContext: result.telemetryContext,
-    });
-    if (result.telemetryContextReadFailed || !parsed.success) {
-      logWarn(this.env, "workspace_opportunity_telemetry_context_failed", {
-        workspace_id: request.workspaceId,
-        operation: "dismiss",
-      });
-    }
-    await this.refreshProductAlarm();
-    return parsed.success
-      ? parsed.data
-      : { dismissed: result.dismissed, telemetryContext: null };
-  }
-
-  async getOpportunity(input: WorkspaceOpportunityGetRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityGetRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return this.productStorage().getOpportunity(request);
-  }
-
-  async opportunityOriginEvents(
-    input: WorkspaceOpportunityOriginEventsRequest,
-  ): Promise<WorkspaceConnectorEvent[]> {
-    await this.initialized;
-    const request = WorkspaceOpportunityOriginEventsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const sourceIds = this.productStorage().opportunityActivitySourceIds(request);
-    const events = sourceIds.flatMap((eventId) => {
-      const row = this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
-        `SELECT * FROM workspace_connector_events WHERE event_id = ?`,
-        eventId,
-      ).toArray()[0];
-      return row
-        ? [connectorEventFromRow(this.state.storage.sql, row, request.workspaceId, this.env.AVALON_REGION)]
-        : [];
-    });
-    return WorkspaceOpportunityOriginEventsResultSchema.parse(events);
-  }
-
-  async claimOpportunityStart(input: WorkspaceOpportunityClaimStartRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityClaimStartRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = this.productStorage().claimOpportunityStart(request);
-    const context = WorkspaceOpportunityTelemetryContextSchema.nullable().safeParse(result.telemetryContext);
-    if (result.telemetryContextReadFailed || !context.success) {
-      logWarn(this.env, "workspace_opportunity_telemetry_context_failed", {
-        workspace_id: request.workspaceId,
-        operation: "start",
-      });
-    }
-    return {
-      outcome: result.outcome,
-      opportunity: result.opportunity,
-      telemetryContext: context.success ? context.data : null,
-    };
-  }
-
-  async releaseOpportunityStart(input: WorkspaceOpportunityClaimStartRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityReleaseStartRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().releaseOpportunityStart(request);
-  }
-
-  async completeOpportunityStart(input: WorkspaceOpportunityCompleteStartRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityCompleteStartRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().completeOpportunityStart(request);
-    await this.refreshProductAlarm();
   }
 
   /**
@@ -14250,7 +13881,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // its news and how a merge row reads (`activity-audience.ts`), so a
         // Space row that moved has every window read Activity again.
         syncTopics: spaceDirectoryChanged ? ["activity"] : [],
-        refreshProductAlarm: false,
         channelLosses: [...channelLosses.channels].map(([id, { lost }]) => [id, [...lost]]),
         activityPushSubjects,
       },
@@ -14379,7 +14009,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && followUp.watchReconciliations.length === 0 && followUp.archivalChanges.length === 0
       && followUp.breakoutArchivalChanges.length === 0
       && !followUp.refreshTerminal && !followUp.refreshWatchKinds && !followUp.directoryChanged
-      && followUp.syncTopics.length === 0 && !followUp.refreshProductAlarm
+      && followUp.syncTopics.length === 0
       && followUp.channelLosses.length === 0 && followUp.activityPushSubjects.length === 0;
   }
 
@@ -14552,7 +14182,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     for (const [workstreamId, lost] of followUp.channelLosses) rows.lost(workstreamId, lost);
-    if (followUp.refreshProductAlarm) await this.refreshProductAlarm();
     // Keep failed handoffs durable without repeating completed publications.
     try {
       await this.pushActivity(followUp.workspaceId, followUp.activityPushSubjects);
@@ -14880,9 +14509,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceRegionalEffectApplyRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const result = applyWorkstreamRegionalEnvelope(this.state.storage, request, Date.now());
-    if (!result.replayed && request.envelope.effect.kind === "activity_event") {
-      await this.refreshProductAlarm();
-    }
     return WorkspaceRegionalEffectApplyResultSchema.parse(result);
   }
 
@@ -19421,10 +19047,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
   }
 
-  private productStorage(): WorkspaceProductStorage {
-    return new WorkspaceProductStorage(this.state.storage);
-  }
-
   private spaceStorage(): WorkspaceSpaceStorage {
     return new WorkspaceSpaceStorage(this.state.storage, (workstreamId, userId) => this.canManageChannelNow(workstreamId, userId));
   }
@@ -19481,29 +19103,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         )`,
       now - ACTIVITY_EVENT_RETENTION_MS,
     );
-  }
-
-  /**
-   * Point the product entry at the next opportunity window or ranking request.
-   *
-   * An entry rather than a derived timestamp because the answer depends on the
-   * caller: an enqueue wants the instant even if it is already past, while the
-   * alarm that launched nothing wants past-due rows left parked. A derived
-   * source has no way to carry that distinction, and reading it the wrong way
-   * turns a parked window into a wake every millisecond.
-   */
-  private async refreshProductAlarm(options: { suppressPastDue?: boolean } = {}): Promise<void> {
-    const now = Date.now();
-    const productDue = this.productStorage().nextProductAlarmAt(now, options.suppressPastDue === true);
-    if (productDue === null) {
-      await this.cancelScheduledAlarm(PRODUCT_ALARM_KIND, PRODUCT_ALARM_KEY);
-      return;
-    }
-    await this.scheduleAlarm({
-      kind: PRODUCT_ALARM_KIND,
-      key: PRODUCT_ALARM_KEY,
-      dueAt: Math.max(now + 1, productDue),
-    });
   }
 
   private assertWorkspace(workspaceId: string): void {

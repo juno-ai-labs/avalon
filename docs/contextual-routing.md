@@ -2,7 +2,7 @@
 
 **Status:** Removed on 2026-08-30. Rally no longer classifies connector activity for an existing work stream, creates Suggested context cards, exposes accept or dismiss APIs, projects suggestion events, or stores suggestion feedback.
 
-This page is the historical record for the retired feature. The four Suggested Work items on the home screen are a separate product and remain active; see [Suggested work](suggested-work.md). Resource watches and automation triggers also remain active.
+This page is the historical record for the retired feature. Suggested Work, the separate home-screen product, was deleted on 2026-11-07. Resource watches and automation triggers also remain active.
 
 ## Retirement boundary
 
@@ -207,7 +207,7 @@ everybody, with the same no-way-back problem one level down.
 the card type: the suggested-work path can still publish a card for a suppressed
 event type, and deliberately keeps its own record. Whether one agent's
 suppression should silence the other is a real product question this change does
-not answer, and answering it belongs in [`suggested-work.md`](suggested-work.md).
+not answer, and answering it belonged to Suggested Work, since deleted.
 Anything added to `activity_suggestions` from here has to declare its `source`,
 and any new read of that table as evidence has to filter on it.
 

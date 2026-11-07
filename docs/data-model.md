@@ -1408,6 +1408,31 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
 
+### 2026-11-07 — Thread, Channel and Activity subsystems retired from the server
+
+**What changed:** The server half of the Canvases and Sidekicks pivot (plan
+steps C-1 and C-2) deletes the code that read and wrote the Thread, Channel,
+Breakout, Activity, digest and suggested-work rows. Retired so far:
+
+- **Suggested work.** `work-opportunity-service.ts`,
+  `work-opportunity-batching.ts`, `workflows/work-opportunity.ts` and its
+  `WORK_OPPORTUNITY_WORKFLOW` binding, `WorkspaceProductStorage`,
+  `workspace-opportunity-protocol.ts`, and the WorkspaceDO RPCs and product
+  alarm they served. A `product` alarm an object armed before the deploy is
+  answered with nothing to do. The verified-identity sync that ran inside the
+  admission step went with it; `external_user_identities` rows it wrote are
+  still read by `connector-actor-identity.ts`. `docs/suggested-work.md` is
+  deleted; its tables (`opportunity_batch_*`, `work_opportunit*`,
+  `opportunity_provenance_*`, `suggested_work_*`) stay until the WorkspaceDO
+  drop migration of step C-7, and `workspace-product-schema.ts` stays because
+  migration 1 still spreads its statements.
+
+**Why:** After the client cutover nothing shows a suggestion, a Thread or a
+Channel; the PRD's decision log removes them from the product. Code that only
+served them is deleted rather than left dormant so the next change does not
+have to reason about it. Tables are dropped worker-first: the Worker that no
+longer reads them deploys before the migration that drops them.
+
 ### 2026-10-18 — A rename is a version cause of its own
 
 **What changed:** WorkspaceDO migration 113 admits `renamed` in

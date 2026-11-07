@@ -26,8 +26,7 @@ import type { ConversationParentKind } from "@rally/contracts/conversation-paren
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { conversationObjectName } from "../durable-objects/agent-loop-do";
-import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
-import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
+import { substreamLoopId } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
 import { publishAccessRevocation } from "./access-revocation";
 import { loopActivationWasRecorded } from "../lib/loop-activation-signal";
@@ -38,13 +37,10 @@ import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting, conversationModelContext } from "./agent-model-flags";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import {
-  activityOriginLocator,
-  describeWorkstreamOrigin,
   resolveOriginResource,
   type OriginResourceDescriptor,
 } from "./workstream-origin-resource";
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
-import { activityIsWorkspaceVisible } from "../lib/activity-visibility";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createMessageObjectPort } from "../runtime/message-port";
@@ -116,14 +112,6 @@ type CreateMessageInput = z.infer<typeof CreateMessageRequestSchema> & {
   expectedToolInvocationId?: string;
 };
 type AnswerElicitationInput = z.infer<typeof AnswerElicitationRequestSchema>;
-/**
- * How many of a suggestion's connector sources become attachments. A batched
- * opportunity can be built from a run of related events, and the rail is a
- * reading surface before it is an index; the cap is generous against what
- * admission actually produces and is stated in
- * `docs/workstream-origin-attachments.md` rather than left to be discovered.
- */
-const MAX_OPPORTUNITY_ORIGIN_RESOURCES = 8;
 
 // Codes that reach the same member surface without being harness failure codes —
 // connector-layer and run-lifecycle outcomes.
@@ -671,55 +659,6 @@ export class WorkstreamService {
     return created;
   }
 
-  /**
-   * `audienceScope` is the suggestion's own audience, carried onto the work
-   * stream rather than left to the private default.
-   *
-   * A suggestion is shown before it is started, and a `workspace` one was shown
-   * to everybody: whoever presses start claims it, and every other member who
-   * was looking at it is answered `work_opportunity_already_claimed`. Landing
-   * that on `personal` would take the work away from the people Avalon had just
-   * offered it to — the same mistake as reading a public channel's thread as one
-   * person's. A `personal` suggestion was only ever shown to its owner and stays
-   * theirs.
-   */
-  async createFromOpportunity(input: {
-    opportunityId: string;
-    version: number;
-    displayPrompt: string;
-    executionPrompt: string;
-    displayPromptHash: string;
-    executionPromptHash: string;
-    idempotencyKey: string;
-    audienceScope: Scope;
-  }) {
-    const originResourceIds = await this.resolveDurableOpportunityOriginResources(input.opportunityId);
-    return new WorkstreamObjectCreationService(this.env, this.auth, this.defer).create({
-      objective: input.displayPrompt,
-      openingMessage: input.executionPrompt,
-      clientMessageId: `opportunity:${input.opportunityId}:v${input.version}`,
-      participantUserIds: [],
-      attachmentIds: [],
-      descriptionSource: "derived",
-      scope: input.audienceScope,
-    }, {
-      openingStructuredContent: {
-        kind: "suggested_work_expansion",
-        label: "Expanded by Avalon from suggested work",
-        opportunityId: input.opportunityId,
-        opportunityVersion: input.version,
-      },
-      opportunitySnapshot: {
-        opportunityId: input.opportunityId,
-        version: input.version,
-        displayPromptHash: input.displayPromptHash,
-        executionPromptHash: input.executionPromptHash,
-      },
-      originResourceIds,
-      reason: "work_opportunity",
-    });
-  }
-
   private async requireSidekickParticipant(id: string, substreamId: string): Promise<void> {
     const participants = await createIdentityObjectPort(this.env, this.auth.workspaceId, id, undefined, substreamId).participants();
     if (!participants.some((person) => person.user_id === this.auth.userId)) {
@@ -983,65 +922,6 @@ export class WorkstreamService {
     }
   }
 
-  /**
-   * Resolve WorkspaceDO-owned provenance before initialize starts the first run.
-   *
-   * AgentLoopDO enqueues the Workflow inside the initialize RPC, so attaching
-   * these after creation would race the run's first context read. WorkspaceDO
-   * returns only roots visible to this member; this second check deliberately
-   * keeps restricted connector objects out of a workspace-visible resource list.
-   */
-  private async resolveDurableOpportunityOriginResources(opportunityId: string): Promise<string[]> {
-    try {
-      const workspace = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.WORKSPACE_DOS,
-        this.auth.workspaceId,
-        workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
-      );
-      const events = WorkspaceOpportunityOriginEventsResultSchema.parse(
-        await workspace.opportunityOriginEvents({
-          workspaceId: this.auth.workspaceId,
-          userId: this.auth.userId,
-          opportunityId,
-          now: nowIso(),
-          limit: MAX_OPPORTUNITY_ORIGIN_RESOURCES,
-        }),
-      );
-      const resourceIds: string[] = [];
-      for (const event of events) {
-        const activity = event.activity;
-        if (!activityIsWorkspaceVisible({
-          connection_scope: activity.connectionScope,
-          connection_owner_user_id: activity.connectionOwnerUserId,
-          target_user_ids_json: JSON.stringify(activity.targetUserIds),
-          visibility_json: JSON.stringify(activity.visibility),
-        })) continue;
-        const descriptor = await describeWorkstreamOrigin(this.env, {
-          connectorType: event.connectorType,
-          connectionId: activity.connectionId,
-          provider: activity.provider,
-          locator: activityOriginLocator({
-            resource_type: activity.resourceType,
-            provider_resource_id: activity.providerResourceId,
-            title: activity.title,
-            metadata_json: JSON.stringify(activity.metadata),
-          }),
-        });
-        if (!descriptor) continue;
-        const resourceId = await resolveOriginResource(this.env, this.auth.workspaceId, descriptor);
-        if (resourceId && !resourceIds.includes(resourceId)) resourceIds.push(resourceId);
-      }
-      return resourceIds;
-    } catch (error) {
-      logWarn(this.env, "workstream_opportunity_origin_resolve_failed", {
-        workspace_id: this.auth.workspaceId,
-        opportunity_id: opportunityId,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-      return [];
-    }
-  }
 }
 
 export const __workstreamServiceTesting = {
