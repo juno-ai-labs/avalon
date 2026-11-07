@@ -7950,6 +7950,37 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return admission.auth;
   }
 
+  /**
+   * The whole committed transcript as room-visible text, for an operator, with
+   * the identity this object holds so the caller can confirm it read the
+   * conversation it addressed. The same `conversationAsText` the transcript
+   * range reader formats with, over every committed turn; no viewer and no
+   * authorization, because the only caller is the operator dump that runs
+   * before a Thread is retired (`services/thread-retirement-service.ts`). An
+   * object with no identity row never held a conversation and answers empty.
+   */
+  async conversationTranscriptText(): Promise<{
+    identity: { workspaceId: string; parentKind: string; parentId: string; substreamId: string } | null;
+    throughSequence: number;
+    text: string;
+  }> {
+    await this.storageReady;
+    const identity = this.objectStore.identity();
+    const throughSequence = this.transcript.transcriptThrough();
+    const range = this.transcript.range(
+      { snapshotId: "operator-dump", snapshotThrough: throughSequence, snapshotAtUtc: new Date().toISOString() },
+      { startInclusive: 1, endExclusive: throughSequence + 1 }, "requested", false,
+    );
+    return {
+      identity: identity ? {
+        workspaceId: identity.workspaceId, parentKind: identity.parentKind, parentId: identity.parentId,
+        substreamId: this.externalSubstreamId(),
+      } : null,
+      throughSequence,
+      text: conversationAsText(range.turns),
+    };
+  }
+
   /** Content-free operator inventory, including retired conversations. */
   async meetingRetirementInventory(resourceIds: string[] = []) {
     await this.storageReady;

@@ -23,6 +23,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     createThread: vi.fn<EngineeringInspectionRpcBinding["createThread"]>(),
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
+    dumpThreadTranscripts: vi.fn<EngineeringInspectionRpcBinding["dumpThreadTranscripts"]>(),
     retireOrg: vi.fn<EngineeringInspectionRpcBinding["retireOrg"]>(),
     readChannel: vi.fn<EngineeringInspectionRpcBinding["readChannel"]>(),
     readConversation: vi.fn<EngineeringInspectionRpcBinding["readConversation"]>(),
@@ -230,6 +231,37 @@ describe("Rally engineering MCP tools", () => {
     expect(tools.find((entry) => entry.name === "retire_org")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
   });
 
+  it("routes dump_thread_transcripts to the Organization's region only when confirm names it", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
+    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
+    vi.mocked(enterprise.dumpThreadTranscripts).mockResolvedValue({ region: "enterprise", orgId, conversations: 3, dumped: 2, skipped: 1,
+      failed: [{ parentKind: "workstream", parentId: "thread-1", substreamId: "0", error: "thread_transcript_identity_mismatch" }] });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+
+    const refused = await rpc(env, "tools/call", { name: "dump_thread_transcripts", arguments: { orgId, confirm: "00000000-0000-7000-8000-000000000ef9" } });
+    expect(refused.result).toMatchObject({ isError: true, content: [{ type: "text", text: "confirm must equal orgId; nothing was changed" }] });
+    expect(enterprise.resolveWorkspace).not.toHaveBeenCalled();
+
+    const response = await rpc(env, "tools/call", { name: "dump_thread_transcripts", arguments: { orgId, confirm: orgId } });
+    expect(response.result).not.toHaveProperty("isError", true);
+    expect(JSON.parse((response.result as { content: Array<{ text: string }> }).content[0]!.text)).toEqual({
+      region: "enterprise", orgId, conversations: 3, dumped: 2, skipped: 1,
+      failed: [{ parentKind: "workstream", parentId: "thread-1", substreamId: "0", error: "thread_transcript_identity_mismatch" }],
+    });
+    expect(enterprise.dumpThreadTranscripts).toHaveBeenCalledExactlyOnceWith({ orgId, confirm: orgId }, principal);
+    expect(global.dumpThreadTranscripts).not.toHaveBeenCalled();
+  });
+
+  it("publishes dump_thread_transcripts as an idempotent write that takes a confirmation", async () => {
+    const response = await rpc(testEnv(), "tools/list");
+    const tool = (response.result as { tools: Array<{ name: string; inputSchema: { required?: string[] }; annotations?: Record<string, boolean> }> })
+      .tools.find((item) => item.name === "dump_thread_transcripts");
+    expect(tool?.inputSchema.required).toEqual(["orgId", "confirm"]);
+    expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
+  });
+
   it("sends Organization creation to only the named region", async () => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
@@ -304,6 +336,7 @@ describe("Rally engineering MCP tools", () => {
       "pause_sidekick",
       "resume_sidekick",
       "retire_org",
+      "dump_thread_transcripts",
       "read_channel",
       "read_thread",
       "read_breakout",
