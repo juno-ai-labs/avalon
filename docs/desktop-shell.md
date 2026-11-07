@@ -21,7 +21,7 @@ routes the shell serves, or who owns the right panel.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/App.tsx` | `WorkspaceApp` and its routes: `/` (the landing), `/canvases`, `/canvases/:id`, `/sidekicks`, `/sidekicks/new`, `/sidekicks/:id`, `/automations/:id`, `/settings`, `/opening`, and the redirects of the removed routes. |
-| `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: the restorable `last-route`, else `/canvases`. `LANDING_ROUTE`, `restorableRoute`, `useOpenLanding`. |
+| `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: the restorable `last-route`, else `/canvases`, once onboarding is finished. `LANDING_ROUTE`, `restorableRoute`, `RESTORED_ROUTE`, `useRestoredRouteFallback`, `useOpenLanding`. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the rail (Canvases, Sidekicks), the account menu under it, the list's header and its actions, and the phone sheet; `useSectionCounts`, the rail's counts the dock badge adds up. |
@@ -117,6 +117,18 @@ when that is a Canvas, a Sidekick or either home (`restorableRoute`), and
 otherwise opens `/canvases`. The app shell writes `last-route` on every
 navigation to such a route. A screen that leaves because what it showed is gone
 uses `useOpenLanding`, which replaces the entry so Back cannot return to it.
+
+The landing restores nothing while onboarding is pending: it waits on the same
+conversation-admission context the onboarding gates set
+([`new-user-onboarding.md`](new-user-onboarding.md)), and draws an opening
+state until both journeys are known to be finished. Finishing onboarding lands
+on `/canvases` itself. A restored route carries `RESTORED_ROUTE` as its
+`location.state`, and the Sidekick and Canvas screens read it through
+`useRestoredRouteFallback`: when the object answers 404 on a restored route,
+the screen replaces itself with its section home (`/sidekicks` or `/canvases`)
+and logs one `restored_route_not_found` line, with no dialog. The same 404 on a
+route someone opened deliberately (a click, a link) still raises the screen's
+**could not be opened** notice.
 
 The removed surfaces' routes, `/channels/*`, `/spaces/*`, `/workstreams/*`,
 `/projects/*`, `/activity` and `/artifacts`, redirect to `/canvases`, so a
@@ -245,6 +257,10 @@ panel of the pane it was clicked in, once.
   the scope comparison is in each close path of `conversation-surface.tsx`.
 - **One link listener, however many hosts.** Two listeners open a link twice,
   as two browser tabs. Guard: `lib/browser-rail-links.test.ts`.
+- **A restore never interrupts.** No stored route is applied before onboarding
+  has finished, and a restored object that is gone falls back to its section
+  home without a dialog; a dialog is for something the person just asked to
+  open. Guard: `screens/landing.test.tsx`.
 - **A removed route never draws a dead screen.** Stored and linked addresses of
   removed surfaces redirect to `/canvases`. Guard: `App.session-gate.test.tsx`,
   `screens/landing.test.tsx`.
@@ -268,8 +284,11 @@ It does not own:
 
 - **No restorable route:** a device that saved none, or saved a route of a
   removed surface, lands on `/canvases`.
-- **A saved Canvas that is gone:** the landing reopens it and the Canvas screen
-  shows its unavailable state ([`canvases.md`](canvases.md)).
+- **A saved Canvas or Sidekick that is gone:** the landing reopens it, the
+  object answers 404, and the screen falls back to `/canvases` or `/sidekicks`
+  with a `restored_route_not_found` warning in the renderer log. A 403 is not
+  treated as gone and still shows the screen's unavailable state
+  ([`canvases.md`](canvases.md)).
 - **Lists not yet delivered:** both lists draw placeholder rows and both tiles
   count nothing until the workspace socket answers.
 
@@ -286,6 +305,30 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-07 — A restored route waits for onboarding and falls back silently
+
+**What changed:** The landing applies no stored `last-route` until
+conversation admission says onboarding is finished, and opens a restored route
+with `RESTORED_ROUTE` state. The Sidekick and Canvas screens, on a 404 for a
+restored route, replace themselves with their section home and log
+`restored_route_not_found` instead of raising **could not be opened**.
+
+**Why:** A real-window pass after a fresh `db:migrate && db:seed` showed
+"Sidekick could not be opened / This Sidekick does not exist" over the "This is
+you in Rally" onboarding screen. The `last-route` from an earlier database named
+a Sidekick that no longer existed; the landing restored it while the journey
+was still loading (the gate renders the workspace until it knows the journey is
+unfinished), the Sidekick screen published its error to the window's notice
+queue, and the queue outlived the screen once onboarding replaced it. A dialog
+is for an open the person just asked for; a restore is the app's own guess.
+Admission was reused rather than adding an onboarding flag because it already
+composes both onboarding gates and means exactly "the workspace may be used".
+
+**Consequences:** Only a 404 counts as gone; a 403 still shows the screen's
+error, since access can come back. A new restorable route kind (beyond Canvas
+and Sidekick) needs its screen to call `useRestoredRouteFallback`, or a stale
+one will raise a dialog at launch.
 
 ### 2026-11-07 — The shell becomes Canvases and Sidekicks; Channels, Threads and Breakouts are deleted
 

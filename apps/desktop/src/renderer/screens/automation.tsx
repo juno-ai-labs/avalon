@@ -12,6 +12,7 @@ import { AutomationHeader, type AutomationHeaderAction } from '../components/aut
 import { Button, EmptyState, OpeningState } from '../components/primitives';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { copyLink } from '../lib/copy-link';
+import { useRestoredRouteFallback } from '../lib/landing';
 import { ConversationSurface } from './conversation-surface';
 import { SidekickDelegation, useSidekickDelegates } from '../components/sidekick-delegation';
 
@@ -108,6 +109,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
     enabled: Boolean(api),
     staleTime: 5_000,
   });
+  const leaving = useRestoredRouteFallback(automation.error, '/sidekicks');
   const runs = useQuery({
     queryKey: ['automation-runs', id],
     queryFn: ({ signal }) => api!.getAutomationRuns(id, signal),
@@ -176,6 +178,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
     queue.current = result.catch(() => undefined);
     return result;
   };
+  if (leaving) return <OpeningState label="Opening Sidekicks…" />;
   if (automation.error) {
     return (
       <div className="screen-error-state screen-with-titlebar">
