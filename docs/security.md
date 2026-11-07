@@ -1202,29 +1202,27 @@ receive no application bridge. See
 
 ## Changelog
 
-### 2026-11-07 — Only the main window may capture audio
+### 2026-11-07 — Only the main window may capture audio, and the iOS client's boundary is gone
 
 **What changed:** `allowsTrustedAudioCapture` admits the main window alone,
 the realtime socket broker no longer admits a Sidekicks window, and the
 trusted-sender set loses it. `system:open-sidekicks` is replaced by
 `system:open-sidekick`, which parses a bare id (`parseRouteId`) before it
-becomes a deep link.
+becomes a deep link. `apps/ios` is gone, so the Keychain session store and the
+iOS entitlements are no longer part of the trust model.
 
-**Why:** Plan step B-2 of the
+**Why:** Plan steps B-2 and B-9 of the
 [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-removed the separate Sidekicks window; every composer is now in the main
-window, so the grant the 2026-10-24 entry added for the second window has no
-window to apply to.
+removed the separate Sidekicks window and the iOS client; every composer is
+now in the main window, so the grant the 2026-10-24 entry added for the
+second window has no window to apply to.
 
 **Consequences:** A new window that hosts a composer needs adding here
-explicitly; nothing else may record.
+explicitly; nothing else may record. The desktop `avalon-desktop` audience and
+the `ai.rallywith.ios` push topic the iOS client reused stay in server code
+with no iOS client using them.
 
-### 2026-11-06 — The iOS client and its Keychain boundary are deleted
-
-`apps/ios` is gone, so the Keychain session store and the iOS entitlements are no
-longer part of the trust model; the desktop `avalon-desktop` audience and the
-`ai.rallywith.ios` push topic it reused stay in server code until a later phase
-removes them ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)).
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-03 — Cross-origin requests reach a site anonymously, not refused
 
