@@ -14,8 +14,8 @@ export interface MemoryFacts extends MemoryFactsState {
 }
 
 /**
- * Reads one scope's remembered facts and removes one: the person's own, the
- * Organization's, a Channel's, or a Thread's or Breakout's. Every review
+ * Reads one scope's remembered facts and removes one: the person's own or the
+ * Organization's. Every review
  * surface goes through this, so a removal behaves the same everywhere: the row
  * leaves the cache on success, a 404 is treated as already removed (by another
  * window, or by the agent), and any other refusal stays on its row. Each fact

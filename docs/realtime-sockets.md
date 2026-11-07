@@ -343,102 +343,21 @@ matched connection there is the Organization's, and otherwise only to the
 owners of the personal ones. A matched connection with no owner counts as
 the Organization's. `activity` goes to the whole Organization.
 
-Electron sends `list_workstreams` with a stable request ID, bounded limit,
-optional opaque `(access_or_creation_time, workstream_id)` cursor, and the system-row preference. WorkspaceDO responds
-with `workspace_workstream_page`, the directory waterline, each row's independent
-common/viewer waterlines plus the corresponding UUIDv7 row identities, parsed work-stream rows,
-and the next cursor. Pending page requests survive a transient reconnect
-and reject only when the provider is disposed or the user/session changes. A
-`workstream_directory` sync invalidation refetches these pages; it never asks a
-REST/D1 list endpoint to reconstruct them.
+**Retired: Thread and Channel listing.** `list_workstreams`
+(`workspace_workstream_page`), `space_channels` (`workspace_space_channels`),
+`channel_rails` (`workspace_channel_rails`) and the foreground-visit
+`workspace_workstream_recency` frame listed Threads and Channels, which the
+Canvases and Sidekicks pivot removed. WorkspaceDO ignores the three commands
+(no client sends them; a reply would only name what no longer exists), and the
+sidebar's `workstreams` page is always empty until the contract drops it.
 
-A member's desktop loads its Channel rows a Space at a time. Once the Space
-hierarchy is whole, the sidebar that answers a member's `subscribe` carries
-every Space the viewer can see and no Channel rows, and says
-`channelsBySpace: true`.
-The desktop asks each Space with `space_channels`: a stable request ID, the
-`spaceId`, optionally `after` (the previous answer's `nextAfter`), and `rails`,
-whether to send rails with the rows. WorkspaceDO answers with one
-`workspace_space_channels` frame. It holds a page of up to 250 of the Space's
-Channels this viewer may see, in id order, as directory rows with their state
-versions. Each row carries its breakouts (`privateChildren`), so one answer is
-the Space's children and grandchildren. It also holds as many of those
-Channels' rails as fit the frame beside the rows. `nextAfter` is the page's
-last Channel when the page is full, and `null` when the Space ends there. A
-Space the viewer cannot see gets an empty page; a guest's pages hold what the
-listing rules give them ([`listing-rules.md`](listing-rules.md)). System Channels
-are left off, as the connect page leaves them off.
-
-The desktop walks every Space. It asks the Space on screen alone (else the
-first Space of the Channel in front). Once that Space's first page is in, it
-asks every other Space at once: the rest of the Space list, then archived
-Spaces. Pages within one Space follow each other, since each asks after the
-last. WorkspaceDO answers one request at a time either way, so asking together
-saves a round trip per Space rather than server work. It asks for rails unless
-it already holds one for every Channel it knows in that Space. Each page is
-written as it lands, so the Space on screen paints before the walk is over. A
-Space put on screen that no walk has returned, such as one created since the
-last walk, is asked for on its own; a walk running then reaches it itself. When the walk
-ends, a row held before it that no Space returned is dropped. A reconnect
-walks every Space again, and every Space counts as loading until the walk has
-returned it.
-
-A `workstream_directory` invalidation does not walk every Space. It is
-published to every socket in the Organization, for one person's pin as much as
-for a Channel moving between Spaces, so a whole walk there would make every
-desktop ask every Space at once. The desktop asks the Space on screen again,
-and marks every other loaded Space to be asked again when it next comes on
-screen. That re-read writes rows and drops none: a Channel that left a Space
-arrives as a pushed row, and the next reconnect's whole walk is what retires
-anything else.
-
-A Space whose request fails shows the rows held for it and is asked again
-when it next comes on screen. A whole walk that fails leaves the directory
-query in error, and the sidebar stops waiting on the Spaces it did not reach.
-
-A guest's socket is shaped by the same rules as a member's
-([`listing-rules.md`](listing-rules.md)), with Organization-wide scope admitting
-only members. The connect snapshot, `list_workstreams`, `workspace_workstream_state`
-frames, `channel_rails` and `set_presence` all ask whether this person may list
-the Channel, so a guest is sent nothing of an Organization-wide Channel they are
-not in, not even a tombstone, and foregrounding one closes the socket as it
-would a member's. `set_presence` also admits a Canvas id as the foreground
-conversation, when the viewer may open that Canvas by its audience
-([`canvases.md`](canvases.md#presence)); one they may not open is kept out of
-presence the same way. A guest is sent no automations: the Sidekick library is a
+A guest's socket is shaped by the same rules as a member's, with
+Organization-wide scope admitting only members. The Canvas list and
+`set_presence` ask whether this person may open the Canvas by its audience
+([`canvases.md`](canvases.md#presence)), so a guest is sent no Canvas they are
+not on, and one they may not open is kept out of presence (recorded as no
+Canvas, not a close). A guest is sent no Sidekicks: the Sidekick library is a
 member's.
-
-The sidebar keeps the first page, and the desktop keeps `list_workstreams`
-paging, while **an Organization is still opening** (`spacesReady` false). A
-Channel can sit in no Space there, and the page is the only way it reaches the
-sidebar.
-
-Electron asks for Channel rails with `channel_rails`: a stable request ID and
-up to 250 named Channels (`workstreamIds`). The retired Space target
-(`spaceId`, `after`), which desktops 1.467.0 and 1.468.0 still send, is
-answered with one empty final frame, since refusing it would close their
-socket. Each
-Channel row carries `railWaterline`; a held rail is stale once a row's passes
-it. The desktop asks for stale rails by name, in order: the Channel in front,
-then its Spaces, then the other Spaces, then Channels in no Space. Rails
-mostly arrive with their Space's rows, so what is left is the rails that moved
-since, or did not fit beside their rows.
-
-WorkspaceDO answers with `workspace_channel_rails` frames, each at most
-`WORKSTREAM_REALTIME_MAX_FRAME_BYTES` by encoded length, the last one `final`:
-the rails that fit, `oversized` for a rail that fits no frame or fails its
-schema (the client paints that Channel from its snapshot), and `unavailable`
-for a named Channel the viewer is not sent a row for. Named Channels span as
-many frames as they need. Every frame carries `nextAfter: null`, a leftover of
-the Space target that desktops from before its removal still require. The rail
-itself is
-[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)'s.
-
-A validated foreground visit persists this user's access time and sends
-`workspace_workstream_recency` only to their subscribed sessions. This contains
-one workstream, its state version, and the directory waterline; system rows are
-included when visited. A cursor whose timestamp differs from its current row
-restarts at page one, so a pre-upgrade activity cursor cannot silently skip rows.
 
 Subscribing is answered with the sidebar itself. The `workspace_sync` event that
 answers `subscribe` carries a `sidebar` field: one `workstream_page` body plus
@@ -1021,6 +940,20 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-11-07 — The workspace socket stops listing Threads and Channels
+
+**What changed:** `list_workstreams`, `space_channels` and `channel_rails` are
+ignored, the sidebar's `workstreams` page is always empty, and Channel rows,
+rails, recency and the Channel directory frames are no longer sent; the guest
+rules apply to the Canvas list and presence alone.
+
+**Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+deleted the Channel directory these frames read, and no client asks for them
+after B-1 to B-6. Ignoring a command rather than refusing it keeps an old
+desktop's socket open: a refusal there is a permanent close. The empty page
+stays only until the contract drops `workstreams` from the sidebar, so an
+older renderer still parses the subscribe answer.
 
 ### 2026-11-07 — The Channel control socket's Worker half is gone
 

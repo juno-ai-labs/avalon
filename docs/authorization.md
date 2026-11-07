@@ -557,6 +557,23 @@ after the experiment. Pair these results with mutation-to-write-ack queue events
 
 ## Changelog
 
+### 2026-11-07 — A conversation's read is answered by its Canvas or Sidekick alone
+
+**What changed:** `AuthorizationBatch` no longer asks a Thread parent's
+`readAuthorizationFacts` before the hosted parent: every conversation is a
+Canvas's or a Sidekick's, and its parent answers in one call. A resource's
+`sharedThrough` (the Channel a merge shared it with) and its second policy are
+gone.
+
+**Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+deleted the Thread and Channel hosts these branches read. Asking a parent that
+no longer exists first cost a Durable Object round trip on every read for an
+answer that was always "absent", and a merge, the only writer of a Channel
+share, is gone.
+
+**Consequences:** A resource is readable through the conversation that holds
+it and nothing else. Evidence carries the hosted parent's `validatedAt` alone.
+
 ### 2026-11-07 — A Canvas is decided by its own audience, through one rule with a Sidekick's
 
 **What changed:** A conversation whose parent is a Canvas, and an artifact
