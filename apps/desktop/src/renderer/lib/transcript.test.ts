@@ -564,14 +564,14 @@ describe('canonical transcript and transient overlay composition', () => {
     const second = canonicalText('canonical-2', 2, base.createdAt);
 
     expect(() => composeTranscript([second, first], []))
-      .toThrow('Rally received an invalid transcript order. Reopen this thread.');
+      .toThrow('Rally received an invalid transcript order. Reopen this conversation.');
   });
 
   it('refuses a canonical row with no durable transcript position', () => {
     const unpositioned = createTextMessage({ ...base, id: 'unpositioned', text: 'Ambiguous' });
 
     expect(() => composeTranscript([unpositioned], []))
-      .toThrow('Rally received an invalid transcript order. Reopen this thread.');
+      .toThrow('Rally received an invalid transcript order. Reopen this conversation.');
   });
 
   it('preserves overlay and message identity when a reveal tick changes nothing', () => {
