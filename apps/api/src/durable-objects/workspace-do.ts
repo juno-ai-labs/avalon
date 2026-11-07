@@ -9409,7 +9409,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * relationship, each through its `admissionAddress`. Asked once per Channel,
    * inside this object.
    */
-  private async reachableConversations<T extends { parentId: string; substreamId: string; readable: boolean; archived: boolean }>(
+  private async reachableConversations<T extends {
+    parentKind?: string; parentId: string; substreamId: string; readable: boolean; archived: boolean;
+  }>(
     workspaceId: string,
     scope: ConversationToolScope,
     scoped: readonly T[],
@@ -9418,12 +9420,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const relationship = await this.readRelationship(workspaceId, userId);
     if (relationship?.status !== "active") return [];
     const unarchived = scoped.filter((conversation) => !conversation.archived);
-    if (!this.hostedParentSchemaPresent()) return [];
+    // A Sidekick's own conversation is the Sidekick's to admit, never a
+    // Channel's: asking `hostedParent` about its id would open a Channel there.
+    const sidekickReadable = new Set<string>();
+    for (const conversation of unarchived) {
+      if (conversation.parentKind !== "automation") continue;
+      const admission = await this.conversationToolAdmission(workspaceId, conversation, userId);
+      if (admission.authorized && !admission.archived) sidekickReadable.add(conversation.parentId);
+    }
+    if (!this.hostedParentSchemaPresent()) {
+      return unarchived.filter((conversation) => conversation.parentKind === "automation"
+        && sidekickReadable.has(conversation.parentId));
+    }
     const readable = new Map<string, ReadonlySet<string>>();
-    for (const parentId of new Set(unarchived.map((conversation) => conversation.parentId))) {
+    for (const parentId of new Set(unarchived.flatMap((conversation) =>
+      conversation.parentKind === "automation" ? [] : [conversation.parentId]))) {
       readable.set(parentId, new Set((await this.hostedParent(parentId)).readableSubstreams(asUserId(userId), relationship)));
     }
     return unarchived.filter((conversation) => {
+      if (conversation.parentKind === "automation") return sidekickReadable.has(conversation.parentId);
       const admitted = admissionAddress(scope, conversation);
       return readable.get(admitted.parentId)?.has(admitted.substreamId) === true;
     });

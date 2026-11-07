@@ -418,7 +418,11 @@ describe("a Sidekick's home conversation", () => {
       .toEqual({ owningWorkstreamId: ROOM_ID, owningSubstreamId: breakout });
     const listed = await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
       scope: sidekickScope() });
+    // The Sidekick's own conversation, admitted by the Sidekick, comes first; its id is the Sidekick's.
     expect(listed.conversations).toEqual([{
+      conversationId: AUTOMATION_ID, parentId: AUTOMATION_ID, substreamId: "0",
+      kind: "sidekick", title: "Weekly call prep", isHome: false, isOwn: false, isParent: true,
+    }, {
       conversationId: `${ROOM_ID}/${breakout}`, parentId: ROOM_ID, substreamId: breakout,
       kind: "breakout", title: "Weekly call", isHome: true, isOwn: false, isParent: false,
     }]);
@@ -620,7 +624,7 @@ describe("attaching a conversation to a Sidekick", () => {
 
     // The author can open Founders, but the Sidekick is not attached to it.
     expect(await resolve(OTHER_ROOM_ID))
-      .toEqual({ ok: false, code: "conversation_not_in_scope", available: [ROOM_ID], resourceId: null });
+      .toEqual({ ok: false, code: "conversation_not_in_scope", available: [AUTOMATION_ID, ROOM_ID], resourceId: null });
     await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
     expect(await resolve("Founders")).toMatchObject({ ok: true, conversation: { conversationId: OTHER_ROOM_ID } });
@@ -635,7 +639,7 @@ describe("a conversation tool's scope", () => {
       userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: `${ROOM_ID}/${breakout}` });
     const listed = async () => (await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID, scope: sidekickScope() })).conversations.map((entry) => entry.conversationId);
-    expect(await listed()).toEqual([ROOM_ID, `${ROOM_ID}/${breakout}`]);
+    expect(await listed()).toEqual([AUTOMATION_ID, ROOM_ID, `${ROOM_ID}/${breakout}`]);
 
     // The author adds someone, then leaves; the Breakout goes on without them.
     await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
@@ -648,7 +652,7 @@ describe("a conversation tool's scope", () => {
     // participant_notification this suite's D1 has no tables to deliver.
     await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, breakout));
 
-    expect(await listed()).toEqual([ROOM_ID]);
+    expect(await listed()).toEqual([AUTOMATION_ID, ROOM_ID]);
     expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
       scope: sidekickScope(), reference: `${ROOM_ID}/${breakout}` }))
       .toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: breakout });
@@ -685,7 +689,7 @@ describe("a conversation tool's scope", () => {
     await deliverEffectsToWorkspace(TEST_ENV, conversation(OTHER_ROOM_ID));
 
     expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      scope: sidekickScope() })).conversations.map((entry) => entry.conversationId)).toEqual([ROOM_ID]);
+      scope: sidekickScope() })).conversations.map((entry) => entry.conversationId)).toEqual([AUTOMATION_ID, ROOM_ID]);
     expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
       scope: sidekickScope(), reference: OTHER_ROOM_ID }))
       .toEqual({ ok: false, code: "conversation_archived", available: [], resourceId: OTHER_ROOM_ID });

@@ -29,17 +29,24 @@ import type { ConversationToolScope } from "./workspace-conversation-tool-protoc
  * which the caller runs before a read or a post.
  */
 
-/** A Rally conversation: a Channel's Main (`"0"`) or one of its Breakouts. */
+/**
+ * A Rally conversation: a Channel's Main (`"0"`) or one of its Breakouts
+ * (parent kind `workstream`), or a Sidekick's own shared conversation (parent
+ * kind `automation`, substream `"0"`, whose conversation id is the
+ * Sidekick's). A later parent kind, a Canvas's, joins this union the same way.
+ */
 export interface ConversationAddress {
-  parentKind: "workstream";
+  parentKind: "workstream" | "automation";
   parentId: string;
   substreamId: string;
 }
 
+/** A Thread or Breakout address, the only kind the directories describe and a Sidekick attaches. */
+export type WorkstreamAddress = ConversationAddress & { parentKind: "workstream" };
 
 export interface ScopedConversation extends ConversationAddress {
   conversationId: string;
-  kind: "channel" | "breakout";
+  kind: "channel" | "breakout" | "sidekick";
   title: string;
   isHome: boolean;
   isOwn: boolean;
@@ -71,7 +78,7 @@ export function conversationIdOf(address: Pick<ConversationAddress, "parentId" |
 }
 
 /** The inverse of {@link conversationIdOf}; null for anything that is not one. */
-export function parseConversationId(value: string): ConversationAddress | null {
+export function parseConversationId(value: string): WorkstreamAddress | null {
   const [parentId, substreamId, extra] = value.trim().split("/");
   if (extra !== undefined || !parentId || !UUID.test(parentId)) return null;
   if (substreamId === undefined) return { parentKind: "workstream", parentId: parentId.toLowerCase(), substreamId: "0" };
@@ -142,7 +149,7 @@ function describeConversations(
 }
 
 /** A Sidekick's home, or null for one no room owns (or one that was deleted). */
-export function sidekickHome(sql: SqlStorage, automationId: string): ConversationAddress | null {
+export function sidekickHome(sql: SqlStorage, automationId: string): WorkstreamAddress | null {
   const row = sql.exec<{ owning_workstream_id: string | null; owning_substream_id: string }>(
     `SELECT owning_workstream_id, owning_substream_id FROM automation_directory
       WHERE automation_id = ? AND lifecycle <> 'deleted'`,
@@ -152,11 +159,13 @@ export function sidekickHome(sql: SqlStorage, automationId: string): Conversatio
   return { parentKind: "workstream", parentId: row.owning_workstream_id, substreamId: row.owning_substream_id };
 }
 
-function sidekickExists(sql: SqlStorage, automationId: string): boolean {
-  return sql.exec(
-    `SELECT 1 FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+/** A Sidekick's title, or null for one that does not exist or was deleted. */
+function sidekickTitle(sql: SqlStorage, automationId: string): string | null {
+  const row = sql.exec<{ title: string }>(
+    `SELECT title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
     automationId,
-  ).toArray().length > 0;
+  ).toArray()[0];
+  return row ? row.title || "New Sidekick" : null;
 }
 
 /**
@@ -202,7 +211,13 @@ export function scopeConversations(
         isHome: false, isOwn: false, isParent: false });
     }
   } else {
-    if (!sidekickExists(sql, scope.automationId)) return [];
+    const sidekick = sidekickTitle(sql, scope.automationId);
+    if (sidekick === null) return [];
+    // The Sidekick's own conversation comes first: the wizard's own, the one a
+    // run sits inside, and where a post goes when it names no conversation.
+    // Its admission is the Sidekick's (`authorizeViewer`), never the directories'.
+    addresses.push({ parentKind: "automation", parentId: scope.automationId, substreamId: "0",
+      isHome: false, isOwn: scope.authoring === true, isParent: scope.authoring !== true });
     const home = sidekickHome(sql, scope.automationId);
     if (home) addresses.push({ ...home, isHome: true, isOwn: false, isParent: false });
     for (const row of sql.exec<{ parent_id: string; substream_id: string }>(
@@ -215,10 +230,12 @@ export function scopeConversations(
         isHome: false, isOwn: false, isParent: false });
     }
   }
-  const descriptions = describeConversations(sql, addresses, userId);
+  const descriptions = describeConversations(sql, addresses.filter((address) => address.parentKind === "workstream"), userId);
   const scoped: ScopedConversation[] = [];
   for (const address of addresses) {
-    const facts = descriptions.get(conversationIdOf(address));
+    const facts = address.parentKind === "automation"
+      ? { kind: "sidekick" as const, title: sidekickTitle(sql, address.parentId) ?? "", archived: false, readable: true }
+      : descriptions.get(conversationIdOf(address));
     if (!facts) continue;
     scoped.push({ ...address, conversationId: conversationIdOf(address), ...facts });
   }
@@ -277,7 +294,7 @@ export function matchConversationReference<T extends { conversationId: string; t
   return { outcome: "missing" };
 }
 
-interface TitledConversation extends ConversationAddress, DirectoryFacts {
+interface TitledConversation extends WorkstreamAddress, DirectoryFacts {
   conversationId: string;
 }
 
@@ -307,7 +324,7 @@ export function conversationsTitled(sql: SqlStorage, title: string, userId: stri
   ).toArray();
   const found: TitledConversation[] = [];
   for (const row of rows) {
-    const address: ConversationAddress = { parentKind: "workstream", parentId: row.workstream_id, substreamId: row.substream_id };
+    const address: WorkstreamAddress = { parentKind: "workstream", parentId: row.workstream_id, substreamId: row.substream_id };
     const facts = describeConversation(sql, address, userId);
     if (facts) found.push({ ...address, ...facts, conversationId: conversationIdOf(address) });
   }
