@@ -587,10 +587,10 @@ that, and nothing here is to grow a second one.
 
 Losing access to *one conversation* is a different fact, held in its parent's
 SQL: narrowing a Canvas's audience backgrounds the presence of anyone it no
-longer admits, and `AgentLoopDO` closes a feed socket when an event narrows
-visibility. These read no D1 and add no round trip. Without them a reader
-excluded by an audience change keeps receiving the live transcript until the
-window closes, which can be days.
+longer admits and drops the Canvas from their list, reading no D1. It does not
+close their open feed socket, which keeps receiving the live transcript until
+it reconnects; [`access-revocation.md`](access-revocation.md#known-gaps)
+records that gap.
 
 Both socket roles use short-lived, audience-specific, single-use tickets. The
 edge Worker verifies the signed ticket and passes only verified headers to the
