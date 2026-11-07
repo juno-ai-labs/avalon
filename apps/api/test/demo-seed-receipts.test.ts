@@ -54,11 +54,10 @@ function receipt(overrides: Partial<DemoSeedReceipt> = {}): DemoSeedReceipt {
     operationId: OPERATION_ID,
     actionId: "memo-open",
     workspaceId: WORKSPACE_ID,
-    kind: "create_workstream",
-    room: "decision-memo",
-    workstreamId: "00000000-0000-7000-8000-0000000000f1",
-    substream: null,
-    substreamId: "0",
+    kind: "create_canvas",
+    canvas: "decision-memo",
+    canvasId: "00000000-0000-7000-8000-0000000000f1",
+    sidekick: null,
     sidekickId: null,
     sidekickRunId: null,
     turnId: "00000000-0000-7000-8000-0000000000f2",
@@ -102,44 +101,65 @@ describe("demo seed receipts", () => {
     }))).rejects.toThrow(/FOREIGN KEY/u);
   });
 
-  it("refuses an outcome the seeder cannot have confirmed", async () => {
+  it("refuses an outcome the seeder cannot have confirmed, and a kind the pack no longer has", async () => {
     const db = await claimed();
     await expect(recordDemoSeedReceipt(db, receipt({
       runOutcome: "failed" as DemoSeedReceipt["runOutcome"],
     }))).rejects.toThrow(/CHECK/u);
+    await expect(recordDemoSeedReceipt(db, receipt({
+      actionId: "thread-open",
+      kind: "create_workstream" as DemoSeedReceipt["kind"],
+    }))).rejects.toThrow(/CHECK/u);
   });
 
-  it("records a Sidekick, which has no room, and refuses one that claims a room anyway", async () => {
+  it("records a Sidekick with the Canvas its run wrote, and refuses each mode's action naming the other's destination", async () => {
     const db = await claimed();
+    const sidekickId = await demoSeedSidekickId(OPERATION_ID, "morning-briefing");
     const sidekick = await recordDemoSeedReceipt(db, receipt({
       actionId: "morning-briefing",
       kind: "sidekick",
-      room: null,
-      workstreamId: null,
-      // In no room, so in no conversation either.
-      substreamId: null,
-      sidekickId: await demoSeedSidekickId(OPERATION_ID, "morning-briefing"),
+      canvas: null,
+      // The Canvas its run wrote.
+      canvasId: "00000000-0000-7000-8000-0000000000fc",
+      sidekick: "briefing",
+      sidekickId,
       sidekickRunId: "00000000-0000-7000-8000-0000000000fa",
       turnId: null,
-      harnessRunId: null,
       runOutcome: "completed",
     }));
-    expect(sidekick.sidekickId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    expect(sidekick.canvasId).toBe("00000000-0000-7000-8000-0000000000fc");
+    const message = await recordDemoSeedReceipt(db, receipt({
+      actionId: "briefing-reply",
+      kind: "sidekick_message",
+      canvas: null,
+      canvasId: null,
+      sidekick: "briefing",
+      sidekickId,
+      harnessRunId: null,
+      runOutcome: null,
+    }));
+    expect(message.sidekick).toBe("briefing");
 
-    // A Sidekick belongs to no room, and a row that names one is a receipt the
-    // barrier would go looking for a work stream behind.
+    // A Sidekick named by a Canvas key would be found by a later Canvas step.
     await expect(recordDemoSeedReceipt(db, receipt({
       actionId: "misfiled-briefing",
       kind: "sidekick",
-      room: "decision-memo",
+      sidekick: "other",
       sidekickId: "00000000-0000-7000-8000-0000000000fb",
     }))).rejects.toThrow(/CHECK/u);
-
-    // And the other way: a room action that names no work stream.
+    // A message in a Sidekick's conversation is in no Canvas.
     await expect(recordDemoSeedReceipt(db, receipt({
-      actionId: "roomless-message",
-      kind: "message",
-      workstreamId: null,
+      actionId: "misfiled-reply",
+      kind: "sidekick_message",
+      canvas: null,
+      sidekick: "briefing",
+      sidekickId,
+    }))).rejects.toThrow(/CHECK/u);
+    // And a Canvas action that names no Canvas.
+    await expect(recordDemoSeedReceipt(db, receipt({
+      actionId: "canvasless-message",
+      kind: "canvas_message",
+      canvasId: null,
     }))).rejects.toThrow(/CHECK/u);
   });
 });
