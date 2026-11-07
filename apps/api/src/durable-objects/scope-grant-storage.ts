@@ -15,12 +15,6 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { z } from "zod";
 import { ScheduledAlarmStore } from "./scheduled-alarms";
 
-/** SQL counterpart of current-membership grant validity in resolveScopedAccess.
- * Callers use these fixed aliases and load the relationship before synchronous reads. */
-export const CURRENT_MEMBER_GRANT_SQL = `json_extract(grant_row.grant_json, '$.active') = 1
-  AND relationship.active = 1 AND json_extract(relationship.relationship_json, '$.status') = 'active'
-  AND json_extract(grant_row.grant_json, '$.membershipIncarnation') = json_extract(relationship.relationship_json, '$.incarnation')`;
-
 /** A Thread roster frozen for import into its parent's grants. */
 export const ParticipantTransferSnapshotSchema = z.strictObject({
   transferId: IdSchema,

@@ -109,18 +109,10 @@ export const WORKSPACE_LOCAL_TABLES = [
   // one would mean every directory publish failing after its bytes had already
   // landed in the bucket.
   "artifact_registry",
-  // The digest domain reaches these through typed WorkspaceDO methods now.
-  // One routed statement remains — the settings read that joins
-  // `digest_delivery_targets` to `connector_connections` for display names —
-  // and the entries stay regardless, so an accidental generic statement is
-  // routed to the object that has the tables rather than answered
-  // `no such table` by D1.
+  // Emptied and kept by WorkspaceDO migration 147: `schedules` still names it
+  // in a foreign key. Routed so an accidental statement reaches the object.
   "digest_schedules",
-  "digest_schedule_times",
-  "digest_delivery_targets",
-  "digest_deliveries",
-  // Shared: digest-owned rows are written through the typed digest methods,
-  // while the workspace scheduler and the connector-poll paths still route
+  // Shared: the workspace scheduler and the connector-poll paths still route
   // their statements here.
   "schedules",
   "resources",
@@ -143,11 +135,8 @@ export const WORKSPACE_LOCAL_TABLES = [
   // rather than falling through to regional D1 as a misleading `no such table`.
   // Whether the object then refuses it or executes it depends on
   // `WORKSPACE_TYPED_RPC_ONLY_TABLES` over there: the notification-intent and
-  // transcription tables are named in that list and are refused; the pin and
-  // work-stream-email tables are not, and still execute.
+  // transcription tables are named in that list and are refused.
   "workstream_notification_intents",
-  "workspace_workstream_pins",
-  "workstream_email_receipts",
   "realtime_transcription_ticket_receipts",
   "realtime_transcription_sessions",
   // Impersonation authority is reachable only through typed WorkspaceDO RPC.
