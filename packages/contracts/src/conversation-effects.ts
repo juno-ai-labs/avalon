@@ -2,7 +2,6 @@ import { ScopeGrantSchema } from "./scope-grants";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
 import { WorkstreamAppearanceSchema } from "./workstream-appearance";
-import { ConversationParentKindSchema } from "./conversation-parent";
 import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema } from "./identifiers";
 import { ResourceRelationshipTypeSchema } from "./resource-relationships";
 import { HttpUrlSchema } from "./url-schemas";
@@ -277,12 +276,23 @@ function requireViewerVersionForNotifications(
 }
 
 /** One child's versioned effect, addressed to its parent. */
+/**
+ * The parent kind an effect envelope may carry: the hosted Canvas and Sidekick
+ * and the retired Thread (`workstream`) and Space. Wider than
+ * `ConversationParentKindSchema` on purpose: an effect from a retired parent
+ * must still parse at the Queue boundary so its receiver refuses it by name
+ * (`conversation_parent_kind_retired:<kind>`) and it retries to the
+ * dead-letter queue. A retired parent's effect is a defect to find, not
+ * traffic to drop (docs/hosted-conversation-parents.md).
+ */
+export const EffectParentKindSchema = z.enum(["workstream", "automation", "space", "canvas"]);
+
 export const ConversationEffectEnvelopeSchema = z.strictObject({
   kind: z.literal("conversation_effect"),
   contractVersion: z.literal(1),
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
-  parentKind: ConversationParentKindSchema,
+  parentKind: EffectParentKindSchema,
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
   generation: z.number().int().positive(),
@@ -301,7 +311,7 @@ export const ParentEffectEnvelopeSchema = z.strictObject({
   contractVersion: z.literal(1),
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
-  parentKind: ConversationParentKindSchema,
+  parentKind: EffectParentKindSchema,
   parentId: IdSchema,
   /**
    * Which conversation under this parent the effect is about, on the one class

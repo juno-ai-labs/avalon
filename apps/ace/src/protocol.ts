@@ -59,8 +59,8 @@ export const MANAGED_MODELS = [
     rankReason: 'Core path · every main run',
     role: 'workstream',
     key: 'agent-model-workstream',
-    label: 'Work-stream agent',
-    description: 'Runs the main participant-visible work stream and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.',
+    label: 'Conversation agent',
+    description: 'Runs a Canvas\'s Chat or a Sidekick\'s conversation and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.',
     defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
@@ -69,7 +69,7 @@ export const MANAGED_MODELS = [
     role: 'inline_child',
     key: 'agent-model-inline-child',
     label: 'Inline subagent',
-    description: 'Runs a bounded read-only child task delegated by a work-stream agent and returns the result to its parent.',
+    description: 'Runs a bounded read-only child task delegated by a Canvas chat\'s or Sidekick conversation\'s agent and returns the result to its parent.',
     defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
   },
 
@@ -79,8 +79,8 @@ export const MANAGED_MODELS = [
     role: 'workstream_naming',
     key: 'agent-model-workstream-naming',
     label: 'Pasted-text naming',
-    description: 'Titles a block of pasted text as it becomes an attachment, while the person who pasted waits. The role keeps its Thread-era name because it is a Flagship key.',
-    defaultRouting: { model: 'openai/gpt-5.6-terra', fallbackModels: ['google/gemini-3.8-flash'] },
+    description: 'Titles a long pasted text from its contents, so the attachment chip has a name.',
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
     rank: 4,
@@ -88,7 +88,7 @@ export const MANAGED_MODELS = [
     role: 'memory_sweep',
     key: 'agent-model-memory-sweep',
     label: 'Memory sweep',
-    description: 'Reads a window of a Thread, Breakout or Sidekick conversation after it settles and decides which facts Rally should remember, revise or retract; the judgment is what a colleague would need later, so it runs on a strong model.',
+    description: 'Reads a window of a Canvas or Sidekick conversation after it settles and decides which facts Rally should remember, revise or retract; the judgment is what a colleague would need later, so it runs on a strong model.',
     defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {

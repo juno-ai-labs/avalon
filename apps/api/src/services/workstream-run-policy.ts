@@ -1,10 +1,12 @@
 const WORKSTREAM_MAX_MODEL_ITERATIONS = 1_000;
 
-export function workstreamRunLimits(maxWallClockMs = Number.POSITIVE_INFINITY, elapsedMs = 0) {
-  return {
-    maxIterations: WORKSTREAM_MAX_MODEL_ITERATIONS,
-    ...(Number.isFinite(maxWallClockMs) ? { maxWallClockMs: Math.max(0, maxWallClockMs - elapsedMs) } : {}),
-  };
+/**
+ * A run's limits: its model iterations only. Root runs have no wall clock and
+ * keep renewing their execution lease; the one run-wide wall clock, for a
+ * browser import, retired with session import.
+ */
+export function workstreamRunLimits(): { maxIterations: number } {
+  return { maxIterations: WORKSTREAM_MAX_MODEL_ITERATIONS };
 }
 
 /**
