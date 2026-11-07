@@ -281,15 +281,13 @@ export const WorkspaceSlackThreadReleaseRequestSchema = deferredZodSchema(() => 
 }));
 
 /**
- * The App Home context and feedback Rally keeps per Slack user.
+ * The App Home context Rally keeps per Slack user.
  *
  * `slack_agent_contexts` is keyed `(connection_id, slack_user_id)` and carries
  * no `workspace_id` of its own — the workspace is how the caller found the
  * object, not a column. Its requests still take `workspaceId` so the object can
  * assert the caller reached the right one, exactly as every other method here.
  */
-const SlackFeedbackRatingSchema = z.enum(["helpful", "needs_improvement"]);
-
 export const WorkspaceSlackContextRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
@@ -307,32 +305,6 @@ export const WorkspaceSlackContextStoreRequestSchema = deferredZodSchema(() => z
   contextJson: z.string().min(1),
   at: TimestampSchema,
 }));
-
-/**
- * One feedback row per ingress job.
- *
- * `ingress_job_id` is `UNIQUE`, so a redelivered interaction is a replay rather
- * than an error. The statement this replaced already ignored the conflict and
- * was right to; what it could not do was say which case it had hit, because it
- * discarded the result. The witness makes the replay reportable, which is the
- * only thing a caller can usefully do with it.
- */
-export const WorkspaceSlackFeedbackRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  feedbackId: z.string().min(1),
-  ingressJobId: z.string().min(1),
-  workstreamId: IdSchema,
-  userId: IdSchema,
-  connectionId: z.string().min(1),
-  rating: SlackFeedbackRatingSchema,
-  comment: z.string().nullable(),
-  at: TimestampSchema,
-}));
-
-export const WorkspaceSlackFeedbackResultSchema = deferredZodSchema(() => z.discriminatedUnion("outcome", [
-  z.strictObject({ outcome: z.literal("recorded") }),
-  z.strictObject({ outcome: z.literal("replayed") }),
-]));
 
 export type WorkspaceSlackIngressEnqueueRequest = z.infer<typeof WorkspaceSlackIngressEnqueueRequestSchema>;
 export type WorkspaceSlackIngressEnqueueResult = z.infer<typeof WorkspaceSlackIngressEnqueueResultSchema>;
@@ -358,5 +330,3 @@ export type WorkspaceSlackThreadReleaseRequest = z.infer<typeof WorkspaceSlackTh
 export type WorkspaceSlackContextRequest = z.infer<typeof WorkspaceSlackContextRequestSchema>;
 export type WorkspaceSlackContextResult = z.infer<typeof WorkspaceSlackContextResultSchema>;
 export type WorkspaceSlackContextStoreRequest = z.infer<typeof WorkspaceSlackContextStoreRequestSchema>;
-export type WorkspaceSlackFeedbackRequest = z.infer<typeof WorkspaceSlackFeedbackRequestSchema>;
-export type WorkspaceSlackFeedbackResult = z.infer<typeof WorkspaceSlackFeedbackResultSchema>;

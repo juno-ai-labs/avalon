@@ -796,7 +796,7 @@ describe("the activity Queue consumer's effect legs", () => {
     }
   });
 
-  it("acknowledges a late Thread parent's mention or directory row by name, and records nothing", async () => {
+  it("acknowledges a late mention or directory row under a current parent kind by name, and records nothing", async () => {
     // Only the retired Thread host sent a `parent_effect` of these kinds; a
     // hosted parent records a mention where its conversation's effect lands.
     const database = seedAuthority();

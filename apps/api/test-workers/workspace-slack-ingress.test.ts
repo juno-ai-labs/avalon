@@ -3,8 +3,7 @@
 /**
  * The Slack ingress spine against the object that holds it: job admission and
  * its dedupe, the claim lease, settlement fencing, the exhaustion episode, the
- * maintenance sweep, thread claims, pending prompts, App Home context, and
- * feedback.
+ * maintenance sweep, thread claims, pending prompts, and App Home context.
  *
  * These are claim shapes, so what real workerd proves here is exactly what a
  * Node double cannot: the insert-or-report decision and the fail-and-check
@@ -34,7 +33,6 @@ import {
   WorkspaceSlackIngressSettleResultSchema,
   WorkspaceSlackIngressSweepResultSchema,
   WorkspaceSlackContextResultSchema,
-  WorkspaceSlackFeedbackResultSchema,
   WorkspaceSlackPendingPromptResultSchema,
   WorkspaceSlackThreadClaimResultSchema,
   WorkspaceSlackThreadRoutableResultSchema,
@@ -123,7 +121,6 @@ beforeEach(async () => {
     state.storage.sql.exec(`DELETE FROM slack_agent_thread_claims`);
     state.storage.sql.exec(`DELETE FROM slack_agent_feedback`);
     state.storage.sql.exec(`DELETE FROM slack_agent_contexts`);
-    state.storage.sql.exec(`DELETE FROM slack_agent_sessions`);
     state.storage.sql.exec(`DELETE FROM external_conversation_bindings`);
     state.storage.sql.exec(`DELETE FROM slack_link_challenges`);
     state.storage.sql.exec(`DELETE FROM slack_ingress_jobs`);
@@ -517,22 +514,8 @@ describe("workspace fencing", () => {
   });
 });
 
-/**
- * The agent-session lifecycle, on the object that now holds it.
- *
- * What real workerd proves past a Node double: the seating read and its write
- * are one `transactionSync`, so the previous assignment each session travelled
- * back with was read inside the critical section that moved it; the reaction
- * compare-and-set decides `settled` from a `RETURNING` witness against an `IS`
- * predicate, so NULL — Rally has placed nothing — is a state it can match;
- * the feedback insert's `ON CONFLICT … DO NOTHING RETURNING` distinguishes a
- * redelivery from a write; and the foreign key to `connector_connections` is
- * enforced rather than assumed.
- */
-describe("Slack App Home context and feedback", () => {
-  const WORKSTREAM = "00000000-0000-7000-8000-0000000c1d20";
-  const MEMBER = "00000000-0000-7000-8000-0000000c1d30";
-
+/** The App Home context, stored wholesale per Slack user on an installation. */
+describe("Slack App Home context", () => {
   it("keeps one App Home context per Slack user on an installation", async () => {
     const read = (slackUserId: string) => workspace().slackAppContext({
       workspaceId: WORKSPACE_ID,
@@ -560,31 +543,5 @@ describe("Slack App Home context and feedback", () => {
     expect(await read("U1")).toEqual({ contextJson: JSON.stringify({ view: "tasks" }) });
     // Another Slack user on the same installation is a different row.
     expect(await read("U2")).toEqual({ contextJson: null });
-  });
-
-  it("records feedback once per ingress job and reports a redelivery as a replay", async () => {
-    const record = (input: { feedbackId: string; rating: "helpful" | "needs_improvement" }) =>
-      workspace().recordSlackFeedback({
-        workspaceId: WORKSPACE_ID,
-        feedbackId: input.feedbackId,
-        ingressJobId: "interaction:Iv1",
-        workstreamId: WORKSTREAM,
-        userId: MEMBER,
-        connectionId: CONNECTION,
-        rating: input.rating,
-        comment: null,
-        at: at(0),
-      }).then((result) => WorkspaceSlackFeedbackResultSchema.parse(result));
-
-    expect(await record({ feedbackId: "feedback-1", rating: "helpful" })).toEqual({ outcome: "recorded" });
-    // Slack redelivers the interaction; the second write is not a failure, and
-    // it does not overwrite what the member actually said.
-    expect(await record({ feedbackId: "feedback-2", rating: "needs_improvement" }))
-      .toEqual({ outcome: "replayed" });
-    const stored = await runInDurableObject(workspace(), (_instance, state) =>
-      state.storage.sql.exec<{ id: string; rating: string }>(
-        `SELECT id, rating FROM slack_agent_feedback`,
-      ).toArray());
-    expect(stored).toEqual([{ id: "feedback-1", rating: "helpful" }]);
   });
 });

@@ -608,12 +608,9 @@ import {
   type WorkspaceSlackThreadRoutableResult,
   WorkspaceSlackContextRequestSchema,
   WorkspaceSlackContextStoreRequestSchema,
-  WorkspaceSlackFeedbackRequestSchema,
   type WorkspaceSlackContextRequest,
   type WorkspaceSlackContextResult,
   type WorkspaceSlackContextStoreRequest,
-  type WorkspaceSlackFeedbackRequest,
-  type WorkspaceSlackFeedbackResult,
 } from "./workspace-slack-protocol";
 import {
   claimWorkspaceSlackIngressJob,
@@ -629,7 +626,6 @@ import {
   sweepWorkspaceSlackIngress,
   workspaceSlackPendingPrompt,
   workspaceSlackThreadRoutable,
-  recordWorkspaceSlackFeedback,
   storeWorkspaceSlackContext,
   workspaceSlackContext,
 } from "./workspace-slack-storage";
@@ -5552,7 +5548,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       writeRegistrations: (automationId, evaluators) => this.writeSidekickRegistrations(automationId, evaluators),
       reconcileRegistrations: (automationId, evaluators) => {
         const request = ExternalEventRegistrationProjectionV1Schema.parse({ schemaVersion: 1, workspaceId: this.workspaceId(),
-          destination: { kind: "automation", automationId }, sourceGeneration: 1, evaluators });
+          destination: { kind: "automation", automationId }, evaluators });
         this.replaceExternalEventRegistrationRows(request, `automation:${automationId}`, Date.now(), true);
       },
       afterRegistrations: (automationId, revision, evaluators) => this.afterSidekickRegistrations(automationId, revision, evaluators),
@@ -5801,10 +5797,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private writeSidekickRegistrations(automationId: string, evaluators: readonly unknown[]): number {
     const workspaceId = this.workspaceId();
     if (!workspaceId) throw new Error("workspace_identity_unknown");
-    // A source generation, though none is fenced on: with one, each row keeps
-    // its evaluator's id, which is what an admitted event names.
     const request = ExternalEventRegistrationProjectionV1Schema.parse({
-      schemaVersion: 1, workspaceId, destination: { kind: "automation", automationId }, sourceGeneration: 1, evaluators,
+      schemaVersion: 1, workspaceId, destination: { kind: "automation", automationId }, evaluators,
     });
     const destinationKey = `automation:${automationId}`;
     return this.replaceExternalEventRegistrationRows(request, destinationKey, Date.now()).effectiveAfterEventSequence;
@@ -7621,8 +7615,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            connection_id = excluded.connection_id, connector_type = excluded.connector_type,
            event_type = excluded.event_type, resource_id = excluded.resource_id, evaluator_json = excluded.evaluator_json,
            updated_at = excluded.updated_at`,
-        // A hosted Sidekick's writes always carry a source generation, so each
-        // row keeps its evaluator's id, which is what an admitted event names.
+        // Each row keeps its evaluator's id, which is what an admitted event names.
         evaluator.evaluatorId,
         destinationKey,
         request.workspaceId,
@@ -7633,16 +7626,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         evaluator.source.resourceId ?? null,
         JSON.stringify(evaluator),
         destinationKind,
-        destinationKind === "automation" ? request.destination.automationId : null,
-        destinationKind === "workstream_resource_update" ? request.destination.workstreamId : null,
-        destinationKind === "workstream_resource_update" ? request.destination.substreamId : null,
-        destinationKind === "workstream_resource_update" ? request.destination.resourceId : null,
+        request.destination.automationId,
+        null,
+        null,
+        null,
         now,
         now,
       );
     }
     for (const evaluator of changed) {
-      if (evaluator.source.connectorType !== "canva" || destinationKind !== "automation") continue;
+      if (evaluator.source.connectorType !== "canva") continue;
       if (!evaluator.source.resourceId) throw new Error("canva_trigger_requires_design");
       const resource = this.state.storage.sql.exec<{ id: string }>(
         "SELECT id FROM resources WHERE id = ? AND connection_id = ? AND provider = 'canva' AND resource_type = 'canva_design'",
@@ -10074,10 +10067,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * The App Home context Rally keeps for one Slack user on one connection.
    *
-   * Neither `slack_agent_contexts` nor `slack_agent_feedback` is an alarm
-   * source, so these mutations deliberately do **not** call
-   * `refreshScheduleAfterSlackWrite`: a table that gains an alarm target
-   * needs the refresh back.
+   * `slack_agent_contexts` is not an alarm source, so its write deliberately
+   * does **not** call `refreshScheduleAfterSlackWrite`: a table that gains an
+   * alarm target needs the refresh back.
    */
   async slackAppContext(
     input: WorkspaceSlackContextRequest,
@@ -10096,16 +10088,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceSlackContextStoreRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     storeWorkspaceSlackContext(this.state.storage, request);
-  }
-
-  /** Record one feedback submission, or report that its job already had one. */
-  async recordSlackFeedback(
-    input: WorkspaceSlackFeedbackRequest,
-  ): Promise<WorkspaceSlackFeedbackResult> {
-    await this.initialized;
-    const request = WorkspaceSlackFeedbackRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return recordWorkspaceSlackFeedback(this.state.storage, request);
   }
 
   private externalBindings(): ExternalConversationBindingStorage {

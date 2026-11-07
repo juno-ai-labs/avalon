@@ -283,6 +283,43 @@ version ledger.
 
 ## Changelog
 
+### 2026-11-07 — A hosted parent records its conversations' mentions and adds
+
+**What changed:** `HostedConversation.applyChildEnvelope` records a
+`mention_notification` or `participant_notification` effect as a notification
+intent in the transaction that writes its receipt, and `receiveChildEffects`
+answers `{ accepted, notificationIntentIds }`; the activity consumer delivers
+each intent it names. The `parent_effect` apply path the Thread host fed
+(`applyWorkstreamRegionalEffect` in the consumer, the service and `WorkspaceDO`,
+and `workspace-regional-effect-storage.ts`) is deleted: nothing has sent a
+`parent_effect` since the Thread retirement. A late one from a retired Thread
+or Space parent is refused as `conversation_parent_kind_retired:<kind>` and
+dead-letters; one under a current parent kind is acknowledged as
+`parent_effect_producer_retired`. `notificationDirectoryState` reads the
+recipient through `readRelationship`, so a member the Organization object had
+not yet heard of is no longer read as nobody.
+
+**Why:** The [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+keeps push for a mention in a Canvas's Chat or a Sidekick's conversation.
+`applyChildEnvelope` receipted every kind but applied only the directory ones,
+so no intent was written and nothing was sent; the one path that recorded
+intents was reached only from the Thread host's `parent_outbox`. The delivery
+tests seeded intent rows directly, so none of them saw it. The membership read
+surfaced in the same end-to-end test: a Sidekick's admission never reads the
+relationship, so an Organization-wide Sidekick's mention was skipped as
+`recipient_not_listable`.
+
+**Considered and rejected:** Rerouting the conversation's notification effects
+through a `parent_effect` the parent would publish: a second Queue hop and an
+outbox for a row the parent can write in the transaction it already holds.
+Checking the recipient's membership before recording, as the Thread path did:
+delivery reads it again as it is then, so the first read only decided whether a
+row existed.
+
+**Consequences:** A new hosted kind records mentions without doing anything.
+`workspace_workstream_effect_receipts` is no longer written or read, and can
+be dropped with the other Thread-era tables.
+
 ### 2026-11-07 — One hosting primitive for a Sidekick and a Canvas; the Channel and Space host is deleted
 
 **What changed:** The conversation-parent contract a Sidekick answered —

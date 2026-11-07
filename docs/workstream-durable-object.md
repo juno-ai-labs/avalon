@@ -1100,11 +1100,15 @@ AgentLoopDO SQLite product transaction
        conversation_effect -> parent.receiveChildEffects({substreamId, envelopes})
          -> Canvas or Sidekick (WorkspaceDO, HostedConversation): receipt +
             child projection, and for "0" each reader's read, one transaction;
-            a Sidekick also moves the run row; nothing is forwarded
-       parent_effect -> WorkspaceDO.applyWorkstreamRegionalEffect:
-            receipt + a workstream_notification_intents row for an active
-            member's mention or add; an activity_event is receipted and
-            stored nowhere. No producer sends a parent_effect now.
+            a Sidekick also moves the run row; a mention_notification or
+            participant_notification becomes a pending
+            workstream_notification_intents row; nothing is forwarded
+         -> consumer: processWorkstreamNotificationIntent for each intent the
+            parent names (push, Slack, email as the person chose)
+       parent_effect -> retired Thread or Space parent: refused as
+            conversation_parent_kind_retired:<kind>, dead-letters;
+            current kind: acknowledged as parent_effect_producer_retired
+            (a scope_grant_directory row aside). No producer sends one now.
 ```
 
 **Known gap: a conversation's mention and add effects reach no intent.** A
