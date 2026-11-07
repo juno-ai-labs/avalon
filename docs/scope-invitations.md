@@ -204,9 +204,12 @@ Whoever's claim created a guest relationship publishes it right away, rather
 than waiting for the cron sweep: the sharing route for a claim made as the share
 was created, and the claim service for one made at sign-in.
 
-The email's link is the conversation's own address,
-`<browser origin>/app/workspaces/<region>/<workspace>/workstreams/<channel>` with
-`/substreams/<id>` for a child share. It carries nothing a holder could present,
+The email's link is the Canvas's canonical link on the web app,
+`<browser origin>/app/<region>/<organization-base58>/cv/<canvas-base58>/`
+([`links.md`](links.md)), which hands it to the desktop app from there. A
+share of a Thread, still possible server-side until the Thread routes go, has
+no link form and links to its Organization's shell,
+`<browser origin>/app/workspaces/<region>/<workspace>`. Either carries nothing a holder could present,
 so a forwarded copy opens a sign-in page and nothing more. Signing in with the
 right address lands in the conversation; any other address finds no access.
 Only one deployment exists today; if a second one serves Organizations, an
@@ -526,6 +529,19 @@ handoff against real Main and child agents, including refusal to transfer for a
 nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
+
+### 2026-11-07 — A Canvas invitation links to the Canvas
+
+**What changed:** A Canvas share's email carries the Canvas's canonical link
+(`/cv/`) instead of the addressed Channel path; a Thread share's carries its
+Organization's shell.
+
+**Why:** The Thread link forms were deleted in plan step B-5 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md), and a Canvas share was sending
+a Thread-shaped address the web app no longer opens.
+
+**Consequences:** The service tells a Canvas from a Thread by the `parent`
+argument a Canvas host passes; a new kind of shared parent passes its own link.
 
 ### 2026-11-07 — A Canvas is shared through the same invitations
 

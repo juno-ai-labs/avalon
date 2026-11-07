@@ -251,7 +251,7 @@ the Slack product surface, the ingress, or the registration:
 | --- | --- |
 | Lifecycle, data handling, App Home, user linking, acceptance | [`slack-integration.md`](slack-integration.md) |
 | The registration itself and its regional routing | [`provider-apps.md`](provider-apps.md) |
-| The unfurl card and its audience rules | [`workstream-links.md`](workstream-links.md) |
+| The unfurl card and its audience rules | [`links.md`](links.md) |
 | Connector scope kinds, capabilities, and health semantics | [`connectors.md`](connectors.md) |
 | Why a stored status is not a gate | [`connectors.md`](connectors.md#stored-status-is-a-belief-not-a-gate) |
 
