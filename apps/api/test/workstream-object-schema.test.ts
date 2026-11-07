@@ -145,6 +145,7 @@ const EXPECTED_TABLES = [
   "runs",
   "sidekick_attachments",
   "sidekick_execution_skills",
+  "sidekick_run_rows",
   "sidekick_skill_names",
   "substream_agent_identity",
   "substream_context_captures",
