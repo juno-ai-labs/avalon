@@ -570,6 +570,9 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
     ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
     updatedAt: automation.updatedAt,
+    ...(automation.unread === undefined ? {} : { unread: automation.unread }),
+    ...(automation.needsInput === undefined ? {} : { needsInput: automation.needsInput }),
+    ...(automation.pinnedPosition === undefined ? {} : { pinnedPosition: automation.pinnedPosition }),
   };
 }
 

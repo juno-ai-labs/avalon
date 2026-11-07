@@ -8,6 +8,7 @@ import {
   WorkspaceSpaceConversationsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
   WorkspaceNavigationStateEventSchema,
+  WorkspaceCanvasListEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceFeatureFlagsEventSchema,
@@ -666,6 +667,7 @@ export function WorkspaceSocketProvider({
           sidebar.automations.waterline,
           sidebar.automations.items.map(mapAutomationSummary),
         );
+        if (sidebar.canvases) applyVersionedSidebarList(queryClient, 'canvases', sidebar.canvases.waterline, sidebar.canvases.items);
         if (sidebar.spaces) {
           applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true, sidebar.pinnedOrder, { pins: sidebar.pins, artifactPins: sidebar.artifactPins, channelStats: sidebar.channelStats });
         }
@@ -696,6 +698,7 @@ export function WorkspaceSocketProvider({
         sidebar.automations.waterline,
         sidebar.automations.items.map(mapAutomationSummary),
       );
+      if (sidebar.canvases) applyVersionedSidebarList(queryClient, 'canvases', sidebar.canvases.waterline, sidebar.canvases.items);
       // `spacesReady` is optional on the wire and read as ready when absent:
       // a payload from a server that predates the cutover describes an
       // Organization that was never going to open, not one still opening.
@@ -1333,6 +1336,11 @@ export function WorkspaceSocketProvider({
               if (!applied.visible) void queryClient.invalidateQueries({ queryKey: MY_THREADS_QUERY_KEY });
             }
             scheduleRailPrefetch();
+            return;
+          }
+          const canvasList = safeParseSocketEvent(WorkspaceCanvasListEventSchema, decoded);
+          if (canvasList.success) {
+            applyVersionedSidebarList(queryClient, 'canvases', canvasList.data.waterline, canvasList.data.items);
             return;
           }
           const sidebarList = safeParseSocketEvent(WorkspaceSidebarListEventSchema, decoded);
