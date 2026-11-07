@@ -41,7 +41,6 @@ The rest:
 | `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
 | `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the conversation's read-only pill applies to an id the closed set does not admit. |
 | `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a work stream or substream being started, and the locked pill inside one that already exists. |
-| `apps/api/src/services/substream-creation-service.ts` | Where a substream's pin is written, on the confirmation that creates it. See [`substream-creation.md`](substream-creation.md). |
 | `packages/db/src/index.ts`, `apps/api/src/durable-objects/workstream-object-product.ts` | Where compatibility reads and authoritative object reads re-validate a stored model pin before it reaches routing. |
 
 ### Why a flag rather than a Worker variable
@@ -186,7 +185,7 @@ in exactly the case somebody is looking at it.
 A pin comes from one place — the model selector in the composers that start work,
 which appears only while Application → Developer → **Debug enabled** is on. A new
 work stream carries the choice directly, and so does a new substream, through
-`POST …/substreams/confirm`; [`substream-creation.md`](substream-creation.md)
+`POST …/substreams/confirm`; `substream-creation.md` (retired)
 owns that half. An automation's pin is the
 `model_override` column on its `automation_directory` row; there is exactly one path
 that creates a run, `provisionSidekickRun`, which serves manual,

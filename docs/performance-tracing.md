@@ -33,7 +33,6 @@ necessarily keeps apart.
 | `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `inDurableObjectPhase`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place a Rally identifier becomes an attribute name. |
 | `apps/api/src/routes/workstreams.ts`, `routes/conversations.ts` | Root spans for work-stream creation/open/message flows and substream preparation/confirmation. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | The create path's steps — every awaited call between the receipt and the activated route. |
-| `apps/api/src/services/substream-creation-service.ts` | Named steps for parent authorization, preparation receipts, source capture, context transformation, child provisioning, context installation, opening admission, publication, and seating. |
 | `apps/api/src/services/socket-service.ts` | `SocketService.upgrade`: the edge half of a socket open. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The room: product operations, socket acceptance, subscription, snapshot assembly. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Workspace synchronization and the released-client compatibility handler for the former parent-routed `create_message`. |

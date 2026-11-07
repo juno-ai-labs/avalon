@@ -1,16 +1,13 @@
 import { RegionSchema } from "@rally/contracts/regions";
-import { asArtifactId, asSubstreamId, asWorkspaceId, SpaceDirectorySchema, SpaceChannelPageSchema, type SpaceDirectory, type SpaceChannelPage } from "@rally/contracts";
+import { asArtifactId, asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import {
   ArtifactInspectionInputSchema,
   ArtifactSqlInspectionInputSchema,
   D1SqlInspectionInputSchema,
   SendEngineeringMessageInputSchema,
   SendEngineeringMessageResultSchema,
-  ReadEngineeringChannelInputSchema,
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
-  ListEngineeringUserChannelsInputSchema,
-  ListEngineeringUserConversationsInputSchema,
   type SendEngineeringMessageResult,
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
@@ -27,13 +24,7 @@ import {
   type EngineeringTextResult,
   CreateEngineeringOrgInputSchema,
   CreateEngineeringOrgResultSchema,
-  CreateEngineeringChannelInputSchema,
-  CreateEngineeringChannelResultSchema,
-  CreateEngineeringThreadInputSchema,
-  CreateEngineeringThreadResultSchema,
   type CreateEngineeringOrgResult,
-  type CreateEngineeringChannelResult,
-  type CreateEngineeringThreadResult,
   EngineeringArtifactListLookupSchema,
   EngineeringOperatorSchema,
   EngineeringArtifactTargetLookupSchema,
@@ -99,8 +90,8 @@ import {
 import { parseRpcInput } from "./lib/rpc-contracts";
 import { ApiError, asApiError } from "./lib/api-error";
 import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
-import { createEngineeringOrg, createEngineeringChannel, createEngineeringThread } from "./services/engineering-creation";
-import { sendEngineeringMessage, readEngineeringChannel, readEngineeringConversation, listEngineeringUserChannels, listEngineeringUserConversations } from "./services/engineering-messages";
+import { createEngineeringOrg } from "./services/engineering-creation";
+import { sendEngineeringMessage, readEngineeringConversation } from "./services/engineering-messages";
 import { auditedEngineeringWrite } from "./services/engineering-audit";
 import { setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
 import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
@@ -264,17 +255,7 @@ async function resolveInspectionArtifactRoute(
  */
 export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
   implements EngineeringInspectionRpcBinding {
-  async listUserChannels(input: unknown): Promise<SpaceDirectory> {
-    return this.productOperation("listUserChannels", async () => SpaceDirectorySchema.parse(
-      await listEngineeringUserChannels(this.env, ListEngineeringUserChannelsInputSchema.parse(input)),
-    ));
-  }
 
-  async listUserConversations(input: unknown): Promise<SpaceChannelPage> {
-    return this.productOperation("listUserConversations", async () => SpaceChannelPageSchema.parse(
-      await listEngineeringUserConversations(this.env, ListEngineeringUserConversationsInputSchema.parse(input)),
-    ));
-  }
   async sendMessage(input: unknown, operator: unknown): Promise<SendEngineeringMessageResult> {
     return this.productOperation("sendMessage", async () => {
       const request = SendEngineeringMessageInputSchema.parse(input);
@@ -372,12 +353,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     return request;
   }
 
-  async readChannel(input: unknown): Promise<EngineeringTextResult> {
-    return this.productOperation("readChannel", async () => EngineeringTextResultSchema.parse(
-      await readEngineeringChannel(this.env, ReadEngineeringChannelInputSchema.parse(input)),
-    ));
-  }
-
   async readConversation(input: unknown): Promise<EngineeringTextResult> {
     return this.productOperation("readConversation", async () => EngineeringTextResultSchema.parse(
       await readEngineeringConversation(this.env, ReadEngineeringConversationInputSchema.parse(input)),
@@ -406,30 +381,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         operationId: request.operationId,
       }, async () => CreateEngineeringOrgResultSchema.parse(await createEngineeringOrg(this.env, request)),
       (result) => ({ orgId: result.orgId }));
-    });
-  }
-
-  async createChannel(input: unknown, operator: unknown): Promise<CreateEngineeringChannelResult> {
-    return this.productOperation("createChannel", async () => {
-      const request = CreateEngineeringChannelInputSchema.parse(input);
-      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
-        action: "create_channel", orgId: request.orgId, representedUserId: request.creatorUserId,
-        operationId: request.operationId,
-      }, async () => CreateEngineeringChannelResultSchema.parse(
-        await createEngineeringChannel(this.env, request, (work) => this.ctx.waitUntil(work))),
-      (result) => ({ channelId: result.channelId }));
-    });
-  }
-
-  async createThread(input: unknown, operator: unknown): Promise<CreateEngineeringThreadResult> {
-    return this.productOperation("createThread", async () => {
-      const request = CreateEngineeringThreadInputSchema.parse(input);
-      return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
-        action: "create_thread", orgId: request.orgId, representedUserId: request.creatorUserId,
-        operationId: request.operationId, threadId: request.operationId,
-      }, async () => CreateEngineeringThreadResultSchema.parse(
-        await createEngineeringThread(this.env, request, (work) => this.ctx.waitUntil(work))),
-      (result) => ({ threadId: result.threadId, turnId: result.turnId, harnessRunId: result.harnessRunId }));
     });
   }
 

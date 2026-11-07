@@ -1451,6 +1451,13 @@ Breakout, Activity, digest and suggested-work rows. Retired so far:
   `retired-workspace-schema.ts`, the home for statements whose module is gone;
   the colour triggers keep marking rows until C-7 drops their tables.
   `docs/thread-backfill.md` is deleted.
+- **Breakout creation.** `substream-creation-service.ts` and
+  `substream-context-summary.ts` (its one structured inference, and the
+  `substream-context-summary-policy` routing it used) had no caller after
+  C-1; `docs/substream-creation.md` is deleted. The engineering MCP's
+  `create_channel`, `create_thread`, `read_channel`, `list_channels`,
+  `list_threads` and `list_breakouts` go with the services they called
+  ([`engineering-mcp.md`](engineering-mcp.md)).
 
 **Why:** After the client cutover nothing shows a suggestion, a Thread or a
 Channel; the PRD's decision log removes them from the product. Code that only

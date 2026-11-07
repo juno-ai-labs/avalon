@@ -46,8 +46,7 @@ import { searchWorkspacePage, searchWorkspace } from '../src/services/workspace-
 import { seedParticipantMessage } from './helpers/substream-fixture';
 import { ConversationService } from "../src/services/conversation-service";
 import { WorkstreamService } from "../src/services/workstream-service";
-import { SubstreamCreationService } from "../src/services/substream-creation-service";
-import { readWorkspaceRelationship } from "../src/services/workspace-relationship-service";
+
 import { SocketService, verifySocketTicket } from "../src/services/socket-service";
 import {
   bootstrapConversationChildRuntime,
@@ -56,7 +55,7 @@ import {
 } from "../src/services/workstream-runtime-database";
 import { consumeEffectBodies, pendingChildEffects, deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub, listVisiblePrivateChildren, readSharedWorkstream } from "./helpers/hosted-parent";
+import { hostedParentStub, listVisiblePrivateChildren } from "./helpers/hosted-parent";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -1044,68 +1043,6 @@ describe("conversation parent contract", () => {
     } finally {
       socket.close(1000, "done");
     }
-  });
-
-  it("seats somebody who cannot read the work stream in its substream, and only there", async () => {
-    // A breakout's roster is its own. The person added reads the breakout, is
-    // listed it by the conversation directory, and gains neither Main nor a
-    // sibling breakout.
-    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
-    const parent = roomParent();
-    const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "outsider-child");
-    const siblingId = await seedPrivateChild(PERSONAL_ROOM_ID, "Sibling branch", "outsider-sibling");
-    await expect(new SubstreamCreationService(TEST_ENV, AUTH).changeParticipant(
-      PERSONAL_ROOM_ID, substreamId,
-      { userId: MEMBER_ID, operationId: "outsider-child-add" }, true,
-    )).resolves.toMatchObject({ outcome: "added" });
-    const viewer = (substream?: string) => parent.authorizeViewer({ workspaceId: WORKSPACE_ID,
-      parentId: PERSONAL_ROOM_ID, userId: MEMBER_ID, ...(substream ? { substreamId: asSubstreamId(substream) } : {}) });
-    expect(await viewer(substreamId)).toMatchObject({ authorized: true });
-    expect(await viewer()).toMatchObject({ authorized: false });
-    expect(await viewer(siblingId)).toMatchObject({ authorized: false });
-    const relationship = await readWorkspaceRelationship(env.DB, WORKSPACE_ID, MEMBER_ID);
-    const listed = await readSharedWorkstream(parent, { workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID,
-      userId: MEMBER_ID, membershipIncarnation: relationship!.incarnation });
-    expect(listed?.conversations.map((conversation) => conversation.substreamId)).toEqual([substreamId]);
-    // Search, artifacts and attachments ask the same question through the
-    // canonical access check, and get the same answer.
-    const access = createAccessContext(TEST_ENV, { ...AUTH, userId: MEMBER_ID });
-    const address = { kind: "conversation" as const, workspaceId: WORKSPACE_ID, parentId: PERSONAL_ROOM_ID };
-    expect(await access.check({ ...address, substreamId: asSubstreamId(substreamId) })).toMatchObject({ status: "allowed" });
-    expect(await access.check({ ...address, substreamId: asSubstreamId("0") })).toMatchObject({ status: "denied" });
-    expect(await access.check({ ...address, substreamId: asSubstreamId(siblingId) })).toMatchObject({ status: "denied" });
-    // Losing the work stream closes Main and what they cannot read, never the
-    // breakout their own roster still admits; a membership that ended closes all.
-    const revoked = (reason: "workstream_participant_removed" | "workspace_membership_removed") =>
-      parent.revokeParentSocketAccess({
-        parentId: PERSONAL_ROOM_ID,
-        revocation: { reason, workspaceId: WORKSPACE_ID, userId: MEMBER_ID, sessionId: null },
-      });
-    expect((await revoked("workstream_participant_removed")).substreamIds).toEqual(
-      expect.arrayContaining(["0", siblingId]));
-    expect((await revoked("workstream_participant_removed")).substreamIds).not.toContain(substreamId);
-    expect((await revoked("workspace_membership_removed")).substreamIds).toContain(substreamId);
-    // Their own membership is authority enough to manage the roster.
-    await expect(new SubstreamCreationService(TEST_ENV, { ...AUTH, userId: MEMBER_ID }).changeParticipant(
-      PERSONAL_ROOM_ID, substreamId,
-      { userId: PARTICIPANT_ID, operationId: "outsider-adds-participant" }, true,
-    )).resolves.toMatchObject({ outcome: "added" });
-  });
-
-  it("shares a substream with a guest rather than seating them on its legacy roster", async () => {
-    // A guest reads only through grants, so a roster row would admit them to a
-    // breakout that search, artifacts and navigation all refuse.
-    await seedRoom(PERSONAL_ROOM_ID, "personal", [AUTHOR_ID, PARTICIPANT_ID]);
-    const substreamId = await seedPrivateChild(PERSONAL_ROOM_ID, "Private branch", "guest-child");
-    await env.DB.prepare("UPDATE workspace_members SET access_class = 'guest', role = NULL WHERE workspace_id = ? AND user_id = ?")
-      .bind(WORKSPACE_ID, MEMBER_ID).run();
-    await expect(new SubstreamCreationService(TEST_ENV, AUTH).changeParticipant(
-      PERSONAL_ROOM_ID, substreamId,
-      { userId: MEMBER_ID, operationId: "guest-child-add" }, true,
-    )).resolves.toMatchObject({ outcome: "added" });
-    expect(await roomParent().authorizeViewer({ ...viewer(PERSONAL_ROOM_ID, MEMBER_ID), substreamId: asSubstreamId(substreamId) }))
-      .toMatchObject({ authorized: true });
-    expect(await roomParent().authorizeViewer(viewer(PERSONAL_ROOM_ID, MEMBER_ID))).toMatchObject({ authorized: false });
   });
 
   it("renames a substream through the conversation that owns its title", async () => {
