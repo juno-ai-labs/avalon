@@ -12,6 +12,7 @@ import {
 import { workspaceDOName } from "../../durable-objects/names";
 import type { Env } from "../../env";
 import { TerminalToolError } from "./tools";
+import { logWarn } from "../../observability/logger";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 
 /**
@@ -182,9 +183,16 @@ export function canvasArtifactNoter(env: Env, input: Pick<WorkstreamWorkflowInpu
     if (target.substreamId !== "0") return;
     const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, asWorkspaceId(input.workspaceId),
       workspaceDOName(env.AVALON_REGION, input.workspaceId));
-    await workspace.canvasNoteArtifact({
+    const { noted } = await workspace.canvasNoteArtifact({
       workspaceId: input.workspaceId, canvasId: target.parentId, resourceId,
       editor: input.parentKind === "canvas" ? { kind: "rally", id: null } : { kind: "sidekick", id: input.parentId },
     });
+    // This run's publications land in a Canvas, so one the Organization does
+    // not hold is a defect to see, not a case to pass over.
+    if (!noted) {
+      logWarn(env, "canvas_artifact_note_failed", {
+        workspace_id: input.workspaceId, parent_id: target.parentId, resource_id: resourceId, error_code: "canvas_not_found",
+      });
+    }
   };
 }

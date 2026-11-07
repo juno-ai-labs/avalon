@@ -127,6 +127,16 @@ export const AUTOMATION_VIEWER_JOINS = `LEFT JOIN sidekick_viewer_reads reads
    LEFT JOIN sidekick_child_projections main
      ON main.sidekick_id = directory.automation_id AND main.substream_id = '0'`;
 
+/**
+ * Whether the sidebar lists a Sidekick to the viewer bound to `?1`, in the
+ * Organization bound to `?2`, over an `automation_directory` aliased
+ * `directory`: the viewer's own, the Organization's, and those shared with them.
+ */
+export const SIDEBAR_SIDEKICK_LISTED_SQL = `directory.workspace_id = ?2 AND directory.lifecycle <> 'deleted'
+   AND (directory.scope = 'workspace' OR directory.author_user_id = ?1 OR directory.run_as_user_id = ?1
+     OR EXISTS (SELECT 1 FROM sidekick_audience audience
+                 WHERE audience.sidekick_id = directory.automation_id AND audience.user_id = ?1))`;
+
 /** Each Channel's Main participants at the Channel's generation, newest first. */
 export function channelParticipantIds(sql: Sql, workstreamIds: readonly string[]): Map<string, string[]> {
   const result = new Map<string, string[]>();
