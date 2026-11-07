@@ -213,15 +213,12 @@ export async function notificationDeliveryContext(env: Env, row: WorkspaceNotifi
   const viewer = rawDirectoryState
     ? WorkspaceDirectoryNotificationStateSchema.parse(rawDirectoryState)
     : null;
-  if (
-    !viewer
-    || viewer.authorityGeneration < row.sourceGeneration
-    || (
-      viewer.authorityGeneration === row.sourceGeneration
-      && viewer.viewerVersion < row.requiredDirectoryVersion
-    )
-  ) {
-    return { outcome: "pending" as const, reason: "directory_projection_pending", viewer };
+  // Neither a Canvas nor a Sidekick: a retired Thread's intent, which nobody can open.
+  if (!viewer) return { outcome: "skipped" as const, reason: "notification_parent_missing" };
+  // The parent was replaced after the effect was written: wait for this
+  // object to hear of the generation the conversation spoke from.
+  if (viewer.authorityGeneration < row.sourceGeneration) {
+    return { outcome: "pending" as const, reason: "notification_parent_generation_pending", viewer };
   }
   if (!childId && !viewer.listable) return { outcome: "skipped" as const, reason: "recipient_not_listable" };
   const originator = effect.kind === "mention_notification" ? effect.authorUserId : effect.actorUserId;
@@ -296,7 +293,6 @@ export async function processWorkstreamNotificationIntent(
         outcome: transition.outcome === "applied" ? "busy" : transition.outcome,
         reason: transition.outcome === "applied" ? context.reason : "notification_lease_lost_before_defer",
         required_generation: row.sourceGeneration, current_generation: context.viewer?.authorityGeneration ?? null,
-        required_directory_version: row.requiredDirectoryVersion, current_directory_version: context.viewer?.viewerVersion ?? null,
         current_state: transition.outcome === "lease_lost" ? transition.state : null,
       });
       if (transition.outcome === "lease_lost" && (transition.state === "delivered" || transition.state === "skipped")) return transition.state;

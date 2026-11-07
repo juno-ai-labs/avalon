@@ -23,7 +23,6 @@ const payloads = (send: { mock: { calls: unknown[][] } }) => send.mock.calls.map
 // No runs or model calls: only the real workspace intent/directory read and D1 delivery writes.
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-00000000f101');
 const workstreamId = asWorkstreamId('00000000-0000-7000-8000-00000000f102');
-const spaceId = '00000000-0000-7000-8000-00000000f107';
 const userId = asUserId('00000000-0000-7000-8000-00000000f103');
 const actorId = asUserId('00000000-0000-7000-8000-00000000f104');
 const workspace = () => env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName('global', workspaceId)));
@@ -64,23 +63,8 @@ beforeEach(async () => {
   ]);
   await workspace().initializeWorkspace(workspaceId, 'wnam');
   await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec(`INSERT INTO spaces
-      (space_id, title, scope, authority_generation, source_version, payload_hash, revision, created_at, updated_at)
-      VALUES (?, 'General', 'workspace', 1, 1, 'space', 1, 0, 0)`, spaceId);
-    state.storage.sql.exec(`INSERT INTO space_channel_memberships
-      (space_id, workstream_id, state, generation, joined_at, updated_at)
-      VALUES (?, ?, 'active', 1, 0, 0)`, spaceId, workstreamId);
-    state.storage.sql.exec(`INSERT INTO channels
-      (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview,
-       scope, exact_state, last_activity_at, origin_type, title_status, latest_attention_ordinal,
-       unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
-      VALUES (?, 1, 1, 'source', 'hash', 'Planning', '', '', 'personal', 'idle', 0, 'ad_hoc', 'settled', 0, 0, 0, 0, 0)`, workstreamId);
-    state.storage.sql.exec(`INSERT INTO channel_viewers
-      (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
-       unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at)
-      VALUES (?, ?, 1, 1, 'viewer', 'hash', 1, 0, 0, 1, 0, 0, 0, 0)`, workstreamId, userId);
-    // The conversation is a Canvas's Chat, which is what a push links to
-    // (`docs/links.md`); a Thread's has no link and sends nothing.
+    // The conversation is a Canvas's Chat: its row is what decides whether
+    // the person may still be told, and what a push links to (`docs/links.md`).
     state.storage.sql.exec(`INSERT INTO canvas_directory
       (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, visibility, authority_generation)
       VALUES (?, ?, 'Planning', ?, 0, 0, 'workspace', 1)`, workstreamId, workspaceId, userId);
@@ -111,11 +95,18 @@ it('sends no mention to a person who turned mentions off, and still sends their 
   expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   expect(send).toHaveBeenCalledTimes(2);
 });
-it('rechecks access after queueing and defers a directory that is still catching up', async () => {
+it('rechecks access after queueing, waits for a newer parent generation, and skips a parent that is gone', async () => {
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
-  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`UPDATE workstream_notification_intents SET required_directory_version = 2`); });
+  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`UPDATE workstream_notification_intents SET source_generation = 2`); });
   expect(await deliverPush(pushEnv(), message(), send)).toBe(false);
-  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`UPDATE workstream_notification_intents SET required_directory_version = 1`); });
+  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`UPDATE workstream_notification_intents SET source_generation = 1`); });
+  // Made private to its creator: the recipient may no longer open it.
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`UPDATE canvas_directory SET visibility = 'creator', created_by_user_id = ?`, actorId);
+  });
+  expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
+  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`DELETE FROM canvas_directory`); });
+  expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   await env.DB.prepare(`UPDATE workspace_members SET status = 'removed'`).run();
   expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   expect(send).not.toHaveBeenCalled();
