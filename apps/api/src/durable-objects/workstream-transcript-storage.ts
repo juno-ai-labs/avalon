@@ -543,19 +543,6 @@ export class WorkstreamTranscriptStorage {
     return new SubstreamLoopStorage(this.storage).loop()?.transcript_projected_through ?? 0;
   }
 
-  /**
-   * Model calls made through a sequence: Bind reserves one assistant turn per
-   * provider response, tool-only responses included, so the count is exact.
-   * A context compaction is a model call with no turn of its own.
-   */
-  assistantTurnsThrough(through: number): number {
-    return Number(this.sql.exec<{ n: number } & Record<string, SqlStorageValue>>(
-      `SELECT count(*) AS n FROM participant_transcript_turns
-        WHERE transcript_sequence <= ? AND actor = 'assistant' AND entry_kind = 'conversation'`,
-      through,
-    ).one().n);
-  }
-
   /** Highest canonical sequence currently owned by this transcript. */
   transcriptThrough(): number {
     return Number(this.sql.exec<{

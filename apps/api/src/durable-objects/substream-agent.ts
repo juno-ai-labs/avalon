@@ -3669,7 +3669,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         // The run's cost comes with its first page, so a review reads totals
         // rather than counting turns across every page by hand.
         const usage = request.input.afterSequence === 0
-          ? { modelCalls: this.transcript.assistantTurnsThrough(through), tools: this.toolReceipts.toolUsage() }
+          ? { model: this.harnessRuns.modelUsage(), tools: this.toolReceipts.toolUsage() }
           : undefined;
         return jsonResponse(SidekickRunTranscriptResultSchema.parse({ transcriptAvailability: "available", turns: range.turns,
           throughSequence: through, nextAfterSequence: end <= through ? end - 1 : null, ...(usage ? { usage } : {}) }));
