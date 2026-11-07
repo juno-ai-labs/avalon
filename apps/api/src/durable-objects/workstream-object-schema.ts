@@ -61,7 +61,7 @@ const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
 ] as const;
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 85;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 86;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3828,6 +3828,15 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `DROP TABLE private_child_membership_authority`,
       `DROP TABLE private_child_lifecycle_authority`,
     ],
+  },
+  {
+    version: 86,
+    description: "drop the per-conversation Sidekick attachment table",
+    // Version 43 recorded which Sidekicks a conversation had attached; the
+    // Organization's `sidekick_conversation_attachments` replaced it, and no
+    // reader or writer has named this one since the Thread retirement (plan
+    // step C-7). No trigger or foreign key references it.
+    statements: [`DROP TABLE IF EXISTS sidekick_attachments`],
   },
 ];
 

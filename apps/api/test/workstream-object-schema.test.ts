@@ -135,7 +135,6 @@ const EXPECTED_TABLES = [
   "run_plugin_activations",
   "run_scopes",
   "runs",
-  "sidekick_attachments",
   "sidekick_execution_skills",
   "sidekick_run_rows",
   "sidekick_skill_names",
@@ -506,11 +505,9 @@ describe("the Workstream Durable Object relational schema", () => {
     const storage = objectStorage(database);
     try {
       applyDurableObjectSqliteMigrations({ storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 45), component: "substream_agent_do", workerVersionId: "worker-v45", now: 1_000 });
-      database.exec(`INSERT INTO sidekick_execution_skills VALUES ('execution', '{"sources":[],"activeRefs":[]}');
-        INSERT INTO sidekick_attachments VALUES ('sidekick', 1000)`);
+      database.exec(`INSERT INTO sidekick_execution_skills VALUES ('execution', '{"sources":[],"activeRefs":[]}')`);
       applyWorkstreamObjectSchema(storage, "worker-v46", 2_000);
       expect(database.prepare(`SELECT * FROM sidekick_execution_skills`).all()).toEqual([{ execution_id: "execution", snapshot_json: '{"sources":[],"activeRefs":[]}' }]);
-      expect(database.prepare(`SELECT * FROM sidekick_attachments`).all()).toEqual([{ sidekick_id: "sidekick", attached_at: 1000 }]);
       database.exec(`INSERT INTO sidekick_skill_names VALUES ('first', 'sidekick-editor')`);
       expect(() => database.exec(`INSERT INTO sidekick_skill_names VALUES ('second', 'sidekick-editor')`)).toThrow(/UNIQUE/);
       applyWorkstreamObjectSchema(storage, "worker-v46", 3_000);
