@@ -470,8 +470,8 @@ describe("customToolFailure", () => {
 
 describe("the program module", () => {
   it("always wraps the body, whatever shape the model wrote", () => {
-    expect(wrapProgram("return 1;")).toBe("export default async function run(tools, console, input) {\nreturn 1;\n}");
-    expect(wrapProgram("export default async function run() { return 1; }")).toContain("export default async function run(tools, console, input) {\nexport default");
+    expect(wrapProgram("return 1;")).toBe("export default async function run(tools, console, input, msLeft) {\nreturn 1;\n}");
+    expect(wrapProgram("export default async function run() { return 1; }")).toContain("export default async function run(tools, console, input, msLeft) {\nexport default");
   });
 
   it("parses the isolate's answer with a schema and rejects anything else", () => {
