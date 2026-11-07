@@ -9,7 +9,8 @@ Leave it without one and it stays a page of instructions that Rally loads in
 conversations (see [What a Sidekick is](01-what-a-sidekick-is.md)).
 
 You never pick triggers from a list. You say when you want the Sidekick to
-work, in the Sidekick's conversation, and the drafting assistant sets it up.
+work, in an **Edit Sidekick** message in its conversation, and the drafting
+assistant sets it up.
 The triggers it chose then appear in plain words in the details column under
 **When to expect it**, along with **Next** and how long until the next run.
 

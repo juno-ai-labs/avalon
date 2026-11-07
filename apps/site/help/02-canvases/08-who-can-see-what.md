@@ -47,16 +47,20 @@ explains.
 
 ### Who can change the sharing
 
-The creator of a Canvas, and the Organization's owners and administrators, can
-change who can open it. Participants who are members can add other people.
-Guests cannot change who can open a Canvas or add anyone.
+The creator of a Canvas, and the Organization's owners and administrators,
+decide who can open it: they add and remove people, invite guests, and open it
+to the Organization or close it again. Everyone else in the Canvas, members and
+guests alike, reads it and takes part but does not change who can open it. If
+you want someone added, ask the creator. For a Canvas a Sidekick made, the
+Sidekick's managers take the creator's place.
 
 ## Canvases from a Sidekick
 
 A Canvas a Sidekick makes starts out open to the people the Sidekick is shared
-with, so everyone who can talk to the Sidekick can read what it made. After
-that it is a Canvas like any other, and anyone allowed to change its sharing
-can change it.
+with, so everyone who can talk to the Sidekick can read what it made. From then
+on, the Sidekick's managers, and the Organization's owners and administrators,
+decide who else can open it. Changing who the Sidekick is shared with later
+does not change the Canvases it already made.
 
 ## Sites have a public address
 

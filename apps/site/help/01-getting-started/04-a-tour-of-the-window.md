@@ -20,7 +20,7 @@ This page walks through each part. Each one has a chapter of its own later; here
 Two buttons run down the top of the rail, each an icon with its name under it. Click one and the sidebar beside it changes.
 
 - **Canvases** lists the Canvases you can open. A red number on the button counts the ones with something new for you: a reply, a comment, a new version, or a mention.
-- **Sidekicks** lists the Sidekicks shared with you. Its red number counts the ones waiting for you, chiefly those that **Need input**.
+- **Sidekicks** lists the Sidekicks shared with you. Its red number counts the ones waiting for you, chiefly those under **Needs input**.
 
 At the bottom of the rail sit your avatar, which opens the account menu described [below](#the-account-menu), and **Settings**. <kbd>⌘</kbd> <kbd>,</kbd> opens Settings from anywhere.
 

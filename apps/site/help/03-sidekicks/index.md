@@ -25,9 +25,11 @@ shows in the conversation as a folded row that carries its reply, and anything
 it made for people to work on afterwards shows as a card that opens a
 [Canvas](../02-canvases/index.md).
 
-That one conversation is also where the Sidekick is set up and changed. The
-people who manage a Sidekick talk to its drafting assistant there ("make it run
-at 8 instead"), and the change is saved as a new version of the Sidekick. Runs
+That one conversation is also where the Sidekick is set up and changed. A
+message addressed to the Sidekick starts a run, whoever sends it. The people
+who manage a Sidekick change it by marking a message **Edit Sidekick** ("make
+it run at 8 instead"), which goes to its drafting assistant and saves a new
+version of the Sidekick. Runs
 and setup stay separate underneath, so you can always see which run did what,
 under which version.
 
