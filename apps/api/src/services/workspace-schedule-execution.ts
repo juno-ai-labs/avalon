@@ -265,7 +265,7 @@ const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promi
  *
  * Each arm counts exactly the rows its pass will act on, with the same
  * predicates the pass applies. These statements run against the object's own
- * tables — `workspace_workstream_resource_links` and `connector_connections`
+ * tables — `canvas_artifacts` and `connector_connections`
  * among them — and a Node test that runs them needs the object's ledger, not
  * a regional snapshot.
  */
@@ -303,8 +303,8 @@ export const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKi
   {
     kind: "maintenance",
     scoped: true,
-    // Counts exactly what `reapExpiredDraftResources` removes. A draft a work
-    // stream has linked is kept on purpose, and counting it here would leave
+    // Counts exactly what `reapWorkspaceExpiredDraftResources` removes. A
+    // draft a Canvas holds as an artifact is kept on purpose, and counting it here would leave
     // the pass due at an instant it can never move. The `'+24 hours'` below is
     // DRAFT_ATTACHMENT_TTL_HOURS in the object's own
     // `durable-objects/workspace-resources-storage.ts`, spelled in SQL on this
@@ -315,7 +315,7 @@ export const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKi
             FROM resources
            WHERE workspace_id = ?1 AND provider = 'avalon_upload'
              AND attachment_status = 'draft'
-             AND NOT EXISTS (SELECT 1 FROM workspace_workstream_resource_links link
+             AND NOT EXISTS (SELECT 1 FROM canvas_artifacts link
                               WHERE link.resource_id = resources.id)
              AND NOT EXISTS (SELECT 1 FROM pending_attachment_reservations reservation
                               WHERE reservation.resource_id = resources.id)

@@ -45,6 +45,7 @@ import {
   pendingChildEffects,
 } from "./helpers/conversation-effects";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+import { createCanvas } from "../src/services/canvas-service";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ba0");
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000ba1");
@@ -73,6 +74,22 @@ beforeEach(async () => {
     userId: USER_ID,
     sessionId: SESSION_ID,
   });
+  // The D1 anchors `createCanvas` claims for the conversation it makes.
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstreams (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, do_identity_anchor INTEGER NOT NULL DEFAULT 0)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_create_receipts (
+      workspace_id TEXT NOT NULL, creator_user_id TEXT NOT NULL, client_message_id TEXT NOT NULL,
+      workstream_id TEXT NOT NULL, generation INTEGER NOT NULL, request_hash TEXT NOT NULL,
+      state TEXT NOT NULL, message_id TEXT, harness_run_id TEXT, error_code TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, creator_user_id, client_message_id), UNIQUE (workstream_id))`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_routes (
+      workspace_id TEXT NOT NULL, workstream_id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
+      object_name TEXT NOT NULL, state TEXT NOT NULL, stage_index INTEGER NOT NULL DEFAULT 0,
+      source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
+      source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
+      verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL)`),
+  ]);
   await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam");
 }, 30_000);
 
@@ -164,31 +181,20 @@ async function captureEffectQueue(
 }
 
 /**
- * The real member create, through the product service and stopping short of
- * the endpoint's execution-receipt wake, so no model run is admitted and the
- * only alarm work the object has is its outbox.
+ * The real Canvas create, then its first message through the product service,
+ * stopping short of the endpoint's execution-receipt wake, so no model run is
+ * admitted and the only alarm work the object has is its outbox.
  */
 async function openWorkstream(stub: DurableObjectStub<AgentLoopDO>, workstreamId: string, title: string): Promise<void> {
+  await createCanvas(env, { workspaceId: WORKSPACE_ID, creatorUserId: USER_ID, canvasId: workstreamId, title });
   await runInDurableObject(stub, async (instance) => {
     const product = (instance as unknown as { product: WorkstreamObjectProductService }).product;
-    await product.initialize(AUTH, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId,
-      generation: 1,
-      title,
-      objective: "Prove the Queue legs",
-      descriptionSource: "authored",
-      titleStatus: "settled",
-      scope: "personal",
-      emailAddress: null,
-      creatorUserId: USER_ID,
-      openingMessage: "starting",
+    await product.createMessage(AUTH, {
+      text: "starting",
       clientMessageId: `queue-open-${workstreamId}`,
-      participantUserIds: [],
+      mentions: [],
+      confirmedParticipantUserIds: [],
       attachmentIds: [],
-      modelOverride: null,
-      executionPrincipal: { type: "user", userId: USER_ID },
-      reason: "user_message",
     });
   });
 }
@@ -211,7 +217,7 @@ let envelopeSeq = 0;
 
 /** What a child stamps on an effect, built the way `enqueueEffectsInCurrentTransaction` does. */
 function childEnvelope(input: {
-  parentKind: "workstream" | "automation";
+  parentKind: "canvas" | "automation";
   parentId: string;
   substreamId: string;
   sourceVersion: number;
@@ -270,22 +276,27 @@ describe("a conversation object's outbox", () => {
     const gate = await parkEffectQueue(child);
     await openWorkstream(child, DRAIN_WORKSTREAM_ID, "Drained by the alarm");
 
-    // The opening turn keeps writing the Channel row until it settles (here it
-    // fails: there is no model), and each write is a new version. Wait it out,
-    // so the version read below is the one the drain alone must leave alone.
-    const SETTLED = ["needs_input", "completed", "cancelled", "failed", "budget_exhausted", "idle"];
-    await expect.poll(async () => {
-      const common = (await pendingChildEffects(child)).filter((envelope) => envelope.effect.kind === "directory_common");
-      const effect = common.at(-1)?.effect;
-      return effect?.kind === "directory_common" ? effect.state : null;
-    }, { timeout: 10_000, interval: 100 }).toBeOneOf(SETTLED);
+    // The opening message's run keeps writing the Canvas's row until it
+    // settles (here it fails: there is no model), and each write is a new
+    // version. Let the object's own alarm take the message and wait the run
+    // out, so the version read below is the one the drain alone must leave
+    // alone.
+    await runDurableObjectAlarm(child);
+    await expect.poll(() => runInDurableObject(child, (_instance, state) => ({
+      runs: state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM runs").one().count,
+      open: state.storage.sql.exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM runs WHERE terminalized_at IS NULL").one().count,
+      pending: state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM pending_loop_inputs").one().count,
+      executing: state.storage.sql.exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM substream_loops WHERE status = 'executing'").one().count,
+    })), { timeout: 10_000, interval: 100 }).toEqual({ runs: 1, open: 0, pending: 0, executing: 0 });
 
     const pending = await pendingChildEffects(child);
     expect(pending.map((envelope) => envelope.effect.kind)).toContain("directory_common");
     for (const envelope of pending) {
       expect(envelope).toMatchObject({
         kind: "conversation_effect",
-        parentKind: "workstream",
+        parentKind: "canvas",
         parentId: DRAIN_WORKSTREAM_ID,
         substreamId: "0",
       });
@@ -364,14 +375,14 @@ describe("an envelope the Queue would refuse", () => {
     await parkEffectQueue(child, { logLevel: "warn" });
     expect((await child.bootstrapRuntime({
       workspaceId: WORKSPACE_ID,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: OVERSIZED_WORKSTREAM_ID,
       generation: 1,
     })).status).toBe(200);
 
     // Only `resourceLinks` can push a directory effect past the message limit.
     const envelope = childEnvelope({
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: OVERSIZED_WORKSTREAM_ID,
       substreamId: "0",
       sourceVersion: 1,
@@ -434,12 +445,12 @@ describe("an envelope the Queue would refuse", () => {
     const capture = await captureEffectQueue(child, { logLevel: "warn" });
     expect((await child.bootstrapRuntime({
       workspaceId: WORKSPACE_ID,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: ATTACHMENTS_WORKSTREAM_ID,
       generation: 1,
     })).status).toBe(200);
     const envelope = childEnvelope({
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: ATTACHMENTS_WORKSTREAM_ID,
       substreamId: "0",
       sourceVersion: 1,
