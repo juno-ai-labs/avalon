@@ -50,8 +50,6 @@ type LocalOnlyTranscriptOperation =
   | "transcriptActivity"
   | "transcriptThrough"
   | "transcriptProjectedThrough"
-  // Read by the owning object for a run review's first page.
-  | "assistantTurnsThrough"
   // The in-memory Bind projection uses an immutable suffix chain. It is a
   // same-isolate harness input, never an RPC/JSON response.
   | "readBindProjection"

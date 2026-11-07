@@ -254,11 +254,22 @@ export const ReadTranscriptResultSchema = z.strictObject({
 /** Internal inspection does not seat a viewer or acknowledge the conversation. */
 /**
  * What a Sidekick run spent, read from the run's own object for its first
- * page: model calls (one assistant turn per provider response) and every
- * tool's calls and time, with a program's own requests counted apart.
+ * page: its model calls as the provider counted them, and every tool's calls
+ * and time, with a program's own requests counted apart.
  */
 export const SidekickRunUsageSchema = z.strictObject({
-  modelCalls: z.number().int().nonnegative(),
+  model: z.strictObject({
+    calls: z.number().int().nonnegative(),
+    failedAttempts: z.number().int().nonnegative(),
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    cachedInputTokens: z.number().int().nonnegative(),
+    costUsd: z.number().nonnegative(),
+    firstCallInputTokens: z.number().int().nonnegative().nullable(),
+    lastCallInputTokens: z.number().int().nonnegative().nullable(),
+    largestCallInputTokens: z.number().int().nonnegative().nullable(),
+    ms: z.number().nonnegative(),
+  }),
   tools: z.array(z.strictObject({
     toolName: z.string(),
     fromProgram: z.boolean(),

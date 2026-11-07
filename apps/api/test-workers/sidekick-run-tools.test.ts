@@ -139,7 +139,7 @@ describe("Sidekick wizard run inspection", () => {
     expect(JSON.stringify(result.output)).not.toContain("sidekick-history/");
   });
 
-  it("opens a run with what it spent: model calls, each tool's calls and time, and each call's duration", async () => {
+  it("opens a run with what it spent: model calls and tokens, each tool's calls and time, and each call's duration", async () => {
     await seedRuns(SIDEKICK, 1);
     await seedHistory();
     await runInDurableObject(child(runId(1)), (_instance, state) => {
@@ -152,10 +152,20 @@ describe("Sidekick wizard run inspection", () => {
           VALUES (?, ?, 0, ?, ?, 'run_sql', 'read', 'hash', '1', 'completed', ?, '{}', ?, ?)`,
         `nested-${index}`, ACTIVATION, index + 1, `nested-${index}`, `scan-call:call:${index}`, startedAt, settledAt);
       }
+      // Three provider attempts: two calls whose input grew with the conversation, and one retry.
+      for (const [id, outcome, input, created] of [["a1", "success", 1000, 1], ["a2", "retry", 1500, 2], ["a3", "success", 2500, 3]] as const) {
+        state.storage.sql.exec(`INSERT INTO inference_attempts
+          (inference_attempt_id, run_id, attempt_id, turn_id, endpoint_attempt, fallback_attempt, provider, model,
+           workspace_identity_hash, routing_decision_json, outcome, latency_ms, input_tokens, output_tokens,
+           cached_tokens, cost_micros, started_at, completed_at, created_at)
+          VALUES (?, ?, 'attempt', 'turn', 1, 0, 'openrouter', 'model', 'hash', '{}', ?, 400, ?, 50, 800, 25000, 0, 0, ?)`,
+        id, ACTIVATION, outcome, input, created);
+      }
     });
     const result = await tool("runs_read").execute({ runId: runId(1) }, context);
-    // The fixture's two assistant turns: the report text and the delivery call's response.
-    expect(evidence(result.output).usage).toEqual({ modelCalls: 2, tools: [
+    expect(evidence(result.output).usage).toEqual({ model: { calls: 2, failedAttempts: 1, inputTokens: 5000,
+      outputTokens: 150, cachedInputTokens: 2400, costUsd: 0.075, firstCallInputTokens: 1000, lastCallInputTokens: 2500,
+      largestCallInputTokens: 2500, ms: 1200 }, note: expect.stringContaining("sends the whole conversation"), tools: [
       { toolName: "run_sql", fromProgram: true, calls: 2, failed: 0, ms: 70, maxMs: 50 },
       { toolName: "slack_send_message", fromProgram: false, calls: 1, failed: 1, ms: 60, maxMs: 60 },
     ] });
