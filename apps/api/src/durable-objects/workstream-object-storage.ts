@@ -14,6 +14,7 @@ import {
   type WorkspaceId,
 } from "@rally/contracts";
 
+import { ApiError } from "../lib/api-error";
 import { uuidV7 } from "../lib/uuid-v7";
 import { applyWorkstreamObjectSchema } from "./workstream-object-schema";
 import {
@@ -105,7 +106,12 @@ export type HostedConversationParentKind = z.infer<typeof HostedConversationPare
 /** A stored parent kind, refusing the retired Thread and Space kinds by name. */
 export function hostedConversationParentKind(stored: string): HostedConversationParentKind {
   const kind = ConversationParentKindSchema.parse(stored);
-  if (kind === "workstream" || kind === "space") throw new Error(`conversation_parent_kind_retired:${kind}`);
+  if (kind === "workstream" || kind === "space") {
+    // The message is the code with the kind: a Durable Object RPC hop keeps
+    // only the message, and the kind is what an operator needs.
+    throw new ApiError(409, "conversation_parent_kind_retired", `conversation_parent_kind_retired:${kind}`,
+      undefined, `conversation_parent_kind_retired:${kind}`);
+  }
   return kind;
 }
 

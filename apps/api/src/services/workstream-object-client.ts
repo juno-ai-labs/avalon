@@ -184,9 +184,8 @@ export class WorkstreamObjectClient {
      *
      * Sent on every product request and checked against the object's own
      * identity before it runs anything. A conversation is addressed by id, so
-     * this is what keeps a Space id from reaching a Channel operation — see
-     * `productOperation` in `agent-loop-do.ts`. The plain constructor means
-     * Channel; {@link WorkstreamObjectClient.forParent} names the kind.
+     * this is what keeps a Sidekick's id from reaching an operation meant for a
+     * Canvas's Chat — see `productOperation` in `agent-loop-do.ts`.
      */
     private readonly parentKind: ConversationParentKind,
   ) {}

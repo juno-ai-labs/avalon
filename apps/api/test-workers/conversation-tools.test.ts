@@ -17,6 +17,7 @@
 
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { createCanvas } from "../src/services/canvas-service";
+import { conversationToolPorts, createConversationsPlugin } from "../src/services/conversation-tools";
 import { substreamLoopId } from "../src/durable-objects/names";
 import { createAgentCommunicationPlugin } from "../src/services/agent-communication-plugin";
 import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
@@ -630,3 +631,86 @@ describe("a Breakout's access to its Channel", () => {
 
 });
 
+describe("a Sidekick's Canvases through the conversation tools", () => {
+  const SIDE_ROOM = () => asWorkstreamId(ROOM_ID.replace(/0a01$/u, "0a04"));
+  const WRITTEN = () => asWorkstreamId(ROOM_ID.replace(/0a01$/u, "0a05"));
+
+  /** The Sidekick's configuration conversation, talking with `userId`. */
+  function configuration(userId: string) {
+    return WorkstreamWorkflowInputSchema.parse({
+      region: "global", workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: AUTOMATION_ID, substreamId: "0",
+      loopId: `automation:${AUTOMATION_ID}:substream:0:loop`, harnessRunId: crypto.randomUUID(),
+      triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId }, reason: "user_message",
+    });
+  }
+
+  /** The real plugin over the real ports: WorkspaceDO's scope and each parent's admission. */
+  function conversationTools(userId: string) {
+    const input = configuration(userId);
+    const plugin = createConversationsPlugin(input, conversationToolPorts(TEST_ENV, input), (tool) => [tool]);
+    if (!plugin) throw new Error("conversations_plugin_missing");
+    const byName = new Map(plugin.tools.map((tool) => [tool.definition.name, tool]));
+    const context = (effectIntentId: string): HarnessToolContext => ({ workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID,
+      harnessRunId: input.harnessRunId, toolCallId: effectIntentId, effectIntentId,
+      executionPrincipal: { type: "user", userId: asUserId(userId) }, signal: new AbortController().signal });
+    return { run: (name: string, args: unknown, receipt: string = crypto.randomUUID()) => byName.get(name)!.execute(args, context(receipt)) };
+  }
+
+  async function seedCanvases(): Promise<void> {
+    await seedSidekick("0");
+    // The author's alone: the colleague cannot open it.
+    await seedRoom(SIDE_ROOM(), "Side room");
+    // Made by one of the Sidekick's runs, which makes the Sidekick its writer.
+    await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR_ID, canvasId: WRITTEN(),
+      title: "Weekly agenda", writer: { sidekickId: AUTOMATION_ID, runId: crypto.randomUUID() } });
+  }
+
+  it("lists the Sidekick's own conversation, the Canvas it writes and the Canvases attached to it, as each person may open them", async () => {
+    await seedCanvases();
+    const author = conversationTools(AUTHOR_ID);
+    expect((await author.run("attach", { conversation: ROOM_ID })).output).toMatchObject({
+      conversationId: ROOM_ID, kind: "canvas", title: "Investors", alreadyAttached: false });
+    // By the title the person used, among the Canvases they can open.
+    expect((await author.run("attach", { conversation: "side ROOM" })).output).toMatchObject({
+      conversationId: SIDE_ROOM(), kind: "canvas", alreadyAttached: false });
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `SELECT parent_kind, parent_id, substream_id FROM sidekick_conversation_attachments
+        WHERE automation_id = ? ORDER BY attached_at, parent_id`, AUTOMATION_ID,
+    ).toArray())).toEqual([
+      { parent_kind: "canvas", parent_id: ROOM_ID, substream_id: "0" },
+      { parent_kind: "canvas", parent_id: SIDE_ROOM(), substream_id: "0" },
+    ]);
+
+    const listed = async (userId: string) => ((await conversationTools(userId).run("list", {})).output as {
+      conversations: Array<{ conversationId: string; isOwn: boolean }> }).conversations.map((entry) => entry.conversationId);
+    expect(await listed(AUTHOR_ID)).toEqual([AUTOMATION_ID, WRITTEN(), ROOM_ID, SIDE_ROOM()]);
+    // `canvasAdmits` for the colleague: a participant of Investors, nobody on
+    // the side room, and the run's Canvas follows the Sidekick's audience.
+    expect(await listed(COLLEAGUE_ID)).toEqual([AUTOMATION_ID, WRITTEN(), ROOM_ID]);
+    await expect(conversationTools(COLLEAGUE_ID).run("read", { conversation: SIDE_ROOM() }))
+      .rejects.toMatchObject({ code: "conversation_access_denied" });
+  });
+
+  it("refuses to attach a Canvas the person cannot open, and never names one by a title they cannot see", async () => {
+    await seedCanvases();
+    const colleague = conversationTools(COLLEAGUE_ID);
+    await expect(colleague.run("attach", { conversation: "Side room" })).rejects.toMatchObject({ code: "conversation_not_found" });
+    await expect(colleague.run("attach", { conversation: SIDE_ROOM() })).rejects.toMatchObject({ code: "conversation_access_denied" });
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      `SELECT parent_id FROM sidekick_conversation_attachments WHERE automation_id = ?`, AUTOMATION_ID,
+    ).toArray())).toEqual([]);
+  });
+
+  it("posts into a Canvas's Chat the Sidekick writes, once per receipt, and reads it back", async () => {
+    await seedCanvases();
+    const author = conversationTools(AUTHOR_ID);
+    const posted = await author.run("post", { conversation: WRITTEN(), text: "The agenda is ready." }, "post-receipt");
+    expect(posted.output).toMatchObject({ conversationId: WRITTEN(), replayed: false });
+    expect((await author.run("post", { conversation: WRITTEN(), text: "The agenda is ready." }, "post-receipt")).output)
+      .toMatchObject({ conversationId: WRITTEN(), replayed: true });
+    const read = (await author.run("read", { conversation: "weekly agenda" })).output as {
+      conversationId: string; messages: Array<{ text: string }> };
+    expect(read.conversationId).toBe(WRITTEN());
+    expect(read.messages.map((message) => message.text)).toEqual(["The agenda is ready."]);
+  });
+});

@@ -13,7 +13,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { createExecutionContext, reset, runInDurableObject } from "cloudflare:test";
+import { createExecutionContext, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
@@ -307,3 +307,24 @@ describe("a conversation the dump refuses", () => {
     });
   });
 });
+
+describe("a Thread's object before its retirement", () => {
+  it("clears a due wake reason's alarm without running a lane, and keeps the row for the retirement", async () => {
+    const thread = await conversation(THREAD_A);
+    await runInDurableObject(thread, async (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO memory_sweep_state
+        (id, swept_through_seq, rest_until, consecutive_quiet, claim_attempt, retry_at, version, created_at, updated_at)
+        VALUES (1, 0, 0, 0, 0, 1, 1, 0, 0)`);
+      // Ahead of now, so workerd does not fire it before the test does.
+      await state.storage.setAlarm(Date.now() + 3_600_000);
+    });
+    // The sweep lane reads the hosted identity, which refuses a Thread: run
+    // here, it would throw on every pass.
+    expect(await runDurableObjectAlarm(thread)).toBe(true);
+    await runInDurableObject(thread, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).toBeNull();
+      expect(state.storage.sql.exec(`SELECT retry_at FROM memory_sweep_state`).toArray()).toEqual([{ retry_at: 1 }]);
+    });
+  });
+});
+

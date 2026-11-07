@@ -1,13 +1,12 @@
 /**
- * A Sidekick's home and attached conversations, against the checked-in
- * schemas.
+ * A Sidekick's reachable conversations and its Canvas attachments, against the
+ * checked-in schemas.
  *
- * The migrations are claims about SQL: a column added with a default keeps
- * every existing row's home at its Channel's Main conversation, and the
- * attachment table's key makes a repeat attach one row. The scope reads are
- * claims about joins over `channels`, `breakouts` and their viewer rows. Both
- * are proved here against the object ledgers rather than in the workers suite;
- * what workerd adds (the RPC, the parent's admission) is proved in
+ * The attachment table's key makes a repeat attach one row, and the scope reads
+ * are claims about joins over `automation_directory`, `canvas_directory` and
+ * `sidekick_conversation_attachments`. Both are proved here against the object
+ * ledger rather than in the workers suite; what workerd adds (the RPC, each
+ * parent's admission of the acting person) is proved in
  * `test-workers/conversation-tools.test.ts`.
  */
 import { DatabaseSync } from "node:sqlite";
@@ -16,8 +15,8 @@ import { describe, expect, it } from "vitest";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import {
   attachSidekickConversation,
+  canvasesTitled,
   conversationIdOf,
-  conversationsTitled,
   matchConversationReference,
   parseConversationId,
   scopeConversations,
@@ -28,9 +27,11 @@ const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000a1";
 const AUTHOR = "00000000-0000-7000-8000-0000000000b1";
 const STRANGER = "00000000-0000-7000-8000-0000000000b2";
 const CHANNEL = "00000000-0000-7000-8000-0000000000c1";
-const OTHER_CHANNEL = "00000000-0000-7000-8000-0000000000c2";
-const BREAKOUT = "00000000-0000-7000-8000-0000000000d1";
 const SIDEKICK = "00000000-0000-7000-8000-0000000000e1";
+const OTHER_SIDEKICK = "00000000-0000-7000-8000-0000000000e2";
+const WRITTEN = "00000000-0000-7000-8000-0000000000f1";
+const NEWER_WRITTEN = "00000000-0000-7000-8000-0000000000f2";
+const ATTACHED = "00000000-0000-7000-8000-0000000000f3";
 const HOME_COLUMN_VERSION = 86;
 
 function applyWorkspace(database: DatabaseSync, through: number, after = 0): void {
@@ -48,6 +49,7 @@ function seedIdentity(database: DatabaseSync): void {
   ).run(WORKSPACE_ID);
 }
 
+/** A Sidekick as migration 86 left one a Channel owned. */
 function seedSidekick(database: DatabaseSync, id = SIDEKICK, lifecycle = "active"): void {
   database.prepare(
     `INSERT INTO automation_directory
@@ -57,49 +59,19 @@ function seedSidekick(database: DatabaseSync, id = SIDEKICK, lifecycle = "active
   ).run(id, WORKSPACE_ID, AUTHOR, lifecycle, CHANNEL);
 }
 
-function seedChannel(database: DatabaseSync, id: string, title: string, scope: "personal" | "workspace", archived = false): void {
+function seedCanvas(database: DatabaseSync, id: string, title: string, updatedAt: number, writer: string | null = null): void {
   database.prepare(
-    `INSERT INTO channels
-       (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description,
-        preview, scope, exact_state, last_activity_at, origin_type, title_status, latest_attention_ordinal,
-        unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at, archived_at)
-     VALUES (?, 1, 1, ?, 'sha256:c', ?, '', '', ?, 'idle', 1, 'ad_hoc', 'settled', 0, 0, 1, 1, 1, ?)`,
-  ).run(id, `event-${id}`, title, scope, archived ? 5 : null);
+    `INSERT INTO canvas_directory
+       (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, writer_sidekick_id,
+        visibility, authority_generation)
+     VALUES (?, ?, ?, ?, 1, ?, ?, 'creator', 1)`,
+  ).run(id, WORKSPACE_ID, title, AUTHOR, updatedAt, writer);
 }
 
-function seedChannelViewer(database: DatabaseSync, channel: string, userId: string, participant: boolean): void {
-  database.prepare(
-    `INSERT INTO channel_viewers
-       (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
-        unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation,
-        latest_mention_attention_ordinal, projected_at)
-     VALUES (?, ?, 1, 1, ?, 'sha256:v', ?, 0, 0, 1, 0, 0, 0, 1)`,
-  ).run(channel, userId, `viewer-${channel}-${userId}`, participant ? 1 : 0);
-}
-
-function seedBreakout(database: DatabaseSync, title: string, archived = false): void {
-  database.prepare(
-    `INSERT INTO breakouts
-       (workstream_id, substream_id, authority_generation, waterline, source_event_id, payload_hash, title,
-        description, scope, exact_state, title_status, last_activity_at, archived_at, latest_attention_ordinal,
-        unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
-     VALUES (?, ?, 1, 1, 'event-breakout', 'sha256:b', ?, '', 'personal', 'idle', 'settled', 1, ?, 0, 0, 1, 1, 1)`,
-  ).run(CHANNEL, BREAKOUT, title, archived ? 5 : null);
-}
-
-function seedBreakoutMember(database: DatabaseSync, userId: string): void {
-  database.prepare(
-    `INSERT INTO breakout_viewers
-       (workstream_id, substream_id, user_id, authority_generation, waterline, source_event_id, payload_hash,
-        is_participant, unread_count, you_are_mentioned, unseen, listable, seen_attention_ordinal,
-        manual_unread_generation, latest_mention_attention_ordinal, projected_at)
-     VALUES (?, ?, ?, 1, 1, 'event-member', 'sha256:m', 1, 0, 0, 0, 1, 0, 0, 0, 1)`,
-  ).run(CHANNEL, BREAKOUT, userId);
-}
-
-function migratedWorkspace(): DatabaseSync {
+/** Every WorkspaceDO migration, the way a current object holds them. */
+function currentWorkspace(): DatabaseSync {
   const database = new DatabaseSync(":memory:");
-  applyWorkspace(database, HOME_COLUMN_VERSION);
+  applyWorkspace(database, Number.POSITIVE_INFINITY);
   seedIdentity(database);
   return database;
 }
@@ -118,141 +90,99 @@ describe("the WorkspaceDO home-conversation migration", () => {
     ).all()).toEqual([{ automation_id: SIDEKICK, owning_workstream_id: CHANNEL, owning_substream_id: "0" }]);
   });
 
-  it("holds one attachment per Sidekick and conversation", () => {
-    const database = migratedWorkspace();
+  it("holds one attachment per Sidekick and Canvas, filed under the canvas kind", () => {
+    const database = currentWorkspace();
     const sql = createTestSqlStorage(database);
     seedSidekick(database);
-    const address = { parentKind: "workstream" as const, parentId: OTHER_CHANNEL, substreamId: "0" };
+    const address = { parentKind: "canvas" as const, parentId: ATTACHED, substreamId: "0" };
 
     expect(attachSidekickConversation(sql, { automationId: SIDEKICK, address, userId: AUTHOR, now: 1 }))
       .toEqual({ alreadyAttached: false });
     expect(attachSidekickConversation(sql, { automationId: SIDEKICK, address, userId: STRANGER, now: 2 }))
       .toEqual({ alreadyAttached: true });
-    // The home is attached without a row, so attaching it writes nothing.
-    expect(attachSidekickConversation(sql, {
-      automationId: SIDEKICK, address: { ...address, parentId: CHANNEL }, userId: AUTHOR, now: 3,
-    })).toEqual({ alreadyAttached: true });
     expect(database.prepare(
-      `SELECT parent_id, substream_id, attached_by_user_id FROM sidekick_conversation_attachments`,
-    ).all()).toEqual([{ parent_id: OTHER_CHANNEL, substream_id: "0", attached_by_user_id: AUTHOR }]);
-  });
-
-  it("files a Canvas's Chat attachment under the canvas kind, and scopes it as one", () => {
-    const database = migratedWorkspace();
-    const sql = createTestSqlStorage(database);
-    seedSidekick(database);
-    // Migration 140 admits the canvas kind in the attachment CHECK.
-    applyWorkspace(database, 140, HOME_COLUMN_VERSION);
-    const canvasId = "00000000-0000-7000-8000-0000000000f1";
-    attachSidekickConversation(sql, {
-      automationId: SIDEKICK, address: { parentKind: "canvas", parentId: canvasId, substreamId: "0" }, userId: AUTHOR, now: 1,
-    });
-    expect(database.prepare(`SELECT parent_kind, parent_id FROM sidekick_conversation_attachments`).all())
-      .toEqual([{ parent_kind: "canvas", parent_id: canvasId }]);
-    // No Thread directory describes a Canvas, so it is never offered as a Thread.
-    expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }, AUTHOR)
-      .some((conversation) => conversation.parentId === canvasId)).toBe(false);
+      `SELECT parent_kind, parent_id, substream_id, attached_by_user_id FROM sidekick_conversation_attachments`,
+    ).all()).toEqual([{ parent_kind: "canvas", parent_id: ATTACHED, substream_id: "0", attached_by_user_id: AUTHOR }]);
   });
 });
 
-describe("a conversation scope", () => {
-  it("puts a Sidekick's own conversation first, then its Breakout home, and flags what a person cannot open or what is archived", () => {
-    const database = migratedWorkspace();
+describe("a Sidekick's scope", () => {
+  it("puts its own conversation first, then the Canvases it writes newest first, then its attachments in order", () => {
+    const database = currentWorkspace();
     const sql = createTestSqlStorage(database);
     seedSidekick(database);
-    database.prepare(`UPDATE automation_directory SET owning_substream_id = ?`).run(BREAKOUT);
-    seedChannel(database, CHANNEL, "Investors", "personal");
-    seedChannel(database, OTHER_CHANNEL, "Founders", "workspace", true);
-    seedChannelViewer(database, CHANNEL, AUTHOR, true);
-    seedBreakout(database, "Weekly call");
-    seedBreakoutMember(database, AUTHOR);
+    seedSidekick(database, OTHER_SIDEKICK);
+    seedCanvas(database, WRITTEN, "Monday brief", 10, SIDEKICK);
+    seedCanvas(database, NEWER_WRITTEN, "Tuesday brief", 20, SIDEKICK);
+    seedCanvas(database, ATTACHED, "Launch", 5);
+    // Another Sidekick's Canvas is not this one's.
+    seedCanvas(database, "00000000-0000-7000-8000-0000000000f4", "Elsewhere", 30, OTHER_SIDEKICK);
     attachSidekickConversation(sql, { automationId: SIDEKICK,
-      address: { parentKind: "workstream", parentId: OTHER_CHANNEL, substreamId: "0" }, userId: AUTHOR, now: 1 });
+      address: { parentKind: "canvas", parentId: ATTACHED, substreamId: "0" }, userId: AUTHOR, now: 1 });
+    // A Canvas both written and attached is listed once, where it is written.
     attachSidekickConversation(sql, { automationId: SIDEKICK,
-      address: { parentKind: "workstream", parentId: CHANNEL, substreamId: "0" }, userId: AUTHOR, now: 2 });
+      address: { parentKind: "canvas", parentId: WRITTEN, substreamId: "0" }, userId: AUTHOR, now: 2 });
+    // An attachment of a Thread from before the cutover names nothing.
+    database.prepare(`INSERT INTO sidekick_conversation_attachments
+      (automation_id, parent_kind, parent_id, substream_id, attached_by_user_id, attached_at)
+      VALUES (?, 'workstream', ?, '0', ?, 3)`).run(SIDEKICK, CHANNEL, AUTHOR);
 
-    const scope = { kind: "sidekick" as const, automationId: SIDEKICK };
-    expect(scopeConversations(sql, scope, AUTHOR).map((conversation) => ({
-      id: conversation.conversationId, kind: conversation.kind, home: conversation.isHome,
-      readable: conversation.readable, archived: conversation.archived,
-    }))).toEqual([
-      // Its own conversation's id is the Sidekick's; the Sidekick admits it, so the directories mark it readable.
-      { id: SIDEKICK, kind: "sidekick", home: false, readable: true, archived: false },
-      { id: `${CHANNEL}/${BREAKOUT}`, kind: "breakout", home: true, readable: true, archived: false },
-      { id: OTHER_CHANNEL, kind: "channel", home: false, readable: true, archived: true },
-      { id: CHANNEL, kind: "channel", home: false, readable: true, archived: false },
+    const listed = (authoring?: boolean) => scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK,
+      ...(authoring ? { authoring } : {}) }).map((conversation) => [conversation.conversationId, conversation.kind,
+      conversation.title, conversation.isOwn, conversation.isParent]);
+    expect(listed(true)).toEqual([
+      [SIDEKICK, "sidekick", "Weekly call prep", true, false],
+      [NEWER_WRITTEN, "canvas", "Tuesday brief", false, false],
+      [WRITTEN, "canvas", "Monday brief", false, false],
+      [ATTACHED, "canvas", "Launch", false, false],
     ]);
-    // Someone in neither the private Channel nor the Breakout reaches only
-    // the workspace-scoped Channel, and that one is archived.
-    expect(scopeConversations(sql, scope, STRANGER).map((conversation) => [conversation.conversationId, conversation.readable]))
-      .toEqual([[SIDEKICK, true], [`${CHANNEL}/${BREAKOUT}`, false], [OTHER_CHANNEL, true], [CHANNEL, false]]);
+    // A run sits inside the Sidekick's own conversation.
+    expect(listed()[0]).toEqual([SIDEKICK, "sidekick", "Weekly call prep", false, true]);
   });
 
-  it("archives a Breakout with its Channel, and reaches nothing for a deleted Sidekick", () => {
-    const database = migratedWorkspace();
+  it("drops a deleted Canvas and reaches nothing for a deleted Sidekick", () => {
+    const database = currentWorkspace();
     const sql = createTestSqlStorage(database);
     seedSidekick(database);
-    database.prepare(`UPDATE automation_directory SET owning_substream_id = ?`).run(BREAKOUT);
-    seedChannel(database, CHANNEL, "Investors", "personal", true);
-    seedBreakout(database, "Weekly call");
-    seedBreakoutMember(database, AUTHOR);
-
-    expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }, AUTHOR)
-      .find((conversation) => conversation.isHome)?.archived).toBe(true);
+    seedCanvas(database, ATTACHED, "Launch", 5);
+    attachSidekickConversation(sql, { automationId: SIDEKICK,
+      address: { parentKind: "canvas", parentId: ATTACHED, substreamId: "0" }, userId: AUTHOR, now: 1 });
+    database.prepare(`DELETE FROM canvas_directory WHERE canvas_id = ?`).run(ATTACHED);
+    expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }).map((conversation) => conversation.conversationId))
+      .toEqual([SIDEKICK]);
     database.prepare(`UPDATE automation_directory SET lifecycle = 'deleted'`).run();
-    expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }, AUTHOR)).toEqual([]);
+    expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK })).toEqual([]);
   });
 
-  it("gives a Breakout loop its own conversation and its Channel's Main", () => {
-    const database = migratedWorkspace();
-    const sql = createTestSqlStorage(database);
-    seedChannel(database, CHANNEL, "Investors", "workspace");
-    seedBreakout(database, "Weekly call");
-    seedBreakoutMember(database, AUTHOR);
-
-    expect(scopeConversations(sql, { kind: "conversation", parentId: CHANNEL, substreamId: BREAKOUT }, AUTHOR)
-      .map((conversation) => [conversation.conversationId, conversation.isOwn]))
-      .toEqual([[`${CHANNEL}/${BREAKOUT}`, true], [CHANNEL, false]]);
-  });
-
-  it("finds a conversation a person can open by its title, ignoring case", () => {
-    const database = migratedWorkspace();
-    seedChannel(database, CHANNEL, "Investors", "personal");
-    seedChannel(database, OTHER_CHANNEL, "Investors", "workspace");
-    seedChannelViewer(database, CHANNEL, AUTHOR, true);
-    seedBreakout(database, "Weekly call");
-    seedBreakoutMember(database, AUTHOR);
+  it("finds every Canvas by its title, ignoring case, for the caller to admit", () => {
+    const database = currentWorkspace();
+    seedCanvas(database, WRITTEN, "Investors", 1);
+    seedCanvas(database, ATTACHED, "investors", 2);
+    seedCanvas(database, NEWER_WRITTEN, "Founders", 3);
     const sql = createTestSqlStorage(database);
 
-    expect(conversationsTitled(sql, "investors", AUTHOR).map((conversation) => conversation.conversationId).sort())
-      .toEqual([CHANNEL, OTHER_CHANNEL].sort());
-    // The private Channel is not one a stranger can name.
-    expect(conversationsTitled(sql, "Investors", STRANGER).map((conversation) => conversation.conversationId))
-      .toEqual([OTHER_CHANNEL]);
-    expect(conversationsTitled(sql, "weekly CALL", AUTHOR).map((conversation) => conversation.conversationId))
-      .toEqual([`${CHANNEL}/${BREAKOUT}`]);
-    expect(conversationsTitled(sql, "Weekly call", STRANGER)).toEqual([]);
+    expect(canvasesTitled(sql, " INVESTORS ").map((conversation) => conversation.conversationId))
+      .toEqual([WRITTEN, ATTACHED]);
+    expect(canvasesTitled(sql, "Weekly call")).toEqual([]);
   });
 });
 
 describe("a conversation reference", () => {
-  it("reads `<channelId>` and `<channelId>/<breakoutId>`, and nothing else, as an id", () => {
-    expect(parseConversationId(CHANNEL)).toEqual({ parentKind: "workstream", parentId: CHANNEL, substreamId: "0" });
-    expect(parseConversationId(` ${CHANNEL}/${BREAKOUT} `))
-      .toEqual({ parentKind: "workstream", parentId: CHANNEL, substreamId: BREAKOUT });
-    expect(parseConversationId(`${CHANNEL}/0`)).toBeNull();
-    expect(parseConversationId(`${CHANNEL}/${BREAKOUT}/x`)).toBeNull();
+  it("reads one Canvas or Sidekick id, and nothing else, as an id", () => {
+    expect(parseConversationId(` ${WRITTEN.toUpperCase()} `)).toEqual({ parentId: WRITTEN, substreamId: "0" });
+    // A Breakout's `<threadId>/<breakoutId>` went with Breakouts.
+    expect(parseConversationId(`${CHANNEL}/${WRITTEN}`)).toBeNull();
     expect(parseConversationId("Investors")).toBeNull();
-    expect(conversationIdOf({ parentId: CHANNEL, substreamId: "0" })).toBe(CHANNEL);
+    expect(conversationIdOf({ parentId: WRITTEN, substreamId: "0" })).toBe(WRITTEN);
   });
 
   it("matches an id exactly, or one title, and calls two titles ambiguous", () => {
     const candidates = [
-      { conversationId: CHANNEL, title: "Investors" },
-      { conversationId: `${CHANNEL}/${BREAKOUT}`, title: "Weekly call" },
-      { conversationId: OTHER_CHANNEL, title: "weekly call" },
+      { conversationId: WRITTEN, title: "Investors" },
+      { conversationId: NEWER_WRITTEN, title: "Weekly call" },
+      { conversationId: ATTACHED, title: "weekly call" },
     ];
-    expect(matchConversationReference(candidates, CHANNEL)).toEqual({ outcome: "found", conversation: candidates[0] });
+    expect(matchConversationReference(candidates, WRITTEN)).toEqual({ outcome: "found", conversation: candidates[0] });
     expect(matchConversationReference(candidates, "investors")).toEqual({ outcome: "found", conversation: candidates[0] });
     expect(matchConversationReference(candidates, "Weekly Call"))
       .toEqual({ outcome: "ambiguous", matches: [candidates[1], candidates[2]] });

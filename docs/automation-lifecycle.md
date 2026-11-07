@@ -380,12 +380,16 @@ in those separately seated conversations. New admission and guest execution
 boundaries read current authority; frame publication does not add permission reads.
 The lite browser does not expose setup or authoring screens.
 
-A substream persists its skill snapshots by execution id and records loaded refs.
-Loading a Sidekick in a workstream's main substream also persists a deduplicated
-attachment. Future executions load eligible attachments using their latest
-accepted revision; retries retain the admitted bodies while rechecking access.
-Loads in child substreams persist in that child's attachment table too; main
-and sibling attachments stay independent. Removing an attachment affects future executions.
+A substream persists its skill snapshots by execution id and records loaded refs;
+retries retain the admitted bodies while rechecking access. Only a Thread's
+conversation filed a loaded Sidekick as attached (`sidekick_attachments`); a
+Canvas's and a Sidekick's conversations attach nothing, so that table is unread.
+
+A Sidekick's own reach is separate: `conversation_attach` files a Canvas's Chat
+in `sidekick_conversation_attachments` as `canvas`, and the conversation tools
+offer the Sidekick its own conversation, every Canvas it writes, and those
+attachments, each admitted for the acting person by `canvasAdmits` or
+`sidekickAdmits` ([`conversation-tools.md`](conversation-tools.md)).
 
 No Thread owns a Sidekick, so none is inherently Recommended. Explicit links a
 Channel's parent already holds in `WorkspaceDO`'s `parent_sidekicks` still reach
@@ -408,21 +412,8 @@ that Sidekick in the library window. Someone who may edit the Channel sees
 the library's other Sidekicks. Failures are stable Rally-owned copy; raw API,
 transport and provider messages never become sidebar text.
 
-A Thread's Main still sends three Sidekick lists on its Channel rail for
-released clients, the owned list always empty; the current desktop draws none of
-them. They ride the rail (`channel_rails`,
-[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)),
-read from the Organization object's own rows: `parent_sidekicks` and the
-attachment list Main reports on its `directory_common` effect. A Main that has
-never reported is asked to when its Channel is opened; until it reports, its
-rail omits `attached`. A listed Sidekick is named by its title and shown under the
-one audience predicate `HostedSidekick.readSkillSummary` applies
-(`sidekick-audience.ts`, shared by both), with the directory row's
-`run_as_user_id`, which is null until the Sidekick next publishes and leaves the
-author alone until then. The directory cannot see a Sidekick's accepted revision
-so a rail can call available a Sidekick whose REST
-summary would not; loading it still goes through `readSkillSource`, which
-refuses.
+A Channel rail's Sidekick lists went with Channels; a Thread's Main no longer
+reports an attachment list on its `directory_common` effect (plan step C-3).
 
 The Sidekicks library opens in its own window from the account popup, immediately
 above Settings. It lists accessible personal, workspace, and room Sidekicks.
