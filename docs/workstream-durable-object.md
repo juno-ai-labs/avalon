@@ -1835,7 +1835,7 @@ order, including tool and safe status turns.
 waterline used by unread tracking. Product messages expose the latter as the
 nullable `attentionSequenceNumber`; tool/transient rows and source merge notices
 (`conversation_merged_into`) carry `null`; see
-[source merge notices](conversation-merge.md#the-sources-merge-divider). Desktop
+source merge notices (retired). Desktop
 read receipts and unread anchors must never substitute transcript sequence for
 that field, including while an older Worker omits the optional wire property.
 

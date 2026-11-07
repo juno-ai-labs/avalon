@@ -181,7 +181,7 @@ it.
   <person>". The Merge button still offers one Channel at a time; the PRD's
   `channel` argument and its Channel-naming system line were dropped for the
   tool ([`PRDs/2026-10-16_merge-back/agent-behavior.md`](PRDs/2026-10-16_merge-back/agent-behavior.md)
-  records the first contract). The mechanism is [`conversation-merge.md`](conversation-merge.md).
+  records the first contract). The mechanism is `conversation-merge.md` (retired).
 
 ### Admission
 

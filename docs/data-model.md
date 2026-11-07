@@ -550,7 +550,7 @@ SQL joins.
   `conversation_access_requests` (migration 95) holds each request to join a
   Channel or Breakout, addressed to one approver, with at most one pending per
   person per conversation; see
-  [`channel-access-requests.md`](channel-access-requests.md).
+  `channel-access-requests.md` (retired).
   `space_invitees` (migration 96) holds the addresses of Organization invitees a
   Space lists until they accept and are seated as participants; see
   [`spaces.md`](spaces.md#participants).
@@ -1436,6 +1436,12 @@ Breakout, Activity, digest and suggested-work rows. Retired so far:
   also owned, `email-markdown.ts`, is now
   [`markdown-rendering.md`](markdown-rendering.md)'s, with the decisions that
   still bind it.
+- **Merge, Channel access requests and session import.**
+  `conversation-merge-service.ts` and the agent's `conversation_merge` tool
+  backend, `conversation-access-request-service.ts` (its WorkspaceDO storage
+  goes with the Channel host) and `session-import-run-service.ts`; their
+  routes went in C-1. `docs/conversation-merge.md` and
+  `docs/channel-access-requests.md` are deleted.
 
 **Why:** After the client cutover nothing shows a suggestion, a Thread or a
 Channel; the PRD's decision log removes them from the product. Code that only
