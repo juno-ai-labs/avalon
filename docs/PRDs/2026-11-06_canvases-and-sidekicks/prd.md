@@ -280,6 +280,25 @@ message.
 **Changes:** The Product behavior for "Sidekick open" and the prose of section
 4 of [design.html](design.html) now say so. The frames are unchanged.
 
+### 2026-11-07 — Who manages a Canvas's participants, and who can open a Sidekick's Canvas
+
+**Decided:** A Canvas's creator, and the Organization's owners and
+administrators, manage who can open it: add people, invite guests, or open
+it to the Organization. Other participants read and take part but do not
+change the audience. A Canvas a Sidekick makes starts out open to the people
+the Sidekick is shared with, and the Sidekick's managers manage its audience
+from then on.
+
+**Why:** The help center had to say who can add people and found no decision.
+Goal 6 needs a Sidekick's Canvas reachable from the Sidekick's conversation by
+everyone in it, which a creator-only default would break. Keeping audience
+changes with the creator and administrators matches the roles the product
+already has.
+
+**Changes:** Plan steps A-6 (participant management) and A-9 (a Sidekick's
+Canvas inherits the Sidekick's audience). The help center's
+who-can-see-what and where-results-go pages say the same.
+
 ### 2026-11-07 — A manager marks a wizard edit explicitly
 
 **Decided:** In a Sidekick's shared conversation, every message addressed to
