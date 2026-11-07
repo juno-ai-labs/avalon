@@ -31,13 +31,13 @@ import { RegionalOnboardingService } from "../src/services/platform-onboarding-s
 import { claimScopeInvitations } from "../src/services/scope-invitation-claims";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 
-let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000cb000");
-let CANVAS_ID = asWorkstreamId("00000000-0000-7000-8000-0000000cb100");
-const CREATOR = asUserId("00000000-0000-7000-8000-0000000cb001");
+let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c5000");
+let CANVAS_ID = asWorkstreamId("00000000-0000-7000-8000-0000000c5100");
+const CREATOR = asUserId("00000000-0000-7000-8000-0000000c5001");
 /** Already signs in with guest@example.test, so a share to that address is theirs as it is made. */
-const GUEST = asUserId("00000000-0000-7000-8000-0000000cb002");
+const GUEST = asUserId("00000000-0000-7000-8000-0000000c5002");
 /** Someone with no account yet: a share to them waits for their first sign-in. */
-const NEWCOMER = asUserId("00000000-0000-7000-8000-0000000cb003");
+const NEWCOMER = asUserId("00000000-0000-7000-8000-0000000c5003");
 const GUEST_EMAIL = "guest@example.test";
 const NEWCOMER_EMAIL = "newcomer@example.test";
 

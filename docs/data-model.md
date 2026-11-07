@@ -492,7 +492,7 @@ SQL joins.
   carries no `CHECK` enumerating the ids: the selectable set is a product decision
   that moves, so it lives in `AGENT_MODEL_OVERRIDES` and is re-validated on read,
   which lets a model be retired without a migration.
-- `workspace_workstream_pins` in WorkspaceDO is one person's pinned Channels in
+- **Retired (WorkspaceDO migration 147 dropped this table).** `workspace_workstream_pins` in WorkspaceDO is one person's pinned Channels in
   one Space and the order they arranged them in. Its primary key is
   `(user_id, space_id, workstream_id)`. It belongs beside the authoritative
   workspace and Space directories because it is a cross-Channel ordering owned
@@ -547,7 +547,7 @@ SQL joins.
   [`personal-system-prompt.md`](personal-system-prompt.md).
   `member_preferences` (migration 89) holds each member's display preferences;
   see [`member-preferences.md`](member-preferences.md).
-  `conversation_access_requests` (migration 95) holds each request to join a
+  **Retired (WorkspaceDO migration 147 dropped this table).** `conversation_access_requests` (migration 95) held each request to join a
   Channel or Breakout, addressed to one approver, with at most one pending per
   person per conversation; see
   `channel-access-requests.md` (retired).
@@ -909,7 +909,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   a receipt row. Activity and mention effects commit their receipt in the same
   WorkspaceDO transaction as the event or intent they acknowledge; no regional
   D1 receipt exists for them.
-- `WorkspaceDO.workspace_activity_events` is the first-party derived record of what happened that someone should
+- **Retired (WorkspaceDO migration 147 dropped this table).** `WorkspaceDO.workspace_activity_events` is the first-party derived record of what happened that someone should
   hear about, separate from the WorkspaceDO-owned normalized provider event.
   `audience_kind`
   stores a visibility *rule* — `workspace`, `user`, or `workstream` — resolved
@@ -923,7 +923,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   human message authors and event ids excluding merged copies. The People
   picker combines those author seeks with existing target and conversation
   indexes instead of scanning the Organization's retained activity.
-- `workspace_activity_events.digestible` is the separate question of whether anybody *wants*
+- **Retired (WorkspaceDO migration 147 dropped this table).** `workspace_activity_events.digestible` is the separate question of whether anybody *wants*
   to hear about an event, as opposed to who *may*. It is still written, but nothing
   reads it today: the digest lists unread Activity, which carries no connector
   activity. It is kept for a future surface. It is fixed when the row is
@@ -937,7 +937,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   and the WorkspaceDO column deliberately has no default: every producer must
   make the decision explicitly. Frozen D1 migration input retains its historical
   `DEFAULT 1`, but no post-cutover writer can use it.
-- `workspace_activity_events.event_sequence` is `INTEGER PRIMARY KEY AUTOINCREMENT` and is the
+- **Retired (WorkspaceDO migration 147 dropped this table).** `workspace_activity_events.event_sequence` is `INTEGER PRIMARY KEY AUTOINCREMENT` and is the
   only cursor axis. Timestamps cannot order it: two events written in the same
   millisecond tie, and any tiebreak can place the second below a cursor taken after
   the first, dropping it permanently. `AUTOINCREMENT` is required rather than
@@ -1234,7 +1234,7 @@ has a document, and the column notes above point at it rather than restating it:
 
 ## Failure modes and limits
 
-- **The historical D1 `activity_events.digestible` defaulted to `1`;
+- **Retired (WorkspaceDO migration 147 dropped this table).** **The historical D1 `activity_events.digestible` defaulted to `1`;
   WorkspaceDO does not.** That source table existed only through migration 0089
   and is absent from the current D1 schema. `workspace_activity_events.digestible` is
   `NOT NULL` with no default, and the typed RPC requires it, so every live
@@ -1246,7 +1246,7 @@ has a document, and the column notes above point at it rather than restating it:
   `pending → fired` under a version guard before the run launches, so a wake-up
   lost between the guard and the launch does not fire at all rather than firing
   twice.
-- **`workspace_workstream_pins.position` is not uniquely indexed**, because any intermediate
+- **Retired (WorkspaceDO migration 147 dropped this table).** **`workspace_workstream_pins.position` is not uniquely indexed**, because any intermediate
   state of the dense rewrite collides with itself. Uniqueness is a property the
   rewrite maintains, not one the database enforces.
 - **An archived Sidekick's object is kept forever.** Its stored lifecycle moves
@@ -1503,6 +1503,17 @@ Breakout, Activity, digest and suggested-work rows. Retired so far:
 - **Moved, not changed.** Every migration statement those modules exported is
   in `retired-workspace-schema.ts`, byte for byte: the WorkspaceDO migration
   ledger's statement hashes are identical before and after.
+- **The tables (plan step C-7).** WorkspaceDO migration 147 drops 49 of them
+  (Activity, digests but `digest_schedules`, suggested work, a Channel's own
+  ledgers, `workspace_workstream_pins` and the other Thread pin and order
+  tables, Thread access and resource links, batch dispatches,
+  `conversation_access_requests`, `thread_backfill`, the import-reservation
+  reclaim, `workstream_email_receipts`), and the Thread rows of the shared
+  tables; AgentLoopDO migration 86 drops `sidekick_attachments`. The Thread,
+  Channel and Breakout directories, their viewers and the `parent_*` tables
+  stay until the operator's Thread retirement has run everywhere, and
+  `digest_schedules` stays empty under the `schedules` foreign key; the why is
+  in [`workspace-retirement.md`](workspace-retirement.md#changelog).
 
 **Why:** After the client cutover nothing shows a suggestion, a Thread or a
 Channel; the PRD's decision log removes them from the product. Code that only
