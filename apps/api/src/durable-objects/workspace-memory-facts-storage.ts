@@ -418,7 +418,8 @@ function openableByPerson(sql: SqlStorage, person: ResolvedPerson, sources: Read
   // Whoever the Canvas admits, the rule its canonical reads apply.
   for (const row of canvasRows(sql, canvases)) {
     if (canvasReaderAllows(row, {
-      userId: person.userId, actorRole: admitsOrganizationWide(person.accessClass) ? "member" : null,
+      userId: person.userId,
+      actorRole: !admitsOrganizationWide(person.accessClass) ? null : person.administrator ? "admin" : "member",
     }, sql)) open.add(`canvas:${row.canvas_id}`);
   }
   return open;

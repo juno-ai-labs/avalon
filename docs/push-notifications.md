@@ -134,9 +134,48 @@ when a native notification response arrives during asynchronous app startup.
 > describes (`workspace-activity-push.ts`, `workspace-activity-feed.ts`,
 > `activity-event-service.ts`, `activity-email-service.ts`). Push delivery now
 > reads notification intents only: a Queue message for an Activity row is
-> logged `activity_item_retired` and acknowledged. The three events that
-> replace the row source (Canvas chat mentions, Needs input, finished runs) are
-> the next change in that step.
+> logged `activity_item_retired` and acknowledged (its id logged as
+> `activity_item_id`). The three events that replace the row source are a
+> Canvas Chat mention (the mention intent above) and a Sidekick run's two
+> notices, below.
+
+### A Sidekick run that needs input or finished
+
+A run reaching `needs_input`, or finishing (`completed`, `failed` or
+`stopped`), is a notice on the same intent row a mention uses, with
+`notification_kind` `needs_input` or `run_finished` (WorkspaceDO migration 145
+widened the CHECK; `NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION`). Who hears it is
+decided, per the [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+
+- **Needs input** goes to the run's requester when a person's request started
+  the run (a `manual` trigger's `requestedByUserId`: a message in the
+  Sidekick's conversation or Run now), plus whoever manages the Sidekick (its
+  author, the person it runs as, and for an Organization-wide Sidekick the
+  Organization's owners and administrators).
+- **A finished run** goes only to its requester. A scheduled, event or email
+  run has none; its row in the shared conversation and its unread are the
+  signal.
+
+`HostedSidekick.onChildCommonProjection` sees the transition in the
+projection's own transaction (the state it moves from is read there) and arms
+one `sidekick_run_notice` alarm entry carrying the notice
+(`SidekickRunNotificationSchema` in `packages/contracts/src/push-notifications.ts`:
+the Sidekick's name, the run, its state and reply then). A run admitted
+straight into `needs_input` for want of a delegate arms the same entry. The
+entry resolves recipients, drops anyone no longer active, records one intent
+per recipient with `recordSidekickRunNotices` (already `delivered`: push is
+the only channel, so there is no lease), and enqueues each with
+`enqueuePushDelivery`. A retried entry records nothing twice (the source and
+kind are unique per recipient) and re-enqueues, which the per-device receipts
+make harmless.
+
+The push consumer reads the notice back, checks the recipient is an active
+member the Sidekick still admits (`notificationDirectoryState`), consults
+`notificationAllows` for the kind, and links to the Sidekick
+(`conversationLink`). The title is "<Sidekick> needs your input" or
+"<Sidekick> finished / failed / stopped"; the body is the run's reply as plain
+text. Both kinds read the person's **Sidekick runs** choice (`runFinished`),
+so one row in Settings covers both.
 
 **Human replies** (`new_message`) use the existing message activity log and
 current participant viewer rows, without requiring another mention. Their
@@ -442,6 +481,13 @@ host allowlist and key shapes, and `web-push.test.ts` covers registration,
 re-subscribing on a key change, and the permission prompt coming first.
 `activity-push.test.ts` (deleted in plan step C-2) drives Activity rows through `receiveChildEffects` on
 real workerd, and the consumer's read-back. `test/conversation-effect-service.test.ts` covers
+a mention whose conversation has no link, and that an owner or administrator
+mentioned in a Canvas only its creator otherwise opens is told. The same
+suite pushes both Sidekick run notices with their titles and the Sidekick's
+link, and sends neither once **Sidekick runs** is off; `hosted-sidekick.test.ts`
+covers who each notice is recorded for (requester and managers for Needs
+input, the requester alone for a finish, managers alone for a scheduled run's
+Needs input and nobody for its finish). `test/conversation-effect-service.test.ts` covers
 a mention whose conversation has no link: Slack and email log
 `conversation_not_linkable` with `parent_kind`, and the intent settles. The provider itself and macOS alert
 presentation require a signed installed build.
@@ -455,6 +501,34 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-07 — A Sidekick run that needs input or finished is pushed again
+
+**What changed:** A run's transition into `needs_input`, or into a finished
+state, arms a `sidekick_run_notice` alarm entry in the Organization object; the
+entry records a `needs_input` or `run_finished` intent per recipient
+(WorkspaceDO migration 145 widens `notification_kind`) and enqueues the push.
+The consumer renders it from the stored notice and links to the Sidekick.
+`needs_input` joins `PushNotificationData.kind` and reads the `runFinished`
+choice, whose Settings row is now **Sidekick runs**. `notificationDirectoryState`
+passes an owner's or administrator's role, so a mention reaches an
+administrator in a creator-only Canvas; memory-fact visibility does the same.
+
+**Why:** The [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+keeps push for Canvas Chat mentions, Needs input and finished runs. The last
+two were Activity rows, retired in plan step C-2, so nothing told anyone a run
+was waiting on them. The recipient rule was decided there: Needs input to the
+requester of a person-started run plus the managers, a finish to the requester
+alone, because a scheduled run's row and unread already signal it. The notice
+rides the existing intent row and push pointer rather than a second pipeline,
+and an alarm entry in the projection's transaction makes it durable without a
+transactional enqueue. Reading every member as `member` withheld mentions
+from administrators, whom `canvasReaderAllows` admits by role.
+
+**Consequences:** A run notice goes by push only: an email or Slack channel
+chosen on **Sidekick runs** sends nothing for it today. A Run now counts as a
+person's request, as a conversation message does. A desktop build older than
+this release does not parse `needs_input` in a clicked notification's data.
 
 ### 2026-11-07 — A Canvas mention is checked against the Canvas, not a Thread's directory
 
