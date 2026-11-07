@@ -22,13 +22,10 @@ import { connectorMaintenanceOperatorRoutes } from './routes/connector-maintenan
 import { conversationRoutes } from "./routes/conversations";
 import { demoOperatorRoutes } from './routes/demo-operations';
 import { devRoutes } from "./routes/dev";
-import { digestRoutes } from "./routes/digest";
 import { featureFlagRoutes } from "./routes/feature-flags";
 import { faviconRoutes } from "./routes/favicons";
 import { healthRoutes } from "./routes/health";
 import { onboardingRoutes } from "./routes/onboarding";
-import { projectRoutes } from "./routes/projects";
-import { spaceReadRoutes, spaceRoutes } from "./routes/spaces";
 import { navigationRoutes } from "./routes/navigation";
 import { pushDeviceRoutes } from "./routes/push-devices";
 import { realtimeRoutes } from "./routes/realtime";
@@ -41,11 +38,9 @@ import { speechRoutes } from "./routes/speech";
 import { authenticatedTelemetryRoutes, publicTelemetryRoutes } from "./routes/telemetry";
 import { linkRoutes } from "./routes/links";
 import { telemetryOperatorRoutes } from './routes/telemetry-operations';
-import { workOpportunityRoutes } from "./routes/work-opportunities";
 import { deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRoutes, workspaceSocketTicket } from "./routes/workspace";
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { workspaceOperatorRoutes } from './routes/workspace-operations';
-import { workstreamCreateRoutes, workstreamRoutes } from "./routes/workstreams";
 import {
   isAllowedGitHubIngressRoute,
   isSharedGitHubIngress,
@@ -60,7 +55,6 @@ import {
 } from "./services/slack-routing-service";
 
 import { privateAccessRoutes } from "./routes/private-access";
-import { conversationAccessRoutes } from "./routes/conversation-access";
 
 export function createApp(): Hono<HonoAppEnv> {
   const app = new Hono<HonoAppEnv>();
@@ -133,7 +127,6 @@ export function createApp(): Hono<HonoAppEnv> {
   app.get("/", (c) => c.json({ service: "avalon-api", region: c.env.AVALON_REGION }));
   app.route("/health", healthRoutes);
   app.route("/access", privateAccessRoutes);
-  app.route("/conversation-access", conversationAccessRoutes);
   app.route("/auth", authRoutes);
   app.route("/browser",createBrowserRoutes((request,c) => {
     let executionContext;
@@ -169,11 +162,6 @@ export function createApp(): Hono<HonoAppEnv> {
   identityApi.get("/workspace/socket", requireWorkspaceAuth, workspaceSocketTicket);
   identityApi.get("/workspace", requireWorkspaceAuth, workspaceProfile);
   identityApi.get("/workspace/members", requireWorkspaceAuth, workspaceMembers);
-  // Starting a thread: a guest may start one in a Channel they take part in.
-  // Only `POST /workstreams` itself; every other `/workstreams` route falls
-  // through to the member-only mount below.
-  identityApi.post("/workstreams", requireWorkspaceAuth, workspaceRealtimeInvalidation);
-  identityApi.route("/workstreams", workstreamCreateRoutes);
   // A support session's device is the impersonator's, not the person's.
   identityApi.use("/workspace/me/device-timezone", requireWorkspaceAuth, refuseSupportSession);
   identityApi.route("/workspace/me/device-timezone", deviceTimezoneRoutes);
@@ -191,7 +179,6 @@ export function createApp(): Hono<HonoAppEnv> {
   identityApi.route("/push-devices", pushDeviceRoutes);
   identityApi.route("/search", searchRoutes);
   identityApi.route("/speech", speechRoutes);
-  identityApi.route("/spaces", spaceReadRoutes);
   identityApi.route("/navigation", navigationRoutes);
   app.route("/", identityApi);
 
@@ -200,11 +187,6 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.use("*", workspaceRealtimeInvalidation);
   protectedApi.route("/workspace", workspaceRoutes);
   protectedApi.route("/workspaces", workspaceMembershipRoutes);
-  protectedApi.route("/workstreams", workstreamRoutes);
-  protectedApi.route("/work-opportunities", workOpportunityRoutes);
-  protectedApi.route("/projects", projectRoutes);
-  protectedApi.route("/spaces", spaceRoutes);
-  protectedApi.route("/digest", digestRoutes);
   protectedApi.route("/connections", connectionRoutes);
   protectedApi.route("/favicons", faviconRoutes);
   protectedApi.route("/realtime", realtimeRoutes);

@@ -77,6 +77,9 @@ export function canvasArtifactKind(resourceType: string, mimeType: string | null
 }
 export type CanvasActorRequest = z.infer<typeof CanvasActorRequestSchema>;
 
+export const CanvasRenameRequestSchema = CanvasActorRequestSchema.extend({ title: z.string().trim().min(1).max(300) });
+export type CanvasRenameRequest = z.input<typeof CanvasRenameRequestSchema>;
+
 export const CanvasSetAudienceRequestSchema = CanvasActorRequestSchema.extend({ update: CanvasAudienceUpdateSchema });
 export type CanvasSetAudienceRequest = z.input<typeof CanvasSetAudienceRequestSchema>;
 
@@ -388,6 +391,21 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       artifacts: this.artifacts(),
       canManage: this.manages(row, request.actor),
     });
+  }
+
+  /**
+   * Retitle the Canvas. Anyone it admits may, as anyone it admits may change
+   * its artifacts from its Chat; anyone else is told it does not exist.
+   */
+  rename(input: CanvasRenameRequest): CanvasDetail {
+    const request = parseRpcInput(CanvasRenameRequestSchema, input, "canvas_rename");
+    const row = this.assertCanvas(request.workspaceId, request.canvasId);
+    if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
+    this.host.storage.transactionSync(() => {
+      this.sql.exec(`UPDATE canvas_directory SET title = ?, updated_at = ? WHERE canvas_id = ?`, request.title, Date.now(), this.canvasId);
+      this.host.noteCanvasDirectoryChanged(this.canvasId);
+    });
+    return this.detail({ workspaceId: request.workspaceId, canvasId: request.canvasId, actor: request.actor });
   }
 
   /**

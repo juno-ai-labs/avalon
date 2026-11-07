@@ -117,6 +117,16 @@ export class CanvasService {
     return (await this.workspace()).canvasSetAudience({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), update });
   }
 
+  /** Order this viewer's Pinned group of Canvases or Sidekicks; see `WorkspacePinStorage.reorder`. */
+  async reorderPins(kind: "canvas" | "sidekick", itemIds: string[]): Promise<void> {
+    await (await this.workspace()).reorderSidebarPins({ workspaceId: this.auth.workspaceId, userId: this.auth.userId, kind, itemIds });
+  }
+
+  /** Retitle a Canvas; see `HostedCanvas.rename`. */
+  async rename(canvasId: string, title: string): Promise<CanvasDetail> {
+    return (await this.workspace()).canvasRename({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), title });
+  }
+
   /** Pin a Canvas or a Sidekick in, or out of, its list's Pinned group; refused for one the viewer may not open. */
   async pin(kind: "canvas" | "sidekick", itemId: string, pinned: boolean): Promise<void> {
     const result = await (await this.workspace()).setSidebarPin({

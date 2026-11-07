@@ -17,7 +17,6 @@
  */
 import {
   CreateMessageRequestSchema,
-  CreateWorkstreamRequestSchema,
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
@@ -29,7 +28,6 @@ import type { HonoAppEnv } from "../src/env";
 import { InitializeWorkstreamObjectInputSchema } from "../src/durable-objects/workstream-object-product";
 import { errorHandler } from "../src/middleware/errors";
 import { conversationRoutes } from "../src/routes/conversations";
-import { workstreamCreateRoutes, workstreamRoutes } from "../src/routes/workstreams";
 import { provisionalWorkstreamDescription } from "../src/services/workstream-description-service";
 import { provisionalWorkstreamTitle } from "../src/services/workstream-naming-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
@@ -46,8 +44,6 @@ import { createTestEnv } from "./helpers/cloudflare-test";
  */
 function routedApp() {
   const app = new Hono<HonoAppEnv>();
-  app.route("/workstreams", workstreamCreateRoutes);
-  app.route("/workstreams", workstreamRoutes);
   app.route("/conversations", conversationRoutes);
   app.onError(errorHandler);
   return app;
@@ -69,10 +65,7 @@ async function post(path: string, body: unknown): Promise<{ status: number; code
 }
 
 const workstreamId = "00000000-0000-7000-8000-0000000000c1";
-
-function createBody(openingMessage: string) {
-  return { openingMessage, clientMessageId: "client-1", participantUserIds: [], attachmentIds: [] };
-}
+const messagesPath = `/conversations/${workstreamId}/substreams/0/messages`;
 
 function messageBody(text: string) {
   return { text, clientMessageId: "client-1" };
@@ -87,15 +80,15 @@ describe("the message ceiling", () => {
     expect(MESSAGE_MAX_CHARACTERS).toBe(100_000);
   });
 
-  it("refuses an opening message over the ceiling before the create reserves anything", async () => {
-    const refused = await post("/workstreams", createBody("x".repeat(MESSAGE_MAX_CHARACTERS + 1)));
+  it("refuses a message over the ceiling before the conversation is touched", async () => {
+    const refused = await post(messagesPath, messageBody("x".repeat(MESSAGE_MAX_CHARACTERS + 1)));
 
     expect(refused.status).toBe(400);
     expect(refused.code).toBe("message_too_long");
     expect(refused.message).toBe(MESSAGE_TOO_LONG_MESSAGE);
   });
 
-  it("lets an opening message at exactly the ceiling through the guard, and leaves the body readable behind it", async () => {
+  it("lets a message at exactly the ceiling through the guard, and leaves the body readable behind it", async () => {
     // Two assertions in one request, and the second is the load-bearing one.
     //
     // `authentication_required` rather than merely "not message_too_long":
@@ -108,7 +101,7 @@ describe("the message ceiling", () => {
     //
     // The first assertion is the off-by-one: a person told to shorten a message
     // that was never too long.
-    const create = await post("/workstreams", createBody("x".repeat(MESSAGE_MAX_CHARACTERS)));
+    const create = await post(messagesPath, messageBody("x".repeat(MESSAGE_MAX_CHARACTERS)));
 
     // Reaching the session check proves the handler ran, so the body was still
     // there to be parsed after the guard read it.
@@ -120,77 +113,21 @@ describe("the message ceiling", () => {
     // not JSON, or that carries no message where one belongs, is a malformed
     // request rather than a long one, and saying "shorten it" to either would
     // send the caller after the wrong thing.
-    const notJson = await post("/workstreams", "{not json");
-    const noMessage = await post("/workstreams", { clientMessageId: "client-1" });
+    const notJson = await post(messagesPath, "{not json");
+    const noMessage = await post(messagesPath, { clientMessageId: "client-1" });
 
-    expect(notJson.code).toBe("invalid_request");
-    expect(noMessage.code).toBe("invalid_request");
-  });
-
-  it("answers the same way for the message a substream is created with", async () => {
-    // The message rides one level down here — a substream is created with the
-    // instruction that starts it — and a nested field is exactly where a bound
-    // quietly stops being the caller's to act on: the schema alone refuses it
-    // as `invalid_request`, which says nothing about what to shorten.
-    const over = await post(`/conversations/${workstreamId}/substreams/confirm`, {
-      operationId: "00000000-0000-7000-8000-0000000000c2",
-      opening: {
-        clientMessageId: "client-1",
-        text: "x".repeat(MESSAGE_MAX_CHARACTERS + 1),
-      },
-    });
-
-    expect(over.status).toBe(400);
-    expect(over.code).toBe("message_too_long");
-    expect(over.message).toBe(MESSAGE_TOO_LONG_MESSAGE);
-
-    // And the guard claims nothing beyond its own bound: a confirmation at the
-    // ceiling, and one carrying no message at all, both reach the handler and
-    // fail there for want of a session.
-    const atCeiling = await post(`/conversations/${workstreamId}/substreams/confirm`, {
-      operationId: "00000000-0000-7000-8000-0000000000c2",
-      opening: {
-        clientMessageId: "client-1",
-        text: "x".repeat(MESSAGE_MAX_CHARACTERS),
-      },
-    });
-    const idleChild = await post(`/conversations/${workstreamId}/substreams/confirm`, {
-      operationId: "00000000-0000-7000-8000-0000000000c2",
-    });
-
-    expect(atCeiling.code).toBe("authentication_required");
-    expect(idleChild.code).toBe("authentication_required");
+    // Both pass the guard and reach the session check, which the validator
+    // sits behind.
+    expect(notJson.code).toBe("authentication_required");
+    expect(noMessage.code).toBe("authentication_required");
   });
 
   it("bounds every schema the message travels through at the same number", () => {
     const atCeiling = "x".repeat(MESSAGE_MAX_CHARACTERS);
     const overCeiling = "x".repeat(MESSAGE_MAX_CHARACTERS + 1);
 
-    expect(CreateWorkstreamRequestSchema.safeParse(createBody(atCeiling)).success).toBe(true);
-    expect(CreateWorkstreamRequestSchema.safeParse(createBody(overCeiling)).success).toBe(false);
     expect(CreateMessageRequestSchema.safeParse(messageBody(atCeiling)).success).toBe(true);
     expect(CreateMessageRequestSchema.safeParse(messageBody(overCeiling)).success).toBe(false);
-  });
-});
-
-describe("removed child-mutation REST routes", () => {
-  it.each([
-    ["POST", `/workstreams/${workstreamId}/messages`],
-    ["PUT", `/workstreams/${workstreamId}/pending-inputs`],
-    ["POST", `/workstreams/${workstreamId}/elicitations/${workstreamId}/answer`],
-    ["POST", `/workstreams/${workstreamId}/stop`],
-    ["POST", `/workstreams/${workstreamId}/retry`],
-  ])("does not expose %s %s", async (method, path) => {
-    const response = await routedApp().request(
-      `https://api.example.com${path}`,
-      {
-        method,
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      },
-      createTestEnv({ AVALON_REGION: "global", LOG_LEVEL: "error" }),
-    );
-    expect(response.status).toBe(404);
   });
 });
 
