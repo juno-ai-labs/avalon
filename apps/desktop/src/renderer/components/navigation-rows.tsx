@@ -183,3 +183,10 @@ export function useRowPinDrop(pinnedIds: ReadonlySet<string>, pin: (id: string) 
     },
   };
 }
+
+/** Pinned first in the order the viewer pinned them; then the list's own order, most recently active first. */
+export function splitPinned<T extends { pinnedPosition?: number | null | undefined }>(rows: readonly T[]): { pinned: T[]; rest: T[] } {
+  const pinned = rows.filter((row) => row.pinnedPosition != null)
+    .sort((left, right) => (left.pinnedPosition ?? 0) - (right.pinnedPosition ?? 0));
+  return { pinned, rest: rows.filter((row) => row.pinnedPosition == null) };
+}

@@ -2883,6 +2883,9 @@ function automationActivationFields(
     automationActivation: {
       automationId: parsed.data.automationId,
       automationName: parsed.data.automationName,
+      runId: parsed.data.runId,
+      ...(parsed.data.trigger ? { trigger: parsed.data.trigger.kind } : {}),
+      ...(parsed.data.run ? { run: parsed.data.run } : {}),
     },
   };
 }

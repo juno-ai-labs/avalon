@@ -11,6 +11,9 @@ import { Badge, Button, IconButton, ErrorNotice, Modal, StatusDot } from './prim
 import { MenuActionItem } from '@rally/ui/components/menu-action-item';
 import { RelativeTime } from './relative-time';
 import { useOptionalCollaborationSession } from '../lib/collaboration-session';
+import { canvasRoute } from '../lib/canvases';
+import { Link } from 'react-router-dom';
+import { CanvasMark } from './canvas-mark';
 
 export type AutomationHeaderAction = 'pause' | 'resume' | 'archive' | 'run';
 
@@ -52,6 +55,17 @@ const lifecycleLabel: Record<AutomationDetail['lifecycle'], string> = {
 
 function scopeLabel(scope: AutomationDetail['scope']): string {
   return scope === 'you' ? 'Only you' : 'Organization';
+}
+
+/** Who a Sidekick is shared with, as its badge says it: its audience when the server sends one, else its scope. */
+export function sidekickAudienceLabel(automation: Pick<AutomationDetail, 'audience' | 'scope'> & { sharedWithUserIds?: readonly string[] | undefined }): string {
+  if (automation.audience === 'people') {
+    const count = (automation.sharedWithUserIds?.length ?? 0) + 1;
+    return automation.sharedWithUserIds ? `Shared · ${count} people` : 'Shared with people';
+  }
+  if (automation.audience === 'personal') return 'Only you';
+  if (automation.audience === 'workspace') return 'Organization';
+  return scopeLabel(automation.scope);
 }
 
 function runTriggerLabel(run: AutomationRun): string {
@@ -136,6 +150,10 @@ export function AutomationHeader({
   // Older accepted definitions receive email without listing an email trigger.
   const triggerSummaries = automation.triggerSummaries.length === 0 && automation.emailAddress
     ? ['When an email arrives'] : automation.triggerSummaries;
+  // The connections its runs use, named as the rest of the profile names
+  // plugins; and the Canvases it writes that this reader may open.
+  const plugins = [...new Set((definition?.recommendedPlugins ?? []).map((plugin) => customToolPluginLabel(plugin.pluginId)))];
+  const canvases = automation.canvases ?? [];
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [showRunHistory, setShowRunHistory] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -158,7 +176,7 @@ export function AutomationHeader({
               <Badge className={`automation-lifecycle is-${automation.lifecycle}`}>
                 {lifecycleLabel[automation.lifecycle]}
               </Badge>
-              <Badge className="scope-badge">{scopeLabel(automation.scope)}</Badge>
+              <Badge className="scope-badge">{sidekickAudienceLabel(automation)}</Badge>
             </div>
             <div className="automation-description">
               {description}
@@ -220,6 +238,18 @@ export function AutomationHeader({
           </ul>}
           {automation.nextRunAt && <p className="automation-runs-next">Next <RelativeTime value={automation.nextRunAt} /></p>}
         </section>
+        {plugins.length > 0 && <section className="sidekick-profile-section">
+          <h2>Uses</h2>
+          <ul aria-label="Connections it uses" className="automation-header-triggers">
+            {plugins.map((label) => <li key={label}>{label}</li>)}
+          </ul>
+        </section>}
+        {canvases.length > 0 && <section className="sidekick-profile-section">
+          <h2>Writes to</h2>
+          <ul aria-label="Canvases it writes to" className="sidekick-canvas-links">
+            {canvases.map((canvas) => <li key={canvas.id}><Link to={canvasRoute(canvas.id)}><CanvasMark kind={null} size={24} />{canvas.title}</Link></li>)}
+          </ul>
+        </section>}
         {automation.emailAddress && <details className="sidekick-profile-section sidekick-email-details"><summary>Email this Sidekick</summary><span className="automation-header-email"><Mail aria-hidden="true" size={14} /><span>{automation.emailAddress}</span></span></details>}
         {customTools.length > 0 && <section className="sidekick-profile-section sidekick-tools-section">
           <h2>Tools</h2>

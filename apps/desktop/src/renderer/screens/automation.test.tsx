@@ -16,6 +16,7 @@ const createAutomation = vi.hoisted(() => vi.fn());
 const shell = vi.hoisted(() => ({ host: 'desktop' as 'desktop' | 'browser' }));
 const viewer = vi.hoisted(() => ({ session: undefined as { user: { id: string }; workspace: { role: string | null } } | undefined }));
 const surfaceIntents = vi.hoisted(() => [] as (string | undefined)[]);
+const surfaceMenus = vi.hoisted(() => [] as (ReadonlyArray<{ label: string; checked?: boolean; onSelect: () => void }> | undefined)[]);
 vi.mock('../lib/collaboration-session', () => ({
   useOptionalCollaborationSession: () => null,
   useCollaborationSession: () => ({ session: viewer.session, api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance, getSidekickDelegates, createAutomation } }),
@@ -23,8 +24,12 @@ vi.mock('../lib/collaboration-session', () => ({
 }));
 // The conversation beside the profile is its own surface with its own sockets,
 // and none of it is what this file is about.
-vi.mock('./conversation-surface', () => ({ ConversationSurface: ({ messageIntent }: { messageIntent?: string }) => {
+vi.mock('./conversation-surface', () => ({ ConversationSurface: ({ messageIntent, composerMenuActions }: {
+  messageIntent?: string;
+  composerMenuActions?: ReadonlyArray<{ label: string; checked?: boolean; onSelect: () => void }>;
+}) => {
   surfaceIntents.push(messageIntent);
+  surfaceMenus.push(composerMenuActions);
   return <div />;
 } }));
 
@@ -86,32 +91,49 @@ beforeEach(() => {
   shell.host = 'desktop';
   viewer.session = undefined;
   surfaceIntents.length = 0;
+  surfaceMenus.length = 0;
   window.location.hash = '';
 });
 
 describe("The Sidekick's conversation composer", () => {
-  async function intentFor(userId: string, role: string | null, overrides: Partial<AutomationDetail> = {}) {
+  async function open(userId: string, role: string | null, overrides: Partial<AutomationDetail> = {}) {
     viewer.session = { user: { id: userId }, workspace: { role } };
     getAutomation.mockResolvedValue(detail(overrides));
     renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
     await waitFor(() => expect(surfaceIntents.length).toBeGreaterThan(0));
-    return surfaceIntents.at(-1);
   }
+  const editAction = () => surfaceMenus.at(-1)?.find((action) => action.label === 'Edit Sidekick');
 
-  it("marks the author's messages as wizard edits", async () => {
-    expect(await intentFor('user-1', 'member')).toBe('edit_sidekick');
+  it("asks the Sidekick for a run from the author until they switch on Edit Sidekick", async () => {
+    await open('user-1', 'member');
+    expect(surfaceIntents.at(-1)).toBeUndefined();
+    expect(editAction()).toMatchObject({ checked: false });
+    act(() => editAction()!.onSelect());
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBe('edit_sidekick'));
+    expect(editAction()).toMatchObject({ checked: true });
+    act(() => editAction()!.onSelect());
+    await waitFor(() => expect(surfaceIntents.at(-1)).toBeUndefined());
   });
 
-  it("marks an Organization admin's messages as edits of an Organization Sidekick", async () => {
-    expect(await intentFor('user-2', 'admin')).toBe('edit_sidekick');
+  it('opens a draft already editing, since it has nothing to run yet', async () => {
+    await open('user-1', 'member', { lifecycle: 'draft', status: 'draft' });
+    expect(surfaceIntents.at(-1)).toBe('edit_sidekick');
   });
 
-  it("leaves a member's messages unmarked, so they ask the Sidekick for a run", async () => {
-    expect(await intentFor('user-2', 'member')).toBeUndefined();
+  it("offers an Organization admin the edit on an Organization Sidekick", async () => {
+    await open('user-2', 'admin');
+    expect(editAction()).toBeDefined();
   });
 
-  it("leaves an admin's messages unmarked on a personal Sidekick they did not write", async () => {
-    expect(await intentFor('user-2', 'admin', { scope: 'you' })).toBeUndefined();
+  it("offers a member who does not manage it no edit, so they only ask for runs", async () => {
+    await open('user-2', 'member');
+    expect(editAction()).toBeUndefined();
+    expect(surfaceIntents.at(-1)).toBeUndefined();
+  });
+
+  it("offers an admin no edit on a personal Sidekick they did not write", async () => {
+    await open('user-2', 'admin', { scope: 'you' });
+    expect(editAction()).toBeUndefined();
   });
 });
 
@@ -126,16 +148,8 @@ describe('Immediate Sidekick creation', () => {
 });
 
 describe('AutomationScreen load failure', () => {
-  it('offers a way back to the workspace in a browser tab, where the sidebar is hidden', async () => {
-    shell.host = 'browser';
-    getAutomation.mockRejectedValue(new Error('Sidekick not found'));
-    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
-    fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(window.location.hash).toBe('#/');
-  });
-
-  it('leaves closing to the window in the Mac app', async () => {
+  it.each(['desktop', 'browser'] as const)('offers a retry and leaves the way out to the sidebar beside it (%s)', async (host) => {
+    shell.host = host;
     getAutomation.mockRejectedValue(new Error('Sidekick not found'));
     renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
     fireEvent.click(await screen.findByRole('button', { name: 'OK' }));
