@@ -174,7 +174,7 @@ describe("custom MCP connections", () => {
       connections.push(connection);
     }
     const input: WorkstreamWorkflowInput = {
-      region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream",
+      region: "global", workspaceId: WORKSPACE_ID, parentKind: "canvas",
       parentId: asWorkstreamId("00000000-0000-4000-8000-000000000004"),
       loopId: "custom-mcp-named-catalog", harnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000005"),
       triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: USER_ID }, reason: "test",
@@ -573,7 +573,7 @@ function stubMcpServer(
 }
 
 function catalogWorkflowInput(): WorkstreamWorkflowInput {
-  return { region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream",
+  return { region: "global", workspaceId: WORKSPACE_ID, parentKind: "canvas",
     parentId: asWorkstreamId("00000000-0000-4000-8000-000000000004"), loopId: "custom-mcp-metadata",
     harnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000005"),
     triggerMessageId: null, activityId: null, executionPrincipal: { type: "user", userId: USER_ID }, reason: "test" };

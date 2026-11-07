@@ -47,7 +47,7 @@ describe("launching a run against the open authority", () => {
   it.each([
     { parentKind: "automation" as const, substreamId: "0", expected: "openai/gpt-6.1-sol" },
     { parentKind: "automation" as const, substreamId: "00000000-0000-7000-8000-000000000099", expected: "openai/gpt-5.6-terra" },
-    { parentKind: "workstream" as const, substreamId: "0", expected: "openai/gpt-5.6-terra" },
+    { parentKind: "canvas" as const, substreamId: "0", expected: "openai/gpt-5.6-terra" },
   ])("records the conversation's model when waking $parentKind/$substreamId", async ({ parentKind, substreamId, expected }) => {
     const database = preRetirementProductSqliteDatabase();
     databases.push(database);
@@ -112,7 +112,7 @@ describe("launching a run against the open authority", () => {
       origin: "scheduled_wakeup",
       executionPrincipal: { type: "user", userId: memberId },
       scheduledWakeupId: "00000000-0000-7000-8000-0000000000e1",
-      conversation: { parentKind: "workstream", substreamId: "0", backgroundAgent: false },
+      conversation: { parentKind: "canvas", substreamId: "0", backgroundAgent: false },
     })).rejects.toThrow(diagnostic);
 
     const objectStore = objectStores.get(workstreamId);
@@ -130,7 +130,7 @@ describe("launching a run against the open authority", () => {
       origin: "scheduled_wakeup",
       executionPrincipal: { type: "user", userId: memberId },
       scheduledWakeupId: "00000000-0000-7000-8000-0000000000e1",
-      conversation: { parentKind: "workstream", substreamId: "0", backgroundAgent: false },
+      conversation: { parentKind: "canvas", substreamId: "0", backgroundAgent: false },
     })).resolves.toBe(row.id);
     expect(workstreamObjectGet(
       objectStore,

@@ -6,7 +6,6 @@ import { cleanupCanvaTransactions } from "../services/canva-transaction-cleanup"
 import { parseRpcInput } from "../lib/rpc-input";
 import { ToolPageError } from "./tool-page-storage";
 
-import { MergeResourceTokenSchema } from "@rally/contracts";
 import { AGENT_HANDOFF_TOOL_NAMES, AgentCommunicationService } from "../services/agent-communication-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
@@ -401,6 +400,8 @@ const SocketUpgradeIdentitySchema = z.object({
 
 type SocketUpgradeIdentity = z.infer<typeof SocketUpgradeIdentitySchema>;
 
+/** A resource named by its UUID or its alias (resource-slug.ts). */
+const ResourceTokenSchema = z.string().regex(/^[A-Za-z0-9_-]+$/u);
 const BroadcastRequestSchema = z.strictObject({
   event: z.unknown(),
 });
@@ -494,7 +495,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("remove_participant"), userId: IdSchema,
     operationId: IdSchema.optional(), owningThread: z.boolean().optional() }),
   productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
-  productOperation({ operation: z.literal("attach_resources"), resourceIds: z.array(MergeResourceTokenSchema) }),
+  productOperation({ operation: z.literal("attach_resources"), resourceIds: z.array(ResourceTokenSchema) }),
   productOperation({ operation: z.literal("detach_resource"), resourceId: IdSchema }),
   productOperation({ operation: z.literal("rename_resource"), resourceId: IdSchema, title: z.string().min(1) }),
   productOperation({ operation: z.literal("answer_elicitation"),
@@ -3340,10 +3341,10 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         return jsonResponse(await this.product.markUnread(current));
       }
       if (request.operation === "create_message") {
-        const { replayed, ...receipt } = await this.admitMessage(sender, request.input, span);
-        // Only a merge is told whether it replayed: the receipt is a strict
-        // client shape, and the merge service is the one caller that asks.
-        return jsonResponse(request.input.merge ? { ...receipt, replayed } : receipt);
+        // The receipt is a strict client shape; whether it replayed stays here.
+        const receipt: Record<string, unknown> = { ...await this.admitMessage(sender, request.input, span) };
+        delete receipt.replayed;
+        return jsonResponse(receipt);
       }
       if (request.operation === "add_participant") {
         const participant = await this.product.addParticipant(current, request.userId);
@@ -3371,7 +3372,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
             await this.publishLocalProductEvent(identity, { type: "resource_attached", resource });
           }
         }
-        return jsonResponse(result.ok ? { ok: true, linked: result.linked, resources: result.resources } : result);
+        return jsonResponse(result.ok ? { ok: true, linked: result.linked } : result);
       }
       if (request.operation === "attach_resource") {
         const resource = await this.product.attachResource(current, request.resourceId);

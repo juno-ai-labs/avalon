@@ -2,7 +2,6 @@ import "../../../tests/isolated-region";
 import {
   asArtifactId,
   asAutomationId,
-  asSpaceId,
   asSubstreamId,
   asWorkspaceId,
   asWorkstreamId,
@@ -23,7 +22,6 @@ const WORKSTREAM = asWorkstreamId("3f2504e0-4f89-41d3-9a0c-0305e82c3302");
 const SUBSTREAM = asSubstreamId("3f2504e0-4f89-41d3-9a0c-0305e82c3303");
 const AUTOMATION = asAutomationId("3f2504e0-4f89-41d3-9a0c-0305e82c3305");
 const ARTIFACT = asArtifactId("3f2504e0-4f89-41d3-9a0c-0305e82c3306");
-const SPACE = asSpaceId("3f2504e0-4f89-41d3-9a0c-0305e82c3307");
 
 /**
  * Every name this repository mints, so the allowlist below is checked against
@@ -38,7 +36,6 @@ const EVERY_MINTED_NAME = (["global", "enterprise"] as const).flatMap((region) =
   conversationObjectName(region, WORKSPACE, WORKSTREAM, SUBSTREAM),
   automationDOName(region, WORKSPACE, AUTOMATION),
   artifactHostDOName(region, ARTIFACT),
-  conversationObjectName(region, WORKSPACE, SPACE),
 ]);
 
 describe("durable object names", () => {
@@ -58,10 +55,6 @@ describe("durable object names", () => {
 
   it("separates the two regions, so one name never addresses both objects", () => {
     expect(artifactHostDOName("global", ARTIFACT)).not.toBe(artifactHostDOName("enterprise", ARTIFACT));
-  });
-
-  it("names a Space's hidden main conversation by the Space id, as a Channel's is by its own", () => {
-    expect(conversationObjectName("global", WORKSPACE, SPACE)).toBe(`global:${WORKSPACE}:${SPACE}`);
   });
 
   it("keeps an artifact name distinct from every other object's", () => {

@@ -11,7 +11,9 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
 } from "./identifiers";
-import { SpaceIdSchema } from "./spaces";
+// The Space id these operator shapes still carry is a plain id until the
+// engineering MCP stops listing Spaces (plan step B-8, step 2).
+const SpaceIdSchema = z.string().uuid();
 import { ReadTranscriptRequestSchema } from "./workstream-transcript";
 
 /** Trusted Access identity supplied by the MCP Worker, never a tool argument. */

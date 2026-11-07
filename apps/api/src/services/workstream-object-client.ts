@@ -58,7 +58,6 @@ const AttachedResourcesSchema = z.union([
   z.strictObject({
     ok: z.literal(true),
     linked: z.array(z.string()),
-    resources: z.array(z.strictObject({ id: z.string(), slug: z.string().optional(), title: z.string(), kind: z.string() })),
   }),
   z.strictObject({
     ok: z.literal(false),
@@ -309,19 +308,6 @@ export class WorkstreamObjectClient {
     return CreatedMessageSchema.parse(await this.request({ operation: "create_message", input }));
   }
 
-  /**
-   * Append a Breakout's merged result to this Main conversation: the message
-   * route's admission with the server-written `merge` tag, which starts no
-   * run. `replayed` is true when this `clientMessageId` was already admitted.
-   */
-  async createMergeMessage(
-    input: WorkstreamObjectCreateMessageInput & { merge: NonNullable<WorkstreamObjectCreateMessageInput["merge"]> },
-  ): Promise<WorkstreamMessageAdmissionReceipt & { replayed: boolean }> {
-    return CreatedMessageSchema.extend({ replayed: z.boolean() }).parse(
-      await this.request({ operation: "create_message", input }),
-    );
-  }
-
   /** Seat a reader through the conversation that owns the roster. */
   async addParticipant(userId: string): Promise<WorkstreamDetail["participants"][number]> {
     return ParticipantSchema.parse(await this.request({ operation: "add_participant", userId }));
@@ -347,7 +333,7 @@ export class WorkstreamObjectClient {
    * `WorkstreamObjectProduct.attachResources`. A refusal names the position.
    */
   async attachResources(resourceIds: readonly string[]): Promise<
-    | { ok: true; linked: string[]; resources: Array<{ id: string; slug?: string | undefined; title: string; kind: string }> }
+    | { ok: true; linked: string[] }
     | { ok: false; index: number; code: "resource_not_found" | "resource_access_denied" | "attachment_draft_requires_message" }
   > {
     return AttachedResourcesSchema.parse(await this.request({ operation: "attach_resources", resourceIds: [...resourceIds] }));

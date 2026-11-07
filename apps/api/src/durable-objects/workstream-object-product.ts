@@ -2,9 +2,9 @@ import { renderPersonalSystemPrompt } from "@rally/agent-harness";
 import { annotationCommentText } from "@rally/contracts";
 import { AnnotationsSchema, SidekickMessageIntentSchema, validateAnnotationAttachments } from "@rally/contracts";
 import { ResourceService } from "../services/resource-service";
-import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-share-rules";
+import { resolveShareableResources } from "../services/resource-share-rules";
 import { AGENT_MESSAGE_CONTENT_KIND } from "@rally/contracts";
-import { WorkstreamAppearanceSchema, type MergeEmbed } from "@rally/contracts";
+import { WorkstreamAppearanceSchema } from "@rally/contracts";
 import { renderAgentMessage } from "../services/agent-message-content";
 import { renderSidekickReviewNotice } from "../services/sidekick-review-notice";
 import {
@@ -24,8 +24,6 @@ import {
   WorkstreamWorkflowInputSchema,
   workstreamParticipantPreview,
   DemoSeedSchema,
-  ConversationMergeV1Schema,
-  type ConversationMergeV1,
   type Elicitation,
   type Message,
   type User,
@@ -180,16 +178,9 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
    */
   seed: DemoSeedSchema.optional(),
   /**
-   * Present when the message is a Breakout's merged result, written by the
-   * merge service after it checked the Breakout is this Thread's and the
-   * person can read it. Like `seed`, it reaches the object only over its
-   * internal RPC: the message route's request schema has no such field.
-   */
-  merge: ConversationMergeV1Schema.optional(),
-  /**
    * A message posted for the conversation's readers that starts no run,
    * whatever addressing would decide. Sent only by the engineering bridge's
-   * `sendMessage`; like `seed` and `merge`, the message route's request schema
+   * `sendMessage`; like `seed`, the message route's request schema
    * has no such field.
    */
   recordOnly: z.literal(true).optional(),
@@ -210,10 +201,6 @@ function messageAdmissionRequestHash(authorUserId: string, input: WorkstreamObje
   delete receiptInput.telemetryOperationId;
   delete receiptInput.telemetryRequestReceivedAt;
   delete receiptInput.telemetryJourney;
-  // The merge title is a server snapshot and may change between attempts.
-  if (receiptInput.merge) {
-    receiptInput.merge = { ...receiptInput.merge, mergedFrom: { ...receiptInput.merge.mergedFrom, title: "" } };
-  }
   return workstreamImportHash({ command: "create_message", authorUserId, input: receiptInput });
 }
 
@@ -1321,11 +1308,8 @@ export class WorkstreamObjectProductService {
         dueAt: iso(wakeup.due_at),
         promptPreview: truncateUtf16Safe(wakeup.prompt.replace(/\s+/gu, " ").trim(), 40),
       } : null,
-      // Pin identity belongs to a Channel's placement in a Space. A detail
-      // read has no selected Space, so the legacy scalar must stay empty.
+      // The retired workspace-wide pin position; always empty.
       pinPosition: null,
-      // A Thread's Space pins went with the Spaces (plan step C-2).
-      spacePins: [],
       ...(root.scope === "personal"
         ? workstreamParticipantPreview(this.recentParticipantUserIds())
         : { participantUserIds: [], participantExtraCount: 0 }),
@@ -2327,19 +2311,15 @@ export class WorkstreamObjectProductService {
   /**
    * Attach several resources at once, all or none: every one passes
    * {@link attachResource}'s source checks before any link is written, then
-   * every link is written in one commit. A merge's embeds take this path, so a
-   * refused embed refuses the merge before anything is shared
-   * (docs/conversation-merge.md).
+   * every link is written in one commit.
    *
    * A refusal names the position that failed, never the resource. `linked`
-   * lists the ids this call newly linked; `resources` describes each in the
-   * order asked, for a merge's stored embeds.
+   * lists the ids this call newly linked.
    */
   async attachResources(auth: AuthContext, resourceTokens: readonly string[]): Promise<
     | {
       ok: true;
       linked: string[];
-      resources: MergeEmbed[];
       /** The newly linked resources as the rail reads them, for its live event. */
       attached: WorkstreamResource[];
     }
@@ -2347,9 +2327,9 @@ export class WorkstreamObjectProductService {
   > {
     await this.authorize(auth);
     // A citation names a resource by its UUID or by its alias
-    // (resource-slug.ts); both resolve to the one row. A merge shares only
-    // what its author may read (resource-share-rules.ts).
-    if (resourceTokens.length === 0) return { ok: true, linked: [], resources: [], attached: [] };
+    // (resource-slug.ts); both resolve to the one row. It shares only what
+    // its author may read (resource-share-rules.ts).
+    if (resourceTokens.length === 0) return { ok: true, linked: [], attached: [] };
     const resolved = await resolveShareableResources(this.env, auth, resourceTokens, { readCheck: true });
     if (!resolved.ok) return { ok: false, index: resolved.index, code: resolved.code };
     const rows = resolved.rows;
@@ -2405,7 +2385,6 @@ export class WorkstreamObjectProductService {
       ok: true,
       linked,
       attached,
-      resources: mergeEmbedsOf(rows),
     };
   }
 
@@ -3032,16 +3011,6 @@ export class WorkstreamObjectProductService {
         delivery.turnId,
       ));
       const messageType = turn?.message_type;
-      // A merge that queued behind input carries its tag here, as one written
-      // at once does, so it is a `merged` Activity row either way.
-      const merge = (() => {
-        try {
-          const parsed = ConversationMergeV1Schema.safeParse(JSON.parse(turn?.structured_content_json ?? "null"));
-          return parsed.success ? parsed.data : undefined;
-        } catch {
-          return undefined;
-        }
-      })();
       // Elicitation answers historically advance the transcript/directory but
       // do not create a blank digest activity or a notification. Their typed
       // structured payload remains in the canonical turn itself.
@@ -3077,7 +3046,6 @@ export class WorkstreamObjectProductService {
           metadata: {
             substreamId: this.externalSubstreamId(),
             attentionOrdinal: delivery.attentionOrdinal,
-            ...mergeActivityMetadata(merge),
           },
           targets: activityTargets(
             delivery.affectedUserIds,
@@ -3903,8 +3871,8 @@ export class WorkstreamObjectProductService {
     const participantAddedCount = new Set(confirmedParticipantUserIds.filter((userId) => !this.isParticipant(userId))).size;
     const missingParticipantUserIds = [...new Set([auth.userId, ...confirmedParticipantUserIds])]
       .filter((userId) => !this.isParticipant(userId));
-    const structuredContent = input.merge ?? (input.annotations?.length
-      ? await new ResourceService(this.env,auth).annotationContent(input.annotations) : null);
+    const structuredContent = input.annotations?.length
+      ? await new ResourceService(this.env,auth).annotationContent(input.annotations) : null;
     const attachmentRows = await this.reserveAttachmentDrafts({
       workspaceId: auth.workspaceId,
       workstreamId: root.workstream_key,
@@ -3940,10 +3908,9 @@ export class WorkstreamObjectProductService {
     // edit is the Sidekick's to say when the loop takes the message.
     const editsSidekick = sharedSidekickConversation && input.intent === "edit_sidekick";
     let shouldInvoke = editsSidekick || Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0 || Boolean(input.annotations?.some((a)=>a.comment.trim()));
-    if (input.merge || input.recordOnly) {
-      // A merge is a result posted for the thread's readers, never a request
-      // to Rally, and a record-only message says so explicitly: neither starts
-      // a run, whatever the room's size.
+    if (input.recordOnly) {
+      // A record-only message is posted for the conversation's readers, never
+      // a request to Rally: it starts no run, whatever the room's size.
       shouldInvoke = false;
     } else if (input.seed) {
       // A seed action states its addressing outcome instead of being classified.
@@ -4443,8 +4410,6 @@ export class WorkstreamObjectProductService {
             metadata: {
               substreamId: this.externalSubstreamId(),
               attentionOrdinal: write.attentionOrdinal,
-              // What makes the message a `merged` Activity row.
-              ...mergeActivityMetadata(input.merge),
             },
             targets: activityTargets(affectedUsers, personIds, auth.userId),
           },
@@ -5276,12 +5241,3 @@ function attachmentMetadataSize(metadataJson: unknown): number {
   }
 }
 
-/**
- * A Breakout merge's activity-event metadata: the source the `merged`
- * Activity row names, frozen at merge time, as the message's own tag is.
- * Empty for any other message. The feed reads `mergedFrom.breakoutId` through
- * a partial index (WorkspaceDO migration 109).
- */
-function mergeActivityMetadata(merge: ConversationMergeV1 | undefined): { mergedFrom?: { breakoutId: string; title: string } } {
-  return merge ? { mergedFrom: { breakoutId: merge.mergedFrom.breakoutId, title: merge.mergedFrom.title } } : {};
-}
