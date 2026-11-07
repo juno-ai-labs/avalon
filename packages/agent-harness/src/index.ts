@@ -2857,7 +2857,7 @@ const automationDraftSubmissionJsonSchema = {
     },
     customTools: {
       type: "array",
-      description: "Tools this Sidekick's runs call instead of rediscovering a method: each is a tested JavaScript program with a name, a model-facing description and an input schema, offered to every run as custom_<name>. One tool does one thing a run can name in a sentence; two steps are two tools, with no mode or preview input. Test each with sidekick_tool_test before submitting; a tool whose current code has no successful test is refused. Use [] when the runs need none.",
+      description: "Tools this Sidekick's runs call instead of rediscovering a method: each is a tested JavaScript program with a name, a model-facing description and an input schema, offered to every run as custom_<name>. Prefer one tool that runs the whole repeated procedure and returns the facts to report plus the items it could not handle; keep the set under five, with no mode or preview input. Test each with sidekick_tool_test before submitting; a tool whose current code has no successful test is refused. Use [] when the runs need none.",
       items: sidekickCustomToolJsonSchema,
     },
     suggestedScope: {

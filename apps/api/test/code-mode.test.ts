@@ -295,30 +295,63 @@ describe("GatewaySession", () => {
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 
-  it("refuses a write queued behind the call that stopped the program", async () => {
-    let authorizations = 0;
+  it("runs writes side by side, each with its own receipt", async () => {
+    let inFlight = 0;
+    let most = 0;
+    let releaseWrites: (() => void) | undefined;
+    const writesHeld = new Promise<void>((resolve) => { releaseWrites = resolve; });
+    const held: HarnessTool["execute"] = async () => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      if (inFlight === 2) releaseWrites?.();
+      await writesHeld;
+      inFlight -= 1;
+      return { output: {}, summary: "written" };
+    };
+    const writes = plugin("rally:core", "rally_core", [
+      tool({ name: "first", mode: "write", execute: held, definition: { ...tool({ name: "first", mode: "write" }).definition, timeoutMs: 2_000 } }),
+      tool({ name: "second", mode: "write", execute: held, definition: { ...tool({ name: "second", mode: "write" }).definition, timeoutMs: 2_000 } }),
+    ]);
+    const { host, rows } = await hostOver();
+    const session = new GatewaySession({ host, view: view([writes]), context: context(), input: { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, harnessRunId: RUN_ID }, allowedPluginIds: null });
+    const answers = await Promise.all([session.gateway.call("rally_core", "first", {}), session.gateway.call("rally_core", "second", {})]);
+    expect(answers).toEqual([{ ok: true, output: {} }, { ok: true, output: {} }]);
+    expect(most).toBe(2);
+    expect(rows().map((row) => row.tool_call_id)).toEqual(["program-call:call:0", "program-call:call:1"]);
+  });
+
+  it("claims no write after another call stopped the program, though both were started together", async () => {
+    // The second write is authorized and looked up while the first's
+    // authorization is still out; the first then stops the program, and the
+    // second, reaching its claim afterwards, is refused with no receipt.
+    let failFirst: (() => void) | undefined;
+    const firstOut = new Promise<void>((resolve) => { failFirst = resolve; });
+    let secondLookedUp: (() => void) | undefined;
+    const secondIn = new Promise<void>((resolve) => { secondLookedUp = resolve; });
+    let releaseLookup: (() => void) | undefined;
+    const lookupHeld = new Promise<void>((resolve) => { releaseLookup = resolve; });
     const executed: string[] = [];
     const { host, rows } = await hostOver({
-      authorize: vi.fn(async () => {
-        authorizations += 1;
-        if (authorizations === 1) throw new Error("run_authority_lost");
+      authorize: vi.fn(async ({ toolName }) => {
+        if (toolName === "first") { await firstOut; throw new Error("run_authority_lost"); }
         return { allowed: true as const };
       }),
+      findCompletedToolResult: vi.fn(async () => { secondLookedUp?.(); await lookupHeld; return null; }),
     });
     const writes = plugin("rally:core", "rally_core", [
       tool({ name: "first", mode: "write", execute: async () => { executed.push("first"); return { output: {}, summary: "first" }; } }),
       tool({ name: "second", mode: "write", execute: async () => { executed.push("second"); return { output: {}, summary: "second" }; } }),
     ]);
     const session = new GatewaySession({ host, view: view([writes]), context: context(), input: { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, harnessRunId: RUN_ID }, allowedPluginIds: null });
-    const [first, second] = await Promise.all([
-      session.gateway.call("rally_core", "first", {}),
-      session.gateway.call("rally_core", "second", {}),
-    ]);
-    expect(first).toMatchObject({ ok: false, code: "code_call_refused" });
-    expect(second).toMatchObject({ ok: false, code: "code_call_refused" });
+    const first = session.gateway.call("rally_core", "first", {});
+    const second = session.gateway.call("rally_core", "second", {});
+    await secondIn;
+    failFirst?.();
+    expect(await first).toMatchObject({ ok: false, code: "code_call_refused" });
+    releaseLookup?.();
+    expect(await second).toMatchObject({ ok: false, code: "code_call_refused", error: expect.stringContaining("stopped") });
     expect(session.calls.map((call) => call.refusal)).toEqual(["program_stopped", "program_stopped"]);
     expect(executed).toEqual([]);
-    expect(authorizations).toBe(1);
     expect(rows()).toEqual([]);
   });
 
@@ -437,8 +470,8 @@ describe("customToolFailure", () => {
 
 describe("the program module", () => {
   it("always wraps the body, whatever shape the model wrote", () => {
-    expect(wrapProgram("return 1;")).toBe("export default async function run(tools, console, input) {\nreturn 1;\n}");
-    expect(wrapProgram("export default async function run() { return 1; }")).toContain("export default async function run(tools, console, input) {\nexport default");
+    expect(wrapProgram("return 1;")).toBe("export default async function run(tools, console, input, msLeft) {\nreturn 1;\n}");
+    expect(wrapProgram("export default async function run() { return 1; }")).toContain("export default async function run(tools, console, input, msLeft) {\nexport default");
   });
 
   it("parses the isolate's answer with a schema and rejects anything else", () => {
@@ -472,19 +505,21 @@ describe("checkProgram", () => {
     expect(issues).toEqual([{ code: "syntax_error", line: 2, column: 11, message: "Line 2, column 11: Unexpected token." }]);
   });
 
-  it("refuses a write whose promise is dropped, one in Promise.all, and one in an iteration callback, once per call site", () => {
+  it("refuses a write whose promise is dropped, bare or in a forEach callback, once per call site, and passes writes side by side", () => {
     expect(check("tools.rally_tables.insert_rows({});\nreturn 1;")).toEqual([
       ["write_not_awaited", 1, expect.stringContaining("Line 1: rally_tables.insert_rows is a write that is not awaited where it is called.")],
     ]);
-    expect(check("await Promise.all([tools.rally_tables.query({}), tools.plugin_slack.send_message({})]);")).toEqual([
-      ["write_in_parallel", 1, expect.stringContaining("inside Promise.all()")],
-    ]);
-    expect(check("await Promise.all(rows.map(async (row) => {\n  await tools.rally_tables.insert_rows({ rows: [row] });\n}));")).toEqual([
-      ["write_in_callback", 2, expect.stringContaining("inside a map() callback")],
-    ]);
     expect(check("rows.forEach((row) => tools.rally_tables.insert_rows({ rows: [row] }));")).toEqual([
-      ["write_in_callback", 1, expect.stringContaining("inside a forEach() callback")],
+      ["write_in_callback", 1, expect.stringContaining("inside a forEach() callback, which drops its promise")],
     ]);
+    expect(check("rows.filter(async (row) => {\n  await tools.rally_tables.insert_rows({ rows: [row] });\n});")).toEqual([
+      ["write_in_callback", 2, expect.stringContaining("inside a filter() callback")],
+    ]);
+    expect(check([
+      "await Promise.all([tools.rally_tables.query({}), tools.plugin_slack.send_message({})]);",
+      "await Promise.all(rows.map(async (row) => {\n  await tools.rally_tables.insert_rows({ rows: [row] });\n}));",
+      "const settled = await Promise.allSettled(rows.map((row) => tools.rally_tables.insert_rows({ rows: [row] })));",
+    ].join("\n"))).toEqual([]);
   });
 
   it("refuses the clock and random numbers only in a program that writes, and follows no alias or computed name", () => {

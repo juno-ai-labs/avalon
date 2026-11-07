@@ -2,7 +2,7 @@
 
 > Created 2026-08-05.
 >
-> The product contract for Rally as a whole — what a Channel and a Thread are, what the
+> The product contract for Rally as a whole — what a Canvas and a Sidekick are, what the
 > agent may do, and what the prototype must deliver. Unlike a per-change PRD,
 > this one stays current: it is the document every other document defers to on
 > what Rally *is*, and it is edited when the contract itself changes. The
@@ -11,19 +11,26 @@
 >
 > Conventions for this folder: [`../../prds.md`](../../prds.md).
 
-Rally is an AI-native workplace communication and execution environment organized around Channels and the Threads inside them, the durable homes work actually happens in, rather than direct messages, search, or a global inbox. Its visible hierarchy is Organizations, Channels, Threads, and Breakouts; a Space level above Channels exists in the model but is not shown.
+Rally is an AI-native workplace for doing work with Rally and with shared AI agents, organized around two shared homes rather than direct messages, search, or a global inbox: Canvases, where people and Rally make things together, and Sidekicks, the agents people share. Its visible hierarchy is Organizations, then the Canvases and Sidekicks inside them.
 
 ## Product contract
 
-- A Thread is the durable, multiplayer home for a task, investigation, deliverable, client engagement, or automation run, and the conversation Rally participates and acts in.
-- A Channel is a stable, named list of Threads for an ongoing area of work, Organization-wide or private to its members. It holds no conversation, runs no inference, and grants no access to its Threads; each Thread keeps its own audience. Every non-deleted Thread belongs to at least one Channel, one Thread may sit in several Channels at once, and a person starts a Thread from a Channel's composer.
-- A Breakout is a private or shared conversation inside a Thread, carrying that Thread's context without widening its audience. Breakouts do not nest.
-- Rally is inherent in every Thread. It is never shown as a removable participant.
+> Rewritten on 2026-11-07 for
+> [Canvases and Sidekicks](../2026-11-06_canvases-and-sidekicks/prd.md), which
+> replaces Channels, Threads and Breakouts with Canvases and Sidekicks; that
+> PRD's "Impact on the product contract" section and decision log are the
+> reasoning.
+
+- A Canvas is the shared home for work: a conversation with Rally that produces artifacts of any kind (documents, spreadsheets, images, PDFs, archives and live sites), shown beside the conversation, each with its own versions. A Canvas is identified by its conversation and starts with no artifact; Rally changes an artifact by publishing a new version, attributed to Rally.
+- A Canvas has its own audience: its creator only by default, then the people added to it, or the whole Organization, and guests can be invited to it. Its creator and the Organization's owners and administrators manage that audience, and owners and administrators can open every Canvas. Everyone in a Canvas sees who else is in it now, pins it in their own list, and comments on its artifacts through annotations that arrive in the Canvas's conversation.
+- A Sidekick is the shared home for an agent: a versioned definition with one shared conversation that everyone it is shared with (its author, named people, or the Organization) can join. A message addressed to the Sidekick starts a run under its definition, which acts as the requester when they are not one of its delegates; a tool that would need a delegate is then refused with a named reason. Its managers edit the Sidekick in the same conversation through an explicitly marked wizard edit; nothing infers an edit from the text. Each run appears in the conversation as a row carrying its reply.
+- A Canvas a Sidekick writes admits the Sidekick's audience as it stands, read live from the Sidekick, plus whoever is added to the Canvas itself.
+- Rally is inherent in every Canvas's conversation. It is never shown as a removable participant.
 - Viewing does not create participation. Creating, posting, answering an elicitation, or being explicitly added does. An impersonation-aware surface may perform a participant action under an active workspace-scoped **can impersonate** relationship while retaining audit attribution to the initiating operator. The relationship is independent of demo status; the surface still applies the represented participant's ordinary authorization and availability rules.
-- Every admitted automation run owns exactly one Thread. A scheduled run is admitted and creates that Thread at its due time; Rally does not pre-open a planned Thread merely because a future occurrence exists.
-- Automations are versioned templates plus scoped subscriptions. Active subscriptions share one sidebar list and carry `You` or `Organization` badges.
-- Connected activities either trigger deterministic automation work, enrich an explicitly watched resource, or appear as an in-stream routing suggestion. Rally has no feed of connector activity. Its one cross-thread feed, Activity, lists events about the viewer (being added, mentions, new Breakouts, finished runs, new Threads in their Channels), each opening the Thread it names; it has no reply or triage of its own.
-- The agent uses typed, authorized tools. An ordinary Thread run may load
+- Every run is a child of its Sidekick's shared conversation. A scheduled run is admitted at its due time; Rally does not pre-open a run merely because a future occurrence exists.
+- Rally has no Channels, Threads, Breakouts, Activity feed, routing suggestions or digests. Connected activities either trigger Sidekick work or enrich an explicitly watched resource, nothing else; Rally has no feed of connector activity.
+- Structured elicitation appears in a Canvas's conversation and in a Sidekick's conversation.
+- The agent uses typed, authorized tools. An ordinary run may load
   the Terminal plugin and execute bounded file/command operations inside one
   isolated, authority-fenced, organization-network-policy-governed sandbox when
   code is useful. Rally still exposes no user-visible terminal, host shell,
@@ -32,7 +39,7 @@ Rally is an AI-native workplace communication and execution environment organize
 
 ## Required prototype outcomes
 
-The prototype provides a secure Electron shell; configured deployment signup routing; Google identity and separately scoped connector authorization; persistent Channels, Threads, participants, messages, resources, automations, and activities; live collaboration; OpenRouter streaming and tool execution; structured elicitation; dynamic scheduling; Google, GitHub App, Linear, Notion, signed-webhook, and Firecrawl web-tool paths; and contextual activity routing.
+The prototype provides a secure Electron shell; configured deployment signup routing; Google identity and separately scoped connector authorization; persistent Canvases, Sidekicks, participants, messages, resources, and activities; live collaboration; OpenRouter streaming and tool execution; structured elicitation; dynamic scheduling; and Google, GitHub App, Linear, Notion, signed-webhook, and Firecrawl web-tool paths.
 
 The visual language is a dense, quiet, dark work surface inspired by Codex and Claude Code: text-forward navigation, a readable shared transcript, a restrained bottom composer, compact status dots, and a contextual 320–380px right rail.
 

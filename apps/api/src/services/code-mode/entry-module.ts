@@ -12,7 +12,8 @@
  * Everything the program can reach is built here: `tools`, a proxy whose
  * functions forward to the gateway and throw a coded Error on refusal or
  * failure (an unknown name is forwarded too, so the gateway refuses it by
- * name); `console`, captured; and the deadline race. `fetch` and `connect`
+ * name); `console`, captured; `msLeft`, the milliseconds before the deadline;
+ * and the deadline race. `fetch` and `connect`
  * are blocked by the loader (`globalOutbound: null`), not by this module.
  *
  * Nothing the isolate answers is trusted on its own: the host parses the
@@ -79,6 +80,12 @@ export default class extends WorkerEntrypoint {
       error: (...args) => push("error", args),
     };
     const tools = toolsProxy(gateway, api);
+    // The program's own budget, from the clock this timer runs on, so a tool
+    // sizes its share to the real deadline rather than a copy of it. Inside
+    // the entry, not the program: the pre-run check refuses the clock in a
+    // program that writes, so a clock value cannot become a write's input.
+    const deadlineAt = Date.now() + options.deadlineMs;
+    const msLeft = () => Math.max(0, deadlineAt - Date.now());
     let timer;
     const deadline = new Promise((_, reject) => {
       timer = setTimeout(() => {
@@ -88,7 +95,7 @@ export default class extends WorkerEntrypoint {
       }, options.deadlineMs);
     });
     try {
-      const value = await Promise.race([run(tools, programConsole, options.input), deadline]);
+      const value = await Promise.race([run(tools, programConsole, options.input, msLeft), deadline]);
       let valueJson;
       try {
         valueJson = JSON.stringify(value === undefined ? null : value, (_, part) => typeof part === "bigint" ? part.toString() : part) ?? "null";
@@ -115,12 +122,12 @@ export default class extends WorkerEntrypoint {
 
 /**
  * The program as a module: the model's function body, always wrapped, with
- * `tools`, `console` and `input` in scope. The wrapping is unconditional so
+ * `tools`, `console`, `input` and `msLeft` in scope. The wrapping is unconditional so
  * the module's shape is the host's, never the program's. A body that uses
  * module syntax, or escapes its braces, fails to compile or runs at module
  * level in an isolate that holds nothing to reach: no bindings, no network,
  * and the loader's own error is the program's failure.
  */
 export function wrapProgram(code: string): string {
-  return `export default async function run(tools, console, input) {\n${code}\n}`;
+  return `export default async function run(tools, console, input, msLeft) {\n${code}\n}`;
 }

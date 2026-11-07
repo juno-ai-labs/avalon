@@ -484,6 +484,23 @@ the gateway stays the authority.
 writes are sequential by rule. Writes in loops and several write sites in one
 program remain allowed; a loop of awaited writes stops at the first failure.
 
+### 2026-11-06 — Reversed: one tool runs the whole procedure; the run handles the exceptions
+
+**Decided:** The guide prefers one tool that runs a Sidekick's whole repeated
+procedure, including its own progress writes and its date window, and keeps the
+set under five. The tool returns the facts to report and an `exceptions` list,
+works in bounded resumable shares, and is safe to call again. It still has one
+entry point with no mode or preview input, it does not post, and whether a run
+acts at all stays in the trigger and instructions. This replaces "A saved tool
+does one thing; the run keeps the decisions" above.
+
+**Why:** Runs paid for every turn by re-sending the whole conversation. Daily
+Active Rally Organizations spent $197 on one run of 966 model calls, and its
+single-step custom tool did not shorten it. The narrow-contract concern stands,
+so the judgement the run keeps is now explicit in the result as exceptions
+rather than spread across a turn per step. Details in
+[`code-mode.md`](../../code-mode.md#2026-11-06--one-tool-runs-the-whole-procedure-the-run-handles-the-exceptions).
+
 ## Key design decisions
 
 1. **The program's tool calls go through `HarnessTool.execute`, not around
@@ -714,12 +731,10 @@ arithmetic for the team to set it before merge.
 
 ## Open questions
 
-1. **Concurrency inside a program.** `Promise.all` over reads is natural
-   JavaScript and allowed; a write inside `Promise.all` or an iteration
-   callback is refused before the program runs, so writes are sequential by
-   rule as well as by the gateway's serialization. Whether connectors tolerate
-   the read concurrency a program can generate is a provider question the
-   first production trip decides.
+1. **Concurrency inside a program.** `Promise.all` over reads and writes is
+   allowed (since 2026-11-06; writes were sequential before). Whether
+   connectors tolerate the concurrency a program can generate is a provider
+   question the first production trip decides.
 2. **Pagination inside a program.** `_next` tools are offered as stubs so a
    program can loop pages. Whether to add an async iterator helper depends on
    how often programs page; decide after the first ten programs.

@@ -130,15 +130,20 @@ id, together with the answer.
 
 Loops are fine; a program may make as many calls as the work needs. It has
 ${Math.round(CODE_PROGRAM_DEADLINE_MS / 1000)} seconds of runtime, then it is
-stopped; split work larger than that across programs.
+stopped. msLeft() returns the milliseconds left before that; a program doing a
+share of a larger job keeps taking work while msLeft() exceeds what the next
+step takes, then returns what remains.
 
 A write made from a program is made for real. Compute first and write last, so a
 failure before the write leaves nothing half done. Before it runs, a program is
 checked and refused by line, with nothing written, when a write's promise is
-dropped, when a write runs inside Promise.all or a map/forEach callback, or when
-a program that writes reads Date.now(), new Date() or Math.random(). Await each
-write in order, in a for...of loop when there are several, and take the time
-from the time tool. When Rally re-runs an
+dropped (a bare call, or one inside a forEach callback), or when a program that
+writes reads Date.now(), new Date() or Math.random(). Await every write. Await
+writes in order when one depends on the last, or when a failure should stop the
+rest; independent calls, writes included, may run together in Promise.all. Start
+calls that run together in a fixed order, such as map over a list already in
+hand, so a re-run makes them in the same order. Take the time from the time
+tool. When Rally re-runs an
 interrupted program, calls that already completed replay instead of running
 again; a program you send again is a new run and repeats its writes. A failed
 program names the call that failed and the writes that stand. Correct the
@@ -528,9 +533,11 @@ export { CUSTOM_TOOLS_PLUGIN_ID, CUSTOM_TOOLS_PLUGIN_MODEL_ID };
 
 export const CUSTOM_TOOLS_SYSTEM_MESSAGE = `# Custom tools
 The custom_* tools were written and tested for this Sidekick. Call one instead of
-rediscovering its method. A failed custom tool says which call failed and which
-writes stand; do the failure step your instructions give for it rather than
-rebuilding the method by hand.`;
+rediscovering its method, and do not redo by hand what it did. When it says work
+remains, call it again. Handle each item it lists as an exception yourself, as your
+instructions direct. A failed custom tool says which call failed and which writes
+stand; do the failure step your instructions give for it rather than rebuilding the
+method by hand.`;
 
 /**
  * A saved tool's program failure, in the run's vocabulary: every code the

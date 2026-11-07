@@ -56,8 +56,8 @@ async function and is always wrapped as one. Before any isolate is loaded,
 `checkProgram` parses the wrapped body with acorn, walks it, and refuses the
 program as `code_program_rejected`, by line and with nothing written: a body
 that does not parse; a write (`tools.<plugin>.<tool>` whose mode is `write`)
-called as a bare statement with its promise dropped, inside `Promise.all` and
-its kin, or inside a `map`/`forEach` callback; and `Date.now()`, `new Date()`,
+called with its promise dropped, as a bare statement or inside a `forEach`
+callback or another array method that discards its callback's result; and `Date.now()`, `new Date()`,
 `Math.random()` and the like in a program that writes, because a re-run
 replays a nested call by its input hash and cannot match a write whose input
 changed. The balance is latency against certainty: the parse of a
@@ -83,7 +83,9 @@ stub lives for that call and nothing else reaches the isolate.
 Inside, the entry builds `tools` as a proxy: the names in `api` are real
 functions, and any other name a program reaches for is forwarded too, so the
 gateway refuses it by name instead of the program seeing `undefined`. It
-captures `console`, races the program against the deadline, and answers with
+captures `console`, gives the program `msLeft()` (the milliseconds before the
+deadline, on the clock the entry's own timer runs on), races the program against
+the deadline, and answers with
 the serialized return value and the logs, or the error with its message, the
 code it carried and the index of the call that threw. The host parses that
 answer with a schema and trusts none of it on its own: `finishProgram` reads
@@ -131,9 +133,16 @@ Terminal's `command_outcome_unknown` is ambiguous; everything else is a
 definitive failure with the tool's own code. A `ZodError` after valid
 arguments names the fields it rejected, in the receipt's code
 (`tool_response_invalid:<fields>`) and in the sentence. Writes and `serial`
-tools run one at a time per program, and a write queued behind the call that
-stopped the program is refused when its turn comes; reads run as the program
-asks.
+tools run one at a time per program, and a call queued behind the one that
+stopped the program is refused when its turn comes. Every other call, writes
+included, runs as the program asks: `Promise.all` over writes runs them
+together. Each call checks the stopped state again just before its receipt is
+claimed, so a write that was authorized while another call stopped the program
+is refused with nothing written; one already dispatched finishes. A nested
+receipt's key is the call's index in the order calls were made, so a program
+whose concurrent calls start in an order that depends on timing may, on a
+re-run, meet a recorded call at that index with other input; the receipt lookup
+treats that as an ambiguous write and halts, rather than make it twice.
 
 The session has a lifetime. When the program returns, the tool closes it:
 calls still running are awaited, not aborted (a write the program did not
@@ -169,25 +178,44 @@ which a resumed conversation restores it. `submit_draft` refuses a ready draft
 whose tool has no recorded test for its current identity with
 `custom_tool_untested`, naming `customTools.<i>.code`. The test tool and its
 guide paragraph exist only where `CODE_LOADER` does. The guide holds the shape
-of a saved tool: one tool does one thing a run can name in a sentence, takes
-only that thing's inputs, and returns the facts the run decides with. Two steps
-are two tools, never one behind a `mode`, `action`, `dryRun` or `preview`
-input, and a tool does not compute and write in one call when the run should
-read the result first. A tool that writes takes what it writes as input and
-never reads the clock to decide whether to act. The decisions (whether to post, whether it is time,
-which step is next) stay in the instructions; a smaller model running the
-Sidekick reads a narrow contract correctly where a wide one makes it guess. In
-a self-review, the plan says of each deterministic step the runs repeated,
-skipped or got wrong whether it becomes a tool or why it stays in the
-instructions, with "the instructions already say so" ruled out as a reason, and
-a writing tool is tested only against a scratch table
+of a saved tool: prefer one tool that runs the whole repeated procedure (reads,
+pages, loops, dedupe, date bounds, arithmetic and the Sidekick's own progress
+writes) and keep the set under five, adding a tool only where the run must judge
+something between two steps. The tool returns the facts to report and an
+`exceptions` list of items it could not handle, finishes the rest rather than
+stopping on one bad item, works in bounded shares that record where they stopped
+when the job can outgrow the two-minute deadline, sized by elapsed time and
+recorded one write per group of items, with its concurrency and group size tuned
+by timing tests at a few settings to finish the most items per call, and is safe
+to call again. It
+records the facts it found with its progress and returns every one not yet marked
+delivered, so a call that timed out after its writes loses nothing; the run marks
+them delivered after posting, through a second tool. A tool takes the IDs of the
+Sidekick's tables as input rather than fixing them in its code or finding them by
+name, so setup and a review can test it against scratch tables. A scratch table is
+named after its real table with " (test)" appended, because creating a table under
+the real name reopens the live one; tests reuse it and invalidate the rows they wrote.
+Posting and messages to people stay with the run, and a tool has one entry
+point, never a `mode`, `action`, `dryRun` or `preview` input. It may read the
+clock to work out which dates or items the work covers, never to decide whether
+to do it: a time-of-day gate stays in the trigger and the instructions. In a self-review, the plan says of each deterministic step the
+runs repeated, skipped or got wrong whether it moves into the tool or why it
+stays in the instructions, with "the instructions already say so" ruled out as a
+reason; tools the runs always call one after another become one; a tool call
+that finished fewer items than its measured settings, returned exceptions code
+could have settled, or timed its share against a fixed number is the case for
+re-tuning the tool and timing it again, while a tuned tool that still needs
+several calls stays as it is; and a tool the review
+changes is tested against scratch tables as above
 ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)).
 The schema refuses, by
 field, a tool on an instruction-only Sidekick, a `plugin_*` entry missing from
 `recommendedPlugins`, and a Rally plugin outside the allowlist.
 
 A run whose definition carries tools registers `rally:custom-tools`, always
-active, with one `custom_<name>` tool per saved tool: the saved schema closed
+active, with one `custom_<name>` tool per saved tool, and a system message
+telling the run to call it rather than redo its method, to call again while work
+remains, and to handle each listed exception itself: the saved schema closed
 with `additionalProperties: false` as its input, `mode: write`,
 `record_before_execute`, and the identity hash in `providerOperationName` so the
 surface hash, and so receipt replay, follows the tool. Calling one validates
@@ -268,8 +296,8 @@ twenty values, `expected`, `retryAfterMs`); a tool's message text is bounded to
   Breaking the first nests receipts without bound; breaking the second puts an
   image in a JSON value. Guard: `callableTools` in `test/code-mode.test.ts`.
 - **A program reaches the isolate only through the pre-run check.** Breaking it
-  means a write in a `catch`, a `map` callback or a `Promise.all` that the
-  gateway meets with the write already made, and a clock-stamped write a re-run
+  means a write whose promise was dropped that the gateway meets with the write
+  already made, and a clock-stamped write a re-run
   makes twice. Guard: `test/code-mode.test.ts` fails when the executor skips
   the check, since the loader is then called for a flagged program.
 
@@ -436,12 +464,13 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   the sentences that name those shapes took the Code Mode suite from 23 of 26
   to 26 of 26 and the wizard suite to 12 of 12. The final twenty passed, 38 of
   38 wizard and run checks in substance; one run landed on a Gemini Flash
-  fallback and still passed. A fourth suite, `prod`, holds twelve scenarios
+  fallback and still passed. A fourth suite, `prod`, holds thirteen scenarios
   shaped after Sidekicks running in production (daily activity and signup
   reports with checkpoints, a careers-page monitor with a baseline ledger, a
   note delta behind a cursor, weekly call prep, an hourly dashboard, a polling
-  window, research dedup, a connector firehose the run cannot serve) rewritten
-  over local plugins; it passed 22 of 22, with ten of its runs routed to the
+  window, research dedup, a connector firehose the run cannot serve, and a large
+  repeated scan graded on finishing in at most two calls) rewritten over local
+  plugins; the first twelve passed 22 of 22, with ten of its runs routed to the
   scheduled-run model, Gemini Flash, each calling its saved tool. The code suite
   with the final prompts passed 28 of 28 on Sol and Terra. Three `choice`
   scenarios in it check that "run this Python" and "publish a CSV" load
@@ -470,6 +499,168 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   is a listing-rules question still open.
 
 ## Changelog
+
+### 2026-11-07 — A program reads its own time left
+
+**What changed:** The entry module passes the program `msLeft()`, the
+milliseconds before its deadline, as a fourth argument to the wrapped
+function (`run(tools, console, input, msLeft)`). `CODE_SYSTEM_MESSAGE` names it,
+and `CUSTOM_TOOLS_GUIDE` has a saved tool keep taking groups while `msLeft()` is
+more than its slowest group has taken, rather than reading `current_time` and
+comparing against "three quarters of two minutes". The guide also has a tool
+read every page within its budget, cut requests per item, raise a source's page
+size and its concurrency while finished items per call keep rising, and report
+the requests it made.
+
+**Why:** A writing program may not read the clock (`write_with_clock_or_random`),
+so a tool timed its share with `current_time`, a nested call and receipt per
+check, against 90 seconds copied into its code from the guide's prose. A change
+to `CODE_PROGRAM_DEADLINE_MS` would have left every saved tool stopping at the
+old number. `msLeft()` lives in the entry, not the program, so the pre-run check
+still keeps clock values out of write inputs.
+
+**Considered and rejected:** Allowing `Date.now()` in a writing program: a clock
+value in a write's input makes a re-run's call differ from its receipt. Passing
+only a recorded deadline: comparing against it still needs a clock. A replayed
+clock (`msLeft()` answered from receipts on a re-run): it would need a recorded
+time per call for a decision that already converges, below.
+
+**Consequences:** `msLeft()` is live on a re-run. Replayed calls return faster
+than the original live ones, so a re-run reaches each group with at least as
+much time left and takes at least the groups the original did; calls line up
+with their receipts. A re-run whose replay ran slower than the original calls,
+and so stopped earlier, would meet a recorded call at that index with other
+input and halt as ambiguous, never writing twice. The guide's sizing no longer
+names the deadline, so moving `CODE_PROGRAM_DEADLINE_MS` needs no guide edit.
+
+### 2026-11-06 — Size a tool's share by time, and let a program's writes run together
+
+**What changed:** The guide has a tool size its share by elapsed time, reading
+`current_time` at the start and after each group of reads and stopping at about
+three quarters of the two-minute deadline, rather than a fixed count. It records
+each group's finished items with one `update_rows`, moves a row a refused write
+names into its exceptions and writes the rest, claims only the group about to be
+read, takes new revisions from the write's result rather than re-reading, and runs
+independent reads side by side up to any limit a person or a source set. The tool returns how many items it
+finished, how long it took and its errors, and setup tunes concurrency and group
+size by timing tests at a few settings, keeping the one with the most items per
+second that adds no errors. A number an earlier revision wrote without a
+measurement is re-measured, not obeyed.
+
+The gateway no longer queues write-mode calls: only `serial` tools run one at a
+time, and every other call runs as the program starts it. Each call checks the
+stopped state again just before its receipt is claimed. `checkProgram` drops
+`write_in_parallel` and narrows `write_in_callback` to callbacks whose result
+the array method discards (`forEach`, `filter` and the like), which drop a
+write's promise; `Promise.all` over writes, and writes in a `map` callback,
+pass.
+
+**Why:** Daily Active Rally Organizations' first one-tool revision,
+`scan_fixed_batch`, took ten conversations per call. Nothing in the guide said
+how to size a share, so the setup agent picked a small fixed count, and it
+copied the Sidekick's run rules into the program: a claim, a re-read, the SQL
+count, a completion write and another re-read for every conversation, with
+reads capped at four at a time. About 450 conversations a day still meant about
+45 tool calls, each re-sending the run's context. The cap of four was itself a
+guess: the setup agent wrote it into revision 4 during a repair, no person asked
+for it, and neither the platform nor the source sets it, yet later revisions
+treated it as a rule.
+
+The setup agent's first timing test of 4, 8 and 16 concurrent reads could not
+run. Its reads go through a hosted MCP SQL tool whose `readOnlyHint` is false,
+so Rally treats it as a write: the checker refused it inside `Promise.all`, and
+the earlier revision's "four at a time" had in fact run one at a time, because
+the gateway queued every write-mode call. Write-mode is a retry and receipt
+policy, not a promise that two calls conflict; the program already sees each
+call's outcome, and the ambiguous-write halt and receipts do not depend on
+order. Writes that must not overlap still have a way to say so: await them in
+sequence, or mark the tool `serial`.
+
+**Considered and rejected:** `Date.now()` for the time budget, which
+`checkProgram` refuses in a program that writes (`write_with_clock_or_random`).
+Claiming the whole share up front, which strands the rows the time budget does
+not reach. One write for the whole share, which loses every result on an overrun
+and stalls on one bad row, since `update_rows` refuses the whole batch. Raising the program deadline, which bounded
+shares make unnecessary. Exempting only hosted SQL tools from the write queue:
+the same mismatch applies to any tool whose mode is write for retry reasons, and
+a per-tool exception list is a rule nobody keeps. Keying nested receipts by input
+rather than index, so concurrent calls replay in any order: a re-run whose input
+diverged would then make a new write where today it halts, and the order a
+program starts its calls in is already fixed when it maps over a list in hand.
+
+**Consequences:** The guide states the deadline in words; a change to
+`CODE_PROGRAM_DEADLINE_MS` must update `CUSTOM_TOOLS_GUIDE` by hand. A cap on
+concurrent reads may protect a production source, so the code keeps it. A
+program that fires writes together no longer stops at the first failure: the
+ones already dispatched finish, and the program sees every outcome. A program
+whose concurrent calls start in an order that depends on timing (a write after
+an `await` inside each branch) can, on a re-run, meet a recorded call at its
+index with other input and halt as ambiguous; the system message tells the
+model to start calls that run together in a fixed order. Bind's direct path
+still runs a turn's write calls one at a time.
+
+### 2026-11-06 — A custom tool takes its tables as input
+
+**What changed:** The guide has a tool take the IDs of the Sidekick's tables as
+input, has setup and reviews test writing tools against scratch tables passed
+that way, and has a review rewrite a tool whose table ID is fixed in its code.
+The prod eval grader fails a writing tool with a table ID in its code or one it
+finds by name through `rally_tables.create` or `search`, and its
+no-posting check now covers `send`, `reply`, `reply_to_message` and
+`create_comment` as well as `post`, `conversation_post` and `send_message`, in
+both the dot form and the bracket form a dotted connector name such as
+`gmail.send` takes inside a program.
+
+**Why:** The one-tool guide put progress writes inside the tool, but a review may
+test a writing tool only against a scratch table, and a fixed table ID cannot be
+pointed at one. So a review could not merge an existing Sidekick's steps into one
+tool, and the costly per-step tools would stay. The posting check matched only
+three names, so a tool that sent mail or left a comment passed.
+
+**Considered and rejected:** Letting a review test against the live tables, which
+would mark real items done that no run reported.
+
+**Consequences:** A tool saved before this keeps its fixed IDs until it next
+changes. Scratch tables persist, since nothing drops a table; the fixed
+" (test)" name keeps it to one per real table, and invalidating test rows keeps
+them out of searches.
+
+### 2026-11-06 — One tool runs the whole procedure; the run handles the exceptions
+
+**What changed:** The wizard's custom-tools guide, the `customTools` schema
+description and the run's `rally:custom-tools` system message. The guide now
+asks for one tool that runs the whole repeated procedure, a set under five, a
+compact result with an `exceptions` list, bounded resumable shares, and safe
+re-calls. It drops "two steps are two tools" and "never a tool that computes and
+writes": a tool may now read, compute and write the Sidekick's own progress rows
+in one call, and may read the clock to work out which dates it covers. It keeps one entry point
+with no mode or preview input, posting with the run, and the whether-to-act
+decision in the trigger and instructions. `scripts/code-mode-evals.mjs` grades
+the new shape (no flag inputs, no posting from a tool, at most four tools),
+no longer fails a writing tool for reading the clock, lets P04 save one tool,
+and records each run's tool-call count.
+
+**Why:** Every model turn re-reads the whole conversation, so a run's cost grows
+with the square of its turns. Daily Active Rally Organizations made 1,318 tool
+calls in one run on 2026-11-05, re-sending 250k to 840k tokens each time, for
+$197. Its only custom tool picked the next four pending rows, the kind of
+single-step tool the old guide asked for, and saved nothing: across six
+Sidekicks given custom tools since 2026-11-01, no run got cheaper per run.
+Splitting a procedure into one-thing tools keeps the turns and only moves the
+arithmetic.
+
+**Considered and rejected:** Keeping small tools and asking runs to batch their
+calls, which leaves a turn per step. A tool that also posts, which would take
+wording and the decision to deliver away from the run. Raising the program
+deadline so one call can always finish, which the bounded-share rule makes
+unnecessary.
+
+**Consequences:** This reverses the PRD's decision that a saved tool does one
+thing (see its decision log). The risk that decision guarded against, a small
+model misreading a wide contract, is now carried by the result shape: the tool
+decides only what code can decide and hands every case it cannot to the run as
+an exception. A future change should keep exceptions in the result rather than
+thrown, and keep delivery out of tools.
 
 ### 2026-10-31 — A program is checked before it runs
 
