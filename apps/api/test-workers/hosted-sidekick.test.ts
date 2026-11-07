@@ -725,7 +725,7 @@ describe("a hosted Sidekick", () => {
       // Sidekick, and a product request that claimed a Channel is refused.
       body: JSON.stringify({ operation: "create_message", parentKind: "automation", auth: {
         sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: "global", role: "member",
-      }, input: { text: "Publish a personal knowledge Sidekick.", clientMessageId: "sidekick-authoring", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [], modelOverride: "double/primary" } }),
+      }, input: { text: "Publish a personal knowledge Sidekick.", clientMessageId: "sidekick-authoring", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [], modelOverride: "double/primary", intent: "edit_sidekick" } }),
     });
     expect(sent.status, await sent.clone().text()).toBe(200);
     await runDurableObjectAlarm(root);

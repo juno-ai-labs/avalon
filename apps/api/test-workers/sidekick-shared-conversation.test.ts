@@ -44,13 +44,17 @@ const AUTHOR_ID = asUserId("00000000-0000-7000-8000-00000000c8a1");
 const MEMBER_ID = asUserId("00000000-0000-7000-8000-00000000c8a2");
 const SESSION_ID = "00000000-0000-7000-8000-00000000c8a3";
 const MEMBER_SESSION_ID = "00000000-0000-7000-8000-00000000c8a4";
+/** An Organization admin who did not write the Sidekick: a manager of an Organization one by role. */
+const ADMIN_ID = asUserId("00000000-0000-7000-8000-00000000c8a5");
+const ADMIN_SESSION_ID = "00000000-0000-7000-8000-00000000c8a6";
 const NOW = "2026-11-06T10:00:00.000Z";
 const TEST_ENV: Env = env;
 /** A turn reaches the double and ends; sized for a contended multi-suite run. */
 const SETTLE_TIMEOUT_MS = 15_000;
 
 function auth(userId: string): AuthContext {
-  return { sessionId: userId === MEMBER_ID ? MEMBER_SESSION_ID : SESSION_ID, userId: asUserId(userId), workspaceId: WORKSPACE_ID, region: "global", role: "member" };
+  const sessionId = userId === MEMBER_ID ? MEMBER_SESSION_ID : userId === ADMIN_ID ? ADMIN_SESSION_ID : SESSION_ID;
+  return { sessionId, userId: asUserId(userId), workspaceId: WORKSPACE_ID, region: "global", role: userId === ADMIN_ID ? "admin" : "member" };
 }
 
 /** Reassigned per test, so a finished test's draining objects stay its own. */
@@ -107,6 +111,12 @@ async function seedRegionalDatabase(): Promise<void> {
       VALUES (?, 'member@example.com', 'Member', NULL, 'UTC', ?)`).bind(MEMBER_ID, NOW),
     env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(MEMBER_SESSION_ID, MEMBER_ID, WORKSPACE_ID),
+    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+      VALUES (?, ?, 'active', 'admin', ?)`).bind(WORKSPACE_ID, ADMIN_ID, NOW),
+    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+      VALUES (?, 'admin@example.com', 'Admin', NULL, 'UTC', ?)`).bind(ADMIN_ID, NOW),
+    env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(ADMIN_SESSION_ID, ADMIN_ID, WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstreams (
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, do_identity_anchor INTEGER NOT NULL DEFAULT 0
     )`),
@@ -152,8 +162,11 @@ async function allowDelegation(userId: string): Promise<void> {
   await workspaceStub().sidekickSetDelegation({ ...request, expectedGeneration: prepared.generation, source: "self_service" });
 }
 
-/** A person's message in the shared conversation, as the Worker sends it. */
-async function say(userId: string, text: string, clientMessageId: string): Promise<string> {
+/**
+ * A person's message in the shared conversation, as the Worker sends it;
+ * `edit` marks it as a wizard edit, as a manager's composer does.
+ */
+async function say(userId: string, text: string, clientMessageId: string, edit = false): Promise<string> {
   // The Worker's own admission: the Sidekick decides who may read its
   // conversation, and the reader it admits is seated there before they post.
   await new ConversationService(TEST_ENV, auth(userId)).authorizeViewer(AUTOMATION_ID);
@@ -162,7 +175,10 @@ async function say(userId: string, text: string, clientMessageId: string): Promi
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       operation: "create_message", parentKind: "automation", auth: auth(userId),
-      input: { text, clientMessageId, mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] },
+      input: {
+        text, clientMessageId, mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+        ...(edit ? { intent: "edit_sidekick" } : {}),
+      },
     }),
   });
   const body = await response.json() as { turn?: { turnId: string } };
@@ -187,14 +203,20 @@ async function sidekickRuns(): Promise<RunRow[]> {
 }
 
 /** Executions the shared conversation's own loop ran: the wizard's turns. */
-async function wizardExecutions(): Promise<{ trigger: string | null; terminal: boolean }[]> {
+async function wizardExecutions(): Promise<{ trigger: string | null; terminal: boolean; wizard: boolean }[]> {
   return runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{
     execution_context_json: string; terminalized_at: number | null;
   }>(`SELECT execution_context_json, terminalized_at FROM runs WHERE execution_context_json IS NOT NULL
-      ORDER BY created_at, run_id`).toArray().map((row) => ({
-    trigger: (JSON.parse(row.execution_context_json) as { triggerMessageId?: string | null }).triggerMessageId ?? null,
-    terminal: row.terminalized_at !== null,
-  })));
+      ORDER BY created_at, run_id`).toArray().map((row) => {
+    const context = JSON.parse(row.execution_context_json) as { triggerMessageId?: string | null; sidekickWizard?: boolean };
+    return { trigger: context.triggerMessageId ?? null, terminal: row.terminalized_at !== null, wizard: context.sidekickWizard === true };
+  }));
+}
+
+/** Wait for the wizard's turn the message started to finish. */
+async function wizardAnswered(turnId: string): Promise<void> {
+  await expect.poll(async () => (await wizardExecutions()).find((execution) => execution.trigger === turnId)?.terminal,
+    { timeout: SETTLE_TIMEOUT_MS }).toBe(true);
 }
 
 /** Whether the message has landed as a turn and nothing is still queued for the loop. */
@@ -321,14 +343,98 @@ describe("a Sidekick's shared conversation", () => {
     expect(await systemNotes("sidekick-message-refused:")).toEqual([]);
   });
 
-  it("gives a manager's message to the wizard, as it always has", async () => {
+  it("gives a manager's message marked as an edit to the wizard", async () => {
     await activeSidekick();
     const request = "Make the release notes shorter from now on.";
-    const turnId = await say(AUTHOR_ID, request, "author-edit");
-    await expect.poll(async () => (await wizardExecutions()).find((execution) => execution.trigger === turnId)?.terminal,
-      { timeout: SETTLE_TIMEOUT_MS }).toBe(true);
+    const turnId = await say(AUTHOR_ID, request, "author-edit", true);
+    await wizardAnswered(turnId);
+    // The turn is marked as the wizard's, which is what loads the authoring tools.
+    expect(await wizardExecutions()).toEqual([{ trigger: turnId, terminal: true, wizard: true }]);
     expect(await sidekickRuns()).toEqual([]);
     expect(callsThatSaw(request).length).toBeGreaterThan(0);
+  });
+
+  it("starts a run from a manager's message that is not marked as an edit", async () => {
+    await activeSidekick();
+    const turnId = await say(AUTHOR_ID, "What shipped this week?", "author-question");
+    await expect.poll(() => landed(turnId), { timeout: SETTLE_TIMEOUT_MS }).toBe(true);
+    expect(await wizardExecutions()).toEqual([]);
+    const runs = await sidekickRuns();
+    expect(runs).toEqual([expect.objectContaining({ occurrence_key: `message:${turnId}`, coordinator_user_id: AUTHOR_ID })]);
+    expect(JSON.parse(runs[0]!.trigger_json)).toEqual({ kind: "manual", requestedByUserId: AUTHOR_ID });
+  });
+
+  it("refuses an edit from someone who does not manage the Sidekick, and says why", async () => {
+    await activeSidekick();
+    await allowDelegation(MEMBER_ID);
+    const turnId = await say(MEMBER_ID, "Stop including the importer.", "member-edit", true);
+    await expect.poll(() => systemNotes("sidekick-message-refused:"), { timeout: SETTLE_TIMEOUT_MS })
+      .toEqual([{ code: "sidekick_edit_requires_manager", turnId }]);
+    expect(await landed(turnId)).toBe(true);
+    expect(await wizardExecutions()).toEqual([]);
+    expect(await sidekickRuns()).toEqual([]);
+  });
+
+  it("gives an Organization admin's edit to the wizard of an Organization Sidekick someone else wrote", async () => {
+    await activeSidekick();
+    const turnId = await say(ADMIN_ID, "Add the release date to every note.", "admin-edit", true);
+    await wizardAnswered(turnId);
+    expect(await wizardExecutions()).toEqual([{ trigger: turnId, terminal: true, wizard: true }]);
+    expect(await sidekickRuns()).toEqual([]);
+  });
+
+  it("admits one run for a message however often its claim is retried", async () => {
+    await activeSidekick();
+    await allowDelegation(MEMBER_ID);
+    const request = {
+      ...addressed(), actor: actor(MEMBER_ID), messageId: "00000000-0000-7000-8000-00000000c8b1",
+      intent: null, authorName: "Member", text: "What shipped?",
+    };
+    const first = await workspaceStub().sidekickAdmitConversationMessage(request);
+    expect(first).toEqual({ route: "run", runId: expect.any(String), reused: false });
+    const retried = await workspaceStub().sidekickAdmitConversationMessage(request);
+    expect(retried).toEqual({ route: "run", runId: (first as { runId: string }).runId, reused: true });
+    expect(await sidekickRuns()).toHaveLength(1);
+  });
+
+  it("takes an answer to the wizard's question only from someone who manages the Sidekick", async () => {
+    await activeSidekick();
+    script = [{
+      callTool: {
+        name: "request_elicitation",
+        arguments: {
+          prompt: "Which release?", responseType: "radio",
+          options: [{ value: "4.2", label: "4.2", description: null }, { value: "4.3", label: "4.3", description: null }],
+          minimumSelections: 1, maximumSelections: 1,
+        },
+      },
+    }];
+    const turnId = await say(AUTHOR_ID, "Ask me which release to cover.", "author-asks", true);
+    await wizardAnswered(turnId);
+    const elicitationId = await runInDurableObject(conversationStub(), (_instance, state) =>
+      state.storage.sql.exec<{ elicitation_id: string }>(
+        `SELECT elicitation_id FROM elicitation_requests WHERE status = 'pending'`,
+      ).one().elicitation_id);
+    const answer = (userId: string) => conversationStub().fetch("https://object.test/internal/product", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        operation: "answer_elicitation", parentKind: "automation", auth: auth(userId),
+        elicitationId, input: { answer: "4.2" },
+      }),
+    });
+    await new ConversationService(TEST_ENV, auth(MEMBER_ID)).authorizeViewer(AUTOMATION_ID);
+    const refused = await answer(MEMBER_ID);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ error: "sidekick_edit_requires_manager" });
+    // Still open, so the manager can answer it, and their answer is the wizard's.
+    const accepted = await answer(AUTHOR_ID);
+    expect(accepted.status, await accepted.clone().text()).toBe(200);
+    await runDurableObjectAlarm(conversationStub());
+    await expect.poll(async () => (await wizardExecutions()).filter((execution) => execution.terminal).length,
+      { timeout: SETTLE_TIMEOUT_MS }).toBe(2);
+    expect((await wizardExecutions()).every((execution) => execution.wizard)).toBe(true);
+    expect(await sidekickRuns()).toEqual([]);
   });
 
   it("starts no run, and says why, for a member who has not allowed the Sidekick to act for them", async () => {

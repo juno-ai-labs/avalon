@@ -1232,15 +1232,17 @@ export class HostedSidekick {
   }
 
   /**
-   * Who answers a person's message in the Sidekick's shared conversation
-   * (substream `"0"`), once the addressing classifier sent it to an agent.
+   * Who answers a person's input in the Sidekick's shared conversation
+   * (substream `"0"`), once it is addressed to an agent.
    *
    * The conversation keeps the wizard and run separation the PRD's decision
-   * log records: a manager's message is the wizard's, which is the authoring
-   * turn the conversation has always run; anyone else's starts a run under
-   * the Sidekick's definition, the path `runNow` takes, with the message as
-   * the run's opening, and the run answers in its own child conversation. The
-   * conversation's loop itself never acts on the Sidekick's definition.
+   * log records, and a manager marks a wizard edit explicitly (its 2026-11-07
+   * entry): input for the wizard (`intent: "edit_sidekick"`) is the wizard's
+   * when its sender manages the Sidekick and refused otherwise; anything else
+   * starts a run under the Sidekick's definition, from a manager as from
+   * anyone, the path `runNow` takes, with the message as the run's opening,
+   * and the run answers in its own child conversation. The conversation's
+   * loop itself never acts on the Sidekick's definition.
    *
    * The run acts only as its sender, and only when the sender is an eligible
    * delegate: a person must not read, through the Sidekick, what they cannot
@@ -1252,7 +1254,11 @@ export class HostedSidekick {
   async admitConversationMessage(input: SidekickConversationMessageRequest): Promise<SidekickConversationMessageRoute> {
     const request = parseRpcInput(SidekickConversationMessageRequestSchema, input, "admit_conversation_message");
     const initial = this.assertSidekick(request.workspaceId, request.automationId);
-    if (await this.managerAllows(initial, request.actor)) return { route: "wizard" };
+    if (request.intent === "edit_sidekick") {
+      return await this.managerAllows(initial, request.actor)
+        ? { route: "wizard" }
+        : { route: "refused", code: "sidekick_edit_requires_manager" };
+    }
     if (initial.lifecycle !== "active") return { route: "refused", code: "sidekick_not_active" };
     const coordinator = await this.coordinator(request.actor.userId, [request.actor.userId], false);
     // Read after the awaits, as `runNow` does: a pause or a revision applied
@@ -1277,6 +1283,17 @@ export class HostedSidekick {
       coordinator,
     );
     return { route: "run", runId: admitted.runId, reused: admitted.reused };
+  }
+
+  /**
+   * Whether this person manages the Sidekick, for a caller that must refuse
+   * before it writes anything: the shared conversation asks it before it
+   * records an answer to a question the wizard asked, which only a manager
+   * may give.
+   */
+  allowsManager(input: z.input<typeof AutomationActorRequestSchema>): Promise<boolean> {
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "allows_manager");
+    return this.managerAllows(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
   }
 
   /**

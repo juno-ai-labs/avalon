@@ -73,6 +73,7 @@ import {
   WorkstreamSocketCommandResultSchema,
   WorkstreamWorkflowInputSchema,
   DemoSeedSchema,
+  SidekickMessageIntentSchema,
   type ServerSocketEvent,
   type TranscriptRangeResult,
   type TranscriptTurn,
@@ -218,6 +219,7 @@ import {
   continuationSource,
   continueSidekickRun,
   routeSidekickConversationMessage,
+  sidekickAllowsManager,
   SIDEKICK_MESSAGE_REFUSAL_TEXT,
   SIDEKICK_RUN_REFUSAL_TEXT,
 } from "../services/sidekick-run-continuation";
@@ -1163,6 +1165,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.loop,
         () => this.externalSubstreamId(),
       );
+      this.product.sidekickAllowsManager = (input) => sidekickAllowsManager(env, {
+        workspaceId: asWorkspaceId(input.workspaceId), automationId: input.automationId,
+        actor: { userId: asUserId(input.actor.userId), actorRole: input.actor.actorRole },
+      });
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
       this.residentContext = new WorkstreamResidentContextStorage(state.storage);
@@ -4329,6 +4335,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         seed: DemoSeedSchema.nullable().optional(),
         agentExchange: AgentExchangeSchema.optional(),
         actorRole: z.enum(["owner", "admin", "member"]).nullable().optional(),
+        intent: SidekickMessageIntentSchema.nullable().optional(),
       }).parse(JSON.parse(pending.authorization_json));
       // Input to a Sidekick run child continues that run: its instructions,
       // tools and run-as authority, against the Sidekick's accepted revision
@@ -4370,23 +4377,29 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           continuation = decided;
         }
       }
-      // A person's message in the Sidekick's shared conversation is the
-      // wizard's only when its sender manages the Sidekick. Anyone else's
+      // A person's input in the Sidekick's shared conversation is routed by
+      // the Sidekick before anything is activated, exactly as a run child
+      // asks above. Input for the wizard is the sender's marked edit, or an
+      // answer to what the wizard asked (an elicitation, an authorized
+      // resource), and is the wizard's only from a manager; anything else
       // starts a run under the Sidekick's definition with the message as its
-      // opening, and lands here as said to the room: the run answers in its
-      // own conversation, and its row here carries the reply. Asked before
-      // anything is activated, exactly as a run child asks above.
-      const sender = pending.actor === "human" && pending.author_user_id !== null
-        && authorization.reason === "human_message" && authorization.agentExchange === undefined
-        ? pending.author_user_id : null;
-      if (identity.parentKind === "automation" && externalSubstreamId === "0" && !background && sender !== null) {
+      // opening and lands here as said to the room: the run answers in its own
+      // conversation, and its row here carries the reply. A demo seed scripts
+      // its own turn and is not routed. Whatever activates here past this
+      // point is the wizard's, and only such a turn loads the authoring tools.
+      const sharedSidekickConversation = identity.parentKind === "automation" && externalSubstreamId === "0" && !background;
+      const sender = sharedSidekickConversation && pending.actor === "human" && pending.author_user_id !== null
+        && authorization.reason !== "demo_seed" ? pending.author_user_id : null;
+      if (sender !== null) {
         const opening = this.transcript.pendingTranscriptInput(pending.input_id);
+        const answersWizard = authorization.reason === "elicitation_answer" || authorization.reason === "resource_authorization";
         const routed = await routeSidekickConversationMessage(this.env, {
           workspaceId: asWorkspaceId(identity.workspaceId),
           automationId: identity.parentId,
-          actor: { userId: asUserId(sender), actorRole: authorization.actorRole ?? null, participantOfOwningWorkstream: false },
+          actor: { userId: asUserId(sender), actorRole: authorization.actorRole ?? null },
           messageId: pending.prepared_turn_id,
-          authorName: pending.author_name_snapshot ?? "Somebody",
+          intent: authorization.intent ?? (answersWizard ? "edit_sidekick" : null),
+          authorName: pending.author_name_snapshot,
           text: opening?.block.text || "(no text)",
         });
         const current = this.loop.loop();
@@ -4437,6 +4450,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           : {}),
         ...(authorization.agentExchange ? { agentExchange: authorization.agentExchange } : {}),
         ...(delegation ? { automationDelegation: delegation } : {}),
+        ...(sharedSidekickConversation ? { sidekickWizard: true } : {}),
         backgroundAgent: Boolean(background),
         ...(authorization.telemetryOperationId
           ? {
