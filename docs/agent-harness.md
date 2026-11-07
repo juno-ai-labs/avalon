@@ -1620,7 +1620,6 @@ It does not own:
 | Which model each agent runs on, and the pin that overrides it | [`feature-flags.md`](feature-flags.md) |
 | Connector adapters, grants, and health semantics | [`connectors.md`](connectors.md) |
 | The create path a run is launched from | [`workstream-creation.md`](workstream-creation.md) |
-| The description pass that runs after a terminal run | [`workstream-descriptions.md`](workstream-descriptions.md) |
 | Reading a captured inference record back | [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) |
 | Regional analytical inference capture and retention | [`inference-lakehouse.md`](inference-lakehouse.md) |
 
@@ -1910,9 +1909,9 @@ was deleted). A run's row now carries its reply whole
 which the prompts' claim that the row is the delivery depends on.
 
 **Deferred C-5 deletions:** `workstream-name.ts`, `workstream-description.ts`
-and `suggestion-draft.ts` go with their services in C-2's naming, description
-and suggestion deletions; `session-import.ts` with `agent-profiles.ts`'s import
-profile; `src/turn-disposition.ts` with the conversation-suggestions observer
+and `session-import.ts` went in C-2 with the naming and description services
+(no importer was left; `agent-profiles.ts` stays, `integrations.ts` reads it);
+`suggestion-draft.ts` goes with the suggestion services in C-3; `src/turn-disposition.ts` with the conversation-suggestions observer
 in C-3; `mergeInstruction` and `conversation_merge` with the Thread loop's
 conversation plugin; and the memory subject kinds (`thread`, `channel`,
 `breakout`) with the `memory_facts` rebuild, which renames them to `canvas`.
