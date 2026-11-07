@@ -16,6 +16,8 @@ import {
   SetEngineeringSidekickPausedResultSchema,
   RetireEngineeringOrgInputSchema,
   RetireEngineeringOrgResultSchema,
+  ThreadRetirementOperationInputSchema,
+  DumpThreadTranscriptsResultSchema,
   ReadEngineeringChannelInputSchema,
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
@@ -271,6 +273,22 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, (request) => tool(principal, "retire_org", { workspace_id: request.orgId },
     async () => RetireEngineeringOrgResultSchema.parse(
       await (await organizationBinding(request.orgId)).retireOrg(request, principal))));
+  /** The typed confirmation, checked here before any region is asked and again by the region. */
+  function confirmedOrg(request: { orgId: string; confirm: string }): string {
+    if (request.confirm !== request.orgId) {
+      throw new InspectionRefusal("thread_retirement_unconfirmed", "confirm must equal orgId; nothing was changed");
+    }
+    return request.orgId;
+  }
+
+  server.registerTool("dump_thread_transcripts", {
+    description: "Write every Thread, Breakout and Channel conversation of orgId to R2 as room-visible text, under retired-conversations/<orgId>/<parentId>/<substreamId>.txt, before retire_threads deletes them. Canvases and Sidekicks are never dumped. A conversation already in R2 is skipped, so repeat the call to resume. confirm must equal orgId. Returns counts: conversations, dumped, skipped, and failed with a code per conversation.",
+    inputSchema: ThreadRetirementOperationInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "dump_thread_transcripts", { workspace_id: request.orgId }, async () => {
+    const orgId = confirmedOrg(request);
+    return DumpThreadTranscriptsResultSchema.parse(await (await organizationBinding(orgId)).dumpThreadTranscripts(request, principal));
+  }));
 
   server.registerTool("read_channel", {
     description: "Read the Channel feed visible to userId as plain text, with messages and Thread cards in app order. The app's ordinary feed pagination applies; follow the returned cursor for older history. Does not read the contents of every Thread.",
