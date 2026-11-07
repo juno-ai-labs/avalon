@@ -313,7 +313,7 @@ import {
 import { digestPrincipalKey, digestReaderFor, renderMemoryDigestSection } from "./memory-digest-service";
 import { automationScopeMemoryTables, createMemoryTableTools } from "./memory-table-service";
 import type { MaterializedMemoryTable } from "./memory-table-service";
-import { MAX_SESSION_IMPORT_RUN_MS, workstreamRunLimits } from "./workstream-run-policy";
+import { workstreamRunLimits } from "./workstream-run-policy";
 import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import {
   CONVERSATIONS_WIRE_PREFIX,
@@ -3254,7 +3254,7 @@ export async function runWorkstreamHarness(
   };
   const runLimitsAtMs = Date.now();
   const runLimits = workstreamRunLimits(
-    profile?.role === "session_import" ? MAX_SESSION_IMPORT_RUN_MS : undefined,
+    undefined,
     initialRun.started_at > 0 ? Math.max(0, runLimitsAtMs - initialRun.started_at) : 0,
   );
   const runScopeLimits = {
@@ -3474,11 +3474,9 @@ export async function runWorkstreamHarness(
       ? { requestReceivedAt: input.telemetryRequestReceivedAt }
       : {}),
     inferenceStartEligible,
-    usage: profile?.role === "session_import"
-      ? { activity: "session_import" }
-      : input.automationRun
-        ? { activity: "sidekick_run", sidekickId: input.automationRun.automationId }
-        : { activity: "agent_run" },
+    usage: input.automationRun
+      ? { activity: "sidekick_run", sidekickId: input.automationRun.automationId }
+      : { activity: "agent_run" },
   });
   const ensureTranscriptToolParents = async (event: {
     toolCallId: string;

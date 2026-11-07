@@ -1,8 +1,8 @@
 # Engineering MCP
 
 The engineering MCP is Rally's authenticated operator path to the authoritative
-SQLite database inside a workspace, work stream, substream, Sidekick, or live
-web artifact Durable Object, and to each region's D1 databases.
+SQLite database inside a workspace, a Canvas's or Sidekick's conversation, or
+a live web artifact Durable Object, and to each region's D1 databases.
 It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
 repair writes. It also reads and changes the feature flags and agent model
@@ -29,7 +29,7 @@ available to Rally users by virtue of product membership.
 - `apps/api/src/durable-objects/internally-inspectable-durable-object.ts` owns
   the shared raw-SQL Durable Object RPC.
 - `apps/api/src/durable-objects/scheduled-alarms.ts` makes every scheduled
-  authority inherit that RPC. WorkspaceDO and SubstreamAgent have the
+  authority inherit that RPC. WorkspaceDO and AgentLoopDO have the
   capability that way.
 - `apps/api/src/durable-objects/artifact-host-do.ts` inherits the same base
   directly. It is not a scheduled authority, so it names the inspectable base in
@@ -424,20 +424,24 @@ to use typed domain RPCs and must never depend on this surface.
 A Sidekick has two inspectable halves and they are reached by different tools.
 Its definition revisions, schedules and run history are the Organization's
 `sidekick_*` tables, read with `run_workspace_sql` filtered by `sidekick_id`.
-Its *conversations* are `SubstreamAgent`s, reached with the substream tools
-under the Sidekick's ID as the parent, exactly as a work stream's are.
+Its *conversations* are AgentLoopDO objects, reached with `run_canvas_sql`
+under the Sidekick's ID: its shared conversation with no `substreamId`
+(substream `0`), or a run's conversation with that run's registered
+`substreamId`.
 
-Channel and Space parent state lives in WorkspaceDO, in the `parent_*` tables
-keyed by `parent_id`
+A Canvas's parent state lives in WorkspaceDO, in `canvas_directory` and the
+`parent_*` tables keyed by `parent_id`
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), so
-`run_workspace_sql` is the tool for it.
+`run_workspace_sql` is the tool for it; its Chat is reached with
+`run_canvas_sql` under the Canvas's ID.
 
-**A Space's participants and resources are read with `run_workspace_sql`**,
-from `spaces`, `space_viewers` and `space_defaults`. A Space created before
-2026-09-26 also has an idle hidden conversation, still reachable with the
-substream tools under the Space id and substream `0` through the
-`workstream_authority_routes` row every Space's creation writes; nothing reads
-or writes it.
+`list_canvases` lists every Canvas in the Organization, private ones
+included: listing is operator inspection, like `run_workspace_sql`. Reading a
+Chat is still the selected user's, through ordinary admission.
+
+`run_canvas_sql` checks the parent's route, not its kind: until
+`retire_threads` has run for an Organization, a Thread's id still resolves
+there, and nothing else in this MCP names one.
 
 A stateful artifact's facet database is outside this MCP for the reason above:
 its contents are reachable only through the product's admitted read path.
@@ -631,8 +635,8 @@ names its kind rather than taking any conversation id because the two parents
 answer different questions, and an operator's diagnosis rests on which one
 they read. `run_canvas_sql` keeps the child reach `run_substream_sql` had
 (2026-09-28), since a Sidekick run's conversation is where its failures are.
-A future tool must not take a Thread or Space id: those parents are refused
-by name (`conversation_parent_kind_retired:<kind>`).
+A future tool must not take a Thread or Space id: the product refuses those
+parents by name (`conversation_parent_kind_retired:<kind>`).
 
 ### 2026-11-07 — The Channel and Thread creation, list and feed tools go
 

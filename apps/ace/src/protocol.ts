@@ -84,34 +84,6 @@ export const MANAGED_MODELS = [
   },
   {
     rank: 4,
-    rankReason: 'Background · candidate creation',
-    role: 'work_opportunity_admission',
-    key: 'agent-model-work-opportunity-admission',
-    label: 'Suggested-work admission',
-    description: 'Decides whether recent unclaimed activity should become a personal or workspace suggestion and drafts its candidate.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
-  },
-  {
-    rank: 5,
-    rankReason: 'Background · per-person ordering',
-    role: 'work_opportunity_ranking',
-    key: 'agent-model-work-opportunity-ranking',
-    label: 'Suggested-work ranking',
-    description: 'Orders admitted suggestions for one person, accounting for freshness and impressions before storing the visible set.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
-  },
-  {
-    rank: 6,
-    rankReason: 'On demand · conversation imports',
-    role: 'session_import',
-    key: 'agent-model-session-import',
-    label: 'Conversation import',
-    description: 'Drives the person\'s desktop browser (page script, page outline, screenshots, input) to read a ChatGPT or Claude conversation and its files into a new Channel. Must accept images.',
-    defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
-  },
-
-  {
-    rank: 7,
     rankReason: 'Background · one call per rested conversation window',
     role: 'memory_sweep',
     key: 'agent-model-memory-sweep',
@@ -120,7 +92,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
-    rank: 8,
+    rank: 5,
     rankReason: 'On demand · Sidekick setup and editing',
     role: 'sidekick_authoring',
     key: 'agent-model-sidekick-authoring',
