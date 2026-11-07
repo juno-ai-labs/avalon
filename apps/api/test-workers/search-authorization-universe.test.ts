@@ -12,6 +12,8 @@ const WORKSPACE_ID = asWorkspaceId('00000000-0000-7000-8000-000000000c01');
 const OWNER = '00000000-0000-7000-8000-000000000c02';
 const MEMBER = '00000000-0000-7000-8000-000000000c03';
 const OUTSIDER = '00000000-0000-7000-8000-000000000c04';
+/** An administrator, who opens every Canvas without being on it. */
+const ADMIN = '00000000-0000-7000-8000-000000000c05';
 /** A Canvas open to the Organization, and one only its creator and participants open. */
 const OPEN_ROOM = '00000000-0000-7000-8000-000000000c11';
 const PRIVATE_ROOM = '00000000-0000-7000-8000-000000000c12';
@@ -34,9 +36,10 @@ beforeAll(async () => {
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (workspace_id TEXT NOT NULL, user_id TEXT NOT NULL,
       status TEXT NOT NULL, role TEXT NOT NULL, access_class TEXT DEFAULT 'member', last_seen_at TEXT, revision INTEGER NOT NULL DEFAULT 1, incarnation TEXT NOT NULL DEFAULT 'existing-member', PRIMARY KEY (workspace_id, user_id))`),
-    ...[[OWNER, 'active'], [MEMBER, 'active'], [OUTSIDER, 'removed']].map(([userId, status]) => env.DB.prepare(
-      `INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, ?, 'member')
-       ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = excluded.status`).bind(WORKSPACE_ID, userId, status)),
+    ...[[OWNER, 'active', 'member'], [MEMBER, 'active', 'member'], [OUTSIDER, 'removed', 'member'], [ADMIN, 'active', 'admin']]
+      .map(([userId, status, role]) => env.DB.prepare(
+        `INSERT INTO workspace_members (workspace_id, user_id, status, role) VALUES (?, ?, ?, ?)
+         ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = excluded.status, role = excluded.role`).bind(WORKSPACE_ID, userId, status, role)),
   ]);
   // Resource background work addresses the canonical workspace even when a
   // universe-only case uses its own named object for directory isolation.
@@ -85,11 +88,12 @@ describe('search projection universe', () => {
   it('reaches every member for an open Canvas, its creator and participants for a private one, and nobody for an unknown parent', async () => {
     const stub = await seededWorkspace('search-universe-parents');
     const open = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'parent', id: OPEN_ROOM } });
-    expect(sorted(open.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, MEMBER]));
+    expect(sorted(open.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, MEMBER, ADMIN]));
     // The main feed, plus the located upload; the synced file is admitted by its connection instead.
     expect(sorted(open[0]!.resources)).toEqual(sorted([conversation(OPEN_ROOM, '0'), resource(UPLOAD)]));
     const closed = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'parent', id: PRIVATE_ROOM } });
-    expect(closed.map((pair) => pair.subject.userId)).toEqual([OWNER]);
+    // Its creator and the administrator who manages every Canvas; not another member.
+    expect(sorted(closed.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, ADMIN]));
     expect(sorted(closed[0]!.resources)).toEqual(sorted([conversation(PRIVATE_ROOM, '0'), conversation(PRIVATE_ROOM, CHILD)]));
     // A personal Sidekick reaches its author.
     const automation = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'parent', id: AUTOMATION } });
@@ -101,13 +105,13 @@ describe('search projection universe', () => {
   it('reaches every member for a connection, the located readers and owner for an upload, and nothing for a synced file', async () => {
     const stub = await seededWorkspace('search-universe-resources');
     const synced = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'connection', id: WORKSPACE_CONNECTION } });
-    expect(sorted(synced.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, MEMBER]));
+    expect(sorted(synced.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, MEMBER, ADMIN]));
     expect(synced[0]!.resources).toEqual([connection(WORKSPACE_CONNECTION)]);
     expect(await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'resource', id: SYNCED_FILE } })).toEqual([]);
     const note = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'resource', id: NOTE } });
     expect(note).toEqual([]);
     const upload = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'resource', id: UPLOAD } });
-    expect(sorted(upload.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, MEMBER]));
+    expect(sorted(upload.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, MEMBER, ADMIN]));
     expect(upload[0]!.resources).toEqual([resource(UPLOAD)]);
   });
 
@@ -128,7 +132,7 @@ describe('search projection universe', () => {
     const decisions = await stub.readSearchAuthorizationSnapshots({ subject: subject(MEMBER), resources: [connection(WORKSPACE_CONNECTION)] });
     expect(decisions[0]).toMatchObject({ decision: { status: 'allowed' } });
     expect(await stub.listSearchAuthorizationSnapshots({ workspaceId: WORKSPACE_ID, target: { kind: 'connection', id: WORKSPACE_CONNECTION } }))
-      .toHaveLength(2);
+      .toHaveLength(3);
   });
 
   it('records a membership change for the member it names', async () => {

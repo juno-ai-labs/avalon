@@ -11117,9 +11117,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * search. A search returns a row only when its `audience` shares a group
    * with this list.
    *
-   * Everything is read from this object's own tables. A conversation is
-   * decided by its parent's own `readableSubstreams`, the rule its canonical
-   * reads apply; a Sidekick and a connection by the predicates canonical
+   * Everything is read from this object's own tables. A Canvas's Chat is
+   * decided by `canvasReaderAllows`; a Sidekick and a connection by the predicates canonical
    * authorization shares (`sidekickAdmits`, `connectionAdmits`), and a
    * Canvas's Chat by `canvasReaderAllows`, the rule opening the Canvas
    * applies. One narrowing is search's own, from the PRD: a guest never holds
