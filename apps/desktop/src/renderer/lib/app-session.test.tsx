@@ -45,7 +45,6 @@ import {
 
 let deepLinkListener: ((navigation: DesktopDeepLinkNavigation) => void) | null = null;
 let sessionListener: ((session: DesktopSession | null) => void) | null = null;
-let observedCreateSidekick: (() => Promise<void>) | null = null;
 let observedApi: RallyApi | null = null;
 let observedSignOutIfCleared: (() => Promise<void>) | null = null;
 let observedReconnectAccount: (() => Promise<void>) | null = null;
@@ -82,7 +81,7 @@ const bridge = vi.hoisted(() => ({
   onDeepLink: vi.fn(),
   onSessionChanged: vi.fn(),
   openExternal: vi.fn(),
-  openSidekicks: vi.fn().mockResolvedValue(undefined),
+  openSidekick: vi.fn().mockResolvedValue(undefined),
   openSettings: vi.fn(),
   refreshSession: vi.fn(),
   reselectActiveWorkspace: vi.fn(),
@@ -140,7 +139,6 @@ const expiredIdentitySession: DesktopSession = {
 function SessionProbe(): React.JSX.Element {
   const context = useAppSession();
   const collaboration = useCollaborationSession();
-  observedCreateSidekick = collaboration.createSidekick;
   const { api, booting, deepLinkError, invitationApi, pendingInvitation, region, session } = context;
   observedApi = api;
   observedSignOutIfCleared = context.signOutIfCredentialCleared;
@@ -317,9 +315,6 @@ describe('single-platform desktop identity routing', () => {
     }));
     expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
     expect(screen.getByTestId('collaboration-context')).toHaveTextContent('shared');
-    expect(observedCreateSidekick).not.toBeNull();
-    await observedCreateSidekick?.();
-    expect(bridge.openSidekicks).toHaveBeenCalledWith('new');
     expect(readDevicePreferences().selectedRegion).toBe('global');
     expect(window.localStorage.getItem('rally:selected-region')).toBeNull();
   });

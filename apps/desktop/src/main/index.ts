@@ -12,7 +12,7 @@ import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagn
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
 import { ArtifactPinListSchema } from '@rally/contracts';
-import { spaceDeepLink, workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
+import { sidekickDeepLink, spaceDeepLink, workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import { z, type ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
@@ -115,9 +115,7 @@ import {
 import type { DesktopSettingsSection } from '../common/settings';
 import { parseDesktopSettingsSection } from '../common/settings';
 import { WORKSPACE_SYNC_RELAY_IPC_CHANNELS } from '../common/workspace-sync-relay';
-import type { SidekicksWindowTarget } from '../common/sidekicks';
-import { parseSidekicksWindowTarget } from '../common/sidekicks';
-import { parseThreadId } from '../common/open-thread';
+import { parseRouteId } from '../common/route-id';
 import { fontScheme } from '../common/theme-assets';
 import {
   defaultThemeChoice,
@@ -530,7 +528,6 @@ const rendererCrashRecovery = new RendererCrashRecovery({
   onError: (error) => logError('rally', 'renderer crash recovery failed', error),
 });
 let settingsWindow: BrowserWindow | null = null;
-let sidekicksWindow: BrowserWindow | null = null;
 /** The one window that imports a signed-in Claude or ChatGPT conversation. */
 let browserImportWindow: BrowserWindow | null = null;
 /** The Spaces the main window offered when it opened the import window. */
@@ -602,14 +599,11 @@ let developmentDockIconUsesAppearancePreview = false;
 const realtimeSocketBroker = new RealtimeSocketBroker(createNodeRealtimeSocketFactory(
   (url) => electronSession.defaultSession.resolveProxy(url),
 ));
-// The main window's Organization socket, relayed to the Settings and Sidekicks
-// windows so neither holds a socket of its own while there is one to relay. A
-// hidden prewarmed window receives it too: its reads are mounted and must stay
-// fresh.
+// The main window's Organization socket, relayed to the Settings window so it
+// holds no socket of its own while there is one to relay. A hidden prewarmed
+// window receives it too: its reads are mounted and must stay fresh.
 const workspaceSyncRelay = new WorkspaceSyncRelay((event) => {
-  for (const target of [settingsWindow, sidekicksWindow]) {
-    if (target && !target.isDestroyed()) target.webContents.send(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, event);
-  }
+  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.relayed, event);
 });
 let telemetryIdentity: TelemetryIdentity | null = null;
 let telemetryRoute: ResolvedTelemetryRoute = {
@@ -769,7 +763,7 @@ async function reportJavascriptErrorCandidate(
 }
 
 function rallyWindows(): BrowserWindow[] {
-  return availableRendererWindows([mainWindow, settingsWindow, sidekicksWindow, deepLinkErrorWindow, browserImportWindow]);
+  return availableRendererWindows([mainWindow, settingsWindow, deepLinkErrorWindow, browserImportWindow]);
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -1896,7 +1890,6 @@ async function endAccountSession(rejected?: StoredAuth): Promise<void> {
     try {
       await clearStoredSessionUnlocked();
       settingsWindow?.close();
-      sidekicksWindow?.close();
     } finally {
       loggingOut = false;
     }
@@ -3222,7 +3215,6 @@ async function logout(): Promise<void> {
       failures.push(error);
     }
     settingsWindow?.close();
-    sidekicksWindow?.close();
     if (stored) {
       try { failures.push(...await revokeStoredCredentials(stored)); }
       catch (error) { failures.push(error); }
@@ -3790,7 +3782,6 @@ function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const sender = event.sender;
   const belongsToRallyWindow = sender === mainWindow?.webContents
     || sender === settingsWindow?.webContents
-    || sender === sidekicksWindow?.webContents
     || sender === deepLinkErrorWindow?.webContents
     || sender === browserImportWindow?.webContents;
   if (!belongsToRallyWindow || !event.senderFrame || !rendererNavigationAllowed(event.senderFrame.url)) {
@@ -3846,8 +3837,7 @@ function registerIpc(): void {
       assertTrustedIpcSender(event);
       // The import window holds its import agent's conversation socket: the
       // agent's browser actions arrive on it and are answered from it.
-      if (event.sender !== mainWindow?.webContents && event.sender !== sidekicksWindow?.webContents
-        && event.sender !== browserImportWindow?.webContents) {
+      if (event.sender !== mainWindow?.webContents && event.sender !== browserImportWindow?.webContents) {
         throw new Error('Only Rally conversation windows can open realtime sockets');
       }
     },
@@ -3863,7 +3853,7 @@ function registerIpc(): void {
     ipc: ipcMain,
     mainWindowContents: () => mainWindow?.webContents,
     relay: workspaceSyncRelay,
-    consumerWindowContents: () => [settingsWindow?.webContents, sidekicksWindow?.webContents],
+    consumerWindowContents: () => [settingsWindow?.webContents],
   });
   ipcMain.handle('embedded-browser:state', (event) => embeddedBrowserFor(embeddedBrowserHost(event)).state());
   ipcMain.handle('embedded-browser:command', async (event, raw: unknown) => {
@@ -4491,15 +4481,19 @@ function registerIpc(): void {
     if (!request || (request.kind === 'site' && !isArtifactUrl(request.url, artifactServingDomain()))) return false;
     return await updatePoppedOutArtifact(request);
   });
-  ipcMain.handle('system:open-sidekicks', async (event, rawTarget: unknown) => {
+  ipcMain.handle('system:open-sidekick', (event, rawSidekickId: unknown) => {
     assertTrustedIpcSender(event);
-    const target = rawTarget === undefined ? undefined : parseSidekicksWindowTarget(rawTarget);
-    if (rawTarget !== undefined && !target) throw new Error('Invalid Sidekicks window target');
-    await createSidekicksWindow(target ?? undefined);
+    const sidekickId = parseRouteId(rawSidekickId);
+    const workspace = inMemorySession?.workspace;
+    if (!sidekickId) throw new Error('Invalid Sidekick id');
+    if (!workspace) throw new Error('Sign in before opening a Sidekick');
+    // A Sidekick opens in the main window, as a route; this is how a window
+    // with no router of its own, such as Settings, asks for one.
+    emitDeepLink(sidekickDeepLink({ region: workspace.region, workspaceId: workspace.id, sidekickId }), 'in_app_link');
   });
   ipcMain.handle('system:open-thread', (event, rawWorkstreamId: unknown) => {
     assertTrustedIpcSender(event);
-    const workstreamId = parseThreadId(rawWorkstreamId);
+    const workstreamId = parseRouteId(rawWorkstreamId);
     if (!workstreamId) throw new Error('Invalid thread id');
     // The route a menu-bar pick or a finished import takes, so the main window
     // opens the Thread whether or not it was up, and comes forward to show it.
@@ -4927,7 +4921,7 @@ function preloadPath(): string {
 
 function installWindowDiagnostics(
   window: BrowserWindow,
-  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error' | 'browser-import',
+  surface: 'main' | 'settings' | 'deep-link-error' | 'browser-import',
 ): void {
   window.webContents.on('preload-error', (_event, _scriptPath, error) => {
     logError('rally', `${surface} preload failed to initialize`, {
@@ -4988,7 +4982,7 @@ function installWindowDiagnostics(
 async function loadRenderer(
   window: BrowserWindow,
   url: string,
-  surface: 'main' | 'settings' | 'sidekicks' | 'deep-link-error' | 'browser-import',
+  surface: 'main' | 'settings' | 'deep-link-error' | 'browser-import',
 ): Promise<void> {
   try {
     await window.loadURL(url);
@@ -5000,7 +4994,7 @@ async function loadRenderer(
 }
 
 function rendererUrl(
-  surface?: 'settings' | 'sidekicks' | 'deep-link-error' | 'browser-import' | 'artifact-preview',
+  surface?: 'settings' | 'deep-link-error' | 'browser-import' | 'artifact-preview',
   settingsSection?: DesktopSettingsSection,
 ): string {
   const target = rendererDevelopmentUrl
@@ -5009,7 +5003,6 @@ function rendererUrl(
   if (surface) target.searchParams.set('surface', surface);
   if (settingsSection) target.searchParams.set('settingsSection', settingsSection);
   if (surface === 'settings') target.hash = '/settings';
-  if (surface === 'sidekicks') target.hash = '/sidekicks';
   if (surface === 'deep-link-error') target.hash = '/deep-link-error';
   if (surface === 'browser-import') target.hash = '/browser-import';
 
@@ -5214,57 +5207,6 @@ function revealedSettingsWindow(): BrowserWindow | null {
   return settingsWindowController.isRevealRequested() ? settingsWindow : null;
 }
 
-/** The branded type is the guarantee: only a parsed target can reach the hash. */
-async function createSidekicksWindow(requestedTarget?: SidekicksWindowTarget): Promise<void> {
-  const target = new URL(rendererUrl('sidekicks'));
-  if (requestedTarget) target.hash = `/sidekicks/${requestedTarget}`;
-  if (sidekicksWindow && !sidekicksWindow.isDestroyed()) {
-    if (sidekicksWindow.webContents.getURL() !== target.toString()) await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
-    if (sidekicksWindow.isMinimized()) sidekicksWindow.restore();
-    sidekicksWindow.show();
-    sidekicksWindow.focus();
-    return;
-  }
-
-  sidekicksWindow = new BrowserWindow({
-    width: 960,
-    height: 720,
-    minWidth: 720,
-    minHeight: 560,
-    show: false,
-    backgroundColor: windowBackgroundColor(),
-    title: 'Rally Sidekicks',
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
-    trafficLightPosition: { x: 18, y: 17 },
-    ...(process.platform === 'darwin' ? {} : { icon: applicationWindowIconPath() }),
-    webPreferences: {
-      preload: preloadPath(),
-      contextIsolation: true,
-      devTools: !app.isPackaged,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: true,
-      webSecurity: true,
-      allowRunningInsecureContent: false,
-    },
-  });
-
-  const sidekicksWebContentsId = sidekicksWindow.webContents.id;
-  installEditableTextMenu(sidekicksWindow);
-  sidekicksWindow.webContents.on('render-process-gone', () => realtimeSocketBroker.closeOwner(sidekicksWebContentsId));
-  sidekicksWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
-    if (isMainFrame && !isInPlace) realtimeSocketBroker.closeOwner(sidekicksWebContentsId);
-  });
-  installWindowDiagnostics(sidekicksWindow, 'sidekicks');
-  sidekicksWindow.setMenuBarVisibility(false);
-  sidekicksWindow.once('ready-to-show', () => sidekicksWindow?.show());
-  sidekicksWindow.on('closed', () => {
-    realtimeSocketBroker.closeOwner(sidekicksWebContentsId);
-    sidekicksWindow = null;
-  });
-  await loadRenderer(sidekicksWindow, target.toString(), 'sidekicks');
-}
-
 /**
  * A window around the account's local browser, for finding and importing one
  * signed-in Claude or ChatGPT conversation. It is a Rally renderer surface
@@ -5438,7 +5380,7 @@ async function createMainWindow(): Promise<void> {
   });
   mainWindow.on('closed', () => {
     realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
-    // The Settings and Sidekicks windows may outlive this one, and each dials
+    // The Settings window may outlive this one, and dials
     // its own socket the moment it hears there is nothing left to relay.
     workspaceSyncRelay.release();
     rendererReady = false;
@@ -5504,7 +5446,6 @@ function installContentSecurityPolicy(): void {
       mediaTypes: 'mediaTypes' in details ? details.mediaTypes ?? [] : [],
       permission,
       requestingContents: webContents,
-      sidekicksWindowContents: sidekicksWindow?.webContents,
       trustedRenderer,
     }));
   });
@@ -5515,7 +5456,6 @@ function installContentSecurityPolicy(): void {
       mediaTypes: details.mediaType ? [details.mediaType] : [],
       permission,
       requestingContents: webContents,
-      sidekicksWindowContents: sidekicksWindow?.webContents,
       trustedRenderer,
     });
   });

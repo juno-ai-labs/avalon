@@ -71,7 +71,7 @@ bounded-evidence contract in [Sidekick lifecycle](automation-lifecycle.md#sideki
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
-| `apps/desktop/src/main/media-permission.ts` | Chromium media permission for the shared composer: audio-only capture from the main and Sidekicks windows. |
+| `apps/desktop/src/main/media-permission.ts` | Chromium media permission for the shared composer: audio-only capture from the main window. |
 | `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local browser in the right rail and the import window; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the conversation-window socket IPC boundary. |
@@ -114,8 +114,7 @@ are canonical storage services, not authorization layers.
 - Every IPC argument is parsed before use.
 - Chromium media permission is a second grant on top of macOS System Settings,
   and it is per WebContents. `allowsTrustedAudioCapture` admits the main window
-  and the Sidekicks window only, and only for audio: both host the shared
-  composer, and Sidekicks can outlive the main window. Settings, the import
+  only, and only for audio: it hosts every composer. Settings, the import
   window, the deep-link failure window, detached artifacts, and the embedded
   browser are refused. Camera, display capture, and mixed audio+video stay
   denied. Computer-audio tap IPC remains main-window-only because the composer
@@ -140,9 +139,11 @@ are canonical storage services, not authorization layers.
 - Detached artifact renderers remain outside the trusted-window sender set.
   `artifact:window-action` admits only a registered detached renderer and maps a
   strict operation union to the resource in main's window record. Rename,
-  Archive, pinning and navigation-link coordinates derive their thread from
-  that record's Main annotation scope and owning surface eligibility; the server
-  still authorizes each route.
+  Archive, pinning and navigation-link coordinates derive their conversation
+  from that record's annotation scope and owning surface eligibility; the
+  server still authorizes each route. A scope may name a Canvas
+  (`canvas:<id>`): rename and archive then go through the Canvas's
+  conversation, and pin and link are refused with a reason naming the Canvas.
   Read/content/version/site-data and frozen-page preview operations cannot name another resource or an
   arbitrary API path. Credentials stay in main, which checks session ownership, including the opening region,
   again after asynchronous work and uses fresh site access for external opens.
@@ -968,7 +969,7 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **A native WebSocket in the renderer is constructed only from a URL an
   authenticated ticket endpoint returned; Electron's work-stream broker is
   narrower still.** Its typed IPC accepts only configured regional
-  Channel-control/SubstreamAgent paths from main or Sidekicks windows, and main supplies the
+  Channel-control/SubstreamAgent paths from the main or import window, and main supplies the
   application Origin.
 
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL
@@ -1200,6 +1201,23 @@ receive no application bridge. See
 [artifact annotations](artifact-annotations.md) for the protocol.
 
 ## Changelog
+
+### 2026-11-07 — Only the main window may capture audio
+
+**What changed:** `allowsTrustedAudioCapture` admits the main window alone,
+the realtime socket broker no longer admits a Sidekicks window, and the
+trusted-sender set loses it. `system:open-sidekicks` is replaced by
+`system:open-sidekick`, which parses a bare id (`parseRouteId`) before it
+becomes a deep link.
+
+**Why:** Plan step B-2 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+removed the separate Sidekicks window; every composer is now in the main
+window, so the grant the 2026-10-24 entry added for the second window has no
+window to apply to.
+
+**Consequences:** A new window that hosts a composer needs adding here
+explicitly; nothing else may record.
 
 ### 2026-11-06 — The iOS client and its Keychain boundary are deleted
 

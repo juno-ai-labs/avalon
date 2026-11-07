@@ -7,7 +7,7 @@ import { ApiError } from '../lib/api';
 import { MemoryFactList, useMemoryFacts } from './memory-review';
 
 const openThread = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ openThread, openSidekicks: vi.fn() }) }));
+vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ openThread, openSidekick: vi.fn() }) }));
 
 function fact(factId: string, text: string, extra: Partial<MemoryReviewFact> = {}): MemoryReviewFact {
   return {

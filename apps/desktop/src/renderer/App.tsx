@@ -53,7 +53,7 @@ import { useOpenLanding } from './lib/landing';
 import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/guided-onboarding';
 import { ErrorNotice } from './components/primitives';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
-import { SidekicksLibraryRoute, SidekicksWindow } from './screens/sidekicks-library';
+import { SidekicksLibraryRoute } from './screens/sidekicks-library';
 import { BrowserImportWindow } from './screens/browser-import';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
 import { SidekickMentionProvider } from './lib/sidekick-mentions';
@@ -235,11 +235,11 @@ export function WorkspaceApp(): React.JSX.Element {
   }, [signOut, signOutIfCredentialCleared, surrenderActiveWorkspace, workspace.error]);
 
   const surface = new URLSearchParams(window.location.search).get('surface');
-  const mainSurface = surface !== 'settings' && surface !== 'sidekicks' && surface !== 'browser-import';
+  const mainSurface = surface !== 'settings' && surface !== 'browser-import';
   // A window that closes on Escape has to do it before its screen exists, too.
   // `Opening workspace…` and the service-setup error are the states a person is
-  // most stuck in, and until the profile lands neither Settings nor Sidekicks
-  // has mounted the screen that installs the gesture — so the keystroke did
+  // most stuck in, and until the profile lands Settings has not mounted the
+  // screen that installs the gesture — so the keystroke did
   // nothing in exactly the dead end it exists to leave.
   //
   // It stands down the moment the screen is there. Both installs would answer
@@ -252,7 +252,7 @@ export function WorkspaceApp(): React.JSX.Element {
   // The meeting window is left out — a recording in progress is not a dead end,
   // and nobody asked for Escape to end one.
   useEscapeClosesWindow({
-    enabled: (surface === 'sidekicks' || surface === 'settings') && !workspace.data,
+    enabled: surface === 'settings' && !workspace.data,
   });
   const scope = `${session!.user.email}:${desktopWorkspaceIdentityKey(session!.workspace!.region, session!.workspace!.id)}`;
   // The import window needs the session's API and nothing from the profile
@@ -270,10 +270,10 @@ export function WorkspaceApp(): React.JSX.Element {
       key={scope}
       api={api!}
       onAccessRevoked={surrenderActiveWorkspace}
-      // The main window publishes its socket to main and Settings and
-      // Sidekicks consume it, so a desktop holds one Organization socket
-      // rather than one per window.
-      relay={surface === 'settings' || surface === 'sidekicks' ? 'consume' : mainSurface ? 'publish' : undefined}
+      // The main window publishes its socket to main and Settings consumes
+      // it, so a desktop holds one Organization socket rather than one per
+      // window.
+      relay={surface === 'settings' ? 'consume' : mainSurface ? 'publish' : undefined}
       region={session!.workspace!.region}
       workspaceId={session!.workspace!.id}
     >
@@ -390,11 +390,6 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
     );
   }
 
-  if (new URLSearchParams(window.location.search).get('surface') === 'sidekicks') {
-    return <SidekicksWindow />;
-  }
-
-
   return (
     <SpeechPlaybackProvider api={api!}>
       <TelemetryRouteObserver />
@@ -415,7 +410,7 @@ function WorkspaceAppContent({ workspace }: { workspace: Workspace }): React.JSX
             <Route element={<CanvasScreen />} path="/canvases/:id" />
             <Route element={<AutomationScreen />} path="/automations/:id" />
             <Route element={<SidekicksLibraryRoute />} path="/sidekicks" />
-            {/* Creating a Sidekick is a member's, as in the Sidekicks window. */}
+            {/* Creating a Sidekick is a member's. */}
             {guest && <Route element={<Navigate replace to="/sidekicks" />} path="/sidekicks/new" />}
             <Route element={<AutomationScreen />} path="/sidekicks/:id" />
             <Route element={<WorkspaceSettingsScreen workspace={workspace} />} path="/settings" />
