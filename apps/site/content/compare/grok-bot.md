@@ -5,7 +5,7 @@ maker: xAI
 order: 2
 title: "Rally vs Grok Bot (2026): one shared AI or a roster of bots"
 description: "Grok Bot lets you build named agents on a cloud computer. Rally gives your team one shared AI and a place to work, at a flat monthly price."
-updated: 2026-10-01
+updated: 2026-11-07
 kind: "A legion of AI agents that run on a single shared cloud computer."
 edge: "A single AI the whole team communicates with together."
 ---
