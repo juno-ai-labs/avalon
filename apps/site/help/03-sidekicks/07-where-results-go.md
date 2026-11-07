@@ -36,8 +36,8 @@ is labelled "Automation", the old name for a Sidekick.
 ## Canvases it writes to
 
 A Canvas a Sidekick makes starts out open to the people the Sidekick is shared
-with. From then on it is an ordinary Canvas: people can talk to Rally about it,
-comment on it and share it further, as
+with. From then on people can talk to Rally about it and comment on it like any
+other Canvas, and the Sidekick's managers decide who else can open it, as
 [Who can see what](../02-canvases/08-who-can-see-what.md#canvases-from-a-sidekick)
 explains. When the Sidekick runs again and its instructions say to update that
 Canvas, it publishes a new version, and the version says it came from the

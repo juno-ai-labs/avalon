@@ -11,7 +11,9 @@ who join this way are **guests**.
 
 ## Invite a guest
 
-You invite guests from the same window you use to add teammates:
+Guests are invited from the same window used to add teammates, and by the same
+people: the Canvas's creator, or an owner or administrator of the Organization.
+For a Canvas a Sidekick made, the Sidekick's managers can invite guests too.
 
 1. Open the Canvas and click **Share** at the top right.
 2. Under the list of people is **Share by email**. Type one or more addresses in

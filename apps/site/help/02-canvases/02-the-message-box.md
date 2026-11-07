@@ -73,14 +73,14 @@ Press <kbd>Esc</kbd> to close the list without picking anyone.
 Mention a teammate when you want them to notice a message. Mention **@Rally**
 when you want to be sure Rally answers. In a busy Canvas, Rally decides for
 itself which messages are meant for it, and
-[People in the room](07-people-in-a-canvas.md#does-rally-answer-every-message)
+[People in a Canvas](07-people-in-a-canvas.md#does-rally-answer-every-message)
 explains how.
 
 Things that catch people out:
 
 - People under **Org members** or **Guests** cannot open this Canvas yet.
   If you mention them, Rally asks
-  whether to add them first. [People in the room](07-people-in-a-canvas.md) has
+  whether to add them first. [People in a Canvas](07-people-in-a-canvas.md) has
   the details.
 - Only people and Rally can be mentioned here. Your connected tools and your
   Sidekicks are not in the list. You talk to a Sidekick in its own conversation, covered in

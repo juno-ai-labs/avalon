@@ -77,8 +77,8 @@ Sidekicks section and in its details column.
 A few rules follow from this.
 
 - **New Sidekicks start as Only you.** To share one, ask the drafting assistant
-  ("share this with Theo and Priya", "make this an Organization Sidekick"), or
-  use **Share** in its details column.
+  in an **Edit Sidekick** message ("share this with Theo and Priya", "make
+  this an Organization Sidekick"), or use **Share** in its details column.
 - **Everyone it is shared with gets the same conversation.** There are no
   private side conversations with a shared Sidekick. If you would rather ask it
   something on your own, make a personal Sidekick for that.
