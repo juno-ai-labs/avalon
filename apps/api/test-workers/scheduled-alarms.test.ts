@@ -1096,7 +1096,7 @@ describe("an agent's own wake-ups", () => {
     ));
     await agent.bootstrapRuntime({
       workspaceId: WORKSPACE_ID,
-      parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
+      parentKind: "canvas" as const, parentId: WORKSTREAM_ID,
       generation: 1,
     });
 
@@ -1123,7 +1123,7 @@ describe("an agent's own wake-ups", () => {
     ));
     await agent.bootstrapRuntime({
       workspaceId: WORKSPACE_ID,
-      parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
+      parentKind: "canvas" as const, parentId: WORKSTREAM_ID,
       generation: 1,
     });
     const dueAt = Date.now() + 120_000;
@@ -1189,7 +1189,7 @@ describe("an agent's own wake-ups", () => {
     ));
     await agent.bootstrapRuntime({
       workspaceId: WORKSPACE_ID,
-      parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
+      parentKind: "canvas" as const, parentId: WORKSTREAM_ID,
       generation: 1,
     });
     await runInDurableObject(agent, (_instance, state) => {
@@ -1247,7 +1247,7 @@ describe("an agent's own wake-ups", () => {
       await runInDurableObject(stub, async (instance: AgentLoopDO, state) => {
         await instance.bootstrapRuntime({
           workspaceId: WORKSPACE_ID,
-          parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
+          parentKind: "canvas" as const, parentId: WORKSTREAM_ID,
           generation: 1,
           ...(substreamId ? { substreamId } : {}),
         });

@@ -43,8 +43,8 @@ const { principalSystemSectionFor } = __integrationTesting;
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000201");
 const OWNER_ID = asUserId("00000000-0000-4000-8000-000000000202");
 const MEMBER_ID = asUserId("00000000-0000-4000-8000-000000000203");
-/** An Organization-wide thread both people take part in. */
-const OPEN_THREAD = asWorkstreamId("00000000-0000-4000-8000-000000000212");
+/** An Organization-wide Canvas both people read. */
+const OPEN_CANVAS = asWorkstreamId("00000000-0000-4000-8000-000000000212");
 const OWNER_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000221");
 const MEMBER_RUN = asHarnessRunId("00000000-0000-4000-8000-000000000222");
 const SIDEKICK_ID = asAutomationId("00000000-0000-4000-8000-000000000231");
@@ -58,25 +58,7 @@ afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
-function seedThread(objectDatabase: DatabaseSync, workstreamId: string, title: string, participants: string[]) {
-  objectDatabase.prepare(`INSERT INTO channels (
-      workstream_id, authority_generation, waterline, source_event_id, payload_hash,
-      title, description, preview, scope, exact_state, origin_type, title_status,
-      latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
-      source_created_at, source_updated_at, projected_at
-    ) VALUES (?, 1, 1, ?, 'hash', ?, '', '', 'workspace', 'idle', 'ad_hoc', 'settled', 0, 0, 200, 200, 200, 200)`)
-    .run(workstreamId, `event-${workstreamId}`, title);
-  for (const userId of participants) {
-    objectDatabase.prepare(`INSERT INTO channel_viewers (
-        workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash,
-        is_participant, unread_count, you_are_mentioned, listable, seen_attention_ordinal,
-        manual_unread_from_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at
-      ) VALUES (?, ?, 1, 1, ?, 'hash', 1, 0, 0, 1, 0, NULL, 0, 0, 200)`)
-      .run(workstreamId, userId, `event-${workstreamId}-${userId}`);
-  }
-}
-
-function fixture(): Env {
+async function fixture(): Promise<Env> {
   // The current regional topology: the object reads a person's relationship
   // from `workspace_members`, and the conversation lives in its own object.
   const database = migratedSqliteDatabase();
@@ -93,9 +75,9 @@ function fixture(): Env {
   `);
   const store = testWorkstreamObjectStore();
   openDatabases.push(store);
-  seedWorkstreamObjectRoot(store, { workstreamId: OPEN_THREAD, workspaceId: WORKSPACE_ID });
+  seedWorkstreamObjectRoot(store, { workstreamId: OPEN_CANVAS, workspaceId: WORKSPACE_ID });
   applyWorkstreamObjectRootFields(store, { title: "Fixture", description: "Fixture", exactState: "running", createdByUserId: OWNER_ID });
-  objectStores.set(OPEN_THREAD, store);
+  objectStores.set(OPEN_CANVAS, store);
   for (const [runId, userId, leaseOwner] of [[OWNER_RUN, OWNER_ID, "lease-owner"], [MEMBER_RUN, MEMBER_ID, "lease-member"]] as const) {
     seedWorkstreamRun(store, {
       id: runId, executionPrincipalJson: JSON.stringify({ type: "user", userId }), attemptId: `attempt-${runId}`,
@@ -105,7 +87,10 @@ function fixture(): Env {
   const workspaceObject = createTestWorkspaceDO({
     workspaceId: WORKSPACE_ID, regionalDatabase: database, register: (created) => { openDatabases.push(created); },
   });
-  seedThread(workspaceObject.objectDatabase, OPEN_THREAD, "Launch", [OWNER_ID, MEMBER_ID]);
+  // Made by the owner and opened to every member, so both people read it.
+  await workspaceObject.instance.canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: OPEN_CANVAS, title: "Launch",
+    createdByUserId: OWNER_ID, authorityGeneration: 1 });
+  workspaceObject.objectDatabase.prepare(`UPDATE canvas_directory SET visibility = 'workspace' WHERE canvas_id = ?`).run(OPEN_CANVAS);
   const rpcs = workspaceObjectRpcs(workspaceObject.instance, [
     "ensureMemoryScope", "recallMemoryFacts", "rememberMemoryFact", "forgetMemoryFact", "memoryDigest",
   ]);
@@ -123,9 +108,9 @@ function runInput(userId: string, runId: string, reason = "human_message"): Work
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    parentKind: "workstream",
-    parentId: OPEN_THREAD,
-    loopId: `workstream:${OPEN_THREAD}:substream:0:loop`,
+    parentKind: "canvas",
+    parentId: OPEN_CANVAS,
+    loopId: `canvas:${OPEN_CANVAS}:substream:0:loop`,
     harnessRunId: asHarnessRunId(runId),
     triggerMessageId: null,
     activityId: null,
@@ -148,7 +133,7 @@ function tool(env: Env, input: WorkstreamWorkflowInput, name: "remember" | "forg
   });
 }
 
-const OPEN_CONVERSATION = { workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: OPEN_THREAD, substreamId: "0" } as const;
+const OPEN_CONVERSATION = { workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: OPEN_CANVAS, substreamId: "0" } as const;
 
 /** One reader's digest read straight from `WorkspaceDO`, as a refresh reads it before it stores. */
 function workspaceStub(env: Env) {
@@ -159,7 +144,7 @@ async function readDigest(env: Env, userId: string, limit = 50) {
   return WorkspaceMemoryDigestResultSchema.parse(await workspaceStub(env).memoryDigest({
     workspaceId: WORKSPACE_ID,
     reader: { kind: "person", userId },
-    conversation: { parentKind: "workstream", parentId: OPEN_THREAD, substreamId: "0" },
+    conversation: { parentKind: "canvas", parentId: OPEN_CANVAS, substreamId: "0" },
     now: Date.now(),
     limit,
   }));
@@ -201,9 +186,9 @@ describe("digestReaderFor", () => {
 
 describe("the memory digest copy", () => {
   it("holds what each reader may see here, with the subject's title, and an older revision never replaces it", async () => {
-    const env = fixture();
+    const env = await fixture();
     const { personFactId, threadFactId } = await rememberTwo(env);
-    const port = createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_THREAD);
+    const port = createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_CANVAS);
 
     expect(await refreshMemoryDigestCopy(env, OPEN_CONVERSATION, { kind: "person", userId: OWNER_ID })).toBe(true);
     const ownerCopy = await port.memoryDigestCopy(`user:${OWNER_ID}`);
@@ -226,7 +211,7 @@ describe("the memory digest copy", () => {
   });
 
   it("drops a forgotten fact from every copy in the conversation the forget ran in", async () => {
-    const env = fixture();
+    const env = await fixture();
     const { personFactId, threadFactId } = await rememberTwo(env);
     await refreshMemoryDigestCopy(env, OPEN_CONVERSATION, { kind: "person", userId: OWNER_ID });
     await refreshMemoryDigestCopy(env, OPEN_CONVERSATION, { kind: "person", userId: MEMBER_ID });
@@ -234,7 +219,7 @@ describe("the memory digest copy", () => {
     // The member forgets what the thread established; both copies lose it at once.
     const forgot = await tool(env, runInput(MEMBER_ID, MEMBER_RUN), "forget")({ factId: threadFactId }, "receipt-forget");
     expect(forgot.summary).toBe("Forgot one fact");
-    const port = createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_THREAD);
+    const port = createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_CANVAS);
     expect((await port.memoryDigestCopy(`user:${OWNER_ID}`))?.map((fact) => fact.factId)).toEqual([personFactId]);
     expect(await port.memoryDigestCopy(`user:${MEMBER_ID}`)).toEqual([]);
     // Nothing left to drop is not an error, and touches no copy.
@@ -242,7 +227,7 @@ describe("the memory digest copy", () => {
   });
 
   it("refuses a refresh that read before a forget and lands after it, in every copy of the conversation", async () => {
-    const env = fixture();
+    const env = await fixture();
     const { personFactId, threadFactId } = await rememberTwo(env);
     await refreshMemoryDigestCopy(env, OPEN_CONVERSATION, { kind: "person", userId: OWNER_ID });
     await refreshMemoryDigestCopy(env, OPEN_CONVERSATION, { kind: "person", userId: MEMBER_ID });
@@ -252,7 +237,7 @@ describe("the memory digest copy", () => {
     expect(memberBefore.facts.map((fact) => fact.factId)).toEqual([threadFactId]);
 
     await tool(env, runInput(MEMBER_ID, MEMBER_RUN), "forget")({ factId: threadFactId }, "receipt-forget-race");
-    const port = createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_THREAD);
+    const port = createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_CANVAS);
     for (const [principal, read] of [[`user:${OWNER_ID}`, ownerBefore], [`user:${MEMBER_ID}`, memberBefore]] as const) {
       expect(await port.storeMemoryDigestCopy({ principal, facts: read.facts, sourceRevision: read.revision, now: Date.now() })).toBe(false);
     }
@@ -264,10 +249,10 @@ describe("the memory digest copy", () => {
   });
 
   it("leaves external facts out of the digest before its limit, while recall still returns them", async () => {
-    const env = fixture();
+    const env = await fixture();
     const remember = (factId: string, text: string, derivedFrom: "person" | "external", now: number) => workspaceStub(env).rememberMemoryFact({
       workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: OWNER_ID },
-      conversation: { parentKind: "workstream", parentId: OPEN_THREAD, substreamId: "0" },
+      conversation: { parentKind: "canvas", parentId: OPEN_CANVAS, substreamId: "0" },
       receiptId: `receipt-${factId}`, harnessRunId: OWNER_RUN, factId, text, kind: "standing", validUntil: null,
       about: "this conversation", derivedFrom, now,
     });
@@ -278,17 +263,17 @@ describe("the memory digest copy", () => {
     expect((await readDigest(env, OWNER_ID, 1)).facts.map((fact) => fact.factId)).toEqual(["fact-said-here"]);
     const recalled = await workspaceStub(env).recallMemoryFacts({
       workspaceId: WORKSPACE_ID, reader: { kind: "person", userId: OWNER_ID },
-      conversation: { parentKind: "workstream", parentId: OPEN_THREAD, substreamId: "0" },
+      conversation: { parentKind: "canvas", parentId: OPEN_CANVAS, substreamId: "0" },
       query: null, now: NOW + 2, limit: 10,
     });
     expect(recalled.facts.map((fact) => fact.factId)).toEqual(["fact-from-email", "fact-said-here"]);
   });
 
   it("renders the copy as the section a run starts with, only the memory digest in the system prompt", async () => {
-    const env = fixture();
+    const env = await fixture();
     const { personFactId, threadFactId } = await rememberTwo(env);
     await refreshMemoryDigestCopy(env, OPEN_CONVERSATION, { kind: "person", userId: OWNER_ID });
-    const copy = await createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_THREAD).memoryDigestCopy(`user:${OWNER_ID}`);
+    const copy = await createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_CANVAS).memoryDigestCopy(`user:${OWNER_ID}`);
 
     const digest = renderMemoryDigestSection(copy ?? [], NOW);
     expect(digest).toContain(`About the Canvas "Launch":\n- The launch thread meets on Tuesdays. [${threadFactId}]`);

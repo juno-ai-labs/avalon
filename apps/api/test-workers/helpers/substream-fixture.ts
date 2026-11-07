@@ -121,7 +121,7 @@ export function runInput(
   return WorkstreamWorkflowInputSchema.parse({
     region: "global",
     workspaceId: WORKSPACE_ID,
-    parentKind: "workstream",
+    parentKind: "canvas",
     parentId: WORKSTREAM_ID,
     substreamId: "0",
     loopId: LOOP_ID,
@@ -149,14 +149,14 @@ export function seedWorkstreamRoot(
        exact_state, state_reason_code, next_sequence_number, next_attention_ordinal,
        unread_tracking_start_ordinal, authority_epoch, scope_epoch,
        source_authorization_floor, listing_epoch, deletion_epoch, run_revision,
-       created_at, last_people_activity_at, state_changed_at, updated_at
+       created_at, last_people_activity_at, state_changed_at, updated_at, parent_kind
      ) VALUES (
        1, ?, ?, NULL, 0, 'global',
        'authoritative', 1, 'Fixture', '', '', 'workspace',
        'idle', 'seeded', 1, 1,
        0, 0, 0,
        0, 0, 0, 0,
-       ?, ?, ?, ?
+       ?, ?, ?, ?, 'canvas'
      ) ON CONFLICT(id) DO NOTHING`,
     workstreamId,
     workspaceId,

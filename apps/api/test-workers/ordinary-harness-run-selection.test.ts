@@ -144,7 +144,7 @@ async function openWorkstream(
 ): Promise<void> {
   expect((await stub.bootstrapRuntime({
     workspaceId: WORKSPACE_ID,
-    parentKind: "workstream",
+    parentKind: "canvas",
     parentId: workstreamId,
     generation: 1,
   })).status).toBe(200);
@@ -167,7 +167,7 @@ async function openWorkstream(
 }
 
 async function latestRunId(stub: DurableObjectStub<AgentLoopDO>): Promise<string | null> {
-  const detail = await stub.handleProductRequest({ operation: "get", auth });
+  const detail = await stub.handleProductRequest({ operation: "get", parentKind: "canvas", auth });
   expect(detail.status).toBe(200);
   return (JSON.parse(detail.bodyJson) as { latestHarnessRunId: string | null })
     .latestHarnessRunId;
@@ -193,7 +193,7 @@ describe("the ordinary harness run a work stream reports", () => {
       });
     });
 
-    const detail = await stub.handleProductRequest({ operation: "get", auth });
+    const detail = await stub.handleProductRequest({ operation: "get", parentKind: "canvas", auth });
 
     expect(detail.status).toBe(200);
     expect(JSON.parse(detail.bodyJson)).toMatchObject({

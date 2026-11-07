@@ -1,26 +1,12 @@
-import { asSubstreamId, asUserId, asWorkspaceId, type SidekickSkillSource, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { asUserId, asWorkspaceId, type SidekickSkillSource, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { codeSkillRef, type HarnessSkill } from "@rally/agent-harness";
 import type { Env } from "../env";
-import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
+import { workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
 // Durable identity is independent of the readable catalog name.
 export const sidekickSkillRef = (id: string): string => codeSkillRef(`sidekick-${id}`);
-
-/**
- * The Sidekicks a conversation's parent recommends as skills. A Channel's
- * defaults recommended them to its Threads; both are retired (plan step C-2),
- * so no parent recommends one.
- */
-export function recommendedSidekickRefs(env: Env, input: WorkstreamWorkflowInput): Promise<string[]> {
-  void env; void input;
-  return Promise.resolve([]);
-}
-/** One candidate rule for discovery, management and execution. */
-export function conversationSidekickCandidateIds(recommended: readonly string[], loaded: readonly string[]): Set<string> {
-  return new Set([...recommended, ...loaded]);
-}
 
 export function sidekickHarnessSkill(source: SidekickSkillSource, name: string): HarnessSkill {
   return { name, description: `${source.name}: ${source.description}`,
@@ -63,30 +49,18 @@ export function sidekickSkillCatalog(
 }
 
 /** Resolve authority on every attempt, including attempts restoring pinned content. */
-export async function resolveSidekickSkills(env: Env, input: WorkstreamWorkflowInput, principalIsGuest: boolean, pinnedIds?: readonly string[], existingExecution = pinnedIds !== undefined, recommendations = () => recommendedSidekickRefs(env, input)): Promise<SidekickSkillSource[]> {
+export async function resolveSidekickSkills(env: Env, input: WorkstreamWorkflowInput, principalIsGuest: boolean, pinnedIds?: readonly string[], existingExecution = pinnedIds !== undefined): Promise<SidekickSkillSource[]> {
   const workspaceId = asWorkspaceId(input.workspaceId);
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(env.AVALON_REGION, workspaceId));
   // Unset only on the common path: no pinned set and no guest filter, where
   // the batch read below selects every loadable Sidekick itself and resolving
   // skills costs one Organization call.
-  let ids: readonly string[] | undefined = pinnedIds;
+  const ids: readonly string[] | undefined = pinnedIds;
   if (ids?.length === 0) return [];
   // The run's existing principal admission supplies this fact. Resolving skills
   // must not add another membership round trip to every assistant/tool attempt.
-  if (principalIsGuest && !existingExecution) {
-    if (input.parentKind !== "workstream") return [];
-    ids ??= await workspace.sidekickSkillCandidates({ workspaceId });
-    if (ids.length === 0) return [];
-    const conversation = await durableObjectStubForWorkspace(env,env.SUBSTREAM_AGENTS,workspaceId,
-      conversationObjectName(env.AVALON_REGION,workspaceId,input.parentId,asSubstreamId(input.substreamId ?? "0")));
-    const [recommended,loaded] = await Promise.all([
-      recommendations(),
-      conversation.sidekickAttachments({ workspaceId,workstreamId:input.parentId }),
-    ]);
-    const available = conversationSidekickCandidateIds(recommended, loaded.map(sidekickSkillRef));
-    ids = ids.filter((id) => available.has(sidekickSkillRef(id)));
-    if (ids.length === 0) return [];
-  }
+  // A guest's own Sidekicks were offered only in a Thread's conversation.
+  if (principalIsGuest && !existingExecution) return [];
   const identityPort = createIdentityObjectPort(env, input.workspaceId, input.parentId, undefined, input.substreamId ?? "0");
   const [identity, participants] = await Promise.all([identityPort.identity(), identityPort.participants()]);
   if (!identity || identity.archived_at !== null) return [];

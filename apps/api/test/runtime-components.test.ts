@@ -74,7 +74,7 @@ describe("runtime component invariants", () => {
     const originId = "00000000-0000-7000-8000-000000000065";
     const readbackFailureId = "00000000-0000-7000-8000-000000000066";
     const backupId = "00000000-0000-7000-8000-000000000067";
-    store.ensureIdentity({ workspaceId, parentKind: "workstream", parentId: workstreamId }, "global");
+    store.ensureIdentity({ workspaceId, parentKind: "canvas", parentId: workstreamId }, "global");
     sql.exec(
       `UPDATE workstream
           SET authority_mode = 'authoritative', authority_generation = 1,
@@ -256,7 +256,7 @@ describe("runtime component invariants", () => {
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000091");
     const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000092");
     const userId = asUserId("00000000-0000-7000-8000-000000000093");
-    store.ensureIdentity({ workspaceId, parentKind: "workstream", parentId: workstreamId }, "global");
+    store.ensureIdentity({ workspaceId, parentKind: "canvas", parentId: workstreamId }, "global");
     sql.exec(
       `UPDATE workstream
           SET authority_mode = 'authoritative', authority_generation = 1,
@@ -394,7 +394,7 @@ describe("runtime component invariants", () => {
     const workstreamId = asWorkstreamId("00000000-0000-4000-8000-0000000000a2");
     const creatorId = asUserId("00000000-0000-4000-8000-0000000000a3");
     const outsiderId = asUserId("00000000-0000-4000-8000-0000000000a4");
-    store.ensureIdentity({ workspaceId, parentKind: "workstream", parentId: workstreamId }, "global");
+    store.ensureIdentity({ workspaceId, parentKind: "canvas", parentId: workstreamId }, "global");
     sql.exec(
       `UPDATE workstream
           SET authority_mode = 'authoritative', authority_generation = 1,
@@ -469,7 +469,7 @@ describe("runtime component invariants", () => {
     const workspaceId = asWorkspaceId("00000000-0000-4000-8000-0000000000d1");
     const workstreamId = asWorkstreamId("00000000-0000-4000-8000-0000000000d2");
     const runId = "00000000-0000-7000-8000-0000000000d3";
-    store.ensureIdentity({ workspaceId, parentKind: "workstream", parentId: workstreamId }, "global");
+    store.ensureIdentity({ workspaceId, parentKind: "canvas", parentId: workstreamId }, "global");
     sql.exec(
       `UPDATE workstream
           SET authority_mode = 'authoritative', authority_generation = 1,
@@ -624,7 +624,7 @@ describe("runtime component invariants", () => {
     const store = new WorkstreamObjectStore(storage, "test", "global");
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-0000000000b1");
     const workstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000000b2");
-    store.ensureIdentity({ workspaceId, parentKind: "workstream", parentId: workstreamId }, "global");
+    store.ensureIdentity({ workspaceId, parentKind: "canvas", parentId: workstreamId }, "global");
     sql.exec(
       `UPDATE workstream
           SET authority_mode = 'authoritative', authority_generation = 1,

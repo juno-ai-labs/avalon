@@ -240,7 +240,7 @@ describe("Sidekick wizard run inspection", () => {
       plugin(overrides).tools.some((candidate) => candidate.definition.capability.startsWith("rally.sidekick.runs."));
     expect(plugin().tools.filter((candidate) => candidate.definition.capability.startsWith("rally.sidekick.runs.")).map((candidate) => candidate.definition.mode)).toEqual(["read", "read"]);
     expect(reads({ substreamId: asSubstreamId(runId(8)), backgroundAgent: true })).toBe(true);
-    for (const overrides of [{ parentKind: "workstream" as const }, { substreamId: asSubstreamId(runId(1)) },
+    for (const overrides of [{ parentKind: "canvas" as const }, { substreamId: asSubstreamId(runId(1)) },
       { substreamId: asSubstreamId(runId(9)), backgroundAgent: true, automationDelegation: { runId: runId(1), stopGeneration: 0 } }]) {
       expect(reads(overrides)).toBe(false);
     }

@@ -122,7 +122,7 @@ describe("stale-run reaping on real workerd", () => {
     const workflowInput = WorkstreamWorkflowInputSchema.parse({
       region: "global",
       workspaceId: WORKSPACE_ID,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: WORKSTREAM_ID,
       substreamId: "0",
       loopId,

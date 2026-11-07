@@ -174,4 +174,35 @@ describe("the conversation store AgentLoopDO opens, over a conversation stored b
       expect(state.storage.sql.exec(`SELECT title FROM workstream WHERE id = 1`).one()).toEqual({ title: "Launch" });
     });
   });
+
+  it("refuses to open a conversation whose stored parent is a retired Thread or Space", async () => {
+    for (const kind of ["workstream", "space"] as const) {
+      const stub = env.MIGRATION_PROBE_DO!.getByName(`agent-loop-do-retired-${kind}`);
+      await stub.ping();
+      await runInDurableObject(stub, (_instance, state) => {
+        applyDurableObjectSqliteMigrations({
+          storage: state.storage,
+          migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+          component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
+          workerVersionId: "worker-current",
+          now: 1_000,
+        });
+        state.storage.sql.exec(
+          `INSERT INTO workstream
+             (id, workstream_key, parent_workspace_key, region, authority_mode, authority_generation,
+              title, description, scope, exact_state, state_reason_code, next_sequence_number,
+              next_attention_ordinal, authority_epoch, scope_epoch, source_authorization_floor,
+              listing_epoch, deletion_epoch, run_revision, created_at, last_people_activity_at,
+              state_changed_at, updated_at, parent_kind, archive_generation)
+           VALUES (1, ?, ?, 'global', 'authoritative', 1, 'Old', '', 'workspace', 'idle', 'seeded',
+                   1, 1, 1, 1, 0, 1, 0, 0, 1000, 1000, 1000, 1000, ?, 0)`,
+          PARENT_ID, WORKSPACE_ID, kind,
+        );
+      });
+      await runInDurableObject(stub, (_instance, state) => {
+        const store = new WorkstreamObjectStore(state.storage, "worker-current", "global");
+        expect(() => store.identity()).toThrow(`conversation_parent_kind_retired:${kind}`);
+      });
+    }
+  });
 });

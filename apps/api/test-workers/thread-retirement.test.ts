@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
 
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridge";
 import type { Env } from "../src/env";
@@ -178,6 +179,19 @@ describe("dump_thread_transcripts", () => {
     expect(await dumpedText(CHANNEL)).toBe("Test user · 2026-11-07T09:00:00.000Z\nWelcome to Marketing.");
     expect(await dumpedText(CANVAS)).toBeNull();
     expect(await dumpedText(SIDEKICK)).toBeNull();
+  });
+
+  it("reads a Thread's conversation that every product read still refuses by name", async () => {
+    // Inside the object: a rejection over a stub is reported again as unhandled.
+    const readerAudience = async () => runInDurableObject(await conversation(THREAD_A), (instance: AgentLoopDO) =>
+      instance.readerAudience({ workspaceId: WORKSPACE_ID, workstreamId: THREAD_A }));
+    await expect(readerAudience()).rejects.toThrow("conversation_parent_kind_retired:workstream");
+    const result = await bridge().dumpThreadTranscripts({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR);
+    expect(result.failed).toEqual([]);
+    expect(await dumpedText(THREAD_A)).toBe(
+      "Test user · 2026-11-07T09:00:00.000Z\nShip it Friday?\n\nTest user · 2026-11-07T09:00:01.000Z\nFriday works.",
+    );
+    await expect(readerAudience()).rejects.toThrow("conversation_parent_kind_retired:workstream");
   });
 
   it("writes nothing new on a rerun, even when a conversation moved since", async () => {

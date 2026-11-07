@@ -30,6 +30,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import type { AuthContext } from "../src/env";
+import { createCanvas } from "../src/services/canvas-service";
+import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import { conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
 import {
@@ -59,6 +61,7 @@ let workstreamOrdinal = 0;
 const USER_ID = asUserId("00000000-0000-7000-8000-00000000f0a3");
 const SESSION_ID = "00000000-0000-7000-8000-00000000f0a4";
 const MODEL = "queue-suite/primary";
+const TEST_ENV: Env = env;
 
 /** Wall-clock budgets, sized for a contended multi-suite run. See the pipeline suite. */
 const RUN_SETTLE_TIMEOUT_MS = 15_000;
@@ -84,6 +87,23 @@ beforeEach(async () => {
     userId: USER_ID,
     sessionId: SESSION_ID,
   });
+  await env.DB.batch([
+    ...SCOPE_SHARE_TABLES.map((sql) => env.DB.prepare(sql)),
+    // The D1 anchors `createCanvas` claims for the conversation it makes.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstreams (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, do_identity_anchor INTEGER NOT NULL DEFAULT 0)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_create_receipts (
+      workspace_id TEXT NOT NULL, creator_user_id TEXT NOT NULL, client_message_id TEXT NOT NULL,
+      workstream_id TEXT NOT NULL, generation INTEGER NOT NULL, request_hash TEXT NOT NULL,
+      state TEXT NOT NULL, message_id TEXT, harness_run_id TEXT, error_code TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, creator_user_id, client_message_id), UNIQUE (workstream_id))`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_routes (
+      workspace_id TEXT NOT NULL, workstream_id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
+      object_name TEXT NOT NULL, state TEXT NOT NULL, stage_index INTEGER NOT NULL DEFAULT 0,
+      source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
+      source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
+      verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL)`),
+  ]);
   const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
     workspaceDOName("global", WORKSPACE_ID),
   ));
@@ -103,39 +123,60 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
   const response = await stub.fetch("https://object.test/internal/product", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    // Every case's conversation is a Canvas's chat.
+    body: JSON.stringify({ parentKind: "canvas", ...(body as Record<string, unknown>) }),
   });
   return { status: response.status, body: await response.json() };
 }
 
+/**
+ * The conversation every case drives: a Canvas's chat, created the way the
+ * product creates one, and its first message admitted through the ordinary
+ * `create_message`. The body adds the run that message activated, which the
+ * cases settle; activation is left to the object's own alarm, so a case that
+ * holds the loop before the run executes still can.
+ */
 async function initializeWorkstream(
   stub: DurableObjectStub,
   openingMessage: string,
   extra: { telemetryJourney?: "workstream_create" } = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  return product(stub, {
-    operation: "initialize",
+  await createCanvas(TEST_ENV, {
+    workspaceId: WORKSPACE_ID, creatorUserId: USER_ID, canvasId: WORKSTREAM_ID, title: "Queue",
+  });
+  // A Canvas has no model picker; the pinned model is how a case reaches its
+  // scripted provider.
+  await runInDurableObject(stub, (_instance, state) => {
+    state.storage.sql.exec("UPDATE workstream SET model_override = ? WHERE id = 1", MODEL);
+  });
+  const sent = await product(stub, {
+    operation: "create_message",
     auth: AUTH,
     input: {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      generation: 1,
-      title: "Queue",
-      objective: "",
-      descriptionSource: "derived",
-      titleStatus: "settled",
-      emailAddress: null,
-      creatorUserId: USER_ID,
-      openingMessage,
+      text: openingMessage,
       clientMessageId: "queue-open-1",
-      participantUserIds: [],
+      mentions: [],
+      confirmedParticipantUserIds: [],
       attachmentIds: [],
-      modelOverride: MODEL,
-      executionPrincipal: { type: "user", userId: USER_ID },
-      reason: "user_message",
-      ...extra,
+      ...(extra.telemetryJourney ? { telemetryJourney: extra.telemetryJourney } : {}),
     },
   });
+  if (sent.status !== 200) return sent;
+  const turnId = (sent.body.turn as { turnId: string }).turnId;
+  let harnessRunId: string | null = null;
+  await expect.poll(async () => {
+    harnessRunId = await runInDurableObject(stub, (_instance, state) => {
+      const rows = state.storage.sql.exec<{ run_id: string; execution_context_json: string }>(
+        `SELECT run_id, execution_context_json FROM runs
+          WHERE execution_context_json IS NOT NULL ORDER BY created_at, run_id`,
+      ).toArray();
+      return rows.find((row) => (
+        JSON.parse(row.execution_context_json) as { triggerMessageId?: string | null }
+      ).triggerMessageId === turnId)?.run_id ?? null;
+    });
+    return harnessRunId === null ? `no run was activated for ${turnId}` : "activated";
+  }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 20 }).toBe("activated");
+  return { status: sent.status, body: { ...sent.body, turnId, harnessRunId } };
 }
 
 /** Admit one member message through the AgentLoopDO product/RPC compatibility endpoint. */
@@ -197,7 +238,9 @@ async function providerUserTurns(stub: DurableObjectStub): Promise<string[][]> {
   const requests = await capturedProviderRequests(stub);
   return requests.map((request) =>
     (request.body.messages as Array<{ role?: unknown; content?: unknown }>)
-      .filter((message) => message.role === "user")
+      // A person's messages only: a Canvas's host adds its own context to
+      // every run as a user message, which no person said.
+      .filter((message) => message.role === "user" && JSON.stringify(message.content).includes("rally_author"))
       .map((message) => JSON.stringify(message.content)));
 }
 

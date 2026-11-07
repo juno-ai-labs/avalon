@@ -1,5 +1,6 @@
 import type { Region } from "@rally/contracts/regions";
 import { ConversationParentKindSchema, type ConversationParentKind } from "@rally/contracts/conversation-parent";
+import { z } from "zod";
 import {
   AgentCompactionStateSchema,
   InferenceDelayStateSchema,
@@ -12,7 +13,6 @@ import {
   type ServerSocketEvent,
   type WorkspaceId,
 } from "@rally/contracts";
-import { z } from "zod";
 
 import { uuidV7 } from "../lib/uuid-v7";
 import { applyWorkstreamObjectSchema } from "./workstream-object-schema";
@@ -98,18 +98,31 @@ export interface RegionalEffectCommand {
   dependsOnProjectionKey?: string;
 }
 
+/** The parents a conversation object is hosted under. */
+export const HostedConversationParentKindSchema = z.enum(["automation", "canvas"]);
+export type HostedConversationParentKind = z.infer<typeof HostedConversationParentKindSchema>;
+
+/** A stored parent kind, refusing the retired Thread and Space kinds by name. */
+export function hostedConversationParentKind(stored: string): HostedConversationParentKind {
+  const kind = ConversationParentKindSchema.parse(stored);
+  if (kind === "workstream" || kind === "space") throw new Error(`conversation_parent_kind_retired:${kind}`);
+  return kind;
+}
+
 /**
  * What this conversation object is: the workspace it lives in and the parent
  * it belongs to. `parentId` is stored in the root row's `workstream_key`
  * column (the name predates typed parents and is held by released migration
  * text); `parentKind` says whether that id names a work stream, an automation,
- * or a Space. The read parses it through `ConversationParentKindSchema`, so a
- * kind the contract does not know is named at this boundary rather than
- * degrading to `workstream`.
+ * or a Space. Only a Sidekick (`automation`) or a Canvas is hosted now; a
+ * stored `workstream` or `space` names a conversation whose parent was retired
+ * (plan step B-7), and reading it is refused with
+ * `conversation_parent_kind_retired:<kind>` rather than served as a parent
+ * that no longer exists.
  */
 export interface WorkstreamObjectIdentity {
   workspaceId: WorkspaceId;
-  parentKind: ConversationParentKind;
+  parentKind: HostedConversationParentKind;
   parentId: string;
 }
 
@@ -552,6 +565,18 @@ export class WorkstreamObjectStore {
   }
 
   identity(): WorkstreamObjectIdentity | null {
+    const stored = this.identityForRetirement();
+    return stored ? { ...stored, parentKind: hostedConversationParentKind(stored.parentKind) } : null;
+  }
+
+  /**
+   * The stored identity with its parent kind unnarrowed, for the two callers
+   * that must reach a conversation whose parent was retired: the operator
+   * dump before a Thread is retired (`conversationTranscriptText`) and the
+   * constructor, which has to stay constructible so `retireObject` can close
+   * it. Everything else reads {@link identity}, which refuses those kinds.
+   */
+  identityForRetirement(): (Omit<WorkstreamObjectIdentity, "parentKind"> & { parentKind: ConversationParentKind }) | null {
     const row = first(this.storage.sql.exec<{
       workstream_key: string;
       parent_workspace_key: string;
