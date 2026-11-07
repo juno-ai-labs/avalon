@@ -328,7 +328,11 @@ composes both onboarding gates and means exactly "the workspace may be used".
 **Consequences:** Only a 404 counts as gone; a 403 still shows the screen's
 error, since access can come back. A new restorable route kind (beyond Canvas
 and Sidekick) needs its screen to call `useRestoredRouteFallback`, or a stale
-one will raise a dialog at launch.
+one will raise a dialog at launch. For an eligible returning account, the `/`
+restore now waits one journey round trip: the restored Canvas or Sidekick's
+detail query no longer runs in parallel with the journey query, because the
+screen that issues it is not mounted until admission. Deep links and every
+other route are not held and mount as before.
 
 ### 2026-11-07 — The shell becomes Canvases and Sidekicks; Channels, Threads and Breakouts are deleted
 
