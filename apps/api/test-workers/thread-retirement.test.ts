@@ -109,6 +109,13 @@ async function seedOrganization(): Promise<void> {
        VALUES (?, ?, ?, 1, 'h', 'active', 'workspace', NULL, 'Nightly', '', NULL, 0)`,
       SIDEKICK, WORKSPACE_ID, USER_ID,
     );
+    // A pending email share of Thread A. The invitation names its operation by
+    // a foreign key with no ON DELETE, so the sweep has to remove both rows.
+    state.storage.sql.exec(`INSERT INTO parent_invitation_operations (parent_id, operation_id, request_json, invitation_ids_json)
+      VALUES (?, 'share-1', '{}', '["invitation-1"]')`, THREAD_A);
+    state.storage.sql.exec(`INSERT INTO parent_invitations (parent_id, id, operation_id, actor_user_id, actor_incarnation,
+        summary_json, token_hash, delivery_encrypted, grant_operations_json, created_at)
+      VALUES (?, 'invitation-1', 'share-1', ?, 'existing-member', '{}', 'token-hash-1', 'sealed', '[]', 0)`, THREAD_A, USER_ID);
     // Made in a Thread, kept after it: resources outlive the conversation that made them.
     state.storage.sql.exec(`INSERT INTO resources (id, workspace_id, resource_type, provider, title, mime_type,
         metadata_json, uploaded_by_user_id, attachment_status, created_at, updated_at)
@@ -208,6 +215,8 @@ async function survivors() {
       channel: count("SELECT COUNT(*) AS count FROM spaces WHERE space_id = ?", CHANNEL),
       parentState: count(`SELECT (SELECT COUNT(*) FROM parent_metadata WHERE parent_id IN (?, ?, ?))
         + (SELECT COUNT(*) FROM parent_children WHERE parent_id IN (?, ?, ?)) AS count`, ...ids, ...ids),
+      invitations: count(`SELECT (SELECT COUNT(*) FROM parent_invitations WHERE parent_id = ?)
+        + (SELECT COUNT(*) FROM parent_invitation_operations WHERE parent_id = ?) AS count`, THREAD_A, THREAD_A),
       canvas: count("SELECT COUNT(*) AS count FROM canvas_directory WHERE canvas_id = ?", CANVAS),
       sidekick: count("SELECT COUNT(*) AS count FROM automation_directory WHERE automation_id = ?", SIDEKICK),
       resource: count("SELECT COUNT(*) AS count FROM resources WHERE id = ?", RESOURCE),
@@ -229,7 +238,7 @@ describe("retire_threads", () => {
     await expect(bridge().retireThreads({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR))
       .rejects.toThrow("engineering_operation_failed:thread_retirement_dump_incomplete");
     expect(await survivors()).toEqual({
-      threads: 2, channel: 1, parentState: 7, canvas: 1, sidekick: 1, resource: 1,
+      threads: 2, channel: 1, parentState: 7, invitations: 2, canvas: 1, sidekick: 1, resource: 1,
       retired: { threadA: false, breakout: false, threadB: false, channel: false, canvas: false },
     });
   });
@@ -244,7 +253,7 @@ describe("retire_threads", () => {
     expect(result.retiredParents).toBe(3 + general.length);
     expect(result.retiredConversations).toBe(4 + general.length);
     expect(await survivors()).toEqual({
-      threads: 0, channel: 0, parentState: 0, canvas: 1, sidekick: 1, resource: 1,
+      threads: 0, channel: 0, parentState: 0, invitations: 0, canvas: 1, sidekick: 1, resource: 1,
       retired: { threadA: true, breakout: true, threadB: true, channel: true, canvas: false },
     });
     // The dump is still the copy.
@@ -260,5 +269,27 @@ describe("retire_threads", () => {
 
     expect(rerun).toMatchObject({ parents: 0, conversations: 0, retiredParents: 0, retiredConversations: 0, failed: [] });
     expect((await (await conversation(THREAD_A)).objectRetirementState()).retiredAt).toBe(first.retiredAt);
+  });
+});
+
+describe("a conversation the dump refuses", () => {
+  it.each([
+    ["thread_transcript_identity_mismatch", "UPDATE workstream SET workstream_key = ? WHERE id = 1", "00000000-0000-7000-8000-00000000b7aa"],
+    ["thread_transcript_parent_kind_refused", "UPDATE workstream SET parent_kind = ? WHERE id = 1", "canvas"],
+  ])("is reported as %s, left unwritten, and keeps the retirement refused", async (code, statement, value) => {
+    await runInDurableObject(await conversation(THREAD_B), (_instance, state) => {
+      state.storage.sql.exec(statement, value);
+    });
+
+    const dump = await bridge().dumpThreadTranscripts({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR);
+
+    expect(dump.failed).toEqual([{ parentKind: "workstream", parentId: THREAD_B, substreamId: "0", error: code }]);
+    expect(await dumpedText(THREAD_B)).toBeNull();
+    await expect(bridge().retireThreads({ orgId: WORKSPACE_ID, confirm: WORKSPACE_ID }, OPERATOR))
+      .rejects.toThrow("engineering_operation_failed:thread_retirement_dump_incomplete");
+    expect(await survivors()).toEqual({
+      threads: 2, channel: 1, parentState: 7, invitations: 2, canvas: 1, sidekick: 1, resource: 1,
+      retired: { threadA: false, breakout: false, threadB: false, channel: false, canvas: false },
+    });
   });
 });

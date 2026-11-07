@@ -920,7 +920,7 @@ import {
   WorkspaceBreakoutStorage,
   type WorkspaceBreakoutRow,
 } from "./workspace-breakout-storage";
-import { HOSTED_PARENT_SCHEMA_STATEMENTS } from "./hosted-parent-schema";
+import { HOSTED_PARENT_SCHEMA_STATEMENTS, HOSTED_PARENT_STATE_TABLES } from "./hosted-parent-schema";
 import {
   HOSTED_CHANNEL_ROLE,
   HOSTED_SPACE_ROLE,
@@ -6646,24 +6646,30 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Delete one Thread's or Channel's rows once every conversation under it is
    * retired: its directory row and viewer rows (and a Thread's Breakout
-   * directory), and its parent state, every `parent_*` table keyed by
-   * `parent_id` — read from the schema, so a table phase C drops first is not
-   * named here. The foreign keys that cascade from `channels` and `spaces`
+   * directory), and its parent state in every table
+   * `HOSTED_PARENT_STATE_TABLES` names that the schema still holds, so a table
+   * phase C drops first is skipped. The foreign keys that cascade from `channels` and `spaces`
    * (pins, resource links, access rows) go with them; the resources a link
    * names do not. Idempotent: a second call finds nothing to delete.
    */
   async deleteRetiredThreadParent(input: { parentKind: "workstream" | "space"; parentId: string }): Promise<void> {
     await this.initialized;
     const sql = this.state.storage.sql;
-    const parentTables = sql.exec<{ name: string }>(
-      `SELECT name FROM sqlite_schema
-        WHERE type = 'table' AND name LIKE 'parent\\_%' ESCAPE '\\'
-          AND EXISTS (SELECT 1 FROM pragma_table_info(sqlite_schema.name) WHERE name = 'parent_id')
-        ORDER BY name`,
-    ).toArray().map((row) => row.name);
+    const present = new Set(sql.exec<{ name: string }>(
+      "SELECT name FROM sqlite_schema WHERE type = 'table'",
+    ).toArray().map((row) => row.name));
+    const parentTables = HOSTED_PARENT_STATE_TABLES.filter((table) => present.has(table));
     this.state.storage.transactionSync(() => {
       // Checked at commit, when every referencing row is gone too, so the
-      // delete order among the parent tables does not matter.
+      // delete order among the parent tables does not matter: definition
+      // order deletes `parent_invitation_operations` before the
+      // `parent_invitations` rows whose foreign key names it with no ON
+      // DELETE, which an immediate check refuses. The nuance: inside
+      // `transactionSync` a deferred violation is not raised here but at the
+      // commit of the whole event, after this method returns, so it would
+      // surface as this RPC failing rather than inside the service's
+      // try/catch. Only a row this sweep does not delete can cause one, and
+      // every referencing table is in the list.
       sql.exec("PRAGMA defer_foreign_keys = ON");
       // First: while a participant migration row stands, a Breakout's member
       // rows refuse deletion (`parent_breakout_members_freeze_delete`).
