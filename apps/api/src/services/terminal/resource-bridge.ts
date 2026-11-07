@@ -377,7 +377,8 @@ export function createTerminalResourceBridge(
    * resolve the live authorized resource scope independently of publication;
    * a publication target is not an access grant.
    */
-  publicationHome?: (() => Promise<{ parentId: string; substreamId: string } | null>) | null,
+  publicationHome?: ((request: { canvas?: string | undefined; title?: string | undefined }) =>
+    Promise<{ parentId: string; substreamId: string } | null>) | null,
   /**
    * The conversation this run executes in, when it is not the one whose
    * object holds the sandbox: a background agent importing into its owner's
@@ -393,6 +394,12 @@ export function createTerminalResourceBridge(
    */
   onBehalfOfUserId: string | null = null,
   publicationSubstreamId = "0",
+  /**
+   * After a publish attached a resource to its destination: when that is a
+   * Canvas's Chat, the Canvas records the artifact and its last editor
+   * (`WorkspaceDO.canvasNoteArtifact`). Null where no destination can be one.
+   */
+  noteCanvasArtifact: ((target: { parentId: string; substreamId: string }, resourceId: string) => Promise<void>) | null = null,
 ): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
   // tool/link rows to AgentLoopDO. Keep every statement single-authority;
@@ -411,13 +418,30 @@ export function createTerminalResourceBridge(
    * did not ask for and its delivered result deliberately excluded, so an
    * internal capture stays in the conversation that produced it.
    */
+  // One resolution per Canvas choice for this bridge's run: the first publish
+  // of a Sidekick run may create its Canvas, and every later one finds it.
+  const homes = new Map<string, Promise<{ parentId: string; substreamId: string } | null>>();
   const publicationAddress = async (
     context: { workstreamId: string },
+    input: { canvas?: string | undefined; displayName?: string | undefined } = {},
     internalProviderResourceId?: string,
   ) => {
+    if (input.canvas !== undefined && !publicationHome && input.canvas !== context.workstreamId) {
+      throw new TerminalToolError("canvas_argument_unsupported", "Only a Sidekick run names a Canvas to publish into; omit canvas.", { field: "canvas" });
+    }
     // Internal captures stay local and require no access to the home.
-    const home = internalProviderResourceId === undefined ? await publicationHome?.() : null;
-    return home ?? { parentId: context.workstreamId, substreamId: publicationSubstreamId };
+    if (internalProviderResourceId !== undefined || !publicationHome) {
+      return { parentId: context.workstreamId, substreamId: publicationSubstreamId };
+    }
+    const key = input.canvas ?? "";
+    let home = homes.get(key);
+    if (!home) {
+      home = publicationHome({ canvas: input.canvas, title: input.displayName });
+      homes.set(key, home);
+      // A failed resolution is not remembered, so the next publish asks again.
+      home.catch(() => homes.delete(key));
+    }
+    return await home ?? { parentId: context.workstreamId, substreamId: publicationSubstreamId };
   };
   const assertExistingPublicationVisible = async (context: HarnessToolContext, target: { parentId: string; substreamId: string },
     row: Pick<PublishedRow, "id" | "metadata_json"> | null) => {
@@ -683,7 +707,7 @@ export function createTerminalResourceBridge(
       fileCount: files.length,
     };
   };
-  return {
+  const bridge: TerminalResourceBridge = {
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {
       const rows = await loadVisibleWorkstreamResourcesByIds(
         env.DB,
@@ -931,7 +955,7 @@ export function createTerminalResourceBridge(
      * distinguish "I wrote this" from "somebody wrote this".
      */
     async reconcilePublishedResource(context, input) {
-      const target = await publicationAddress(context);
+      const target = await publicationAddress(context, input);
       const providerResourceId = await publishedResourceIdentity(target.parentId, input.filePath, target.substreamId);
       const document = await existingPublication(context, target, input.filePath, providerResourceId);
       if (!document) return { outcome: "not_landed" as const };
@@ -965,7 +989,7 @@ export function createTerminalResourceBridge(
     },
 
     async publishResource(context, input, bytes) {
-      const target = await publicationAddress(context, input.providerResourceId);
+      const target = await publicationAddress(context, input, input.providerResourceId);
       const maximum = numericEnv(env, "MAX_ATTACHMENT_BYTES", 25_000_000);
       if (bytes.byteLength > maximum) {
         throw new TerminalToolError("resource_limit_exceeded", `The file is ${bytes.byteLength} bytes; published resources allow at most ${maximum}. Reduce or split it and retry.`, { field: "filePath", expected: `file bytes at most ${maximum}` });
@@ -1152,8 +1176,8 @@ export function createTerminalResourceBridge(
       };
     },
 
-    async publishedKindForPath(context, filePath) {
-      const target = await publicationAddress(context);
+    async publishedKindForPath(context, filePath, input = {}) {
+      const target = await publicationAddress(context, input);
       const providerResourceId = await publishedResourceIdentity(target.parentId, filePath, target.substreamId);
       const row = await existingPublication(context, target, filePath, providerResourceId);
       if (!row) return null;
@@ -1176,7 +1200,7 @@ export function createTerminalResourceBridge(
      * the Terminal import instead.
      */
     async publishSiteResource(context, input, site) {
-      const target = await publicationAddress(context);
+      const target = await publicationAddress(context, input);
       const effectIntentId = requireTerminalEffectIntent(context, "publication");
       const providerResourceId = await publishedResourceIdentity(target.parentId, input.filePath, target.substreamId);
       const existing = await existingPublication(context, target, input.filePath, providerResourceId);
@@ -1381,6 +1405,22 @@ export function createTerminalResourceBridge(
         slug,
       });
     },
+  };
+  if (!noteCanvasArtifact) return bridge;
+  // A publish that landed in a Canvas's Chat is one of the Canvas's
+  // artifacts; the note is idempotent, so a replayed publish notes it again.
+  const noted = async <T extends { resourceId: string }>(context: HarnessToolContext,
+    input: { canvas?: string | undefined; displayName?: string | undefined; providerResourceId?: string | undefined },
+    published: T): Promise<T> => {
+    if (input.providerResourceId === undefined) {
+      await noteCanvasArtifact(await publicationAddress(context, input), published.resourceId);
+    }
+    return published;
+  };
+  return {
+    ...bridge,
+    publishResource: async (context, input, bytes) => noted(context, input, await bridge.publishResource(context, input, bytes)),
+    publishSiteResource: async (context, input, site) => noted(context, input, await bridge.publishSiteResource(context, input, site)),
   };
 }
 

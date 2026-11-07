@@ -6,7 +6,7 @@ import {
   applyVersionedSpaceSnapshot,
   applyVersionedSidebarList,
 } from './sidebar-list-store';
-import type { PersonalOrder, SpaceSnapshot } from '@rally/contracts';
+import { CanvasSidebarRowSchema, type PersonalOrder, type SpaceSnapshot } from '@rally/contracts';
 import type { AutomationSummary } from './types';
 
 const SPACE_ID = '00000000-0000-7000-8000-0000000000a1';
@@ -52,10 +52,10 @@ describe('applyVersionedSidebarList', () => {
 
   it('orders the Canvas list by its own waterline, apart from the Sidekick list', () => {
     const queryClient = new QueryClient();
-    const row = (id: string) => ({
+    const row = (id: string) => CanvasSidebarRowSchema.parse({
       id, title: 'Launch plan', createdByUserId: '00000000-0000-7000-8000-0000000000c1',
       createdAt: '2026-11-07T10:00:00.000Z', updatedAt: '2026-11-07T10:00:00.000Z', lastEditor: null,
-      writerSidekickId: null, visibility: 'creator' as const, artifactKind: null, unread: false,
+      writerSidekickId: null, visibility: 'creator', artifactKind: null, unread: false,
       presentUserIds: [], pinnedPosition: null, sharedWithMe: false,
     });
     expect(applyVersionedSidebarList(queryClient, 'automations', 9, [automation('a')])).toBe(true);
