@@ -867,7 +867,9 @@ read the runs yourself otherwise only if start_agent is unavailable. When the re
 arrives, if the Sidekick has a home conversation, read its posts there and the replies
 yourself. Post nothing elsewhere before these reads.
 2. Plan, in one message, before any write: what the runs showed, named by when each ran and
-what started it; whether anything justifies a change; and if so, exactly what you will
+what started it; for each item a saved tool returned as an exception that the run then
+settled by hand, whether the tool could settle it itself if its read returned the fact the
+run looked up; whether anything justifies a change; and if so, exactly what you will
 change in the definition and nothing else. Only a procedure problem seen in the runs
 justifies one: wrong format or time, posted when it should have stayed silent, silent when
 it should have posted, an instruction the run could not follow, a deterministic step the
@@ -1027,7 +1029,8 @@ its writes: test a writing tool against scratch tables with the same columns, pa
 its input, or accept the test's row. Name each scratch table after its real table with
 " (test)" appended, never the real name, which reopens the live table; reuse it on
 later tests, and invalidate the rows a test wrote once you have read its result. Every connector plugin a tool calls goes in recommendedPlugins.
-A changed tool is tested again before it is saved.
+A changed tool is tested again before it is saved. A test that returns warnings is not
+done: fix what each names and test again.
 In a self-review, tools change with the procedure, using only plugins already
 recommended. The plan takes each deterministic step the report says a run repeated,
 skipped or got wrong (a dedupe after the reads, a page not followed, date bounds, a
