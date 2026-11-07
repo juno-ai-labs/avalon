@@ -462,7 +462,8 @@ described in [attachment image caching](attachment-preview-cache.md).
   over what another client changed while the device was away.
 - **Only state the server delivered is persisted.** The conversation mirror
   writes only while the feed source is `socket_snapshot`; the directory mirror
-  only after the first subscribe answer; the usage slice only a
+  only after the first subscribe answer; the `canvas-directory` mirror only a
+  list `sidebarListApplied` says the socket's waterline ledger holds; the usage slice only a
   `GET /workspace/usage` answer or a `workspace_usage` push. Break it and a seed, or a launch surface's
   optimistic turn, becomes what the next launch paints, with no live frame
   having vouched for it.

@@ -91,14 +91,16 @@ function boot(): WorkstreamBoot {
   } as WorkstreamBoot;
 }
 
-function renderSidekick(viewerId: string): void {
+function renderSidekick(viewerId: string, search = ''): void {
   session.current = { user: { id: viewerId, name: 'Viewer', email: 'viewer@example.test' }, workspace: { id: 'w', region: 'global', role: 'member' } };
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const conversation = boot();
   queryClient.setQueryData(['workstream', SIDEKICK], conversation);
   queryClient.setQueryData(['ordered-transcript', SIDEKICK], conversation.transcript);
+  queryClient.setQueryData(['substream-workstream', SIDEKICK, 'run-1'], conversation);
+  queryClient.setQueryData(['substream-ordered-transcript', SIDEKICK, 'run-1'], conversation.transcript);
   render(<Tooltip.Provider><QueryClientProvider client={queryClient}>
-    <MemoryRouter initialEntries={[`/sidekicks/${SIDEKICK}`]}>
+    <MemoryRouter initialEntries={[`/sidekicks/${SIDEKICK}${search}`]}>
       <Routes><Route element={<AutomationScreen />} path="/sidekicks/:id" /></Routes>
     </MemoryRouter>
   </QueryClientProvider></Tooltip.Provider>);
@@ -142,6 +144,14 @@ describe("a Sidekick's shared conversation", () => {
     await send('Check the checkout latency now.');
     await waitFor(() => expect(createMessage).toHaveBeenCalled());
     expect(createMessage.mock.calls[0]![0]).not.toHaveProperty('intent');
+  });
+
+  it("shows a run's own conversation without a composer: replies go in the shared conversation", async () => {
+    renderSidekick(AUTHOR, '?run=run-1');
+    expect(await screen.findByRole('heading', { name: 'Run' })).toBeInTheDocument();
+    await screen.findByText('Ready to begin');
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
   });
 
   it('offers someone who does not manage it no edit', async () => {

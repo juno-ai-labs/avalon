@@ -240,8 +240,11 @@ function SidekickConversation({ detail, manages }: { detail: AutomationDetail; m
       key={`run:${runId}`}
       parentId={detail.id}
       parentKind="automation"
+      // A run is read here, not answered: replies to the Sidekick go in the
+      // shared conversation, where they start the next run.
+      readOnly
       renderHeader={() => <header className="sidekick-conversation-heading">
-        <button className="sidekick-run-back" onClick={() => setSearch({}, { replace: false })} type="button"><ChevronLeft aria-hidden="true" size={16} />Conversation</button>
+        <button className="sidekick-run-back" onClick={() => setSearch({}, { replace: true })} type="button"><ChevronLeft aria-hidden="true" size={16} />Conversation</button>
         <h2>Run</h2>
       </header>}
       substreamId={runId}

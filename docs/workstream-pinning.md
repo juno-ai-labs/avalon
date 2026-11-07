@@ -1,8 +1,9 @@
 # Pinning
 
-A person pins what they want to hand: a thread, a Channel, a breakout, or an
-artifact Rally generated. Each sidebar section (Threads, Channels, Artifacts)
-has a **Pinned** part above its list,
+A person pins what they want to hand: a thread, a Channel, a breakout, an
+artifact Rally generated, a Canvas or a Sidekick. Each sidebar section
+(Threads, Channels, Artifacts, Canvases, Sidekicks) has a **Pinned** part
+above its list,
 arranged by hand, never sorted, and both the pin and the arrangement live on
 the server, so the same person opening Rally on another machine finds their
 list as they left it.

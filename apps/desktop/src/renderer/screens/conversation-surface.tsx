@@ -1377,6 +1377,8 @@ export interface ConversationSurfaceProps {
   composerMenuActions?: readonly ComposerMenuAction[];
   /** What the composer says while empty, when the host has something more specific to say. */
   composerPlaceholder?: string;
+  /** Draw the feed without a composer: a run's own conversation, read from its Sidekick. */
+  readOnly?: boolean;
   renderSidebar?: (context: ConversationHeaderContext & {
     focusTranscript: () => void;
     openArtifact: (id: string, returnFocus: HTMLElement) => void;
@@ -1427,6 +1429,7 @@ function ConversationSurfaceContent({
   messageIntent,
   composerMenuActions: hostMenuActions,
   composerPlaceholder,
+  readOnly = false,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
@@ -3787,7 +3790,7 @@ function ConversationSurfaceContent({
             || stopAcknowledgement.runId !== null)
             && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
           {mergeCardWithDialog && !mergeCardAnchored && <div className="merge-response-card-end">{mergeCardWithDialog}</div>}
-          <WorkstreamComposer
+          {!readOnly && <WorkstreamComposer
             api={api ?? undefined}
             placeholder={composerPlaceholder ?? (parentKind === 'automation'
               ? 'Ask your Sidekick…'
@@ -3837,7 +3840,7 @@ function ConversationSurfaceContent({
             draftKey={conversationDraftKey(workspaceRegion, workspaceId, parentKind, displayedDetail.id, substreamId)}
             substreamId={substreamId}
             {...(composerMenuActions || hostMenuActions ? { menuActions: [...composerMenuActions ?? [], ...hostMenuActions ?? []] } : {})}
-          />
+          />}
         </div>
       </div>
       </>}

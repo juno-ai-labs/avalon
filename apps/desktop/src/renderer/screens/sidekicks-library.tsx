@@ -9,6 +9,8 @@ import { useQuery } from '@tanstack/react-query';
 import { HashRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
+import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
+import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
 import type { AutomationSummary } from '../lib/types';
@@ -52,7 +54,15 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
   const { api } = useAppSession();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<SidekickFilter>('all');
-  const query = useQuery({ queryKey: ['sidekicks-library'], queryFn: ({ signal }) => api!.getSidekicks(signal), enabled: Boolean(api) });
+  // The main window reads the list the workspace socket keeps: only its rows
+  // carry the viewer's `needsInput` and `unread`, which `GET /sidekicks` never
+  // does. REST remains only for a tree with no workspace socket mounted.
+  const socket = useOptionalWorkspaceSocket();
+  const pushed = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations);
+  const fetched = useQuery({ queryKey: ['sidekicks-library'], queryFn: ({ signal }) => api!.getSidekicks(signal), enabled: Boolean(api) && !socket });
+  const query = socket
+    ? { data: pushed.data, isLoading: pushed.data === undefined, isSuccess: pushed.data !== undefined, error: null }
+    : fetched;
   const items = (query.data ?? []).filter((item) =>
     matchesFilter(item, filter)
     && `${item.name} ${item.description}`.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
