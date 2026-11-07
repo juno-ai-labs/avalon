@@ -171,6 +171,8 @@ import {
   acceptedDeepLink,
   shouldDeliverConnectorResultToSettings,
   httpsLinkDeepLink,
+  isRetiredDeepLink,
+  RETIRED_LINK_MESSAGE,
 } from "./deep-links";
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { DeveloperSettingsFlagController } from './developer-settings-flag';
@@ -3258,7 +3260,13 @@ function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): vo
 
 function emitDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint = 'deep_link'): boolean {
   const deepLink = acceptedDeepLink(rawUrl);
-  if (!deepLink) return false;
+  if (!deepLink) {
+    // A Space, Channel, Breakout or Thread link opens nothing now; say so, as
+    // the site's handoff page and the web app do, rather than drop it. It can
+    // arrive before `ready` on a cold launch, and a window cannot open before.
+    if (isRetiredDeepLink(rawUrl)) void app.whenReady().then(() => createDeepLinkErrorWindow(RETIRED_LINK_MESSAGE));
+    return false;
+  }
   sendDeepLink(deepLink, entrypoint);
   return true;
 }

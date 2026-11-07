@@ -57,6 +57,8 @@ describe('public Rally site', () => {
     ]) expect(handoffPlan(retired)).toEqual({ kind: 'gone' });
     expect(handoffPlan('/app/global/1111117Hxt1fAWDjN7TW/cv/not-base58/')).toEqual({ kind: 'invalid' });
     expect(handoffPlan('/app/')).toEqual({ kind: 'invalid' });
+    expect(handoffPlan('/app/workspaces/global/00000000-0000-7000-8000-00000000000a')).toEqual({ kind: 'invalid' });
+    expect(handoffPlan('/app/workspaces/global/00000000-0000-7000-8000-00000000000a/')).toEqual({ kind: 'invalid' });
   });
   it('parses a Slack identity fragment and builds the exact desktop target', () => {
     const token = 'a'.repeat(43);

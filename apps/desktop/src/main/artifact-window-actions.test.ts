@@ -10,24 +10,17 @@ const preview: DesktopArtifactWindowRequest = {
 };
 
 describe('detached artifact commands', () => {
-  it('derives mutation targets from the window record', () => {
-    expect(artifactWindowActionRequest(preview, { type: 'rename', title: '  New plan  ' })).toMatchObject({
-      path: '/conversations/00000000-0000-4000-8000-000000000002/resources/00000000-0000-4000-8000-000000000001',
-      method: 'PATCH', body: { title: 'New plan' },
-    });
-    expect(artifactWindowActionRequest(preview, { type: 'pin', pinned: true })).toMatchObject({
-      path: '/navigation/artifact-pins/00000000-0000-4000-8000-000000000001', method: 'PUT',
-      body: { threadId: '00000000-0000-4000-8000-000000000002' },
-    });
-  });
-  it('refuses caller-selected resources and mutations outside Main', () => {
-    expect(() => artifactWindowActionRequest({ ...preview, editable: false }, { type: 'rename', title: 'Other' })).toThrow('cannot be edited here');
+  it('builds nothing for a Thread scope, whose routes are gone, and refuses caller-selected resources', () => {
+    expect(() => artifactWindowActionRequest(preview, { type: 'rename', title: 'New plan' })).toThrow('cannot be edited here');
+    expect(() => artifactWindowActionRequest(preview, { type: 'pin', pinned: true })).toThrow('cannot be edited here');
     expect(() => artifactWindowActionRequest(preview, { type: 'archive', resourceId: 'other' })).toThrow();
-    expect(() => artifactWindowActionRequest({ ...preview, annotationScope: '00000000-0000-4000-8000-000000000002:private' }, { type: 'archive' })).toThrow('cannot be edited here');
     expect(() => artifactWindowActionRequest({ ...preview, annotationScope: undefined }, { type: 'pin', pinned: false })).toThrow('cannot be edited here');
+    // Reading the pin list survives: `GET /navigation/artifact-pins` is still served.
+    expect(artifactWindowActionRequest(preview, { type: 'pin-state' })).toMatchObject({ path: '/navigation/artifact-pins', method: 'GET' });
   });
   it("renames and deletes a Canvas artifact through the Canvas's conversation, names its Canvas for a link, and refuses pin with a reason", () => {
     const canvas = { ...preview, annotationScope: 'canvas:00000000-0000-4000-8000-0000000000c1' };
+    expect(() => artifactWindowActionRequest({ ...canvas, editable: false }, { type: 'rename', title: 'Other' })).toThrow('cannot be edited here');
     expect(artifactWindowActionRequest(canvas, { type: 'rename', title: 'Q1 plan' })).toMatchObject({
       path: '/conversations/00000000-0000-4000-8000-0000000000c1/resources/00000000-0000-4000-8000-000000000001',
       method: 'PATCH', body: { title: 'Q1 plan' },

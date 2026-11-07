@@ -25,6 +25,7 @@ import {
   type WorkspaceNotificationIntentTransitionRequest,
   type WorkspaceNotificationIntentTransitionResult,
 } from "../durable-objects/workspace-notification-intent-protocol";
+import { conversationLink } from "./conversation-link-service";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamParticipantAddedEmail } from "./participant-email-service";
 import {
@@ -333,6 +334,12 @@ export async function processWorkstreamNotificationIntent(
     // falls back to another: an empty choice means Activity and the digest.
     const preferences = await workspace.memberPreferences({ workspaceId: typedWorkspaceId, userId: row.recipientUserId });
     const channels = preferences.notify[row.notificationKind === "participant_added" ? "added" : "mentions"];
+    // One lookup for the Slack and email transports, which both carry the
+    // Canvas's or Sidekick's link; a Thread has none, so neither sends.
+    const link = channels.includes("slack_agent_dm") || channels.includes("email")
+      ? await conversationLink(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId, parentId: row.workstreamId })
+      : null;
+    const linkless = link !== null && link.url === null;
     const push = channels.includes("push") && await enqueuePushDelivery(env, { region: env.AVALON_REGION, workspaceId: row.workspaceId,
       recipientUserId: row.recipientUserId, intentId });
     const recipient = {
@@ -343,9 +350,10 @@ export async function processWorkstreamNotificationIntent(
       workstreamId: row.workstreamId,
       workstreamTitle: effect.workstreamTitleSnapshot,
       ...(childId ? { substreamId: childId } : {}),
+      ...(link?.url ? { url: link.url } : {}),
     };
     const sourceId = effect.kind === "participant_notification" ? effect.sourceId : effect.messageId;
-    const slack = !channels.includes("slack_agent_dm") ? "skipped" as const
+    const slack = !channels.includes("slack_agent_dm") || linkless ? "skipped" as const
       : effect.kind === "participant_notification"
       ? await sendWorkstreamParticipantAddedSlack(env, {
         ...recipient,
@@ -369,10 +377,19 @@ export async function processWorkstreamNotificationIntent(
       recipient_user_id: effect.recipientUserId,
       channel: "slack",
       outcome: slack,
-      reason: slack === "sent" ? "provider_accepted" : channels.includes("slack_agent_dm") ? "not_delivered" : "channel_not_chosen",
+      reason: slack === "sent" ? "provider_accepted" : !channels.includes("slack_agent_dm") ? "channel_not_chosen"
+        : linkless ? "conversation_not_linkable" : "not_delivered",
+      ...(linkless ? { parent_kind: link.kind ?? "missing" } : {}),
     });
     let email: "sent" | "skipped" | null = null;
-    if (channels.includes("email")) {
+    if (channels.includes("email") && linkless) {
+      email = "skipped";
+      logInfo(env, "workstream_notification_transport_terminal", {
+        workspace_id: row.workspaceId, workstream_id: row.workstreamId, notification_intent_id: intentId,
+        kind: row.notificationKind, source_id: sourceId, recipient_user_id: effect.recipientUserId,
+        channel: "email", outcome: email, reason: "conversation_not_linkable", parent_kind: link.kind ?? "missing",
+      });
+    } else if (channels.includes("email")) {
       const fallback = {
         ...recipient,
         recipientName: identity.recipient_name,

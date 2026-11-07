@@ -181,12 +181,15 @@ export function parseLinkTarget(raw: string, options: { webBaseUrl: string | rea
  * Whether a path has the shape of a link to something that no longer exists:
  * a Space (later a Channel), a Channel (later a Thread) or a Breakout, in the
  * hierarchical form (`/app/<region>/<organization>/s/...`), the addressed
- * invitation form (`/app/workspaces/...`), the ID-only form from before
- * Organizations were addressed (`/app/workstreams/<id>`), or an import's
- * (`/app/<region>/<organization>/i/...`). Shape only: nothing it names is
- * read, since nothing it named is left to open.
+ * invitation form (`/app/workspaces/<region>/<organization>/workstreams/...`),
+ * the ID-only form from before Organizations were addressed
+ * (`/app/workstreams/<id>`), or an import's
+ * (`/app/<region>/<organization>/i/...`). The web app's own Organization
+ * shell, `/app/workspaces/<region>/<organization>`, is not one. Shape only:
+ * nothing it names is read, since nothing it named is left to open.
  */
 export function isRetiredLinkPath(pathname: string): boolean {
-  return /^\/app\/(?:workspaces|workstreams)\/./u.test(pathname)
+  return /^\/app\/workspaces\/[^/]+\/[^/]+\/workstreams\/./u.test(pathname)
+    || /^\/app\/workstreams\/./u.test(pathname)
     || /^\/app\/[a-z][a-z0-9-]*\/[^/]+\/(?:s|i)\/[^/]+/u.test(pathname);
 }

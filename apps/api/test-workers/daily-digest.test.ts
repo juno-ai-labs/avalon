@@ -166,7 +166,8 @@ describe("the daily digest", () => {
       .toMatchObject({ sent: true, itemCount: 1 });
     const kept = await occurrence();
     expect(kept).toMatchObject({ status: "delivered", event_count: 1 });
-    expect(kept!.summary_markdown).toMatch(/^1 unread item in your Activity\.\n\n## New threads\n- Maya started \[Q3 plan\]\(https:\/\/[^)]+\)$/u);
+    // A Thread has no link now that no surface opens one, so its row is named unlinked (`docs/links.md`).
+    expect(kept!.summary_markdown).toMatch(/^1 unread item in your Activity\.\n\n## New threads\n- Maya started Q3 plan$/u);
   });
 
   it("counts a mentioned human reply once in the digest", async () => {
@@ -210,7 +211,7 @@ describe("the daily digest", () => {
     expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor }))
       .toMatchObject({ sent: true, itemCount: 1 });
     const kept = await occurrence();
-    expect(kept!.summary_markdown).toMatch(/^1 unread item in your Activity\.\n\n## New threads\n- Maya started \[Q3 plan\]\([^)]+\)\n\n1 more older than 2 days\.$/u);
+    expect(kept!.summary_markdown).toMatch(/^1 unread item in your Activity\.\n\n## New threads\n- Maya started Q3 plan\n\n1 more older than 2 days\.$/u);
   });
 
   it("given a gap since the last delivered digest longer than two days, then a row no digest has listed yet is still listed", async () => {
@@ -231,7 +232,7 @@ describe("the daily digest", () => {
     expect(await fireDigestSchedule(env, { scheduleId, workspaceId, plannedFor }))
       .toMatchObject({ sent: true, itemCount: 1 });
     expect((await occurrence())!.summary_markdown)
-      .toMatch(/^1 unread item in your Activity\.\n\n## New threads\n- Maya started \[Q3 plan\]\([^)]+\)$/u);
+      .toMatch(/^1 unread item in your Activity\.\n\n## New threads\n- Maya started Q3 plan$/u);
   });
 
   it("given only unread rows older than two days, then nothing is sent and the occurrence is settled as empty", async () => {

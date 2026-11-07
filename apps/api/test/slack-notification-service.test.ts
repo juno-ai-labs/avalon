@@ -12,9 +12,9 @@ import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 // conversation is a Canvas's Chat but the one named THREAD_PARENT.
 vi.mock("../src/services/conversation-link-service", async () => {
   const { canvasCanonicalUrl } = await import("@rally/contracts");
-  return { conversationCanonicalUrl: async (env: Env, target: { region: "global"; workspaceId: string; parentId: string }) =>
-    target.parentId === "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7900" ? null
-      : canvasCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { region: target.region, workspaceId: target.workspaceId, canvasId: target.parentId }) };
+  return { conversationLink: async (env: Env, target: { region: "global"; workspaceId: string; parentId: string }) =>
+    target.parentId === "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7900" ? { kind: "workstream", url: null }
+      : { kind: "canvas", url: canvasCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { region: target.region, workspaceId: target.workspaceId, canvasId: target.parentId }) } };
 });
 
 const workspaceId = "00000000-0000-7000-8000-000000000001";

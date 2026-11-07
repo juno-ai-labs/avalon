@@ -316,7 +316,8 @@ function workspaceSyncNamespace(listable = true, mentionChannels: NotificationCh
         title: "Regional effects",
         emailAddress: "regional-effects@example.com",
       })),
-      canonicalChannelSpace: vi.fn(async () => ({ spaceId: "00000000-0000-7000-8000-0000000000a9" })),
+      // The conversation is a Canvas's Chat, so each transport carries its link.
+      resolveHostedParent: vi.fn(async () => ({ kind: "canvas", authority: { exists: true } })),
       // Every channel chosen, so each transport's path runs.
       memberPreferences: vi.fn(async () => ({
         ...DEFAULT_MEMBER_PREFERENCES,

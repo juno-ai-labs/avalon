@@ -18,7 +18,7 @@ import type { PushDevice } from "../services/push-device-service";
 import { renderPushPayload, renderWebPushPayload, pushCollapseId, type PushPayloads } from "../services/push/push-payload";
 import { sendWebPush, WEB_PUSH_PAYLOAD_BYTES, type WebPushOutcome } from "../services/push/web-push-transport";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
-import { conversationCanonicalUrl } from "../services/conversation-link-service";
+import { conversationLink, type ConversationLink } from "../services/conversation-link-service";
 import { sendActivityEmail } from "../services/activity-email-service";
 import { sendWorkstreamActivitySlack } from "../services/slack-notification-service";
 
@@ -121,8 +121,8 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Extr
  * Channel, which no surface opens any more: such a delivery is skipped, named
  * `conversation_not_linkable`, rather than sent to open nothing.
  */
-async function contentUrl(env: Env, workspaceId: string, content: Extract<PushContent, { outcome: "ready" }>): Promise<string | null> {
-  return await conversationCanonicalUrl(env, { region: env.AVALON_REGION, workspaceId, parentId: content.workstreamId,
+async function contentUrl(env: Env, workspaceId: string, content: Extract<PushContent, { outcome: "ready" }>): Promise<ConversationLink> {
+  return await conversationLink(env, { region: env.AVALON_REGION, workspaceId, parentId: content.workstreamId,
     ...(content.artifactId ? { artifactId: content.artifactId } : {}) });
 }
 
@@ -160,11 +160,12 @@ async function deliverActivityElsewhere(
     return true;
   }
   const linked = await contentUrl(env, message.workspaceId, ready);
-  if (!linked) {
-    logInfo(env, "activity_delivery_skipped", { activity_item_id: message.activityItemId, channel: message.channel, reason: "conversation_not_linkable" });
+  if (!linked.url) {
+    logInfo(env, "activity_delivery_skipped", { activity_item_id: message.activityItemId, channel: message.channel,
+      reason: "conversation_not_linkable", parent_kind: linked.kind ?? "missing" });
     return true;
   }
-  const url: string = linked;
+  const url: string = linked.url;
   const identity = await workspaceRegionalDatabase(env).prepare(
     `SELECT u.email AS email, w.name AS workspace_name
        FROM workspace_members m JOIN users u ON u.id = m.user_id JOIN workspaces w ON w.id = m.workspace_id
@@ -261,11 +262,6 @@ export async function deliverPush(
     logInfo(env, "push_delivery_skipped", { intent_id: pointer, reason: content.reason });
     return true;
   }
-  const url = await contentUrl(env, message.workspaceId, content);
-  if (!url) {
-    logInfo(env, "push_delivery_skipped", { intent_id: pointer, reason: "conversation_not_linkable" });
-    return true;
-  }
   // Every kind, mentions and adds included: a choice changed since this was
   // queued holds too.
   if (!await workspace.notificationAllows({ workspaceId: id, userId: message.recipientUserId, kind: content.kind,
@@ -273,6 +269,12 @@ export async function deliverPush(
     logInfo(env, "push_delivery_skipped", { intent_id: pointer, reason: "push_preference_off" });
     return true;
   }
+  const linked = await contentUrl(env, message.workspaceId, content);
+  if (!linked.url) {
+    logInfo(env, "push_delivery_skipped", { intent_id: pointer, reason: "conversation_not_linkable", parent_kind: linked.kind ?? "missing" });
+    return true;
+  }
+  const url = linked.url;
   // The badge counts what this person's sidebar lists, and a guest's lists less.
   const member = await workspaceRegionalDatabase(env).prepare(`SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
     .bind(message.workspaceId, message.recipientUserId).first<{ access_class: "member" | "guest" }>();
