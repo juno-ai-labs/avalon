@@ -111,6 +111,42 @@ export const SetEngineeringSidekickPausedResultSchema = deferredZodSchema(() => 
 }));
 export type SetEngineeringSidekickPausedResult = z.infer<typeof SetEngineeringSidekickPausedResultSchema>;
 
+/**
+ * One Organization's Threads, Breakouts and Channels, retired after the
+ * cutover (docs/workspace-retirement.md#retiring-threads-breakouts-and-channels).
+ * `confirm` is the Organization id again: the operation is refused unless it
+ * names `orgId`, the consistency check Ace's workspace retirement makes.
+ */
+export const ThreadRetirementOperationInputSchema = deferredZodSchema(() => z.strictObject({
+  orgId: WorkspaceIdSchema,
+  confirm: z.string().describe("The orgId again, typed by the operator. The operation is refused unless it equals orgId."),
+}));
+export type ThreadRetirementOperationInput = z.infer<typeof ThreadRetirementOperationInputSchema>;
+
+/** A Thread (`workstream`) or a Channel (`space`), the parents the Thread retirement walks. */
+export const RetiredThreadParentKindSchema = z.enum(["workstream", "space"]);
+
+/** One conversation or parent a pass could not finish, by a stable code. The next pass returns to it. */
+export const ThreadRetirementFailureSchema = z.strictObject({
+  parentKind: RetiredThreadParentKindSchema,
+  parentId: z.string(),
+  substreamId: z.string().nullable(),
+  error: z.string(),
+});
+
+export const DumpThreadTranscriptsResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  /** Every conversation under a Thread or Channel the Organization still holds. */
+  conversations: z.number().int().nonnegative(),
+  /** Written by this pass. */
+  dumped: z.number().int().nonnegative(),
+  /** Already in R2 from an earlier pass, so not read again. */
+  skipped: z.number().int().nonnegative(),
+  failed: z.array(ThreadRetirementFailureSchema),
+}));
+export type DumpThreadTranscriptsResult = z.infer<typeof DumpThreadTranscriptsResultSchema>;
+
 export const ReadEngineeringChannelInputSchema = deferredZodSchema(() => z.strictObject({
   ...engineeringViewer,
   channelId: SpaceIdSchema,
@@ -535,6 +571,7 @@ export interface EngineeringInspectionRpcBinding {
   listUserConversations(input: ListEngineeringUserConversationsInput): Promise<SpaceChannelPage>;
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
+  dumpThreadTranscripts(input: ThreadRetirementOperationInput, operator: EngineeringOperator): Promise<DumpThreadTranscriptsResult>;
   readChannel(input: ReadEngineeringChannelInput): Promise<EngineeringTextResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;

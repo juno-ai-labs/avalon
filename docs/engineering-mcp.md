@@ -77,6 +77,7 @@ The regional bridge uses D1 only for identity and routing:
 | `create_thread` | Resolve the Organization in exactly one region | WorkstreamObjectCreationService, placement, opening turn and normal agent run |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause or resume, which call HostedSidekick in WorkspaceDO |
+| `dump_thread_transcripts` | Resolve the Organization in exactly one region | `thread-retirement-service.ts`: WorkspaceDO's Thread inventory, each conversation's AgentLoopDO, and R2 `PAYLOADS` |
 | `read_channel` | Resolve the Organization in exactly one region | SpaceService summary and authorized Channel feed |
 | `list_channels` | Resolve the Organization in exactly one region | SpaceService.list and the workspace socket's active Channel directory |
 | `list_threads`, `list_breakouts` | Resolve the Organization in exactly one region | SpaceService.listChannels with kind and all-visible filters in the ordinary paginated reader |
@@ -256,6 +257,21 @@ and `resume` as the app's buttons, as the selected user, so HostedSidekick
 decides who may manage the Sidekick and refuses with its own codes. Both are
 idempotent, so they take no `operationId`; the bridge mints one per call only
 to pair the attempt and result audit rows.
+
+### Retiring Threads
+
+`dump_thread_transcripts` is the first of the two operator operations that
+retire an Organization's Threads, Breakouts and Channels after the cutover to
+Canvases and Sidekicks. It writes each of their conversations to R2 as text and
+reports `conversations`, `dumped`, `skipped` (already in R2) and `failed`, a
+stable code per conversation. It takes `orgId` and `confirm`, which must equal
+`orgId`: the MCP refuses `thread_retirement_unconfirmed` before asking any
+region, and the regional bridge checks it again, then refuses
+`workspace_not_found` for an Organization the region does not hold. Being
+Organization-wide, it represents no user: its audit rows target the
+Organization (`target_type = 'workspace'`). The walk, its receipts and its
+failure codes are
+[`workspace-retirement.md`](workspace-retirement.md#retiring-threads-breakouts-and-channels)'s.
 
 ### User-visible lists
 
@@ -623,6 +639,21 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-11-07 — Dump an Organization's Thread transcripts before they are retired
+
+**What changed:** `dump_thread_transcripts` and the bridge's
+`dumpThreadTranscripts`, behind a typed `confirm` that must equal `orgId`.
+`auditedEngineeringWrite` takes an action with no represented user and then
+targets the Organization.
+
+**Why:** Plan step B-7a: the PRD deletes every Thread, Breakout and Channel at
+cutover and dumps their transcripts to R2 first. It is an operator operation
+per Organization, and this MCP is the Access-gated operator surface that already
+reaches every region's objects; Ace's retirement route is the `demos` role's.
+
+**Consequences:** The first Organization-wide write here. Its confirmation is a
+consistency check on the request, not a second approval, as Ace's is.
 
 ### 2026-11-06 — Pause and resume a Sidekick
 

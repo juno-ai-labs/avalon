@@ -6567,6 +6567,46 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * Every Thread and Channel this Organization still holds, with each
+   * conversation under it, for the Thread retirement walk
+   * (`services/thread-retirement-service.ts`).
+   *
+   * A Thread is a `channels` row and a Channel is a `spaces` row; either can
+   * also survive as parent state alone, so `parent_metadata` is read too. Its
+   * conversations are Main `0` (always named, as `childRegistry` names it,
+   * because a Space created before 2026-09-26 has a hidden one) and every
+   * child the parent registry, its projections or the Breakout directory
+   * knows. Canvases and Sidekicks are other parents, in other tables, and are
+   * never named here.
+   */
+  async threadRetirementInventory(): Promise<{
+    parents: { parentKind: "workstream" | "space"; parentId: string; substreamIds: string[] }[];
+  }> {
+    await this.initialized;
+    const sql = this.state.storage.sql;
+    const parents = sql.exec<{ parent_kind: "workstream" | "space"; parent_id: string }>(
+      `SELECT 'workstream' AS parent_kind, workstream_id AS parent_id FROM channels
+       UNION SELECT 'space', space_id FROM spaces
+       UNION SELECT parent_kind, parent_id FROM parent_metadata
+       ORDER BY parent_kind DESC, parent_id`,
+    ).toArray();
+    return {
+      parents: parents.map((parent) => ({
+        parentKind: parent.parent_kind,
+        parentId: parent.parent_id,
+        substreamIds: sql.exec<{ substream_id: string }>(
+          `SELECT '0' AS substream_id
+           UNION SELECT substream_id FROM parent_children WHERE parent_id = ?
+           UNION SELECT substream_id FROM parent_child_projections WHERE parent_id = ?
+           UNION SELECT substream_id FROM breakouts WHERE workstream_id = ?
+           ORDER BY substream_id`,
+          parent.parent_id, parent.parent_id, parent.parent_id,
+        ).toArray().map((row) => row.substream_id),
+      })),
+    };
+  }
+
+  /**
    * The parent step of a conversation's effects, delivered by the activity
    * Queue consumer. The directory step lands in the same transaction. The
    * people the effects name are learned before it, so the transaction does
