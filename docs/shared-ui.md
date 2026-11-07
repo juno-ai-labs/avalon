@@ -260,10 +260,8 @@ src/renderer/components/conversation-motion.test.tsx` covers announcements,
 retained content, interruption, reduced motion and cleanup. Real-window
 inspection covers placement, theme contrast and native preview composition.
 
-Run `pnpm lint`, `pnpm typecheck`, and `pnpm --filter @rally/desktop exec vitest run
-src/renderer/components/sidekick-picker.test.tsx
-src/renderer/components/sidekick-section.test.tsx` (as one command). The desktop
-suite imports the real shared implementations through their re-export adapters.
+Run `pnpm lint` and `pnpm typecheck`. The desktop suite imports the real shared
+implementations through their re-export adapters.
 Run `pnpm --filter @rally/desktop exec vitest run
 src/renderer/components/error-notice.test.tsx
 src/renderer/components/acknowledged-error-dialog.test.tsx` for the popup
