@@ -405,6 +405,12 @@ export interface HostedSidekickHost {
   afterRegistrations(automationId: string, revision: number | null, evaluators: readonly unknown[]): Promise<void>;
   /** Inside the transaction that changed a directory row: the sidebar's waterline and a deleted Sidekick's bindings. */
   noteDirectoryChanged(automationId: string, deleted: boolean, now: number): void;
+  /**
+   * Inside the transaction that changed one person's read of a shared
+   * conversation: their sidebar's waterline, with the Sidekick list sent only
+   * to that person's sockets, since nobody else's row moved.
+   */
+  noteViewerReadChanged(userId: string): void;
   /** Record an activity-only refresh inside the projection transaction. */
   noteSidekickActivityChanged(workspaceId: string): void;
   /** Whether a person is an active participant of a live Channel: a read of this object's own rows. */
@@ -1114,6 +1120,11 @@ export class HostedSidekick {
     await this.assertManager(row, request.actor);
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     const userIds = [...new Set(request.update.userIds)].filter((userId) => userId !== row.author_user_id);
+    // A list naming nobody but the author would store as personal and read
+    // back as `personal`, not the `people` that was asked for.
+    if (request.update.audience === "people" && userIds.length === 0) {
+      throw new ApiError(422, "sidekick_audience_people_empty", "Name someone other than the author to share a Sidekick with");
+    }
     const relationships = await Promise.all(userIds.map((userId) => this.host.readRelationship(row.workspace_id, userId)));
     const absent = userIds.filter((_userId, index) => relationships[index]?.status !== "active");
     if (absent.length > 0) {
@@ -1427,9 +1438,13 @@ export class HostedSidekick {
         : !emailEnabled || row.email_address === null || row.email_address.toLowerCase() !== request.emailAddress.toLowerCase()
           ? "sidekick_email_route_mismatch"
           : request.senderUserId === null
-            || (row.scope === "personal"
-              && request.senderUserId !== row.author_user_id
-              && request.senderUserId !== row.run_as_user_id)
+            // Whoever the Sidekick is shared with; an Organization one takes
+            // any member's mail, which the email route has already resolved.
+            || (row.scope === "personal" && !sidekickAdmits({
+              scope: row.scope, author: request.senderUserId === row.author_user_id,
+              executor: request.senderUserId === row.run_as_user_id,
+              shared: sidekickSharedWith(this.sql, this.sidekickId, request.senderUserId),
+            }, true))
             ? "email_sender_not_authorized"
             : null;
     };
@@ -1855,25 +1870,31 @@ export class HostedSidekick {
    * Keep what one person has read of the shared conversation, its own
    * `directory_user` report of `member_attention`, so the sidebar row can say
    * whether they have something unread; the newest report wins. A change
-   * republishes the Sidekick list.
+   * republishes the Sidekick list to that reader alone.
    */
   private acceptViewerRead(effect: Extract<ConversationEffectEnvelope["effect"], { kind: "directory_user" }>,
     sourceVersion: number, now: number): void {
-    const changed = this.sql.exec(
+    const seen = effect.seenAttentionOrdinal ?? 0;
+    const manual = effect.manualUnreadFromOrdinal ?? null;
+    const existing = first(this.sql.exec<{ source_version: number; seen_attention_ordinal: number; manual_unread_from_ordinal: number | null }>(
+      `SELECT source_version, seen_attention_ordinal, manual_unread_from_ordinal FROM sidekick_viewer_reads
+        WHERE sidekick_id = ? AND user_id = ?`, this.sidekickId, effect.userId,
+    ));
+    if (existing && existing.source_version > sourceVersion) return;
+    // The version always moves, so a later report older than this one is
+    // dropped even when this one changed nothing the row shows.
+    this.sql.exec(
       `INSERT INTO sidekick_viewer_reads
          (sidekick_id, user_id, source_version, seen_attention_ordinal, manual_unread_from_ordinal, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(sidekick_id, user_id) DO UPDATE SET source_version = excluded.source_version,
          seen_attention_ordinal = excluded.seen_attention_ordinal,
-         manual_unread_from_ordinal = excluded.manual_unread_from_ordinal, updated_at = excluded.updated_at
-       WHERE excluded.source_version >= sidekick_viewer_reads.source_version
-         AND (sidekick_viewer_reads.seen_attention_ordinal IS NOT excluded.seen_attention_ordinal
-           OR sidekick_viewer_reads.manual_unread_from_ordinal IS NOT excluded.manual_unread_from_ordinal)
-       RETURNING user_id`,
-      this.sidekickId, effect.userId, sourceVersion, effect.seenAttentionOrdinal ?? 0,
-      effect.manualUnreadFromOrdinal ?? null, now,
-    ).toArray().length > 0;
-    if (changed) this.host.noteDirectoryChanged(this.sidekickId, false, now);
+         manual_unread_from_ordinal = excluded.manual_unread_from_ordinal, updated_at = excluded.updated_at`,
+      this.sidekickId, effect.userId, sourceVersion, seen, manual, now,
+    );
+    if (!existing || existing.seen_attention_ordinal !== seen || existing.manual_unread_from_ordinal !== manual) {
+      this.host.noteViewerReadChanged(effect.userId);
+    }
   }
 
   /** Keep a child's newest common projection; `false` for one that is not newer. */
