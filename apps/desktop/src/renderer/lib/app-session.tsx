@@ -15,7 +15,6 @@ import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, Supp
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 import {
-  parseWorkspaceAddressedDeepLink,
   workspaceTargetsEqual,
   type WorkspaceTarget,
 } from '@rally/contracts/workspace-target';
@@ -253,14 +252,6 @@ function sessionsShareDraftScope(
  */
 function leaveSupportRoute(): void {
   if (!new URLSearchParams(window.location.search).has('surface')) navigateAppRoute('/');
-}
-
-
-/** Whether a deep link names a Space, Channel, Breakout or Thread, which no longer exist. */
-function retiredDeepLink(url: URL | null): boolean {
-  if (!url) return false;
-  const destination = parseWorkspaceAddressedDeepLink(url)?.destination ?? url;
-  return destination.hostname === 'spaces' || (destination.hostname === 'workstreams' && destination.pathname !== '/new');
 }
 
 export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.Element {
@@ -1023,10 +1014,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         reportDeepLinkFailure(
           deepLink?.hostname === 'notes'
             ? 'Rally could not open that note link.'
-            // A Space, Channel, Breakout or Thread link, from before Canvases
-            // replaced them, addressed or not.
-            : retiredDeepLink(deepLink)
-            ? 'This link is to something that no longer exists.'
             : deepLink?.hostname === 'auth'
             && deepLink.pathname === '/complete'
             && (deepLink.searchParams.has('connection')

@@ -19,14 +19,31 @@ export async function conversationCanonicalUrl(
   env: Env,
   input: { region: Region; workspaceId: string; parentId: string; artifactId?: string },
 ): Promise<string | null> {
+  return (await conversationLink(env, input)).url;
+}
+
+/** A conversation's parent kind (`null` when the Organization holds no such parent) and its link. */
+export interface ConversationLink {
+  kind: "workstream" | "space" | "automation" | "canvas" | null;
+  url: string | null;
+}
+
+/**
+ * The link and the parent kind it came from, for a caller that logs why it
+ * has no link: a deleted Canvas (`kind: null`) reads apart from a Thread.
+ */
+export async function conversationLink(
+  env: Env,
+  input: { region: Region; workspaceId: string; parentId: string; artifactId?: string },
+): Promise<ConversationLink> {
   const workspaceId = asWorkspaceId(input.workspaceId);
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId, workspaceDOName(input.region, workspaceId));
   const { kind } = await workspace.resolveHostedParent({ workspaceId, parentId: input.parentId });
   const target = { region: input.region, workspaceId };
   if (kind === "canvas") {
-    return canvasCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
+    return { kind, url: canvasCanonicalUrl(env.PUBLIC_WEB_BASE_URL, {
       ...target, canvasId: input.parentId, ...(input.artifactId ? { artifactId: input.artifactId } : {}),
-    });
+    }) };
   }
-  return kind === "automation" ? sidekickCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { ...target, sidekickId: input.parentId }) : null;
+  return { kind, url: kind === "automation" ? sidekickCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { ...target, sidekickId: input.parentId }) : null };
 }

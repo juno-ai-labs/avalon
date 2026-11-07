@@ -1,5 +1,10 @@
-import { linkDeepLink, parseLinkTarget } from "@rally/contracts/links";
+import { isRetiredLinkPath, linkDeepLink, parseLinkTarget } from "@rally/contracts/links";
+import { isDesktopDeepLinkProtocol } from '@rally/contracts/desktop-deep-link';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
+import { parseWorkspaceAddressedDeepLink } from '@rally/contracts/workspace-target';
+
+/** What the app says when it is handed a link to something deleted with Threads. */
+export const RETIRED_LINK_MESSAGE = 'This link is to something that no longer exists.';
 
 /** The exact native URL shapes the main process will deliver to a renderer. */
 export function acceptedDeepLink(rawUrl: string): string | null {
@@ -36,4 +41,22 @@ export function httpsLinkDeepLink(rawUrl: string): string | null {
   if (!rawUrl.startsWith('https://')) return null;
   const target = parseLinkTarget(rawUrl, { webBaseUrl: ['https://rallywith.ai', 'https://www.rallywith.ai'] });
   return target ? linkDeepLink(target) : null;
+}
+
+/**
+ * Whether a link the app refused names a Space, Channel, Breakout or Thread,
+ * which no longer exist: a deep link under `spaces` or `workstreams`,
+ * addressed or not, or an HTTPS link on a Rally host with a retired path
+ * (`isRetiredLinkPath`, the shapes the site's handoff page answers as gone).
+ * Shape only, as on the site: nothing it names is read. Main says so in its
+ * deep-link error window rather than dropping the link without a word.
+ */
+export function isRetiredDeepLink(rawUrl: string): boolean {
+  let url: URL;
+  try { url = new URL(rawUrl); } catch { return false; }
+  if (isDesktopDeepLinkProtocol(url.protocol)) {
+    const destination = parseWorkspaceAddressedDeepLink(url)?.destination ?? url;
+    return destination.hostname === 'spaces' || destination.hostname === 'workstreams';
+  }
+  return ['https://rallywith.ai', 'https://www.rallywith.ai'].includes(url.origin) && isRetiredLinkPath(url.pathname);
 }

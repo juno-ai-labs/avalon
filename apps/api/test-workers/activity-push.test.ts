@@ -203,6 +203,13 @@ beforeEach(async () => {
     state.storage.sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, title)
       VALUES (?, '0', 'main', ?, 0, 'Main'), (?, ?, 'child', ?, 1, 'Breakout')`,
     thread, owner, thread, breakout, owner);
+    // A delivery links to the Canvas or Sidekick its conversation belongs to
+    // (`docs/links.md`), and a Thread has no link, so the conversation these
+    // rows are about is also listed as a Canvas: what is under test here is
+    // the delivery, which is the same for either.
+    state.storage.sql.exec(`INSERT INTO canvas_directory
+      (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, visibility, authority_generation)
+      VALUES (?, ?, 'Plan', ?, 0, 0, 'workspace', 1)`, thread, workspaceId, owner);
   });
 });
 
@@ -301,7 +308,7 @@ describe("sending an Activity row's push", () => {
     const apns = JSON.parse(payloads(send)[0]!.apns) as { aps: { alert: { title: string } }; rally: { kind: string; url: string } };
     expect(apns.aps.alert.title).toBe("Maya started Q3 plan");
     expect(apns.rally.kind).toBe("thread_started");
-    expect(apns.rally.url).toContain(`/workstreams/${thread}`);
+    expect(apns.rally.url).toBe("https://app.test/app/global/1111114bZ6BZRUqUtvU8/cv/1111114bZ6BZRUqUtvWs/");
   });
 
   it("still sends a finish whose time later traffic moved before it was sent", async () => {
@@ -373,7 +380,7 @@ describe("a breakout merged into its thread", () => {
     const apns = JSON.parse((calls[0]![2] as PushPayloads).apns) as { aps: { alert: { title: string } }; rally: { kind: string; url: string } };
     expect(apns.aps.alert.title).toBe("Maya merged Sequence B into Q3 plan");
     expect(apns.rally.kind).toBe("merged");
-    expect(apns.rally.url).toContain(`/workstreams/${thread}`);
+    expect(apns.rally.url).toBe("https://app.test/app/global/1111114bZ6BZRUqUtvU8/cv/1111114bZ6BZRUqUtvWs/");
     expect(apns.rally.url).not.toContain(breakout);
   });
 
@@ -408,7 +415,7 @@ describe("news in an Organization-wide Channel", () => {
 });
 
 describe("a private thread merged into its Channel", () => {
-  it("given a merge from a thread a member cannot open, then they are pushed it, worded and linked as the Channel's, never naming the thread", async () => {
+  it("given a merge from a thread a member cannot open, then they are pushed it, worded as the Channel's, never naming the thread", async () => {
     // Only Maya is in the thread.
     await publish(asSubstreamId("0"), [common("Comp bands", { scope: "personal" }), viewer(owner)]);
     const reserved = await organization().reserveSpace({ workspaceId, userId: owner,
@@ -434,8 +441,9 @@ describe("a private thread merged into its Channel", () => {
     const apns = JSON.parse((calls[0]![2] as PushPayloads).apns) as { aps: { alert: { title: string } }; rally: { url: string } };
     expect(apns.aps.alert.title).toBe("Maya merged a private thread into GTM");
     expect(apns.rally.url).not.toContain("Comp bands");
-    expect(apns.rally.url).toContain("/s/");
-    expect(apns.rally.url).not.toContain("/c/");
+    // The Channel link form went with Channels; the push opens the Canvas the
+    // conversation belongs to.
+    expect(apns.rally.url).toBe("https://app.test/app/global/1111114bZ6BZRUqUtvU8/cv/1111114bZ6BZRUqUtvWs/");
   });
 });
 
@@ -614,7 +622,7 @@ describe("human reply activity", () => {
     const calls = (send as { mock: { calls: unknown[][] } }).mock.calls;
     const payload = JSON.parse((calls[0]![2] as PushPayloads).apns) as { rally: { kind: string; url: string }; aps: { alert: { title: string } } };
     expect(payload.rally.kind).toBe("mention");
-    expect(payload.rally.url).toContain(thread);
+    expect(payload.rally.url).toBe("https://app.test/app/global/1111114bZ6BZRUqUtvU8/cv/1111114bZ6BZRUqUtvWs/");
     expect(payload.aps.alert.title).toBe("Maya replied in Q3 plan");
   });
 
