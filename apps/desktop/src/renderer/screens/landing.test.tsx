@@ -70,6 +70,7 @@ describe('the landing route', () => {
     </Routes></ConversationAdmissionProvider></MemoryRouter>;
     const { rerender } = render(tree(false));
     expect(screen.queryByTestId('destination')).toBeNull();
+    expect(screen.getByText('Opening…')).toBeInTheDocument();
     rerender(tree(true));
     expect(screen.getByTestId('destination').textContent).toBe('/sidekicks/00000000-0000-7000-8000-000000000a51');
   });
