@@ -105,7 +105,7 @@ function waitingLabel(attention: WorkspaceAttention): string | null {
   return attention.waitingReason === 'mentioned'
     ? `${count} mention${plural} waiting for you`
     : attention.waitingReason === 'needs_input'
-      ? `${count} waiting for your input`
+      ? `${count} conversation${plural} waiting for your input`
       : `${count} new conversation${plural} you have not opened`;
 }
 

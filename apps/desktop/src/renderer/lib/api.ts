@@ -375,17 +375,11 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
       ? { ...workstream.nextPendingWakeup }
       : null,
     pinPosition: workstream.pinPosition,
-    spacePins: workstream.spacePins.map((pin) => ({ ...pin })),
     // Only WorkspaceDO owns this field. Child responses omit it and must not
     // erase a newer directory-waterlined visit when callers merge the result.
     ...(workstream.lastAccessedAt !== undefined ? { lastAccessedAt: workstream.lastAccessedAt } : {}),
     participantUserIds: [...workstream.participantUserIds],
     participantExtraCount: workstream.participantExtraCount,
-    // Every Space this Channel sits in. The sidebar renders one placement per
-    // id, all of them opening this same row.
-    spaceIds: [...workstream.spaceIds],
-    breakoutAttentionCount: workstream.breakoutAttentionCount ?? 0,
-    ...(workstream.mainWithheld ? { mainWithheld: true as const } : {}),
     preview: workstream.objective,
   };
 }

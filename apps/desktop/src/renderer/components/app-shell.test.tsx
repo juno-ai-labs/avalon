@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { openCanvasId } from '../lib/canvases';
+import { canvasTurnRoute, openCanvasId } from '../lib/canvases';
 import {
   invitationAccountMismatch,
   windowControlsShellClass,
@@ -22,6 +22,18 @@ describe('openCanvasId', () => {
   it('has none for other screens, or a nested route', () => {
     expect(openCanvasId('/sidekicks/abc')).toBeNull();
     expect(openCanvasId(`/canvases/${workstreamId}/settings`)).toBeNull();
+  });
+});
+
+describe('canvasTurnRoute', () => {
+  it('opens a message search result on its Canvas, at the turn the conversation surface reads back', () => {
+    const route = canvasTurnRoute(workstreamId, 'turn a/1', 42);
+    expect(route).toBe(`/canvases/${workstreamId}?turn=turn%20a%2F1&sequence=42`);
+    const [pathname, query] = route.split('?');
+    expect(openCanvasId(pathname!)).toBe(workstreamId);
+    const params = new URLSearchParams(query);
+    expect(params.get('turn')).toBe('turn a/1');
+    expect(params.get('sequence')).toBe('42');
   });
 });
 

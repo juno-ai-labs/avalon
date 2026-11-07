@@ -56,8 +56,8 @@ export function formatSparseRelativeDate(value: string, now = new Date()): Spars
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
   const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
-  // Sunday-start, same as `groupActivityItems` below. `getDay()` is 0 on
-  // Sunday; a Monday-start locale would shift every week bucket by a day.
+  // Sunday-start. `getDay()` is 0 on Sunday; a Monday-start locale would
+  // shift every week bucket by a day.
   const startOfWeek = new Date(
     now.getFullYear(),
     now.getMonth(),
