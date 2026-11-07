@@ -1442,6 +1442,15 @@ Breakout, Activity, digest and suggested-work rows. Retired so far:
   goes with the Channel host) and `session-import-run-service.ts`; their
   routes went in C-1. `docs/conversation-merge.md` and
   `docs/channel-access-requests.md` are deleted.
+- **Thread backfill and Channel colour sync.** `thread-backfill.ts`,
+  `channel-color-sync.ts`, their alarm lanes and RPCs, and their activity-Queue
+  handlers. A message of either type still in the Queue at deploy is
+  acknowledged by the consumer's retired-message tombstone (with Projects'),
+  rather than dead-lettered. The migration statements they exported (99, 100,
+  115, 133, and the trigger migration 102 restates) moved byte for byte to
+  `retired-workspace-schema.ts`, the home for statements whose module is gone;
+  the colour triggers keep marking rows until C-7 drops their tables.
+  `docs/thread-backfill.md` is deleted.
 
 **Why:** After the client cutover nothing shows a suggestion, a Thread or a
 Channel; the PRD's decision log removes them from the product. Code that only

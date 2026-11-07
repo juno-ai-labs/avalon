@@ -113,7 +113,6 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `apps/api/src/durable-objects/workspace-notification-intent-protocol.ts`, `workspace-notification-intent-storage.ts` | Runtime-validated notification claim/transition/maintenance RPC contract and the private WorkspaceDO SQL state machine behind it. |
 | `apps/api/src/services/workspace-runtime-database.ts` | Allowlisted D1-compatible adapter: WorkspaceDO tables use native RPC, underlying control tables use D1, and mixed-authority transactions fail closed. |
 | `apps/api/src/services/sidebar-reads.ts` | The one statement and row mapping per sidebar list, used by WorkspaceDO's batch read and by the REST services that route back into it. |
-| `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute using fenced WorkspaceDO RPC inputs and settlements. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
 | `apps/api/src/durable-objects/hosted-parent.ts` | `HostedParent`: one Channel's or Space's parent authority inside `WorkspaceDO`, scoped by `parent_id`. The child registry, per-child projections and receipts, cross-child aggregation, the parent's metadata row, viewer authorization from scope and participation, the Channel control socket's snapshots, and the effects it publishes into the Organization's tables in its own transaction. `HOSTED_CHANNEL_ROLE` and `HOSTED_SPACE_ROLE` are every way a Space differs from a Channel. Owned by [`hosted-conversation-parents.md`](hosted-conversation-parents.md). |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The shared request schemas, aggregation helpers and Queue batching every hosted parent reuses. |
@@ -1359,8 +1358,6 @@ complete relationship map is:
 | regional Queue Worker | regional Queue | Cloudflare Queue | one `workspace_external_event_delivery_v1` message per matched registration, carrying the registration, destination, and event inline |
 | regional Queue Worker | WorkspaceDO / SubstreamAgent | typed RPC | `sidekickAdmitExternalEvent` (one run per event id, one call unless a written condition needs judging) or `appendWatchedResourceEvent` (one receipt per event and registration); a throw retries |
 | legacy ConnectorEventWorkflow | WorkspaceDO | typed RPC | drain-only compatibility for instances created before the Queue-processing cutover; no new instance is created |
-| WorkspaceDO alarm | WorkOpportunityWorkflow | Workflow binding | a deterministic instance receives only workspace, lease, and attempt fences; no model input body is copied into Workflow state |
-| WorkOpportunityWorkflow | WorkspaceDO | typed RPC | loads claimed source state and atomically persists admission/provenance or ranking/resolution settlement |
 
 A Queue cannot target a particular Durable Object; it needs a Worker consumer to
 resolve the object and make the RPC, and `queue.send()` cannot commit atomically

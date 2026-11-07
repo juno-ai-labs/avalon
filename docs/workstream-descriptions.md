@@ -70,7 +70,7 @@ already that short comes back as written, and nothing is stored.
   the loop below only reads Main, so a Breakout's run settlement writes one
   from its first message while it is still empty.
 - **Existing threads and Breakouts are backfilled** by the
-  `description_summary` job; see [`thread-backfill.md`](thread-backfill.md).
+  `description_summary` job; see `thread-backfill.md` (retired).
 
 Then the work stream is used, and two things drift apart:
 
