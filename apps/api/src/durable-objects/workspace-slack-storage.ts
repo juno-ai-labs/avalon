@@ -13,7 +13,6 @@ import {
   WorkspaceSlackThreadClaimResultSchema,
   WorkspaceSlackThreadRoutableResultSchema,
   WorkspaceSlackContextResultSchema,
-  WorkspaceSlackFeedbackResultSchema,
   type WorkspaceSlackIngressClaimRequest,
   type WorkspaceSlackIngressClaimResult,
   type WorkspaceSlackIngressCompleteRequest,
@@ -36,8 +35,6 @@ import {
   type WorkspaceSlackContextRequest,
   type WorkspaceSlackContextResult,
   type WorkspaceSlackContextStoreRequest,
-  type WorkspaceSlackFeedbackRequest,
-  type WorkspaceSlackFeedbackResult,
   type WorkspaceSlackThreadRoutableRequest,
   type WorkspaceSlackThreadRoutableResult,
   SLACK_INGRESS_ATTEMPT_LIMIT,
@@ -597,30 +594,4 @@ export function storeWorkspaceSlackContext(
     request.contextJson,
     request.at,
   );
-}
-
-/** One row per ingress job; a redelivery is a replay, not a failure. */
-export function recordWorkspaceSlackFeedback(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackFeedbackRequest,
-): WorkspaceSlackFeedbackResult {
-  const inserted = storage.sql.exec<{ id: string }>(
-    `INSERT INTO slack_agent_feedback
-       (id, ingress_job_id, workspace_id, workstream_id, user_id, connection_id, rating, comment, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(ingress_job_id) DO NOTHING
-     RETURNING id`,
-    request.feedbackId,
-    request.ingressJobId,
-    request.workspaceId,
-    request.workstreamId,
-    request.userId,
-    request.connectionId,
-    request.rating,
-    request.comment,
-    request.at,
-  ).toArray()[0];
-  return WorkspaceSlackFeedbackResultSchema.parse({
-    outcome: inserted ? "recorded" : "replayed",
-  });
 }

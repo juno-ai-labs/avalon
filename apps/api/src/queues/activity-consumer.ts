@@ -173,44 +173,6 @@ export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: En
 
 export const activityQueueConsumer = consumeActivityQueue;
 
-/** Repairs the commit-before-queue-send window for every connector ingress. */
-export async function recoverPendingActivityQueue(env: Env, limit = 100): Promise<number> {
-  // Post-cutover the Queue payload is the handoff and WorkspaceDO owns retry
-  // state. This scan exists only for an interrupted legacy D1 deployment.
-  if (env.WORKSPACE_DOS) return 0;
-  const staleBefore = new Date(Date.now() - 60_000).toISOString();
-  const pending = await env.DB.prepare(
-    `SELECT a.id, a.workspace_id, w.region, a.processing_status,
-            CAST(COALESCE(json_extract(a.metadata_json, '$._connector_event_attempt'), -1) AS INTEGER) AS connector_event_attempt
-     FROM activities a
-     JOIN workspaces w ON w.id = a.workspace_id
-     WHERE a.processing_status IN ('pending', 'failed') AND a.received_at <= ?
-       AND (a.processing_status = 'pending'
-         OR CAST(COALESCE(json_extract(a.metadata_json, '$._connector_event_attempt'), -1) AS INTEGER) < 5)
-       AND w.region = ?
-     ORDER BY a.received_at ASC, a.id ASC
-     LIMIT ?`,
-  ).bind(staleBefore, env.AVALON_REGION, Math.max(1, Math.min(limit, 100))).all<{
-    id: string;
-    workspace_id: string;
-    region: Region;
-    processing_status: "pending" | "failed";
-    connector_event_attempt: number;
-  }>();
-  if (pending.results.length === 0) return 0;
-  await env.ACTIVITY_QUEUE.sendBatch(pending.results.map((activity) => ({
-    body: ActivityQueueMessageSchema.parse({
-      region: activity.region,
-      workspaceId: activity.workspace_id,
-      activityId: activity.id,
-      attempt: activity.processing_status === "failed"
-        ? Math.max(0, activity.connector_event_attempt + 1)
-        : Math.max(0, activity.connector_event_attempt),
-    }),
-  })));
-  return pending.results.length;
-}
-
 async function discoverSearchDocuments(env: Env, reference: z.infer<typeof SearchProjectionMessageSchema>): Promise<string[]> {
   const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
     conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));

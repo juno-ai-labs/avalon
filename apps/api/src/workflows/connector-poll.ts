@@ -1,5 +1,4 @@
 import {
-  ActivityQueueMessageSchema,
   ConnectorPollWorkflowInputSchema,
   type ConnectorPollWorkflowInput
 } from "@rally/contracts";
@@ -141,27 +140,10 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       throw error;
     }
 
-    await step.do("enqueue-normalized-activities", async () => {
-      // WorkspaceDO cutover enqueues each normalized event from the provider
-      // persistence step itself, so no D1 activity-body handoff exists to read
-      // here. Legacy deployments retain the separate ID-only queue step.
-      if (this.env.WORKSPACE_DOS) return;
-      for (let offset = 0; offset < result.activityIds.length; offset += 100) {
-        const chunk = result.activityIds.slice(offset, offset + 100);
-        await this.env.ACTIVITY_QUEUE.sendBatch(
-          chunk.map((activityId) => ({
-            body: ActivityQueueMessageSchema.parse({
-              region: input.region,
-              workspaceId: input.workspaceId,
-              activityId,
-              attempt: 0
-            }),
-            contentType: "json" as const
-          }))
-        );
-      }
-    });
-
+    // Each normalized event is enqueued by the provider persistence step
+    // itself. The ID-only `enqueue-normalized-activities` step served only a
+    // deployment without WorkspaceDO, and is deleted; an instance replaying
+    // across this deploy simply never reaches it.
     const cursorCommit = await step.do("commit-connector-cursor", async (): Promise<ConnectorCursorCommit> => {
       const now = new Date().toISOString();
       return commitConnectorCursor(workspaceEnv.DB, input, result, now);

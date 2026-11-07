@@ -796,8 +796,10 @@ and reaction setters, with their storage and protocol. Its readers were left
 answering legacy rows: the feedback submit's session check (now refused
 outright), the channel-type hint an event read from a session (now always
 Slack's answer), and the seating a verified-email or explicit link did, whose
-`assigned_user_id` nothing read. `slack_agent_sessions` itself is kept: dropping
-a table is a migration, and the rows are inert.
+`assigned_user_id` nothing read. With the submit refused, the feedback
+ingress branch, `recordSlackFeedback` and its storage went too.
+`slack_agent_sessions` and `slack_agent_feedback` are kept: dropping a table is
+a migration, and the rows are inert.
 
 **Open:** The retired-ingress copy is the agent's wording and needs product
 confirmation.
