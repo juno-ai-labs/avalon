@@ -14,15 +14,45 @@ column and the `workstream_naming` model role remain (the role still serves
 the pasted-text title, `pasted-text-service.ts`). Do not build on anything else
 it describes; the code is gone.
 
-`workstream-descriptions.md`, which owned the matching description loop
-(`workstream-description-service.ts`, `prompts/workstream-description.ts`, the
-pass after each run and a Breakout's empty-description summary), was deleted in
-the same step: Canvases and Sidekicks carry no model-written description. It
-kept no changelog; its keep bias, generality ban and confidence floor lived in
-the prompt it described. The `workstream_description` model role stays in the
-catalog until its Flagship key is retired.
+[`workstream-descriptions.md`](workstream-descriptions.md), which owned the
+matching description loop (`workstream-description-service.ts`,
+`prompts/workstream-description.ts`, the pass after each run and a Breakout's
+empty-description summary), was retired in the same step: Canvases and
+Sidekicks carry no model-written description. It is kept, cut to its
+changelog, as its own retired record. The `workstream_description` model role
+stays in the catalog until its Flagship key is retired.
 
 ## Changelog
+
+### 2026-11-07 — Naming and the description loop are retired
+
+**What changed:** Plan step C-2 deleted the naming pass, the description loop
+and both prompts, and cut this document to its changelog.
+[`workstream-descriptions.md`](workstream-descriptions.md) was deleted in the
+same step on the reading that it kept no changelog, and then restored as a
+retired record of its own: its six dated entries sat after `## Operations`
+with no `## Changelog` heading, which is how the reading missed them.
+
+**Why:** A Canvas is titled by the person and a Sidekick names its own
+conversations, so nothing calls a model to name or describe a conversation
+after a run. The description document's entries hold reasoning that
+[`workstream-creation.md`](workstream-creation.md),
+[`data-model.md`](data-model.md), [`feature-flags.md`](feature-flags.md) and
+[`potential-bugs.md`](potential-bugs.md) cite — the provisional description's
+bound above all — and with the file deleted those links pointed here, at a
+record that does not hold it.
+
+**Considered and rejected:** Folding the six description entries into this
+changelog. They record a separate module's decisions, and a reader following
+a link about the description's bound would land in a record about titles.
+Also rejected: keeping either document's body. The code it described is gone,
+and a body that reads as present tense invites building on it.
+
+**Consequences:** The `title_status` column, the `description_refresh_state`
+table and both model roles outlive the passes; `workstream_naming` still serves
+`pasted-text-service.ts`, and `workstream_description` has no caller and stays
+only until `agent-model-workstream-description` is retired. Whichever change
+drops one of them notes it in the document that owned it.
 
 ### 2026-10-05 — The icon is a plain string, and fallbacks may reason
 

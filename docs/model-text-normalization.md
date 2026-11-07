@@ -35,8 +35,6 @@ The call sites, each on the path from stored text to a reader:
 | Every Rally email's plain-text alternative and preheader | `services/email-markdown.ts` (`markdownToEmailText`, `markdownToEmailPreheader`) | `normalizeModelText` |
 | An elicitation's question, option labels and descriptions, and answered label | `renderer/components/workstream-blocks.tsx` (`ElicitationPanel`, `elicitationAnswerLabel`) | `normalizeModelText` |
 | A tool card's summary line | `renderer/components/workstream-blocks.tsx` | `normalizeModelText` |
-| A generated work-stream title | `services/workstream-naming-service.ts` (`normalizeGeneratedTitle`) | `normalizeModelText` |
-| A generated work-stream description | `services/workstream-description-service.ts` (`judgeDescriptionProposal`) | `normalizeModelText` |
 | A message export's file name | `renderer/components/workstream-blocks.tsx` | `normalizeModelText` |
 
 `MarkdownBody` repairs by default and skips the repair when its caller marks

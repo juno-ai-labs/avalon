@@ -950,10 +950,13 @@ rules apply to the Canvas list and presence alone.
 
 **Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
 deleted the Channel directory these frames read, and no client asks for them
-after B-1 to B-6. Ignoring a command rather than refusing it keeps an old
-desktop's socket open: a refusal there is a permanent close. The empty page
-stays only until the contract drops `workstreams` from the sidebar, so an
-older renderer still parses the subscribe answer.
+after B-1 to B-6. An ignored command keeps an old desktop's socket open. The
+empty page stays only until the contract drops `workstreams` from the sidebar,
+so an older renderer still parses the subscribe answer.
+
+**Considered and rejected:** Refusing the retired commands. A refusal on this
+socket is a permanent close, so an old desktop that still sends one would lose
+its socket for asking.
 
 ### 2026-11-07 — The Channel control socket's Worker half is gone
 

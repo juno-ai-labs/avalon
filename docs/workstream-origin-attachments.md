@@ -300,35 +300,22 @@ It deliberately does **not** cover:
 
 ## Testing
 
-Three suites, split the way the code is:
+Two suites cover the connector half that survives:
 
 ```bash
 pnpm --filter @rally/connectors exec vitest run src/origin.test.ts   # the contract and the base
 pnpm --filter @rally/connectors exec vitest run src/slack.test.ts    # one connector's implementation
-pnpm --filter @rally/api exec vitest run test/workstream-origin-attachment.test.ts  # the host
 ```
 
 `src/origin.test.ts` holds the contract against a synthetic adapter, so a new
-connector's obligations are readable without opening a provider. The host suite
-runs each creation path against a real migrated SQLite database through
-`test/helpers/sqlite-d1.ts`.
+connector's obligations are readable without opening a provider.
 
-Traps for whoever extends it:
-
-- The host suite builds descriptors **through the registry**, never by hand: a
-  hand-written descriptor would not notice the connector no longer producing that
-  shape. Its fake `Env` therefore carries real-looking `SLACK_*` and `LINEAR_*`
-  configuration, because an unconfigured connector is not in the registry at all.
-- `integrations`, `workstream-naming-service`, and
-  `workstream-email-routing-service` are module-mocked. The email fake must
-  return a **distinct address per work stream** — `workstreams.email_address` is
-  unique, so a constant collides the moment a test creates two.
-- Use `vi.clearAllMocks()`, not `vi.restoreAllMocks()`: restoring wipes the
-  implementations the module factories installed, and the next test fails in a
-  way that looks nothing like its cause.
-- The activity path needs real `activities` and `connector_connections` rows, not
-  a hand-built activity object: the work stream it writes references the activity
-  by foreign key.
+The host suite, `apps/api/test/workstream-origin-attachment.test.ts`, was
+deleted with the host half. A host that reuses the connector half should build
+its descriptors **through the registry** in its tests, never by hand: a
+hand-written descriptor would not notice the connector no longer producing that
+shape, and an unconfigured connector is not in the registry at all, so the test
+`Env` needs real-looking provider configuration.
 
 ## Data model
 

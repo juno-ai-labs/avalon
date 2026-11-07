@@ -528,11 +528,9 @@ export { MESSAGE_MAX_CHARACTERS,MESSAGE_TOO_LONG_MESSAGE } from "./message-limit
  * The most text a work stream's description may carry.
  *
  * Deliberately far below {@link MESSAGE_MAX_CHARACTERS}, because a description
- * is not a message: it is the line the sidebar shows under the title, the text
- * the routing classifier reads, and the standing context every run starts from
- * (see `docs/workstream-descriptions.md`). It is also stored in every workspace
- * directory row and pushed to every client on connect, so its size is paid on
- * reads that have nothing to do with the work stream it describes.
+ * is not a message: it is a one-line summary of the conversation, and the
+ * retired `docs/workstream-descriptions.md` records (in its 2026-08-24 entry)
+ * why the bound stayed here when the message ceiling was raised.
  *
  * Changing this number means changing the `length(description) <= 4000` CHECK on
  * `channels` and the producer-side bound in
