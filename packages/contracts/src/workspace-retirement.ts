@@ -26,7 +26,7 @@ export const WorkspaceRetirementResultSchema = z.strictObject({
      * are kept in step by hand so widening the conversation vocabulary is a
      * deliberate decision about what an operator is told, not a transitive one.
      */
-    parentKind: z.enum(["workstream", "automation", "space"]),
+    parentKind: z.enum(["workstream", "automation", "space", "canvas"]),
     parentId: z.string().min(1),
     error: z.string().min(1),
   })),
