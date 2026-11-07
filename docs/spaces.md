@@ -640,12 +640,10 @@ mechanism knows what a message is for.
   desktop draws a message as its author speaking, on the leading side, with
   the renderer a thread's messages use.
 
-A thread's merged result is the first caller from outside WorkspaceDO
-(`mergeThreadIntoChannel`, `removeChannelMessage`), and a Sidekick's
-scheduled self-review announcing a change is the second
-(`postSidekickChannelMessage`: a message from Rally opening with the
-Sidekick's name, keyed on the post's client message id, in General or the
-author's Personal Channel; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), and a desktop before client
+A thread's merged result is the one caller from outside WorkspaceDO
+(`mergeThreadIntoChannel`, `removeChannelMessage`); a Sidekick posts nothing
+to a Channel's feed, since its scheduled self-review announces in its own
+conversation ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)). A desktop before client
 contract 7 (`CHANNEL_MERGES_CLIENT_CONTRACT`) is served each merge as a plain
 message without `merge` or `attentionSequenceNumber`. A merge from a thread the
 reader cannot open is shown without the thread (`merge.private`), and a desktop
