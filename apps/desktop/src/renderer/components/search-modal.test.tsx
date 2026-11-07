@@ -35,17 +35,15 @@ async function reachEndOfList() {
     }
   });
 }
-function setup(search: React.ComponentProps<typeof SearchModal>['search'],
-  places: Pick<React.ComponentProps<typeof SearchModal>, 'channels' | 'spaces'> = {}) {
+function setup(search: React.ComponentProps<typeof SearchModal>['search']) {
   const onSelect = vi.fn();
-  const onSelectPlace = vi.fn();
   const onOpenChange = vi.fn();
   const client = new QueryClient();
   const tree = (open: boolean) => <QueryClientProvider client={client}><SearchModal workspaceId="workspace:user"
-    open={open} onOpenChange={onOpenChange} onSelect={onSelect} search={search} onSelectPlace={onSelectPlace} {...places} /></QueryClientProvider>;
+    open={open} onOpenChange={onOpenChange} onSelect={onSelect} search={search} /></QueryClientProvider>;
   const view = render(tree(true));
   // RTL wraps `rerender` in `act`, so opening and closing settles like a click.
-  return { onSelect, onSelectPlace, onOpenChange, client, setOpen: (open: boolean) => { view.rerender(tree(open)); } };
+  return { onSelect, onOpenChange, client, setOpen: (open: boolean) => { view.rerender(tree(open)); } };
 }
 describe('organization search modal', () => {
   afterEach(() => { focusManager.setFocused(undefined); });
@@ -59,7 +57,7 @@ describe('organization search modal', () => {
   it('queries the selected source and opens the highlighted canonical result with Enter', async () => {
     const search = vi.fn(async () => ({ results: [result] }));
     const { onSelect, onOpenChange } = setup(search);
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files', 'Threads']);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files']);
     fireEvent.click(screen.getByRole('tab', { name: 'Messages' }));
     const input = screen.getByRole('combobox');
     fireEvent.change(input, { target: { value: 'danil' } });
@@ -72,112 +70,20 @@ describe('organization search modal', () => {
     expect(onSelect).toHaveBeenCalledWith(result);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
-  const PLACES = {
-    channels: [
-      { kind: 'channel', id: '00000000-0000-7000-8000-0000000000c1', name: 'Pricing review' },
-      { kind: 'breakout', id: '00000000-0000-7000-8000-0000000000b1', channelId: '00000000-0000-7000-8000-0000000000c1',
-        channelName: 'Pricing review', name: 'Hiring plan' },
-      { kind: 'channel', id: '00000000-0000-7000-8000-0000000000c2', name: 'Hiring' },
-    ],
-    spaces: [
-      { kind: 'space', id: 'space-1', name: 'Launch', iconKey: 'flag', colorKey: 'rose' },
-      { kind: 'space', id: 'space-2', name: 'Pricing', iconKey: 'target', colorKey: 'teal' },
-    ],
-  } satisfies Pick<React.ComponentProps<typeof SearchModal>, 'channels' | 'spaces'>;
-
-  it('finds Channels, their Breakouts and Spaces by name without asking the Worker, and opens the chosen one', async () => {
-    const search = vi.fn(async () => ({ results: [result] }));
-    const { onSelectPlace, onOpenChange } = setup(search, PLACES);
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent))
-      .toEqual(['All', 'Messages', 'Links', 'Artifacts', 'Files', 'Threads', 'Channels']);
-    fireEvent.click(screen.getByRole('tab', { name: 'Threads' }));
-    const input = screen.getByRole('combobox');
-    // Each Channel is followed by its Breakouts.
-    fireEvent.change(input, { target: { value: 'ing' } });
-    expect(screen.getAllByRole('option').map((option) => option.textContent))
-      .toEqual(['Pricing reviewThread', 'Hiring planBreakout in Pricing review', 'HiringThread']);
-    fireEvent.change(input, { target: { value: 'i' } });
-    expect(screen.queryByRole('option')).not.toBeInTheDocument();
-    fireEvent.change(input, { target: { value: 'plan' } });
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Hiring planBreakout in Pricing review']);
-    // Each place wears its own mark, not a generic symbol.
-    for (const option of screen.getAllByRole('option')) expect(option.querySelector('svg.workstream-mark')).not.toBeNull();
-    fireEvent.change(input, { target: { value: 'PLAN' } });
-    expect(screen.getByRole('option').querySelector('strong')).toHaveTextContent('plan');
-    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
-    fireEvent.change(input, { target: { value: 'nothing' } });
-    expect(screen.getByText('No results')).toBeVisible();
-    fireEvent.change(input, { target: { value: 'launch' } });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onSelectPlace).toHaveBeenCalledWith(PLACES.spaces[0]);
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-    await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
-    expect(search).not.toHaveBeenCalled();
-  });
-
   it('waits for three characters before searching on any tab', async () => {
     const search = vi.fn(async () => ({ results: [result] }));
-    setup(search, PLACES);
+    setup(search);
     const input = screen.getByRole('combobox');
     fireEvent.change(input, { target: { value: 'pr' } });
     await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
     expect(search).not.toHaveBeenCalled();
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
     expect(screen.getByText('What are you looking for?')).toBeVisible();
-    // The place tabs wait as well.
-    fireEvent.click(screen.getByRole('tab', { name: 'Threads' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Messages' }));
     expect(screen.queryByRole('option')).not.toBeInTheDocument();
-    expect(screen.getByText('What are you looking for?')).toBeVisible();
     fireEvent.click(screen.getByRole('tab', { name: 'All' }));
     fireEvent.change(input, { target: { value: 'pri' } });
     await waitFor(() => expect(search).toHaveBeenCalledWith({ query: 'pri', category: 'all', pageSize: 7 }, expect.any(AbortSignal)));
-  });
-
-  it('draws a Breakout with no look of its own in exactly its Channel\'s mark', () => {
-    const channelId = '00000000-0000-7000-8000-0000000000c4';
-    setup(async () => ({ results: [] }), { channels: [
-      { kind: 'channel', id: channelId, name: 'Pricing review' },
-      { kind: 'breakout', id: '00000000-0000-7000-8000-0000000000b4', channelId, channelName: 'Pricing review', name: 'Pricing tiers' },
-    ] });
-    fireEvent.click(screen.getByRole('tab', { name: 'Threads' }));
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'pricing' } });
-    const [channel, breakout] = screen.getAllByRole('option').map((option) => option.querySelector('.rally-search-result-icon')!.innerHTML);
-    expect(breakout).toBe(channel);
-  });
-
-  it('says the content search failed even when places matched', async () => {
-    setup(async () => { throw new ApiError('Unavailable', 503); }, PLACES);
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'pric' } });
-    expect(await screen.findByText('Search could not be completed. Please try again.')).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
-    expect(screen.getAllByRole('option')).toHaveLength(2);
-  });
-
-  it('highlights the matched letters of a name whose lowercase is longer', () => {
-    setup(async () => ({ results: [] }), { channels: [{ kind: 'channel', id: '00000000-0000-7000-8000-0000000000c3', name: 'İİ Pricing' }] });
-    fireEvent.click(screen.getByRole('tab', { name: 'Threads' }));
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'pric' } });
-    expect(screen.getByRole('option').querySelector('strong')).toHaveTextContent(/^Pric$/);
-  });
-
-  it('puts matching places above the content results in All', async () => {
-    const search = vi.fn(async () => ({ results: [result] }));
-    const { onSelect, onSelectPlace } = setup(search, PLACES);
-    const input = screen.getByRole('combobox');
-    fireEvent.change(input, { target: { value: 'pric' } });
-    // Places answer at once; content follows below them.
-    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['Pricing reviewThread', 'PricingChannel']);
-    expect(screen.getByText('Searching…')).toBeVisible();
-    // A listbox holds only options; the status line sits beside it.
-    expect(screen.getByRole('listbox')).not.toContainElement(screen.getByText('Searching…'));
-    await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(3));
-    expect(screen.queryByText('Searching…')).not.toBeInTheDocument();
-    expect(screen.getAllByRole('option')[2]).toHaveTextContent('Alex Danilowicz replied');
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(onSelect).toHaveBeenCalledWith(result);
-    expect(onSelectPlace).not.toHaveBeenCalled();
   });
 
   it('continues past an empty page as its end comes into view and measures through the first result paint', async () => {

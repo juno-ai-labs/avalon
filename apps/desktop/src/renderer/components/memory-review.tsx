@@ -4,7 +4,7 @@ import { useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { ApiError } from '../lib/api';
-import { channelRoute, threadRoute } from '../lib/navigation-routes';
+import { canvasRoute, CANVASES_ROUTE } from '../lib/canvases';
 import { desktopBridge } from '../lib/platform';
 import { ErrorNotice, LoadingState } from './primitives';
 
@@ -90,12 +90,16 @@ function refusalCopy(error: unknown): string {
   return error instanceof ApiError ? error.message : 'Rally could not remove this. Try again.';
 }
 
-/** Where a fact's source opens in the main window. A Breakout opens inside its Thread. */
+/**
+ * Where a fact's source opens in the main window. A Canvas's facts are stored
+ * under the `thread` subject kind until the memory rebuild (plan step C-5), so
+ * a thread or breakout source is a Canvas; a Channel has no screen any more and
+ * opens the Canvases home.
+ */
 export function memorySourceRoute(source: MemoryReviewSource): string {
   if (source.kind === 'sidekick') return `/sidekicks/${encodeURIComponent(source.automationId)}`;
-  if (source.kind === 'thread') return threadRoute(source.workstreamId, null);
-  if (source.kind === 'breakout') return threadRoute(source.workstreamId, null, source.substreamId);
-  return channelRoute(source.spaceId);
+  if (source.kind === 'thread' || source.kind === 'breakout') return canvasRoute(source.workstreamId);
+  return CANVASES_ROUTE;
 }
 
 /** Opens a fact's source from the main window, by its route. */
@@ -105,17 +109,13 @@ export function openMemorySource(source: MemoryReviewSource, navigate: (to: stri
 
 /**
  * Opens a fact's source from a window surface such as Settings, which cannot
- * route the main window itself: a Thread (a Breakout's own Thread) and a
- * Sidekick through the bridge. A Channel has no such hand-off, so it is named
- * without a link.
+ * route the main window itself: a Sidekick through the bridge. A Canvas has no
+ * such hand-off until it has a link form (plan step B-5), and a Channel none at
+ * all, so both are named without a link.
  */
 function SurfaceSourceLink({ source, title }: { source: MemoryReviewSource; title: string }): React.JSX.Element {
-  if (source.kind === 'channel') return <span>{title}</span>;
-  const open = (): void => {
-    if (source.kind === 'sidekick') void desktopBridge().openSidekick(source.automationId);
-    else void desktopBridge().openThread(source.workstreamId);
-  };
-  return <button className="memory-review-source" onClick={open} type="button">{title}</button>;
+  if (source.kind !== 'sidekick') return <span>{title}</span>;
+  return <button className="memory-review-source" onClick={() => void desktopBridge().openSidekick(source.automationId)} type="button">{title}</button>;
 }
 
 /**

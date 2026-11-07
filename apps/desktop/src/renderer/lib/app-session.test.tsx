@@ -93,10 +93,8 @@ const bridge = vi.hoisted(() => ({
   endSupportSession: vi.fn(),
   reportTelemetryProductIntent: vi.fn(),
 }) satisfies AppSessionDesktopBridge & Pick<RallyDesktopBridge, 'reportTelemetryProductIntent'>);
-const markDeepLinkWorkstreamNavigation = vi.hoisted(() => vi.fn());
 
 vi.mock('./platform', () => ({ desktopBridge: () => bridge }));
-vi.mock('./deep-link-navigation', () => ({ markDeepLinkWorkstreamNavigation }));
 
 const futureExpiry = new Date(Date.now() + 60 * 60_000).toISOString();
 
@@ -605,7 +603,7 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink(ticketCallback);
 
     await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000031'));
+    await waitFor(() => expect(window.location.hash).toBe('#/canvases/00000000-0000-7000-8000-000000000031'));
     expect(await screen.findByText('global:Global Studio')).toBeVisible();
     expect(bridge.showDeepLinkError).not.toHaveBeenCalled();
   });
@@ -1382,7 +1380,7 @@ describe('single-platform desktop identity routing', () => {
       name: 'work-stream',
       url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/workstreams/00000000-0000-7000-8000-000000000031',
       assertDestination: async () => expect(window.location.hash)
-        .toBe('#/workstreams/00000000-0000-7000-8000-000000000031'),
+        .toBe('#/canvases/00000000-0000-7000-8000-000000000031'),
     },
     {
       name: 'settings',
@@ -1488,7 +1486,7 @@ describe('single-platform desktop identity routing', () => {
     expect(window.location.hash).not.toContain(secondWorkstreamId);
     mainActiveSession = activated;
     activations[0]!.resolve(activated);
-    await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${secondWorkstreamId}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/canvases/${secondWorkstreamId}`));
     // By the time the second link ran, its workspace was the active one, so
     // main answered the claim and it opened without a second activation. Had
     // the second link run before the first resolved, the claim would have
@@ -1497,7 +1495,7 @@ describe('single-platform desktop identity routing', () => {
     expect(bridge.reselectActiveWorkspace).toHaveBeenCalledTimes(2);
   });
 
-  it('preserves a child destination after serialized organization activation', async () => {
+  it('opens a child link\'s Canvas after serialized organization activation', async () => {
     const workspaceId = '00000000-0000-7000-8000-000000000033';
     const firstWorkstreamId = '00000000-0000-7000-8000-000000000034';
     const secondWorkstreamId = '00000000-0000-7000-8000-000000000035';
@@ -1532,7 +1530,7 @@ describe('single-platform desktop identity routing', () => {
     expect(window.location.hash).not.toContain(secondWorkstreamId);
     mainActiveSession = activated;
     activations[0]!.resolve(activated);
-    await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${secondWorkstreamId}?substream=${childId}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/canvases/${secondWorkstreamId}`));
     // By the time the second link ran, its workspace was the active one, so
     // main answered the claim and it opened without a second activation. Had
     // the second link run before the first resolved, the claim would have
@@ -1551,8 +1549,7 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink('rallywithai://settings/connections');
     await dispatchDeepLink(`rallywithai://workstreams/${workstreamId}`);
 
-    await waitFor(() => expect(window.location.hash).toBe(`#/workstreams/${workstreamId}`));
-    expect(markDeepLinkWorkstreamNavigation).toHaveBeenCalledWith(workstreamId);
+    await waitFor(() => expect(window.location.hash).toBe(`#/canvases/${workstreamId}`));
   });
 
   it('does not apply a connector result when its organization cannot be activated', async () => {
@@ -1945,7 +1942,7 @@ describe('single-platform desktop identity routing', () => {
       `rallywithai://workspace/global/${activeWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000042`,
     );
 
-    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000042'));
+    await waitFor(() => expect(window.location.hash).toBe('#/canvases/00000000-0000-7000-8000-000000000042'));
     // Straight to the work stream: main answered with the session in use, no
     // platform round trip, and the shell keeps what it had loaded rather than
     // reloading behind the link.
@@ -1959,12 +1956,12 @@ describe('single-platform desktop identity routing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/ordinary-visit'));
     fireEvent.click(screen.getByRole('button', { name: 'Forward' }));
-    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/00000000-0000-7000-8000-000000000042'));
+    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/canvases/00000000-0000-7000-8000-000000000042'));
     // A new deep link from an earlier visit discards the old forward branch.
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/ordinary-visit'));
     await dispatchDeepLink(`rallywithai://workspace/global/${activeWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000043`);
-    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/00000000-0000-7000-8000-000000000043'));
+    await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/canvases/00000000-0000-7000-8000-000000000043'));
     expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
   });
 
@@ -1983,7 +1980,7 @@ describe('single-platform desktop identity routing', () => {
       `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000046`,
     );
 
-    await waitFor(() => expect(window.location.hash).toBe('#/workstreams/00000000-0000-7000-8000-000000000046'));
+    await waitFor(() => expect(window.location.hash).toBe('#/canvases/00000000-0000-7000-8000-000000000046'));
     // Main declined the local claim, so the platform revalidated the
     // membership before the window moved.
     expect(bridge.reselectActiveWorkspace).toHaveBeenCalledWith({ region: 'global', workspaceId: targetWorkspaceId });

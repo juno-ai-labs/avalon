@@ -17,7 +17,7 @@ token and which state wins.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/format.ts` | `workstreamMarkerStatus` owns the ranking, reading `MARKER_PRECEDENCE` from `apps/desktop/src/renderer/lib/attention-ranking.ts`, where it sits beside `readerMarkerStatus` (the three personal states alone, for the Threads button's count and the dock badge; see the retired [attention menu](attention-menu.md)). Shared vocabulary, labels and `harnessMarkerStatus` live in `packages/ui/src/lib/format.ts` and are re-exported here. |
+| `apps/desktop/src/renderer/lib/format.ts` | `workstreamMarkerStatus` owns the ranking, reading `MARKER_PRECEDENCE` from `apps/desktop/src/renderer/lib/attention-ranking.ts`, where it sits beside `readerMarkerStatus` (the three personal states alone, for the Threads button's count and the dock badge; see the retired attention menu). Shared vocabulary, labels and `harnessMarkerStatus` live in `packages/ui/src/lib/format.ts` and are re-exported here. |
 | `packages/ui/src/components/primitives.tsx` | `StatusDot` — the one component that draws a marker, for every surface. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | Not a reader since 2026-10-12: a Threads-tab row (`ThreadRow`) draws only the reader's own states, collapsed to one unread dot (`threadUnread`: unread, mentioned or unseen). The run's states are the thread header's to show ([`desktop-shell.md`](desktop-shell.md#the-sidebar)). |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | The work-stream header's status line, which names the run's own marker rather than this viewer's. |

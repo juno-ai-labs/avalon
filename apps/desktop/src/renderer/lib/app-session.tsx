@@ -33,7 +33,8 @@ import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { workspaceFromSession } from './session-workspace';
 import { accountOnboardingQueryKey } from './account-onboarding-query';
 import { clearAllDrafts, clearWorkspaceDrafts, migrateLegacyDrafts } from './draft-cache';
-import { markDeepLinkWorkstreamNavigation } from './deep-link-navigation';
+import { canvasRoute } from './canvases';
+import { openResourceState } from './navigation-routes';
 import { clearAllLocalCache, clearWorkspaceLocalCache } from './local-cache';
 import {
   readDevicePreferences,
@@ -1048,25 +1049,26 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const openSpace = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          navigateAppRoute(`/spaces/${intent.spaceId}`);
+          // Channels are gone (2026-11); a Channel's link opens the Canvases home.
+          navigateAppRoute('/canvases');
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openSpace);
-        else if (requireActiveWorkspace('Sign in before opening this channel link.')) openSpace();
+        else if (requireActiveWorkspace('Sign in before opening this link.')) openSpace();
         return;
       }
       if (intent.kind === 'workstream') {
+        // A conversation link names a Canvas now: a Canvas is identified by
+        // its conversation, and its links use the conversation forms until it
+        // has its own (plan step B-5). A Thread's id opens the Canvas screen's
+        // unavailable state.
         const openWorkstream = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          markDeepLinkWorkstreamNavigation(intent.workstreamId);
-          const query = new URLSearchParams();
-          if (intent.substreamId) query.set('substream', intent.substreamId);
-          if (intent.spaceId) query.set('space', intent.spaceId);
-          if (intent.artifactId) query.set('artifact', intent.artifactId);
-          navigateAppRoute(`/workstreams/${intent.workstreamId}${query.size ? `?${query}` : ''}`);
+          navigateAppRoute(canvasRoute(intent.workstreamId),
+            intent.artifactId ? openResourceState(intent.workstreamId, intent.artifactId) : undefined);
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);
-        else if (requireActiveWorkspace('Sign in before opening this thread link.')) openWorkstream();
+        else if (requireActiveWorkspace('Sign in before opening this link.')) openWorkstream();
         return;
       }
       if (intent.kind === 'sidekick') {

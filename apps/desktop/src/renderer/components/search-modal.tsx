@@ -5,49 +5,17 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { File, Link, MessageSquare, Search, Shapes } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { SearchCategory, SearchRequest, SearchResponse, SearchResult } from '@rally/contracts/search';
-import type { SpaceColorKey, SpaceIconKey, WorkstreamAppearance } from '@rally/contracts';
-import { SpaceIcon } from '@rally/ui/components/space-icon';
-import { WorkstreamMark } from '@rally/ui/components/workstream-glyph';
 import { Button } from './primitives';
 import { RelativeTime } from './relative-time';
 import { ApiError } from '../lib/api';
 import { isComposingKeyEvent } from '../lib/ime';
 
-/**
- * A Channel, Breakout or Space the reader can open, matched by name in the
- * modal itself and drawn with its own mark in its own colour.
- */
-export type SearchPlace =
-  // `substreamId` is the conversation the Channel opens on for this reader (its sidebar row's).
-  | { kind: 'channel'; id: string; name: string; substreamId?: string | undefined; appearance?: WorkstreamAppearance | undefined }
-  // A Breakout is listed with the Channels. Without a look of its own it wears its Channel's.
-  | { kind: 'breakout'; id: string; channelId: string; channelName: string; name: string;
-    appearance?: WorkstreamAppearance | undefined; channelAppearance?: WorkstreamAppearance | undefined }
-  | { kind: 'space'; id: string; name: string; iconKey: SpaceIconKey; colorKey: SpaceColorKey };
-
-const placeKey = (place: SearchPlace) => place.kind === 'breakout' ? `breakout:${place.channelId}/${place.id}` : `${place.kind}:${place.id}`;
-
-function PlaceIcon({ place }: { place: SearchPlace }): React.JSX.Element {
-  if (place.kind === 'space') return <SpaceIcon size={18} space={place} />;
-  // A look of its own resolves its unset parts from its own id; borrowing the
-  // Channel's resolves them from the Channel's, so the two marks match.
-  if (place.kind === 'breakout' && !place.appearance) {
-    return <WorkstreamMark appearance={place.channelAppearance} id={place.channelId} size={18} />;
-  }
-  return <WorkstreamMark appearance={place.appearance} id={place.id} size={18} />;
-}
-
-const placeSource = (place: SearchPlace) => place.kind === 'space' ? 'Channel'
-  : place.kind === 'breakout' ? `Breakout in ${place.channelName}` : 'Thread';
-type PlaceTab = 'channels' | 'spaces';
-type SearchTab = SearchCategory | PlaceTab;
-const isPlaceTab = (tab: SearchTab): tab is PlaceTab => tab === 'channels' || tab === 'spaces';
+type SearchTab = SearchCategory;
 const CONTENT_TABS: Array<{ id: SearchTab; label: string }> = [
   { id: 'all', label: 'All' }, { id: 'messages', label: 'Messages' },
   { id: 'links', label: 'Links' }, { id: 'artifacts', label: 'Artifacts' },
-  { id: 'files', label: 'Files' }, { id: 'channels', label: 'Threads' },
+  { id: 'files', label: 'Files' },
 ];
-const SPACES_TAB = { id: 'spaces', label: 'Channels' } as const;
 // The 360px body minus 16px padding, divided by a 52px two-line row plus 2px
 // gap. The list is the whole body until a pagination footer takes part of it.
 const SEARCH_VISIBLE_PAGE_SIZE = Math.ceil((360 - 16) / (52 + 2));
@@ -97,42 +65,6 @@ interface SearchModalProps {
   onOpenChange: (open: boolean) => void;
   search: (request: SearchRequest, signal: AbortSignal) => Promise<SearchResponse>;
   onSelect: (result: SearchResult) => void;
-  /**
-   * The Channels and Spaces the window already holds; their tabs match names
-   * here and never ask the Worker. Without `spaces` (Spaces off) there is no
-   * Spaces tab.
-   */
-  channels?: readonly SearchPlace[];
-  spaces?: readonly SearchPlace[] | undefined;
-  onSelectPlace: (place: SearchPlace) => void;
-}
-
-/**
- * Where the query first appears in a name, ignoring case, as a span of the
- * name itself. Each window of the original is lowered and compared, rather
- * than finding the query in the lowered name: lowering can change a string's
- * length (`İ` becomes two code units), and an index into the lowered copy
- * would then highlight the wrong letters.
- */
-function nameMatch(name: string, query: string): { start: number; end: number } | null {
-  // `toLowerCase`, not `toLocaleLowerCase`: under a Turkish locale the latter
-  // lowers `I` to dotless `ı`, and "pricing" would stop matching "Pricing".
-  const needle = query.toLowerCase();
-  for (let start = 0; start + query.length <= name.length; start += 1) {
-    if (name.slice(start, start + query.length).toLowerCase() === needle) return { start, end: start + query.length };
-  }
-  return null;
-}
-
-/** Places whose name holds the query, in the order given. */
-function matchPlaces(places: readonly SearchPlace[], query: string): SearchPlace[] {
-  return places.filter((place) => nameMatch(place.name, query));
-}
-
-function HighlightedName({ name, query }: { name: string; query: string }): React.JSX.Element {
-  const match = nameMatch(name, query);
-  if (!match) return <>{name}</>;
-  return <>{name.slice(0, match.start)}<strong>{name.slice(match.start, match.end)}</strong>{name.slice(match.end)}</>;
 }
 
 function HighlightedExcerpt({ result }: { result: SearchResult }): React.JSX.Element {
@@ -147,15 +79,12 @@ function HighlightedExcerpt({ result }: { result: SearchResult }): React.JSX.Ele
   return <>{fragments}{result.excerpt.slice(cursor)}</>;
 }
 
-export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect, channels = [], spaces, onSelectPlace }: SearchModalProps): React.JSX.Element {
+export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect }: SearchModalProps): React.JSX.Element {
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<SearchTab>('all');
-  const tabs = spaces ? [...CONTENT_TABS, SPACES_TAB] : CONTENT_TABS;
-  // A Spaces tab left selected after Spaces turned off falls back to All.
-  const activeTab: SearchTab = tabs.some((candidate) => candidate.id === tab) ? tab : 'all';
-  const placeTab = isPlaceTab(activeTab) ? activeTab : null;
-  // The Worker's category; a place tab never asks it, so this value is unused there.
-  const category: SearchCategory = isPlaceTab(activeTab) ? 'all' : activeTab;
+  const tabs = CONTENT_TABS;
+  const activeTab: SearchTab = tab;
+  const category: SearchCategory = activeTab;
   const [selected, setSelected] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -217,7 +146,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
       }
       return { ...page, admittedAt: Date.now() };
     },
-    enabled: open && !placeTab && searchable && settledQuery === normalized,
+    enabled: open && searchable && settledQuery === normalized,
     // Reopening on the same words repaints the last pages rather than
     // reauthorizing them; after the window one keystroke's worth of results is
     // read again.
@@ -245,16 +174,10 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
   });
   const continuationFailed = response.isFetchNextPageError
     && (!(response.error instanceof ApiError) || response.error.status >= 500);
-  // A place tab lists its own kind; All puts every matching place above the
-  // content results, which arrive later and so never push a place down. No
-  // cap: how many is the team's number to set.
-  const places = !open || !searchable ? []
-    : placeTab ? matchPlaces(placeTab === 'channels' ? channels : spaces ?? [], normalized)
-    : activeTab === 'all' ? matchPlaces([...channels, ...spaces ?? []], normalized) : [];
-  const results = open && !placeTab && searchable && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
+  const results = open && searchable && settledQuery === normalized && (!response.isFetching || response.isFetchingNextPage) && (!response.isError || continuationFailed)
     ? [...new Map((response.data?.pages.flatMap((page) => page.results) ?? []).map((result) => [result.id, result])).values()] : [];
   useEffect(() => {
-    if (!open || placeTab || !searchable || settledQuery !== normalized || response.isFetching || !response.isFetched) return;
+    if (!open || !searchable || settledQuery !== normalized || response.isFetching || !response.isFetched) return;
     // Keep time-to-results open across explicit continuation, including the user's wait.
     if (!response.isError && results.length === 0 && response.hasNextPage) return;
     const current = trace.current;
@@ -267,8 +190,8 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
       if (trace.current === current) trace.current = null;
     }); });
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
-  }, [open, placeTab, searchable, normalized, settledQuery, response.isFetching, response.isFetched, response.isError, results.length, response.hasNextPage]);
-  const canContinue = open && !placeTab && searchable && settledQuery === normalized && response.hasNextPage && (!response.isError || continuationFailed);
+  }, [open, searchable, normalized, settledQuery, response.isFetching, response.isFetched, response.isError, results.length, response.hasNextPage]);
+  const canContinue = open && searchable && settledQuery === normalized && response.hasNextPage && (!response.isError || continuationFailed);
   const loadMore = () => {
     if (canContinue && !response.isFetching) void response.fetchNextPage({ cancelRefetch: false });
   };
@@ -285,7 +208,7 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
     observer.observe(target);
     return () => observer.disconnect();
   }, [canContinue, continuationFailed, results.length]);
-  const rowCount = places.length + results.length;
+  const rowCount = results.length;
   const active = Math.min(selected, Math.max(0, rowCount - 1));
   // Also when the footer opens or closes: it takes its room from the list, and
   // the state that opens it is one the reader reaches without moving the
@@ -295,15 +218,9 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   }, [active, response.isFetchingNextPage, continuationFailed]);
   const choose = (index: number) => {
-    if (index < places.length) {
-      const place = places[index];
-      if (!place) return;
-      onSelectPlace(place);
-    } else {
-      const result = results[index - places.length];
-      if (!result) return;
-      onSelect(result);
-    }
+    const result = results[index];
+    if (!result) return;
+    onSelect(result);
     onOpenChange(false);
   };
   return <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -349,28 +266,17 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
             no state either of them enters can resize the modal around the reader. */}
         <div className="rally-search-body">
           {/* The scroller holds the listbox and, after it, the status lines: a
-              listbox may hold only options, so a status beside the places sits
-              outside it while still reading as the next line beneath them. */}
+              listbox may hold only options, so a status sits outside it while
+              still reading as the next line beneath the results. */}
           <div className="rally-search-results" ref={list}
             onScroll={(event) => {
               const element = event.currentTarget;
               if (element.scrollTop + element.clientHeight >= element.scrollHeight - 1) loadMore();
             }}>
             <div className="rally-search-options" id={listId} role="listbox" aria-label="Results" aria-busy={response.isFetching}>
-              {places.map((place, index) => {
-                return <div key={placeKey(place)} id={`${listId}-${index}`} role="option" aria-selected={index === active}
-                  className="rally-search-result" onMouseMove={() => setSelected(index)}
-                  onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
-                  <span className={`rally-search-result-icon is-${place.kind}`}><PlaceIcon place={place} /></span>
-                  <div className="rally-search-result-copy">
-                    <div className="rally-search-result-excerpt"><HighlightedName name={place.name} query={normalized} /></div>
-                    <div className="rally-search-result-source">{placeSource(place)}</div>
-                  </div>
-                </div>;
-              })}
               {results.map((result, resultIndex) => {
                 const Icon = ICONS[result.category];
-                const index = places.length + resultIndex;
+                const index = resultIndex;
                 return <div key={result.id} id={`${listId}-${index}`} role="option" aria-selected={index === active}
                   className="rally-search-result" onMouseMove={() => setSelected(index)}
                   onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
@@ -382,12 +288,6 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
                 </div>;
               })}
             </div>
-            {/* Places answer at once; say what the content search is doing beneath them. */}
-            {places.length > 0 && !placeTab && results.length === 0 && (response.isFetching || settledQuery !== normalized
-              ? <div className="rally-search-pending" role="status">Searching…</div>
-              : response.isError && !continuationFailed
-              ? null
-              : null)}
             {canContinue && <div ref={sentinel} className="rally-search-sentinel" aria-hidden="true" />}
           </div>
           {canContinue && (continuationFailed || response.isFetchingNextPage) && <div className="rally-search-footer" role="status">
@@ -399,11 +299,10 @@ export function SearchModal({ workspaceId, open, onOpenChange, search, onSelect,
         </div>
         {rowCount === 0 && !(canContinue && continuationFailed) && <div className="rally-search-state" role="status">
           {!searchable ? 'What are you looking for?'
-            : placeTab ? 'No results'
             : (response.isFetching || settledQuery !== normalized || canContinue) ? 'Searching…'
             : response.isError ? null : 'No results'}
         </div>}
-        {!placeTab && searchable && response.isError && !continuationFailed && <>
+        {searchable && response.isError && !continuationFailed && <>
           <ErrorNotice occurrence={response.error}>Search could not be completed. Please try again.</ErrorNotice>
           <Button onClick={() => void response.refetch()}>Retry search</Button>
         </>}

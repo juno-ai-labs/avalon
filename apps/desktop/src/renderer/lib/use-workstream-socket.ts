@@ -1,8 +1,6 @@
 import { useOptionalWorkspaceSocket } from './workspace-socket';
 import type { Annotation } from '@rally/contracts';
 import { useConversationAdmission } from './conversation-admission';
-import { mainReachable, useConversationDirectory } from './conversation-directory';
-import { useCachedWorkstreamSummary } from './use-workstreams-query';
 import { safeParseSocketEvent } from "@rally/contracts";
 import type { SidekickMessageIntent, WorkstreamAppearancePatch } from '@rally/contracts';
 import {
@@ -23,7 +21,6 @@ import {
   type TranscriptRange,
   type TranscriptRangeResult,
 } from '@rally/contracts';
-import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import { SubstreamInitialContextSchema, type SubstreamInitialContext } from '@rally/contracts/substream-creation';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { retainQueryData } from './retain-query-data';
@@ -82,13 +79,8 @@ import {
   upsertTranscriptMessage,
 } from './transcript';
 import type { HarnessStatus, Message, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from './types';
-import { withDerivedUnread } from './workstream-state-store';
 import { evictCachedSubstream, patchCachedGeneratedIcon, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
-import {
-  applyBreakoutAppearanceReceipt,
-  captureBreakoutAppearanceUpdate,
-} from './channel-viewer-state';
 import {
   conversationSeededFromLocalCache,
   hydrateConversation,
@@ -589,6 +581,15 @@ export function applyHarnessStatus(
  *
  * `viewerUserId` is null before sign-in, when nothing is anybody's own message.
  */
+/** A row's unread state, derived from its waterlines and the reader's own mark. */
+function withDerivedUnread<T extends WorkstreamSummary>(workstream: T): T {
+  const manual = workstream.manualUnreadFromSequenceNumber;
+  const seen = workstream.readThroughSequenceNumber;
+  const latest = workstream.latestAttentionSequenceNumber;
+  const firstUnread = manual ?? (latest > seen ? Math.min(latest, seen + 1) : null);
+  return { ...workstream, hasUnread: firstUnread !== null, firstUnreadSequenceNumber: firstUnread };
+}
+
 function advanceWorkstreamAttention<T extends WorkstreamSummary>(
   workstream: T,
   message: Message,
@@ -740,17 +741,8 @@ export function useWorkstreamSocket(
   socketLeaseId?: string,
   openCommitted = true,
   substreamId = '0',
-  parentKind: ConversationParentKind = 'workstream',
   active = openCommitted,
 ): WorkstreamSocketConnection {
-  // Main of a Channel this person reaches only through some of its
-  // conversations is not theirs to open; every Main feed, pooled or direct,
-  // passes here.
-  const row = useCachedWorkstreamSummary(parentId);
-  const conversationDirectory = useConversationDirectory();
-  const mainOutOfReach = parentKind === 'workstream' && substreamId === '0'
-    && mainReachable(row, conversationDirectory, parentId) === false;
-  enabled = enabled && !mainOutOfReach;
   const admissionAllowed = useConversationAdmission();
   const localCacheScope = useLocalCacheScope();
   const requestConversationView = useOptionalWorkspaceSocket()?.requestConversationView;
@@ -1229,9 +1221,6 @@ export function useWorkstreamSocket(
       const command = { type: 'set_workstream_appearance' as const, operationId: uuidV7(), appearance };
       const result = appearanceQueue.then(async () => {
         if (closedByEffect) throw new ApiError('The thread is no longer available.', 409, 'workstream_socket_unavailable');
-        const breakoutUpdate = substreamId === '0'
-          ? null
-          : captureBreakoutAppearanceUpdate(queryClient, parentId, substreamId, appearance);
         const submitted = submitSubstreamCommand(command);
         // Read after the submit, which starts a connection attempt when none is
         // open and bumps the generation as it does.
@@ -1250,15 +1239,7 @@ export function useWorkstreamSocket(
         // simply not needed there, and applying it could put the older choice
         // back with nothing left to correct it.
         if (sentOnGeneration === connectGeneration) {
-          if (substreamId === '0') {
-            patchCachedWorkstreamAppearance(queryClient, parentId, appearance);
-          } else {
-            // A Breakout is listed by its parent rather than in the top-level
-            // Channel directory. The receipt is its durable commit, so move
-            // that one row immediately while the child-to-parent projection
-            // follows and eventually replaces the whole versioned roster.
-            applyBreakoutAppearanceReceipt(queryClient, parentId, substreamId, breakoutUpdate!);
-          }
+          if (substreamId === '0') patchCachedWorkstreamAppearance(queryClient, parentId, appearance);
         }
       });
       appearanceQueue = result.catch(() => undefined);
