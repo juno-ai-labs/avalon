@@ -3820,7 +3820,7 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     // and started from `substream_initial_context` (version 40); a private
     // child mirrored its parent's roster and archive versions (versions 41 and
     // 50). Breakouts are deleted (plan step C-3). Dropping the membership
-    // mirror drops version 21's three authorization triggers on it with it;
+    // mirror drops version 44's three authorization triggers on it with it;
     // nothing else references these tables.
     statements: [
       `DROP TABLE substream_context_captures`,
