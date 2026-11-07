@@ -34,7 +34,6 @@ import {
   type ConnectorActivityTypePartition,
   type ConnectorAdapter,
   type ConnectorConnectionContext,
-  type ConnectorOriginSource,
   type ConnectorToolContext,
   type ConnectorToolResult,
 } from "./types";
@@ -706,107 +705,6 @@ function slackTimestampIso(timestamp: string | null, eventTime?: number): string
     return new Date(eventTime * 1_000).toISOString();
   }
   return new Date().toISOString();
-}
-
-/**
- * The Slack conversation an Agent invocation arrived in, as the host hands it
- * over: the channel and thread the agent actually replies into, which is not
- * always what the event carried — a DM opens its channel and posts its own
- * thread root before there is anything to reply under.
- */
-export const SlackAgentSessionOriginSchema = z.strictObject({
-  teamId: z.string().min(1).max(255),
-  channelId: z.string().min(1).max(255),
-  threadTs: z.string().min(1).max(80),
-  channelName: z.string().min(1).max(255).nullable().default(null),
-  channelType: z.enum(["public", "private", "im", "unknown"]).default("unknown"),
-  invocationType: z.string().min(1).max(80).nullable().default(null),
-});
-
-export type SlackAgentSessionOrigin = z.input<typeof SlackAgentSessionOriginSchema>;
-
-/**
- * Where a Slack-started work stream came from.
- *
- * The **thread**, not the channel: an `@Avalon` mention that opens a new
- * top-level message still gets a thread of its own, so there is always one, and
- * it is the place a person would go back to — attaching the channel would
- * collapse every work stream started in a busy channel onto one row that no
- * longer answers "where did this come from".
- *
- * Nothing here is message content. Slack Agent policy forbids durably storing
- * provider content gathered for surrounding context, so the origin carries
- * identifiers, the channel's name, and the kind of conversation; the messages
- * stay in Slack, where an authorized tool fetches them for a run.
- */
-export function slackOriginSource(fetcher: FetchLike = fetch): ConnectorOriginSource {
-  return {
-    describe(locator) {
-      if (locator.kind !== "agent_session") return null;
-      const session = SlackAgentSessionOriginSchema.parse(locator.session);
-      return {
-        resourceType: "slack_thread",
-        providerResourceId: slackThreadResourceId(session.channelId, session.threadTs),
-        title: slackOriginTitle(session),
-        canonicalUrl: null,
-        metadata: {
-          teamId: session.teamId,
-          channelId: session.channelId,
-          ...(session.channelName ? { channelName: session.channelName } : {}),
-          threadTs: session.threadTs,
-          channelType: session.channelType,
-          ...(session.invocationType ? { invocationType: session.invocationType } : {}),
-        },
-      };
-    },
-    /**
-     * Asked of Slack rather than assembled from the identifiers, because a
-     * permalink is qualified by the team's own domain — which the installation
-     * never tells us — and a guessed URL is a link that silently opens the wrong
-     * workspace.
-     */
-    async resolveCanonicalUrl(connection, origin, signal) {
-      const token = connection.credentials.botAccessToken;
-      if (typeof token !== "string") return null;
-      const [channel, messageTs] = splitSlackThreadResourceId(origin.providerResourceId);
-      if (!channel || !messageTs) return null;
-      const result = await slackApi(
-        token,
-        "chat.getPermalink",
-        { channel, message_ts: messageTs },
-        signal,
-        fetcher,
-      );
-      return result.permalink;
-    },
-    };
-  }
-
-/**
- * A thread's identity, kept distinct from its root message's.
- *
- * `normalizeSlackActivity` already identifies a message as `<channel>:<ts>`, and
- * for the root of a thread that `ts` *is* the `thread_ts` — so the obvious
- * `<channel>:<threadTs>` would be the same string, and the resource identity
- * tuple does not include the resource type. The two would collide on one row:
- * whichever arrived first would win, and a thread origin resolved against an
- * earlier `slack_message` row would keep that row's type, title, and missing
- * permalink. The `thread` segment is what keeps a conversation and the message
- * it hangs from two objects, which is what they are.
- */
-function slackThreadResourceId(channelId: string, threadTs: string): string {
-  return `${channelId}:thread:${threadTs}`;
-}
-
-function splitSlackThreadResourceId(value: string): [string | null, string | null] {
-  const parts = value.split(":");
-  if (parts.length !== 3 || parts[1] !== "thread") return [null, null];
-  return [parts[0] || null, parts[2] || null];
-}
-
-function slackOriginTitle(session: z.output<typeof SlackAgentSessionOriginSchema>): string {
-  if (session.channelType === "im") return "Slack direct message";
-  return session.channelName ? `Thread in #${session.channelName}`.slice(0, 300) : "Slack thread";
 }
 
 function slackActivityTitle(eventType: string, channel: string | null, reaction: string | null): string {
@@ -2326,7 +2224,6 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
         return normalizeSlackActivity(connection, envelope, payloadRef);
       },
     },
-    origin: slackOriginSource(fetcher),
     agentPlugin: SlackAgentPluginDescriptor,
     dynamicAgentTools: personalMcp.dynamicAgentTools,
     capabilityConnectionScopes: {

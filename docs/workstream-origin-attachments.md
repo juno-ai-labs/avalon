@@ -1,4 +1,4 @@
-# Work-stream origin attachments (retired host half)
+# Work-stream origin attachments (retired)
 
 **The host half is deleted.** A work stream that started from a place in a
 connected tool (the Slack thread `@Rally` was mentioned in, the Linear issue a
@@ -9,14 +9,12 @@ plan step C-2 deleted `workstream-origin-resource.ts` and every create path
 that attached an origin (`slack-workspace-workstream-service.ts`, the Slack
 Thread-creating path, the suggestion start).
 
-What survives is the connector half: `ConnectorOriginLocator`,
-`connectorOriginFromActivity`, `describeConnectorOrigin` and `slackOriginSource`
-in `packages/connectors`, and `ConnectorOriginResourceSchema` in
-`packages/contracts`. No API code calls them any more; they go with the
-contracts cleanup (plan step B-8) unless a Canvas or Sidekick takes them up.
+The connector half went in plan step B-8: `ConnectorOriginLocator`,
+`connectorOriginFromActivity`, `describeConnectorOrigin`,
+`ConnectorAdapter.origin`, `slackOriginSource` and
+`ConnectorOriginResourceSchema` had no caller once the host half was gone.
 Stored `workstream_resources` rows keep their `origin` label. The sections
-below describe the mechanism as it ran, and are accurate for the connector half
-only.
+below describe the mechanism as it ran; none of it exists in the tree now.
 
 ## How it works
 
@@ -339,6 +337,28 @@ neither can an adapter.
 runs through `withAuthorizedConnection` like every other provider-calling adapter
 entry point: the credentials it uses are refreshed by the door rather than by a
 step the ingress has to remember.
+
+### 2026-11-07 — The connector half is deleted
+
+**What changed:** `describeConnectorOrigin`, `connectorOriginFromActivity`,
+`connectorOriginUrl`, the `ConnectorOriginLocator`/`ConnectorOriginSource`
+types, the optional `ConnectorAdapter.origin` capability with its
+observability wrapper, Slack's `slackOriginSource` and
+`SlackAgentSessionOriginSchema`, and `ConnectorOriginResourceSchema` in
+`@rally/contracts`, with their tests.
+
+**Why:** Plan step B-8 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
+Plan step C-2 deleted every host path that attached an origin, because only a
+Thread had one; nothing in `apps/` called the connector half after that.
+
+**Considered and rejected:** Keeping it for a Canvas or a Sidekick run to
+adopt. Neither records where it started from in the PRD, and a capability no
+caller exercises drifts from the adapters it describes.
+
+**Consequences:** A future "where did this come from" link for a Sidekick run
+starts from the run's own trigger event, which already carries the provider
+object; it is new work, not this module restored. The `slack_thread` resource
+type stays in Slack's manifest, since stored resources may name it.
 
 ### 2026-08-30 — Versions is a header dropdown; Archive stays a confirm modal
 
