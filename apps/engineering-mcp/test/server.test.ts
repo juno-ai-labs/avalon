@@ -19,17 +19,12 @@ const principal: AccessPrincipal = {
 function regionalBinding(region: string): EngineeringInspectionRpcBinding {
   return {
     createOrg: vi.fn<EngineeringInspectionRpcBinding["createOrg"]>(),
-    createChannel: vi.fn<EngineeringInspectionRpcBinding["createChannel"]>(),
-    createThread: vi.fn<EngineeringInspectionRpcBinding["createThread"]>(),
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
     dumpThreadTranscripts: vi.fn<EngineeringInspectionRpcBinding["dumpThreadTranscripts"]>(),
     retireThreads: vi.fn<EngineeringInspectionRpcBinding["retireThreads"]>(),
     retireOrg: vi.fn<EngineeringInspectionRpcBinding["retireOrg"]>(),
-    readChannel: vi.fn<EngineeringInspectionRpcBinding["readChannel"]>(),
     readConversation: vi.fn<EngineeringInspectionRpcBinding["readConversation"]>(),
-    listUserChannels: vi.fn<EngineeringInspectionRpcBinding["listUserChannels"]>(),
-    listUserConversations: vi.fn<EngineeringInspectionRpcBinding["listUserConversations"]>(),
     listWorkspaces: vi.fn<EngineeringInspectionRpcBinding["listWorkspaces"]>(
       async () => ({ region, items: [] }),
     ),
@@ -137,39 +132,17 @@ describe("Rally engineering MCP tools", () => {
     expect(instructions).toContain("Never expose credentials");
   });
 
-  it.each(["list_channels", "list_threads", "list_breakouts"])("routes %s as the selected user through the authoritative region", async (name) => {
+  it.each(["read_thread", "read_breakout"])("returns unquoted participant text from %s in the authoritative region", async (name) => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
     const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
     vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
-    vi.mocked(enterprise.listUserChannels).mockResolvedValue({ waterline: 4, items: [] });
-    vi.mocked(enterprise.listUserConversations).mockResolvedValue({ items: [], nextCursor: "next-page" });
-    const request = { orgId, userId: asUserId("00000000-0000-7000-8000-000000000ef2"),
-      ...(name === "list_channels" ? {} : { channelId: "00000000-0000-7000-8000-000000000ef4", cursor: "previous-page" }) };
-    const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name, arguments: request });
-    const result = response.result as { content: Array<{ text: string }> };
-    expect(JSON.parse(result.content[0]!.text)).toEqual(name === "list_channels" ? { waterline: 4, items: [] } : { items: [], nextCursor: "next-page" });
-    if (name === "list_channels") expect(enterprise.listUserChannels).toHaveBeenCalledExactlyOnceWith(request);
-    else expect(enterprise.listUserConversations).toHaveBeenCalledExactlyOnceWith({ ...request, kind: name === "list_threads" ? "channel" : "breakout" });
-    expect(global.listUserChannels).not.toHaveBeenCalled();
-    expect(global.listUserConversations).not.toHaveBeenCalled();
-  });
-
-  it.each(["read_channel", "read_thread", "read_breakout"])("returns unquoted participant text from %s in the authoritative region", async (name) => {
-    const global = regionalBinding("global");
-    const enterprise = regionalBinding("enterprise");
-    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
-    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
-    vi.mocked(enterprise.readChannel).mockResolvedValue({ text: "Channel: Releases\n\nMaya: Ready." });
     vi.mocked(enterprise.readConversation).mockResolvedValue({ text: "Thread: Releases\n\nMaya: Ready." });
     const request = { orgId, userId: asUserId("00000000-0000-7000-8000-000000000ef2"),
-      ...(name === "read_channel" ? { channelId: "00000000-0000-7000-8000-000000000ef4" }
-        : { threadId: "00000000-0000-7000-8000-000000000ef4", ...(name === "read_breakout" ? { breakoutId: "00000000-0000-7000-8000-000000000ef5" } : {}) }) };
+      threadId: "00000000-0000-7000-8000-000000000ef4", ...(name === "read_breakout" ? { breakoutId: "00000000-0000-7000-8000-000000000ef5" } : {}) };
     const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name, arguments: request });
-    expect(response.result).toMatchObject({ content: [{ type: "text", text: `${name === "read_channel" ? "Channel" : "Thread"}: Releases\n\nMaya: Ready.` }] });
-    if (name === "read_channel") expect(enterprise.readChannel).toHaveBeenCalledExactlyOnceWith(request);
-    else expect(enterprise.readConversation).toHaveBeenCalledExactlyOnceWith({ ...request, afterSequence: 0 });
-    expect(global.readChannel).not.toHaveBeenCalled();
+    expect(response.result).toMatchObject({ content: [{ type: "text", text: "Thread: Releases\n\nMaya: Ready." }] });
+    expect(enterprise.readConversation).toHaveBeenCalledExactlyOnceWith({ ...request, afterSequence: 0 });
     expect(global.readConversation).not.toHaveBeenCalled();
   });
 
@@ -299,7 +272,7 @@ describe("Rally engineering MCP tools", () => {
     expect(global.createOrg).not.toHaveBeenCalled();
   });
 
-  it.each(["create_channel", "create_thread"])("refuses ambiguous Organization routing before %s writes", async (name) => {
+  it("refuses ambiguous Organization routing before a message is sent", async () => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
     const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
@@ -307,38 +280,11 @@ describe("Rally engineering MCP tools", () => {
       vi.mocked(binding.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "global", authorityGeneration: 1 } });
     }
     const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", {
-      name, arguments: { operationId: "00000000-0000-7000-8000-000000000ef3", orgId,
-        creatorUserId: "00000000-0000-7000-8000-000000000ef2",
-        ...(name === "create_channel" ? { name: "Releases", participantUserIds: [] }
-          : { channelId: "00000000-0000-7000-8000-000000000ef4", prompt: "Plan the release." }) },
+      name: "send_message", arguments: { operationId: "00000000-0000-7000-8000-000000000ef3", orgId,
+        userId: "00000000-0000-7000-8000-000000000ef2", threadId: "00000000-0000-7000-8000-000000000ef4", text: "Plan the release." },
     });
     expect(response.result).toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringContaining("must resolve to one region") }] });
-    for (const binding of [global, enterprise]) {
-      expect(binding.createChannel).not.toHaveBeenCalled();
-      expect(binding.createThread).not.toHaveBeenCalled();
-    }
-  });
-
-  it("routes Thread creation to its Organization and keeps prompt text out of audit logs", async () => {
-    const global = regionalBinding("global");
-    const enterprise = regionalBinding("enterprise");
-    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
-    const request = { operationId: "00000000-0000-7000-8000-000000000ef3", orgId,
-      creatorUserId: asUserId("00000000-0000-7000-8000-000000000ef2"),
-      channelId: "00000000-0000-7000-8000-000000000ef4", prompt: "Confidential release plan" };
-    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
-    vi.mocked(enterprise.createThread).mockRejectedValue(new Error("engineering_operation_failed:user_not_active_organization_user"));
-    const audit = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    try {
-      const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name: "create_thread", arguments: request });
-      expect(response.result).toMatchObject({ isError: true });
-      expect(enterprise.createThread).toHaveBeenCalledExactlyOnceWith(request, principal);
-      expect(global.createThread).not.toHaveBeenCalled();
-      expect(JSON.stringify(audit.mock.calls)).not.toContain("Confidential release plan");
-      expect(audit).toHaveBeenCalledWith(expect.stringContaining('"error_code":"engineering_operation_failed:user_not_active_organization_user"'));
-    } finally {
-      audit.mockRestore();
-    }
+    for (const binding of [global, enterprise]) expect(binding.sendMessage).not.toHaveBeenCalled();
   });
 
   it.each(hostedClients.originHostnames)("admits the %s hosted origin to the MCP transport", async (hostname) => {
@@ -355,20 +301,14 @@ describe("Rally engineering MCP tools", () => {
     const result = response.result as { tools: Array<{ name: string; annotations?: Record<string, boolean> }> };
     expect(result.tools.map((tool) => tool.name)).toEqual([
       "create_org",
-      "create_channel",
-      "create_thread",
       "send_message",
       "pause_sidekick",
       "resume_sidekick",
       "retire_org",
       "dump_thread_transcripts",
       "retire_threads",
-      "read_channel",
       "read_thread",
       "read_breakout",
-      "list_channels",
-      "list_threads",
-      "list_breakouts",
       "list_workspaces",
       "list_orgs",
       "search_orgs",
