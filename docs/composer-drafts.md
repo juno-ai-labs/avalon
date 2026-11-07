@@ -24,14 +24,15 @@ the attachment hook, or the cache itself.
 
 ### Which surfaces cache a draft
 
-Two surfaces cache a draft, and they are the only ones that do:
+These surfaces cache a draft, and they are the only ones that do:
 
 | Surface | Component | Cache key |
 | --- | --- | --- |
 | A conversation's composer, a work stream's or an automation's | `ConversationSurface` through `WorkstreamComposer` | `workspace:<region>:<workspaceId>:workstream:<parentId>`, the parent being the work stream or the automation |
+| A Canvas's Chat | `ConversationSurface` with `parentKind: "canvas"` | `workspace:<region>:<workspaceId>:canvas:<canvasId>`, `canvasDraftKey`; its annotation scope is `canvas:<canvasId>`, which `annotationDraftKeyForScope` maps back for a detached artifact window |
 | A Channel's composer | `ChannelComposer` | `workspace:<region>:<workspaceId>:new-workstream:space:<channelId>`, `newWorkstreamDraftKey` plus the Channel's id |
 
-`common/draft-keys.ts` is the single place those strings are built. A draft's text and
+`common/draft-keys.ts` is the single place those strings are built; `ConversationSurface` picks the family by parent kind through `conversationDraftKey` and `conversationAnnotationScope`, and a Sidekick's shared conversation stays in the work-stream family it has always used, so no released draft moves. A draft's text and
 its attachments share one key, so the two halves of a composer can never drift
 apart, and the launchers are scoped by regional workspace identity so switching
 workspaces does not surface another workspace's words even if configured deployments hold
@@ -288,6 +289,23 @@ signing out deletes all of them. [`security.md`](security.md) owns the boundary 
 sits inside.
 
 ## Changelog
+
+### 2026-11-07 — A Canvas's Chat drafts under its own family
+
+**What changed:** A Canvas's Chat caches its draft, attachments and annotation
+pins under `canvas:<canvasId>` and registers the annotation scope
+`canvas:<canvasId>`, chosen by parent kind in `conversationDraftKey`.
+
+**Why:** A Canvas is a new conversation parent
+([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)); keying it as a work
+stream would put Canvas drafts in front of every reader of `workstream:` keys
+(the legacy migration, the Breakout launcher) and make the cutover's deletion
+of those families take Canvas drafts with it.
+
+**Consequences:** The workspace prefix still leads, so leaving an Organization
+clears Canvas drafts with the rest. A popped-out artifact's Copy link reads the
+scope's first part as a thread id; for a Canvas that is `canvas`, and the
+Canvas link form is plan step B-5.
 
 ### 2026-10-20 — Persist confirmed artifact comments with composer drafts
 

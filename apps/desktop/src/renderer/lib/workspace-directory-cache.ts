@@ -109,7 +109,7 @@ function isWorkstreamSummaryLike(value: unknown): value is WorkstreamSummary {
     && (candidate['spacePins'] === undefined || Array.isArray(candidate['spacePins']));
 }
 
-function isAutomationSummaryLike(value: unknown): value is AutomationSummary {
+export function isAutomationSummaryLike(value: unknown): value is AutomationSummary {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
   return typeof candidate['id'] === 'string'

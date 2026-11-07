@@ -16,7 +16,7 @@ import {
   writeDraftAttachment,
   writeDraftText,
 } from './draft-cache';
-import { newAutomationDraftKey, newWorkstreamDraftKey, workstreamDraftKey } from './draft-keys';
+import { conversationDraftKey, newAutomationDraftKey, newWorkstreamDraftKey, workstreamDraftKey } from './draft-keys';
 import type { WorkstreamResource } from './types';
 
 const resource: WorkstreamResource = {
@@ -166,6 +166,22 @@ describe('draft cache', () => {
     await writeDraftText('workstream:1', 'a new session, a new draft', [], atEpoch);
 
     expect((await readDraftText('workstream:1'))?.text).toBe('a new session, a new draft');
+  });
+
+  it("keeps a Canvas's Chat draft apart from a thread with the same id, and clears it with its organization", async () => {
+    const canvasKey = conversationDraftKey('enterprise', 'shared-workspace', 'canvas', '7');
+    const threadKey = conversationDraftKey('enterprise', 'shared-workspace', 'workstream', '7');
+    await writeDraftText(canvasKey, 'the Canvas draft');
+    await writeDraftText(threadKey, 'the thread draft');
+    await cacheAttachment(canvasKey, 'canvas-file', 'canvas');
+
+    expect((await readDraftText(canvasKey))?.text).toBe('the Canvas draft');
+    expect((await readDraftText(threadKey))?.text).toBe('the thread draft');
+
+    await clearWorkspaceDrafts('enterprise', 'shared-workspace');
+
+    expect(await readDraftText(canvasKey)).toBeNull();
+    expect(await readDraftAttachments(canvasKey)).toEqual([]);
   });
 
   it('clears one regional organization without touching a same-id organization in another region', async () => {
