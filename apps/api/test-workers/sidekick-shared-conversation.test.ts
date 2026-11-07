@@ -287,6 +287,13 @@ async function rowReaches(runId: string, wanted: string): Promise<RunRowView> {
   return latest!;
 }
 
+/** The run row turn's stored text, as `conversation_read` and gap-fill read it. */
+async function storedRowContent(runId: string): Promise<string | null> {
+  return runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{ content: string | null }>(
+    `SELECT content FROM canonical_conversation_turn_details WHERE client_message_id = ?`, `sidekick-run:${runId}`,
+  ).one().content);
+}
+
 /** The run's first activation, once it has ended. */
 async function runSettled(runId: string): Promise<void> {
   await expect.poll(() => runInDurableObject(conversationStub(runId), (_instance, state) => {
@@ -448,7 +455,8 @@ describe("a Sidekick's shared conversation", () => {
   });
   it("writes a run's row into the shared conversation and carries its reply when the run finishes", async () => {
     await activeSidekick();
-    script = [{ say: "Version 4.2 shipped the new importer." }];
+    // One tool call, so the row's step count has something to count.
+    script = [{ callTool: { name: "conversation_list", arguments: {} } }, { say: "Version 4.2 shipped the new importer." }];
     const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "row-run-0001" });
     expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
     const running = await rowReaches(started.runId, "running");
@@ -461,10 +469,31 @@ describe("a Sidekick's shared conversation", () => {
       turns: 1,
       runId: started.runId,
       text: "Version 4.2 shipped the new importer.",
-      run: { state: "completed", stepCount: 0, reply: "Version 4.2 shipped the new importer." },
+      run: { state: "completed", stepCount: 1, reply: "Version 4.2 shipped the new importer." },
     });
+    // The stored turn says the same, for every reader that reads it rather than the joined row.
+    expect(await storedRowContent(started.runId)).toBe("Version 4.2 shipped the new importer.");
     // The wizard was not woken by the row.
     expect(await wizardExecutions()).toEqual([]);
+  });
+
+  it("drops a projection older than the row it holds", async () => {
+    await activeSidekick();
+    script = [{ say: "Shipped." }];
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "row-run-0003" });
+    await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
+    await runSettled(started.runId);
+    await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
+    const finished = await rowReaches(started.runId, "completed");
+    const held = await runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{ source_version: number }>(
+      `SELECT source_version FROM sidekick_run_rows WHERE run_id = ?`, started.runId,
+    ).one().source_version);
+    expect(await conversationStub().projectSidekickRunRow({
+      ...addressed(), runId: started.runId, automationName: "Release notes", triggerKind: "manual",
+      createdAt: held - 1, state: "running", stepCount: 0, reply: null, version: held - 1,
+    })).toEqual({ outcome: "unchanged", code: "sidekick_run_row_stale" });
+    expect(await runRow(started.runId)).toEqual(finished);
+    expect(await storedRowContent(started.runId)).toBe("Shipped.");
   });
 
   it("rebuilds a run's row from the Sidekick's runs on a replay", async () => {
@@ -475,9 +504,12 @@ describe("a Sidekick's shared conversation", () => {
     await runSettled(started.runId);
     await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
     await rowReaches(started.runId, "completed");
-    // The conversation's copy drifts; the Sidekick's run row does not.
+    // The conversation's copy drifts, and its version runs ahead of the run
+    // (a clock step, a bad write), so an ordinary delivery would drop the
+    // repair as stale. The Sidekick's run row does not drift.
     await runInDurableObject(conversationStub(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE sidekick_run_rows SET state = 'running', reply = NULL, source_version = 0 WHERE run_id = ?`, started.runId);
+      state.storage.sql.exec(`UPDATE sidekick_run_rows SET state = 'running', reply = NULL, source_version = source_version + 86400000
+        WHERE run_id = ?`, started.runId);
     });
     expect((await runRow(started.runId)).run?.state).toBe("running");
     expect(await workspaceStub().sidekickReplayRunRows({ ...addressed(), actor: actor() })).toEqual({ armed: 1 });

@@ -184,6 +184,8 @@ export function scopeConversations(
   channelIds: readonly string[] = [],
 ): ScopedConversation[] {
   const addresses: Array<ConversationAddress & { isHome: boolean; isOwn: boolean; isParent: boolean }> = [];
+  // Only a Sidekick's scope has an automation-kind address, its own.
+  let sidekick: string | null = null;
   if (scope.kind === "conversation") {
     addresses.push({ parentKind: "workstream", parentId: scope.parentId, substreamId: scope.substreamId,
       isHome: false, isOwn: true, isParent: false });
@@ -211,7 +213,7 @@ export function scopeConversations(
         isHome: false, isOwn: false, isParent: false });
     }
   } else {
-    const sidekick = sidekickTitle(sql, scope.automationId);
+    sidekick = sidekickTitle(sql, scope.automationId);
     if (sidekick === null) return [];
     // The Sidekick's own conversation comes first: the wizard's own, the one a
     // run sits inside, and where a post goes when it names no conversation.
@@ -234,7 +236,7 @@ export function scopeConversations(
   const scoped: ScopedConversation[] = [];
   for (const address of addresses) {
     const facts = address.parentKind === "automation"
-      ? { kind: "sidekick" as const, title: sidekickTitle(sql, address.parentId) ?? "", archived: false, readable: true }
+      ? { kind: "sidekick" as const, title: sidekick ?? "", archived: false, readable: true }
       : descriptions.get(conversationIdOf(address));
     if (!facts) continue;
     scoped.push({ ...address, conversationId: conversationIdOf(address), ...facts });

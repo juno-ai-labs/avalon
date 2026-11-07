@@ -344,8 +344,14 @@ export const SidekickRunRowProjectionSchema = z.strictObject({
   stepCount: z.number().int().nonnegative(),
   reply: z.string().max(1_000).nullable(),
   version: z.number().int().nonnegative(),
+  /**
+   * Set by a replay: apply this projection even when the conversation holds a
+   * newer version. Safe because the projection is the run read at delivery,
+   * and it is how a row whose version ran ahead of its run is repaired.
+   */
+  replay: z.boolean().default(false),
 });
-export type SidekickRunRowProjection = z.infer<typeof SidekickRunRowProjectionSchema>;
+export type SidekickRunRowProjection = z.input<typeof SidekickRunRowProjectionSchema>;
 
 export const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
 export const AUTOMATION_RUN_ALARM_KIND = "automation_run";

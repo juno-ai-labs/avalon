@@ -4,11 +4,12 @@ import type { SqlStorageValue } from "@cloudflare/workers-types";
  * A Sidekick run's row in its Sidekick's shared conversation, as the
  * conversation reads it.
  *
- * The row is an `automation_activation` turn written once; what it shows (the
- * run's state, its steps, its reply) lives in `sidekick_run_rows`, the
- * conversation's projection of the Sidekick's `sidekick_runs` row, and is
- * joined in here whenever the turn is read. `docs/automation-lifecycle.md`
- * owns the mechanism.
+ * The row is an `automation_activation` turn; what it shows (the run's state,
+ * its steps, its reply) lives in `sidekick_run_rows`, the conversation's
+ * projection of the Sidekick's `sidekick_runs` row, and is joined in here
+ * whenever the turn is read. The turn's stored text is replaced alongside, so
+ * a reader of the stored turn alone sees the same line.
+ * `docs/automation-lifecycle.md` owns the mechanism.
  */
 
 export type SidekickRunRowState = "pending" | "running" | "needs_input" | "completed" | "failed" | "stopped";
