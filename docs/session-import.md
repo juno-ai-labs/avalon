@@ -22,6 +22,23 @@ changelog. Do not build on anything it describes.
 
 ## Changelog
 
+### 2026-11-07 — Session import is deleted
+
+**What changed:** The run service and routes went in plan step C-1; step C-2
+deleted the import desktop action, the reservation reclaim and its WorkspaceDO
+alarm lane, the share-URL and file helpers, the `session_import` agent profile
+and `AgentLoopDO`'s prepared-conversation install. The `imported_session_*` and
+`prepared_conversation_receipts` tables stay until step C-3, and migration
+119's statements moved byte for byte to `retired-workspace-schema.ts`.
+
+**Why:** An import landed in a reserved Channel, which the
+[Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+removes; the PRD does not carry import onto Canvases, so nothing was left to
+reserve into.
+
+**Consequences:** No client offers import. Bringing it back means designing
+it onto a Canvas's Chat, not restoring this code.
+
 ### 2026-10-19 — The Organization watches every import reservation
 
 **What changed:** A new-thread import's reservation now arms a row in

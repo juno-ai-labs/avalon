@@ -527,6 +527,23 @@ would be a way into somebody else's workspace.
 
 ## Changelog
 
+### 2026-11-07 — The four Thread and Channel hops end at the consumer
+
+**What changed:** A `workstream_audience_narrowed`, `workstream`, `space` or
+`workstream_automations` revocation target is acknowledged by the access
+revocation consumer without a hop, and `WorkspaceDO.revokeSocketAccess` no
+longer runs a hosted Channel's step; it names every Canvas and its children's
+conversations for the caller to close.
+
+**Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+retired Threads and Channels and the conversations under them, so a hop queued
+before the deploy has nothing left to close. Acknowledging rather than failing
+keeps such a message from retrying to the dead-letter queue.
+
+**Consequences:** The four target kinds stay in the message schema until no
+producer can have one in flight; plan step C-4 removes their producers' last
+callers.
+
 ### 2026-11-07 — A room owns no Sidekick, so its Sidekick hop ends at the consumer
 
 **What changed:** `WorkspaceDO.automationIdsOwnedByWorkstream` is deleted, and

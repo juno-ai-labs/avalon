@@ -164,7 +164,6 @@ export function claimWorkspaceNotificationIntent(
           ...summary(claimed),
           workspaceId: claimed.workspace_id,
           sourceGeneration: claimed.source_generation,
-          requiredDirectoryVersion: claimed.required_directory_version,
           payloadJson: claimed.payload_json,
         },
       });
@@ -295,6 +294,6 @@ export function readNotificationIntentForDelivery(storage: DurableObjectStorage,
   const row = storage.sql.exec<NotificationIntentRow>(`SELECT * FROM workstream_notification_intents
     WHERE workspace_id = ? AND intent_id = ? AND payload_json IS NOT NULL AND state <> 'skipped'`, input.workspaceId, input.intentId).toArray()[0];
   return row ? WorkspaceNotificationIntentDeliverySchema.parse({ intentId: row.intent_id, workstreamId: row.workstream_id, recipientUserId: row.recipient_user_id, notificationKind: row.notification_kind, workspaceId: row.workspace_id,
-    sourceGeneration: row.source_generation, requiredDirectoryVersion: row.required_directory_version,
+    sourceGeneration: row.source_generation,
     payloadJson: row.payload_json }) : null;
 }
