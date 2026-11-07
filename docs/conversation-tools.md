@@ -36,8 +36,8 @@ conversations are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 | Loop | Scope | Tools | Acts as |
 | --- | --- | --- | --- |
-| Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation, its Thread's Main, the Channels the Thread is in, and all Threads and Breakouts in those Channels | list, read, search, merge | The person it works for, admitted to Main by the Breakout |
-| Thread Main (`parentKind: workstream`, substream `"0"`) | Its own thread, the Channels it is in, and all Threads and Breakouts in those Channels | list, read, search, merge | The person it works for |
+| Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation, its Thread's Main, the Channels the Thread is in, and all Threads and Breakouts in those Channels | list, read, search | The person it works for, admitted to Main by the Breakout |
+| Thread Main (`parentKind: workstream`, substream `"0"`) | Its own thread, the Channels it is in, and all Threads and Breakouts in those Channels | list, read, search | The person it works for |
 | Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's own conversation (`isOwn`) and its attachments | list, read, search, post, attach | The person talking to it |
 | Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`) and its attachments | list, read, search, post | The run-as user |
 
@@ -168,20 +168,8 @@ it.
 - **attach** takes `conversation` and returns
   `{ conversationId, kind, title, alreadyAttached }`. It writes one
   `sidekick_conversation_attachments` row per Sidekick and conversation.
-- **merge** (`conversation_merge`) takes `body` alone, in every loop, and
-  merges into every parent with nothing to choose: a Breakout into its
-  Thread's Main, a Thread into every Channel it is in that the person can post
-  in. It returns `{ merges: [...] }`, one merge route result per target. It
-  calls `ConversationMergeService`, the Merge button's own service, as the
-  person the loop serves, under the `connector` principal after reading their
-  active membership. The key is `conversation-merge:<harnessRunId>:<receiptId>`,
-  passed as each merge's `clientMessageId`; each target keeps its own receipt,
-  so a call that failed part way finishes on its retry. A Breakout's merge into
-  its Thread carries `actingAgent: true` and reads "merged by Rally for
-  <person>". The Merge button still offers one Channel at a time; the PRD's
-  `channel` argument and its Channel-naming system line were dropped for the
-  tool ([`PRDs/2026-10-16_merge-back/agent-behavior.md`](PRDs/2026-10-16_merge-back/agent-behavior.md)
-  records the first contract). The mechanism is `conversation-merge.md` (retired).
+- **merge** (`conversation_merge`) is retired: its backend was deleted with
+  `ConversationMergeService` (plan step C-2); see the changelog.
 
 ### Admission
 
@@ -258,10 +246,6 @@ Each refusal is a typed failure with a stable `code`, a model-visible sentence
 | attach | `conversation_not_found` | `field` |
 | read, search, post, attach | `conversation_archived` | `resourceId` |
 | read, search, post, attach | `conversation_access_denied` (a Channel's feed refused included) | `resourceId` |
-| merge | `invalid_arguments` (empty `body`, or any other field) | `field`, `expected` |
-| merge | `merge_target_not_writable` (no Channel the person can post in) | none |
-| merge | `merge_resource_not_shareable` | `field` (`body.resources[i]`) |
-| merge | `conversation_archived`, `conversation_access_denied` | `resourceId` |
 | read_next, list_next | the wrapper's page codes, per [`tool-pagination.md`](tool-pagination.md) | as there |
 
 `available` is cut to the shared failure-detail bound,
@@ -289,9 +273,7 @@ whole rather than splitting it.
   system-message lines (a run's final-message instruction among them), a
   homeless Sidekick's required `conversation`, each refusal's sentence and
   details, the post key and its replay, the read budget and its cut, the
-  continuation, and link parsing; for `merge`, which loop gets it, its one
-  argument, the pinned lines, the key and its replay, a Thread merging into
-  each of its Channels, and each refusal's sentence. A Channel: listed by id
+  continuation, and link parsing. A Channel: listed by id
   and title alone, its feed read as messages, and its continuation resuming
   inside a feed page and onto the next. Search: matches from a Channel and a
   Thread, newest first, a hit outside the scope dropped, the newest matches kept
@@ -346,6 +328,19 @@ is published to the target's audience; the person who attached that
 conversation chose that audience.
 
 ## Changelog
+
+### 2026-11-07 — The merge tool is retired
+
+**What changed:** `conversation_merge` is no longer given to any loop, and its
+backend (`ConversationMergeService`, the ports, the argument schema and the
+refusal sentences) is deleted. A Thread or Breakout loop keeps list, read and
+search until those loops go with Threads.
+
+**Why:** No Thread or Breakout remains to merge from after the Canvases and
+Sidekicks cutover, and the merge route went with the Thread routes. The prompt
+vocabulary that still names merging (`conversationsSystemMessage`'s `merges`
+line, now always off) is left to plan step C-5, which rewrites that vocabulary
+under its golden hashes.
 
 ### 2026-11-06 — A post that names no conversation lands in the Sidekick's own conversation
 
