@@ -399,8 +399,6 @@ Rally **AI**:
 - **A Space's participants.** Not a share: a Space grants no access, so its
   invitees are listed by address and seated as participants when they accept
   ([Spaces](spaces.md#participants)).
-- **iOS, the Channel details sheet.** Lists invitees under People and shares
-  the open conversation with the one tapped.
 
 When the invitee signs in, the claim makes them a guest of the Channel, and
 accepting the Organization invitation makes them a member, which keeps the

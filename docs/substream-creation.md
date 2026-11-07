@@ -46,10 +46,6 @@ execution independently. See [prepared conversations](session-import.md).
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Renders that surface in place of the conversation's own three rows, and `branchProvenance`, which chooses the turns it fades. |
 | `apps/desktop/src/renderer/lib/launched-conversation.ts` | The optimistic opening transcript and the child detail both launchers seed. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Authoritative baseline, initial-context assembly and readiness. |
-| `apps/ios/Rally/Network/RallyClient.swift` | Same prepare, confirm, cancel, rename and archive routes the desktop client calls. |
-| `apps/ios/Rally/Network/WorkstreamControlSocket.swift` | Parent `workstream_metadata` child directory on iPhone. |
-| `apps/ios/Rally/App/AppModel.swift` | iOS creation state machine: nothing reserved until submit, launch composer, then the child's feed socket. |
-| `apps/ios/Rally/Features/Chat/SubstreamSwitcher.swift` | Phone-shaped center rail: conversation chip, Main/child sheet, launch surface. |
 
 ## How it works
 

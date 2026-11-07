@@ -242,7 +242,7 @@ and why nobody who never saw the Channel is sent one, is in
 [`websocket-architecture.md`](websocket-architecture.md#who-the-workspace-socket-tells-and-how-often).
 
 The Channel control socket (`/parent-socket`, tagged `parent-control:<id>`)
-still works for desktops released before this and for the iOS client, and its
+still works for desktops released before this, and its
 revocation paths (`revokeNarrowedAudienceAccess`, `revokeSocketAccess`) still
 close it. No current desktop opens one.
 
@@ -634,8 +634,7 @@ Space in an Organization now shares one SQLite database and one socket set.
 - Retiring the Channel control socket: `/parent-socket`,
   `HostedParent.acceptSocket`/`onSocketMessage`/`broadcastMetadata`'s socket
   loop, `WorkstreamControlSocketService` and `GET /workstreams/:id/control-socket`
-  can go once the oldest supported desktop is the one that stopped opening it
-  and the iOS client reads its child directory from its workspace socket.
+  can go once the oldest supported desktop is the one that stopped opening it.
 - Spaces created before 2026-09-26 still have an idle hidden conversation
   object. Nothing writes or reads it ([`spaces.md`](spaces.md#the-retired-hidden-conversation));
   deleting those objects is its own decision.
@@ -661,6 +660,12 @@ an alarm-driven RPC, not an outbox row: the write is idempotent and versioned
 by the run's `updated_at`, so the alarm's retry is all the delivery guarantee
 it needs. A change that moves this onto the Queue must keep the handler
 reading the run at delivery time, never carrying a copy.
+
+### 2026-11-06 — The iOS client is deleted
+
+The Channel control socket was kept partly for the iOS client's child directory;
+with `apps/ios` deleted, only released desktops hold it open, and the socket is
+removed in a later phase of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
 
 ### 2026-10-23 — Read historical directory projections without retaining obsolete fields
 

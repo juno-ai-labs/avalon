@@ -186,7 +186,7 @@ the approver's inbox, and it acts only as the approver.
   leaves the Breakout half out rather than aborting the connect: an unguarded
   read there stops the sidebar opening. Guard: `space-authority.test.ts`
   "given an Organization held at schema 57".
-- **The iOS badge leaves requests out.** The APNs badge is counted by
+- **The APNs badge leaves requests out.** It is counted by
   `readerAttentionCount` on the server, which counts conversations only. The
   macOS dock badge and the menu bar include requests.
 - **Approving can send two emails.** The decision email, and the ordinary

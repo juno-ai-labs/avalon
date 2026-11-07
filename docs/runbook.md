@@ -966,7 +966,7 @@ the answer.
 The gate keys on the **absence of `x-rally-client-contract`**, or on a declared
 version below `MINIMUM_SERVED_CLIENT_CONTRACT`. `Origin` only separates a
 browser context from a native one: a request with no contract header and no
-`Origin` is admitted, because iOS and the desktop main process decode with
+`Origin` is admitted, because the desktop main process decodes with
 schemas that ignore unknown keys and refusing them would break working clients
 over a problem they do not have.
 
