@@ -280,6 +280,24 @@ message.
 **Changes:** The Product behavior for "Sidekick open" and the prose of section
 4 of [design.html](design.html) now say so. The frames are unchanged.
 
+### 2026-11-07 — A manager marks a wizard edit explicitly
+
+**Decided:** In a Sidekick's shared conversation, every message addressed to
+the Sidekick starts a run, from a manager as much as from anyone else. A
+manager edits the Sidekick by marking a message as a wizard edit with an
+explicit intent carried on the message; the server accepts that intent only
+from a manager. Nothing infers which of the two a manager meant.
+
+**Why:** The first build of the routing sent every manager message to the
+wizard, so a manager could never ask the Sidekick to do work from its own
+conversation. Inferring wizard-versus-run from the text would be a new
+classifier with its own failure mode; an explicit mark is cheaper, faster and
+cannot misroute.
+
+**Changes:** Plan step A-1 and the composer in step A-13 (a wizard-edit
+affordance for managers). The wizard and run separation from the earlier
+entry stands.
+
 ### 2026-11-06 — Canvas conversations stay in the conversation object, which is renamed
 
 **Decided:** A Canvas's conversation is an ordinary conversation object, the
