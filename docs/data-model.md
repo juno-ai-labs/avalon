@@ -400,7 +400,7 @@ SQL joins.
   full rest outright. `decision` records the outcome including `kept`, because
   knowing the loop looked is what separates a description that still fits from one
   nothing has examined. See
-  [`workstream-descriptions.md`](workstream-descriptions.md).
+  [`workstream-naming.md`](workstream-naming.md) (retired).
 - `workstream.scope` answers who may read a work stream, in the same
   `personal`/`workspace` vocabulary `notes.scope` uses. Privacy is a declared
   property of the row rather than a rule each caller has to remember. The
@@ -1222,7 +1222,6 @@ has a document, and the column notes above point at it rather than restating it:
 | The local-only snapshot a fresh development database starts from | [`d1-baseline-migrations.md`](d1-baseline-migrations.md) |
 | The surfaces, flows, and contract boundaries around this schema | [`architecture.md`](architecture.md) |
 | Which region a row lives in and what crosses | [`regionalization.md`](regionalization.md) |
-| The description refresh loop | [`workstream-descriptions.md`](workstream-descriptions.md) |
 | Pinning and the pinned sidebar section | [`workstream-pinning.md`](workstream-pinning.md) |
 | The automation lifecycle and every `sidekick_*` table | [`automation-lifecycle.md`](automation-lifecycle.md) |
 | The conversation-parent contract and the effect legs between the objects | [`workstream-durable-object.md`](workstream-durable-object.md) |
