@@ -85,6 +85,7 @@ import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { memberPreferencesQueryKey } from './use-member-preferences';
 import { accessRequestsQueryKey, CONVERSATION_ACCESS_RECOVERY_QUERY_KEY, refreshConversationAccessPreviews } from './access-requests';
 import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
+import { hydrateCanvasDirectory, mirrorCanvasDirectory } from './canvas-directory-cache';
 import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
@@ -1666,11 +1667,16 @@ export function WorkspaceSocketProvider({
     const localCacheMirror = localCacheScope === null
       ? null
       : mirrorWorkspaceDirectory(queryClient, localCacheScope, { live: () => directoryLive });
-    if (localCacheScope !== null) void hydrateWorkspaceDirectory(queryClient, localCacheScope, () => !stopped);
+    const canvasCacheMirror = localCacheScope === null ? null : mirrorCanvasDirectory(queryClient, localCacheScope);
+    if (localCacheScope !== null) {
+      void hydrateWorkspaceDirectory(queryClient, localCacheScope, () => !stopped);
+      void hydrateCanvasDirectory(queryClient, localCacheScope, () => !stopped);
+    }
     void connect();
     return () => {
       stopped = true;
       localCacheMirror?.stop();
+      canvasCacheMirror?.stop();
       releaseData();
       listWorkstreamsRef.current = () => Promise.reject(new ApiError(
         'The organization is no longer connected.',

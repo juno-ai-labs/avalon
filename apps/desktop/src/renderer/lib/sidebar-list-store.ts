@@ -166,6 +166,15 @@ export function applyVersionedSidebarList<K extends SidebarList>(
 }
 
 /**
+ * Whether the socket has applied this list in this session. A seed from the
+ * local cache writes the list but never the ledger, so this is what tells a
+ * mirror the list is the socket's rather than the disk's own copy back.
+ */
+export function sidebarListApplied(queryClient: QueryClient, list: SidebarList): boolean {
+  return queryClient.getQueryData<Partial<Record<SidebarList, number>>>(SIDEBAR_LIST_WATERLINES_KEY)?.[list] !== undefined;
+}
+
+/**
  * Apply both Space directories only when their WorkspaceDO waterline is newer.
  *
  * One waterline for the pair, because WorkspaceDO reads both halves inside one

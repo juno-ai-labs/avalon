@@ -33,6 +33,7 @@ here, with reconciliation and retries owned by the linked projection document.
 | `apps/desktop/src/renderer/lib/local-cache-scope.tsx` | `LocalCacheScopeProvider` and `useLocalCacheScope`: the regional workspace every row below it belongs to. No provider, no cache. |
 | `apps/desktop/src/renderer/lib/conversation-cache.ts` | The `conversation` slice: one row per `(parent, substream)`, `hydrateConversation`, `mirrorConversation`, the seed marker, and the pruning and forgetting entry points. |
 | `apps/desktop/src/renderer/lib/organization-usage.ts` | The `usage` slice: one row per Organization scope holding the last `GET /workspace/usage` answer and when it arrived; `useOrganizationUsage`, which seeds from it and writes each answer back. |
+| `apps/desktop/src/renderer/lib/canvas-directory-cache.ts` | The `canvas-directory` slice: one row per workspace holding the Canvases and Sidekicks lists the socket last applied; `hydrateCanvasDirectory`, `mirrorCanvasDirectory`. |
 | `apps/desktop/src/renderer/lib/workspace-directory-cache.ts` | The `directory` slice: one row per workspace holding the Channel list, the automation and note lists, and both Space directories; `hydrateWorkspaceDirectory`, `mirrorWorkspaceDirectory`. |
 | `apps/desktop/src/renderer/lib/transcript.ts` (`openingTranscriptSnapshot`) | The shape a transcript is persisted in: its opening ranges only. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Hydrates a conversation at effect start, mirrors it while mounted, and treats a seed as neither a completed opening nor a snapshot fence. |
@@ -130,12 +131,13 @@ for the same boundaries within one renderer, while other slices keep their
 existing global local-epoch behavior. This uses the existing entries store
 without a schema upgrade; metadata rows have an empty scope outside user rows.
 
-Three slices exist today, and the next surface that wants to paint before its
+Four slices exist today, and the next surface that wants to paint before its
 answer arrives defines another:
 
 | Slice | Key | Subject | Holds |
 | --- | --- | --- | --- |
 | `directory` | `directory` | `directory` | The Channel list as the sidebar holds it, each of those Channels' breakout lists and rails, the automation list, the active and archived Space directories, and the compatible personal-order payload used by the manually arranged Space rail. |
+| `canvas-directory` | `canvas-directory` | `canvas-directory` | The Canvases list (`workspace_canvas_list` rows) and the Sidekicks list, each only once the socket has applied it in the writing session; an absent list seeds nothing. |
 | `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a private child's inherited context. |
 | `usage` | `usage` | `usage` | The last `OrganizationUsage` answer, the plan, the share of the week's quota left, the reset instant and the month's overage, and `fetchedAt`, the time it arrived. |
 
@@ -242,6 +244,18 @@ After the first live payload the provider mirrors those entries back to the
 row: any change to any of them schedules one write, coalesced over
 `LOCAL_CACHE_WRITE_COALESCE_MS`. Until that payload has landed the mirror
 observes and writes nothing, so the seed never persists itself.
+
+### What the Canvases and Sidekicks lists paint
+
+`WorkspaceSocketProvider` reads the `canvas-directory` row beside the
+`directory` row and seeds the Canvases list and the Sidekicks list into their
+cache entries, each only if nothing has written it yet. The mirror writes a
+list only once `sidebarListApplied` says the socket's waterline ledger holds
+it, which a seed never writes, so a launch that never connected cannot write
+its own seed back, and the first live list applies over the seed at any
+waterline. The Sidekicks list is on the `directory` row too until the cutover
+deletes that row's Channel parts (plan step B-3); both seeds fill only an empty
+entry, so whichever lands first paints.
 
 ### What a Channel's menu shows before its conversation answers
 
@@ -577,7 +591,7 @@ same way it backs the draft cache. Two traps, both already paid for once:
 
 The suites are `components/organization-usage.test.tsx` (the `usage` slice: cached paint, the offline label, the write-back; the plan-change push and the reread on subscribe are in `lib/workspace-socket.test.tsx`),
 `lib/local-cache.test.ts`, `lib/local-cache-mirror.test.ts`,
-`lib/conversation-cache.test.ts`, `lib/workspace-directory-cache.test.ts`,
+`lib/conversation-cache.test.ts`, `lib/workspace-directory-cache.test.ts`, `lib/canvas-directory-cache.test.ts`,
 `components/connecting-card.test.tsx`, the `openingTranscriptSnapshot` cases in
 `lib/transcript.test.ts`, and the local-cache blocks appended to
 `lib/use-workstream-socket.test.tsx`, `lib/workspace-socket.test.tsx`,
@@ -620,6 +634,23 @@ is small. The cost that would grow is the persisted transcript, and
 scrolling.
 
 ## Changelog
+
+### 2026-11-07 — A slice for the Canvases and Sidekicks directory
+
+**What changed:** A `canvas-directory` slice holds the Canvases and Sidekicks
+lists as the socket last applied them, seeded before the socket answers and
+mirrored after, under the sidebar-list waterline ledger rather than a `live`
+flag.
+
+**Why:** The pivot's lists ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md),
+"Loading") must paint before the socket as the Channel list does. A slice of its
+own rather than fields on the `directory` row, because that row is the Channel
+directory the cutover deletes and is only read back while the Channel list is
+unseeded.
+
+**Consequences:** B-3 can drop the `directory` row's Channel parts, and its
+automation list, without touching this slice. A list missing from the row
+means never heard, not empty; keep the two apart.
 
 ### 2026-10-21 — Fence image saves across browser tabs
 
