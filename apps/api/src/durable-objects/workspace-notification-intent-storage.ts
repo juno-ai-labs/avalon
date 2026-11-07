@@ -1,3 +1,5 @@
+import type { ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
+
 import {
   WorkspaceNotificationIntentClaimResultSchema,
   WorkspaceNotificationIntentDeliverySchema,
@@ -103,6 +105,60 @@ export function recordSidekickRunNotices(
     );
     return { recipientUserId, intentId };
   }));
+}
+
+/** A conversation's mention or add, as its parent receives it. */
+export type PersonNotificationEnvelope = ConversationEffectEnvelope & {
+  effect: Extract<ConversationEffectEnvelope["effect"], { kind: "mention_notification" | "participant_notification" }>;
+};
+
+/**
+ * Record one person's mention or add as a `pending` intent, for the activity
+ * consumer to deliver by the id this returns. The caller holds the
+ * transaction and the envelope's receipt; this writes the product row only.
+ *
+ * A mention is identified by the message that carried it; being added has no
+ * message, so the effect names its own source. Both land in
+ * `source_message_id`, which with the recipient and the kind makes a
+ * re-emission of either one intent rather than two. The same identity under a
+ * different intent id or payload is a producer bug, refused by name.
+ *
+ * Whether the recipient is still a member, may still open the parent, or is
+ * the author is decided at delivery (`notificationDeliveryContext`), which
+ * reads all three as they are then; recording asks none of them.
+ */
+export function recordPersonNotificationIntent(
+  storage: DurableObjectStorage,
+  envelope: PersonNotificationEnvelope,
+  now: number,
+): string {
+  const effect = envelope.effect;
+  const notificationKind = effect.kind === "mention_notification" ? "mention" : "participant_added";
+  const sourceId = effect.kind === "mention_notification" ? effect.messageId : effect.sourceId;
+  const existing = storage.sql.exec<{ intent_id: string; payload_hash: string }>(
+    `SELECT intent_id, payload_hash FROM workstream_notification_intents
+      WHERE intent_id = ?
+         OR (source_message_id = ? AND recipient_user_id = ? AND notification_kind = ?)`,
+    effect.intentId, sourceId, effect.recipientUserId, notificationKind,
+  ).toArray()[0];
+  if (existing) {
+    if (existing.intent_id !== effect.intentId || existing.payload_hash !== envelope.payloadHash) {
+      throw new Error("notification_intent_identity_conflict");
+    }
+    return effect.intentId;
+  }
+  const at = new Date(now).toISOString();
+  storage.sql.exec(
+    `INSERT INTO workstream_notification_intents
+       (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id, source_generation,
+        source_version, required_directory_version, notification_kind, payload_json, payload_hash, state,
+        attempts, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)`,
+    effect.intentId, envelope.workspaceId, envelope.parentId, effect.recipientUserId, sourceId,
+    envelope.generation, envelope.sourceVersion, envelope.requiredProjectionVersion ?? 1, notificationKind,
+    JSON.stringify(effect), envelope.payloadHash, at, at,
+  );
+  return effect.intentId;
 }
 
 export const WORKSTREAM_NOTIFICATION_INTENT_RETENTION_MS = 30 * 24 * 60 * 60_000;
