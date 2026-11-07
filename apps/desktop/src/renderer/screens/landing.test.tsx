@@ -30,8 +30,13 @@ describe('the landing route', () => {
   });
 
   it('reopens the Canvas or Sidekick last open on this device', () => {
-    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/sidekicks/triage');
-    expect(open()).toBe('/sidekicks/triage');
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/sidekicks/00000000-0000-7000-8000-000000000a51');
+    expect(open()).toBe('/sidekicks/00000000-0000-7000-8000-000000000a51');
+  });
+
+  it('does not reopen New Sidekick, which would create one on every launch', () => {
+    localStorage.setItem(layoutKey('org', 'person', 'last-route'), '/sidekicks/new');
+    expect(open()).toBe('/canvases');
   });
 
   it('opens the Canvases home where a Channel or Thread route was saved before the cutover', () => {

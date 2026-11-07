@@ -1,10 +1,11 @@
 # Embedded browser
 
-Rally's desktop client can show an ordinary web page beside a Channel in the
-existing right sidebar, or in a window of its own for importing a conversation.
-The browser is a local Electron `WebContentsView`, so a person can navigate and
-sign in without handing a remote sandbox their browser session. It is a
-reusable page surface; the import window is its first dedicated consumer.
+Rally's desktop client can show an ordinary web page beside a Canvas's Chat in
+the existing right sidebar. The browser is a local Electron `WebContentsView`,
+so a person can navigate and sign in without handing a remote sandbox their
+browser session. It is a reusable page surface; the import window that was its
+first dedicated consumer was removed with the browser session import
+(2026-11).
 
 ## Where the code lives
 
@@ -12,25 +13,23 @@ reusable page surface; the import window is its first dedicated consumer.
 | --- | --- |
 | `apps/desktop/src/common/embedded-browser.ts` | Typed command, result, state, bounds, and URL validation. |
 | `apps/desktop/src/main/embedded-browser.ts` | Guest contents, tabs, navigation, page inspection, input, and native view placement. |
-| `apps/desktop/src/main/index.ts` | Account ownership, the per-window browser, IPC admission, and the import window. |
-| `apps/desktop/src/common/browser-import.ts` | The Spaces the main window hands the import window, and the imported Channel id it hands back. |
+| `apps/desktop/src/main/index.ts` | Account ownership, the main window's browser, and IPC admission. |
 | `apps/desktop/src/preload/index.ts` | The named renderer bridge, without general IPC access. |
 | `apps/desktop/src/renderer/components/embedded-browser-view.tsx` | The shared pieces: tab state and commands, native page placement, navigation toolbar, tab strip, and keyboard shortcuts. |
 | `apps/desktop/src/renderer/components/embedded-browser-rail.tsx` | The right-rail host. |
-| `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Sends web links to the rail while a Channel is on screen, else to the system browser. |
+| `apps/desktop/src/renderer/lib/browser-rail-links.ts` | Sends web links to the rail while a Canvas is on screen, else to the system browser. |
 | `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Places the browser in the existing rail slot. |
-| `apps/desktop/src/renderer/screens/browser-import.tsx` | The import window: toolbar with Import and Close, start page, and the name-and-Space sheet. |
 
 ## How it works
 
-A web link clicked on a Channel opens the existing right rail with its
-browser variant, as a new tab on that address. The Channel header has no
+A web link clicked in a Canvas's Chat opens the existing right rail with its
+browser variant, as a new tab on that address. The Canvas header has no
 button of its own for the browser. `renderer/lib/browser-rail-links.ts` holds
-the one decision: while a Channel's conversation surface is mounted on the
+the one decision: while a Canvas's conversation surface is mounted on the
 desktop, it registers itself as the rail host (`useBrowserRailLinks`; a
 Sidekick's surface shares the component but does not register), and `openLink`
 sends an http or https URL there. Any other scheme, and any link clicked where
-no Channel is on screen, takes the `openExternal` path it took before, where
+no Canvas is on screen, takes the `openExternal` path it took before, where
 main's allowlist still admits only web URLs. Anchors reach it through one
 document listener (`captureLinkClicks`), which leaves alone a click a component
 already handled and Rally's own same-origin routes; citations, search link results and
@@ -60,23 +59,7 @@ The browser view owns link and redirect navigation. Rally's global app-window
 navigation fence does not send those URLs to the system browser; the browser's
 own URL guard still rejects non-web destinations.
 
-**Import window.** On the desktop, the sidebar's *Import Channel from Claude
-or ChatGPT* item asks main to open one `surface=browser-import` window,
-passing the Spaces the menu offers. The window is a Rally renderer surface with
-its own browser: back, forward, reload and the address field form its title
-bar, with Import and Close at the trailing edge, and a tab strip appears only
-when a site has opened a second tab. A blank tab shows a numbered start page
-instead of the native view. Import is enabled while the active tab shows a
-ChatGPT or claude.ai conversation — the person's own (`/c/<id>`, `/chat/<id>`)
-or a shared link (`/share/<id>`). It reads that conversation (see
-[session import](session-import.md)), then a sheet asks for
-the Channel's name, pre-filled with the chat's title, and its Space. While the
-import runs, the main window shows the new Channel as importing; after it, main
-opens the Channel through the same deep-link path a menu-bar pick uses, and
-closes the import window along with its tabs. This window is the only way to
-import; the web host, which has no browser, offers no import.
-
-**Tabs.** Both hosts use one tab strip. A tab shows its page's icon (an https
+**Tabs.** The rail has one tab strip. A tab shows its page's icon (an https
 or image-data icon only), or a spinner while loading, and its title, with the
 title and address as its tooltip; the active tab is Rally's selected pill, as
 in search filters and sidebar rows, not a Chrome tab. A new-tab button follows
@@ -110,9 +93,8 @@ as Google Chrome.
 
 - Remote pages receive no Rally preload or Node integration. If they did, a
   visited website could invoke app IPC or read local application state.
-- Main admits browser IPC only from the main Rally window and the import
-  window, each addressing its own browser, and parses every command before
-  executing it. Otherwise another app window could control a signed-in
+- Main admits browser IPC only from the main Rally window, and parses every
+  command before executing it. Otherwise another app window could control a signed-in
   browsing session.
 - A browser partition belongs to one Rally user. Reusing a partition across
   users would expose one person's website sessions to another.
@@ -197,6 +179,25 @@ run-to-realm map and disposes associated realms when tabs or the browser close,
 or when the owning renderer reloads or loses its process.
 
 ## Changelog
+
+### 2026-11-07 — A Canvas hosts the rail browser; the import window is removed
+
+**What changed:** The rail browser's host is a Canvas's Chat, where it was a
+Channel's conversation, and main admits browser IPC from the main window
+alone. The import window (`surface=browser-import`, `browser-import:*` IPC,
+`common/browser-import.ts`, `screens/browser-import.tsx`) is deleted.
+
+**Why:** Plan step B-3 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+Channels are deleted and the ChatGPT and Claude session import is deleted
+(decision log, 2026-11-06), since an import landed in a Thread or Breakout. A
+Canvas's Chat is the conversation with a right rail beside it, so it takes the
+Channel's place as the rail's host.
+
+**Consequences:** Paragraphs below that describe the import window's agent
+driving its browser (`agentDriven`) describe code main no longer reaches; the
+`EmbeddedBrowser` flag stays false until that path is removed with the server's
+session import in phase C.
 
 ### 2026-10-22 — Leave the browser visible beside a thread menu
 

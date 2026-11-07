@@ -32,7 +32,6 @@ import type {
   EmbeddedBrowserResult,
   EmbeddedBrowserState,
 } from './embedded-browser';
-import type { BrowserImportContext, BrowserImportProgress } from './browser-import';
 import type {
   WorkspaceSyncPublication,
   WorkspaceConversationViewRelayRequest,
@@ -528,26 +527,8 @@ export interface RallyDesktopBridge {
   onEmbeddedBrowserState: (listener: (state: EmbeddedBrowserState) => void) => () => void;
   /** A browser shortcut pressed inside a visited page that the host's controls handle. */
   onEmbeddedBrowserHostRequest: (listener: (request: EmbeddedBrowserHostRequest) => void) => () => void;
-  /** Opens, or raises, the window for importing a signed-in Claude or ChatGPT conversation. */
-  openBrowserImport: (context: BrowserImportContext) => Promise<void>;
-  /** The import window's Spaces, as the main window last offered them. */
-  getBrowserImportContext: () => Promise<BrowserImportContext | null>;
-  onBrowserImportContextChanged: (listener: () => void) => () => void;
   /** View → Refresh Organization List: reread the account menu's Organizations. */
   onOrganizationListRefreshRequested: (listener: () => void) => () => void;
-  /**
-   * The import window's hand-off: the main window opens the Channel, or the
-   * Breakout `substreamId` names in it, and this window closes.
-   */
-  completeBrowserImport: (workstreamId: string, substreamId?: string) => Promise<void>;
-  /**
-   * The import window's create starting or failing, relayed to the main
-   * window. `completeBrowserImport` relays its success and opens the Channel;
-   * `imported` here only settles the row when that hand-off failed.
-   */
-  reportBrowserImport: (progress: BrowserImportProgress) => Promise<void>;
-  /** The main window's view of an import in the other window. */
-  onBrowserImportProgress: (listener: (progress: BrowserImportProgress) => void) => () => void;
   /**
    * Renders one of Rally's messages as a picture or a PDF and offers to save
    * it. Resolves with `saved: false` when the person dismissed the dialog, and

@@ -43,9 +43,8 @@ and API before releasing the desktop client; existing accounts are exempted by
 the identity migration, with no feature flag.
 The journey owns setup stage and revision. Creators proceed through personal
 appearance, then invitations; members finish after personal appearance.
-Finishing saves `complete` and then leaves for the first work stream through
-`useOpenFirstWorkstream` — the composer only when the workspace is empty, as a
-creator's is. No workstream or
+Finishing saves `complete` and then leaves for the Canvases home through
+`useOpenLanding`, replacing the journey's entry. No workstream or
 agent run is created by onboarding. The unshipped starter columns and removed first-task stages are not part of the schema.
 
 Joining an organization, as its creator or an invited member, makes the person
