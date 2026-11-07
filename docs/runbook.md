@@ -1447,14 +1447,14 @@ and the parent's outbox and receipts first: `parent_outbox` and
 `parent_child_receipts` in `WorkspaceDO` for a Channel or Space (see
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md)), or
 `sidekick_child_receipts` in `WorkspaceDO` for a Sidekick.
-For a missing sidebar badge/resource route/suggestion feedback row, inspect
-`WorkspaceDO.workspace_workstream_effect_receipts` and the corresponding
-`channels` or `channel_viewers` row's authority generation, waterline, and
-UUIDv7 `source_event_id`. For a missing digest event, Slack mention, or email
-notification, inspect that same
-`WorkspaceDO.workspace_workstream_effect_receipts` table — activity and mention
-effects commit their receipt in the object transaction that commits the event
-or intent — and `WorkspaceDO.workstream_notification_intents`. A receiver
+For a missing push, Slack mention, or email notification from a Canvas's
+Chat or a Sidekick's conversation, inspect `WorkspaceDO.sidekick_child_receipts`
+(keyed by the parent id in `sidekick_id`, the substream and the message id)
+and `WorkspaceDO.workstream_notification_intents` (its `state` and
+`last_error_code`): the parent commits a mention's receipt in the transaction
+that records its intent, so a receipt with no intent row means the effect was
+not a mention. `WorkspaceDO.workspace_workstream_effect_receipts` is
+unwritten since 2026-11-07, dropped with the Thread-era tables. A receiver
 receipt with no sender outbox row is the normal end state: the sender deleted
 its row when the Queue accepted the message, and the receiver committed the
 effect with its receipt. A sender outbox row that persists means the Queue is

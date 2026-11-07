@@ -797,12 +797,14 @@ column catalog; what follows is only what WorkspaceDO still holds.
 
 ### Notifications and connectors
 
-- `WorkspaceDO.workspace_workstream_effect_receipts` is the inbox for the
-  regional effects a conversation sends (a mention, somebody added) and the
-  activity events it still emits. Message ID and payload hash detect replay or
-  conflict. An `activity_event` is receipted and stored nowhere: the Activity
-  log it fed is retired, and migration 147 dropped `workspace_activity_events`
-  and its targets, reads and pushes.
+- A conversation's effects, a mention or an add among them, are receipted
+  by its Canvas or Sidekick in `WorkspaceDO.sidekick_child_receipts`; message
+  ID and payload hash detect replay or conflict, and a mention's intent commits
+  in the same transaction. An `activity_event` is receipted and stored nowhere:
+  the Activity log it fed is retired, and migration 147 dropped
+  `workspace_activity_events` and its targets, reads and pushes.
+  `WorkspaceDO.workspace_workstream_effect_receipts`, the Thread host's inbox,
+  is unwritten since 2026-11-07, dropped with the Thread-era tables.
 - WorkspaceDO `workstream_notification_intents` temporarily retains a bounded
   person-notification payload — a mention, or somebody added to the
   conversation — and the Sidekick run pushes (Needs input, finished;
@@ -810,18 +812,16 @@ column catalog; what follows is only what WorkspaceDO still holds.
   and checks the recipient against the parent's own reader rule
   (`notificationDirectoryState`); terminal delivery or skip erases
   `payload_json` rather than retaining a second transcript. Effect receipts
-  and terminal intent shells are retained for 30 days; a redelivery past that
-  window converges on the idempotent intent ID rather than a receipt row. A
-  mention commits its receipt in the same WorkspaceDO transaction as the
+  are retained for 180 days and terminal intent shells for 30; a redelivery
+  past that window converges on the idempotent intent ID rather than a receipt
+  row. A mention commits its receipt in the same WorkspaceDO transaction as the
   intent it acknowledges; no regional D1 receipt exists for it.
 - The digest tables are gone (migration 147) except `digest_schedules`, kept
   empty because a foreign key on `schedules` names it.
 - **The Activity and digest map.** The bullets below describe the Activity log and digest tables as they were, kept for the migration reader; a bullet marked Retired names a table migration 147 dropped.
-- `WorkspaceDO.workspace_workstream_effect_receipts` is the inbox for parent
-  directory, activity, resource-link, and mention-delivery effects, whether
-  applied in a hosted parent's own transaction or delivered by the activity
-  Queue. Message ID and payload hash detect replay or
-  conflict; generation and per-key waterlines reject stale mutable state.
+- `WorkspaceDO.workspace_workstream_effect_receipts` was the inbox for parent
+  directory, activity, resource-link, and mention-delivery effects; it is
+  unwritten since 2026-11-07, dropped with the Thread-era tables.
 - `WorkspaceDO.channels` and
   `channel_viewers` are authoritative common and viewer-specific
   query rows; `viewers.unseen` is the projection of the membership row's
