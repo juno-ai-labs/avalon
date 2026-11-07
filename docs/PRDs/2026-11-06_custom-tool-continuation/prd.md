@@ -120,7 +120,24 @@ principal and receipts as the tool's single program does today.
 
 ## Decision log
 
-None yet.
+- **2026-11-07: Not built yet; page within the budget first, then move the
+  deadline if needed.** Daily Active Rally Organizations' tool, timed at 16 reads
+  at once, finishes about 2.6 conversations a second, about 235 in a 90-second
+  share. It stopped after one 100-row page, so about 450 conversations took five
+  calls; paging until the budget runs out brings that to about two. A review of
+  this design found it no better than a longer program on the grounds non-goal 1
+  gives: segments run back to back hold the object as long as one longer program,
+  with one Dynamic Worker at a time. Shipped as written it would also loop
+  silently, since root runs have no wall clock and Stop does not reach a running
+  tool call (`docs/agent-harness.md`, "Loop stop"), so its segment cap could not
+  ship open. The `cap × CODE_PROGRAM_TOOL_TIMEOUT_MS` timer breaks the 1,050,000 ms
+  tool timeout ceiling at a cap of 7 or more. If a run still needs more than three
+  calls after paging, the next step is moving `CODE_PROGRAM_DEADLINE_MS`, which
+  `limits.ts` already marks provisional, or a per-tool budget under a ceiling the
+  team sets. This PRD is the fallback if neither is enough; building it then
+  needs a set cap, the run's deadline in place of Bind's tool timer, a host seam
+  that reads a requested stop, and the loop in `executeProgram` so `code_execute`
+  gets it too.
 
 ## Key design decisions
 
