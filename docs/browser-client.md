@@ -124,7 +124,7 @@ generation used for sign-out and cross-tab restoration. Long session deadlines
 are split into timer-range-safe waits by `session-timer.ts`.
 
 A guest's sidebar is the desktop sidebar fed by the workspace socket, listed
-by the same rules a member's is ([`listing-rules.md`](listing-rules.md)): the
+by the same rules a member's is ([`canvases.md`](canvases.md)): the
 Canvases shared with them and the Sidekicks they may open. A guest has no New
 Canvas or New Sidekick, and the Canvases home's empty state says a shared
 Canvas appears there. The server re-authorizes every conversation a guest

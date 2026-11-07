@@ -151,7 +151,7 @@ It does not parse Markdown, style anything, or decide where text appears.
 
 - How that Markdown becomes DOM in the desktop client is
   [`markdown-rendering.md`](markdown-rendering.md).
-- How it becomes an email is [`digests.md`](digests.md).
+- How it becomes an email is `digests.md` (retired).
 - How it reaches Slack is [`slack-integration.md`](slack-integration.md). No
   Slack path calls this module today; the gap and its reason are recorded
   under [failure modes](#failure-modes-and-limits) so neither document assumes

@@ -462,7 +462,7 @@ list of times. When one fires, the workspace reads what is still unread in the
 person's Activity tab, renders it as one section per kind, claims the occurrence
 with that text, and sends it by email, to the person's Personal Channel, or through
 any connector declaring a personal delivery surface. No model runs. Nothing unread
-means nothing is sent. See [`digests.md`](digests.md#the-digest).
+means nothing is sent. See `digests.md` (retired).
 
 A work stream can schedule its own wake-up through `schedule_wakeup`,
 giving a relative duration or an exact ISO-8601 instant plus the prompt to act on.
@@ -610,7 +610,7 @@ document, and it does not absorb one when it grows:
 | Socket admission and the ticket | [`realtime-sockets.md`](realtime-sockets.md) |
 | The connector registry and manifest model | [`connectors.md`](connectors.md) |
 | Model routing flags | [`feature-flags.md`](feature-flags.md) |
-| The activity log and scheduled digests | [`digests.md`](digests.md) |
+| The activity log and scheduled digests | `digests.md` (retired) |
 | The macOS status item | [`menu-bar.md`](menu-bar.md) |
 | Regional product telemetry and crash reporting | [`telemetry.md`](telemetry.md) |
 | Hosted resources, secrets, deployment, incidents | [`runbook.md`](runbook.md) |

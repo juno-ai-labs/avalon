@@ -174,7 +174,7 @@ Everything the Activity tab lists can be a push, an email or a Slack message.
 `added` and `mentioned` go through their notification intents above, whose
 processor sends each channel the person chose. `thread_started`,
 `breakout_started`, `run_finished` and `merged` are read by the feed from the directory
-rather than from an event ([`digests.md`](digests.md#the-activity-tab)), and
+rather than from an event (`digests.md` (retired)), and
 `workspace-activity-push.ts` queues one message per chosen channel.
 `artifact_updated` goes the same way, to the person who pinned the artifact
 alone: its trigger is a new version reaching the pinned-artifact ledger
@@ -211,7 +211,7 @@ must not re-run the batch's other work.
 **The feed decides what each person is told.** A start asks everyone when its
 conversation is Organization-wide, else the people its viewer rows name, and
 the feed keeps only those it would tell
-([`digests.md`](digests.md#who-is-told-about-channel-news)); a
+(`digests.md` (retired)); a
 finish asks only its participants, the only people the feed shows one to; a
 join asks the person who joined. D1 narrows that to active members, and the
 object keeps those with a live device or a channel other than push chosen for

@@ -155,16 +155,10 @@ function connectorEvent(): WorkspaceConnectorEvent {
   };
 }
 
-function processingEnv(matched: boolean, eventType?: string): {
-  env: Env;
-  opportunitySources: Array<Record<string, unknown>>;
-  recorded: ActivityEventInput[];
-} {
+function processingEnv(matched: boolean): { env: Env; recorded: ActivityEventInput[] } {
   const database = seededDatabase();
-  const opportunitySources: Array<Record<string, unknown>> = [];
   const recorded: ActivityEventInput[] = [];
   const event = connectorEvent();
-  if (eventType) event.activity.eventType = eventType;
   const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
@@ -177,9 +171,6 @@ function processingEnv(matched: boolean, eventType?: string): {
       extra: {
         matchExternalEventDestinations: () => ({ matched, deliveries: [] }),
         connectorEvent: () => event,
-        enqueueOpportunitySource: (input: Record<string, unknown>) => {
-          opportunitySources.push(input);
-        },
         recordActivityEvent: (input: ActivityEventInput) => {
           recorded.push(input);
           return input.eventId ?? `event-${recorded.length}`;
@@ -187,51 +178,18 @@ function processingEnv(matched: boolean, eventType?: string): {
       },
     }),
   });
-  return { env, opportunitySources, recorded };
+  return { env, recorded };
 }
 
-describe("routing connector activity before Suggested Work", () => {
-  it("keeps a durably claimed event out after its pending deliveries have settled", async () => {
-    const { env, opportunitySources, recorded } = processingEnv(true);
-
-    await processConnectorEvent(env, connectorEvent());
-
-    expect(opportunitySources).toEqual([]);
-    expect(recorded).toHaveLength(1);
-  });
-
-  it("offers only an unclaimed event to each eligible member", async () => {
-    const { env, opportunitySources, recorded } = processingEnv(false);
+describe("processing connector activity", () => {
+  it.each([true, false])("projects the event once and logs whether a route claimed it (claimed: %s)", async (matched) => {
+    const { env, recorded } = processingEnv(matched);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     await processConnectorEvent(env, connectorEvent());
 
-    expect(opportunitySources).toHaveLength(2);
-    expect(opportunitySources.map((source) => source.partitionKey).sort()).toEqual([
-      `workspace:${MEMBER_A}`,
-      `workspace:${MEMBER_B}`,
-    ]);
     expect(recorded).toHaveLength(1);
-    expect(completionLog(info)).toMatchObject({ opportunity_enqueued: true, opportunity_outcome: "enqueued" });
-  });
-
-  it("records an unclaimed event whose type is excluded from candidacy as not enqueued", async () => {
-    // A CI status transition is unclaimed, so it is offered — and declined by
-    // event type before any window opens. The terminal log has to say so:
-    // `opportunity_enqueued` derived from "unclaimed" alone would report every
-    // one of these as admission load, which is the traffic anyone checking the
-    // gate will query.
-    const { env, opportunitySources, recorded } = processingEnv(false, "github.check_run.completed");
-    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-
-    const event = connectorEvent();
-    event.activity.eventType = "github.check_run.completed";
-    await processConnectorEvent(env, event);
-
-    expect(opportunitySources).toEqual([]);
-    // Still projected into the feed: only the home-screen surface withholds it.
-    expect(recorded).toHaveLength(1);
-    expect(completionLog(info)).toMatchObject({ opportunity_enqueued: false, opportunity_outcome: "excluded" });
+    expect(completionLog(info)).toMatchObject({ deterministic_route_claimed: matched, outcome: "processed" });
   });
 });
 

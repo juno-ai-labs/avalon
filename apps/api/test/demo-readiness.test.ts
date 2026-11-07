@@ -5,37 +5,28 @@ import { demoReadinessManifest } from "../src/services/demo-readiness";
 import type { DemoSeedReceipt } from "../src/services/demo-seeder";
 
 /**
- * The manifest is derived, not discovered: rooms, who is in them, how each
- * ends, and the order they should list in all come from the pack, and only the
- * ids come from the receipts. A manifest for a pack whose seeding never
- * confirmed a room describes a demo nobody asked for, so it is refused.
+ * The manifest is derived, not discovered: which Canvases and Sidekicks exist,
+ * who each is shared with, how each Chat ends, how many versions each
+ * artifact reaches and the order the list should hold all come from the pack,
+ * and only the ids come from the receipts. A manifest for a pack whose seeding
+ * never confirmed something describes a demo nobody asked for, so it is
+ * refused.
  */
 
 const CAST: DemoCast = {
-  presenter: { userId: "00000000-0000-7000-8000-0000000000a1", displayName: "Adam Presenter" },
-  priya: { userId: "00000000-0000-7000-8000-0000000000a2", displayName: "Priya Raman" },
-  marcus: { userId: "00000000-0000-7000-8000-0000000000a3", displayName: "Marcus Hale" },
-  dana: { userId: "00000000-0000-7000-8000-0000000000a4", displayName: "Dana Okafor" },
+  presenter: { userId: "00000000-0000-7000-8000-0000000000a1", displayName: "Maya Presenter" },
+  theo: { userId: "00000000-0000-7000-8000-0000000000a2", displayName: "Theo Park" },
+  priya: { userId: "00000000-0000-7000-8000-0000000000a3", displayName: "Priya Raman" },
 };
 const OPERATION_ID = "00000000-0000-7000-8000-0000000000e2";
-const MEMO_ID = "00000000-0000-7000-8000-0000000000f1";
-const RENEWAL_ID = "00000000-0000-7000-8000-0000000000f2";
-const PRESS_ID = "00000000-0000-7000-8000-0000000000f3";
-const WORKSTREAM_IDS: Record<string, string> = {
-  "acme-proposal": MEMO_ID,
-  "vendor-selection": RENEWAL_ID,
-  "acme-review": PRESS_ID,
-  "sales-reviews": "00000000-0000-7000-8000-0000000000f4",
-};
 
 function receipt(overrides: Partial<DemoSeedReceipt> & Pick<DemoSeedReceipt, "actionId" | "kind">): DemoSeedReceipt {
   return {
     operationId: OPERATION_ID,
     workspaceId: "00000000-0000-7000-8000-0000000000e1",
-    room: null,
-    workstreamId: null,
-    substream: null,
-    substreamId: "0",
+    canvas: null,
+    canvasId: null,
+    sidekick: null,
     sidekickId: null,
     sidekickRunId: null,
     turnId: null,
@@ -50,129 +41,76 @@ function receipt(overrides: Partial<DemoSeedReceipt> & Pick<DemoSeedReceipt, "ac
 
 /** The placeholder pack's receipts, as the seeder would leave them. */
 function placeholderReceipts(): DemoSeedReceipt[] {
-  const substreamIds = new Map<string, string>();
   return DemoPackSchema.parse(PLACEHOLDER_DEMO_PACK).steps.map((step) => {
-    if (step.kind === "sidekick") {
-      // In no room and so in no conversation: both substream columns stay null,
-      // which is what the receipts table's own CHECK requires of a Sidekick.
-      return receipt({
-        actionId: step.id,
-        kind: step.kind,
-        substreamId: null,
-        sidekickId: `sidekick-${step.id}`,
-        ...(step.firstRun ? { sidekickRunId: `sidekick-run-${step.id}`, runOutcome: "completed" as const } : {}),
-      });
+    switch (step.kind) {
+      case "sidekick":
+        return receipt({
+          actionId: step.id, kind: step.kind, sidekick: step.sidekick, sidekickId: `sidekick-${step.sidekick}`,
+          ...(step.firstRun ? { sidekickRunId: `run-${step.sidekick}`, runOutcome: "completed" as const } : {}),
+          ...(step.canvas ? { canvasId: `canvas-${step.sidekick}`, resourceId: `resource-${step.sidekick}` } : {}),
+        });
+      case "sidekick_message":
+        return receipt({ actionId: step.id, kind: step.kind, sidekick: step.sidekick, sidekickId: `sidekick-${step.sidekick}`, turnId: `turn-${step.id}` });
+      case "canvas_artifact":
+        // One resource per path: a later version lands on the first's.
+        return receipt({ actionId: step.id, kind: step.kind, canvas: step.canvas, canvasId: `canvas-${step.canvas}`, resourceId: `resource-${step.path}` });
+      case "upload":
+        return receipt({ actionId: step.id, kind: step.kind, canvas: step.canvas, canvasId: `canvas-${step.canvas}`, resourceId: `resource-${step.id}` });
+      default:
+        return receipt({
+          actionId: step.id, kind: step.kind, canvas: step.canvas, canvasId: `canvas-${step.canvas}`,
+          ...(step.assistant?.kind === "ask"
+            ? { runOutcome: "needs_input" as const, elicitationId: `elicitation-${step.id}` }
+            : step.assistant ? { runOutcome: "completed" as const } : {}),
+        });
     }
-    const workstreamId = WORKSTREAM_IDS[step.room]!;
-    if (step.kind === "create_workstream") {
-      return receipt({ actionId: step.id, kind: step.kind, room: step.room, workstreamId, runOutcome: "completed" });
-    }
-    if (step.kind === "create_substream") {
-      substreamIds.set(step.substream, `child-${step.substream}`);
-      return receipt({
-        actionId: step.id, kind: step.kind, room: step.room, workstreamId,
-        substream: step.substream, substreamId: `child-${step.substream}`,
-      });
-    }
-    const inChild = step.substream === undefined
-      ? {}
-      : { substream: step.substream, substreamId: substreamIds.get(step.substream)! };
-    if (step.kind === "upload") {
-      return receipt({
-        actionId: step.id, kind: step.kind, room: step.room, workstreamId,
-        resourceId: `resource-${step.id}`, ...inChild,
-      });
-    }
-    return receipt({
-      actionId: step.id,
-      kind: step.kind,
-      room: step.room,
-      workstreamId,
-      ...inChild,
-      ...(step.assistant?.kind === "ask"
-        ? { runOutcome: "needs_input", elicitationId: `elicitation-${step.id}` }
-        : step.assistant ? { runOutcome: "completed" } : {}),
-    });
   });
 }
 
 describe("the readiness manifest", () => {
   it("derives the presenter's view of the placeholder pack", () => {
-    const manifest = demoReadinessManifest(PLACEHOLDER_DEMO_PACK, CAST, placeholderReceipts());
-    expect(manifest.views).toHaveLength(1);
+    const manifest = demoReadinessManifest(DemoPackSchema.parse(PLACEHOLDER_DEMO_PACK), CAST, placeholderReceipts());
     const [view] = manifest.views;
     expect(view?.viewerUserId).toBe(CAST.presenter!.userId);
-    expect(view?.rooms.map((room) => room.room))
-      .toEqual(["acme-proposal", "sales-reviews", "acme-review", "vendor-selection"]);
-    expect(view?.rooms[0]).toMatchObject({
-      workstreamId: MEMO_ID,
+    // Most recently active first.
+    expect(view?.canvases.map((canvas) => [canvas.canvas, canvas.unread])).toEqual([
+      // Theo's Organization Canvas, which the presenter has never opened.
+      ["weekly-changelog", true],
+      ["launch-plan", true],
+      // Their own, whose read state depends on what came after.
+      ["q4-review", null],
+    ]);
+    expect(manifest.canvases.find((canvas) => canvas.canvas === "q4-review")).toMatchObject({
+      canvasId: "canvas-q4-review",
+      creatorUserId: CAST.presenter!.userId,
+      writerSidekickId: null,
+      artifacts: [{ resourceId: "resource-q4-revenue-review.md", version: 2 }],
       harnessStatus: "completed",
-      resourceIds: ["resource-proposal-brief", "resource-proposal-v1", "resource-proposal-technical-note", "resource-proposal-v2"],
-      participantUserIds: [CAST.marcus!.userId, CAST.priya!.userId, CAST.presenter!.userId],
-      mentioned: true, unseen: true,
     });
-    expect(view?.rooms[2]).toMatchObject({
-      workstreamId: PRESS_ID, harnessStatus: "completed",
-      resourceIds: ["resource-review-transcript", "resource-review-guide", "resource-review-v1", "resource-review-v2"],
-      participantUserIds: [CAST.marcus!.userId, CAST.priya!.userId, CAST.dana!.userId],
-      mentioned: false,
+    expect(manifest.canvases.find((canvas) => canvas.canvas === "launch-plan")).toMatchObject({
+      uploadResourceIds: ["resource-launch-checklist"],
+      artifacts: [{ resourceId: "resource-launch-plan.md", version: 1 }],
     });
-    expect(view?.rooms[3]).toMatchObject({
-      workstreamId: RENEWAL_ID, harnessStatus: "completed", elicitationId: null,
-      participantUserIds: [CAST.marcus!.userId, CAST.priya!.userId, CAST.dana!.userId],
+    expect(manifest.canvases.find((canvas) => canvas.canvas === "weekly-changelog")).toMatchObject({
+      canvasId: "canvas-weekly-changelog",
+      creatorUserId: CAST.theo!.userId,
+      writerSidekickId: "sidekick-weekly-changelog",
+      artifacts: [{ resourceId: "resource-weekly-changelog", version: 1 }],
+      harnessStatus: "idle",
     });
-    expect(view?.attention).toEqual({ waitingForYou: 1, waitingReason: "mentioned" });
+    expect(view?.sidekicks.map((sidekick) => [sidekick.name, sidekick.audience, sidekick.runId])).toEqual([
+      ["Weekly changelog", "workspace", "run-weekly-changelog"],
+      ["Incident triage", "people", "run-incident-triage"],
+    ]);
   });
 
-  it("refuses a pack whose rooms were never confirmed", () => {
-    const receipts = placeholderReceipts().filter((row) => row.room !== "vendor-selection");
-    expect(() => demoReadinessManifest(PLACEHOLDER_DEMO_PACK, CAST, receipts))
-      .toThrow(/demo_readiness_room_unconfirmed|Room "vendor-selection" has no receipt/u);
-  });
-
-  it("refuses a closing question that never opened", () => {
-    const pack = DemoPackSchema.parse({ ...PLACEHOLDER_DEMO_PACK, steps: [
-      ...PLACEHOLDER_DEMO_PACK.steps,
-      { kind: "message", id: "test-question", room: "acme-proposal", as: "marcus", text: "Choose.",
-        assistant: { kind: "ask", prompt: "Which?", options: ["One", "Two"] } },
-    ] });
-    expect(() => demoReadinessManifest(pack, CAST, placeholderReceipts()))
-      .toThrow(/has no confirmed question/u);
-  });
-});
-
-describe("a pack's viewer expectations", () => {
-  const steps = [
-    {
-      kind: "create_workstream", id: "open", room: "private", as: "priya", title: "A private room",
-      participants: ["marcus"], scope: "personal", openingMessage: "Start.",
-      assistant: { kind: "say", text: "Done." },
-    },
-  ];
-
-  it("must list exactly the rooms the viewer will see", () => {
-    const outsider = DemoPackSchema.safeParse({
-      version: "test", roles: ["presenter", "priya", "marcus"], steps,
-      expect: [{ viewer: "presenter", attention: { waitingForYou: 0, waitingReason: null }, rooms: {
-        private: { unseen: false, hasUnread: false, mentioned: false },
-      } }],
-    });
-    expect(outsider.success).toBe(false);
-    expect(outsider.error?.issues.map((issue) => issue.message)).toContain(
-      'Viewer "presenter" will not see room "private"',
-    );
-    const insider = DemoPackSchema.safeParse({
-      version: "test", roles: ["presenter", "priya", "marcus"], steps,
-      expect: [{ viewer: "marcus", attention: { waitingForYou: 1, waitingReason: "unseen" }, rooms: {} }],
-    });
-    expect(insider.error?.issues.map((issue) => issue.message)).toContain(
-      'Viewer "marcus" will see room "private", which is not expected',
-    );
-  });
-
-  it("refuses a pack that names no viewer, rather than reporting Ready unchecked", () => {
-    const silent = DemoPackSchema.parse({ ...PLACEHOLDER_DEMO_PACK, expect: [] });
-    expect(() => demoReadinessManifest(silent, CAST, placeholderReceipts()))
-      .toThrow(expect.objectContaining({ code: "demo_pack_expects_nothing" }));
+  it("refuses a pack whose seeding never confirmed a publish or a Sidekick's Canvas", () => {
+    const pack = DemoPackSchema.parse(PLACEHOLDER_DEMO_PACK);
+    const receipts = placeholderReceipts();
+    expect(() => demoReadinessManifest(pack, CAST, receipts.filter((row) => row.actionId !== "q4-v2")))
+      .toThrow(expect.objectContaining({ code: "demo_readiness_artifact_unconfirmed" }));
+    expect(() => demoReadinessManifest(pack, CAST, receipts.map((row) =>
+      row.actionId === "changelog-sidekick" ? { ...row, canvasId: null } : row)))
+      .toThrow(expect.objectContaining({ code: "demo_readiness_sidekick_canvas_unconfirmed" }));
   });
 });

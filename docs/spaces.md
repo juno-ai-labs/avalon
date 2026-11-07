@@ -648,7 +648,7 @@ contract 7 (`CHANNEL_MERGES_CLIENT_CONTRACT`) is served each merge as a plain
 message without `merge` or `attentionSequenceNumber`. A merge from a thread the
 reader cannot open is shown without the thread (`merge.private`), and a desktop
 before contract 9 is served the feed without it. That feature is
-[`conversation-merge.md`](conversation-merge.md).
+`conversation-merge.md` (retired).
 
 ### The cutover
 
@@ -1825,7 +1825,7 @@ Its `joined_at` (migration 134, `NOT NULL`) is when the person last became a
 participant, stamped by WorkspaceDO's writers rather than projected; rows from
 before the migration are dated at their Channel's earliest known creation. It is what keeps a
 Channel's history out of a new participant's Activity
-([`digests.md`](digests.md#who-is-told-about-channel-news)).
+(`digests.md` (retired)).
 `workspace_container_order` is `(user_id, container_kind, container_id,
 item_id) → position` — every list a person arranges by hand, keyed by the
 container it belongs to, with a `CHECK` narrowing `container_kind` to the three
@@ -2275,7 +2275,7 @@ the stats arm; a future message about something else needs its own visibility
 rule in both. `newThreadCount` still counts placements only.
 
 Design: [`docs/PRDs/2026-10-16_merge-back/prd.md`](PRDs/2026-10-16_merge-back/prd.md).
-Mechanism: [`conversation-merge.md`](conversation-merge.md).
+Mechanism: `conversation-merge.md` (retired).
 
 ### 2026-10-13: Every member gets General and a Personal Channel
 

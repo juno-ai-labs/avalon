@@ -441,7 +441,7 @@ Shipped in [#728](https://github.com/juno-ai-labs/avalon/pull/728).
 
 **What changed:** The acknowledgement sends no HTML part. The stored copy is
 still reduced by `markdownToEmailText` rather than sent verbatim. Carrying that
-required relaxing the shared Resend caller ([digests](digests.md)), where `html`
+required relaxing the shared Resend caller (digests (retired)), where `html`
 was mandatory and is now optional and omitted rather than sent empty.
 
 **Why:** A person's four-paragraph reply arrived in the app's dark palette,

@@ -474,7 +474,7 @@ request per member: private conversations may legitimately reach the connector's
 
 ### Delivering a digest to a person
 
-A connector that can hand a finished digest to a specific person declares `userDelivery` in its manifest: the `targetType` stored on the digest destination, the label and one-line description the Daily digest's **Send to** choice shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the digest's destination list, and a connector that declares nothing is never offered. The scheduled digest ([`digests.md`](digests.md)) is the one consumer. It used to serve personal automation results as well; automations no longer have destinations of their own — a run sends its result with the connector tools it holds, inside the loop — so a connector that starts declaring a surface becomes a digest destination without the digest changing.
+A connector that can hand a finished digest to a specific person declares `userDelivery` in its manifest: the `targetType` stored on the digest destination, the label and one-line description the Daily digest's **Send to** choice shows, and `requiresPersonalIdentityLink`. Nothing about which providers can deliver is written into the API or the client — declaring this is what puts a connection in the digest's destination list, and a connector that declares nothing is never offered. The scheduled digest (`digests.md` (retired)) is the one consumer. It used to serve personal automation results as well; automations no longer have destinations of their own — a run sends its result with the connector tools it holds, inside the loop — so a connector that starts declaring a surface becomes a digest destination without the digest changing.
 
 `requiresPersonalIdentityLink` marks the providers whose installation is workspace-wide. A team-wide bot addresses nobody on its own, so such a connection becomes a destination only for a user who has linked their own provider identity to it. `apps/api/src/services/user-delivery.ts` answers that question: it maps each delivery target type to the table recording "this Rally user is this provider user on this connection" — `slack_user_links` for `slack_agent_dm` — and is the one place a new linked provider is registered. A target type absent from that map needs no link, because its connection already belongs to one person. The connections endpoint resolves `userDelivery` per requesting user, so a disabled connection, an unlinked installation, or a connector Rally does not register in this region is simply not a destination. A connection merely marked `needs_reconnect` stays a destination: the send is what discovers whether the credential still works.
 
@@ -1146,9 +1146,8 @@ as their event; reads and claims reconstruct the full ordered list. Restoring a
 late repeat copies its people too. This avoids the old 262,144-character cell
 constraint and Cloudflare's 2 MB row limit without widening historical DDL.
 
-Suggested Work retains that complete list in sources and provenance. Its single
-bounded model view reports shown and total counts without changing the canonical
-source; see [`suggested-work.md`](suggested-work.md).
+Suggested Work, which kept that list in its provenance, was deleted on
+2026-11-07 ([`data-model.md`](data-model.md#changelog)).
 
 ### Activity ingestion
 
@@ -1228,7 +1227,7 @@ with the reason, is in [`connector-digestibility.md`](connector-digestibility.md
 
 A **polling activity stream** declares `digestible` too, and it is required for the same reason: a stream is the granularity a connector author actually thinks in — Gmail is somebody's day, Drive's change feed is a file watcher — and a stream added later has to state which it is. **A stream can only ever withhold.** An activity is digestible when its event type says so *and* the stream that produced it agrees, so the two declarations cannot contradict each other into somebody's inbox, and a stream saying yes grants nothing on its own. `pollCheckpointedActivityStreams` stamps the withholding onto every activity a non-digestible stream returns, at the one place all polled activity passes through, so an adapter can neither forget to mark its output nor grant itself a digest it was not given.
 
-The manifest is read when the activity log is written, in `activityIsDigestible`, keyed on the event type — the one thing an activity carries all the way from the provider to the log. **Everything unknown is withheld**: a connector this region does not register, an event type a manifest has dropped, an activity older than the declaration. None of those are somebody confirming that a person wants this in their inbox, and being wrong costs one way only. The answer is stored in `workspace_activity_events.digestible`, which nothing reads today; [`digests.md`](digests.md#digestible-what-a-person-should-be-told) owns it.
+The manifest is read when the activity log is written, in `activityIsDigestible`, keyed on the event type — the one thing an activity carries all the way from the provider to the log. **Everything unknown is withheld**: a connector this region does not register, an event type a manifest has dropped, an activity older than the declaration. None of those are somebody confirming that a person wants this in their inbox, and being wrong costs one way only. The answer is stored in `workspace_activity_events.digestible`, which nothing reads today; `digests.md` (retired) owns it.
 
 #### Dropping events that say nothing new
 
@@ -1495,9 +1494,8 @@ It does not own:
 | For | Read |
 | --- | --- |
 | The retired Suggested context feature | [`contextual-routing.md`](contextual-routing.md) |
-| Which unclaimed activity becomes a home-screen suggestion | [`suggested-work.md`](suggested-work.md) |
 | One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
-| What `digestible` is kept for, now that nothing reads it | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
+| What `digestible` is kept for, now that nothing reads it | `digests.md` (retired) |
 | The registrations, secrets, and the zero-copy definition | [`provider-apps.md`](provider-apps.md) |
 | Slack's product surface and its scope inventory | [`slack-integration.md`](slack-integration.md), [`slack-permissions.md`](slack-permissions.md) |
 | Linear's protocol and native-agent gate | [`linear-integration.md`](linear-integration.md) |
@@ -1800,7 +1798,7 @@ reprocessing. Oversized ingress commits directly through canonical admission;
 large matched deliveries reload canonical context. The meeting-notes skill owns
 lookup guidance. [`agent-attachments.md`](agent-attachments.md) owns Gmail PDF
 authorization, [`workstream-durable-object.md`](workstream-durable-object.md)
-owns roster storage, and [`suggested-work.md`](suggested-work.md) owns admission.
+owns roster storage.
 
 **Why:** Real recipient lists exceeded the old schema and the displayed error
 lost the cause. Calendar polling omitted attached transcript Docs that event

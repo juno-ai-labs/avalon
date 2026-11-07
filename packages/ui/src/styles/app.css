@@ -3236,13 +3236,9 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 
 .conversation-layout { display: flex; height: 100%; min-width: 0; }
 .conversation-layout > .workstream-screen { flex: 1; }
-.workstream-context-section h2 { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 400; height: 18px; line-height: 18px; overflow: hidden; transition: height var(--sidebar-layout-motion), margin-bottom var(--sidebar-layout-motion), opacity var(--sidebar-layout-motion), visibility var(--sidebar-layout-motion); }
-.workstream-add-sidekick { color: var(--av-sys-color-text-muted); }
-.workstream-context-section { margin-top: 20px; transition: margin-top var(--sidebar-layout-motion); }
-.workstream-context-section > .sidebar-horizontal-line { height: 0; margin-bottom: 0; opacity: 0; }
-.workstream-context-section h2 { margin: 0 8px 6px; }
+
 .workstream-screen { display: grid; grid-template-rows: 55px minmax(0, 1fr) auto; height: 100%; min-width: 0; position: relative; }
-.workstream-header { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; gap: 12px; justify-content: space-between; min-width: 0; padding: 6px 10px 6px 16px; }
+
 .workstream-header-left,
 .workstream-header-actions { align-items: center; display: flex; min-width: 0; }
 .workstream-header-left { gap: 9px; }
@@ -3951,17 +3947,17 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .markdown-body del { color: var(--markdown-ink-muted); text-decoration-color: var(--markdown-ink-faint); }
 .markdown-body img { border-radius: var(--av-sys-size-radius-md); display: block; height: auto; margin: var(--space-4) 0; max-width: 100%; }
 /* The one hover row under a message (`MessageActions`), wherever a message is
-   drawn: a turn in a Thread or Breakout, a merged result, a Channel's own
-   message. It is revealed by hovering or focusing the message that holds it, and
+   drawn: Rally's turn or a person's bubble, in a Canvas's Chat or a Sidekick's
+   conversation. It is revealed by hovering or focusing the message that holds it, and
    stays up while it is speaking or a save is in flight, so Stop speaking and the
    export's state are not a hover away. Clicks follow the fade: during the 120ms
    it takes to appear, a click would land on a control the reader cannot yet
-   read, and New breakout creates a conversation rather than copying a line. */
+   read. */
 .message-actions { align-items: center; display: flex; gap: var(--space-2); margin-top: var(--space-2); opacity: 0; pointer-events: none; transition: opacity 120ms; }
 .message-actions.is-speaking,
 .message-actions:has(button:disabled) { opacity: 1; pointer-events: auto; }
 /* One set of metrics for every row, because the same controls appear under
-   Rally's turn, under a person's bubble and in a Channel, and have to read as
+   Rally's turn and under a person's bubble, and have to read as
    the same controls. */
 .message-actions button { align-items: center; background: transparent; color: var(--av-sys-color-text-muted); display: flex; font-size: 10px; gap: var(--space-1); padding: 2px; }
 .message-actions button:hover { color: var(--av-sys-color-text-default); }
@@ -4677,7 +4673,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .mention-popover button.is-invited strong,
 .mention-confirm-person.is-invited strong,
 .member-action-row.is-invited strong,
-.title-menu-person.is-invited .title-menu-person-name,
 .new-channel-popover-row.is-invited .new-channel-popover-name { color: var(--av-sys-color-text-muted); font-style: italic; }
 .mention-confirm-person { align-items: center; display: flex; gap: 10px; }
 .mention-confirm-person > span { display: flex; flex-direction: column; }
@@ -5158,8 +5153,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .automation-run-row time,
 .run-duration { color: var(--av-ref-color-neutral-9); font-size: 9px; text-align: right; }
 .form-field { display: grid; gap: 6px; min-width: 0; }
-.session-import-select { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session-import-source-title { color: var(--av-sys-color-text-default); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .dialog-body > .form-field + .form-field { margin-top: 16px; }
 /* Tailwind's preflight zeroes paragraph margins and list markers, and the
    dialog body sets no gap of its own, so consecutive paragraphs render as one
@@ -5263,7 +5257,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
      holding the window's own buttons clear of anything readable. These headers
      inherit that job for as long as it is gone. Off macOS the inset is 0 and
      this stays the 8px it has always been — `docs/assumptions.md` item 25. */
-  .workstream-header,
+
   .automation-overview-header { padding-left: max(8px, var(--window-controls-inset)); }
 }
 
@@ -5302,7 +5296,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 @media (max-width: 560px) {
   .dialog-content { min-width: 0; width: calc(100vw - 24px); }
-  .workstream-launch-screen:not(.is-launching) > .launch-dock { padding: 10px 16px var(--composer-dock-gap); }
+
   .waiting-workstream-row { grid-template-columns: auto auto minmax(0, 1fr) 15px; }
   .waiting-workstream-row > svg { grid-column: 4; }
   .waiting-workstream-source,
@@ -5781,9 +5775,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidebar-row-title-copy { align-items: center; display: flex; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .workstream-row.is-active { background: var(--av-sys-color-surface-raised-hover); }
 
-.workstream-header { min-height: 48px; padding: 5px 10px 5px 13px; }
 .workstream-header-left { gap: 8px; }
-.workstream-header .workstream-title-line h1 { font-size: 13px; }
 
 .app-shell {
   font-family: var(--av-sys-font-family-ui);
@@ -5932,7 +5924,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    than per-theme typography. The identity line's two — the name and the time —
    are stated once, through the feed's byline tokens, beside the header rule
    they belong to rather than restated here per speaker. */
-:is(.workstream-screen, .workstream-launch-screen) {
+.workstream-screen {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .agent-message .markdown-body,
@@ -6085,36 +6077,13 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .embedded-browser-start { align-items: center; color: var(--av-sys-color-text-muted); display: flex; flex-direction: column; gap: 10px; justify-content: center; min-height: 100%; text-align: center; }
 .embedded-browser-start p { margin: 0; }
 
-/* The import window: the browser's own toolbar is the title bar, with Import
-   and Close at its trailing edge. The native page fills `.browser-import-page`;
-   the start page is renderer content shown while the tab is blank. */
-.browser-import-window { background: var(--av-cmp-pane-background); color: var(--av-sys-color-text-default); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-.browser-import-titlebar { align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: 46px; padding: 0 10px; }
-.browser-import-window.has-overlay-window-controls .browser-import-titlebar { padding-left: 82px; }
-.browser-import-toolbar { align-items: center; border-bottom: 1px solid var(--av-sys-color-border-subtle); display: flex; flex-shrink: 0; gap: 8px; height: 46px; padding: 0 10px; }
-.browser-import-toolbar .embedded-browser-toolbar { border-bottom: 0; flex: 1; min-width: 0; padding: 0; }
 /* Tabs can be dragged to reorder; the title bar's empty space still moves the window. */
 .window-drag .embedded-browser-tabs { -webkit-app-region: no-drag; }
-.browser-import-banner { background: var(--av-sys-color-surface-raised); border-bottom: 1px solid var(--av-sys-color-border-subtle); flex-shrink: 0; padding: 10px 16px; }
-.browser-import-page { flex: 1; min-height: 0; overflow: auto; position: relative; }
-/* What the parked page looked like after the agent's last step, under the run's blurred modal. */
-.browser-import-mirror { display: block; height: 100%; inset: 0; object-fit: cover; object-position: top left; position: absolute; width: 100%; }
-.browser-import-steps { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
-.browser-import-steps li, .browser-import-steps-empty { align-items: baseline; color: var(--av-sys-color-text-muted); display: flex; gap: 10px; line-height: 1.4; margin: 0; }
-.browser-import-steps li.is-running { color: var(--av-sys-color-text-default); }
-.browser-import-steps li.is-failed svg { color: var(--av-sys-color-danger-base); }
+
 /* Baseline alignment sits the icon's bottom edge on the label's first
    baseline; the shift then centers it on the capitals, in whatever system
    font draws them and beside the first line of a label that wraps. */
-.browser-import-steps svg, .browser-import-steps-empty svg { flex: 0 0 14px; translate: 0 calc(7px - 0.5cap); }
-.browser-import-start { margin: 0 auto; max-width: 440px; padding: 12vh 24px 48px; }
-.browser-import-start h1 { font-size: 20px; font-weight: 500; margin: 0 0 22px; }
-.browser-import-start ol { counter-reset: import-step; display: grid; gap: 16px; list-style: none; margin: 0; padding: 0; }
-.browser-import-start li { align-items: center; counter-increment: import-step; display: flex; gap: 12px; line-height: 1.4; }
-.browser-import-start li::before { align-items: center; border: 1px solid var(--av-sys-color-border-subtle); border-radius: 50%; color: var(--av-sys-color-text-muted); content: counter(import-step); display: inline-flex; flex: 0 0 26px; font-size: 13px; height: 26px; justify-content: center; }
-.browser-import-link { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; font-weight: 500; padding: 0; text-decoration: underline; text-decoration-color: var(--av-sys-color-border-strong); text-underline-offset: 3px; }
-.browser-import-link:hover { text-decoration-color: currentColor; }
-.browser-import-start strong { font-weight: 600; }
+
 .rail-section { padding-left: 15px; padding-right: 15px; }
 .rail-section-header h3 { font-size: 14px; font-weight: 400; letter-spacing: 0; text-transform: none; }
 .compact-run-list .run-rail-row { grid-template-columns: auto minmax(0, 1fr) auto; }
@@ -6336,13 +6305,15 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 
 /* Under a row this narrow the inset stops being a margin and starts being a
    waste: the field would sit in the middle of a column barely wider than
-   itself. It takes the row instead, inside the dock's own gutters, and the
-   rows a launcher stacks above it come with it or they stop lining up.
+   itself. It takes the row instead, inside the dock's own gutters.
    568px is a 600px pane less a dock's two 16px gutters — a size query reads the
    container's content box, which is inside them, so those numbers have to keep
    to that sum for every dock that states a gutter, because a dock that states a
    different one crosses at a different pane and puts the width change back into
    the hand-off. */
+@container composer-dock (width < 568px) {
+  .has-message-capsule .composer-stack { max-width: none; }
+}
 
 /* A card or a rule, out of the same five values.
  *
@@ -6671,239 +6642,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   }
 }
 
-/* Starting a work stream.
-
-   One element tree carries both the launcher and the work stream being created,
-   so the change between them is a change of geometry rather than a change of
-   screen. The composer is the fixed point: it never unmounts, and every rule
-   below that moves it does so with a transition, which is what lets the eye
-   follow one object from the middle of the launcher down into the dock instead
-   of watching one screen replace another.
-
-   The launching state deliberately states no geometry of its own. Its root also
-   carries `.workstream-screen`, so it inherits that screen's dock padding,
-   column width, and composer treatment from the same rules the real screen uses.
-   Anything restyled for the launcher is therefore written under
-   `:not(.is-launching)` — the moment the class lands, the element is already
-   dressed exactly as the screen it is about to become, and the navigation that
-   follows changes only the data. */
-
-/* The one thing the launching state does not take from `.workstream-screen` is
-   this template, and it cannot: that screen's header row is a fixed height, and
-   inheriting it would snap the row to full height on the frame the class lands,
-   shoving the transcript down — the jump this whole block exists to remove. An
-   `auto` row lets the header animate its own height into place instead, and at
-   rest the two resolve to the same number.
-
-   That number is 44px, not the `55px` written on `.workstream-screen` itself:
-   every conversation renders `.grokbot-workstream-header`, whose `:has()` rule
-   takes the track down to 44. Two numbers have to agree here — this row's
-   resting height, below, and the launching header's own — and both have to
-   follow the row that *applies* rather than the base one, which is the drift
-   to watch for. */
-.workstream-launch-screen {
-  display: grid;
-  /* The column is stated because the rows alone leave an implicit `auto` one,
-     which is max-content: any single unbreakable line inside — a nowrap label,
-     a long word — then sizes all three rows wider than the pane, and the dock
-     they are in hangs off the side of it. `minmax(0, 1fr)` is the pane's own
-     width in both states. */
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  height: 100%;
-  min-width: 0;
-  overflow: hidden;
-  position: relative;
-}
-
-/* Collapsed rather than absent: a header that mounted at the swap would push
-   the transcript down by its own height on the frame it arrived.
-
-   Two of the things this element borrows from `.workstream-header` have to be
-   given back, and both are stated here because neither state wants them. Its
-   `min-height: 48px` outranks a stated `height` in both directions: it held the
-   collapsed header open at 48px, so the launcher reserved a header's worth of
-   empty pane it was supposed to have none of, and it pinned the launching
-   header at 48 where the row it hands over to is 44. Its `border-bottom` is a
-   hairline the destination does not draw — `.grokbot-workstream-header` states
-   `border-bottom: 0` — so a header left with it blinks a rule off at the swap;
-   the width is zeroed rather than the shorthand so the colour stays a token's
-   to name. Released here rather than dropping the shared class, which is also
-   where the padding comes from. */
-.workstream-launch-screen > .launch-header {
-  border-bottom-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* The collapsed state, and the only direction that eases.
-   Composing → launching is not animated, deliberately: creation can finish
-   before a 220ms transition does — `prepare` returns a prepared receipt
-   without doing any work, so a retry lands in one round trip — and a header
-   caught mid-growth hands over to a 44px row, which is the jump measured in
-   pixels rather than removed. The header is at the row's height on the frame
-   the optimistic turn is first drawn, so there is no state of this surface in
-   which the turn is anywhere but where the created conversation draws it.
-   Launching → composing is the failure path, where nothing is racing the
-   transition and the header has somewhere to collapse back to. */
-.workstream-launch-screen:not(.is-launching) > .launch-header {
-  height: 0;
-  padding-bottom: 0;
-  padding-top: 0;
-  transition: height 220ms cubic-bezier(.32, .72, 0, 1);
-}
-
-/* The single launching value this block states, and it is a destination rather
-   than a style: a grid track sized `auto` cannot be sized from the screen this
-   becomes, so the header states that screen's row as a number. It has to equal
-   the row `.grokbot-workstream-header` sizes — every conversation renders that
-   header. It was 55px, the base row's height, for as long as the newer header
-   has been 44px, and those 11px were the last thing still moving at the swap.
-   Keep it agreeing with the row that applies rather than the row underneath
-   it. */
-.workstream-launch-screen.is-launching > .launch-header {
-  height: 44px;
-}
-/* A thread's breakout settles into a title pill, whose row is 64px
-   (`.workstream-screen:has(> .title-pill-header)`); the 44px above stays
-   for a header that is not a title pill. */
-.workstream-launch-screen.is-launching > .launch-header.title-pill-header {
-  height: 64px;
-}
-
-/* Both layers share one grid cell, so the home content can fade out over the
-   transcript that replaced it without being taken out of flow first. */
-.workstream-launch-screen > .launch-body {
-  display: grid;
-  min-height: 0;
-}
-
-.workstream-launch-screen > .launch-body > * {
-  grid-area: 1 / 1;
-  min-height: 0;
-}
-
-.launch-transcript-layer {
-  z-index: 1;
-}
-
-/* The turn and the work timer settle in behind the home content rather than
-   with it, so the transcript reads as being assembled instead of revealed. */
-.launch-arrival {
-  animation: launch-arrival 240ms cubic-bezier(.32, .72, 0, 1) both;
-  animation-delay: calc(var(--arrival-index, 0) * 70ms + 60ms);
-}
-
-/* The launch surfaces draw the feed's rows outside `.virtual-message-row`, so
-   the row rhythm does not reach them and the base rules give a row no margin
-   of its own; they state the same two gaps here. A turn after a turn (the
-   provenance turns) takes the turn gap; a row after the opening turn (the work
-   timer) takes the turn-to-event gap.
-
-   Nothing is stated between the branch turns and the opening turn: the opening
-   turn exists only while launching, and by then the block above it is on its
-   way out, so a gap to it would be a gap to nothing that never eased away. */
-.launch-arrival + .launch-arrival { margin-top: var(--av-sys-space-block-gap); }
-
-@keyframes launch-arrival {
-  from { opacity: 0; transform: translateY(7px); }
-}
-
-/* Only the transition is stated for both states. Every value the launching
-   state settles on is the destination's own — `.workstream-screen .composer-dock`
-   and `.workstream-screen .composer-stack` — so a later change to the real dock
-   flows into the launch surface instead of leaving a copy of the old geometry
-   behind to jump against. */
-.workstream-launch-screen > .launch-dock {
-  transition: padding 240ms cubic-bezier(.32, .72, 0, 1);
-}
-
-.workstream-launch-screen:not(.is-launching) > .launch-dock {
-  background: none;
-  bottom: auto;
-  left: auto;
-  /* 16px on the sides, which is every dock's, because the narrow-row query
-     below measures the container's content box: a dock with wider gutters
-     reaches that row at a wider *pane*, and the field would then change width
-     on the keystroke that submits it — in a band around 600px, the one thing
-     this whole arrangement exists to stop. The hero's old 34px was sized for a
-     690px column that no longer exists, and the two narrow-width media rules
-     that used to equalise it were already saying this. The bottom is every
-     dock's too: a Breakout launcher sits beside its Channel, and a deeper gap
-     held its empty field 12px above the Channel's and dropped it on submit. */
-  padding: 12px 16px var(--composer-dock-gap);
-  position: relative;
-  right: auto;
-}
-
-/* A launcher's field states nothing of its own. It used to: a taller box on a
-   softer corner under a heavier shadow, restated on the new-chat screen as the
-   capsule it was already sitting next to, and travelled back to the
-   conversation's treatment over 240ms when `.is-launching` landed. Three
-   dressings of one component, and the one a person typed their first message
-   into was the odd one out on a screen that shows the conversation behind it.
-   The capsule below is now every surface's, so the transitions have nothing
-   left to travel and the launcher's rules nothing left to say. */
-
-/* The substream banner is only true before the substream exists, so the row
-   leaves rather than moves. */
-.launch-modifiers {
-  max-height: 46px;
-  overflow: hidden;
-  transition: max-height 220ms cubic-bezier(.32, .72, 0, 1), opacity 140ms ease;
-}
-
-.workstream-launch-screen.is-launching .launch-modifiers {
-  max-height: 0;
-  opacity: 0;
-}
-
-/* A substream is started inside the conversation it branches out of, so its
-   launch surface is the block above, rendered into the work stream's own
-   column. Only the two things a work stream's launcher has no equivalent of
-   are stated here: what the substream branches from, and the row that says so. */
-
-/* While composing, the turns above the composer are pushed to the bottom of the
-   body rather than filling it from the top: what is being branched from is the
-   thing nearest the words about to be written.
-
-   Only while composing. On submit this surface stops being a launcher and
-   starts being the substream: it draws the typed turn and the work timer the
-   created child carries on showing, and the created child draws them from the
-   top of its transcript like every other conversation. Stated bottom-aligned
-   through the launch, the optimistic turn sat just above the dock and jumped
-   the height of the pane at the swap — the one jump the whole hand-off exists
-   to remove. So the bottom alignment rides `:not(.is-launching)`, the same
-   split the dock and the header take, and the launching column states nothing:
-   it is `.transcript-column`'s own top-down flow, which is the destination. */
-
-/* The fade is the whole statement: these turns are where this came from, not
-   what this is. A mask rather than an opacity ramp per row, because the turns
-   are different heights and a per-row ramp would step — and because the top of
-   the oldest turn has to reach zero wherever it happens to be cut off by the
-   scroll.
-
-   `pointer-events: none` for the same reason: a copy button or a New substream
-   control on a turn nobody is reading here would act on the main conversation,
-   from a surface that has already left it. */
-
-/* Says what pressing enter will do, and offers the one way out that is not
-   navigating somewhere else. It rides `.launch-modifiers`, so it leaves on the
-   keystroke that submits rather than staying above a substream being created. */
-
-/* The first thing to go when the window is narrow: the label beside it names
-   the surface, and this only explains it. */
-
-/* The setup rows above the new-Channel composer. Optical left edge: a round
-   end reads 2–3px inside its box, so the pill sits 1px and the label 2px in
-   from the composer. 9px between rows is the composer stack's own gap. */
-
-/* One box for both states, so the widening is the box's own width easing
-   rather than one control swapped for another. */
-
-/* Both lists open upward; `fitAbove` in new-channel-participants.tsx caps
-   each at the room above it, which depends on the draft's height. */
-
 /* The shared Space picker, drawn as a pill inline with the name. */
 .dropdown-select-trigger-pill {
   background: var(--av-sys-color-surface-elevated-hover);
@@ -7208,9 +6946,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-picker-list .button > span { color: var(--av-sys-color-text-muted); }
 /* The hexagon in the 36px slot every other row in this rail marks itself with,
    drawn a little inside it so the shape's own points are not the row's edge. */
-.workstream-context-sidekick-glyph { display: block; height: 28px; width: 28px; }
+
 .sidekick-section-list > li { align-items: center; display: flex; }
-.sidekick-section-list > li > .workstream-context-row { flex: 1; min-width: 0; }
 
 .sidebar-footer { display: flex; align-items: center; justify-content: flex-end; flex: 0 0 56px; gap: 4px; margin-top: auto; padding: 8px 12px; transition: gap var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
 .app-shell .sidebar .sidebar-footer .account-trigger { flex: 1; min-width: 0; width: auto; margin: 0; transition: gap var(--sidebar-layout-motion), min-height var(--sidebar-layout-motion), padding var(--sidebar-layout-motion); }
@@ -7357,7 +7094,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 }
 .inference-delay-notice > svg { flex-shrink: 0; }
 
-.session-import-link-form { display: grid; gap: 10px; }
 .background-agent-count {
   color: var(--av-sys-color-text-muted);
   display: grid;
@@ -7483,38 +7219,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   color: var(--av-sys-color-palette-ink-light);
 }
 
-/* The attention count: the sidebar's unread red with white digits, in the
-   same 32px circle as its siblings. */
-.sidebar-top-actions > .attention-trigger.has-attention {
-  background: var(--av-sys-color-workstream-news);
-  box-shadow: var(--av-cmp-composer-shadow);
-  color: var(--av-sys-color-palette-ink-light);
-}
-.sidebar-top-actions > .attention-trigger.has-attention:hover:not(:disabled),
-.sidebar-top-actions > .attention-trigger.has-attention:focus-visible {
-  background: var(--hover-layer), var(--av-sys-color-workstream-news);
-  color: var(--av-sys-color-palette-ink-light);
-}
-.attention-count { font-size: 13px; font-variant-numeric: tabular-nums; font-weight: 650; line-height: 1; }
-.attention-count.is-capped { font-size: 10.5px; letter-spacing: -0.02em; }
-.attention-menu { max-height: min(480px, calc(100vh - 80px)); max-width: min(360px, calc(100vw - 20px)); overflow-y: auto; width: 340px; }
-.attention-menu-item { gap: 10px; min-height: 44px; }
-.attention-menu-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.attention-menu-title,
-.attention-menu-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.attention-menu-title { color: var(--av-sys-color-text-default); font-weight: 560; }
-.attention-menu-detail { color: var(--av-sys-color-text-muted); font-size: 12px; }
-.attention-menu-meta { align-items: center; display: flex; flex: 0 0 auto; gap: 8px; }
-.attention-menu-time { color: var(--av-sys-color-text-muted); font-size: 12px; }
-/* Unread is the sidebar Channel row's red here too, not the generic green. */
-.attention-menu .status-unread .status-dot { background: var(--av-sys-color-workstream-news); }
-.attention-menu-empty { color: var(--av-sys-color-text-muted); font-size: var(--av-cmp-control-font-size); padding: 10px; }
-.attention-menu-request { align-items: center; border-radius: var(--av-cmp-control-radius); display: flex; gap: 4px; min-height: 44px; padding: 0 6px 0 0; }
-/* One fill for the whole row, its buttons included, whichever part the
-   pointer or the keyboard is on. */
-.attention-menu-request:hover,
-.attention-menu-request:has([data-highlighted]) { background-image: var(--hover-layer); }
-.attention-menu-request-open { align-items: center; align-self: stretch; cursor: pointer; display: flex; flex: 1; gap: 10px; min-width: 0; outline: 0; padding: 6px 10px; }
 /* Approve and decline on an access request: the attention menu's rows and the People level's Asked to join. */
 .decision-button { align-items: center; background: transparent; border: 0; border-radius: 999px; color: var(--av-sys-color-text-subtle); cursor: pointer; display: inline-flex; flex: 0 0 auto; height: 28px; justify-content: center; outline: 0; padding: 0; width: 28px; }
 button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-focus-default); }
@@ -7522,9 +7226,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .decision-button.is-approve[data-highlighted] { background: var(--av-sys-color-success-tint); color: var(--av-sys-color-success-strong); }
 .decision-button.is-decline:hover,
 .decision-button.is-decline[data-highlighted] { background: var(--av-sys-color-danger-tint); background-image: none; color: var(--av-sys-color-danger-strong); }
-.attention-menu-error { color: var(--av-sys-color-danger-base); font-size: 12px; padding: 6px 10px; }
-.access-request-dialog-subject { align-items: center; display: flex; gap: 12px; }
-.access-request-dialog-title { color: var(--av-sys-color-text-default); font-size: 15px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 
 .sidebar-top-space-slot { display: contents; }
 
@@ -7623,7 +7324,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
     transition: opacity var(--phone-sheet-motion), transform var(--phone-sheet-motion), visibility 0s;
     visibility: visible;
   }
-  
+
   .app-shell .single-sidebar .sidebar-resizer { display: none; }
   /* The same raised round fill as the actions opposite. Its glyph is a
      menu while the sheet is shut and a close mark while it is open: on a
@@ -7877,9 +7578,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   gap: 2px;
   width: min(404px, var(--title-menu-room));
 }
-.title-menu-view:has(> .title-menu-people-search) { width: min(420px, var(--title-menu-room)); }
+
 /* The breadcrumb already names the level, so its section heading would say it twice. */
-.title-menu-view > .title-menu-sidekicks .workstream-context-section h2 { display: none; }
+
 .title-menu-view > * { animation: title-menu-enter 300ms cubic-bezier(.2, .8, .2, 1) both; }
 /* The filled entrance animation must retain a disabled row's muted opacity. */
 .title-menu-view > [data-disabled] { --title-menu-row-opacity: .42; }
@@ -7947,45 +7648,6 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-menu-level-chevron { color: var(--av-sys-color-text-disabled); flex: none; }
 
 /* People: a search that also takes addresses, who is in it, who could be. */
-.title-menu-people-search { height: 40px; margin-bottom: 6px; border-radius: 10px; }
-.title-menu-person { align-items: center; display: flex; gap: 12px; min-height: 52px; padding: 4px 8px; }
-.title-menu-person .avatar { height: 34px; width: 34px; }
-.title-menu-person-copy { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.title-menu-person-name { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 14.5px; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.title-menu-person-detail { color: var(--av-sys-color-text-muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.title-menu-person-present { background: var(--av-sys-color-success-base); border-radius: 50%; flex: none; height: 7px; width: 7px; }
-.title-menu-person-role { color: var(--av-sys-color-text-muted); flex: none; font-size: 13.5px; }
-.title-menu-person-actions {
-  align-items: center;
-  background: none;
-  border: 0;
-  border-radius: var(--av-sys-size-radius-pill);
-  color: var(--av-sys-color-text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  flex: none;
-  height: 28px;
-  justify-content: center;
-  margin-left: -4px;
-  width: 28px;
-}
-.title-menu-person-actions:hover,
-.title-menu-person-actions[data-state="open"] { background: var(--av-sys-color-surface-sunken); color: var(--av-sys-color-text-default); }
-.title-menu-add {
-  background: var(--av-sys-color-surface-raised);
-  border: var(--av-sys-size-border-hairline) solid var(--av-sys-color-border-strong);
-  border-radius: var(--av-sys-size-radius-pill);
-  color: var(--av-sys-color-accent-strong);
-  cursor: pointer;
-  flex: none;
-  font: inherit;
-  font-size: 13.5px;
-  font-weight: 500;
-  height: 32px;
-  padding: 0 14px;
-}
-.title-menu-add:hover:not(:disabled) { background: var(--av-sys-color-surface-sunken); }
-.title-menu-add:disabled { cursor: progress; opacity: .6; }
 
 .title-menu-switch {
   background: var(--av-ref-color-line-4);
@@ -8048,41 +7710,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 /* A menu item wearing the standard `.button`. Its highlighted state shares
    the `.button:hover` rule above. */
 .title-menu-button { cursor: pointer; flex: none; outline: 0; }
-.title-menu-origin {
-  background: var(--av-sys-color-surface-sunken);
-  border-radius: 12px;
-  box-shadow: 0 0 0 var(--av-sys-size-border-hairline) var(--av-sys-color-border-subtle);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin: 0 0 6px;
-  padding: 10px 12px;
-}
-.title-menu-origin-byline { color: var(--av-sys-color-text-muted); font-size: 11.5px; }
-.title-menu-origin-text { -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: var(--av-sys-color-text-subtle); display: -webkit-box; font-size: 13px; line-height: 1.5; overflow: hidden; }
-.title-menu-people { align-items: center; display: flex; gap: 10px; padding: 0 0 4px; }
-.title-menu-people-trigger { align-items: center; border-radius: var(--av-sys-size-radius-sm); cursor: pointer; display: flex; flex: 1; font-size: 13.5px; gap: 10px; min-width: 0; outline: 0; padding: 4px; }
-.title-menu-people-trigger[data-highlighted] { background: var(--av-sys-color-state-hover); }
-.title-menu-chip {
-  align-items: center;
-  background: var(--av-sys-color-surface-sunken);
-  border-radius: var(--av-sys-size-radius-pill);
-  color: var(--av-sys-color-text-subtle);
-  display: inline-flex;
-  flex: none;
-  font-size: 12.5px;
-  gap: 6px;
-  height: 26px;
-  padding: 0 10px;
-}
+
 .title-menu-item-copy { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.title-menu-merge-row .title-menu-item-copy strong { font-weight: 600; }
-.title-menu-item-age { color: var(--av-sys-color-text-muted); flex: none; font-size: 11.5px; }
-.title-menu-item-dot { background: var(--av-sys-color-accent-base); border-radius: 50%; flex: none; height: 8px; width: 8px; }
-.title-menu-breakout { color: var(--av-sys-color-text-default); min-height: 36px; }
-.title-pill-menu .title-menu-breakout > svg { color: var(--av-sys-color-text-muted); }
-.title-menu-breakout[aria-current='true'] { background: var(--av-sys-color-state-hover); font-weight: 500; }
-.title-menu-section-heading { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 12px; font-weight: 600; padding: 4px 6px 6px; }
+
 .title-menu-search {
   align-items: center;
   background: var(--av-sys-color-surface-sunken);
@@ -8095,103 +7725,12 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   padding: 0 8px;
 }
 .title-menu-search > input { background: transparent; border: 0; color: var(--av-sys-color-text-default); flex: 1; font: inherit; font-size: 13px; min-width: 0; outline: 0; }
-.title-menu-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 0; padding: 4px 8px 6px; }
-.title-menu-more { border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-subtle); cursor: pointer; font-size: 13px; outline: 0; padding: 7px 8px; }
-.title-menu-more[data-highlighted] { background: var(--av-sys-color-state-hover); }
-.title-menu-sidekicks .workstream-context-section { margin-top: 6px; padding: 0; }
-.title-menu-sidekicks .workstream-context-section h2 { margin: 0 6px 4px; }
-/* Sidekick rows are menu rows here, so they take the menu's size rather than
-   the larger row they had in the old channel sidebar. */
-.title-menu-sidekicks .workstream-context-row { border-radius: 8px; flex-basis: 34px; font-size: 13.5px; gap: 10px; height: 34px; min-height: 34px; padding: 0 8px; }
-.title-menu-sidekicks .workstream-context-row .sidebar-row-icon { height: 16px; width: 16px; }
-.title-menu-sidekicks .workstream-context-row .sidebar-row-icon > svg { height: 15px; width: 15px; }
 
-/* ── Breakouts in the Channel ──────────────────────────────────────────────
-   Cards under the message a Breakout started from (`.conversation-card`), and
-   the tick bar down the Channel's leading edge. */
-
-/* A conversation waiting on an answer, in the sidebar badge's colours. */
-.conversation-card-badge {
-  background: var(--av-sys-color-danger-base);
-  border-radius: var(--av-sys-size-radius-pill);
-  color: var(--av-sys-color-danger-on);
-  flex: none;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 18px;
-  padding: 0 7px;
-}
-
-/* The top of a Breakout: the Channel message it started from as a card, and
-   up to three before it, each a step fainter the further back it is, so the
-   lead-up reads as context rather than as more conversation. */
-
-/* Colour says news and length says open, as in the design: an open Breakout
-   with nothing new is the longest tick, in a grey a step darker than the rest. */
-
-/* The transcript makes room for the ticks only when there are ticks. */
-
-/* Phone: the ticks would cover text (chips and the Channel menu still reach
-   Breakouts), and Rally's turns and their placeholder fill the column. Must
-   follow the rule above, which has the same weight. */
+/* Phone: Rally's turns and their placeholder fill the column. */
 @media (max-width: 640px) {
-  
-  
   .workstream-screen :is(.agent-message, .conversation-opening-message:not(.is-human)) { max-width: 100%; }
 }
 
-/* ── Split conversation ─────────────────────────────────────────────────────
-   A Channel and its open Breakout side by side, one resize handle between. A
-   right panel opened from either pane takes the other pane's place: the pane
-   that opened it stays, the other is hidden but kept mounted. */
-.split-conversation { display: flex; height: 100%; min-width: 0; position: relative; }
-.split-conversation-pane { container: conversation-pane / inline-size; display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; position: relative; }
-.split-conversation-pane.is-breakout { flex: 0 0 var(--split-breakout-width, 50%); max-width: calc(100% - var(--conversation-min-width)); }
-.split-conversation-pane.is-breakout::before {
-  background: var(--av-sys-color-border-subtle);
-  bottom: var(--panel-divider-inset-bottom);
-  content: '';
-  left: 0;
-  pointer-events: none;
-  position: absolute;
-  top: var(--panel-divider-inset-top);
-  width: var(--av-sys-size-border-hairline);
-  z-index: 1;
-}
-.split-conversation-pane.is-breakout.is-alone { flex: 1 1 0; max-width: none; }
-.split-conversation-pane.is-breakout.is-alone::before { content: none; }
-.split-conversation-pane[hidden] { display: none; }
-.split-conversation-pane[data-motion='enter'] { animation: split-pane-enter 240ms cubic-bezier(.22, 1, .36, 1); }
-.split-conversation-pane[data-motion='shift'] { animation: split-pane-shift 240ms cubic-bezier(.22, 1, .36, 1); }
-@keyframes split-pane-enter { from { opacity: 0; transform: translateX(24px); } }
-@keyframes split-pane-shift { from { transform: translateX(var(--split-motion-from, 0px)); } }
-@media (prefers-reduced-motion: reduce) {
-  .split-conversation-pane[data-motion] { animation: none; }
-}
-.split-conversation-pane > .conversation-layout { flex: 1; min-height: 0; }
-.split-conversation-resizer {
-  cursor: col-resize;
-  flex: none;
-  /* Over the Breakout, not the Channel beside it: 2px reach the Channel's
-     scrollbar border and no further, so its thumb stays draggable. */
-  margin: 0 calc(2px - var(--resize-hit-size)) 0 -2px;
-  position: relative;
-  touch-action: none;
-  width: var(--resize-hit-size);
-  z-index: 4;
-}
-.split-conversation-resizer:hover::after,
-.split-conversation-resizer.is-resizing::after,
-.split-conversation-resizer:focus-visible::after {
-  background: var(--av-sys-color-accent-tint);
-  bottom: var(--panel-divider-inset-bottom);
-  content: '';
-  left: 1px;
-  position: absolute;
-  top: var(--panel-divider-inset-top);
-  width: 2px;
-}
-.split-conversation.is-resizing { cursor: col-resize; user-select: none; }
 .title-pill-skeleton { border-radius: var(--av-sys-size-radius-pill); display: block; height: 36px; width: 200px; }
 .title-pill-icon-action { align-items: center; display: inline-flex; padding-left: 6px; }
 .title-pill-icon-action .appearance-picker-trigger,
@@ -8572,104 +8111,8 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   .app-shell .navigation-sidebar .navigation-rail-spacer { display: none; }
 }
 
-/* ── A Channel: its feed of threads and the composer that starts one ─────── */
-/* An auto column can keep the feed wider than its pane across the split divider. */
-
-/* The header's pill floats over the feed, which fades out beneath it. */
-
-/* "Thursday", "Today": a hairline either side of the day's name. */
-
-/* A conversation as a feed entry (`ConversationCard`): title, summary and
-   byline, with its mark beside them. The whole entry is the button that opens
-   it. Threads and Breakouts both sit on the trailing side: a person started
-   them. */
-.conversation-card {
-  align-items: flex-start;
-  background: transparent;
-  border: 0;
-  border-radius: 16px;
-  color: inherit;
-  cursor: pointer;
-  display: flex;
-  font: inherit;
-  gap: 12px;
-  margin: -8px -10px;
-  max-width: min(520px, 100%);
-  padding: 8px 10px;
-  text-align: right;
-}
-.conversation-card:hover,
-.conversation-card.is-open { background: var(--av-sys-color-state-hover); }
-.conversation-card:focus-visible { box-shadow: var(--av-sys-focus-ring-default); outline: none; }
-.conversation-card-body { align-items: flex-end; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.conversation-card-title { align-items: center; color: var(--av-sys-color-text-default); display: flex; font-size: 15.5px; font-weight: 650; gap: 6px; max-width: 100%; }
-.conversation-card-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.conversation-card.is-resolved :is(.conversation-card-title, .conversation-card-summary, .conversation-card-meta, .avatar-fallback) { color: var(--av-ref-color-neutral-7); }
-.conversation-card.is-resolved .personal-avatar svg:has(text) { fill: var(--av-ref-color-neutral-5); }
-.conversation-card.is-resolved .personal-avatar text { fill: var(--av-ref-color-neutral-7); }
-.conversation-card.is-resolved:is(:hover, :focus-visible) :is(.conversation-card-title, .conversation-card-summary, .conversation-card-meta, .avatar-fallback) { color: var(--av-sys-color-text-subtle); }
-.conversation-card.is-resolved:is(:hover, :focus-visible) .avatar { background: var(--av-ref-color-neutral-3); }
-.conversation-card.is-resolved:is(:hover, :focus-visible) .personal-avatar svg:has(text) { fill: var(--av-ref-color-neutral-3); }
-.conversation-card.is-resolved:is(:hover, :focus-visible) .personal-avatar text { fill: var(--av-sys-color-text-subtle); }
-.conversation-card.is-resolved .conversation-card-title { font-size: 14px; font-weight: 400; }
-.conversation-card.is-resolved .conversation-card-summary { -webkit-line-clamp: 1; font-size: 12.5px; }
-.conversation-card.is-resolved .conversation-card-meta { font-size: 11px; }
-.conversation-card.is-resolved .conversation-card-caret { opacity: 0.4; }
-.conversation-card.is-resolved .conversation-card-mark { filter: grayscale(1); opacity: 0.3; }
-.conversation-card.is-resolved:is(:hover, :focus-visible) :is(.conversation-card-caret, .conversation-card-mark) { opacity: 0.55; }
-.conversation-card-pill {
-  background: var(--av-ref-color-neutral-3);
-  border-radius: var(--av-sys-size-radius-pill);
-  color: var(--av-ref-color-neutral-7);
-  flex: none;
-  font-size: 10px;
-  font-weight: 400;
-  line-height: 1.4;
-  padding: 2px 9px;
-}
-.conversation-card:is(:hover, .is-open) .conversation-card-pill { background: var(--av-sys-color-state-hover); }
-.conversation-card:is(:hover, :focus-visible) .conversation-card-pill { color: var(--av-sys-color-text-subtle); }
-.conversation-card-caret { color: var(--av-sys-color-text-subtle); flex: none; }
-.conversation-card-news { color: var(--av-sys-color-workstream-news); flex: none; font-size: 12.5px; font-weight: 600; }
-.conversation-card-summary {
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  color: var(--av-sys-color-text-muted);
-  display: -webkit-box;
-  font-size: 13.5px;
-  line-height: 1.5;
-  overflow: hidden;
-  /* A long URL is one word; let it break rather than spill past the card. */
-  overflow-wrap: anywhere;
-  text-wrap: pretty;
-}
-/* The summary is drawn by the message renderer, but reads as the card's own
-   line: its size and ink, and no paragraph or heading spacing to spend the
-   clamp on. */
-.conversation-card-summary .markdown-body { --markdown-ink: currentColor; --markdown-ink-strong: currentColor; color: inherit; font-size: inherit; line-height: inherit; }
-.conversation-card-summary .markdown-body :is(p, h1, h2, h3, h4, h5, h6) { font-size: inherit; margin: 0; }
-.conversation-card-summary .markdown-body :is(ul, ol, blockquote, pre, table, hr, .markdown-code-block) { margin: 0; }
-.conversation-card-summary .markdown-body :is(ul, ol, li, blockquote) { border: 0; display: block; list-style: none; padding: 0; text-align: inherit; }
-.conversation-card-meta { align-items: center; color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 6px; margin-top: 2px; }
-
-.conversation-card-meta .avatar { height: 18px; margin-right: 2px; width: 18px; }
-.conversation-card-meta .avatar-fallback { font-size: 8px; }
-.conversation-card-mark {
-  background: var(--av-sys-color-surface-sunken);
-  border-radius: 50%;
-  color: var(--av-sys-color-text-muted);
-  display: grid;
-  flex: none;
-  height: 36px;
-  place-items: center;
-  width: 36px;
-}
-/* A message in the Channel itself: on the leading side, as speech is in a
-   thread, and not a button, because there is nothing to open. */
-
 /* What Rally remembers (docs/agent-memory.md): one scope's facts, drawn by
-   `MemoryFactRows` in a settings card (`.memory-review`) and in a title menu's
-   Memory level (`.title-menu-memory`). */
+   `MemoryFactRows` in a settings card (`.memory-review`). */
 .memory-review { display: flex; flex-direction: column; }
 .memory-review .center-state { height: auto; padding: 8px 0; }
 .memory-review-empty { color: var(--av-sys-color-text-muted); margin: 0; }
@@ -8685,23 +8128,18 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 /* A link on a page, a button in a settings window or a menu: one look. */
 .memory-review-source { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-decoration: underline; text-decoration-color: var(--av-sys-color-border-default); text-underline-offset: 2px; }
 .memory-review-source:hover, .memory-review-source:focus-visible { color: var(--av-sys-color-text-default); }
-.title-menu-memory .memory-review-facts { font-size: 13.5px; padding: 0 8px; }
+
 /* A settings card carries no padding of its own; its rows do, as
    `.settings-preference-row` does, so the facts line up with every other row. */
 .settings-list-card > .memory-review .memory-review-fact { padding: 10px 14px; }
 .settings-list-card > .memory-review .memory-review-empty,
 .settings-list-card > .memory-review .center-state { padding: 12px 14px; }
-/* No scrim: the feed scrolls in the row above, not behind the dock. */
-
-/* Merge-back (docs/conversation-merge.md). The hover rows never wrap: a row
-   wider than its message runs under the title menu's pop-out rather than
-   breaking onto a second line, and New breakout and Merge, first in the row,
-   stay whole. */
+/* The hover rows never wrap: a row wider than its message runs under the
+   title menu's pop-out rather than breaking onto a second line. */
 .message-actions { flex-wrap: nowrap; white-space: nowrap; }
-.message-merge { white-space: nowrap; }
-/* The composer's merge mode (docs/conversation-merge.md): who will see it,
-   over the toolbar; where it goes, as a pill among the tools; and Merge, a
-   labelled button where Send is. */
+
+/* A composer's notice, over the toolbar, and a labelled submit button where
+   the bare Send arrow would be. */
 .composer-notice {
   align-items: center;
   color: var(--av-sys-color-text-subtle);
@@ -8711,48 +8149,10 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
   padding: 2px 4px 6px;
 }
 .composer-notice > svg { flex: none; }
-.composer-merge-target {
-  align-items: center;
-  background: var(--av-sys-color-success-fill);
-  border-radius: 999px;
-  color: var(--av-sys-color-success-base);
-  display: inline-flex;
-  font-size: 12.5px;
-  font-weight: 550;
-  gap: 4px;
-  height: 26px;
-  padding: 0 9px;
-  white-space: nowrap;
-}
-.composer-merge-target:hover { filter: brightness(.97); }
+
 .composer-send.has-content { gap: 5px; font-size: 13px; font-weight: 550; padding: 0 12px; width: auto; }
-/* In the message capsule the merge composer always takes its tall form, as
-   the design draws it: the words across the top, who will see them, then the
-   tools, the hint and Merge on one row. */
-/* A conversation suggestion (docs/conversation-suggestions.md): one quiet line
-   under a settled turn, in the row where Breakout cards sit. Dashed, because
-   the thing it names does not exist yet; a title, one sentence, one cut line
-   of the words in quotes, the action, and a dismiss. */
+/* What a host draws under a settled turn (`afterTurn`). */
 .turn-host-content { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 6px; padding: 0 10px; }
-
-/* The response card: the merge as the parent will draw it, editable, under
-   the turn it was asked from or at the end of the feed
-   (docs/conversation-merge.md). A solid card, where the chip was dashed:
-   this one is about to exist. */
-
-/* A merged result, the same block in a Thread and in a Channel: on the
-   leading side, a line naming the source, who merged it and when, an optional
-   quote of what the source was asked, then the result. */
-
-/* The source's mark of a merge: a divider across the feed, as a day separator
-   is, with the merge's line at its centre. */
-
-/* A Channel row a link asked for, lit briefly where the feed scrolled to it. */
-
-@keyframes channel-feed-focus {
-  0%, 40% { background: var(--av-sys-color-surface-sunken); box-shadow: 0 0 0 10px var(--av-sys-color-surface-sunken); }
-  100% { background: transparent; box-shadow: 0 0 0 10px transparent; }
-}
 
 /* Artifact annotations: transient pins and the excerpts carried by a message. */
 .annotation-surface { position: relative; min-width: 0; width: 100%; }
@@ -8857,7 +8257,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .navigation-history .mark-bridge-icon { height: 18px; width: 18px; }
 .navigation-history button:disabled { cursor: default; opacity: .35; }
 .navigation-history button:disabled:hover { background: transparent; }
-.split-conversation-pane.is-breakout:not(.is-alone) .title-pill-leading,
+
 .workspace-shell:not(.rail-expanded):not(.rail-fills-pane) .panel-title-header .title-pill-leading { display: none; }
 
 .artifact-window-panel { display:flex; flex-direction:column; flex:1; min-height:0; }

@@ -32,7 +32,6 @@ import {
   sendWorkstreamMentionSlack,
   sendWorkstreamParticipantAddedSlack,
 } from "./slack-notification-service";
-import { enqueueMentionOpportunitySnapshot } from "./work-opportunity-batching";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 
@@ -40,7 +39,7 @@ function workspaceTopicsForEffect(
   effect: ParentEffectEnvelope["effect"],
 ) {
   if (effect.kind === "activity_event") {
-    return ["activity", "work_opportunities"] as const;
+    return ["activity"] as const;
   }
   return ["activity", "workstream_directory"] as const;
 }
@@ -169,24 +168,6 @@ export async function applyWorkstreamRegionalEffect(
     });
   }
 
-  if (
-    message.effect.kind === "activity_event"
-    && message.effect.sourceKind === "workstream_message"
-    && message.effect.sourceId
-    && targetUserIds.length > 0
-  ) {
-    // Deliberately runs on replayed deliveries too. The receipt now commits
-    // atomically with the event, so a crash between that commit and this
-    // enqueue is repaired only by the redelivery; the batch-event unique key
-    // makes a repeated enqueue converge.
-    await enqueueMentionOpportunitySnapshot(env, {
-      workspaceId: message.workspaceId,
-      messageId: message.effect.sourceId,
-      targetUserIds,
-      occurredAt: message.effect.occurredAt,
-      inputCharacters: message.effect.body.length,
-    });
-  }
   await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
   return {
     replayed: applied.replayed,

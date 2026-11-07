@@ -1,11 +1,12 @@
 # WebSocket architecture
 
-Rally keeps a small set of long-lived WebSockets open so workspace state,
-Channel metadata, and the active substream feed are already available when a
-person navigates. Electron deliberately uses two client transports: the
-singleton workspace connection stays in Chromium and carries every Channel's
-row, breakouts and running background agents, while each held Channel's
-substream `0` feed is dialled by a Node broker in the main process. The split
+Rally keeps a small set of long-lived WebSockets open so workspace state, the
+Canvases and Sidekicks lists, and the open conversation's feed are already
+available when a person navigates. Electron deliberately uses two client
+transports: the singleton workspace connection stays in Chromium and carries
+the Canvases and Sidekicks lists and running background agents, while each
+open conversation's substream `0` feed is dialled by a Node broker in the main
+process. The split
 lets the desktop open a useful swarm in parallel without moving protocol state
 or product caches out of the renderer.
 
@@ -14,7 +15,7 @@ Settings window consumes it through main rather than dialling its own, and
 dials only while no main window is publishing — see
 [the Organization-sync relay](#one-workspace-socket-per-desktop-the-organization-sync-relay).
 On macOS, with the menu bar item on, the main process holds a second, its own,
-for the Channel rows behind the menu bar's attention count; it outlives every
+for the Canvases and Sidekicks lists behind the menu bar's attention count; it outlives every
 window ([`menu-bar.md`](menu-bar.md#the-content)).
 
 An automation's page uses the same feed socket kind: its conversation is

@@ -335,6 +335,20 @@ cannot misroute.
 affordance for managers). The wizard and run separation from the earlier
 entry stands.
 
+### 2026-11-07 — Anyone a Canvas admits can retitle it
+
+**Decided:** Retitling a Canvas is open to anyone the Canvas admits, as
+taking part in it is: anyone it admits already changes its artifacts from its
+Chat. Who can open it stays with its creator and the Organization's owners and
+administrators. This was the implementer's reading, made during plan step C-1
+when `PATCH /canvases/:id` was added, and is open to the product owner's
+reversal.
+
+**Why:** The client's Rename Canvas needed a route and no decision said who
+may use it. The title is no more protected than the artifacts it names.
+
+**Changes:** Plan step C-1 (`HostedCanvas.rename`).
+
 ### 2026-11-06 — Canvas conversations stay in the conversation object, which is renamed
 
 **Decided:** A Canvas's conversation is an ordinary conversation object, the

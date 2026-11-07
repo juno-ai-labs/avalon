@@ -44,8 +44,6 @@ const api = vi.hoisted(() => ({
   getTerminalWorkspaceSettings: vi.fn(),
   previewTerminalNetworkPolicy: vi.fn(),
   applyTerminalNetworkPolicy: vi.fn(),
-  getDigestSchedule: vi.fn(),
-  updateDigestSchedule: vi.fn(),
   clientFeatureFlags: vi.fn(),
   getMyPersonalSystemPrompt: vi.fn(),
   updateMyPersonalSystemPrompt: vi.fn(),
@@ -613,10 +611,6 @@ describe('Organization settings', () => {
   });
 
   it('saves one kind\'s channels for every device and leaves the other kinds alone', async () => {
-    api.getDigestSchedule.mockResolvedValue({
-      id: 'digest', enabled: true, days: [1], times: [540], timezone: 'Europe/London',
-      deliveryTargets: [], nextRunAt: null, lastDeliveredAt: null,
-    });
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({ pushNotificationsEnabled: true }));
     api.getMyPreferences.mockResolvedValue(DEFAULT_MEMBER_PREFERENCES);
     api.updateMyPreferences.mockImplementation(async () => ({ ...DEFAULT_MEMBER_PREFERENCES,
@@ -791,11 +785,6 @@ describe('Organization settings', () => {
       connectionId: 'mcp-one', connectionName: 'MCP One', scope: 'workspace',
       serverUrl: 'https://mcp.example.test', authMode: 'oauth', toolPolicy: 'all_tools',
       toolPolicyEditable: true, tools: [], toolsUnavailable: null,
-    });
-    api.getDigestSchedule.mockResolvedValue({
-      id: 'digest', enabled: true, days: [1], times: [540], timezone: 'Europe/London',
-      deliveryTargets: [{ type: 'email', connectionId: null, displayName: 'Adam', status: 'active', lastDeliveredAt: null }],
-      nextRunAt: null, lastDeliveredAt: null,
     });
     if (definition.availability === 'browser') sessionHost.current = 'browser';
     renderSettings();
@@ -3353,18 +3342,6 @@ describe('Closing the settings window with Escape', () => {
       customDomains: [], remainingCustomSlots: 7, failureCode: null,
     });
     api.clientFeatureFlags.mockResolvedValue(ClientFeatureFlagsSchema.parse({}));
-    api.getDigestSchedule.mockResolvedValue({
-      id: '00000000-0000-4000-8000-000000000001',
-      enabled: true,
-      days: [1, 2, 3, 4, 5],
-      times: [9 * 60],
-      timezone: 'Europe/London',
-      deliveryTargets: [
-        { type: 'email', connectionId: null, displayName: 'adam@rally.local', status: 'active', lastDeliveredAt: null },
-      ],
-      nextRunAt: null,
-      lastDeliveredAt: null,
-    });
     getApplicationIcon.mockResolvedValue({ activeIcon: 'dark', isAutomatic: true, supported: true });
   });
 

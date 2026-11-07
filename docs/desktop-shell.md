@@ -24,7 +24,8 @@ routes the shell serves, or who owns the right panel.
 | `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: the restorable `last-route`, else `/canvases`. `LANDING_ROUTE`, `restorableRoute`, `useOpenLanding`. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the rail (Canvases, Sidekicks), the account menu under it, the list's header and its actions, and the phone sheet. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the rail (Canvases, Sidekicks), the account menu under it, the list's header and its actions, and the phone sheet; `useSectionCounts`, the rail's counts the dock badge adds up. |
+| `apps/desktop/src/common/sidebar-attention.ts` | `canvasNeedsAttention` and `sidekickNeedsAttention`: what counts as needing attention, shared by `useSectionCounts` and the menu bar ([`menu-bar.md`](menu-bar.md)). |
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx` | `CanvasesSection` and `SidekicksSection`, and the counts their tiles carry (`useUnreadCanvasCount`, `useSidekickAttentionCount`). |
 | `apps/desktop/src/renderer/components/navigation-rows.tsx` | The row primitives both lists draw: `RowLayout`, `SectionHeading`, `PinnedSection`, `useSectionMotion`, `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the rail, the account menu's trigger included. |
@@ -303,7 +304,8 @@ conversation (`usePaneExpansion`, `expandToggle`, now in
 `lib/navigation-routes.ts`). **`attention-menu.md` is retired**: it kept what
 counted as needing attention (`attentionItems`) for the Threads count and the
 dock badge, and both now count the Canvases and Sidekicks lists
-(`useSectionCounts`); the dock badge is the rail's counts added up. A search
+(`useSectionCounts`, by the predicates in `common/sidebar-attention.ts`
+that the menu bar shares); the dock badge is the rail's counts added up. A search
 result opens its Canvas on the turn it names.
 
 **Why:** Plan step B-3 of the
@@ -651,7 +653,7 @@ which put the same action on screen twice under the newest reply.
 
 **Consequences:** No message has a breakout control outside its hover row. The
 row never wraps (`flex-wrap: nowrap`), so a long row runs under the title
-menu's pop-out instead of breaking. Mechanism: [`conversation-merge.md`](conversation-merge.md).
+menu's pop-out instead of breaking. Mechanism: `conversation-merge.md` (retired).
 
 ### 2026-10-16 — One header at phone width; counts on every section
 

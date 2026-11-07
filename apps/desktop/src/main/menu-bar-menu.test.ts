@@ -82,6 +82,22 @@ describe('menu bar menu', () => {
       .toEqual(['Needs attention', 'Sign in to Rally', '—', 'Open Rally', 'Quit Rally']);
   });
 
+  it('never draws two rules in a row, or a rule at either end', () => {
+    const waiting = [sidekick('triage', 'Incident triage')];
+    const canvases = [canvas('plan', 'Launch plan')];
+    for (const content of [
+      {}, { attention: waiting }, { recents: canvases }, { attention: waiting, recents: canvases },
+      { attentionComplete: false }, { recentsComplete: false },
+    ]) {
+      for (const overrides of [{}, { signedIn: false }, { sectionHeaders: false }]) {
+        const drawn = labels(template(content, overrides));
+        expect(drawn.some((label, index) => label === '—' && drawn[index + 1] === '—')).toBe(false);
+        expect(drawn.at(0)).not.toBe('—');
+        expect(drawn.at(-1)).not.toBe('—');
+      }
+    }
+  });
+
   it('heads both sections, and falls back to a disabled row where macOS has no section headers', () => {
     const items = template({}, { sectionHeaders: false });
     expect(items[0]).toEqual({ label: 'Needs attention', enabled: false });

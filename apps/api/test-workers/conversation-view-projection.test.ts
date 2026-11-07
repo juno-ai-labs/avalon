@@ -6,11 +6,9 @@ import { asSubstreamId, asWorkspaceId, asWorkstreamId, WORKSTREAM_REALTIME_MAX_F
 import { conversationObjectName } from "../src/durable-objects/names";
 import { WorkspaceConversationView } from "../src/durable-objects/workspace-conversation-view";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
-import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { nextConversationViewAt, publishConversationViews } from "../src/durable-objects/conversation-view-projection";
-import { threadBackfillWork } from "../src/durable-objects/thread-backfill";
 import { boot, seedCanonicalMessageRecord, seedOpenWorkstreamAuthority, seedParticipantMessage, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000ca01");
@@ -325,63 +323,3 @@ it("requeues a deleted turn after delivery is lost without requiring another edi
   });
 });
 
-it("backfills populated source storage and every hosted parent including archived breakouts and Sidekicks", async () => {
-  const oldSource = env.MIGRATION_PROBE_DO!.getByName("conversation-view-old-source");
-  await oldSource.ping();
-  await runInDurableObject(oldSource, async (_instance, state) => {
-    applyDurableObjectSqliteMigrations({
-      storage: state.storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((m) => m.version <= 77),
-      component: "substream_agent_do", workerVersionId: "before",
-    });
-    seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: parentId });
-    await seedParticipantMessage(state, { id: "historical", sequence: 1, text: "Old message" });
-  });
-  await runInDurableObject(oldSource, async (_instance, state) => {
-    applyDurableObjectSqliteMigrations({
-      storage: state.storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
-      component: "substream_agent_do", workerVersionId: "after",
-    });
-    expect(state.storage.sql.exec<{ turn_id: string }>(
-      "SELECT turn_id FROM conversation_view_changes WHERE pending = 1 ORDER BY turn_id",
-    ).toArray()).toEqual([{ turn_id: "" }, { turn_id: "historical" }]);
-    await publishConversationViews(state.storage.sql, env.ACTIVITY_QUEUE, job);
-    expect(nextConversationViewAt(state.storage.sql)).toBeGreaterThan(Date.now());
-  });
-  const oldWorkspace = env.MIGRATION_PROBE_DO!.getByName("conversation-view-old-workspace");
-  await oldWorkspace.ping();
-  await runInDurableObject(oldWorkspace, (_instance, state) => {
-    applyDurableObjectSqliteMigrations({
-      storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((m) => m.version <= 123),
-      component: "workspace_do", workerVersionId: "before",
-    });
-    state.storage.sql.exec(`INSERT INTO parent_children(parent_id, substream_id, kind, created_at, archived_at)
-      VALUES ('thread', 'archived-child', 'child', 1, 2),
-             ('channel', '0', 'main', 1, NULL)`);
-    state.storage.sql.exec(`INSERT INTO sidekick_children(sidekick_id, substream_id, kind, created_at)
-      VALUES ('sidekick', '0', 'main', 1), ('sidekick', 'run', 'child', 1)`);
-    state.storage.sql.exec(`INSERT INTO channels (
-      workstream_id, authority_generation, waterline, source_event_id, payload_hash,
-      title, description, preview, scope, exact_state, origin_type, title_status,
-      latest_attention_ordinal, unread_tracking_start_ordinal, last_activity_at,
-      source_created_at, source_updated_at, projected_at
-    ) VALUES ('legacy-main', 1, 1, 'legacy-event', 'hash', 'Legacy', '', '',
-      'workspace', 'idle', 'ad_hoc', 'settled', 0, 0, 1, 1, 1, 1)`);
-  });
-  await runInDurableObject(oldWorkspace, (_instance, state) => {
-    applyDurableObjectSqliteMigrations({
-      storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
-      component: "workspace_do", workerVersionId: "after",
-    });
-    expect(state.storage.sql.exec<{ workstream_id: string }>(
-      "SELECT workstream_id FROM thread_backfill WHERE job = 'conversation_view' ORDER BY workstream_id",
-    ).toArray()).toEqual([{ workstream_id: "channel" }, { workstream_id: "legacy-main" },
-      { workstream_id: "sidekick" }, { workstream_id: "thread" }]);
-    expect(threadBackfillWork(state.storage.sql, { job: "conversation_view", workstreamId: "legacy-main" }))
-      .toEqual({ substreamIds: ["0"] });
-    expect(threadBackfillWork(state.storage.sql, { job: "conversation_view", workstreamId: "thread" }))
-      .toEqual({ substreamIds: ["0", "archived-child"] });
-    expect(threadBackfillWork(state.storage.sql, { job: "conversation_view", workstreamId: "sidekick" }))
-      .toEqual({ substreamIds: ["0", "run"] });
-    expect(state.storage.sql.exec("PRAGMA foreign_key_check").toArray()).toEqual([]);
-  });
-});

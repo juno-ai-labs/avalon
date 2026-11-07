@@ -79,11 +79,11 @@ its runs links to the Sidekick, and anything else — a Thread, a Breakout, a
 Channel, or an id the Organization holds nothing for — has no link and gets
 `null`. Every notification path is built on it: pushes (mentions, adds and the
 Activity kinds, Needs input and finished runs among them), the mention and
-participant emails, Slack DMs, the digest, the access-request answer and the
+participant emails, Slack DMs and the
 Slack task controls. A delivery about a conversation with no link is skipped
 with the named reason `conversation_not_linkable` and the parent's kind
 (`parent_kind`, `missing` for a deleted Canvas or nothing at all, so it reads
-apart from a Thread), or, in the digest and Slack task controls, sent without
+apart from a Thread), or, in the Slack task controls, sent without
 the link: Thread surfaces are gone, so a link to one would open nothing. A
 mention or an add resolves the link once (`conversationLink`) and hands it to
 both its Slack and email transports; a push resolves it after the person's
@@ -252,7 +252,7 @@ or who may open one (the regional API, per [`authorization.md`](authorization.md
 
 ### Deep links that have no canonical form
 
-Settings, access-request and automation deep links go through the
+Settings and automation deep links go through the
 `/open#target=` handoff, whose allowlist lives in the shared
 `desktop-deep-link-intent` contract. They address no shareable object, so they
 need neither a stable URL nor an unfurl, but every newly emitted one uses the

@@ -45,7 +45,6 @@ import { uuidV7 } from "../lib/uuid-v7";
 import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
 import { createHarnessRunPortFactory } from "../runtime/harness-run-port";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
-import { fireDigestSchedule } from "./digest-run-service";
 import {
   reapDeletedResourceObjects,
   reapExpiredDraftResources,
@@ -648,15 +647,8 @@ async function runSchedule(
   if (schedule.connector_connection_id) {
     await startConnectorPoll(ctx, schedule);
   } else if (schedule.digest_schedule_id) {
-    // The occurrence is identified by the due time, not by this row: several
-    // rows carry the same digest at different times of day, and the delivery's
-    // uniqueness on (schedule, planned_for) is what makes a retried alarm
-    // resolve to the attempt already in flight.
-    await fireDigestSchedule(workspaceEnv, {
-      scheduleId: schedule.digest_schedule_id,
-      workspaceId: schedule.workspace_id,
-      plannedFor: schedule.next_run_at,
-    });
+    // Digests were retired (plan step C-2); a row written before that sends
+    // nothing and is advanced as before until the C-7 migration drops it.
   } else {
     throw new Error("unsupported_schedule_target");
   }

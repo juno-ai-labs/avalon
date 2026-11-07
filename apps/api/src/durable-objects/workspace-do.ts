@@ -359,60 +359,6 @@ import {
   type WorkspaceConnectorEventSettleRpcRequest,
 } from "./workspace-connector-event-protocol";
 import {
-  WorkspaceDigestClaimRequestSchema,
-  WorkspaceDigestDefaultRequestSchema,
-  WorkspaceDigestDeliveryContextRequestSchema,
-  WorkspaceDigestDeliveryTargetsRequestSchema,
-  WorkspaceDigestFireScheduleRequestSchema,
-  WorkspaceDigestReplaceRequestSchema,
-  WorkspaceDigestReplaceRowsRequestSchema,
-  WorkspaceDigestRowStateRequestSchema,
-  WorkspaceDigestSettingsRequestSchema,
-  WorkspaceDigestSettleRequestSchema,
-  WorkspaceDigestTargetDeliveredRequestSchema,
-  WorkspaceDigestTargetFailedRequestSchema,
-  WorkspaceDigestTerminalContextRequestSchema,
-  type WorkspaceDigestClaimRequest,
-  type WorkspaceDigestClaimResult,
-  type WorkspaceDigestDefaultRequest,
-  type WorkspaceDigestDefaultResult,
-  type WorkspaceDigestDeliveryContext,
-  type WorkspaceDigestDeliveryContextRequest,
-  type WorkspaceDigestDeliveryTargets,
-  type WorkspaceDigestDeliveryTargetsRequest,
-  type WorkspaceDigestFireSchedule,
-  type WorkspaceDigestFireScheduleRequest,
-  type WorkspaceDigestReplaceRequest,
-  type WorkspaceDigestReplaceResult,
-  type WorkspaceDigestReplaceRowsRequest,
-  type WorkspaceDigestRowState,
-  type WorkspaceDigestRowStateRequest,
-  type WorkspaceDigestSettings,
-  type WorkspaceDigestSettingsRequest,
-  type WorkspaceDigestSettleRequest,
-  type WorkspaceDigestSettleResult,
-  type WorkspaceDigestTargetDeliveredRequest,
-  type WorkspaceDigestTargetFailedRequest,
-  type WorkspaceDigestTargetOutcomeResult,
-  type WorkspaceDigestTerminalContext,
-  type WorkspaceDigestTerminalContextRequest,
-} from "./workspace-digests-protocol";
-import {
-  claimWorkspaceDigestDelivery,
-  ensureDefaultWorkspaceDigestSchedule,
-  markWorkspaceDigestTargetDelivered,
-  markWorkspaceDigestTargetFailed,
-  replaceWorkspaceDigestSchedule,
-  replaceWorkspaceDigestScheduleRows,
-  settleWorkspaceDigestDelivery,
-  workspaceDigestDeliveryContext,
-  workspaceDigestDeliveryTargets,
-  workspaceDigestScheduleForFire,
-  workspaceDigestScheduleRowState,
-  workspaceDigestSettings,
-  workspaceDigestTerminalContext,
-} from "./workspace-digests-storage";
-import {
   WorkspaceDirectoryApplyRequestSchema,
   WorkspaceAttentionRequestSchema,
   WorkspaceDirectoryBatchTargetsRequestSchema,
@@ -567,6 +513,7 @@ import {
   reviewMemoryFacts,
 } from "./workspace-memory-facts-storage";
 import {
+  MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION,
   MEMORY_DIGEST_SYNC_MIGRATION,
   MemoryDigestSyncMessageSchema,
   MemoryDigestSyncWorkSchema,
@@ -602,55 +549,13 @@ import {
   transitionWorkspaceNotificationIntent as transitionStoredWorkspaceNotificationIntent,
   workspaceNotificationIntentMaintenanceTarget as storedWorkspaceNotificationIntentMaintenanceTarget,
 } from "./workspace-notification-intent-storage";
-import {
-  WorkspaceOpportunityBatchEventsRequestSchema,
-  WorkspaceOpportunityClaimStartRequestSchema,
-  WorkspaceOpportunityCompleteStartRequestSchema,
-  WorkspaceOpportunityDismissResultSchema,
-  WorkspaceOpportunityDismissRequestSchema,
-  WorkspaceOpportunityEnqueueRequestSchema,
-  WorkspaceOpportunityEnqueueResultSchema,
-  WorkspaceOpportunityExistingRequestSchema,
-  WorkspaceOpportunityGetRequestSchema,
-  WorkspaceOpportunityImpressionsRequestSchema,
-  WorkspaceOpportunityListRequestSchema,
-  WorkspaceOpportunityListResultSchema,
-  WorkspaceOpportunityOriginEventsRequestSchema,
-  WorkspaceOpportunityOriginEventsResultSchema,
-  WorkspaceOpportunityPersistRequestSchema,
-  WorkspaceOpportunityPersistResultSchema,
-  WorkspaceOpportunityRankingCandidatesRequestSchema,
-  WorkspaceOpportunityRankingRoundRequestSchema,
-  WorkspaceOpportunityRankingSettleRequestSchema,
-  WorkspaceOpportunityRankingStateSchema,
-  WorkspaceOpportunityReleaseStartRequestSchema,
-  WorkspaceOpportunityStoreRankingRequestSchema,
-  WorkspaceOpportunityTelemetryContextSchema,
-  WorkspaceOpportunityTelemetryContextsSchema,
-  WorkspaceOpportunityWindowRequestSchema,
-  WorkspaceOpportunityWindowSchema,
-  WorkspaceOpportunityWindowSettleRequestSchema,
-  WorkspaceOpportunityWorkflowInputSchema,
-  type WorkspaceOpportunityBatchEventsRequest,
-  type WorkspaceOpportunityClaimStartRequest,
-  type WorkspaceOpportunityCompleteStartRequest,
-  type WorkspaceOpportunityDismissRequest,
-  type WorkspaceOpportunityEnqueueRequest,
-  type WorkspaceOpportunityExistingRequest,
-  type WorkspaceOpportunityGetRequest,
-  type WorkspaceOpportunityImpressionsRequest,
-  type WorkspaceOpportunityListRequest,
-  type WorkspaceOpportunityOriginEventsRequest,
-  type WorkspaceOpportunityPersistRequest,
-  type WorkspaceOpportunityRankingCandidatesRequest,
-  type WorkspaceOpportunityRankingRoundRequest,
-  type WorkspaceOpportunityRankingSettleRequest,
-  type WorkspaceOpportunityStoreRankingRequest,
-  type WorkspaceOpportunityWindowRequest,
-  type WorkspaceOpportunityWindowSettleRequest,
-} from "./workspace-opportunity-protocol";
 import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
-import { WorkspaceProductStorage } from "./workspace-product-storage";
+import {
+  CHANNEL_COLOR_SYNC_MIGRATION,
+  SUGGESTION_BACKFILL_MIGRATION,
+  THREAD_BACKFILL_MIGRATION,
+  THREAD_BACKFILL_RESUME_MIGRATION,
+} from "./retired-workspace-schema";
 import {
   publishSpaceBootstrapWork,
   publishSpaceDefaultTargets,
@@ -851,40 +756,12 @@ import {
   WORKSPACE_RESOURCE_VERSION_CHANGES_MIGRATION,
 } from "./workspace-resource-versions";
 import {
-  CHANNEL_COLOR_SYNC_MIGRATION,
-  ChannelColorSyncMessageSchema,
-  ChannelColorWorkSchema,
-  channelColorWork,
-  completeChannelColorSync,
-  nextChannelColorSyncAt,
-  publishChannelColorSync,
-  releaseChannelColorSync,
-  type ChannelColorSyncMessage,
-  type ChannelColorWork,
-} from "./channel-color-sync";
-import {
   IMPORT_RESERVATION_RECLAIM_MIGRATION,
   armImportReservationReclaim,
   nextImportReservationReclaimAt,
   reclaimDueImportReservations,
 } from "./import-reservation-reclaim";
 import { retireUnopenedImportKey } from "../services/session-import-reclaim";
-import {
-  SUGGESTION_BACKFILL_MIGRATION,
-  THREAD_BACKFILL_MIGRATION,
-  THREAD_BACKFILL_RESUME_MIGRATION,
-  ThreadBackfillDeferSchema,
-  ThreadBackfillMessageSchema,
-  completeThreadBackfill,
-  deferThreadBackfill,
-  nextThreadBackfillAt,
-  publishThreadBackfill,
-  releaseThreadBackfill,
-  threadBackfillWork,
-  type ThreadBackfillDefer,
-  type ThreadBackfillMessage,
-  type ThreadBackfillWork,
-} from "./thread-backfill";
 import { unreadState } from "./unread-state";
 import { artifactActivityId, WorkspaceActivityFeed, WORKSPACE_ACTIVITY_READS_MIGRATION } from "./workspace-activity-feed";
 import { rankPeople, WORKSPACE_PEOPLE_RANKING_MIGRATION } from "./workspace-people-ranking";
@@ -1513,8 +1390,8 @@ const CONNECTOR_EVENT_PROCESSING_LEASE_MS = 15 * 60_000;
 // largest rows in the object: the busiest Organization adds about 0.26 GB a
 // week, so the earlier 396 days held about 14.7 GB against the 10 GB object
 // ceiling, and 90 days holds about 3.3 GB. Every reader of a processed event
-// (opportunity windows, reaped 30 days after they finish; a run's trigger
-// context; an opportunity's origin) reaches back well inside that. Only
+// (a run's trigger context, a watched resource's event) reaches back well
+// inside that. Only
 // processed rows age out: their two unique keys are the replay fence, so a
 // provider redelivering an event older than this would be processed again.
 const CONNECTOR_EVENT_BODY_RETENTION_MS = 90 * 24 * 60 * 60_000;
@@ -1525,7 +1402,6 @@ const CONNECTOR_EVENT_BODY_RETENTION_MS = 90 * 24 * 60 * 60_000;
  */
 const CONNECTOR_EVENT_REAP_PAGE = 50;
 const ACTIVITY_EVENT_RETENTION_MS = 90 * 24 * 60 * 60_000;
-const PRODUCT_ALARM_BATCH = 6;
 /** How often a workspace rechecks a region that is closed for maintenance. */
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
 /**
@@ -1576,9 +1452,8 @@ export const WORKSPACE_SOCKET_FIRST_FRAME_DEADLINE_MS = 2 * 60_000;
  *   to two minutes, before a real wedge recovers.
  */
 export const WORKSPACE_SOCKET_MISSED_SOCKETS_BEFORE_RESET = 2;
-/** `_internal_durable_alarms` identity for this workspace's opportunity and ranking work. */
+/** `_internal_durable_alarms` kind of retired suggested-work alarms, answered with nothing to do. */
 const PRODUCT_ALARM_KIND = "product";
-const PRODUCT_ALARM_KEY = "workspace";
 /** The one-shot entry a migrating object uses to reconcile itself once. */
 const SCHEDULE_BOOTSTRAP_ALARM_KIND = "schedule_bootstrap";
 /** One-shot, written by migration 103: seat every existing member. See docs/spaces.md#the-personal-channel. */
@@ -4470,12 +4345,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 99,
   description: "threads and Breakouts store their Channel's colour, and every existing thread is marked to take it",
-  // Triggers mark a thread whenever its colour can move; see channel-color-sync.ts.
+  // Triggers mark a thread whenever its colour can move; the lane that read them is retired.
   statements: CHANNEL_COLOR_SYNC_MIGRATION,
 }, {
   version: 100,
   description: "a work list of one-off jobs over every thread, and every thread listed to have its description summarized",
-  // The lane is channel colour sync's without triggers; see thread-backfill.ts.
+  // The lane is channel colour sync's without triggers; retired with it.
   statements: THREAD_BACKFILL_MIGRATION,
 }, {
   version: 101,
@@ -4531,7 +4406,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // derive, so each digest is marked and the reconciler adds whichever it
   // lacks and switches it on. The derived `schedules` rows are dropped rather
   // than rewritten, since their next instant needs the owner's timezone; the
-  // reconciler rebuilds them on the same visit. See docs/digests.md.
+  // reconciler rebuilds them on the same visit. (Digests are retired.)
   statements: [
     `ALTER TABLE digest_schedules ADD COLUMN default_destinations_pending INTEGER NOT NULL DEFAULT 0
        CHECK (default_destinations_pending IN (0, 1))`,
@@ -4848,7 +4723,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 134,
   description: "record when a person became a Channel participant, so Activity tells them only what happened after",
-  // See SPACE_VIEWER_JOINED_AT_MIGRATION and docs/digests.md#who-is-told-about-channel-news.
+  // See SPACE_VIEWER_JOINED_AT_MIGRATION.
   statements: SPACE_VIEWER_JOINED_AT_MIGRATION,
 }, {
   version: 135,
@@ -4907,6 +4782,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record the artifacts each Canvas's conversation generated",
   // See CANVAS_ARTIFACTS_STATEMENTS and docs/canvases.md#artifacts-and-versions.
   statements: CANVAS_ARTIFACTS_STATEMENTS,
+}, {
+  version: 143,
+  description: "admit a Canvas's Chat among the conversations that hold a memory digest copy",
+  // See MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION.
+  statements: MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5095,10 +4975,6 @@ function epoch(value: string | null | undefined): number | null {
 
 function iso(value: number | null): string | null {
   return value === null ? null : new Date(value).toISOString();
-}
-
-function workflowAlreadyExists(error: unknown): boolean {
-  return error instanceof Error && /(already exists|duplicate|conflict)/iu.test(error.message);
 }
 
 function connectorEventFromRow(
@@ -5552,7 +5428,6 @@ const DirectoryFollowUpSchema = z.strictObject({
   directoryChanged: z.boolean(),
   /** Workspace sync topics an activity or notification record moved. */
   syncTopics: z.array(WorkspaceSyncTopicSchema),
-  refreshProductAlarm: z.boolean(),
   /**
    * Per Channel, the people this batch may have taken it from, named inside
    * the batch's transaction from the rows as they were before it. Each is owed
@@ -6126,8 +6001,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         Date.now(),
       );
       followUp.syncTopics.push(...(effect.kind === "activity_event"
-        ? ["activity", "work_opportunities"] as const : ["activity", "workstream_directory"] as const));
-      if (effect.kind === "activity_event" && !applied.replayed) followUp.refreshProductAlarm = true;
+        ? ["activity"] as const : ["activity", "workstream_directory"] as const));
       // A Breakout's merge into its thread is a `merged` Activity row, pushed
       // like a start once this batch commits.
       if (effect.kind === "activity_event" && !applied.replayed && mergedBreakoutId(effect.metadata) !== null) {
@@ -6161,7 +6035,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId, publishSnapshotAll: false, snapshotUsers: [], reachChangedUsers: [], commonChanges: [],
       viewerChanges: [], breakoutChanges: [], breakoutViewerChanges: [], reopenBootstrap: false,
       watchReconciliations: [], archivalChanges: [], breakoutArchivalChanges: [], refreshTerminal: false,
-      refreshWatchKinds: false, directoryChanged: false, syncTopics: [], refreshProductAlarm: false, channelLosses: [],
+      refreshWatchKinds: false, directoryChanged: false, syncTopics: [], channelLosses: [],
       activityPushSubjects: [],
     };
   }
@@ -6827,6 +6701,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async canvasCreate(input: Parameters<HostedCanvas["create"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
     return this.canvasWrite(() => canvas.create(input));
+  }
+
+  /**
+   * One viewer's Canvas list as their socket's subscribe payload carries it,
+   * without anyone present: the read a caller with no workspace socket makes
+   * (the demo readiness barrier). See `canvasSidebarRows`.
+   */
+  async canvasListFor(input: { workspaceId: string; userId: string; member: boolean }) {
+    this.assertWorkspace(input.workspaceId);
+    return canvasSidebarRows(this.state.storage.sql, { userId: input.userId, member: input.member }, new Map(), SIDEBAR_LIST_LIMIT);
   }
 
   /** A Canvas as one reader sees it; see `HostedCanvas.detail`. */
@@ -8481,8 +8365,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       channel_message_search: () => nextChannelMessageSearchDueAt(sql, this.env, this.channelMessageSearchPace),
       space_default_publish: () => this.spaceStorage().nextDefaultPublicationDueAt(),
       space_bootstrap: () => this.spaceStorage().nextBootstrapDueAt(),
-      channel_color_sync: () => nextChannelColorSyncAt(sql),
-      thread_backfill: () => nextThreadBackfillAt(sql),
       import_reservation_reclaim: () => nextImportReservationReclaimAt(sql),
       memory_digest_sync: () => nextMemoryDigestSyncAt(sql),
       activity_reap: () => {
@@ -8684,42 +8566,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           });
         }
       });
-      // Threads whose colour can have moved; see channel-color-sync.ts.
-      if (due("channel_color_sync")) await this.instrumentWorkspaceAlarmPhase("channel_color_sync", undefined, async () => {
-        try {
-          await publishChannelColorSync({
-            sql: this.state.storage.sql,
-            queue: this.env.ACTIVITY_QUEUE,
-            workspaceId,
-            region: this.env.AVALON_REGION,
-            now,
-            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
-          });
-        } catch (error) {
-          logWarn(this.env, "channel_color_sync_publication_failed", {
-            workspace_id: workspaceId,
-            reason: diagnosticErrorCode(error, "channel_color_sync_publication_failed"),
-          });
-        }
-      });
-      // One-off jobs over every thread; see thread-backfill.ts.
-      if (due("thread_backfill")) await this.instrumentWorkspaceAlarmPhase("thread_backfill", undefined, async () => {
-        try {
-          await publishThreadBackfill({
-            sql: this.state.storage.sql,
-            queue: this.env.ACTIVITY_QUEUE,
-            workspaceId,
-            region: this.env.AVALON_REGION,
-            now,
-            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
-          });
-        } catch (error) {
-          logWarn(this.env, "thread_backfill_publication_failed", {
-            workspace_id: workspaceId,
-            reason: diagnosticErrorCode(error, "thread_backfill_publication_failed"),
-          });
-        }
-      });
       // Import reservations whose thread never opened; see import-reservation-reclaim.ts.
       if (due("import_reservation_reclaim")) await isolated("import_reservation_reclaim", () => reclaimDueImportReservations({
         sql: this.state.storage.sql,
@@ -8822,10 +8668,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           }
         }
         if (await this.runHostedParentAlarm(alarm)) return;
-        if (alarm.kind === PRODUCT_ALARM_KIND) {
-          await this.runProductAlarm(workspaceId);
-          return;
-        }
+        // Suggested work's scheduler is gone (plan step C-2); an alarm an
+        // object armed before that deploy has nothing left to start.
+        if (alarm.kind === PRODUCT_ALARM_KIND) return;
         if (alarm.kind === PERSONAL_CHANNEL_BACKFILL_ALARM_KIND) {
           await this.backfillPersonalChannels(workspaceId);
           return;
@@ -9053,91 +8898,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const results = executeWorkspaceRuntimeSql(this.state.storage, request, [...lists]);
     for (const list of lists) this.publishSidebarList(list);
     return results;
-  }
-
-  /**
-   * Workspace-local product scheduler.
-   *
-   * SQLite decides what is due and fences each claim. The alarm only starts a
-   * deterministic Workflow instance; inference and ranking never run in the
-   * object's single-threaded request path. A dormant member deliberately leaves
-   * a due request parked without another alarm. Their next authenticated read
-   * schedules the object again, avoiding an idle per-workspace polling loop.
-   */
-  private async runProductAlarm(workspaceId: string): Promise<void> {
-    const now = Date.now();
-    const product = this.productStorage();
-    product.reapCompletedOpportunityWindows(now - 30 * 24 * 60 * 60_000);
-    product.reapSettledSuggestedWork(now);
-    let launched = 0;
-
-    for (const row of product.dueOpportunityWindows(now, PRODUCT_ALARM_BATCH)) {
-      const claim = product.claimOpportunityWindow(row.window_id, now);
-      if (!claim) continue;
-      const input = WorkspaceOpportunityWorkflowInputSchema.parse({
-        kind: "admission",
-        region: this.env.AVALON_REGION,
-        workspaceId,
-        windowId: claim.windowId,
-        leaseId: claim.leaseId,
-        attempt: claim.attempt,
-      });
-      try {
-        await this.env.WORK_OPPORTUNITY_WORKFLOW.create({
-          id: `opportunity-admission-${claim.windowId}-${claim.attempt}`,
-          params: input,
-        });
-      } catch (error) {
-        if (!workflowAlreadyExists(error)) throw error;
-      }
-      launched += 1;
-    }
-
-    const dueRankings = product.dueRankingRows(now, PRODUCT_ALARM_BATCH);
-    if (dueRankings.length > 0) {
-      const ids = dueRankings.map((row) => row.user_id);
-      const members = await this.env.DB.prepare(
-        `SELECT user_id, last_seen_at FROM workspace_members
-          WHERE workspace_id = ? AND status = 'active'
-            AND user_id IN (SELECT value FROM json_each(?))`,
-      ).bind(workspaceId, JSON.stringify(ids)).all<{ user_id: string; last_seen_at: string | null }>();
-      const lastSeen = new Map(members.results.map((row) => [row.user_id, epoch(row.last_seen_at)]));
-      const dormantCutoff = now - 7 * 24 * 60 * 60_000;
-      const activeCutoff = now - 15 * 60_000;
-      const starvedCutoff = now - 30 * 60_000;
-      const eligible = dueRankings
-        .filter((row) => (lastSeen.get(row.user_id) ?? 0) > dormantCutoff)
-        .sort((left, right) => {
-          const leftUrgent = (lastSeen.get(left.user_id) ?? 0) > activeCutoff || left.due_at <= starvedCutoff;
-          const rightUrgent = (lastSeen.get(right.user_id) ?? 0) > activeCutoff || right.due_at <= starvedCutoff;
-          return Number(rightUrgent) - Number(leftUrgent) || left.due_at - right.due_at;
-        });
-      for (const row of eligible.slice(0, Math.max(0, PRODUCT_ALARM_BATCH - launched))) {
-        const claim = product.claimRanking(row.user_id, row.request_seq, now);
-        if (!claim) continue;
-        const input = WorkspaceOpportunityWorkflowInputSchema.parse({
-          kind: "ranking",
-          region: this.env.AVALON_REGION,
-          workspaceId,
-          userId: claim.userId,
-          requestSeq: claim.requestSeq,
-          leaseId: claim.leaseId,
-        });
-        try {
-          await this.env.WORK_OPPORTUNITY_WORKFLOW.create({
-            id: `opportunity-ranking-${workspaceId}-${claim.userId}-${claim.requestSeq}`,
-            params: input,
-          });
-        } catch (error) {
-          if (!workflowAlreadyExists(error)) throw error;
-        }
-        launched += 1;
-      }
-    }
-    // Suppressed when nothing launched: what is left is parked behind a
-    // dormant member, and re-arming for an instant already past is the one way
-    // this object turns into a polling loop.
-    await this.refreshProductAlarm({ suppressPastDue: launched === 0 });
   }
 
   /** Per-person learning progress stays inside the workspace authority. */
@@ -10344,8 +10104,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       sourceConnectionOwnerUserId: event.connection_owner_user_id,
     };
     // A message in a bound external conversation is claimed by its binding,
-    // as a matched watch claims one, so a bound reply never also becomes
-    // Suggested Work. The adapter wrote the binding key beside the provider
+    // as a matched watch claims one. The adapter wrote the binding key beside the provider
     // metadata; any connector that writes one is resolved the same way.
     const boundKey = ExternalConversationKeySchema.safeParse({
       installationId: metadata.externalConversationInstallationId,
@@ -12443,45 +12202,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * The colour one marked thread should carry and the conversations to write
-   * it into, or `null` (settling the row) when there is nothing to write.
-   * Server-to-server, like the default-target RPCs: there is no person on it.
-   */
-  async channelColorWork(input: ChannelColorSyncMessage): Promise<ChannelColorWork> {
-    await this.initialized;
-    const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "channel_color_work");
-    this.assertWorkspace(request.workspaceId);
-    const work = ChannelColorWorkSchema.parse(this.state.storage.transactionSync(() => channelColorWork(this.state.storage.sql, {
-      workstreamId: request.workstreamId,
-      revision: request.revision,
-      color: this.spaceStorage().channelColor(request.workstreamId),
-    })));
-    // A settled row may be the last of its batch, which lets the next one go.
-    if (work === null) await this.armNextAlarm();
-    return work;
-  }
-
-  /** Settle a thread every conversation of which now carries its colour. */
-  async completeChannelColorSync(input: ChannelColorSyncMessage): Promise<boolean> {
-    await this.initialized;
-    const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "complete_channel_color_sync");
-    this.assertWorkspace(request.workspaceId);
-    const completed = completeChannelColorSync(this.state.storage.sql, request.workstreamId, request.revision);
-    await this.armNextAlarm();
-    return completed;
-  }
-
-  /** A thread the consumer could not finish: it retries at its own gate and holds back nothing. */
-  async releaseChannelColorSync(input: ChannelColorSyncMessage): Promise<boolean> {
-    await this.initialized;
-    const request = parseRpcInput(ChannelColorSyncMessageSchema, input, "release_channel_color_sync");
-    this.assertWorkspace(request.workspaceId);
-    const released = releaseChannelColorSync(this.state.storage.sql, request.workstreamId, request.revision);
-    await this.armNextAlarm();
-    return released;
-  }
-
-  /**
    * The conversations one listed thread's job runs over, or `null` (settling
    * the row) when there is nothing to do. Server-to-server, like the
    * channel-colour RPCs above.
@@ -12492,46 +12212,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(value.workspaceId);
     if (value.region !== this.env.AVALON_REGION) throw new Error("conversation_view_region_mismatch");
     new WorkspaceConversationView(this.state.storage).apply(value);
-  }
-
-  async threadBackfillWork(input: ThreadBackfillMessage): Promise<ThreadBackfillWork> {
-    await this.initialized;
-    const request = parseRpcInput(ThreadBackfillMessageSchema, input, "thread_backfill_work");
-    this.assertWorkspace(request.workspaceId);
-    const work = this.state.storage.transactionSync(() => threadBackfillWork(
-      this.state.storage.sql, { job: request.job, workstreamId: request.workstreamId },
-    ));
-    // A settled row may be the last of its batch, which lets the next one go.
-    if (work === null) await this.armNextAlarm();
-    return work;
-  }
-
-  /** Settle a thread whose job has run over every conversation. */
-  async completeThreadBackfill(input: ThreadBackfillMessage): Promise<boolean> {
-    await this.initialized;
-    const request = parseRpcInput(ThreadBackfillMessageSchema, input, "complete_thread_backfill");
-    this.assertWorkspace(request.workspaceId);
-    const completed = completeThreadBackfill(this.state.storage.sql, request.job, request.workstreamId);
-    await this.armNextAlarm();
-    return completed;
-  }
-
-  /** A pass that stopped at a conversation still delivering resumes there, not at Main. */
-  async deferThreadBackfill(input: ThreadBackfillDefer): Promise<boolean> {
-    await this.initialized;
-    const request = parseRpcInput(ThreadBackfillDeferSchema, input, "defer_thread_backfill");
-    this.assertWorkspace(request.workspaceId);
-    return deferThreadBackfill(this.state.storage.sql, request.job, request.workstreamId, request.attempt, request.resumeFrom);
-  }
-
-  /** A thread the consumer could not finish: it retries at its own gate and holds back nothing. */
-  async releaseThreadBackfill(input: ThreadBackfillMessage): Promise<boolean> {
-    await this.initialized;
-    const request = parseRpcInput(ThreadBackfillMessageSchema, input, "release_thread_backfill");
-    this.assertWorkspace(request.workspaceId);
-    const released = releaseThreadBackfill(this.state.storage.sql, request.job, request.workstreamId, request.attempt);
-    await this.armNextAlarm();
-    return released;
   }
 
   /**
@@ -13462,7 +13142,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       return canonical;
     });
-    await this.refreshProductAlarm();
     return eventId;
   }
 
@@ -13497,232 +13176,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       audienceWorkstreamId: row.audience_workstream_id,
       occurredAt: iso(row.occurred_at),
     }) : null;
-  }
-
-  async enqueueOpportunitySource(input: WorkspaceOpportunityEnqueueRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityEnqueueRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = WorkspaceOpportunityEnqueueResultSchema.parse(
-      this.productStorage().enqueueOpportunitySource(request),
-    );
-    await this.refreshProductAlarm();
-    return result;
-  }
-
-  async opportunityWindow(input: WorkspaceOpportunityWindowRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityWindowRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return WorkspaceOpportunityWindowSchema.parse(this.productStorage().opportunityWindow(request));
-  }
-
-  async mutateOpportunityBatchEvents(input: WorkspaceOpportunityBatchEventsRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityBatchEventsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().mutateOpportunityBatchEvents(request);
-  }
-
-  async settleOpportunityWindow(input: WorkspaceOpportunityWindowSettleRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityWindowSettleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().settleOpportunityWindow(request);
-    await this.refreshProductAlarm();
-  }
-
-  async existingOpportunities(input: WorkspaceOpportunityExistingRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityExistingRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return this.productStorage().existingOpportunities(request);
-  }
-
-  async persistOpportunity(input: WorkspaceOpportunityPersistRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityPersistRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = WorkspaceOpportunityPersistResultSchema.parse(
-      this.productStorage().persistOpportunity(request),
-    );
-    await this.refreshProductAlarm();
-    return result;
-  }
-
-  async markOpportunityRankingDue(
-    workspaceId: string,
-    userIds: string[],
-    delayMs: number,
-    clearFingerprint = false,
-  ): Promise<void> {
-    await this.initialized;
-    this.assertWorkspace(IdSchema.parse(workspaceId));
-    const ids = z.array(IdSchema).max(10_000).parse([...new Set(userIds)]);
-    const delay = z.number().int().min(0).max(24 * 60 * 60_000).parse(delayMs);
-    const now = Date.now();
-    for (const userId of ids) {
-      this.productStorage().markRankingDue(userId, now + delay, now, clearFingerprint);
-    }
-    await this.refreshProductAlarm();
-  }
-
-  async markWorkspaceOpportunityRankingDue(workspaceId: string, delayMs: number): Promise<void> {
-    await this.initialized;
-    this.assertWorkspace(IdSchema.parse(workspaceId));
-    const members = await this.env.DB.prepare(
-      `SELECT user_id FROM workspace_members WHERE workspace_id = ? AND status = 'active'`,
-    ).bind(workspaceId).all<{ user_id: string }>();
-    await this.markOpportunityRankingDue(
-      workspaceId,
-      members.results.map((row) => row.user_id),
-      delayMs,
-    );
-  }
-
-  async opportunityRankingCandidates(input: WorkspaceOpportunityRankingCandidatesRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityRankingCandidatesRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return this.productStorage().rankingCandidates(request);
-  }
-
-  async opportunityRankingState(workspaceId: string, userId: string) {
-    await this.initialized;
-    this.assertWorkspace(IdSchema.parse(workspaceId));
-    return WorkspaceOpportunityRankingStateSchema.parse(
-      this.productStorage().rankingState(IdSchema.parse(userId)),
-    );
-  }
-
-  async recordOpportunityRankingRound(input: WorkspaceOpportunityRankingRoundRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityRankingRoundRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().recordRankingRound(request);
-  }
-
-  async storeOpportunityRanking(input: WorkspaceOpportunityStoreRankingRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityStoreRankingRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().storeRanking(request);
-  }
-
-  async settleOpportunityRanking(input: WorkspaceOpportunityRankingSettleRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityRankingSettleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().settleRanking(request);
-    await this.refreshProductAlarm();
-  }
-
-  async listOpportunities(input: WorkspaceOpportunityListRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityListRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = WorkspaceOpportunityListResultSchema.parse(
-      this.productStorage().listOpportunities(request),
-    );
-    await this.refreshProductAlarm();
-    return result;
-  }
-
-  async recordOpportunityImpressions(input: WorkspaceOpportunityImpressionsRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityImpressionsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = this.productStorage().recordImpressions(request);
-    const contexts = WorkspaceOpportunityTelemetryContextsSchema.safeParse(result.telemetryContexts);
-    if (result.telemetryContextReadFailed || !contexts.success) {
-      logWarn(this.env, "workspace_opportunity_telemetry_context_failed", {
-        workspace_id: request.workspaceId,
-        operation: "impression",
-      });
-    }
-    await this.refreshProductAlarm();
-    return contexts.success ? contexts.data : [];
-  }
-
-  async dismissOpportunity(input: WorkspaceOpportunityDismissRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityDismissRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = this.productStorage().dismissOpportunity(request);
-    const parsed = WorkspaceOpportunityDismissResultSchema.safeParse({
-      dismissed: result.dismissed,
-      telemetryContext: result.telemetryContext,
-    });
-    if (result.telemetryContextReadFailed || !parsed.success) {
-      logWarn(this.env, "workspace_opportunity_telemetry_context_failed", {
-        workspace_id: request.workspaceId,
-        operation: "dismiss",
-      });
-    }
-    await this.refreshProductAlarm();
-    return parsed.success
-      ? parsed.data
-      : { dismissed: result.dismissed, telemetryContext: null };
-  }
-
-  async getOpportunity(input: WorkspaceOpportunityGetRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityGetRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return this.productStorage().getOpportunity(request);
-  }
-
-  async opportunityOriginEvents(
-    input: WorkspaceOpportunityOriginEventsRequest,
-  ): Promise<WorkspaceConnectorEvent[]> {
-    await this.initialized;
-    const request = WorkspaceOpportunityOriginEventsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const sourceIds = this.productStorage().opportunityActivitySourceIds(request);
-    const events = sourceIds.flatMap((eventId) => {
-      const row = this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
-        `SELECT * FROM workspace_connector_events WHERE event_id = ?`,
-        eventId,
-      ).toArray()[0];
-      return row
-        ? [connectorEventFromRow(this.state.storage.sql, row, request.workspaceId, this.env.AVALON_REGION)]
-        : [];
-    });
-    return WorkspaceOpportunityOriginEventsResultSchema.parse(events);
-  }
-
-  async claimOpportunityStart(input: WorkspaceOpportunityClaimStartRequest) {
-    await this.initialized;
-    const request = WorkspaceOpportunityClaimStartRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = this.productStorage().claimOpportunityStart(request);
-    const context = WorkspaceOpportunityTelemetryContextSchema.nullable().safeParse(result.telemetryContext);
-    if (result.telemetryContextReadFailed || !context.success) {
-      logWarn(this.env, "workspace_opportunity_telemetry_context_failed", {
-        workspace_id: request.workspaceId,
-        operation: "start",
-      });
-    }
-    return {
-      outcome: result.outcome,
-      opportunity: result.opportunity,
-      telemetryContext: context.success ? context.data : null,
-    };
-  }
-
-  async releaseOpportunityStart(input: WorkspaceOpportunityClaimStartRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityReleaseStartRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().releaseOpportunityStart(request);
-  }
-
-  async completeOpportunityStart(input: WorkspaceOpportunityCompleteStartRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceOpportunityCompleteStartRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    this.productStorage().completeOpportunityStart(request);
-    await this.refreshProductAlarm();
   }
 
   /**
@@ -14213,7 +13666,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // its news and how a merge row reads (`activity-audience.ts`), so a
         // Space row that moved has every window read Activity again.
         syncTopics: spaceDirectoryChanged ? ["activity"] : [],
-        refreshProductAlarm: false,
         channelLosses: [...channelLosses.channels].map(([id, { lost }]) => [id, [...lost]]),
         activityPushSubjects,
       },
@@ -14342,7 +13794,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       && followUp.watchReconciliations.length === 0 && followUp.archivalChanges.length === 0
       && followUp.breakoutArchivalChanges.length === 0
       && !followUp.refreshTerminal && !followUp.refreshWatchKinds && !followUp.directoryChanged
-      && followUp.syncTopics.length === 0 && !followUp.refreshProductAlarm
+      && followUp.syncTopics.length === 0
       && followUp.channelLosses.length === 0 && followUp.activityPushSubjects.length === 0;
   }
 
@@ -14515,7 +13967,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     for (const [workstreamId, lost] of followUp.channelLosses) rows.lost(workstreamId, lost);
-    if (followUp.refreshProductAlarm) await this.refreshProductAlarm();
     // Keep failed handoffs durable without repeating completed publications.
     try {
       await this.pushActivity(followUp.workspaceId, followUp.activityPushSubjects);
@@ -14843,9 +14294,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceRegionalEffectApplyRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const result = applyWorkstreamRegionalEnvelope(this.state.storage, request, Date.now());
-    if (!result.replayed && request.envelope.effect.kind === "activity_event") {
-      await this.refreshProductAlarm();
-    }
     return WorkspaceRegionalEffectApplyResultSchema.parse(result);
   }
 
@@ -16711,165 +16159,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return invalidateWorkspaceMemoryTableRows(this.state.storage, request);
   }
 
-  /** A person's digest configuration, minus the connector-joined delivery targets. */
-  async digestSettings(input: WorkspaceDigestSettingsRequest): Promise<WorkspaceDigestSettings> {
-    await this.initialized;
-    const request = WorkspaceDigestSettingsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestSettings(this.state.storage, request);
-  }
-
-  /**
-   * Replace a person's digest wholesale, in one transaction.
-   *
-   * The create-or-update decision lives inside it: as a read through the
-   * runtime facade followed by a batch, two first saves both read "nothing
-   * yet" and `UNIQUE (workspace_id, user_id)` refused whichever landed second.
-   */
-  async replaceDigestSchedule(
-    input: WorkspaceDigestReplaceRequest,
-  ): Promise<WorkspaceDigestReplaceResult> {
-    await this.initialized;
-    const request = WorkspaceDigestReplaceRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = replaceWorkspaceDigestSchedule(this.state.storage, request);
-    this.refreshScheduleAfterDigestWrite(request.workspaceId);
-    return result;
-  }
-
-  /** The reconciler's default: created on absence, otherwise what already exists. */
-  async ensureDefaultDigestSchedule(
-    input: WorkspaceDigestDefaultRequest,
-  ): Promise<WorkspaceDigestDefaultResult> {
-    await this.initialized;
-    const request = WorkspaceDigestDefaultRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return ensureDefaultWorkspaceDigestSchedule(this.state.storage, request);
-  }
-
-  /** How a digest's derived rows stand against the account timezone. */
-  async digestScheduleRowState(
-    input: WorkspaceDigestRowStateRequest,
-  ): Promise<WorkspaceDigestRowState> {
-    await this.initialized;
-    const request = WorkspaceDigestRowStateRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestScheduleRowState(this.state.storage, request);
-  }
-
-  /** Rebuild one digest's derived `schedules` rows — a timezone move, or a repair. */
-  async replaceDigestScheduleRows(input: WorkspaceDigestReplaceRowsRequest): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceDigestReplaceRowsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    replaceWorkspaceDigestScheduleRows(this.state.storage, request);
-    this.refreshScheduleAfterDigestWrite(request.workspaceId);
-  }
-
-  /** What the scheduler must re-validate before firing an occurrence. */
-  async digestScheduleForFire(
-    input: WorkspaceDigestFireScheduleRequest,
-  ): Promise<WorkspaceDigestFireSchedule> {
-    await this.initialized;
-    const request = WorkspaceDigestFireScheduleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestScheduleForFire(this.state.storage, request);
-  }
-
-  /** Claim one occurrence; a retried alarm learns the first attempt already has it. */
-  async claimDigestDelivery(
-    input: WorkspaceDigestClaimRequest,
-  ): Promise<WorkspaceDigestClaimResult> {
-    await this.initialized;
-    const request = WorkspaceDigestClaimRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return claimWorkspaceDigestDelivery(this.state.storage, request);
-  }
-
-  /** One occurrence, as settlement and the run's trigger context read it. */
-  async digestDeliveryContext(
-    input: WorkspaceDigestDeliveryContextRequest,
-  ): Promise<WorkspaceDigestDeliveryContext> {
-    await this.initialized;
-    const request = WorkspaceDigestDeliveryContextRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestDeliveryContext(this.state.storage, request);
-  }
-
-
-  /**
-   * Settle one occurrence, exactly once.
-   *
-   * The witness is the point: two settlement attempts of one retried workflow
-   * step can overlap, and the loser must learn it lost rather than emit the
-   * terminal telemetry and the delivery note a second time.
-   */
-  async settleDigestDelivery(
-    input: WorkspaceDigestSettleRequest,
-  ): Promise<WorkspaceDigestSettleResult> {
-    await this.initialized;
-    const request = WorkspaceDigestSettleRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return settleWorkspaceDigestDelivery(this.state.storage, request);
-  }
-
-  /** What the terminal telemetry event says about destinations and history. */
-  async digestTerminalTelemetryContext(
-    input: WorkspaceDigestTerminalContextRequest,
-  ): Promise<WorkspaceDigestTerminalContext> {
-    await this.initialized;
-    const request = WorkspaceDigestTerminalContextRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestTerminalContext(this.state.storage, request);
-  }
-
-  /** The frozen destinations one occurrence goes to. */
-  async digestDeliveryTargets(
-    input: WorkspaceDigestDeliveryTargetsRequest,
-  ): Promise<WorkspaceDigestDeliveryTargets> {
-    await this.initialized;
-    const request = WorkspaceDigestDeliveryTargetsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceDigestDeliveryTargets(this.state.storage, request);
-  }
-
-  /** One destination received this digest. */
-  async markDigestTargetDelivered(
-    input: WorkspaceDigestTargetDeliveredRequest,
-  ): Promise<WorkspaceDigestTargetOutcomeResult> {
-    await this.initialized;
-    const request = WorkspaceDigestTargetDeliveredRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return markWorkspaceDigestTargetDelivered(this.state.storage, request);
-  }
-
-  /** Record why a destination did not receive this digest. */
-  async markDigestTargetFailed(
-    input: WorkspaceDigestTargetFailedRequest,
-  ): Promise<WorkspaceDigestTargetOutcomeResult> {
-    await this.initialized;
-    const request = WorkspaceDigestTargetFailedRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return markWorkspaceDigestTargetFailed(this.state.storage, request);
-  }
-
-  /**
-   * The alarm backstop the generic SQL path gives every `schedules` write.
-   *
-   * `executeRuntimeSql` re-arms the alarm whenever a routed statement mutates
-   * an alarm-source table, because a generic writer has no request to hang the
-   * reconcile off. The typed digest writers above would otherwise lose that
-   * net: their callers all refresh explicitly today, but a future caller that
-   * forgets would leave a schedule row dark until an unrelated wake.
-   */
-  private refreshScheduleAfterDigestWrite(workspaceId: string): void {
-    this.state.waitUntil(this.refreshScheduleKinds(workspaceId, ["schedule"]).catch((error: unknown) => {
-      logWarn(this.env, "workspace_schedule_auto_refresh_failed", {
-        workspace_id: workspaceId,
-        code: error instanceof Error ? error.message : "unknown_error",
-      });
-    }));
-  }
 
   async canReadWorkstream(input: WorkspaceDirectoryVisibilityRequest): Promise<boolean> {
     await this.initialized;
@@ -19372,10 +18661,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }));
   }
 
-  private productStorage(): WorkspaceProductStorage {
-    return new WorkspaceProductStorage(this.state.storage);
-  }
-
   private spaceStorage(): WorkspaceSpaceStorage {
     return new WorkspaceSpaceStorage(this.state.storage, (workstreamId, userId) => this.canManageChannelNow(workstreamId, userId));
   }
@@ -19432,29 +18717,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         )`,
       now - ACTIVITY_EVENT_RETENTION_MS,
     );
-  }
-
-  /**
-   * Point the product entry at the next opportunity window or ranking request.
-   *
-   * An entry rather than a derived timestamp because the answer depends on the
-   * caller: an enqueue wants the instant even if it is already past, while the
-   * alarm that launched nothing wants past-due rows left parked. A derived
-   * source has no way to carry that distinction, and reading it the wrong way
-   * turns a parked window into a wake every millisecond.
-   */
-  private async refreshProductAlarm(options: { suppressPastDue?: boolean } = {}): Promise<void> {
-    const now = Date.now();
-    const productDue = this.productStorage().nextProductAlarmAt(now, options.suppressPastDue === true);
-    if (productDue === null) {
-      await this.cancelScheduledAlarm(PRODUCT_ALARM_KIND, PRODUCT_ALARM_KEY);
-      return;
-    }
-    await this.scheduleAlarm({
-      kind: PRODUCT_ALARM_KIND,
-      key: PRODUCT_ALARM_KEY,
-      dueAt: Math.max(now + 1, productDue),
-    });
   }
 
   private assertWorkspace(workspaceId: string): void {

@@ -1,8 +1,8 @@
 # Demo workspaces
 
 Rally is presented from a workspace that was prepared for the presentation:
-conversations already in it, people already in them, attention markers already
-set. Every demo is a *new* workspace; any number can be live at once, and one
+Canvases already in it with their Chats and artifacts, Sidekicks already
+published with a run behind them, and the people already in them. Every demo is a *new* workspace; any number can be live at once, and one
 is retired when an operator closes it rather than cleared. This document covers
 the machinery that prepares one: the filter that decides what a member is
 offered, copying the template's connections into a new workspace, seeding its
@@ -24,12 +24,6 @@ preparation operation that drives them, and the operator API the Ace Demos
 page calls. **Open questions** below says what remains.
 
 
-Text-only openings may select `execution: history`: they materialize prepared
-conversation facts through the same authority path as imports, start idle and
-confirm canonical content without inventing a run. The Acme proposal opening uses this mode.
-Tool/elicitation scenarios retain ordinary scripted executions. See
-[prepared conversations and session import](session-import.md).
-
 ## Where the code lives
 
 | Path | Role |
@@ -38,12 +32,12 @@ Tool/elicitation scenarios retain ordinary scripted executions. See
 | `apps/api/src/services/demo-workspace-register.ts` | The walk's one write into the register: `markDemoWorkspaceRetired` stamps `retired_at` on the operation row. Not an authorization input, and nothing reads through it. |
 | `apps/api/src/services/demo-connection-copy.ts` | Copying template connections into a demo, with credential re-encryption; `SHAREABLE_CONNECTOR_TYPES` is the list of providers whose grant may be shared. |
 | `apps/api/src/services/demo-workspace-visibility.ts` | The template and unpublished-candidate filter, applied in regional discovery and activation. `DEMO_TEMPLATE_WORKSPACE_ID`, the template's UUID, is declared here and nowhere else. |
-| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the label each part is cast under, and the multiplayer pack — its three Spaces, four Channels, three Breakouts and review Sidekick. |
-| `.agents/skills/demo-scenario/SKILL.md` | Adding a scenario to the shipped pack from a plain-language description, for an author who does not read the code: what to ask, how Rally has to sound, the files a scenario touches, and the loop that produces the `expect` block. Invoke it as `/demo-scenario`. |
+| `apps/api/src/services/demo-pack.ts` | The pack schema and its playability rules, the planner that binds a pack to a cast, the label each part is cast under, and the placeholder pack — the mockup's three Canvases and two Sidekicks. |
+| `.agents/skills/demo-scenario/SKILL.md` | Adding a scenario to the shipped pack from a plain-language description, for an author who does not read the code: what to ask, how Rally has to sound, the files a scenario touches, and the loop that proves a scenario seeds and is Ready. Invoke it as `/demo-scenario`. |
 | `apps/api/src/services/demo-cast.ts` | Who a demo can be cast from: the company's email domain, the directory query the New demo form suggests from, persona minting for a typed name, and the check that every cast id is a colleague or a persona. |
 | `apps/api/src/services/demo-seeder.ts` | Plays one action at a time through the production write paths, waits for its run to settle as specified, and records the receipt. `sidekickDraft` is the definition a Sidekick step publishes. |
 | `apps/api/src/services/demo-seed-provider.ts` | The `fetch` a seeded run's harness config carries: answers the run's one inference request from the seed and refuses the next. |
-| `apps/api/src/services/demo-readiness.ts` | The manifest of what every verified viewer should find, derived from the pack and the receipts, and the one comparison against their real directory, attention and canonical reads. |
+| `apps/api/src/services/demo-readiness.ts` | The manifest of what every verified viewer should find, derived from the pack and the receipts, and the one comparison against their real Canvas list, Sidekick list and each Canvas's and Sidekick's canonical reads. |
 | `apps/api/src/services/demo-preparation.ts` | The operation: its rows, start/retry/abandon, and the five idempotent phase functions the Workflow's steps call. |
 | `apps/api/src/workflows/demo-preparation.ts` | `DemoPreparationWorkflow`: one step per phase, then a check-and-sleep loop until the workspace matches the pack. |
 | `apps/api/src/routes/demo-operations.ts` | `/internal/demos`, behind the operator credential in the `demos` role; `/internal/workspaces/:id/retire` is retirement's own router. |
@@ -52,7 +46,8 @@ Tool/elicitation scenarios retain ordinary scripted executions. See
 | `packages/db/migrations/0100_demo_workspaces.sql` | The operation's row — which is also the register of published workspaces — its per-phase receipts, and the seeder's receipts. |
 | `packages/db/migrations/0102_demo_seed_sidekicks.sql` | Widens those receipts for an action that is in no room. |
 | `packages/db/migrations/0103_demo_seed_substreams.sql` | A fifth kind of confirmed action, and the conversation each action wrote to. |
-| `apps/api/src/services/substream-creation-service.ts` | Owned by [`substream-creation.md`](substream-creation.md); the seeder calls it with a summary gateway that answers from the pack. |
+| `packages/db/migrations/0125_demo_seed_canvases.sql` | The receipts rebuilt for the Canvas and Sidekick kinds, addressed by the pack's name for a Canvas or a Sidekick and the id it got. |
+| `apps/api/src/services/canvas-service.ts`, `apps/api/src/services/terminal/resource-bridge.ts`, `apps/api/src/services/terminal/authority.ts` | Owned by [`canvases.md`](canvases.md): the seeder makes and shares a Canvas through `CanvasService`, publishes an artifact's version through the Terminal's resource bridge, and lets `resolveTerminalPublicationHome` make a Sidekick run's Canvas. `CanvasService.list` (`WorkspaceDO.canvasListFor`) is the Canvas list the readiness barrier reads. |
 
 ### Retiring a workspace
 
@@ -119,8 +114,9 @@ is a typed name; the **company's directory** — everyone with an account on the
 company's own email domain who has signed in to this region — is what the New
 demo form suggests, and the only accounts a request may name. `demo-cast.ts` holds that domain — the one
 place it is written down — and the query that reads it. The pack names each
-part it is casting for (`roleLabels`: Solutions engineer / IT, Sales lead / business owner, and
-Manager / finance approver for the pack in service), because a role token reads as this pack's own character and a
+part it is casting for (`roleLabels`: Finance lead for `theo` and Engineering
+lead for `priya` in the pack in service; the presenter is chosen from the
+template's members and is not labelled), because a role token reads as this pack's own character and a
 colleague put in the wrong part has its scripted words attributed to them under
 their real name.
 
@@ -172,209 +168,159 @@ the demo register.
 
 ### Seeding a demo from a pack
 
-A pack is versioned data behind a schema: a cast of *roles*, and ordered steps
-that create rooms, open private substreams inside them, say things in either as
-cast members, attach documents, and publish Sidekicks. Roles are bound to real
-workspace members only when a demo is prepared, so the pack never names a user
-id and one pack serves every demo. What Rally says in a room is part of the step
-that starts the run — `assistant`, a single turn that is either prose (`say`) or
-a question (`ask`). The schema refuses, before the first write, a room used
-before it is created, a line from somebody not in the room, a mention of
-somebody not in the cast, a room that carries on after its question, and two
-Sidekicks under one name. The shipped `multiplayer-2026-09` pack replaces the earlier memo, renewal,
-announcement and morning-briefing content completely.
+A pack is versioned data behind a schema: a cast of *roles*, the viewers to
+verify, and ordered steps in the product's two modes
+([Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)).
+Roles are bound to real workspace members only when a demo is prepared, so the
+pack never names a user id and one pack serves every demo.
 
-The [presenter guide](demo-presenter-guide.md) maps the independent stories to
-customer problems and identifies the illustrative imports, snapshots and
-connector distribution. Seeded assistant turns may use only facts explicitly
-shared in their conversation; they cannot fetch private or external context.
+| Step | What it writes, and through what |
+| --- | --- |
+| `create_canvas` | A Canvas with a title, made by `CanvasService.create` as its creator under an id derived from the operation and the step, shared with `sharedWith` (`"organization"`, or the people besides the creator) by `CanvasService.setAudience`, and with an optional first `prompt` sent to its Chat through the conversation route's admission. `assistant` is what Rally answers the prompt with. |
+| `canvas_message` | A cast member's message in a Canvas's Chat, through the same admission; with `assistant`, the run it starts and what Rally says. |
+| `canvas_artifact` | A version of one of the Canvas's artifacts, published by the Terminal's resource bridge — the path `publish_resource` takes — under the identity `(Canvas, path)`: the first publish of a path is version 1, a later one of the same path the next version. It is attributed to the Canvas's latest seeded run and noted on the Canvas as Rally's (`canvasArtifactNoter`). A document only; see **Open questions** for sites. |
+| `upload` | A document a cast member attaches to a message in a Canvas's Chat: `ResourceService.upload`, then the message admission that commits the draft with its turn. |
+| `sidekick` | A Sidekick, made by `createAutomation`, published by `saveDefinition`, and shared with `sharedWith` (`"organization"` is scope `workspace`; a list is the `people` audience, set by `setAudience` after the definition, because a draft's suggested scope that moves the audience clears a list). With `firstRun`, one run through `runSeeded`, whose row lands in the shared conversation like every run's ([`automation-lifecycle.md`](automation-lifecycle.md#runs-in-the-shared-conversation)). With `canvas`, that run also wrote a Canvas: once the run has completed, its document is published through the resource bridge as the run, and `resolveTerminalPublicationHome` makes the run's Canvas with its principal as creator and the Sidekick as writer, exactly as a live run's first publish does. |
+| `sidekick_message` | A cast member's message in a Sidekick's shared conversation, to the people there. It starts no run: a Sidekick's answer is a run, and a demo's one run is the Sidekick step's. |
 
-#### Space placement and replacing older demos
+There is no Thread, Channel, Breakout, Space or room step, and no substream:
+those surfaces are retired, and the earlier steps went with them.
 
-An optional `spaces` map declares named Organization Spaces and their creator,
-icon and colour. A Channel opening may name one with `space`. The seeder derives
-the Space id from the operation and key, resumes creation through `SpaceService`,
-and passes the id into ordinary Channel creation (including prepared history).
-The same Acme Space therefore serves both account Channels, and a retry cannot
-create another copy. Readiness checks the actual directory membership and the
-Space's name, audience and active state. A pack without Space declarations keeps
-the existing General fallback.
+#### The placeholder pack
 
-**A room is Organization-wide, and the seeder refuses one that is not.** The
-Space declarations describe Organization Spaces, which every Space now is.
-`demo_seed_personal_room_unsupported` still refuses a `personal` room. The
-reason it was added (General widening a private room) is gone, since a Space
-grants no reader any more, but a private room has not been seeded and checked
-for readiness end to end, so the refusal stays until one is.
+`PLACEHOLDER_DEMO_PACK` is the
+[mockup's](PRDs/2026-11-06_canvases-and-sidekicks/design.html) Organization,
+with the presenter as Maya, Theo (finance) and Priya (engineering):
 
-**Existing demos do not change when this pack deploys.** Use Ace **New demo** with
-a new operation id; wait for Ready, switch to that Organization, then separately
-retire the old demo if desired. There is no in-place reset/reseed and no bulk
-migration of live or customer Organizations. A stale unfinished operation fails
-`demo_pack_changed` at any phase, including a resumed seeding or readiness phase
-whose earlier template check already completed. Abandon that candidate and start
-a new operation; Retry cannot convert it to the new pack.
+- **Q4 revenue review** — Maya's Canvas, shared with Theo. Rally drafts the
+  board review and publishes it, Theo asks for October churn and Rally
+  publishes version 2, and Theo keeps the accounts board-only. It shows shared
+  work with Rally and an artifact that versions.
+- **Launch plan** — Theo's Canvas, open to the Organization, with Priya's
+  attached checklist and Rally's answer to her. It shows planning across a
+  team, and a Canvas that is unread to the presenter.
+- **Weekly changelog** — an Organization Sidekick on a Friday schedule whose
+  one run wrote **Weekly changelog · Nov 6**. It shows a Sidekick that has
+  already done its job, and the Canvas it writes.
+- **Incident triage** — Priya's Sidekick shared with Maya and Theo, whose run
+  reported a rollback and whose conversation holds Priya taking the fix. It
+  shows a Sidekick shared with people, and talking in its conversation.
 
-**A room step addresses a conversation, not a room.** Naming only the room means
-its main conversation; naming a room and a substream means the child. Every rule
-above is applied per conversation, so a question parks the conversation it was
-asked in and the room's other one carries on. Two rules exist only for a child:
-its roster is stated by the pack — a substream opens creator-only and the
-seeder adds the rest — and a mention in one must name somebody already in it,
-because a message cannot add to a roster the parent object owns. The pack also
-carries the child's **starting context** as text, which
-[`substream-creation.md`](substream-creation.md#extending-initial-context)
-explains: creation's one inference is answered from the pack rather than by a
-model, so what a presenter reads there is approved copy and the same pack
-prepares the same demo twice.
+What Rally says is part of the step that starts its run — `assistant`, a single
+turn that is either prose (`say`) or a question (`ask`). `@{role}` in any prose
+is written as the bound person's display name. It records no mention: a Canvas
+and a Sidekick admit their readers by their audience, so a mention seats nobody
+in either. The schema refuses, before the first write, a Canvas or Sidekick
+used before it exists, two of them under one pack name, a line from somebody
+the Canvas or Sidekick does not admit, a role nobody plays named in any prose,
+a creator listed in their own audience, an answer with no prompt, a publish in
+a Canvas where Rally has not run, a Sidekick's Canvas with no run to write it,
+a Canvas that carries on after its question, and two Sidekicks under one name.
 
-**A substream is deliberately invisible to everything downstream of the pack.**
-A private child takes no directory row, and the parent aggregates only its main
-conversation into the row the sidebar and home screen read — so a substream
-changes neither a room's seats, its state, its attachments, nor where it sorts,
-and the readiness barrier below never sees one. This is what lets the pack put
-the presenter in a child of a workspace-scoped room they are not in: it costs
-their home screen nothing, and they find it by opening the room.
+**A `canvas_artifact` is Rally's, in the run that said it.** A seeded run makes
+no tool calls — a stale tool name in seeded history is a wrong claim about what
+Rally did — so the version is not published from inside the run. It is
+published right after, through the bridge, with the run's id as its author and
+the run's requester as its execution principal, and the pack places it after
+the message whose answer announces it. The schema's rule that Rally must have
+run in the Canvas first is what makes the attribution true. The same holds for
+a Sidekick's Canvas, published once its run has completed.
 
-**A Sidekick step is the one step that is in no room at all**, and so addresses
-no conversation either. It is created by `createAutomation`, the same call "New
-Sidekick" makes, and published by `saveDefinition`, the same call a drafting
-conversation makes when a person accepts what it wrote — so a demo has a real
-published Sidekick without depending on a live model to have drafted one. The
-step carries the definition's prose, the recurrence, and optionally one `say`
-turn: the briefing the Sidekick has already written. The recurrence always names
-its zone. A calendar trigger may leave that null in general, and it then resolves
-against the account the Sidekick runs for — which here is whichever colleague
-was cast as its author, whose own zone is not the one the demo is shown in. A
-demo is presented in a zone somebody chose, so the pack states it.
+**Existing demos do not change when this pack deploys.** Use Ace **New demo**
+with a new operation id; wait for Ready, switch to that Organization, then
+separately retire the old demo if desired. There is no in-place reseed. A stale
+unfinished operation fails `demo_pack_changed` at any phase; and its receipts
+of the retired kinds were not carried by migration 0125, so it cannot resume
+under the new pack either. Abandon it and start a new operation.
 
-That briefing is produced by an ordinary Sidekick run through `runSeeded`, whose
-model bytes come from the seed exactly as a seeded message's do
-([`automation-lifecycle.md`](automation-lifecycle.md)). The run's recorded
-trigger is `manual`, naming the author, because that is what happened: the
-schedule did not fire it, and saying it did would be the fabricated history this
-feature refuses everywhere else. The first scheduled run is the demo's own, at
-the pack's hour, in the pack's zone.
+A Sidekick's recurrence always names its zone. A calendar trigger may leave
+that null in general, and it then resolves against the account the Sidekick
+runs for — whichever colleague was cast as its author. A demo is presented in a
+zone somebody chose, so the pack states it. The seeded run's recorded trigger
+is `manual`, naming the author, because that is what happened.
 
 **Every seeded fact is written by the production path that writes it for a
-person, as the cast member who did it.** A room by the creation service, a line
-by the room's own message admission, a document by the resource upload and
-`attach_resource`, a substream by `SubstreamCreationService`'s own prepare,
-confirm and participant-add, a Sidekick by `createAutomation` and
-`saveDefinition`, and an assistant turn by an ordinary harness run. Nothing in
-this module writes a transcript row, and none of those paths know they were
-seeding. A cast member acts under the `demo_seed` auth principal: no session,
-because the cast never signs in, and the object verifies their current
-membership instead — the same verification a connector ingress gets.
-
-Sidekick creation automatically enrolls its cast creator through the ordinary
-creation path, just as direct and autonomous product creation do. Replaying demo
-creation never restores a withdrawn grant.
+person, as the cast member who did it**, under the `demo_seed` auth principal:
+no session, because the cast never signs in, and the object verifies their
+current membership instead — the same verification a connector ingress gets.
+Nothing in this module writes a transcript row, and none of those paths know
+they were seeding.
 
 Two things are replaced, and both are decisions rather than writers:
 
-- **Addressing.** A message in a multi-person room is normally classified by a
-  model to decide whether it starts a run. A seed action carries the answer
-  instead: `assistant` present means this line starts a run, `null` means it
-  starts none, whatever the room's size would otherwise force. The pack is the
-  authority on which lines start a run, and seeding cannot wait on a live guess
-  about each one.
+- **Addressing.** A message in a Canvas with more than one person in it is
+  normally classified by a model to decide whether it is for Rally. A seed
+  action carries the answer instead: `assistant` present means this line
+  starts a run, `null` means it starts none. In a Sidekick's shared
+  conversation a seed's input is not routed to the Sidekick, which is what
+  keeps a `sidekick_message` a line to the people.
 - **The source of model output.** The seed rides the message's authorization
-  into the run's execution context, and the harness reads it there: `OpenRouterConfig.fetch`,
-  an injection point Bind already exposes, is set to a function that answers the
-  run's one chat-completion request from the seed's turn — as the streamed
-  response Bind asks for; the unstreamed form was carried for a request nothing
-  makes and is gone — and answers everything else (a model catalog read, a
-  pricing read) emptily. A second chat-completion request is
-  refused with a 400 rather than answered again: a seed has exactly one turn
-  because a seeded run makes no tool calls, and without tool calls Bind asks
-  once. A question is a call to the real `request_elicitation` tool with
-  arguments its schema validates, addressed to the room; the run parks on
-  `needs_input`, and whoever answers starts an ordinary, unseeded run.
+  into the run's execution context, and the harness reads it there:
+  `OpenRouterConfig.fetch` is set to a function that answers the run's one
+  streamed request from the seed's turn and everything else emptily, and
+  refuses a second request with a 400. A question is a call to the real
+  `request_elicitation` tool; the run parks on `needs_input`, and whoever
+  answers starts an ordinary, unseeded run.
 
 **Order and outcome are the seeder's.** Actions are applied one at a time and
 each is confirmed before the next: a run has to settle the way its turn said it
 would — `completed` for prose, `needs_input` *with* an open elicitation for a
-question. A failed run fails the action; merely ceasing to run is not success.
-Applying and settling are separate calls because they are separate waits — the
-write returns when the object admits it, and the run it started is driven by the
-object's own alarm afterwards — and the preparation operation will call both
-inside one step. How long it may wait is the caller's deadline; this module sets
-no ceiling.
+question. A failed run fails the action. Applying and settling are separate
+calls because they are separate waits, and the preparation operation calls both
+inside one step. How long it may wait is the caller's deadline; this module
+sets no ceiling.
 
 **A receipt is written only once an action is confirmed**, with every
-destination id it produced: the room, the human turn, the run and how it
-settled, the resource, the elicitation. Preparation resumes from the receipts,
-and the readiness barrier builds its expected manifest from them. Replaying
-an action is safe by construction rather than by care: the client message id of
-every seeded turn, the resource id of every seeded document, the id of every
-seeded Sidekick and the occurrence key of its briefing are derived from the
-operation and the action, so a replay after a crash meets the production path's
-own receipt for the same request and comes back as what it already wrote.
+destination id it produced: the Canvas (by the pack's name and its id) or the
+Sidekick (likewise), the turn, the run and how it settled, the resource, the
+elicitation, and for a Sidekick that wrote one, its Canvas. Replaying an action
+is safe by construction: the id of every seeded Canvas, document and Sidekick,
+the client message id of every turn, and the receipt of every publish are
+derived from the operation and the action, so a replay after a crash meets the
+production path's own receipt and comes back as what it already wrote — a
+republished version with the same bytes is the version it was, not another.
 
 ### Waiting for the workspace
 
-Seeding writes through the room objects; what the presenter sees — the sidebar,
-the mention badge, the home screen's "waiting for you" — is a projection that
-arrives afterwards, through two Queue hops. Ready is therefore not "the seeder
-finished". It is "every verified viewer's projection matches the pack", and the
-barrier is one comparison the preparation operation repeats until it holds.
+Seeding writes through the conversation objects; what the presenter sees of a
+Sidekick's run — its state in the run history, and its row in the shared
+conversation — and a Canvas's recency are projections that arrive afterwards,
+through the effect Queue and the Organization object's alarms. Ready is
+therefore not "the seeder finished". It is "every verified viewer's lists and
+every seeded Canvas and Sidekick match the pack", and the barrier is one
+comparison the preparation operation repeats until it holds.
 
 **What should match comes from the pack and the receipts, never from what the
-workspace happens to contain.** `demoReadinessManifest` is pure: the pack's
-steps say which rooms exist, who is in each at the end, how each ends (parked on
-a question or completed), and which lists first — recency follows the index of
-a room's last step. The receipts say which ids those rooms, uploads and questions
-got, and a pack whose rooms were never all confirmed is refused rather than
-described. The pack's `expect` section names the viewers to verify and the
-per-viewer flags nothing can derive from the steps — new, unread, mentioned, and
-the home screen's count and reason — because those depend on who opened what,
-and the seeder reads a room as the cast member who acted in it, which opens it
-for them. Which Sidekicks a viewer is offered carries no such flags — it follows
-from scope and authorship alone — so it is derived rather than stated, and
-`expect` says nothing about them. The schema checks that a viewer's listed rooms are exactly the rooms
-the pack makes visible to them: every workspace-scoped room, and every room they
-were seated in.
+workspace happens to contain.** `demoReadinessManifest` is pure: the steps say
+which Canvases and Sidekicks exist, who each is shared with (a Sidekick's
+Canvas is admitted by the Sidekick's audience, read live, as `canvasAdmits`
+does), how each Chat ends, and how many versions each artifact reaches; the
+receipts say which ids they got. A pack whose seeding never confirmed a step is
+refused rather than described. The pack's `verify` list names the viewers to
+check, and the steps say everything else: there is no per-viewer block to
+author. `unread` is stated only for a Canvas the viewer neither made nor wrote
+in, which they have never opened and which is therefore unread; what a viewer
+who acted has read since depends on what came after, and is not compared.
 
-**For a viewer who never acts, the flags stop depending on anything and become
-derivable**, and `demoIdleViewerExpectation` derives them: they have opened
-nothing, so *new* is exactly whether the pack seats them, *unread* is every room
-they are offered, *mentioned* is whether a step in the room's main conversation
-names them, and the home screen counts the rooms they are seated in and reports
-the strongest reason across those. That is the presenter in every pack this
-repository has shipped, and the checked-in pack is held to it by test. It does
-not replace `expect` — a pack may verify a cast member, who did act, and states
-their flags by hand — it removes the one part of authoring a scenario where
-being wrong costs an operator a demo rather than a test: a mis-stated flag
-parses, plans and seeds, and then leaves the barrier waiting for a projection
-the platform will never produce.
-
-**The comparison reads as each viewer, through the ordinary surfaces.** The
-directory read the sidebar makes, following pagination until the directory says
-there are no more pages, the Sidekicks list the library makes, and the attention
-read the home screen makes — all as that person, all non-opening. A Sidekick is
-Ready when its row is listed, active, at the scope the pack gave it, with a next
-run — which is what proves the schedule was armed rather than merely accepted —
-and, when the pack seeded a briefing, with that briefing in its history. Canonical content — the room's state, the open
-question, the attached resources, the participants — is read as the room's
-creator, who opened the room by seeding it, and never as the presenter, whose
-unopened state is the demo. Each viewer must also be a participant of General
-and own an active Personal Channel (`compareSeating`, gaps
-`general_missing`, `general_not_seated`, `personal_channel_missing`,
-`personal_channel_state`); this reads General without making it, so a missing
-one is a gap rather than repaired. Personal Channels hold no seeded thread, so
-they never appear as an unexpected room. Every mismatch is reported as a named gap (a room
-not listed, a title, a state, a missing mention, a wrong order, a wrong count)
-rather than the first one, because the operator's **Waiting for workspace**
-state lists what has not arrived.
+**The comparison reads as each viewer, through the ordinary reads.** Their
+Canvas list, as the workspace socket carries it (`CanvasService.list`), must
+hold exactly the Canvases the pack makes visible to them, each with its title,
+its writer Sidekick and its newest artifact's kind; their Sidekick list must
+hold exactly theirs, each active, shared as the pack said, with a next run —
+which proves the schedule was armed — and its seeded run `completed` in its
+history. Then, once each and as whoever made it: a Canvas's artifacts at the
+versions the pack publishes, its Chat's state and open question, and its
+uploads attached; a Sidekick's run's row in its shared conversation. The list's
+order is not compared: a Canvas's recency is the moment its Chat's effects land
+in the Organization object, which no pack can state. Every mismatch is reported
+as a named gap (the gap's `room` field carries the pack's name for the Canvas
+or Sidekick, under its released name) rather than the first one, because the
+operator's **Waiting for workspace** state lists what has not arrived.
 
 The proof is the moment between the two: with the effect Queue held, seeding
-completes and every room is listed — its provisional row arrived through the
-creation service's own RPC — but the presenter is not yet mentioned, the room is
-not yet new to them, and the home screen counts nothing, and the barrier says
-so by name. Delivering the directory effects through the real consumer is what
-makes it Ready. A fixed wait, an empty outbox, `reserveChild`, or a first-page
-count would all have said yes too early, which is what the PRD lists them as.
+completes and every Canvas and Sidekick is listed, but the run's report has not
+crossed the Queue, and the barrier names `sidekick_run_state`. Delivering the
+effects through the real consumer is what makes it Ready.
 
 ### Preparing a demo
 
@@ -405,12 +351,10 @@ id — which is why that column carries no foreign key to `workspaces`; creates
 it through the onboarding service as the presenter's own — the same rows,
 journal, placement check and object initialization as a person creating one,
 minus the session, because a login minted on somebody's behalf by an operator
-is not something preparation may do; and seats the cast. Seating includes what
-every member gets ([the Personal Channel](spaces.md#the-personal-channel)):
-creation gives the presenter General and their Personal Channel, and the phase
-then calls `seatOrganizationMember` for everyone it seated, personas included,
-rather than leaving the cast to the relationship dispatch, which runs on a
-five-minute cron and would land after seeding began. `copying_connections`
+is not something preparation may do; and seats the cast as active members, and
+nothing more: since the Canvases and Sidekicks pivot there is no General or
+Personal Channel to seat them in, and the pack's Canvases and Sidekicks admit
+them by their audiences. `copying_connections`
 is the copier, which matches what it already copied. `seeding_conversations`
 opens the seed session and applies and settles each action in order, recording
 confirmed-of-total on its phase row after every one, so the operator watches
@@ -505,12 +449,12 @@ demo's.
   publish is fenced on the row still being `running`, so the two cannot both
   win.
 - **A seed decides addressing; nothing else in a seeded message does.** The
-  classifier is not consulted, and neither is the room's size.
+  classifier is not consulted, and neither is the Canvas's size.
 - **A seeded run says one thing.** One turn, one provider request; the second
   request is a refusal, never a repeat.
 - **Seeded history carries no tool call except a real elicitation.** Prose
-  states its findings itself; the document it names is attached by a step of
-  its own, so the prose points at something that exists.
+  states its findings itself; the artifact it names is published by a step of
+  its own, attributed to that run, so the prose points at something that exists.
 - **A receipt follows confirmation, never admission.** The run settled as
   specified, the resource is attached, or there is no row.
 - **Every seeded write is idempotent through the production path**, by a
@@ -539,9 +483,9 @@ demo's.
 - **A viewer the workspace does not seat is refused, never invented.** The
   barrier reads as the member membership says the viewer is; there is no
   fabricated role.
-- **Rally's seeded prose cites only what the room holds.** A seeded run makes
+- **Rally's seeded prose cites only what the Canvas holds.** A seeded run makes
   no tool call, so it cannot have read a connector; the people bring the facts,
-  and the memo is attached by the person who wrote it.
+  and a document is attached by the person who wrote it.
 - **Preparation never retires anything.** A failed or repeated preparation
   touches no other demo; only an explicit abandon or an operator's retirement
   closes a workspace.
@@ -586,10 +530,10 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
 - **The barrier is one comparison, not a wait.** `checkDemoReadiness` reads
   once and reports; the driver decides how often to ask and for how many
   rounds.
-- **A cast member's own flags are theirs to state.** The seeder opens a room
-  for whoever it reads it as, so a pack that verifies a cast member's view has
-  to expect what their acting left behind; the placeholder pack verifies the
-  presenter alone.
+- **The barrier compares only what the steps decide.** A viewer's read state in
+  a Canvas they acted in, and the list's order, depend on what came after and
+  when effects landed, so neither is compared; the placeholder pack verifies
+  the presenter alone.
 - **The wait ends before the platform's step limit, with a record.** Each
   readiness round is two Workflow steps; the driver stops at the round count
   that fits under the published limit and fails the phase as
@@ -628,13 +572,13 @@ are closed when access ends ([`access-revocation.md`](access-revocation.md)).
 | `apps/api/test-workers/demo-connection-copy.test.ts` | A copy opens under its own identity, and the template is byte-identical afterwards **when its key version is stale** — the only state in which the wrong decrypt helper is visible. A personal connection and a non-Google one are skipped and reported, as `personal_scope` and `shared_grant`, and only the Google copy exists afterwards. |
 | `apps/api/test/demo-workspace-register.test.ts` | The walk's `retired_at` write against the real migration: written once, the first instant kept on a replay, and a workspace this feature never made untouched. |
 | `apps/api/test/demo-workspace-visibility.test.ts` | The template, an unpublished candidate and an abandoned one are withheld; a published one, a retired one, and a customer workspace named like a demo are not; and a member in more workspaces than one statement can name is answered in chunks. |
-| `apps/api/test-workers/demo-seeder.test.ts` | A five-step pack — a scripted room, a document, two unscripted lines, a question — seeds through the real creation service, room object, alarm-driven loop and upload, with the provider double recording no call; and a confirmed or half-confirmed action replays without a second write. Proved to fail with the seam removed (every run fails at the provider) and with the classifier skip removed (a seeded line is refused at admission). A second pack opens a substream through the real preparation, confirmation and membership path: the child's roster includes a presenter who is not in its parent, its starting context is the pack's text, it runs its own loop, and the parent's main conversation gains nothing. Proved to fail twice — with the substream routing dropped, every child line lands in the parent; with the summary gateway removed, creation's one inference reaches the provider double. A third case holds the seeder's refusal of a `personal` room, which a Channel born without a named Space can no longer honour. |
-| `apps/api/test/demo-pack.test.ts` | The playability rules — including a role token in Rally's own prose that names nobody in the cast — that the planner resolves a mention to the bound member at the offsets of the expanded name and expands `@{role}` in Rally's turn to the cast's names, and that the placeholder pack parses. The substream rules separately: a child of a room that does not exist, a line from somebody only in the parent, a mention of somebody not in the child, a personal parent that cannot admit an outsider, a question counted per conversation rather than per room — and that a substream's steps leave the room's facts, which is what the barrier waits on, completely unchanged. |
+| `apps/api/test-workers/demo-seeder.test.ts` | A seven-step pack — a Canvas shared with one cast member, a scripted prompt, two versions of one artifact, a document, an unscripted line, a question, and an Organization Canvas — seeds through the real Canvas creation, Chat object, alarm-driven loop, resource bridge and upload, with the provider double recording no call: the Canvas shared as stated, the artifact at version 2 attributed to Rally, the question open, two runs. Proved to fail with the audience write dropped (the cast member's line is refused: the Canvas does not admit them). A confirmed or half-confirmed action, a publish among them, replays without a second write. A Sidekick shared with the presenter publishes with its schedule armed in the pack's zone, its run answered from the pack, the Canvas the run wrote (its creator, its writer, the version attributed to the run, open to the presenter), and a line in its shared conversation that starts no run. |
+| `apps/api/test/demo-pack.test.ts` | The playability rules, what a pack makes visible (a Sidekick's Canvas to the Sidekick's audience), that the planner resolves audiences to ids and names to display names and attributes a publish to the run's requester, and that the placeholder pack parses with no Thread, Channel or Breakout step and offers the presenter the mockup's Canvases and Sidekicks. |
 | `apps/api/test/demo-seed-provider.test.ts` | The streamed wire form for `say` and for `ask` — the latter with arguments the real elicitation schema accepts — and the refusal of a second request; and the seeded route: an unbound model kept with its fallbacks dropped, an Azure-bound primary stepped past to the first unbound fallback, and a fixed unbound id when every routed model is bound. |
 | `apps/api/test/demo-seed-receipts.test.ts` | Against the real migration: the first confirmation wins, a receipt needs a claimed operation, and an outcome the seeder cannot confirm is refused. |
-| `apps/api/test-workers/demo-readiness.test.ts` | With the effect Queue held, a seeded two-room pack is listed but not Ready — the mention, the new marker and the attention count are named as gaps — and delivering the directory effects through the real consumer makes it Ready with no gaps, including the room the presenter can see without being in, and the order. Proved to fail with the mention comparison removed. After Ready, the presenter taken out of General and their Personal Channel is named as two gaps and cleared by seating them again; proved to fail with the seating comparison removed. |
-| `apps/api/test/demo-readiness.test.ts` | The manifest derived from the placeholder pack — rooms newest first, seats, states, ids from receipts — and its refusal of a pack whose rooms or question were never confirmed; and the schema's check that a viewer's expected rooms are exactly the visible ones. |
-| `apps/api/test-workers/demo-preparation.test.ts` | The launch id handed to the real Workflow binding, so the platform's own instance-id validator judges it (a colon-joined id is refused, the hyphenated one creates an instance). Every phase in order on real objects: the presenter's workspace through onboarding with the cast seated, everyone in General with a Personal Channel before seeding (proved to fail with the phase's seating removed), the template's Google connection copied and left in place, every action confirmed and a completed phase re-run confirming nothing twice, the wait naming its gaps, and Ready published to the register only after the directory effects land; and a failed template check recorded on the operation with its reason. Proved to fail with the register's publication removed from the waiting phase. |
+| `apps/api/test-workers/demo-readiness.test.ts` | The presenter's Canvas list holds exactly the Organization Canvas; a private Canvas made Organization-wide is named `canvas_unexpected` and an artifact short of a version `artifact_version`. With the effect Queue held, a seeded Sidekick is listed but not Ready — its run is named `sidekick_run_state` — and delivering the effects through the real consumer makes it Ready. Proved to fail with the run-state comparison removed (Ready before the run landed). |
+| `apps/api/test/demo-readiness.test.ts` | The manifest derived from the placeholder pack — the presenter's Canvases with `unread` stated only where it is derivable, each artifact at its version, the Sidekick's Canvas with its writer, the Sidekicks with their audiences — and its refusal of a pack whose publish or Sidekick Canvas was never confirmed. |
+| `apps/api/test-workers/demo-preparation.test.ts` | The launch id handed to the real Workflow binding, so the platform's own instance-id validator judges it. Every phase in order on real objects: the presenter's workspace through onboarding with the cast seated, the template's Google connection copied and left in place, every action of the placeholder pack confirmed and a completed phase re-run confirming nothing twice, the wait naming its gaps, and Ready published to the register only after the effects land; and a failed template check recorded on the operation with its reason. |
 | `apps/api/test/demo-operations.test.ts` | Against the real migrations: one operation id starts one Workflow and answers a repeat with the same progress; a cast that misses or invents a role, seats one person twice, seats two people under one name, or names the presenter's role at all, is refused before a row is written, as is a presenter outside the template and anybody who is not a signed-in account on the company's domain; the row stores the accounts it was given and answers their directory names, a repeat meets the cast it was started with, and a cast member who stops being a colleague fails the template check; the template route answers the presenter's members, the cast's candidates and each part's label, offers nobody off the domain, a near-miss domain or unseen, and is refused outside Global; the allocation statement is accepted before the workspace exists; a retry is the next attempt of a failed or a stalled `running` operation; a superseded attempt's phase call writes nothing; the template check runs against the real rows and records a presenter the template lost; a driver that stopped outside a phase is recorded for its own attempt only, with internal text kept off the page; a failed launch marks the operation failed; a retry without a driver leaves the row untouched; the status lists phases in phase order at their latest attempt, and a list past one statement's parameters is answered whole; abandon needs its confirmation, refuses a published demo and closes an operation with no workspace; and the routes — start, list, template, retry, abandon — admit only the `demos` role and reject a malformed start and an unconfirmed abandon. |
 | `apps/ace/test/demos.test.ts`, `apps/ace/test/demos-client.test.tsx` | Ace's side, owned by [`ace.md`](ace.md#testing): the relay forwards the typed confirmation and answers a regional refusal by its own code, and the page reads a retried operation by its current attempt, keeps polling while offline, and names the presenter beside each gap. |
 | `apps/api/test/socket-ticket-transport.test.ts` | Every socket-ticket issuer refuses a `connector` and a `demo_seed` principal alike. |
@@ -656,7 +600,7 @@ has to register it the same way or watch the seeding phase fail.
 | Where | Table | Holds |
 | --- | --- | --- |
 | Regional D1 | `demo_operations` | One row per preparation: company, presenter, pack version, cast, the allocated workspace, status, attempt, the failed phase and reason, and the instants the workspace was published and closed. The register of published workspaces is this table. |
-| Regional D1 | `demo_seed_receipts` | One row per confirmed seed action: its kind, the room it was in and — once a room can hold more than one conversation — the substream it wrote to, by the pack's name and by the id creation minted; and the work stream, turn, run and outcome, elicitation, and resource it produced — or, for a Sidekick, which belongs to no room and so to no conversation, the Sidekick and the one run seeded for it. A CHECK keeps each kind's identity complete rather than letting a row be half of both. |
+| Regional D1 | `demo_seed_receipts` | One row per confirmed seed action: its kind; the Canvas it wrote to, by the pack's name and the id it got, or the Sidekick, likewise; and the turn, run and outcome, elicitation and resource it produced — for a Sidekick, its seeded run and the Canvas that run wrote. A CHECK keeps each kind's identity complete rather than letting a row be half of both (migration 0125). |
 | Regional D1 | `demo_operation_phases` | One row per phase per operation: status, attempt, a small detail object the page renders, and the error when there is one. |
 | A seeded run's `runs.execution_context_json` | `seed` | The pack version, action id, and the one assistant turn the harness answers the run from. |
 | `WorkspaceDO` | `sidekick_runs.seed_json` | The same object, on a seeded Sidekick run, from admission until `provisionSidekickRun` puts it in the execution context above. Null on every run production makes. |
@@ -727,6 +671,14 @@ and no Azure transport, because production's default model is Azure-first
 
 These are specified in the PRD and not implemented, or resolved differently:
 
+- **Abandoning does not yet close a demo's Canvases.** Abandon retires the
+  candidate through the retirement graph, which records Channels, Sidekicks and
+  Spaces (`workspace_retirement_graph` admits `workstream`, `automation` and
+  `space`), not `canvas_directory`. Until retirement learns Canvases — server
+  work in [`workspace-retirement.md`](workspace-retirement.md)'s module, not
+  this one — the invariant that abandon retires whatever the candidate made is
+  untrue for its Canvases, which stay open to their audiences.
+
 - **Open in Rally.** The PRD's Ready state carries an **Open in Rally** button.
   The desktop's deep-link contract addresses a workspace only together with a
   destination inside it — a work stream, notes, settings, a new automation —
@@ -745,6 +697,40 @@ the cast discussed is answerable. That was a product defect in every
 multi-person room, not a demo concern, and it is fixed where it lived.
 
 ## Changelog
+
+### 2026-11-07 — The pack seeds Canvases and Sidekicks
+
+The pack's steps are now the product's two modes: `create_canvas`,
+`canvas_message`, `canvas_artifact`, `upload`, `sidekick` (shared with people or
+the Organization, with a run whose row sits in its shared conversation, and a
+Canvas that run wrote) and `sidekick_message`. The room, substream, Space and
+prepared-history steps are gone, and the placeholder pack is the mockup's
+Organization: Maya (the presenter), Theo and Priya with "Q4 revenue review",
+"Launch plan", the "Weekly changelog" Sidekick and its Canvas, and "Incident
+triage". Why: the Thread, Channel and Breakout surfaces are retired by the
+[Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md),
+so a pack of rooms seeds a workspace nobody can open, and the services it
+called are being deleted.
+
+Decisions a later change has to respect. An artifact's version is published
+through the Terminal's resource bridge, not written directly, so a seeded
+version has the identity, versioning and Canvas note a live publish has; it is
+attributed to the Canvas's latest seeded run, and the schema requires one,
+because a seeded run makes no tool calls and the version must still be honestly
+Rally's. A Sidekick's Canvas is made by `resolveTerminalPublicationHome` from
+the run, never by `createCanvas` with a hand-set writer. `@{role}` writes a
+name and records no mention, since a mention seats nobody in a Canvas or a
+Sidekick. The readiness barrier reads the Canvas list (`CanvasService.list`,
+new) and the Sidekick list instead of the Thread directory and the home
+screen's attention, and no longer checks General and Personal Channels; the
+per-viewer `expect` block is replaced by a `verify` list, because every flag
+the barrier now compares derives from the steps. It does not compare the
+list's order: a Canvas's recency is when its Chat's effects land, which raced
+the expected order in the first workerd run. Migration 0125 rebuilds the
+receipts for the new kinds and does not copy the retired ones — an operation
+still preparing under the old pack fails and is started again. Deferred: a
+site artifact (no seed has proved a served version and a hostname end to end),
+and a demo whose Chat parks on a question in a Sidekick's shared conversation.
 
 ### 2026-10-13 — A demo's people are seated in General and given Personal Channels before seeding
 

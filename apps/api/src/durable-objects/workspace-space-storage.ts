@@ -37,7 +37,7 @@ import { MEMORY_DIGEST_SYNC_TRIGGERS } from "./memory-digest-sync";
 import { boundParameterChunks } from "./bound-parameters";
 import { stableUuidSync } from "../lib/stable-uuid";
 import { uuidV7 } from "../lib/uuid-v7";
-import { CHANNEL_COLOR_SPACE_CHANGE_TRIGGER } from "./channel-color-sync";
+import { CHANNEL_COLOR_SPACE_CHANGE_TRIGGER } from "./retired-workspace-schema";
 import { channelReadState, type ChannelReadRow, type ChannelReadState } from "./workspace-channel-read-storage";
 import {
   breakoutListedSql,
