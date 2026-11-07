@@ -121,7 +121,6 @@ export interface Env {
   WEB_PUSH_SUBJECT?: string;
   CONNECTOR_POLL_WORKFLOW: Workflow;
   CONNECTOR_EVENT_WORKFLOW: Workflow;
-  WORK_OPPORTUNITY_WORKFLOW: Workflow;
   /** Global-only: the demo preparation driver. Absent, the demo write routes
    * answer 503 (`demo_preparation_unavailable`) and nothing else changes — it
    * is not in the boot contract on purpose, because a demo tool's binding must
@@ -481,7 +480,6 @@ const EnvContractSchema = z.object({
   ANALYTICS_LAKEHOUSE: binding<Pipeline>().optional(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
   CONNECTOR_EVENT_WORKFLOW: binding<Workflow>(),
-  WORK_OPPORTUNITY_WORKFLOW: binding<Workflow>(),
   DEMO_PREPARATION_WORKFLOW: binding<Workflow>().optional(),
 
   APP_ENV: z.enum(["development", "test", "staging", "production"]),

@@ -418,7 +418,6 @@
   "workflows": [
     { "name": "avalon-global-connector-poll", "binding": "CONNECTOR_POLL_WORKFLOW", "class_name": "ConnectorPollWorkflow" },
     { "name": "avalon-global-connector-event", "binding": "CONNECTOR_EVENT_WORKFLOW", "class_name": "ConnectorEventWorkflow" },
-    { "name": "avalon-global-work-opportunity", "binding": "WORK_OPPORTUNITY_WORKFLOW", "class_name": "WorkOpportunityWorkflow" },
     { "name": "avalon-global-demo-preparation", "binding": "DEMO_PREPARATION_WORKFLOW", "class_name": "DemoPreparationWorkflow" }
   ],
   // `enabled`/`head_sampling_rate` cover Workers Logs only; automatic tracing
