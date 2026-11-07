@@ -671,17 +671,9 @@ and no Azure transport, because production's default model is Azure-first
 
 These are specified in the PRD and not implemented, or resolved differently:
 
-- **Abandoning does not yet close a demo's Canvases.** Abandon retires the
-  candidate through the retirement graph, which records Channels, Sidekicks and
-  Spaces (`workspace_retirement_graph` admits `workstream`, `automation` and
-  `space`), not `canvas_directory`. Until retirement learns Canvases — server
-  work in [`workspace-retirement.md`](workspace-retirement.md)'s module, not
-  this one — the invariant that abandon retires whatever the candidate made is
-  untrue for its Canvases, which stay open to their audiences.
-
 - **Open in Rally.** The PRD's Ready state carries an **Open in Rally** button.
   The desktop's deep-link contract addresses a workspace only together with a
-  destination inside it — a work stream, notes, settings, a new automation —
+  destination inside it — a Canvas, a Sidekick, settings —
   and has no home-screen destination, so the Demos page names the workspace to
   switch to rather than fabricating a link the desktop would reject. Adding a
   home destination is a desktop deep-link contract change
