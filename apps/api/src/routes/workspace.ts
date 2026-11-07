@@ -5,8 +5,6 @@ import { Hono, type Context } from "hono";
 import { zValidator } from "../middleware/validation";
 import {
   AcceptWorkspaceInvitationRequestSchema,
-  ContainerOrderSchema,
-  PinnedOrderWriteSchema,
   CreateWorkspaceInvitationRequestSchema,
   IdSchema,
   CreateWorkspaceInvitationResponseSchema,
@@ -34,11 +32,12 @@ import {
   SupportAccessSchema,
 } from "@rally/contracts";
 import { z } from "zod";
+import { SidebarPinOrderRequestSchema } from "@rally/contracts/canvases";
 import type { HonoAppEnv } from "../env";
 import { clientReadsIndividualSpaces, requireCurrentClientContract } from "../lib/client-contract";
 import { requestDeferral } from "../lib/defer";
 import { getAuth, getWorkspaceAuth } from "../middleware/auth";
-import { SpaceService } from "../services/space-service";
+import { CanvasService } from "../services/canvas-service";
 import { readUserTimezone, reportDeviceTimezone, WorkspaceService } from "../services/workspace-service";
 import { SupportAccessService } from "../services/support-access";
 import { workspaceAttention } from "../services/workspace-attention-service";
@@ -200,31 +199,15 @@ workspaceRoutes.delete("/memory/:factId", zValidator("param", memoryFactParam), 
     await new WorkspaceService(c.env, getAuth(c)).forgetOrganizationMemory(c.req.valid("param").factId))),
 );
 /**
- * One person's order for one list they arranged by hand.
- *
- * At the workspace level rather than under `/spaces` because the container is
- * not always a Space: the same request orders the Organization's Spaces, one
- * Space's Channels and one Channel's Breakouts, and a `/spaces/order` that
- * carried a Breakout's arrangement would be a Space route about something no
- * Space has heard of. The authority is still the Space one — the rows, the
- * refusals and the snapshot the answer is republished on all belong to it — so
- * this reaches it through `SpaceService`.
- *
- * It answers with what was stored rather than with the whole directory: the
- * lists themselves arrive on the workspace socket, which this write
+ * One person's order for the Pinned group of their Canvases or Sidekicks
+ * list. The list itself arrives on the workspace socket, which this write
  * republishes to every session this person has open.
  */
-workspaceRoutes.put("/order", zValidator("json", ContainerOrderSchema), async (c) =>
-  c.json(ContainerOrderSchema.parse(
-    await new SpaceService(c.env, getAuth(c)).reorderContainer(c.req.valid("json")),
-  )),
-);
-/** All's Pinned order, which is not an `OrderedContainer`; see `PinnedOrderSchema`. */
-workspaceRoutes.put("/pinned-order", zValidator("json", PinnedOrderWriteSchema), async (c) =>
-  c.json(PinnedOrderWriteSchema.parse({
-    itemIds: await new SpaceService(c.env, getAuth(c)).reorderAllPinned(c.req.valid("json").itemIds),
-  })),
-);
+workspaceRoutes.put("/pinned-order", zValidator("json", SidebarPinOrderRequestSchema), async (c) => {
+  const body = c.req.valid("json");
+  await new CanvasService(c.env, getWorkspaceAuth(c)).reorderPins(body.kind, body.itemIds);
+  return c.body(null, 204);
+});
 workspaceRoutes.get("/terminal", async (c) =>
   c.json(TerminalWorkspaceSettingsSchema.parse(await withTerminalSettingsService(c, (service) => service.get()))),
 );

@@ -5,6 +5,7 @@ import { IdSchema } from "@rally/contracts";
 import {
   CanvasAudienceUpdateSchema,
   CanvasDetailSchema,
+  CanvasRenameRequestSchema,
   CreateCanvasRequestSchema,
   CreatedCanvasSchema,
   SidebarPinRequestSchema,
@@ -19,7 +20,7 @@ const idParam = z.object({ id: IdSchema });
 
 /**
  * A Canvas: create one (with no artifacts, and optionally its first prompt),
- * read what its reader sees, change who can open it, and pin it.
+ * read what its reader sees, retitle it, change who can open it, and pin it.
  * `docs/canvases.md`. Its Chat is an ordinary conversation, opened through
  * `/conversations/:canvasId`.
  */
@@ -31,6 +32,9 @@ canvasRoutes.get("/:id", zValidator("param", idParam), async (c) => {
   c.header("Cache-Control", "no-store");
   return c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c)).detail(c.req.valid("param").id)));
 });
+canvasRoutes.patch("/:id", zValidator("param", idParam), zValidator("json", CanvasRenameRequestSchema), async (c) =>
+  c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
+    .rename(c.req.valid("param").id, c.req.valid("json").title))));
 canvasRoutes.post("/:id/audience", zValidator("param", idParam), zValidator("json", CanvasAudienceUpdateSchema), async (c) =>
   c.json(CanvasDetailSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
     .setAudience(c.req.valid("param").id, c.req.valid("json")))));

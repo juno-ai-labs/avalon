@@ -178,9 +178,6 @@ export function workspaceSyncPublicationsForMutation(
   // invalidation to be about.
   if (pathname.startsWith("/projects")) return [];
   if (pathname.startsWith("/resources")) return organization("resources", "workstream_directory");
-  if (pathname.startsWith("/work-opportunities")) {
-    return organization("work_opportunities", "activity", "workstream_directory");
-  }
   if (pathname.startsWith("/workstreams")) return organization("workstream_directory");
   // A person's own analytics choice.
   if (pathname.startsWith("/telemetry/preference")) return [{ topics: ["viewer_preferences"], audience: ACTOR }];

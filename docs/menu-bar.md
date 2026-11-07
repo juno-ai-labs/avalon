@@ -710,8 +710,8 @@ except its content and the sign-in state.
 
 The menu is no longer a suggestion surface, so the invariant that a surface
 showing suggestions must report them no longer applies to it. Should suggestions
-ever come back here, that obligation comes back with them:
-[`suggested-work.md`](suggested-work.md) owns it.
+ever come back here, that obligation comes back with them. (Suggested Work
+itself was deleted on 2026-11-07; see [`data-model.md`](data-model.md#changelog).)
 
 A recency heading is computed when the menu is built, which is when its content
 moves — not when it opens. A row can therefore sit under **Last hour** for
