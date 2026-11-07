@@ -1012,6 +1012,19 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 
 ## Changelog
 
+### 2026-11-07 — A Canvas's Chat is a conversation feed with ticket kind `canvas`
+
+**What changed:** A conversation ticket's `pk` may be `canvas`, and
+`verifySocketTicket` accepts it. The route admits a Canvas reader by the
+Canvas's audience and seats them in the Chat before minting, as it does for a
+Sidekick's conversation.
+
+**Why:** A Canvas's Chat is an ordinary conversation object (the Canvases and
+Sidekicks decision log), so it opens on the same feed socket.
+
+**Consequences:** The conversation object refuses a ticket whose kind
+disagrees with its root row, so a Canvas id cannot be opened as a Thread.
+
 ### 2026-11-06 — The iOS client is deleted
 
 The native client that set `app://rallywithai` on its own handshake and kept

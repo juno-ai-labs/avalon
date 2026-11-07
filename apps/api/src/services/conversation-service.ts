@@ -78,9 +78,9 @@ export class ConversationService {
         ...(hosted.viewer ? { decision: hosted.viewer } : {}),
       };
     }
-    if (hosted.kind === "automation") {
+    if (hosted.kind === "automation" || hosted.kind === "canvas") {
       return {
-        parent: { kind: "automation", id: parentId, membershipVersion: 0, ...hosted.authority },
+        parent: { kind: hosted.kind, id: parentId, membershipVersion: 0, ...hosted.authority },
         ...(hosted.viewer ? { decision: hosted.viewer } : {}),
       };
     }
@@ -113,7 +113,10 @@ export class ConversationService {
         ...viewer,
       }));
     if (!decision.authorized) throw new ApiError(404, "conversation_not_found", "Conversation not found");
-    if (parent.kind === "automation") {
+    // A hosted conversation (a Sidekick's or a Canvas's) admits by its
+    // parent's audience, which is wider than the conversation's own list, so
+    // the admitted reader is seated before anything is issued.
+    if (parent.kind === "automation" || parent.kind === "canvas") {
       try {
         await createIdentityObjectPort(this.env, this.auth.workspaceId, parentId, undefined, substreamId)
           .admitParticipant({

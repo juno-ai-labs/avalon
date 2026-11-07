@@ -71,21 +71,17 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
       workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const { closedUserIds = [], substreams, automationIds } = await workspace.revokeNarrowedAudienceAccess({
+    const { closedUserIds = [], substreams } = await workspace.revokeNarrowedAudienceAccess({
       workspaceId,
       parentId: target.workstreamId,
     });
-    if (substreams && automationIds) {
+    if (substreams) {
       // The object ran each person's Channel step in the same call, so only
-      // the leaves go out: each conversation, and each Sidekick the Channel owns.
-      await publishDescendantRevocations(env, [
-        ...substreams.flatMap(({ userId, substreamIds }) => substreamIds.map((substreamId) =>
-          descendantRevocation({ ...carried, userId }, {
-            scope: "substream", workstreamId: target.workstreamId, substreamId,
-          }))),
-        ...closedUserIds.flatMap((userId) => automationIds.map((automationId) =>
-          descendantRevocation({ ...carried, userId }, { scope: "automation", automationId }))),
-      ]);
+      // the leaves go out: each conversation. A Channel owns no Sidekick.
+      await publishDescendantRevocations(env, substreams.flatMap(({ userId, substreamIds }) => substreamIds.map((substreamId) =>
+        descendantRevocation({ ...carried, userId }, {
+          scope: "substream", workstreamId: target.workstreamId, substreamId,
+        }))));
       return;
     }
     // An object from before the combined step answers with names only.

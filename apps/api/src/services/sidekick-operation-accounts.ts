@@ -81,9 +81,12 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
   });
   if (eligible.length === 0 && authority.requesterUserId) {
     // A run a non-delegate asked for has only their own accounts; this one
-    // needs a delegate's. Named, so the run's reply can say why.
-    throw new ConnectorError("unauthorized",
-      `${SIDEKICK_REQUESTER_ACCOUNT_UNAVAILABLE}: this needs an account that only someone this Sidekick acts for can use. Ask one of them to request it.`,
+    // needs a delegate's, or the requester has left the Organization and the
+    // run's account view names nobody. Named, so the run's reply can say why.
+    const left = !authority.delegates.some((delegate) => delegate.userId === authority.requesterUserId);
+    throw new ConnectorError("unauthorized", left
+      ? `${SIDEKICK_REQUESTER_ACCOUNT_UNAVAILABLE}: the person who asked for this run is no longer in the Organization, so it has no account to act with.`
+      : `${SIDEKICK_REQUESTER_ACCOUNT_UNAVAILABLE}: this needs an account that only someone this Sidekick acts for can use. Ask one of them to request it.`,
       { code: SIDEKICK_REQUESTER_ACCOUNT_UNAVAILABLE });
   }
   if (eligible.length === 0) throw unavailable("No eligible delegated account is available. Restore delegation, connection and access.");

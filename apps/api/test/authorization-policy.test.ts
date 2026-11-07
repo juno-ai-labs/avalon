@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
-import { AccessContext, canvasAdmits, canvasManages, decisionHasValidEvidence, evaluateReadPolicy, sidekickAdmits,
+import { AccessContext, audienceAdmits, canvasAdmits, canvasManages, decisionHasValidEvidence, evaluateReadPolicy, sidekickAdmits,
   type ReadPolicy, type AuthorizationResource } from '../src/services/authorization-policy';
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000001');
@@ -56,38 +56,37 @@ describe('authorization read policy', () => {
   });
 });
 
+describe('the shared-conversation audience rule', () => {
+  it('admits anyone named, a guest among them', () => {
+    expect(audienceAdmits({ named: true, organizationWide: false }, false)).toBe(true);
+    expect(audienceAdmits({ named: false, organizationWide: false }, true)).toBe(false);
+  });
+  it('admits any member, and no guest, when it is open to the Organization', () => {
+    expect(audienceAdmits({ named: false, organizationWide: true }, true)).toBe(true);
+    expect(audienceAdmits({ named: false, organizationWide: true }, false)).toBe(false);
+  });
+});
+
 describe('who reads a Sidekick', () => {
-  const sidekick = { scope: 'personal', author: false, executor: false, shared: false };
-  it('admits the people a Sidekick is shared with, a guest among them', () => {
-    expect(sidekickAdmits({ ...sidekick, shared: true }, false)).toBe(true);
-    expect(sidekickAdmits(sidekick, true)).toBe(false);
-  });
-  it('admits any member, and no guest, through Organization scope', () => {
+  it('names its author, the person it runs as and its list; Organization scope opens it to members', () => {
+    const sidekick = { scope: 'personal', author: false, executor: false, shared: false };
+    expect([{ shared: true }, { author: true }, { executor: true }].map((named) => sidekickAdmits({ ...sidekick, ...named }, false)))
+      .toEqual([true, true, true]);
     expect(sidekickAdmits({ ...sidekick, scope: 'workspace' }, true)).toBe(true);
-    expect(sidekickAdmits({ ...sidekick, scope: 'workspace' }, false)).toBe(false);
-  });
-  it('admits its author and the person it runs as', () => {
-    expect(sidekickAdmits({ ...sidekick, author: true }, false)).toBe(true);
-    expect(sidekickAdmits({ ...sidekick, executor: true }, true)).toBe(true);
+    expect(sidekickAdmits(sidekick, true)).toBe(false);
   });
 });
 
 describe('who opens a Canvas', () => {
   const canvas = { visibility: 'creator', creator: false, participant: false, writerAudience: false };
-  it('admits only its creator by default', () => {
-    expect(canvasAdmits({ ...canvas, creator: true }, false)).toBe(true);
+  it('names its creator, its participants and its writer Sidekick\'s audience; workspace visibility opens it to members', () => {
+    expect([{ creator: true }, { participant: true }, { writerAudience: true }].map((named) => canvasAdmits({ ...canvas, ...named }, false)))
+      .toEqual([true, true, true]);
+    expect(canvasAdmits({ ...canvas, visibility: 'workspace' }, true)).toBe(true);
     expect(canvasAdmits(canvas, true)).toBe(false);
   });
-  it('admits a participant, a guest among them, and nobody else', () => {
-    expect(canvasAdmits({ ...canvas, visibility: 'participants', participant: true }, false)).toBe(true);
-    expect(canvasAdmits({ ...canvas, visibility: 'participants' }, true)).toBe(false);
-  });
-  it('admits any member, and no guest, when it is open to the Organization', () => {
-    expect(canvasAdmits({ ...canvas, visibility: 'workspace' }, true)).toBe(true);
-    expect(canvasAdmits({ ...canvas, visibility: 'workspace' }, false)).toBe(false);
-  });
-  it('admits anyone its writer Sidekick is shared with', () => {
-    expect(canvasAdmits({ ...canvas, writerAudience: true }, false)).toBe(true);
+  it('opens every Canvas to an owner or administrator, who manages it', () => {
+    expect(canvasAdmits(canvas, true, true)).toBe(true);
   });
   it('lets the creator, an owner or administrator, or its Sidekick\'s manager change who opens it', () => {
     expect(canvasManages({ creator: true, writerManager: false }, null)).toBe(true);

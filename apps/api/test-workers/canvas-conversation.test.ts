@@ -1,0 +1,145 @@
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
+
+/**
+ * A Canvas's Chat on the one hosting primitive: a `canvas`-kind conversation
+ * object whose parent is the Canvas's row in the Organization object. Opening
+ * it is the conversation route's admission (`ConversationService`), the
+ * socket ticket names the `canvas` kind, and the Chat's own effects reach the
+ * Canvas's parent state. Real workerd throughout.
+ */
+
+import { env } from "cloudflare:workers";
+import { reset, runInDurableObject } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
+
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
+import type { AuthContext, Env } from "../src/env";
+import { createAccessContext } from "../src/services/authorization-service";
+import { projectAuthorization } from "../src/services/authorization-projection-service";
+import { createCanvas } from "../src/services/canvas-service";
+import { ConversationService } from "../src/services/conversation-service";
+import { verifySocketTicket } from "../src/services/socket-service";
+import { deliverChildEffects } from "./helpers/conversation-effects";
+import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
+import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
+
+let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000cb000");
+const CREATOR = asUserId("00000000-0000-7000-8000-0000000cb001");
+const MEMBER = asUserId("00000000-0000-7000-8000-0000000cb002");
+const ADMIN = asUserId("00000000-0000-7000-8000-0000000cb003");
+const GUEST = asUserId("00000000-0000-7000-8000-0000000cb004");
+const NOW = "2026-11-07T10:00:00.000Z";
+const TEST_ENV: Env = env;
+useHeldEffectQueue();
+
+function auth(userId: string): AuthContext {
+  return { sessionId: `session-${userId}`, userId: asUserId(userId), workspaceId: WORKSPACE_ID, region: "global",
+    role: userId === ADMIN ? "admin" : userId === GUEST ? null : "member" };
+}
+
+function workspace(): DurableObjectStub<WorkspaceDO> {
+  return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName(env.AVALON_REGION, WORKSPACE_ID)));
+}
+
+async function opens(userId: string, canvasId: string): Promise<boolean> {
+  try {
+    await new ConversationService(TEST_ENV, auth(userId)).authorizeViewer(canvasId);
+    return true;
+  } catch (error) {
+    if ((error as { code?: string }).code === "conversation_not_found") return false;
+    throw error;
+  }
+}
+
+beforeEach(async () => {
+  await reset();
+  WORKSPACE_ID = asWorkspaceId(crypto.randomUUID());
+  await seedWorkspaceControlPlane(env.DB, { workspaceId: WORKSPACE_ID, userId: CREATOR, sessionId: `session-${CREATOR}` });
+  await env.DB.batch([
+    ...[[MEMBER, "member", "member"], [ADMIN, "admin", "member"], [GUEST, null, "guest"]].map(([userId, role, accessClass]) =>
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, access_class, last_seen_at)
+        VALUES (?, ?, 'active', ?, ?, ?)`).bind(WORKSPACE_ID, userId, role, accessClass, NOW)),
+    ...[MEMBER, ADMIN, GUEST].map((userId) => env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(`session-${userId}`, userId, WORKSPACE_ID)),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstreams (
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, do_identity_anchor INTEGER NOT NULL DEFAULT 0)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_create_receipts (
+      workspace_id TEXT NOT NULL, creator_user_id TEXT NOT NULL, client_message_id TEXT NOT NULL,
+      workstream_id TEXT NOT NULL, generation INTEGER NOT NULL, request_hash TEXT NOT NULL,
+      state TEXT NOT NULL, message_id TEXT, harness_run_id TEXT, error_code TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, creator_user_id, client_message_id), UNIQUE (workstream_id))`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_routes (
+      workspace_id TEXT NOT NULL, workstream_id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
+      object_name TEXT NOT NULL, state TEXT NOT NULL, stage_index INTEGER NOT NULL DEFAULT 0,
+      source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
+      source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
+      verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL)`),
+  ]);
+});
+
+describe("a Canvas's Chat", () => {
+  it("opens to its creator, a participant, a guest on its list and an administrator, and to nobody else", async () => {
+    const { canvasId, created } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    expect(created).toBe(true);
+    expect(await opens(CREATOR, canvasId)).toBe(true);
+    expect(await opens(MEMBER, canvasId)).toBe(false);
+    expect(await opens(GUEST, canvasId)).toBe(false);
+    // An administrator manages every Canvas, so opens it.
+    expect(await opens(ADMIN, canvasId)).toBe(true);
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "participants", userIds: [MEMBER, GUEST] } });
+    expect(await opens(MEMBER, canvasId)).toBe(true);
+    expect(await opens(GUEST, canvasId)).toBe(true);
+  });
+
+  it("issues a socket ticket naming the canvas kind", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const issued = await new ConversationService(TEST_ENV, auth(CREATOR)).socketTicket(canvasId);
+    const claims = await verifySocketTicket(TEST_ENV, issued.ticket);
+    expect({ parentKind: claims.parentKind, parentId: claims.parentId, substreamId: claims.substreamId })
+      .toEqual({ parentKind: "canvas", parentId: canvasId, substreamId: "0" });
+  });
+
+  it("takes its Chat's effects into the Canvas's own rows", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    await deliverChildEffects(TEST_ENV, chat);
+    const rows = await runInDurableObject(workspace(), (_instance, state) => ({
+      projections: state.storage.sql.exec<{ substream_id: string }>(
+        `SELECT substream_id FROM sidekick_child_projections WHERE sidekick_id = ?`, canvasId).toArray(),
+      reads: state.storage.sql.exec<{ user_id: string }>(
+        `SELECT user_id FROM sidekick_viewer_reads WHERE sidekick_id = ?`, canvasId).toArray(),
+    }));
+    expect(rows).toEqual({ projections: [{ substream_id: "0" }], reads: [{ user_id: CREATOR }] });
+  });
+
+  it("admits a Canvas's artifact to whoever opens the Canvas, and to nobody else", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "participants", userIds: [GUEST] } });
+    const resourceId = crypto.randomUUID();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
+        VALUES (?, ?, 'generated_file', 'avalon_generated', 'Launch plan.md', '{}', 'attached', ?, ?)`, resourceId, WORKSPACE_ID, NOW, NOW);
+    });
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    await runInDurableObject(chat, (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO workstream_resource_links
+        (resource_id, attached_by_user_id, watch_enabled, relationship_type, resource_json, attached_at, updated_at)
+        VALUES (?, NULL, 0, 'generated', '{}', 1, 1)`, resourceId);
+    });
+    await projectAuthorization(TEST_ENV, { type: "authorization_projection_v1", region: "global",
+      workspaceId: WORKSPACE_ID, parentId: canvasId, substreamId: asSubstreamId("0") });
+    const decide = async (userId: string) => (await createAccessContext(TEST_ENV, auth(userId))
+      .check({ kind: "resource", workspaceId: WORKSPACE_ID, resourceId })).status;
+    // The creator and a guest on the list; a member it was not shared with is refused.
+    expect(await decide(CREATOR)).toBe("allowed");
+    expect(await decide(GUEST)).toBe("allowed");
+    expect(await decide(MEMBER)).toBe("denied");
+  });
+});

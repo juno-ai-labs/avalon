@@ -68,8 +68,8 @@ export type CanvasArtifactKind = z.infer<typeof CanvasArtifactKindSchema>;
 /** One artifact a Canvas's conversation generated, at its current version. */
 export const CanvasArtifactSchema = z.object({
   resourceId: IdSchema,
-  title: z.string().max(300),
-  mimeType: z.string().max(160).nullable(),
+  title: z.string(),
+  mimeType: z.string().nullable(),
   kind: CanvasArtifactKindSchema,
   version: z.number().int().positive(),
   updatedAt: TimestampSchema,

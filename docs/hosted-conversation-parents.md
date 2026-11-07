@@ -642,6 +642,35 @@ Space in an Organization now shares one SQLite database and one socket set.
 
 ## Changelog
 
+### 2026-11-07 — One hosting primitive for a Sidekick and a Canvas
+
+**What changed:** The conversation-parent contract a Sidekick answered —
+authority, the viewer check, children, the children's effects and receipts,
+and each reader's read of `"0"` — moved into `HostedConversation`
+(`hosted-conversation.ts`), which `HostedSidekick` and the new `HostedCanvas`
+extend. Its four tables (`sidekick_children`, `sidekick_child_projections`,
+`sidekick_child_receipts`, `sidekick_viewer_reads`) now hold either kind of
+parent, keyed by the parent id in the column still called `sidekick_id`.
+`WorkspaceDO.hostedConversationParent` resolves a Sidekick or a Canvas before
+the Channel fallback, and `hostedConversationAuthorizationFacts` answers
+authorization for either in one call.
+
+**Why:** A Canvas is a shared conversation with children and readers, exactly
+what a Sidekick's parent already hosted (the Canvases and Sidekicks decision
+"one hosting primitive in WorkspaceDO for Canvases and Sidekicks"). Cloning
+`HostedSidekick` would have meant two copies of the receipt, projection and
+read-state logic.
+
+**Considered and rejected:** A third `HostedParent` role: Channel code scans the
+`parent_*` tables across every parent. New `canvas_*` child tables: the
+existing ones are keyed by parent id, and every reader that scans them across
+parents joins its own directory.
+
+**Consequences:** A new hosted kind implements `identity`, `assertParent`,
+`admitsViewer`, `onViewerReadChanged` and `onChildProjection`, and is added to
+`hostedConversationParent`. A statement on the four tables names the parent
+id, whatever its kind.
+
 ### 2026-11-06 — A Sidekick projects each run into its own shared conversation
 
 **What changed:** `HostedSidekick` writes a row per run into its shared
