@@ -312,64 +312,6 @@ export const WorkspaceResourceSlugBacklogSchema = deferredZodSchema(() => z.stri
   items: z.array(IdSchema),
 }));
 
-export const WorkspaceInboundEmailClaimRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  resendEmailId: z.string(),
-  workstreamId: IdSchema,
-  svixId: z.string(),
-  receivedAt: TimestampSchema,
-  /**
-   * The caller's, because the length is an environment-configured limit the
-   * object has no reading of. The token that fences the lease is the
-   * object's, minted inside the claim and returned.
-   */
-  leaseExpiresAt: TimestampSchema,
-}));
-
-/**
- * `claimed` carries the lease token every later transition must present.
- * `already_processed` is the replay answer; `in_progress` means another
- * delivery holds a live lease. The insert, the duplicate read and the expired
- * -lease takeover used to be three separate round trips.
- */
-export const WorkspaceInboundEmailClaimResultSchema = deferredZodSchema(() => z.strictObject({
-  outcome: z.enum(["claimed", "already_processed", "in_progress"]),
-  leaseToken: z.string().nullable(),
-}));
-
-export const WorkspaceInboundEmailLeaseRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  resendEmailId: z.string(),
-  workstreamId: IdSchema,
-  leaseToken: z.string(),
-  leaseExpiresAt: TimestampSchema,
-}));
-
-export const WorkspaceInboundEmailLeaseResultSchema = deferredZodSchema(() => z.strictObject({
-  outcome: z.enum(["renewed", "lease_lost"]),
-}));
-
-export const WorkspaceInboundEmailSettleRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  resendEmailId: z.string(),
-  workstreamId: IdSchema,
-  leaseToken: z.string(),
-  payloadRef: z.string(),
-  processedAt: TimestampSchema,
-}));
-
-export const WorkspaceInboundEmailSettleResultSchema = deferredZodSchema(() => z.strictObject({
-  outcome: z.enum(["processed", "lease_lost"]),
-}));
-
-export const WorkspaceInboundEmailFailureRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  resendEmailId: z.string(),
-  workstreamId: IdSchema,
-  leaseToken: z.string(),
-  errorCode: z.string(),
-}));
-
 export const WorkspaceInboundEmailResourceRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   /** The id the row gets if this email has no resource yet. */
@@ -481,27 +423,6 @@ export type WorkspaceResourceSlugBacklogRequest = z.infer<
   typeof WorkspaceResourceSlugBacklogRequestSchema
 >;
 export type WorkspaceResourceSlugBacklog = z.infer<typeof WorkspaceResourceSlugBacklogSchema>;
-export type WorkspaceInboundEmailClaimRequest = z.infer<
-  typeof WorkspaceInboundEmailClaimRequestSchema
->;
-export type WorkspaceInboundEmailClaimResult = z.infer<
-  typeof WorkspaceInboundEmailClaimResultSchema
->;
-export type WorkspaceInboundEmailLeaseRequest = z.infer<
-  typeof WorkspaceInboundEmailLeaseRequestSchema
->;
-export type WorkspaceInboundEmailLeaseResult = z.infer<
-  typeof WorkspaceInboundEmailLeaseResultSchema
->;
-export type WorkspaceInboundEmailSettleRequest = z.infer<
-  typeof WorkspaceInboundEmailSettleRequestSchema
->;
-export type WorkspaceInboundEmailSettleResult = z.infer<
-  typeof WorkspaceInboundEmailSettleResultSchema
->;
-export type WorkspaceInboundEmailFailureRequest = z.infer<
-  typeof WorkspaceInboundEmailFailureRequestSchema
->;
 export type WorkspaceInboundEmailResourceRequest = z.infer<
   typeof WorkspaceInboundEmailResourceRequestSchema
 >;

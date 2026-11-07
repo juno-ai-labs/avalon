@@ -1,13 +1,9 @@
-import { uuidV7 } from "../lib/uuid-v7";
 import { isUnlistedResourceMetadata } from "../services/resource-listing";
 import { boundParameterChunks } from "./bound-parameters";
 import {
   WorkspaceConnectorResourceResolveResultSchema,
   WorkspaceExpiredDraftReapResultSchema,
-  WorkspaceInboundEmailClaimResultSchema,
-  WorkspaceInboundEmailLeaseResultSchema,
   WorkspaceInboundEmailResourceResultSchema,
-  WorkspaceInboundEmailSettleResultSchema,
   WorkspaceReapableResourceObjectListSchema,
   WorkspaceResourceDescriptorListSchema,
   WorkspaceResourceExistsResultSchema,
@@ -24,15 +20,8 @@ import {
   type WorkspaceConnectorResourceResolveResult,
   type WorkspaceDiscoveredResourcesRequest,
   type WorkspaceExpiredDraftReapResult,
-  type WorkspaceInboundEmailClaimRequest,
-  type WorkspaceInboundEmailClaimResult,
-  type WorkspaceInboundEmailFailureRequest,
-  type WorkspaceInboundEmailLeaseRequest,
-  type WorkspaceInboundEmailLeaseResult,
   type WorkspaceInboundEmailResourceRequest,
   type WorkspaceInboundEmailResourceResult,
-  type WorkspaceInboundEmailSettleRequest,
-  type WorkspaceInboundEmailSettleResult,
   type WorkspaceReapableResourceObjectList,
   type WorkspaceResourceDescriptorList,
   type WorkspaceResourceDescriptorsRequest,
@@ -641,133 +630,6 @@ export function listWorkspaceResourcesAwaitingSlug(
     MAXIMUM_RESOURCE_CLEANUP_BATCH,
   ).toArray().map((row) => row.id);
   return WorkspaceResourceSlugBacklogSchema.parse({ items });
-}
-
-/**
- * Claim — or reclaim after an expired lease — one inbound email's processing.
- *
- * The insert, the duplicate read, and the takeover of an expired lease were
- * three round trips through the facade; three critical sections rather than
- * one, and the gap between them is where two concurrent deliveries of the
- * same message could both proceed. The lease token is minted here and fences
- * every later transition.
- */
-export function claimWorkspaceInboundEmailReceipt(
-  storage: DurableObjectStorage,
-  request: WorkspaceInboundEmailClaimRequest,
-): WorkspaceInboundEmailClaimResult {
-  const leaseToken = uuidV7();
-  const now = new Date().toISOString();
-  return storage.transactionSync(() => {
-    const existing = storage.sql.exec<{
-      processed_at: string | null;
-      lease_token: string | null;
-      lease_expires_at: string | null;
-    }>(
-      `SELECT processed_at, lease_token, lease_expires_at
-         FROM workstream_email_receipts
-        WHERE resend_email_id = ? AND workstream_id = ?`,
-      request.resendEmailId,
-      request.workstreamId,
-    ).toArray()[0];
-    if (!existing) {
-      storage.sql.exec(
-        `INSERT INTO workstream_email_receipts
-           (resend_email_id, workstream_id, workspace_id, svix_id, payload_ref,
-            received_at, processed_at, error_json, lease_token, lease_expires_at)
-         VALUES (?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)`,
-        request.resendEmailId,
-        request.workstreamId,
-        request.workspaceId,
-        request.svixId,
-        request.receivedAt,
-        leaseToken,
-        request.leaseExpiresAt,
-      );
-      return WorkspaceInboundEmailClaimResultSchema.parse({ outcome: "claimed", leaseToken });
-    }
-    if (existing.processed_at) {
-      return WorkspaceInboundEmailClaimResultSchema.parse({
-        outcome: "already_processed",
-        leaseToken: null,
-      });
-    }
-    if (existing.lease_token && existing.lease_expires_at && existing.lease_expires_at > now) {
-      return WorkspaceInboundEmailClaimResultSchema.parse({
-        outcome: "in_progress",
-        leaseToken: null,
-      });
-    }
-    storage.sql.exec(
-      `UPDATE workstream_email_receipts
-          SET lease_token = ?, lease_expires_at = ?, error_json = NULL
-        WHERE resend_email_id = ? AND workstream_id = ?`,
-      leaseToken,
-      request.leaseExpiresAt,
-      request.resendEmailId,
-      request.workstreamId,
-    );
-    return WorkspaceInboundEmailClaimResultSchema.parse({ outcome: "claimed", leaseToken });
-  });
-}
-
-/** Extend a held lease, or report that it was lost. */
-export function renewWorkspaceInboundEmailLease(
-  storage: DurableObjectStorage,
-  request: WorkspaceInboundEmailLeaseRequest,
-): WorkspaceInboundEmailLeaseResult {
-  const renewed = storage.sql.exec<{ resend_email_id: string }>(
-    `UPDATE workstream_email_receipts SET lease_expires_at = ?
-      WHERE resend_email_id = ? AND workstream_id = ?
-        AND processed_at IS NULL AND lease_token = ?
-      RETURNING resend_email_id`,
-    request.leaseExpiresAt,
-    request.resendEmailId,
-    request.workstreamId,
-    request.leaseToken,
-  ).toArray()[0];
-  return WorkspaceInboundEmailLeaseResultSchema.parse({
-    outcome: renewed?.resend_email_id === request.resendEmailId ? "renewed" : "lease_lost",
-  });
-}
-
-/** Settle a processed email under its lease, releasing the lease. */
-export function settleWorkspaceInboundEmailProcessed(
-  storage: DurableObjectStorage,
-  request: WorkspaceInboundEmailSettleRequest,
-): WorkspaceInboundEmailSettleResult {
-  const processed = storage.sql.exec<{ resend_email_id: string }>(
-    `UPDATE workstream_email_receipts
-        SET payload_ref = ?, processed_at = ?, error_json = NULL,
-            lease_token = NULL, lease_expires_at = NULL
-      WHERE resend_email_id = ? AND workstream_id = ? AND lease_token = ?
-      RETURNING resend_email_id`,
-    request.payloadRef,
-    request.processedAt,
-    request.resendEmailId,
-    request.workstreamId,
-    request.leaseToken,
-  ).toArray()[0];
-  return WorkspaceInboundEmailSettleResultSchema.parse({
-    outcome: processed?.resend_email_id === request.resendEmailId ? "processed" : "lease_lost",
-  });
-}
-
-/** Record a processing failure and release the lease for the next attempt. */
-export function recordWorkspaceInboundEmailFailure(
-  storage: DurableObjectStorage,
-  request: WorkspaceInboundEmailFailureRequest,
-): void {
-  storage.sql.exec(
-    `UPDATE workstream_email_receipts
-        SET error_json = ?, lease_token = NULL, lease_expires_at = NULL
-      WHERE resend_email_id = ? AND workstream_id = ?
-        AND processed_at IS NULL AND lease_token = ?`,
-    JSON.stringify({ code: request.errorCode }),
-    request.resendEmailId,
-    request.workstreamId,
-    request.leaseToken,
-  );
 }
 
 /**
