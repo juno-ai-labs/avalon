@@ -562,7 +562,10 @@ async function publishSeededArtifact(env: Env, session: DemoSeedSession, action:
       : undefined,
     sidekickRun ? (request) => resolveTerminalPublicationHome(env, run, request) : null,
     null,
-    null,
+    // The person who asked for the run, as production passes it for a
+    // Canvas's Chat: the revision is never news to them. A Sidekick run is
+    // nobody's request.
+    sidekickRun ? null : input.executionUserId,
     "0",
     canvasArtifactNoter(env, run),
   );
