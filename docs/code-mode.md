@@ -240,10 +240,11 @@ returns `{ value, logs: [{ level, text }], calls: [{ index, tool, mode, ms,
 outcome }] }`, where `outcome` is `completed`, `replayed`, `failed`, `refused`
 or `ambiguous`. `sidekick_tool_test` takes `{ tool, input }` and returns the
 program's output plus `{ name, identityHash, testedAt }`, and `warnings` when
-`programTestWarnings` finds one: the test ran past three quarters of
-`CODE_PROGRAM_DEADLINE_MS` (`TEST_WARNING_DEADLINE_SHARE`, the guide's own
-share target), or the program read `current_time` more than once and never
-calls `msLeft()`. The guide tells the setup agent a test with warnings is not
+`programTestWarnings` finds one in a program that never calls `msLeft()`: the
+test ran past three quarters of `CODE_PROGRAM_DEADLINE_MS`
+(`TEST_WARNING_DEADLINE_SHARE`), or the program read `current_time` more than
+once. A program that stops on `msLeft()` is not warned for running late: the
+guide has it work until little time is left. The guide tells the setup agent a test with warnings is not
 done. A `custom_<name>`
 takes the saved schema and returns what `code_execute` returns.
 
@@ -508,9 +509,9 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
 
 ### 2026-11-07 — A tool test warns where a share will run out of time
 
-**What changed:** `sidekick_tool_test` adds `warnings` to its result when the
-test ran past three quarters of the program deadline, or when the program read
-`current_time` more than once without calling `msLeft()`. The custom-tools guide
+**What changed:** `sidekick_tool_test` adds `warnings` to its result when a
+program that never calls `msLeft()` ran past three quarters of the deadline, or
+read `current_time` more than once. The custom-tools guide
 says a test with warnings is not done.
 
 **Why:** Daily Active Rally Organizations' self-review on 2026-11-07 saved a
@@ -525,8 +526,9 @@ source on one day, and a refusal costs the author a turn with nothing to fix in
 the code. A static check for `current_time`: one read to work out the dates is
 correct, so only repeated reads without `msLeft()` are evidence.
 
-**Consequences:** `TEST_WARNING_DEADLINE_SHARE` follows the guide's "about three
-quarters"; a change to one should change the other.
+**Consequences:** A tool that stops on `msLeft()` is never warned for running
+late, since the guide has it use the time left; the deadline itself still ends
+one that misjudges its last group.
 
 Shipped in juno-ai-labs/avalon#1488.
 
