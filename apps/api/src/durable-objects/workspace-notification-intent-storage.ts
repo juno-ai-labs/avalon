@@ -12,6 +12,99 @@ import {
   type WorkspaceNotificationIntentTransitionResult,
 } from "./workspace-notification-intent-protocol";
 
+/**
+ * WorkspaceDO migration 145: admit a Sidekick run's two notices,
+ * `needs_input` and `run_finished`, beside a mention and an add. Push stays
+ * for a Canvas Chat mention, a run that needs input and a finished run (the
+ * Canvases and Sidekicks PRD), and the run notices ride the same intent row
+ * and push pointer a mention does, so the push consumer, its receipts and the
+ * reaper serve all four. SQLite cannot alter a CHECK in place, so the table is
+ * rebuilt as migration 9 rebuilt it: new table, copy, drop, rename, then the
+ * indexes and identity-fence triggers the drop took with it. Migrations 1 and
+ * 9 stay as shipped; their statements are hashed into every object's receipt.
+ */
+export const NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION: readonly string[] = [
+  `CREATE TABLE workstream_notification_intents_run_kinds (
+    intent_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    workstream_id TEXT NOT NULL,
+    recipient_user_id TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+    source_version INTEGER NOT NULL CHECK (source_version > 0),
+    required_directory_version INTEGER NOT NULL CHECK (required_directory_version > 0),
+    notification_kind TEXT NOT NULL CHECK (notification_kind IN ('mention', 'participant_added', 'needs_input', 'run_finished')),
+    payload_json TEXT CHECK (payload_json IS NULL OR json_valid(payload_json)),
+    payload_hash TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'processing', 'delivered', 'skipped', 'failed')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    lease_id TEXT,
+    lease_expires_at TEXT,
+    last_error_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    delivered_at TEXT,
+    UNIQUE (source_message_id, recipient_user_id, notification_kind)
+  ) STRICT`,
+  `INSERT INTO workstream_notification_intents_run_kinds
+     (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
+      source_generation, source_version, required_directory_version, notification_kind,
+      payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
+      last_error_code, created_at, updated_at, delivered_at)
+   SELECT intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id,
+      source_generation, source_version, required_directory_version, notification_kind,
+      payload_json, payload_hash, state, attempts, lease_id, lease_expires_at,
+      last_error_code, created_at, updated_at, delivered_at
+     FROM workstream_notification_intents`,
+  `DROP TABLE workstream_notification_intents`,
+  `ALTER TABLE workstream_notification_intents_run_kinds RENAME TO workstream_notification_intents`,
+  `CREATE INDEX workstream_notification_intents_delivery_idx
+    ON workstream_notification_intents(state, lease_expires_at, created_at, intent_id)`,
+  `CREATE INDEX workstream_notification_intents_terminal_idx
+    ON workstream_notification_intents(workstream_id, state, created_at)`,
+  `CREATE TRIGGER workstream_notification_intents_workspace_identity_insert
+    BEFORE INSERT ON workstream_notification_intents
+    WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+    BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+  `CREATE TRIGGER workstream_notification_intents_workspace_identity_update
+    BEFORE UPDATE OF workspace_id ON workstream_notification_intents
+    WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+    BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+];
+
+/**
+ * Record a Sidekick run's notice for each recipient, already `delivered`:
+ * push is its only channel and the queue message is its delivery, so there is
+ * no lease to take (a mention's lease covers its Slack and email sends). The
+ * source and kind make a repeat for the same recipient one row, so a retried
+ * alarm records nothing twice; the returned ids are every recipient's, to
+ * enqueue again, which the push receipts make harmless.
+ */
+export function recordSidekickRunNotices(
+  storage: DurableObjectStorage,
+  input: {
+    workspaceId: string; sidekickId: string; sourceId: string; kind: "needs_input" | "run_finished";
+    generation: number; payloadJson: string; payloadHash: string; recipientUserIds: readonly string[];
+  },
+  now: number,
+): { recipientUserId: string; intentId: string }[] {
+  const at = new Date(now).toISOString();
+  return storage.transactionSync(() => input.recipientUserIds.map((recipientUserId) => {
+    const intentId = `${input.sourceId}:${recipientUserId}`;
+    storage.sql.exec(
+      `INSERT INTO workstream_notification_intents
+         (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id, source_generation,
+          source_version, required_directory_version, notification_kind, payload_json, payload_hash, state,
+          attempts, created_at, updated_at, delivered_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, 'delivered', 0, ?, ?, ?)
+       ON CONFLICT DO NOTHING`,
+      intentId, input.workspaceId, input.sidekickId, recipientUserId, input.sourceId, Math.max(1, input.generation),
+      input.kind, input.payloadJson, input.payloadHash, at, at, at,
+    );
+    return { recipientUserId, intentId };
+  }));
+}
+
 export const WORKSTREAM_NOTIFICATION_INTENT_RETENTION_MS = 30 * 24 * 60 * 60_000;
 export const WORKSTREAM_NOTIFICATION_INTENT_LEASE_MS = 5 * 60_000;
 
@@ -22,7 +115,7 @@ type NotificationIntentRow = Record<string, SqlStorageValue> & {
   recipient_user_id: string;
   source_generation: number;
   required_directory_version: number;
-  notification_kind: "mention" | "participant_added";
+  notification_kind: "mention" | "participant_added" | "needs_input" | "run_finished";
   payload_json: string | null;
   state: "pending" | "processing" | "delivered" | "skipped" | "failed";
 };

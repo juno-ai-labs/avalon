@@ -111,6 +111,7 @@ import { AgentIdSchema, type AgentId } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
 import {
+  NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION,
   readNotificationIntentForDelivery as readStoredPushIntent,
 } from "./workspace-notification-intent-storage";
 
@@ -4422,6 +4423,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "refresh memory digest copies when who may open a Canvas or a Sidekick changes",
   // See MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION and docs/agent-memory.md.
   statements: MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION,
+}, {
+  version: 145,
+  description: "admit a Sidekick run's needs-input and finished notices among the notification intents",
+  // See NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION and docs/push-notifications.md.
+  statements: NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -10950,11 +10956,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceDirectoryNotificationRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const sql = this.state.storage.sql;
-    const accessClass = sql.exec<{ access_class: string | null }>(
-      `SELECT json_extract(relationship_json, '$.accessClass') AS access_class
+    // The role beside the access class: an owner or administrator opens every
+    // Canvas (`canvasReaderAllows`), so reading every member as `member`
+    // withheld a mention from an administrator a creator-only Canvas admits.
+    const relationship = sql.exec<{ access_class: string | null; role: string | null }>(
+      `SELECT json_extract(relationship_json, '$.accessClass') AS access_class,
+              json_extract(relationship_json, '$.role') AS role
          FROM workspace_member_status WHERE user_id = ? AND active = 1`, request.userId,
-    ).toArray()[0]?.access_class ?? null;
-    const actorRole = accessClass === "member" ? "member" as const : null;
+    ).toArray()[0];
+    const actorRole = relationship?.access_class !== "member" ? null
+      : relationship.role === "owner" || relationship.role === "admin" ? relationship.role : "member" as const;
     const canvas = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, request.workstreamId).toArray()[0];
     if (canvas) {
       return WorkspaceDirectoryNotificationStateSchema.parse({

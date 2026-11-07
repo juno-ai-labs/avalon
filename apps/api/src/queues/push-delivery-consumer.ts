@@ -1,12 +1,12 @@
 import { notifyOps } from "../observability/ops-slack-notifier";
 import { asWorkspaceId, WorkspaceAttentionSchema } from "@rally/contracts";
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
-import { PushDeliveryMessageSchema, type PushDeliveryMessage, type PushNotificationData } from "@rally/contracts/push-notifications";
+import { PushDeliveryMessageSchema, SidekickRunNotificationSchema, type PushDeliveryMessage, type PushNotificationData, type SidekickRunNotification } from "@rally/contracts/push-notifications";
 import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
-import { WorkspaceNotificationIntentDeliverySchema } from "../durable-objects/workspace-notification-intent-protocol";
-
+import { WorkspaceNotificationIntentDeliverySchema, type WorkspaceNotificationIntentDelivery } from "../durable-objects/workspace-notification-intent-protocol";
+import { WorkspaceDirectoryNotificationStateSchema } from "../durable-objects/workspace-directory-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { ApiError } from "../lib/api-error";
 import { logInfo, logWarn } from "../observability/logger";
@@ -59,6 +59,9 @@ async function intentContent(env: Env, workspace: WorkspaceStub, message: PushDe
   if (!raw) return { outcome: "skipped", reason: "notification_intent_missing" };
   const row = WorkspaceNotificationIntentDeliverySchema.parse(raw);
   if (row.recipientUserId !== message.recipientUserId) throw new Error("Push recipient mismatch");
+  if (row.notificationKind === "needs_input" || row.notificationKind === "run_finished") {
+    return await runNoticeContent(env, workspace, row);
+  }
   const context = await notificationDeliveryContext(env, row);
   if (context.outcome !== "ready") return context.outcome === "pending" ? { outcome: "pending" } : { outcome: "skipped", reason: context.reason };
   const { effect, childId } = context;
@@ -75,6 +78,37 @@ async function intentContent(env: Env, workspace: WorkspaceStub, message: PushDe
     ),
     workstreamId: row.workstreamId,
     substreamId: childId,
+  };
+}
+
+/** What a finished run's push says it did. */
+const FINISHED_VERB: Record<SidekickRunNotification["state"], string> = {
+  completed: "finished", failed: "failed", stopped: "stopped", needs_input: "needs your input",
+};
+
+/**
+ * A Sidekick run's notice: whether the person may still open the Sidekick,
+ * read now as a mention's recipient is, and what the run said when it got
+ * there. The title is the Sidekick's name as the run saw it.
+ */
+async function runNoticeContent(env: Env, workspace: WorkspaceStub, row: WorkspaceNotificationIntentDelivery): Promise<PushContent> {
+  const notice = SidekickRunNotificationSchema.parse(JSON.parse(row.payloadJson));
+  const member = await workspaceRegionalDatabase(env).prepare(
+    `SELECT 1 AS active FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+  ).bind(row.workspaceId, row.recipientUserId).first<{ active: number }>();
+  if (!member) return { outcome: "skipped", reason: "recipient_inactive_or_identity_missing" };
+  const raw = await workspace.notificationDirectoryState({ workspaceId: row.workspaceId, workstreamId: row.workstreamId, userId: row.recipientUserId });
+  const viewer = raw ? WorkspaceDirectoryNotificationStateSchema.parse(raw) : null;
+  if (!viewer) return { outcome: "skipped", reason: "notification_parent_missing" };
+  if (!viewer.listable) return { outcome: "skipped", reason: "recipient_not_listable" };
+  return {
+    outcome: "ready",
+    deliveryKey: row.intentId,
+    kind: row.notificationKind,
+    title: notice.kind === "needs_input" ? `${notice.sidekickName} needs your input` : `${notice.sidekickName} ${FINISHED_VERB[notice.state]}`,
+    body: rewriteMessageAsPlainText(notice.reply ?? "", { sources: "none" }),
+    workstreamId: row.workstreamId,
+    substreamId: notice.runId,
   };
 }
 
@@ -99,7 +133,7 @@ export async function deliverPush(
   // An Activity row's push, email or connector delivery, queued before the
   // Activity feed was retired (plan step C-2): nothing reads it back now.
   if (!("intentId" in message)) {
-    logInfo(env, "push_delivery_skipped", { intent_id: message.activityItemId, channel: message.channel ?? "push",
+    logInfo(env, "push_delivery_skipped", { activity_item_id: message.activityItemId, channel: message.channel ?? "push",
       reason: "activity_item_retired" });
     return true;
   }

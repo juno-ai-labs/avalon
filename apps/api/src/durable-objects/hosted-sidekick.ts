@@ -1,6 +1,10 @@
 import { sidekickProjectionRunning } from "./sidekick-activity";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
+import { recordSidekickRunNotices } from "./workspace-notification-intent-storage";
+import { SidekickRunNotificationSchema, type SidekickRunNotification } from "@rally/contracts/push-notifications";
+import { enqueuePushDelivery } from "../services/push-delivery-service";
+import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
 import { conversationObjectName } from "./names";
 import {
   SIDEKICK_DELEGATION_ERRORS, SidekickDelegatesResultSchema,
@@ -173,9 +177,17 @@ export const SIDEKICK_REVIEW_INTERVAL_MS = 3 * 24 * 60 * 60 * 1_000;
 export const SIDEKICK_REVIEW_SAMPLE_LIMITS = { failed: 10, needsInput: 5, completed: 10 } as const;
 /** The one review entry a Sidekick has; its inner key. */
 const SIDEKICK_REVIEW_ALARM_INNER_KEY = "review";
+/**
+ * A run reached a state worth telling a person: it waits on input, or it
+ * finished. Keyed `<sidekickId>:<runId>:<kind>:<instant>`, one entry per
+ * transition, armed in the projection's transaction with the notice as its
+ * payload; the entry records the intents and enqueues the pushes.
+ */
+export const SIDEKICK_RUN_NOTICE_ALARM_KIND = "sidekick_run_notice";
 /** The Sidekick alarm kinds `WorkspaceDO` dispatches here. */
 export const HOSTED_SIDEKICK_ALARM_KINDS: ReadonlySet<string> = new Set([
   SIDEKICK_RUN_ROW_ALARM_KIND,
+  SIDEKICK_RUN_NOTICE_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
   AUTOMATION_RUN_ALARM_KIND,
   SIDEKICK_MEMORY_TABLES_ALARM_KIND,
@@ -1723,6 +1735,11 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const next = RUN_STATE_FROM_CONVERSATION_STATE[effect.state] ?? null;
     if (next === null) return;
     const live = !TERMINAL_RUN_STATES.has(next);
+    // Read inside the same transaction as the update below: the state it
+    // moves from is what says whether this projection is a transition.
+    const before = first(this.sql.exec<{ state: RunState }>(
+      `SELECT state FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, this.sidekickId, substreamId,
+    ));
     // One statement. An open run takes the new summary, and the new state when
     // it differs. A finished run is left alone unless it reopens: a live state
     // other than `idle`, while the Sidekick is active. `completed_at` is
@@ -1742,7 +1759,91 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       (effect.reply ?? effect.preview) || null, now, next, live ? 1 : 0, this.sidekickId, substreamId, effect.state !== "idle" ? 1 : 0,
       JSON.stringify([...TERMINAL_RUN_STATES]), effect.stepCount ?? null,
     ));
-    if (!live && moved?.completed_at === now) this.noteRunFinished(moved.definition_revision, now);
+    if (!live && moved?.completed_at === now) {
+      this.noteRunFinished(moved.definition_revision, now);
+      this.armRunNotice(substreamId, "run_finished", next, (effect.reply ?? effect.preview) || null, now);
+    } else if (moved && next === "needs_input" && before?.state !== "needs_input") {
+      this.armRunNotice(substreamId, "needs_input", next, (effect.reply ?? effect.preview) || null, now);
+    }
+  }
+
+  /**
+   * Arm the entry that tells people about this run's transition, inside the
+   * transaction that made it. The notice is captured now, so the push says
+   * what the run said when it got here rather than whatever it says later.
+   */
+  private armRunNotice(runId: string, kind: SidekickRunNotification["kind"], state: RunState, reply: string | null, now: number): void {
+    const notice: SidekickRunNotification = {
+      kind, sidekickId: this.sidekickId, runId, sidekickName: this.row()?.title || "New Sidekick",
+      state: state as SidekickRunNotification["state"], reply, occurredAt: now,
+    };
+    this.host.alarms.schedule({
+      kind: SIDEKICK_RUN_NOTICE_ALARM_KIND, key: sidekickAlarmKey(this.sidekickId, `${runId}:${kind}:${now}`), dueAt: now,
+      payload: JSON.stringify(notice),
+    }, now);
+  }
+
+  /**
+   * Who hears about a run's transition (the Canvases and Sidekicks PRD's
+   * decision log): a run that needs input tells the person whose request
+   * started it, when a person's did, and whoever manages the Sidekick; a
+   * finished run tells only the person whose request started it, so a
+   * scheduled run tells nobody (its row in the shared conversation and its
+   * unread are the signal). A recipient who has left the Organization is
+   * dropped here, and the push consumer checks again before sending.
+   */
+  private async runNoticeRecipients(row: HostedSidekickRow, runId: string, kind: SidekickRunNotification["kind"]): Promise<string[]> {
+    const run = first(this.sql.exec<{ trigger_json: string }>(
+      `SELECT trigger_json FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, this.sidekickId, runId,
+    ));
+    if (!run) return [];
+    const trigger = JSON.parse(run.trigger_json) as { kind?: string; requestedByUserId?: string };
+    const candidates = new Set<string>();
+    if (trigger.kind === "manual" && trigger.requestedByUserId) candidates.add(trigger.requestedByUserId);
+    if (kind === "needs_input") {
+      candidates.add(row.author_user_id);
+      if (row.run_as_user_id) candidates.add(row.run_as_user_id);
+      if (row.scope === "workspace") {
+        const administrators = await workspaceRegionalDatabase(this.env).prepare(
+          `SELECT user_id FROM workspace_members
+            WHERE workspace_id = ? AND status = 'active' AND role IN ('owner', 'admin')`,
+        ).bind(row.workspace_id).all<{ user_id: string }>();
+        for (const administrator of administrators.results) candidates.add(administrator.user_id);
+      }
+    }
+    const recipients: string[] = [];
+    for (const userId of candidates) {
+      if (await this.requesterActive(row.workspace_id, userId)) recipients.push(userId);
+    }
+    return recipients.sort();
+  }
+
+  /** Record a run notice's intents and hand each to the push queue. */
+  private async deliverRunNotice(innerKey: string, payload: string | null): Promise<ScheduledAlarmOutcome> {
+    const parsed = SidekickRunNotificationSchema.safeParse(payload === null ? null : JSON.parse(payload));
+    if (!parsed.success) {
+      logWarn(this.env, "sidekick_run_notice_rejected", { ...this.logFields(), alarm_key: innerKey,
+        code: zodDiagnosticCode(parsed.error, "sidekick_run_notice") });
+      return { progressed: true };
+    }
+    const notice = parsed.data;
+    const row = this.row();
+    if (!row || row.lifecycle === "deleted") return { progressed: true };
+    const recipientUserIds = await this.runNoticeRecipients(row, notice.runId, notice.kind);
+    const payloadJson = JSON.stringify(notice);
+    const intents = recordSidekickRunNotices(this.host.storage, {
+      workspaceId: row.workspace_id, sidekickId: this.sidekickId, sourceId: `sidekick_run:${notice.runId}:${notice.kind}:${notice.occurredAt}`,
+      kind: notice.kind, generation: row.authority_generation, payloadJson, payloadHash: await sha256(payloadJson), recipientUserIds,
+    }, Date.now());
+    for (const intent of intents) {
+      await enqueuePushDelivery(this.env, {
+        region: this.env.AVALON_REGION, workspaceId: row.workspace_id,
+        recipientUserId: intent.recipientUserId, intentId: intent.intentId,
+      });
+    }
+    logInfo(this.env, "sidekick_run_notice_recorded", { ...this.logFields(), run_id: notice.runId, kind: notice.kind,
+      recipients: intents.length });
+    return { progressed: true };
   }
 
   // ---------------------------------------------------------------------------
@@ -2104,6 +2205,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       return { progressed: true };
     }
     if (alarm.kind === SIDEKICK_REVIEW_ALARM_KIND) return this.startReview();
+    if (alarm.kind === SIDEKICK_RUN_NOTICE_ALARM_KIND) return this.deliverRunNotice(innerKey, alarm.payload);
     if (alarm.kind === SIDEKICK_MEMORY_TABLES_ALARM_KIND) {
       try {
         await this.materializeMemoryTables(Number(innerKey));
@@ -2218,6 +2320,11 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     if (coordinatorUserId === null) this.noteDelegationAttention("no_eligible_delegate");
     else if (this.row()?.delegation_attention_code !== "event_no_eligible_delegate") this.noteDelegationAttention(null);
     if (run.state === "pending") this.armRunStart(run.run_id, now);
+    // Admitted waiting on input, with no delegate to act as: that is a Needs
+    // input the managers hear about, as a run that later asks is.
+    else if (run.state === "needs_input" && run.run_id === runId) {
+      this.armRunNotice(run.run_id, "needs_input", "needs_input", "Needs attention: no delegated user is available", now);
+    }
     return { runId: run.run_id, reused: run.run_id !== runId };
   }
 

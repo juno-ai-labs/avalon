@@ -274,21 +274,25 @@ marks holders in `memory_digest_sync` with a revision:
   whose copy holds that fact (`markMemoryDigestHoldersFor`). A sweep's `update`
   marks nothing: a supersede withdraws nobody's access, and the copy showing
   the old wording catches up at its next refresh, as for an add;
-- a trigger marks every holder when a `channels`, `breakouts` or `spaces`
-  row's `scope` or `archived_at` changes, when a `workspace_member_status` row's
-  access class, role, status or `active` changes, or when an
-  `automation_directory` row's `scope` changes;
-- a trigger marks one conversation's holders when a participant joins or
-  leaves it: an `INSERT` with `is_participant = 1` or a change of
-  `is_participant` in `channel_viewers` or `breakout_viewers` marks the holders
-  under that Thread, in `space_viewers` the Channel's;
-- a participant leaving also marks every holder whose copy holds a fact
-  sourced from what they left (the Thread and its Breakouts, the Breakout, or
-  the Channel's feed), found by joining `memory_digest_holder_facts` to the
-  fact's sources: the person can no longer open it, so its facts leave their
-  own copies in every other conversation and every copy whose audience
-  includes them. Joining marks only that conversation's holders, because a
-  wider audience hides nothing.
+- a trigger marks every holder when a `canvas_directory` row's visibility,
+  creator or writing Sidekick changes or the row is deleted, when a
+  `workspace_member_status` row's access class, role, status or `active`
+  changes, when an `automation_directory` row's `scope` changes, or when a
+  `sidekick_audience` row is inserted or deleted (migration 144). Those
+  triggers fire per row, so a `setAudience` rewrite of N people to M marks
+  every holder N+M times; each mark only bumps the holder's revision, so the
+  cost is bounded by the list and accepted;
+- a trigger marks one Canvas's holders when a `canvas_participants` row is
+  inserted (a participant joins);
+- a `canvas_participants` row deleted (a participant leaving) also marks every
+  holder whose copy holds a fact sourced from that Canvas, found by joining
+  `memory_digest_holder_facts` to the fact's sources: the person can no longer
+  open it, so its facts leave their own copies in every other conversation and
+  every copy whose audience includes them. Joining marks only that Canvas's
+  holders, because a wider audience hides nothing.
+- the Thread, Breakout and Channel triggers of migration 117 (`channels`,
+  `breakouts`, `spaces` and their `*_viewers`) still sit on their tables,
+  which nothing writes, until plan step C-7 drops them.
 
 The alarm lane `memory_digest_sync` publishes one batch of up to 100
 `memory_digest_sync` messages with one batch in flight per Organization; the
@@ -598,14 +602,13 @@ defensive numbers.
 | `apps/api/test/memory-digest-service.test.ts` | The digest over a real `WorkspaceDO` and real conversation objects: who reads as whom (`digestReaderFor`), a copy holds what its reader may see and nobody else's facts, an older revision never replaces a newer copy, a forget drops the fact from every copy and refuses a read from before it, `external` facts never take a copy's place, and the section composes digest then personal prompt. |
 | `apps/api/test-workers/sidekick-run-continuation.test.ts` | A Sidekick run's first activation starts with the Sidekick's facts, copied in at provisioning. |
 | `apps/api/test/message-run-context.test.ts` | Which runs carry the personal prompt; the section is empty with no copy and no prompt. |
-| `apps/api/test/memory-review.test.ts` | The four review routes over a real `WorkspaceDO`: own facts only under `/me/memory`, an own fact's source untitled once the room is closed to its person; the Organization's facts read-only to a member and removable by the owner; a Thread's own facts removable by a participant and 404 to a non-participant of a private one; a Breakout's under its `substreamId` and not under Main; a Channel's removable by an administrator and 404 where unlisted; a Personal Channel's removable by its owner; not found outside the scope and for a superseded fact; a repeat removal. |
+| `apps/api/test/memory-review.test.ts` | The review routes over a real `WorkspaceDO`: own facts only under `/me/memory`, newest first; an own fact's source untitled once its Canvas is closed to its person; the Organization's facts read-only to a member and every one removable by an administrator; a member's removal refused; not found outside the scope and for a superseded fact; a repeat removal. |
 | `apps/desktop/src/renderer/components/memory-review.test.tsx`, `title-pill-menu.test.tsx`, `screens/channel.test.tsx`, `screens/workspace-settings.test.tsx` | The rows' order, horizons judged from the fact's own dates (and turning Expired while open), Remove visibility, removal, refusal, a 404 as already removed, concurrent removals, the empty state; the pill's Memory level for a conversation and a Channel; Account's list. |
 | `apps/api/test/scoped-memory.test.ts`, `test-workers/workspace-memory.test.ts` | The scopes and typed tables this module leaves in place. |
 
-Traps: the Node fixtures seed `channels` and `channel_viewers` by hand (the
-directory projection has no Node writer), so a visibility test that forgets a
-participant row reads as "not a participant", which is the production default
-too. `memory_sweep_state` is created by conversation migration 76; a test
+Traps: the Node fixtures set a Canvas's `canvas_directory` visibility by hand,
+so a visibility test that forgets to open a Canvas reads it as creator-only,
+which is the production default too. `memory_sweep_state` is created by conversation migration 76; a test
 object below it has no row and `nextMemorySweepAt` reads `null`.
 
 ## Data model

@@ -234,8 +234,10 @@ describe("the rally:memory tools", () => {
       { text: "Owner prefers release notes as bullets.", kind: "standing", about: "me" }, "receipt-remember-1",
     );
     const firstId = (first.output as { factId: string }).factId;
-    // The side room is handed to the member: the fact is still the owner's, and out of their reach.
-    objectDatabase.prepare(`UPDATE canvas_directory SET created_by_user_id = ? WHERE canvas_id = ?`).run(MEMBER_ID, PRIVATE_CANVAS);
+    // The side room is gone: the fact is still the owner's, and out of their
+    // reach. (Handing it to the member would not do: the owner administers
+    // the Organization, and an administrator opens every Canvas.)
+    objectDatabase.prepare(`DELETE FROM canvas_directory WHERE canvas_id = ?`).run(PRIVATE_CANVAS);
     const again = await tool(env, "owner-open", "remember").execute(
       { text: "Owner prefers release notes as bullets.", kind: "standing", about: "me" }, "receipt-remember-2",
     );

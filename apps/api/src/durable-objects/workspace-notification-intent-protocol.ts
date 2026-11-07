@@ -3,7 +3,7 @@ import { z } from "zod";
 
 const NotificationIntentIdSchema = z.string().min(1).max(300);
 
-export const WorkspaceNotificationIntentKindSchema = z.enum(["mention", "participant_added"]);
+export const WorkspaceNotificationIntentKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished"]);
 export const WorkspaceNotificationIntentStateSchema = z.enum([
   "pending",
   "processing",
