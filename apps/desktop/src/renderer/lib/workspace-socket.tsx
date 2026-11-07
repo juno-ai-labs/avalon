@@ -461,7 +461,7 @@ export function WorkspaceSocketProvider({
     if (!ownSocket) return;
     const releaseData = retainQueryData(queryClient, [
       WORKSTREAMS_QUERY_KEY,
-      SIDEBAR_LIST_QUERY_KEYS.automations,
+      SIDEBAR_LIST_QUERY_KEYS.automations, SIDEBAR_LIST_QUERY_KEYS.canvases,
       SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_READY_QUERY_KEY,
       PERSONAL_ORDER_QUERY_KEY, PINNED_ORDER_QUERY_KEY,
       CLIENT_FEATURE_FLAGS_QUERY_KEY,

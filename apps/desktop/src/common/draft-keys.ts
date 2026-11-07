@@ -1,3 +1,5 @@
+import type { ConversationParentKind } from '@rally/contracts';
+
 import { desktopWorkspaceIdentityKey, type RallyRegion } from './desktop';
 
 /**
@@ -26,7 +28,7 @@ export function canvasDraftKey(region: RallyRegion, workspaceId: string, canvasI
 export function conversationDraftKey(
   region: RallyRegion,
   workspaceId: string,
-  parentKind: string,
+  parentKind: ConversationParentKind,
   parentId: string,
   substreamId = '0',
 ): string {
@@ -38,7 +40,7 @@ export function conversationDraftKey(
  * The annotation scope a conversation registers with main, which derives the
  * draft key back from it in `annotationDraftKeyForScope`.
  */
-export function conversationAnnotationScope(parentKind: string, parentId: string, substreamId = '0'): string {
+export function conversationAnnotationScope(parentKind: ConversationParentKind, parentId: string, substreamId = '0'): string {
   return parentKind === 'canvas' ? `canvas:${parentId}` : `${parentId}:${substreamId}`;
 }
 

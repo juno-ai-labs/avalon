@@ -1,15 +1,11 @@
-import * as ContextMenu from '@radix-ui/react-context-menu';
-import { IconPin, IconPinnedOff } from '@tabler/icons-react';
-import clsx from 'clsx';
-import { useCallback, useLayoutEffect, useMemo, useState, type RefObject } from 'react';
-import { Link, matchPath, useLocation } from 'react-router-dom';
+import { useMemo, type RefObject } from 'react';
+import { matchPath, useLocation } from 'react-router-dom';
 
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
 import type { AutomationSummary } from '../lib/types';
-import { useListMotionPass } from '../lib/use-list-motion';
-import { PinnedSection, pinnedPosition, RowLayout, SectionHeading, splitPinned, useRowPinDrop } from './navigation-rows';
+import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, splitPinned, usePinWrite, useRowPinDrop, useSectionMotion } from './navigation-rows';
 import { ErrorNotice } from './primitives';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
@@ -47,30 +43,26 @@ export function SidekicksSection({ scroll }: { scroll: RefObject<HTMLElement | n
   const waiting = useMemo(() => (rows ?? []).filter((row) => row.needsInput), [rows]);
   const { pinned, rest } = useMemo(() => splitPinned((rows ?? []).filter((row) => !row.needsInput)), [rows]);
   const pinnedIds = useMemo(() => new Set(pinned.map((row) => row.id)), [pinned]);
-  const [pinError, setPinError] = useState<Error | null>(null);
-  const setPinned = useCallback(async (id: string, next: boolean): Promise<void> => {
-    if (!api) throw new Error('Rally is not connected yet.');
-    setPinError(null);
-    try {
-      await api.setSidekickPinned(id, next);
-    } catch (cause) {
-      setPinError(cause instanceof Error ? cause : new Error('The Sidekick could not be pinned.'));
-      throw cause;
-    }
-  }, [api]);
+  const { error: pinError, setPinned } = usePinWrite(api ? (id, next) => api.setSidekickPinned(id, next) : undefined, 'Sidekick');
   const { drop, sourceProps, targetProps } = useRowPinDrop(pinnedIds, (id) => setPinned(id, true));
-  const motion = useListMotionPass(scroll);
-  useLayoutEffect(() => motion());
+  useSectionMotion(scroll, undefined);
   const { pathname } = useLocation();
   const open = (matchPath('/sidekicks/:id', pathname) ?? matchPath('/automations/:id', pathname))?.params.id;
-  const row = (sidekick: AutomationSummary, options: { pinned: boolean; position?: string; draggable: boolean }): React.JSX.Element => <SidekickRow
+  const row = (sidekick: AutomationSummary, options: { pinned: boolean; position?: string; draggable: boolean }): React.JSX.Element => <PinnableRow
     active={sidekick.id === open}
+    className="navigation-sidekick-row"
+    detail={sidekickRowState(sidekick)}
     drag={options.draggable ? sourceProps(sidekick.id) : {}}
     key={sidekick.id}
+    motionKey={`sidekick:${sidekick.id}`}
     onPin={(next) => { void setPinned(sidekick.id, next).catch(() => undefined); }}
     pinned={options.pinned}
     position={options.position}
-    row={sidekick}
+    tile={<span className="navigation-sidekick-mark"><AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} /></span>}
+    time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={sidekick.lastRunAt ?? sidekick.updatedAt} />}
+    title={sidekick.name}
+    to={`/sidekicks/${encodeURIComponent(sidekick.id)}`}
+    unread={sidekick.unread === true}
   />;
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Sidekick could not be pinned. Try again.</ErrorNotice>}
@@ -96,43 +88,4 @@ export function SidekicksSection({ scroll }: { scroll: RefObject<HTMLElement | n
       {rest.map((sidekick) => row(sidekick, { pinned: false, draggable: true }))}
     </section>
   </>;
-}
-
-function SidekickRow({ active, drag, onPin, pinned, position, row }: {
-  active: boolean;
-  drag: React.HTMLAttributes<HTMLElement>;
-  onPin: (pinned: boolean) => void;
-  pinned: boolean;
-  position: string | undefined;
-  row: AutomationSummary;
-}): React.JSX.Element {
-  const unread = row.unread === true;
-  return <ContextMenu.Root>
-    <ContextMenu.Trigger asChild>
-      <Link
-        aria-current={active ? 'page' : undefined}
-        className={clsx('navigation-row navigation-sidekick-row', active && 'is-active', unread && 'is-unread')}
-        data-motion-key={`sidekick:${row.id}`}
-        to={`/sidekicks/${encodeURIComponent(row.id)}`}
-        {...drag}
-      >
-        <RowLayout
-          detail={sidekickRowState(row)}
-          tile={<span className="navigation-sidekick-mark"><AutomationGlyph {...(row.appearance ? { appearance: row.appearance } : {})} id={row.id} /></span>}
-          time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={row.lastRunAt ?? row.updatedAt} />}
-          title={row.name}
-          unread={unread}
-        />
-        {position && <span className="sr-only">{position}</span>}
-      </Link>
-    </ContextMenu.Trigger>
-    <ContextMenu.Portal>
-      <ContextMenu.Content className="menu-content">
-        <ContextMenu.Item className="menu-item" onSelect={() => onPin(!pinned)}>
-          {pinned ? <IconPinnedOff aria-hidden="true" size={15} stroke={1.8} /> : <IconPin aria-hidden="true" size={15} stroke={1.8} />}
-          {pinned ? 'Unpin' : 'Pin'}
-        </ContextMenu.Item>
-      </ContextMenu.Content>
-    </ContextMenu.Portal>
-  </ContextMenu.Root>;
 }

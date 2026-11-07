@@ -522,7 +522,7 @@ export function orderedTranscriptMessages(
             id: messageId,
             messageType,
             annotationContent: block.structuredContent ?? undefined,
-            text: visibleParticipantText(block.text, turn.actor),
+            text: visibleBlockText(block.text, turn.actor, block.structuredContent),
             streaming: block.streaming,
             ...(statusKind ? { statusEvent: { kind: statusKind, code: statusCode } } : {}),
             mentions: (block.mentions ?? []).map((mention) => {
@@ -1021,7 +1021,7 @@ export function pendingTranscriptInputOverlay(
         : input.block.messageType === 'system' ? 'system' : 'text',
       ...(elicitation ? { elicitation } : {}),
       annotationContent: input.block.structuredContent ?? undefined,
-      text: visibleParticipantText(input.block.text, input.actor),
+      text: visibleBlockText(input.block.text, input.actor, input.block.structuredContent),
       mentions: input.block.mentions?.map((mention) => ({
         type: mention.type,
         ...(mention.userId ? { personId: mention.userId } : {}),
@@ -1295,6 +1295,24 @@ export function dedupeAdjacentConnectorConnectionCards(messages: readonly Messag
     rows.push(message);
   }
   return rows;
+}
+
+/**
+ * What a run's opening row says when a message in its Sidekick's shared
+ * conversation started it. The block itself is the prompt the run reads (the
+ * sender named as data, the message, how to answer), written for the model;
+ * the person reading the run already saw that message where they sent it.
+ */
+export const RUN_OPENED_BY_MESSAGE_CAPTION = 'Started by a message in the conversation.';
+
+function visibleBlockText(
+  text: string,
+  actor: Parameters<typeof visibleParticipantText>[1],
+  structured: Readonly<Record<string, unknown>> | null | undefined,
+): string {
+  return structured?.['kind'] === 'sidekick_conversation_message'
+    ? RUN_OPENED_BY_MESSAGE_CAPTION
+    : visibleParticipantText(text, actor);
 }
 
 /** The byline beside the agent message that opened a conversation. */

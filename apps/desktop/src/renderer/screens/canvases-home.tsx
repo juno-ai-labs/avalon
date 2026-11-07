@@ -1,18 +1,15 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { Plus, Sparkles } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { CanvasMark } from '../components/canvas-mark';
 import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
 import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
-import { canvasRoute, canvasRowDetail, othersPresent, useCanvasList, useCreateCanvas } from '../lib/canvases';
+import { canvasRoute, canvasRowDetail, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
-import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
-import type { AutomationSummary } from '../lib/types';
-import { useWorkspaceMembers } from '../lib/workspace-members';
 
 type CanvasFilter = 'all' | 'mine' | 'shared' | 'sidekicks';
 
@@ -43,10 +40,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   const { guest } = useShellCapabilities();
   const currentUserId = session?.user.id;
   const rows = useCanvasList();
-  const members = useWorkspaceMembers(api).data;
-  const sidekicks = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
-  const membersById = useMemo(() => new Map((members ?? []).map((member) => [member.id, member])), [members]);
-  const sidekicksById = useMemo(() => new Map((sidekicks ?? []).map((sidekick) => [sidekick.id, sidekick])), [sidekicks]);
+  const { membersById, sidekicksById } = useCanvasNameSources(api);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<CanvasFilter>('all');
   const create = useCreateCanvas();

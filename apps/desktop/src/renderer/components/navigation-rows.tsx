@@ -1,6 +1,10 @@
-import { IconPin } from '@tabler/icons-react';
+import * as ContextMenu from '@radix-ui/react-context-menu';
+import { IconPin, IconPinnedOff } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useState, type ReactNode, type RefObject } from 'react';
+import { Link } from 'react-router-dom';
+
+import { useListMotionPass } from '../lib/use-list-motion';
 
 import { Tip } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
@@ -189,4 +193,83 @@ export function splitPinned<T extends { pinnedPosition?: number | null | undefin
   const pinned = rows.filter((row) => row.pinnedPosition != null)
     .sort((left, right) => (left.pinnedPosition ?? 0) - (right.pinnedPosition ?? 0));
   return { pinned, rest: rows.filter((row) => row.pinnedPosition == null) };
+}
+
+const NO_CONTAINER: RefObject<HTMLElement | null> = { current: null };
+
+/**
+ * A section's list motion: its own over the scroll box, or, inside the Pinned
+ * tab, the tab's shared one. Call after `usePinReveal`.
+ */
+export function useSectionMotion(scroll: RefObject<HTMLElement | null>, shared: (() => void) | undefined): void {
+  const own = useListMotionPass(shared ? NO_CONTAINER : scroll);
+  const run = shared ?? own;
+  useLayoutEffect(() => run());
+}
+
+/**
+ * The pin write of a list whose pins are a flag on its own rows, and the
+ * failure it last met, for the section's notice. The write rethrows, so a drop
+ * into Pinned can put the row back.
+ */
+export function usePinWrite(
+  write: ((id: string, pinned: boolean) => Promise<unknown>) | undefined,
+  noun: string,
+): { error: Error | null; setPinned: (id: string, pinned: boolean) => Promise<void> } {
+  const [error, setError] = useState<Error | null>(null);
+  const setPinned = useCallback(async (id: string, pinned: boolean): Promise<void> => {
+    if (!write) throw new Error('Rally is not connected yet.');
+    setError(null);
+    try {
+      await write(id, pinned);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error(`The ${noun} could not be pinned.`));
+      throw cause;
+    }
+  }, [noun, write]);
+  return { error, setPinned };
+}
+
+/**
+ * One row of a list whose pins are a flag on its own rows: a link drawn with
+ * `RowLayout`, draggable into Pinned while unpinned, and a context menu that
+ * pins or unpins it. The section supplies what the row stands for.
+ */
+export function PinnableRow({ active, className, drag, motionKey, onPin, pinned, position, to, unread, ...layout }: {
+  active: boolean;
+  className: string;
+  drag: React.HTMLAttributes<HTMLElement>;
+  motionKey: string;
+  onPin: (pinned: boolean) => void;
+  pinned: boolean;
+  position: string | undefined;
+  to: string;
+  unread: boolean;
+  detail: ReactNode;
+  tile: ReactNode;
+  time: ReactNode;
+  title: ReactNode;
+}): React.JSX.Element {
+  return <ContextMenu.Root>
+    <ContextMenu.Trigger asChild>
+      <Link
+        aria-current={active ? 'page' : undefined}
+        className={clsx('navigation-row', className, active && 'is-active', unread && 'is-unread')}
+        data-motion-key={motionKey}
+        to={to}
+        {...drag}
+      >
+        <RowLayout {...layout} unread={unread} />
+        {position && <span className="sr-only">{position}</span>}
+      </Link>
+    </ContextMenu.Trigger>
+    <ContextMenu.Portal>
+      <ContextMenu.Content className="menu-content">
+        <ContextMenu.Item className="menu-item" onSelect={() => onPin(!pinned)}>
+          {pinned ? <IconPinnedOff aria-hidden="true" size={15} stroke={1.8} /> : <IconPin aria-hidden="true" size={15} stroke={1.8} />}
+          {pinned ? 'Unpin' : 'Pin'}
+        </ContextMenu.Item>
+      </ContextMenu.Content>
+    </ContextMenu.Portal>
+  </ContextMenu.Root>;
 }
