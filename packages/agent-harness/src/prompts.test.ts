@@ -8,7 +8,6 @@ import {
   renderCompactionCheckpointContent,
   renderMemorySweepMessages,
   MAXIMUM_MEMORY_SWEEP_MESSAGE_CHARACTERS,
-  renderSuggestionDraftMessages,
   renderPersonalSystemPrompt,
   renderWorkstreamSystemPrompt,
   renderMemoryDigest,
@@ -199,34 +198,6 @@ describe("prompt renderers", () => {
           sidekick: workstreamAutomation,
         }),
         hash: "fd8db14479b1a21b96d4547d8c80c53386806581ff4a0e3625fd8dcc4771bc91",
-      },
-      suggestionMergeNote: {
-        actual: renderSuggestionDraftMessages({
-          kind: "merge_up",
-          title: "Annual discount",
-          purpose: "Decide whether the annual plan keeps a discount.",
-          parentTitle: "Pricing for the spring launch",
-          recent: [
-            { author: "person", text: "Should we keep the 20% annual discount at launch?" },
-            { author: "rally", text: "I'll compare the retention numbers for annual and monthly plans." },
-          ],
-          judgedText: "Keep it. Annual customers churn at a third of the monthly rate. Recommendation: annual at $96, monthly at $10. ![Retention table](resource://019fc000-0000-7000-8000-000000000001)",
-        }),
-        hash: "8c93d7d65ac75a8697ad2d8d6df82c94b2dcb70915413e071d737736eb55f8be",
-      },
-      suggestionBreakoutPrompt: {
-        actual: renderSuggestionDraftMessages({
-          kind: "start_breakout",
-          title: "Pricing for the spring launch",
-          purpose: "Settle the price list and launch plan for the spring release.",
-          parentTitle: null,
-          recent: [
-            { author: "rally", text: "Annual at $96 holds. The Starter tier is a separate question." },
-            { author: "person", text: "Can you also work out whether a Starter tier makes sense at all?" },
-          ],
-          judgedText: "A Starter tier needs its own look: who it is for, what it leaves out, and whether it cannibalizes Pro.",
-        }),
-        hash: "c6ac936cf7d112419ce4106e9f5a0fc4fd4576f86854b0d9c6159e10e7452402",
       },
     };
 
@@ -463,21 +434,6 @@ describe("prompt renderers", () => {
     expect(sweepMessages[0]!.content).not.toContain(injection);
     expect(sweepMessages[1]).toMatchObject({ role: "user" });
     expect(sweepMessages[1]!.content).toContain(injection);
-
-    // The drafter carries member-set titles and purposes and transcript text.
-    for (const kind of ["merge_up", "start_breakout"] as const) {
-      const draftMessages = renderSuggestionDraftMessages({
-        kind,
-        title: injection,
-        purpose: injection,
-        parentTitle: injection,
-        recent: [{ author: "person", text: injection }],
-        judgedText: injection,
-      });
-      expect(draftMessages[0]!.content).not.toContain(injection);
-      expect(draftMessages[1]).toMatchObject({ role: "user" });
-      expect(draftMessages[1]!.content).toContain(injection);
-    }
   });
 
   it("bounds each sweep message and marks a window the conversation continues past", () => {

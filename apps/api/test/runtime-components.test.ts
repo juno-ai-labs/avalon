@@ -1,4 +1,3 @@
-import { seedProjectedParticipants } from "./helpers/durable-authority";
 import "../../../tests/isolated-region";
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -175,7 +174,6 @@ describe("runtime component invariants", () => {
       }
       return executeRuntimeSql(input);
     };
-    seedProjectedParticipants(storage);
     const product = new WorkstreamObjectProductService(
       storage,
       store,
@@ -323,7 +321,6 @@ describe("runtime component invariants", () => {
       `INSERT INTO workspace_members (workspace_id, user_id, status, role)
        VALUES (?, ?, 'active', 'member')`,
     ).run(workspaceId, userId);
-    seedProjectedParticipants(storage);
     const product = new WorkstreamObjectProductService(
       storage,
       store,
@@ -434,7 +431,6 @@ describe("runtime component invariants", () => {
       `INSERT INTO workspace_members (workspace_id, user_id, status, role)
        VALUES (?, ?, 'active', 'member')`,
     ).run(workspaceId, outsiderId);
-    seedProjectedParticipants(storage);
     const product = new WorkstreamObjectProductService(
       storage,
       store,

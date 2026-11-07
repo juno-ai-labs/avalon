@@ -1,10 +1,9 @@
 import { renderPersonalSystemPrompt } from "@rally/agent-harness";
-import { AnnotatedMessageContentSchema, annotationCommentText } from "@rally/contracts";
+import { annotationCommentText } from "@rally/contracts";
 import { AnnotationsSchema, SidekickMessageIntentSchema, validateAnnotationAttachments } from "@rally/contracts";
 import { ResourceService } from "../services/resource-service";
 import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-share-rules";
-import { stableUuid } from "../lib/stable-uuid";
-import { AGENT_MESSAGE_CONTENT_KIND, ConversationInitializationSchema, ImportedMessageProvenanceSchema, PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
+import { AGENT_MESSAGE_CONTENT_KIND } from "@rally/contracts";
 import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type MergeEmbed, type WorkstreamAppearancePatch } from "@rally/contracts";
 import { renderAgentMessage } from "../services/agent-message-content";
 import { renderSidekickReviewNotice } from "../services/sidekick-review-notice";
@@ -19,7 +18,6 @@ import {
   ResourceRelationshipTypeSchema,
   WorkstreamResourceSchema,
   resourceDirectionForRelationship,
-  ScopeSchema,
   UpdateWorkstreamRequestSchema,
   WorkstreamBatchUpdateSchema,
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
@@ -41,12 +39,8 @@ import {
   type WorkstreamWorkflowInput,
   type WorkstreamMessageAdmissionReceipt,
   type PendingTranscriptInput,
-  SpaceColorKeySchema,
-  WorkspaceIdSchema,
-  WorkstreamIdSchema,
   UserIdSchema,
   WORKSTREAM_NAMING_GRACE_MS,
-  asHarnessRunId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
@@ -82,10 +76,8 @@ import {
   agentModelOverride,
   pinnedModelRouting,
   resolveAgentModelRouting,
-  resolveNewWorkstreamModelRouting,
 } from "../services/agent-model-flags";
 import { classifyWorkstreamMessage } from "../services/integrations";
-import { openingMessageStartsRun } from "../services/opening-message-classifier";
 import {
   isUnlistedResourceMetadata,
   listedResourceVisibilitySql,
@@ -109,10 +101,9 @@ import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
 import { enqueueSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { admitsOrganizationWide } from "../services/authorization-policy";
 import { substreamLoopId, workspaceDOName } from "./names";
-import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { WorkspaceReserveDraftAttachmentsResultSchema } from "./workspace-draft-attachment-protocol";
-import { type ConversationEffectEnvelope, WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "@rally/contracts/conversation-effects";
+import { WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "@rally/contracts/conversation-effects";
 import type { RegionalEffectCommand, WorkstreamObjectStore } from "./workstream-object-storage";
 import {
   LOOP_EXECUTION_LEASE_MS,
@@ -208,100 +199,6 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
 }).superRefine(validateAnnotationAttachments).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((a) => a.comment.trim()), {
   message: "A message must include text or an attachment",
 });
-
-export const InitializeWorkstreamObjectInputSchema = z.strictObject({
-  workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
-  generation: z.number().int().positive(),
-  title: z.string().min(1).max(180),
-  objective: z.string().max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
-  descriptionSource: z.enum(["authored", "derived"]),
-  titleStatus: z.enum(["naming", "automatic", "settled"]),
-  emailAddress: z.string().email().max(254).nullable(),
-  creatorUserId: z.string().uuid(),
-  initialization: ConversationInitializationSchema.default({ kind: "prompt" }),
-  openingMessage: z.string().max(MESSAGE_MAX_CHARACTERS),
-  mentions: z.array(MentionSchema).default([]),
-  openingStructuredContent: z.unknown().nullable().default(null),
-  clientMessageId: z.string().min(1).max(120),
-  participantUserIds: z.array(z.string().uuid()),
-  attachmentIds: z.array(z.string().uuid()).max(10),
-  originResourceIds: z.array(z.string().uuid()).default([]),
-  /**
-   * Who may read it from birth. Defaulted to `personal`: a work stream nobody
-   * has said anything about is the one somebody just started for themselves,
-   * and the two mistakes are not symmetrical — a private work stream that
-   * should have been public is opened from its own right-click menu, while the
-   * reverse has already been read. A caller that *knows* the audience is public
-   * — a public Slack channel's thread, for example — says `workspace` outright.
-   * Automation executions remain private and seat their creator.
-   *
-   * Defaulted rather than required so a rolling deploy stays safe in the one
-   * direction it can go wrong: the previous Worker's creation service names no
-   * scope, and a required field would turn every create it issues against a
-   * replaced object into a validation failure for the length of the deploy.
-   */
-  scope: ScopeSchema.default("personal"),
-  /**
-   * The thread's Channel colour, written as its appearance at birth so no
-   * surface draws the id-derived colour while the sync lane catches up.
-   * `channel-color-sync.ts` stays the colour's writer after this; see
-   * `docs/workstream-appearance.md`.
-   */
-  color: SpaceColorKeySchema.optional(),
-  /**
-   * Whether the people in `participantUserIds` are told they were added.
-   *
-   * Separate from the list for the same reason `scope` is separate from it: the
-   * object cannot tell one kind of list from the other, and they are not the
-   * same event. A person picking names in "Add people" is inviting them, and
-   * being invited is worth a Slack DM and an inbox. A connector ingress fills
-   * the same field with a conversation's resolved roster — `CreateWorkstreamRequestSchema`
-   * says so where the cap used to be, and a Slack channel's audience "can be
-   * hundreds" — and nobody in that channel was added by anybody. Telling them
-   * so would DM a roster on somebody else's behalf about something that did not
-   * happen, in a thread they are already reading.
-   *
-   * Defaulted to `false`, which is both halves of the safe direction: a caller
-   * that has not thought about it does not send mail, and a rolling deploy in
-   * which the previous Worker's creation service names no value stays quiet
-   * rather than validating-failing every create against a replaced object.
-   */
-  notifyParticipants: z.boolean().default(false),
-  modelOverride: z.string().max(200).nullable(),
-  systemKind: z.literal("digest").nullable().default(null),
-  createdFromOpportunityId: z.string().uuid().nullable().default(null),
-  opportunityVersion: z.number().int().positive().nullable().default(null),
-  opportunityDisplayPromptHash: z.string().max(200).nullable().default(null),
-  opportunityExecutionPromptHash: z.string().max(200).nullable().default(null),
-  executionPrincipal: z.unknown(),
-  slackOrigin: z.unknown().optional(),
-  slackSearchAuthorization: z.unknown().optional(),
-  telemetryOperationId: z.string().uuid().optional(),
-  telemetrySubjectUserId: z.string().uuid().optional(),
-  telemetryRequestReceivedAt: z.number().int().nonnegative().optional(),
-  telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).optional(),
-  /**
-   * Present when a demo seed opens the work stream. A scripted opening always
-   * starts a run, so the seed's turn is what that run says; a seed that says
-   * nothing is refused rather than left to reach a provider.
-   */
-  seed: DemoSeedSchema.optional(),
-  reason: z.string().min(1).max(80),
-});
-
-export type InitializeWorkstreamObjectInput = z.infer<typeof InitializeWorkstreamObjectInputSchema>;
-
-/**
- * What a caller hands `initialize`, before the schema fills its defaults in.
- *
- * Separate from {@link InitializeWorkstreamObjectInput} — the parsed shape the
- * method works with — because a defaulted field is optional on the way in and
- * present on the way out. Typing the boundary with the output shape would make
- * every default unreachable, which is how `scope` would have arrived required
- * at exactly the callers the default exists for.
- */
-export type InitializeWorkstreamObjectRequest = z.input<typeof InitializeWorkstreamObjectInputSchema>;
 
 export type WorkstreamObjectCreateMessageInput = z.infer<typeof WorkstreamObjectCreateMessageInputSchema>;
 
@@ -1237,754 +1134,6 @@ export class WorkstreamObjectProductService {
     );
   }
 
-  private async prepareConversationMaterialization(input: {
-    conversation: PreparedConversation; operationId: string; identityHash?: string;
-    firstTurnId: string; clientMessageId: string; userId: string;
-    snapshot: { displayName: string; avatarUrl: string | null }; now: number;
-    workspaceId: string; workstreamId: string;
-  }) {
-    const hash = input.identityHash ?? workstreamImportHash(input.conversation);
-    const conversation = this.storage.transactionSync(() => {
-      const existing = first(this.storage.sql.exec<{ content_hash: string; content_json: string; state: string }>(
-        `SELECT content_hash, content_json, state FROM prepared_conversation_receipts WHERE operation_id = ?`, input.operationId));
-      if (existing) {
-        if (existing.content_hash !== hash || existing.state === "failed") throw new ApiError(409, "conversation_initialization_conflict", "This preparation changed or failed; start a new import");
-        return PreparedConversationSchema.parse(JSON.parse(existing.content_json));
-      }
-      this.storage.sql.exec(`INSERT INTO prepared_conversation_receipts(operation_id, content_hash, first_turn_id, content_json, state, created_at)
-        VALUES (?, ?, ?, ?, 'preparing', ?)`, input.operationId, hash, input.firstTurnId, JSON.stringify(input.conversation), input.now);
-      return input.conversation;
-    });
-    try {
-      const turns = await this.transcript.prepareConversation({ conversation,
-        firstTurnId: input.firstTurnId, clientMessageId: input.clientMessageId,
-        human: { userId: input.userId, snapshot: input.snapshot }, now: input.now });
-      const attachments: AttachmentResourceRow[] = [];
-      for (const [index, turn] of turns.entries()) attachments.push(...await this.reserveAttachmentDrafts({
-        workspaceId: input.workspaceId, workstreamId: input.workstreamId, inputId: turn.input.turnId,
-        preparationId: input.operationId, userId: input.userId, resourceIds: conversation.messages[index]?.attachmentIds ?? [], now: input.now,
-      }));
-      return { conversation, turns, attachments };
-    } catch (error) {
-      // Only definite input refusals end this operation. An uncertain RPC
-      // response leaves the durable owner preparing, so the same request can
-      // reconcile its reservation rather than delete possibly committed bytes.
-      if (error instanceof ApiError && [409, 422].includes(error.status)) await this.failConversationPreparation(input.operationId);
-      throw error;
-    }
-  }
-
-  private async failConversationPreparation(operationId: string): Promise<void> {
-    this.storage.sql.exec(`UPDATE prepared_conversation_receipts SET state = 'failed' WHERE operation_id = ? AND state = 'preparing'`, operationId);
-    while (await this.recoverTerminalAttachmentReservation()) { /* release durable terminal owners */ }
-  }
-
-  private commitConversationPreparation(operationId: string): void {
-    const receipt = first(this.storage.sql.exec<{ state: string }>(`SELECT state FROM prepared_conversation_receipts WHERE operation_id = ?`, operationId));
-    if (!receipt || receipt.state === "failed") throw new ApiError(409, "conversation_initialization_failed", "The preparation failed; start a new import");
-    this.storage.sql.exec(`UPDATE prepared_conversation_receipts SET state = 'committed' WHERE operation_id = ?`, operationId);
-  }
-
-  /** Joins the caller's identity/publication transaction for roots and children. */
-  private commitPreparedConversation(
-    conversation: PreparedConversation,
-    transcriptMessages: Awaited<ReturnType<WorkstreamTranscriptStorage["prepareConversation"]>>,
-    attachments: AttachmentResourceRow[], userId: string, now: number,
-    recordSource = true,
-  ): void {
-    for (const message of transcriptMessages) this.transcript.appendPreparedParticipantMessage(message);
-      transcriptMessages.forEach((turn, turnIndex) => (conversation.messages[turnIndex]?.attachmentIds ?? []).forEach((resourceId, position) => {
-        const resource = attachments.find((candidate) => String(candidate.id) === resourceId)!;
-        const descriptor = {
-          id: resourceId,
-          connectionId: resource.connection_id == null ? null : String(resource.connection_id),
-          type: String(resource.resource_type),
-          provider: String(resource.provider),
-          providerResourceId: resource.provider_resource_id == null ? null : String(resource.provider_resource_id),
-          title: String(resource.title),
-          mimeType: resource.mime_type == null ? null : String(resource.mime_type),
-          contentRef: resource.content_ref == null ? null : String(resource.content_ref),
-          canonicalUrl: resource.canonical_url == null ? null : String(resource.canonical_url),
-          metadata: parseJson(String(resource.metadata_json ?? "{}"), {}),
-        };
-        this.storage.sql.exec(
-          `INSERT INTO participant_transcript_attachments(turn_id, resource_id, position, attachment_json)
-           VALUES (?, ?, ?, ?)`,
-          turn.input.turnId, resourceId, position, JSON.stringify({ attachedAt: iso(now) }),
-        );
-        this.storage.sql.exec(
-          `INSERT OR IGNORE INTO workstream_resource_links
-             (resource_id, attached_by_user_id, watch_enabled, relationship_type,
-              resource_json, attached_at, updated_at)
-           VALUES (?, ?, 0, 'message_attachment', ?, ?, ?)`,
-          resourceId, userId, JSON.stringify(descriptor), now, now,
-        );
-      }));
-    for (const turn of transcriptMessages) this.markAttachmentReleaseOwnedByProjection(turn.input.turnId);
-    const imports = conversation.messages.flatMap((message) => {
-      const parsed = ImportedMessageProvenanceSchema.safeParse(message.structuredContent);
-      return parsed.success ? [parsed.data] : [];
-    });
-    if (recordSource && imports.length === conversation.messages.length
-      && imports.every((result) => result.source.sessionId && result.sourceMessageId && result.sourceRevision)) {
-      const source = imports[0]!;
-      if (imports.some((result) => result.source.provider !== source.source.provider
-        || result.source.sessionId !== source.source.sessionId
-        || result.source.url !== source.source.url)) {
-        throw new ApiError(422, "session_import_source_mismatch", "Imported messages must belong to one source session");
-      }
-      const ids = imports.map((result) => result.sourceMessageId!);
-      if (new Set(ids).size !== ids.length) throw new ApiError(422, "session_import_duplicate_message", "The source contains duplicate message IDs");
-      this.storage.sql.exec(`INSERT INTO imported_session_sources(id, provider, session_id, source_url, created_at, updated_at)
-        VALUES (1, ?, ?, ?, ?, ?)`, source.source.provider, source.source.sessionId!, source.source.url, now, now);
-      imports.forEach((result, index) => this.storage.sql.exec(`INSERT INTO imported_session_messages
-        (source_message_id, source_revision, source_position, latest_turn_id, updated_at) VALUES (?, ?, ?, ?, ?)`,
-        result.sourceMessageId!, result.sourceRevision!, index, transcriptMessages[index]!.input.turnId, now));
-    }
-  }
-
-  /** The import checkpoint belongs to this conversation, never to its regional directory row. */
-  async importedSessionSource(auth: AuthContext): Promise<{ provider: string; sessionId: string; url: string | null } | null> {
-    const root = await this.authorize(auth);
-    if (root.created_by_user_id !== auth.userId) return null;
-    const row = first(this.storage.sql.exec<{ provider: string; session_id: string; source_url: string | null }>(
-      `SELECT provider, session_id, source_url FROM imported_session_sources WHERE id = 1`));
-    return row ? { provider: row.provider, sessionId: row.session_id, url: row.source_url } : null;
-  }
-
-  async importedSessionCheckpoint(auth: AuthContext): Promise<Array<{ sourceMessageId: string; sourceRevision: string }>> {
-    const root = await this.authorize(auth);
-    if (root.created_by_user_id !== auth.userId) {
-      throw new ApiError(403, "session_import_update_denied", "Only the original importer can update this thread");
-    }
-    return this.storage.sql.exec<{ source_message_id: string; source_revision: string }>(
-      `SELECT source_message_id, source_revision FROM imported_session_messages ORDER BY source_position`).toArray()
-      .map((row) => ({ sourceMessageId: row.source_message_id, sourceRevision: row.source_revision }));
-  }
-
-  /** Append only source changes. Rally-authored turns can occupy any positions between imports. */
-  async updateImportedSession(auth: AuthContext, operationId: string, rawConversation: PreparedConversation): Promise<{
-    added: number; updated: number;
-  }> {
-    const conversation = PreparedConversationSchema.parse(rawConversation);
-    const root = await this.authorize(auth);
-    if (root.created_by_user_id !== auth.userId) {
-      throw new ApiError(403, "session_import_update_denied", "Only the original importer can update this thread");
-    }
-    const source = first(this.storage.sql.exec<{ provider: string; session_id: string; source_url: string | null }>(
-      `SELECT provider, session_id, source_url FROM imported_session_sources WHERE id = 1`));
-    if (!source) throw new ApiError(409, "session_import_source_missing", "This thread has no updateable source session");
-    const entries = conversation.messages.map((message, position) => ({
-      message, position, provenance: ImportedMessageProvenanceSchema.parse(message.structuredContent),
-    }));
-    if (entries.some(({ provenance }) => provenance.source.provider !== source.provider
-      || provenance.source.sessionId !== source.session_id
-      || provenance.source.url !== source.source_url
-      || !provenance.sourceMessageId || !provenance.sourceRevision)) {
-      throw new ApiError(409, "session_import_source_mismatch", "Select the original source conversation for this thread");
-    }
-    const ids = entries.map(({ provenance }) => provenance.sourceMessageId!);
-    if (new Set(ids).size !== ids.length) throw new ApiError(422, "session_import_duplicate_message", "The source contains duplicate message IDs");
-    const requestHash = workstreamImportHash({ source, messages: entries.map(({ provenance }) => ({
-      sourceMessageId: provenance.sourceMessageId, sourceRevision: provenance.sourceRevision,
-    })) });
-    const receipt = () => first(this.storage.sql.exec<{ request_hash: string; added_count: number; updated_count: number }>(
-      `SELECT request_hash, added_count, updated_count FROM imported_session_update_receipts WHERE operation_id = ?`, operationId));
-    const replay = receipt();
-    if (replay) {
-      if (replay.request_hash !== requestHash) throw new ApiError(409, "session_import_update_conflict", "This update key was used for different content");
-      return { added: Number(replay.added_count), updated: Number(replay.updated_count) };
-    }
-    const previous = new Map(this.storage.sql.exec<{ source_message_id: string; source_revision: string; source_position: number; latest_turn_id: string }>(
-      `SELECT source_message_id, source_revision, source_position, latest_turn_id FROM imported_session_messages`).toArray()
-      .map((row) => [row.source_message_id, row]));
-    const checkpointUnchanged = (): boolean => {
-      const current = this.storage.sql.exec<{ source_message_id: string; source_revision: string; source_position: number; latest_turn_id: string }>(
-        `SELECT source_message_id, source_revision, source_position, latest_turn_id FROM imported_session_messages`).toArray();
-      return current.length === previous.size && current.every((row) => {
-        const old = previous.get(row.source_message_id);
-        return old?.source_revision === row.source_revision
-          && old.source_position === row.source_position && old.latest_turn_id === row.latest_turn_id;
-      });
-    };
-    if ([...previous.keys()].some((id) => !ids.includes(id))
-      || entries.some(({ position, provenance }) => {
-        const old = previous.get(provenance.sourceMessageId!);
-        return old && Number(old.source_position) !== position;
-      })) {
-      throw new ApiError(409, "session_import_branch_changed", "The source removed or reordered earlier messages. Import this branch into a new thread");
-    }
-    const changes = entries.filter(({ provenance }) => previous.get(provenance.sourceMessageId!)?.source_revision !== provenance.sourceRevision);
-    const added = changes.filter(({ provenance }) => !previous.has(provenance.sourceMessageId!)).length;
-    const updated = changes.length - added;
-    if (changes.length === 0) {
-      let result = { added: 0, updated: 0 };
-      this.storage.transactionSync(() => {
-        const raced = receipt();
-        if (raced) {
-          if (raced.request_hash !== requestHash) throw new ApiError(409, "session_import_update_conflict", "This update key was used for different content");
-          result = { added: Number(raced.added_count), updated: Number(raced.updated_count) };
-          return;
-        }
-        if (!checkpointUnchanged()) throw new ApiError(409, "session_import_update_raced", "The source was updated concurrently; retry the import");
-        this.storage.sql.exec(`INSERT INTO imported_session_update_receipts
-          (operation_id, request_hash, added_count, updated_count, missing_count, committed_at) VALUES (?, ?, 0, 0, 0, ?)`,
-          operationId, requestHash, Date.now());
-      });
-      return result;
-    }
-    const now = Date.now();
-    const delta: PreparedConversation = { messages: changes.map(({ message, provenance }) => ({
-      ...message,
-      structuredContent: { ...provenance,
-        ...(previous.get(provenance.sourceMessageId!) ? { supersedesTurnId: previous.get(provenance.sourceMessageId!)!.latest_turn_id } : {}),
-      },
-    })) };
-    const firstTurnId = await stableUuid(["session-import-update", root.workstream_key, operationId]);
-    const names = await this.messageUsers([auth.userId]);
-    const person = names.get(auth.userId);
-    const prepared = await this.prepareConversationMaterialization({
-      conversation: delta, operationId, firstTurnId, clientMessageId: operationId,
-      userId: auth.userId,
-      snapshot: { displayName: person?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME, avatarUrl: person?.avatar_url ?? null },
-      now, workspaceId: auth.workspaceId, workstreamId: root.workstream_key,
-    });
-    try {
-      this.storage.transactionSync(() => {
-        const racedReceipt = receipt();
-        if (racedReceipt) {
-          if (racedReceipt.request_hash !== requestHash) throw new ApiError(409, "session_import_update_conflict", "This update key was used for different content");
-          return;
-        }
-        if (!checkpointUnchanged()) throw new ApiError(409, "session_import_update_raced", "The source was updated concurrently; retry the import");
-        const currentRoot = this.root();
-        prepared.turns.forEach((turn, index) => {
-          turn.input.messageSequenceNumber = currentRoot.next_sequence_number + index;
-          turn.input.attentionOrdinal = currentRoot.next_attention_ordinal + index;
-        });
-        this.commitConversationPreparation(operationId);
-        this.commitPreparedConversation(prepared.conversation, prepared.turns, prepared.attachments, auth.userId, now, false);
-        changes.forEach(({ position, provenance }, index) => this.storage.sql.exec(`INSERT INTO imported_session_messages
-          (source_message_id, source_revision, source_position, latest_turn_id, updated_at) VALUES (?, ?, ?, ?, ?)
-          ON CONFLICT(source_message_id) DO UPDATE SET source_revision = excluded.source_revision,
-            source_position = excluded.source_position, latest_turn_id = excluded.latest_turn_id, updated_at = excluded.updated_at`,
-          provenance.sourceMessageId!, provenance.sourceRevision!, position, prepared.turns[index]!.input.turnId, now));
-        this.storage.sql.exec(`UPDATE workstream SET next_sequence_number = next_sequence_number + ?,
-          next_attention_ordinal = next_attention_ordinal + ?, last_people_activity_at = ?, updated_at = ? WHERE id = 1`,
-          changes.length, changes.length, now, now);
-        this.storage.sql.exec(`INSERT INTO member_attention
-          (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
-           manual_unread_from_ordinal, latest_mention_attention_ordinal,
-           last_seen_at, version, updated_at)
-          VALUES (?, ?, ?, NULL, 0, ?, 0, ?)
-          ON CONFLICT(user_id) DO UPDATE SET
-            seen_attention_ordinal = MAX(member_attention.seen_attention_ordinal, excluded.seen_attention_ordinal),
-            manual_unread_from_ordinal = NULL, last_seen_at = excluded.last_seen_at,
-            updated_at = excluded.updated_at`,
-          auth.userId, currentRoot.unread_tracking_start_ordinal,
-          currentRoot.next_attention_ordinal + changes.length - 1, now, now);
-        this.storage.sql.exec(`INSERT INTO imported_session_update_receipts
-          (operation_id, request_hash, added_count, updated_count, missing_count, committed_at) VALUES (?, ?, ?, ?, 0, ?)`,
-          operationId, requestHash, added, updated, now);
-      });
-    } catch (error) {
-      await this.failConversationPreparation(operationId);
-      throw error;
-    }
-    await this.enqueueDirectorySnapshot();
-    return { added, updated };
-  }
-
-  /** Internal coordinator operation, valid only for a freshly provisioned conversation. */
-  async installPreparedConversation(auth: AuthContext, operationId: string, rawConversation: PreparedConversation, replayOnly = false): Promise<{ turnId: string }> {
-    const conversation = PreparedConversationSchema.parse(rawConversation);
-    const root = this.root();
-    const identity = this.objectStore.identity();
-    if (!identity || identity.workspaceId !== auth.workspaceId || root.created_by_user_id !== auth.userId) {
-      throw new ApiError(403, "conversation_initialization_denied", "Only the creator may initialize this conversation");
-    }
-    const hash = workstreamImportHash(conversation);
-    const replay = () => {
-      const receipt = first(this.storage.sql.exec<{ content_hash: string; first_turn_id: string }>(
-        `SELECT content_hash, first_turn_id FROM prepared_conversation_receipts WHERE operation_id = ? AND state = 'committed'`, operationId));
-      if (receipt && receipt.content_hash !== hash) throw new ApiError(409, "conversation_initialization_conflict", "This preparation already has different content");
-      return receipt;
-    };
-    const existing = replay();
-    if (existing) { await this.enqueueDirectorySnapshot(); return { turnId: existing.first_turn_id }; }
-    if (replayOnly) throw new ApiError(409, "conversation_initialization_missing", "A published conversation cannot receive initial history");
-    if (this.transcript.transcriptThrough() > 0) throw new ApiError(409, "conversation_already_started", "Prepared history requires an empty conversation");
-    const now = Date.now();
-    const firstTurnId = await stableUuid(["prepared-conversation", identity, operationId]);
-    const names = await this.messageUsers([auth.userId]);
-    const person = names.get(auth.userId);
-    const prepared = await this.prepareConversationMaterialization({ conversation, firstTurnId, operationId,
-      clientMessageId: operationId, userId: auth.userId, snapshot: {
-        displayName: person?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME, avatarUrl: person?.avatar_url ?? null }, now,
-      workspaceId: auth.workspaceId, workstreamId: identity.parentId });
-    const { turns, attachments } = prepared;
-    try {
-    this.storage.transactionSync(() => {
-      if (replay()) return;
-      if (this.transcript.transcriptThrough() > 0) throw new ApiError(409, "conversation_already_started", "The conversation started during preparation");
-      this.commitConversationPreparation(operationId);
-      this.commitPreparedConversation(prepared.conversation, turns, attachments, auth.userId, now);
-      this.storage.sql.exec(`UPDATE workstream SET next_sequence_number = ?, next_attention_ordinal = ?, updated_at = ? WHERE id = 1`, turns.length + 1, turns.length + 1, now);
-
-    });
-    } catch (error) { await this.failConversationPreparation(operationId); throw error; }
-    await this.enqueueDirectorySnapshot();
-    return { turnId: firstTurnId };
-  }
-
-  async initialize(
-    auth: AuthContext,
-    rawInput: InitializeWorkstreamObjectRequest,
-  ): Promise<{
-    workstream: Workstream;
-    turnId: string;
-    harnessRunId: string | null;
-    workflowInput: WorkstreamWorkflowInput | null;
-  }> {
-    const input = InitializeWorkstreamObjectInputSchema.parse(rawInput);
-    const history = input.initialization.kind === "history" ? input.initialization.conversation : null;
-    if (history && (input.seed || input.mentions.length || input.attachmentIds.length || input.openingStructuredContent !== null)) {
-      throw new ApiError(422, "invalid_initial_content", "Prepared history cannot also execute a scripted opening or attach opening-message metadata");
-    }
-    if (input.seed && input.seed.assistant === null) {
-      throw new ApiError(
-        422,
-        "demo_seed_opening_without_script",
-        "A scripted opening starts a run, so its seed must say what the run says",
-      );
-    }
-    if (auth.workspaceId !== input.workspaceId || auth.userId !== input.creatorUserId) {
-      throw new ApiError(403, "workstream_create_denied", "The thread cannot be created for this identity");
-    }
-    const requestedPersonIds = [...new Set(input.mentions.flatMap((mention) =>
-      mention.type === "person" && mention.userId ? [mention.userId] : []))];
-    const candidateMemberIds = [...new Set([
-      input.creatorUserId,
-      ...input.participantUserIds,
-      ...requestedPersonIds,
-    ])];
-    const members = await this.env.DB.prepare(
-      `SELECT user_id, access_class FROM workspace_members
-        WHERE workspace_id = ? AND status = 'active'
-          AND user_id IN (${candidateMemberIds.map(() => "?").join(",")})`,
-    ).bind(input.workspaceId, ...candidateMemberIds).all<{ user_id: string; access_class: "member" | "guest" }>();
-    if ((members.results ?? []).length !== candidateMemberIds.length) {
-      throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
-    }
-    // Typed reads against the workspace object that owns `resources`: the
-    // draft filter travels with the request so somebody else's draft — or an
-    // already sent one — cannot be attached by id.
-    const workspaceObject = await this.workspaceDirectory(input.workspaceId);
-    const originResources = input.originResourceIds.length === 0 ? [] : (await workspaceObject
-      .resourceDescriptors({
-        workspaceId: input.workspaceId,
-        resourceIds: [...new Set(input.originResourceIds)],
-        draftUploadedByUserId: null,
-      })).items;
-    if (originResources.length !== new Set(input.originResourceIds).size) {
-      throw new ApiError(422, "invalid_origin_resource", "One or more origin resources are unavailable");
-    }
-    const existing = this.objectStore.identity();
-    if (existing && (existing.workspaceId !== input.workspaceId || existing.parentId !== input.workstreamId)) {
-      throw new ApiError(409, "workstream_object_identity_mismatch", "The object identity does not match");
-    }
-    // A member initializes a work stream; an automation's conversation is
-    // bootstrapped by its object and never comes through here.
-    this.objectStore.ensureIdentity({
-      workspaceId: input.workspaceId,
-      parentKind: "workstream",
-      parentId: input.workstreamId,
-    }, this.env.AVALON_REGION);
-    const existingRoot = first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
-    if (existingRoot?.authority_mode === "authoritative") {
-      await this.ensureParticipantAuthority();
-      const part = first(this.storage.sql.exec<{ id: string }>(
-        `SELECT id FROM canonical_conversation_turn_details WHERE client_message_id = ?`, input.clientMessageId,
-      ));
-      const run = first(this.storage.sql.exec<{
-        run_id: string;
-        execution_context_json: string | null;
-      }>(
-        `SELECT run_id, execution_context_json FROM runs
-          WHERE trigger_part_id = ? ORDER BY created_at LIMIT 1`, part?.id ?? "",
-      ));
-      if (part && !run) {
-        await this.enqueueDirectorySnapshot();
-        return { workstream: await this.summary(existingRoot, auth.userId), turnId: part.id,
-          harnessRunId: null, workflowInput: null };
-      }
-      if (!part || !run || run.execution_context_json === null) {
-        throw new ApiError(409, "workstream_create_replay_incomplete", "The thread is incomplete");
-      }
-      const workflowInput = WorkstreamWorkflowInputSchema.parse(
-        JSON.parse(run.execution_context_json),
-      );
-      const loopId = substreamLoopId(asWorkstreamId(existingRoot.workstream_key));
-      const bindHead = first(this.storage.sql.exec<{ state_revision: number }>(
-        `SELECT state_revision FROM bind_loop_heads WHERE loop_id = ?`, loopId,
-      ));
-      this.loops.ensureLoop({
-        loopId,
-        bindStateRevision: Number(bindHead?.state_revision ?? 0),
-        now: existingRoot.created_at,
-      });
-      // The authoritative root and first run commit before projection effects
-      // are built. A retry repairs an effect-construction failure; unchanged
-      // snapshots are suppressed by projection_keys.
-      await this.enqueueDirectorySnapshot();
-      return {
-        workstream: await this.summary(existingRoot, auth.userId),
-        turnId: part.id,
-        harnessRunId: run.run_id,
-        workflowInput,
-      };
-    }
-    // Resolve from the authoritative workspace directory before accepting any
-    // visible range. The client sends identity and offsets, not Markdown; the
-    // object owns the durable spelling and target.
-    // The opening human turn carries an immutable author snapshot. Participant
-    // membership is mutable and cannot be the historical display authority.
-    const names = await this.messageUsers(candidateMemberIds);
-    const mentionPeople = new Map<string, MentionPerson>([...names].map(([userId, user]) => [userId, {
-      id: user.id,
-      name: user.name,
-      avatarUrl: user.avatar_url,
-    }]));
-    const prepared = prepareMentionMarkdown(input.openingMessage, input.mentions, mentionPeople);
-    const mentionedPersonIds = [...new Set(prepared.mentions.flatMap((mention) =>
-      mention.type === "person" && mention.userId ? [mention.userId] : []))];
-    // Only a mention that survived authoritative visible-range validation can
-    // grant mention-derived access. Raw IDs are candidates, not audience.
-    const memberIds = [...new Set([
-      input.creatorUserId,
-      ...input.participantUserIds,
-      ...mentionedPersonIds,
-    ])];
-    // Everybody the creator explicitly invited, minus the creator and anyone
-    // who receives the more specific mention notification. One action must not
-    // become both "you were added" and "you were mentioned" in Slack.
-    const invitedUserIds = input.notifyParticipants
-      ? [...new Set(input.participantUserIds)].filter((userId) => (
-          userId !== input.creatorUserId && !mentionedPersonIds.includes(userId)
-        ))
-      : [];
-    const actorName = names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME;
-    const now = Date.now();
-    const messageId = await stableUuid(["conversation-initialization", input.workstreamId, input.clientMessageId]);
-    const runId = asHarnessRunId(uuidV7(now));
-    const authorSnapshot = {
-      displayName: names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME,
-      avatarUrl: names.get(input.creatorUserId)?.avatar_url ?? null,
-    };
-    const annotations = AnnotatedMessageContentSchema.safeParse(input.openingStructuredContent);
-    // Only member-composed openings need addressing. Explicit summons and
-    // started work already authorize a run, even when their text looks like a title.
-    const classifyOpening = input.reason === "opening_message" && !input.slackOrigin
-      && !input.createdFromOpportunityId && !input.seed;
-    const initialConversation: PreparedConversation = history ?? { messages: [{ role: "user", text: prepared.text,
-      structuredContent: input.openingStructuredContent, attachmentIds: input.attachmentIds }] };
-    const [startsRun, [routing], materialization] = await Promise.all([
-      history ? false : !classifyOpening || openingMessageStartsRun(this.env, {
-        workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
-        substreamId: "0",
-        message: annotations.success
-          ? annotationCommentText(input.openingMessage, annotations.data.annotations)
-          : input.openingMessage,
-        humanMentions: mentionedPersonNames(prepared.mentions),
-        connectorMentions: prepared.mentions.flatMap((mention) => mention.type === "connector" && mention.connectorType ? [mention.connectorType] : []),
-        attachmentCount: input.attachmentIds.length,
-        defer: this.defer,
-      }),
-      // Overlap independent routing and materialization with JEV. A routing
-      // failure must not prevent a silent opening from being persisted.
-      Promise.allSettled([history ? null : input.modelOverride
-        ? pinnedModelRouting(input.modelOverride).model
-        : resolveNewWorkstreamModelRouting(this.env, {
-            workspaceId: input.workspaceId, workstreamId: input.workstreamId,
-          }).then((route) => route.model)]),
-      this.prepareConversationMaterialization({
-        conversation: history ?? { messages: [{ ...initialConversation.messages[0]!,
-          text: this.withPersonalSystemPrompt(prepared.text, input.creatorUserId, input.reason) }] },
-        operationId: input.clientMessageId, firstTurnId: messageId, clientMessageId: input.clientMessageId,
-        // Receipt identity follows the request; a cache refresh may change the
-        // proposed prefix on retry, but the receipt replays its frozen content.
-        identityHash: input.initialization.kind === "history" && input.initialization.identityHash
-          ? input.initialization.identityHash : workstreamImportHash(initialConversation),
-        userId: input.creatorUserId, snapshot: authorSnapshot, now,
-        workspaceId: input.workspaceId, workstreamId: input.workstreamId,
-      }),
-    ]);
-    if (startsRun && routing.status === "rejected") throw routing.reason;
-    const model = startsRun && routing.status === "fulfilled" ? routing.value : null;
-    const { conversation, turns: transcriptMessages, attachments } = materialization;
-    const initialMessages = conversation.messages;
-    const openingWorkflowInput = startsRun ? this.workflowInput(input, runId, messageId) : null;
-    let initializedElsewhere = false;
-    await this.objectStore.commitWithRegionalEffects(() => {
-      // Hashing and directory reads yield. Another delivery can initialize
-      // the room while those awaits are in flight; decide against current SQL.
-      if (first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`))?.authority_mode === "authoritative") {
-        initializedElsewhere = true;
-        return;
-      }
-      this.storage.sql.exec(
-        `UPDATE workstream SET authority_mode = 'authoritative', authority_generation = ?,
-             title = ?, description = ?, scope = ?, exact_state = ?,
-             state_reason_code = ?, next_sequence_number = ?, next_attention_ordinal = ?,
-             authority_epoch = 1, scope_epoch = 0, listing_epoch = 1, run_revision = 1,
-             created_at = ?, last_people_activity_at = ?, state_changed_at = ?,
-             created_by_user_id = ?, email_address = ?, email_route_status = 'active',
-             created_from_opportunity_id = ?, opportunity_version = ?,
-             opportunity_display_prompt_hash = ?, opportunity_execution_prompt_hash = ?,
-             description_source = ?, system_kind = ?, title_status = ?, model_override = ?,
-             appearance_json = COALESCE(appearance_json, ?), updated_at = ?
-         WHERE id = 1 AND authority_mode = 'preparing'`,
-        input.generation, input.title, input.objective, input.scope, startsRun ? "scheduled" : "idle",
-        input.reason, initialMessages.length + 1, initialMessages.length + 1, now, now, now,
-        input.creatorUserId, input.emailAddress, input.createdFromOpportunityId, input.opportunityVersion,
-        input.opportunityDisplayPromptHash, input.opportunityExecutionPromptHash,
-        input.descriptionSource, input.systemKind, input.titleStatus, input.modelOverride,
-        input.color ? JSON.stringify({ icon: null, color: input.color }) : null, now,
-      );
-      for (const userId of memberIds) {
-        const creator = userId === input.creatorUserId;
-        this.storage.sql.exec(
-          `INSERT INTO participants
-             (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-              added_at, removed_at, first_opened_at, updated_at)
-           VALUES (?, ?, ?, 'active', 0, ?, NULL, ?, ?)`,
-          userId,
-          creator ? "creator" : "explicit",
-          input.creatorUserId,
-          now,
-          // The person who typed the opening message is looking at the work
-          // stream they just started; everybody they named on the way in is
-          // not, and stays unseen until they open it themselves.
-          creator ? now : null,
-          now,
-        );
-      }
-      this.storage.sql.exec(
-        `INSERT INTO member_attention
-           (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
-            manual_unread_from_ordinal, latest_mention_attention_ordinal,
-            last_seen_at, version, updated_at)
-         VALUES (?, 0, ?, NULL, 0, ?, 0, ?)`,
-        input.creatorUserId, initialMessages.length, now, now,
-      );
-      this.commitConversationPreparation(input.clientMessageId);
-      this.commitPreparedConversation(conversation, transcriptMessages, attachments, input.creatorUserId, now);
-      prepared.mentions.forEach((mention, index) => {
-        this.storage.sql.exec(
-          `INSERT INTO participant_transcript_mentions
-             (turn_id, mention_index, mention_kind, target_user_id, connector_type,
-              start_offset, end_offset, attention_ordinal)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-          messageId, index, mention.type, mention.userId, mention.connectorType,
-          mention.startOffset, mention.endOffset,
-        );
-        if (mention.type === "person" && mention.userId) {
-          this.storage.sql.exec(
-            `INSERT INTO member_attention
-               (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
-                manual_unread_from_ordinal, latest_mention_attention_ordinal,
-                last_seen_at, version, updated_at)
-             VALUES (?, 0, 0, NULL, 1, ?, 0, ?)
-             ON CONFLICT(user_id) DO UPDATE SET
-               latest_mention_attention_ordinal = MAX(
-                 member_attention.latest_mention_attention_ordinal,
-                 excluded.latest_mention_attention_ordinal
-               ), updated_at = excluded.updated_at`,
-            mention.userId, now, now,
-          );
-        }
-      });
-      for (const resourceId of input.originResourceIds) {
-        const resource = originResources.find((candidate) => String(candidate.id) === resourceId)!;
-        const descriptor = {
-          id: resourceId,
-          connectionId: resource.connection_id == null ? null : String(resource.connection_id),
-          type: String(resource.resource_type),
-          provider: String(resource.provider),
-          providerResourceId: resource.provider_resource_id == null ? null : String(resource.provider_resource_id),
-          title: String(resource.title),
-          mimeType: resource.mime_type == null ? null : String(resource.mime_type),
-          contentRef: resource.content_ref == null ? null : String(resource.content_ref),
-          canonicalUrl: resource.canonical_url == null ? null : String(resource.canonical_url),
-          metadata: parseJson(String(resource.metadata_json ?? "{}"), {}),
-        };
-        this.storage.sql.exec(
-          `INSERT OR IGNORE INTO workstream_resource_links
-             (resource_id, attached_by_user_id, watch_enabled, relationship_type,
-              resource_json, attached_at, updated_at)
-           VALUES (?, ?, 0, 'origin', ?, ?, ?)`,
-          resourceId, input.creatorUserId, JSON.stringify(descriptor), now, now,
-        );
-      }
-      if (openingWorkflowInput) {
-        this.storage.sql.exec(
-          `INSERT INTO runs
-           (run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
-            model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
-            active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
-            tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
-            terminal_reason, origin, execution_principal_json, chain_depth, model,
-            trigger_part_id, execution_context_json, created_at, updated_at)
-         VALUES (?, '0', NULL, 'admitted', '{}', 0, 0, '', 1, 0, ?,
-                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, ?, ?, 0, ?, ?, ?, ?, ?)`,
-          runId, now, input.reason, JSON.stringify(input.executionPrincipal), model,
-          messageId, JSON.stringify(openingWorkflowInput), now, now,
-        );
-      }
-      // Product identity, never an activation receipt, owns the singleton.
-      // Every later message, retry, and recovery therefore derives this exact
-      // same loop instead of minting a new logical conversation.
-      this.loops.ensureLoop({
-        loopId: substreamLoopId(input.workstreamId),
-        bindStateRevision: 0,
-        now,
-      });
-    }, () => {
-        if (initializedElsewhere) return [];
-        const root = this.root();
-        const occurredAt = new Date(now).toISOString();
-        const activity = {
-          partitionKey: `activity:${messageId}`,
-          sourceVersion: 1,
-          dedupeKey: `message:${messageId}`,
-          effect: {
-            kind: "activity_event" as const,
-            eventId: uuidV7(now),
-            eventType: "workstream_message_created",
-            subjectSequenceNumber: 1,
-            actorType: "user" as const,
-            actorUserId: input.creatorUserId,
-            actorLabel: actorName,
-            title: truncateUtf16Safe(root.title, 500),
-            body: notificationMessageExcerpt(prepared.text),
-            canonicalUrl: null,
-            digestible: true,
-            occurredAt,
-            sourceKind: "workstream_message",
-            sourceId: messageId,
-            dedupeKey: `message:${messageId}`,
-            // Which conversation of the thread spoke: "0" for the thread itself,
-            // a breakout's id otherwise. The Activity tab tells the two apart,
-            // and reads a mention as read once the reader's position in that
-            // conversation reaches `attentionOrdinal` — the one the mention
-            // rows above were stamped with.
-            metadata: { substreamId: this.externalSubstreamId(), attentionOrdinal: 1 },
-            targets: activityTargets(memberIds, mentionedPersonIds, input.creatorUserId),
-          },
-        };
-        const mentionNotifications = mentionedPersonIds
-          .filter((userId) => userId !== input.creatorUserId)
-          .map((userId) => ({
-            partitionKey: `notification:${messageId}:${userId}`,
-            sourceVersion: 1,
-            dedupeKey: `mention:${messageId}:${userId}`,
-            dependsOnProjectionKey: `user:${userId}`,
-            effect: {
-              kind: "mention_notification" as const,
-              intentId: `mention:${messageId}:${userId}`,
-              messageId,
-              recipientUserId: userId,
-              authorUserId: input.creatorUserId,
-              authorNameSnapshot: actorName,
-              workstreamTitleSnapshot: truncateUtf16Safe(root.title, 500),
-              messageText: notificationMessageExcerpt(prepared.text),
-              occurredAt,
-            },
-          }));
-        return [
-          { partitionKey: "common", effect: this.commonEffect(root) },
-          ...memberIds.map((userId) => ({
-            partitionKey: `user:${userId}`,
-            effect: this.userEffect(root, userId),
-          })),
-          // After every viewer effect, which is all the gate below needs:
-          // each recipient's own directory row is written earlier in this same
-          // array. The epoch is a literal zero rather than a read — these rows
-          // were inserted by the transaction above with `participant_epoch = 0`
-          // and nothing can have removed them yet.
-          ...invitedUserIds.flatMap((userId) => this.participantAddedEffects({
-            root,
-            userId,
-            actorUserId: input.creatorUserId,
-            actorName,
-            recipientName: names.get(userId)?.name ?? "a workspace member",
-            epoch: 0,
-            now,
-          })),
-          ...(mentionedPersonIds.length > 0 ? [activity] : []),
-          ...mentionNotifications,
-        ];
-      },
-    );
-    if (initializedElsewhere) return this.initialize(auth, rawInput);
-    await this.ensureParticipantAuthority();
-    // Only the composer's create carries this journey; Slack, suggestions,
-    // imports and Sidekicks open Channels with text nobody typed here.
-    if (input.telemetryJourney === "workstream_create" && !history && !input.seed) {
-      recordMessageSentTelemetry(this.env, auth, {
-        workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
-        messageId,
-        scope: input.scope,
-        origin: new WorkstreamIdentityStorage(this.storage).identity()?.origin_type ?? "ad_hoc",
-        messageKind: "message",
-        attachmentCount: input.attachmentIds.length,
-        mentionCount: prepared.mentions.length,
-        // Everyone seated besides the creator: explicit picks and accepted mentions.
-        participantAddedCount: memberIds.length - 1,
-      }, this.defer);
-    }
-    return {
-      workstream: await this.summary(this.root(), auth.userId),
-      turnId: messageId,
-      harnessRunId: openingWorkflowInput ? runId : null,
-      workflowInput: openingWorkflowInput,
-    };
-  }
-
-  private workflowInput(
-    input: InitializeWorkstreamObjectInput,
-    runId: HarnessRunId,
-    messageId: string,
-  ): WorkstreamWorkflowInput {
-    return {
-      region: this.env.AVALON_REGION,
-      workspaceId: input.workspaceId,
-      parentKind: this.objectStore.identity()?.parentKind ?? "workstream",
-      parentId: input.workstreamId,
-      loopId: substreamLoopId(input.workstreamId),
-      harnessRunId: runId,
-      triggerMessageId: messageId,
-      activityId: null,
-      executionPrincipal: input.executionPrincipal as WorkstreamWorkflowInput["executionPrincipal"],
-      ...(input.slackOrigin ? { slackOrigin: input.slackOrigin as WorkstreamWorkflowInput["slackOrigin"] } : {}),
-      ...(input.slackSearchAuthorization ? {
-        slackSearchAuthorization: input.slackSearchAuthorization as WorkstreamWorkflowInput["slackSearchAuthorization"],
-      } : {}),
-      ...(input.telemetryOperationId ? { telemetryOperationId: input.telemetryOperationId } : {}),
-      ...(input.telemetrySubjectUserId ? { telemetrySubjectUserId: input.telemetrySubjectUserId } : {}),
-      ...(input.telemetryRequestReceivedAt !== undefined
-        ? { telemetryRequestReceivedAt: input.telemetryRequestReceivedAt }
-        : {}),
-      ...(input.telemetryJourney ? { telemetryJourney: input.telemetryJourney } : {}),
-      // Rides the execution receipt, so the run this create starts answers
-      // from the seed rather than reaching a provider.
-      ...(input.seed ? { seed: input.seed } : {}),
-      reason: input.reason,
-    };
-  }
-
   isParticipant(userId: string): boolean {
     return first(this.storage.sql.exec<{ one: number }>(
       `SELECT 1 AS one FROM participants WHERE user_id = ? AND status = 'active' LIMIT 1`,
@@ -2103,7 +1252,6 @@ export class WorkstreamObjectProductService {
   }
 
   async authorize(auth: AuthContext, includeArchived = false): Promise<RootRow> {
-    await this.ensureParticipantAuthority(auth.userId);
     const root = this.locallyAuthorizedRoot(auth, includeArchived);
     const membership = await this.env.DB.prepare(
       `SELECT access_class FROM workspace_members
@@ -2234,10 +1382,7 @@ export class WorkstreamObjectProductService {
       this.assertRetainedContentContains({ scope: "workspace" });
     }
     const joined = scopeChanged && input.scope === "personal" && !this.isParticipant(auth.userId);
-    // Source membership is a projection. A new narrowing seat must come from
-    // the grant owner; repeating the current scope never writes a seat.
-    const seatThroughGrants = joined && await this.migratedRosterSeat(auth);
-    const { envelopes } = await this.objectStore.commitWithRegionalEffects(
+    await this.objectStore.commitWithRegionalEffects(
       (sql) => {
         // A mention's grants and canonical turn must precede narrowing. The
         // durable mailbox also covers recovery and messages waiting in the loop.
@@ -2251,7 +1396,7 @@ export class WorkstreamObjectProductService {
           throw new ApiError(409, "conversation_message_pending",
             "Wait for the pending mention to finish before making this conversation private");
         }
-        if (joined && !seatThroughGrants) {
+        if (joined) {
           sql.exec(
             `INSERT INTO participants
                (user_id, participation_reason, added_by_user_id, status, participant_epoch,
@@ -2318,7 +1463,6 @@ export class WorkstreamObjectProductService {
         ];
       },
     );
-    if (input.scope !== undefined) await this.convergeParentVisibility(envelopes);
     const root = this.root();
     const events: Record<string, unknown>[] = [];
     if (input.title !== undefined) {
@@ -3035,52 +2179,11 @@ export class WorkstreamObjectProductService {
     return member.access_class;
   }
 
-  /** Narrowing must seat through the same grant authority as any explicit add. */
-  private async migratedRosterSeat(auth: AuthContext): Promise<boolean> {
-    // Narrowing seated the narrower on a Thread's Main; Threads are retired
-    // (plan step C-2), and no other parent narrows through a roster seat.
-    void auth;
-    return false;
-  }
-
-  private async convergeParentVisibility(envelopes: readonly ConversationEffectEnvelope[]): Promise<void> {
-    const identity = this.objectStore.identity();
-    if (identity?.parentKind !== "workstream") return;
-    const envelope = envelopes.find(({ effect }) => effect.kind === "directory_common");
-    if (!envelope) throw new Error("participant_authority_visibility_receipt_missing");
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
-    await parent.receiveChildEffects({ substreamId: this.externalSubstreamId(), envelopes: [envelope] });
-  }
-
-  /** Historical and creation rows are frozen once, before normal admission. */
-  async ensureParticipantAuthority(userId?: string): Promise<boolean> {
-    // A Thread's conversation moved its roster into its parent's grants
-    // first; Threads are retired (plan step C-2), and a Canvas's or a
-    // Sidekick's parent holds its audience from the start.
-    void userId;
-    return this.objectStore.identity()?.parentKind !== "workstream";
-  }
-
-  private async prepareParticipantAccess(auth: AuthContext, operationId: string, userIds: readonly string[],
-    options: { participationReason?: "message" } = {}): Promise<void> {
-    // Seated people through a Thread's parent grants; a Canvas's or a
-    // Sidekick's parent decides its audience itself (plan step C-2).
-    void auth; void operationId; void userIds; void options;
-  }
-
   async addParticipant(
     auth: AuthContext,
     userId: string,
-    operationId = uuidV7(),
   ): Promise<WorkstreamDetail["participants"][number]> {
     await this.authorizeParticipantAddition(auth, userId);
-    if (this.objectStore.identity()?.parentKind === "workstream") {
-      await this.prepareParticipantAccess(auth, operationId, [userId]);
-      const participant = await this.participant(userId);
-      if (!participant) throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
-      return participant;
-    }
     // Both names are read before the commit because the effects that carry
     // them are built inside it: an effect callback runs against object SQL and
     // cannot await a regional round trip.
@@ -4966,10 +4069,6 @@ export class WorkstreamObjectProductService {
       .filter((userId) => !this.isParticipant(userId));
     const structuredContent = input.merge ?? (input.annotations?.length
       ? await new ResourceService(this.env,auth).annotationContent(input.annotations) : null);
-    if (missingParticipantUserIds.length > 0) {
-      await this.prepareParticipantAccess(auth, input.clientMessageId, missingParticipantUserIds,
-        { participationReason: "message" });
-    }
     const attachmentRows = await this.reserveAttachmentDrafts({
       workspaceId: auth.workspaceId,
       workstreamId: root.workstream_key,
@@ -5019,20 +4118,6 @@ export class WorkstreamObjectProductService {
       // scripted conversation cannot wait on a live guess about each line when
       // the pack is the authority on which lines start a run.
       shouldInvoke = input.seed.assistant !== null;
-    } else if (!input.forcedHarnessOrigin && this.objectStore.identity()?.parentKind === "workstream"
-      && this.root().next_sequence_number === 1 && !this.loops.hasInputAhead(preparation.input_sequence)) {
-      // Read current state after preparation's awaits. A prior input can have
-      // become canonical while this request was resolving people/attachments.
-      shouldInvoke = await openingMessageStartsRun(this.env, {
-        workspaceId: auth.workspaceId,
-        workstreamId: root.workstream_key,
-        substreamId: this.externalSubstreamId(),
-        message: annotationCommentText(input.text, input.annotations),
-        humanMentions: mentionedPersonNames(prepared.mentions),
-        connectorMentions,
-        attachmentCount: attachmentRows.length,
-        defer: this.defer,
-      });
     } else if (!shouldInvoke) {
       await this.waitForEarlierInputPreparations(preparation.input_sequence);
       const activeTask = this.loops.loop()?.status === "executing";
@@ -5213,13 +4298,9 @@ export class WorkstreamObjectProductService {
           }
         }
         // Sending is participation when the message is accepted, even while
-        // its turn waits behind an active run. Handoff-owned rosters were
-        // already seated through prepareParticipantAccess above.
+        // its turn waits behind an active run.
         const authorJoined = !this.isParticipant(auth.userId);
         if (authorJoined) {
-          if (new ParticipantAuthorityTransferStorage(this.storage).currentTransferId() !== null) {
-            throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
-          }
           new WorkstreamIdentityStorage(this.storage).admitParticipant({
             userId: auth.userId, addedByUserId: auth.userId, reason: "message", now,
           });

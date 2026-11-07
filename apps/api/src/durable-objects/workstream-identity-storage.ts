@@ -86,9 +86,8 @@ export interface WorkstreamProvisionInput {
    */
   agentProfile?: string | null;
   /**
-   * A thread's Channel colour, as its birth appearance; see
-   * `InitializeWorkstreamObjectInputSchema.color`. Absent for a conversation
-   * that is not a thread's Main.
+   * A conversation's birth colour. No producer still sends one: it was a
+   * Thread's Channel colour.
    */
   color?: SpaceColorKey | null;
   now: number;
