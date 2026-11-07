@@ -136,7 +136,7 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `scripts/eslint-rules/durable-object-sync-transaction.mjs` | Rejects explicit or type-resolvable Promise-returning callbacks passed to `transactionSync`, `commitRuntimeMutation`, or `commitWithRegionalEffects`. |
 | `packages/db/migrations/0043_hypersight.sql`, `0078_rename_hypersight_to_block_dashboard.sql` | Immutable historical migrations retained byte-for-byte after feature removal. They are migration ledger, not live product authority. |
 | `packages/db/migrations/0079_workstream_do_authority_cutover.sql` | Maintenance control, routes, import receipts, identity anchors, and permanent legacy-product/pin writer fences. |
-| `packages/db/migrations/0080_workstream_do_regional_effects.sql` | Legacy causally fenced notification-intent shells; the activity/mention effect replay receipt is object-local (`workspace_workstream_effect_receipts`), never a D1 row. |
+| `packages/db/migrations/0080_workstream_do_regional_effects.sql` | Legacy causally fenced notification-intent shells. A mention's replay receipt is the hosted parent's `sidekick_child_receipts` row, never a D1 row; `workspace_workstream_effect_receipts` is unwritten since 2026-11-07, dropped with the Thread-era tables. |
 | `packages/db/migrations/0081_workstream_do_full_serving.sql` | Serving-contract attestation and idempotent creation receipts (`workstream_create_receipts`, which Canvas and Sidekick creation still read); it intentionally creates no directory projection tables. |
 | `packages/db/migrations/0082_workspace_durable_object_placement_affinity.sql` | Immutable Global/regional workspace affinity projection and migration/background fallbacks. |
 | `packages/db/migrations/0083_workspace_product_do_authority.sql` | Per-workspace product import routes plus permanent D1 writer fences for the migrated activity and opportunity families. |
@@ -1539,7 +1539,7 @@ already have committed across the object boundary.
 
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_sidebar_list_state` | The `automations` and `canvases` list waterlines each list push carries. |
-| `workspace_workstream_effect_receipts` | Message/hash receipts making regional effect retries idempotent; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
+| `workspace_workstream_effect_receipts` | The Thread host's regional effect receipts, unwritten since 2026-11-07, dropped with the Thread-era tables. A conversation's effects are receipted in `sidekick_child_receipts`. |
 | `channels`, `channel_viewers`, `spaces`, `space_viewers`, `breakouts`, `breakout_viewers`, `parent_*` | The retired Thread, Channel and Breakout directory and parent state, kept by migration 147 because the Thread retirement's inventory reads them; nothing else does, and they go once `retire_threads` has run in every Organization ([`workspace-retirement.md`](workspace-retirement.md)). |
 
 WorkspaceDO migration 147 dropped the Activity, suggested-work, digest,
@@ -1692,7 +1692,7 @@ the ticket; a conversation object never widens it.
 
 Health endpoints report role and object-local database bytes. Migration errors
 include component/version reason. Inspect `_sql_schema_migrations`,
-`workspace_directory_state`, `workspace_workstream_effect_receipts`,
+`workspace_directory_state`, `sidekick_child_receipts`, `workstream_notification_intents`,
 `substream_loops`, pending inputs, assistant reservations, linked execution
 receipts, attempt leases, child and
 parent `durable_outbox` (a row there means the Queue has not yet accepted it),

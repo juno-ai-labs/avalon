@@ -76,12 +76,12 @@ function conversation(parentId: string): DurableObjectStub {
 }
 
 /** The author's message mentioning the recipient, sent the way the Worker sends it. */
-async function mention(parentKind: "canvas" | "automation", parentId: string, clientMessageId: string): Promise<void> {
+async function mention(parentKind: "canvas" | "automation", parentId: string, clientMessageId: string, confirmedParticipantUserIds: readonly string[] = []): Promise<void> {
   const text = "@Robin please review the plan";
   const response = await conversation(parentId).fetch("https://object.test/internal/product", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ operation: "create_message", parentKind, auth: auth(AUTHOR), input: {
-      text, clientMessageId, confirmedParticipantUserIds: [], attachmentIds: [],
+      text, clientMessageId, confirmedParticipantUserIds, attachmentIds: [],
       mentions: [{ type: "person", userId: RECIPIENT, connectorType: null, displayName: "Robin", startOffset: 0, endOffset: 6 }],
     } }),
   });
@@ -179,18 +179,30 @@ describe("a mention in a hosted conversation", () => {
     expect(await pushedAlert(canvasId)).toEqual([{ title: "Avery mentioned you in Launch plan", body: "@Robin please review the plan" }]);
   });
 
-  it("records the recipient's intent from a Sidekick shared-conversation mention", async () => {
+  /** An Organization-wide Sidekick, opened by `openers`, whose author then mentions the recipient. */
+  async function sidekickMention(openers: readonly string[]): Promise<string> {
     const automationId = asAutomationId(crypto.randomUUID());
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR, scope: "workspace", automationId });
     await workspace().sidekickSubmitDefinition({ workspaceId: WORKSPACE_ID, automationId, draft: DEFINITION,
       evaluatorRules: null, submittedByRunId: null });
     await runInDurableObject(workspace(), (instance: WorkspaceDO) => instance.sidekickApply({
       workspaceId: WORKSPACE_ID, automationId, actor: { userId: AUTHOR, actorRole: "member", participantOfOwningWorkstream: false } }));
-    for (const userId of [AUTHOR, RECIPIENT]) await new ConversationService(TEST_ENV, auth(userId)).authorizeViewer(automationId);
-    await mention("automation", automationId, "sidekick-mention-1");
+    for (const userId of openers) await new ConversationService(TEST_ENV, auth(userId)).authorizeViewer(automationId);
+    await mention("automation", automationId, `sidekick-mention-${openers.length}`, openers.includes(RECIPIENT) ? [] : [RECIPIENT]);
+    return automationId;
+  }
 
+  it("records the recipient's intent from a Sidekick shared-conversation mention", async () => {
+    const automationId = await sidekickMention([AUTHOR, RECIPIENT]);
     // The title is the conversation's own snapshot, taken when it was opened,
     // before the definition named the Sidekick.
+    expect(await pushedAlert(automationId)).toEqual([{ title: "Avery mentioned you in New Sidekick", body: "@Robin please review the plan" }]);
+  });
+
+  it("tells a member mentioned in an Organization-wide Sidekick they never opened", async () => {
+    // Nothing has read the recipient's relationship into the Organization
+    // object: the delivery's reader check has to ask for it.
+    const automationId = await sidekickMention([AUTHOR]);
     expect(await pushedAlert(automationId)).toEqual([{ title: "Avery mentioned you in New Sidekick", body: "@Robin please review the plan" }]);
   });
 });
