@@ -248,12 +248,19 @@ cleanup is revision-fenced so an accepted send cannot erase newer intent, and
 new intent preserves Queue failure backoff. Parent discovery prunes retired
 children; even delayed child jobs check the current parent registry.
 
-Parent discovery for a Canvas or a Sidekick hosted in WorkspaceDO runs where it
-is enqueued: the parent's child rows are in the same database, so
-`enqueueAuthorizationDiscovery` registers them in the caller's transaction and
-queues only the per-conversation jobs, which read an `AgentLoopDO`. The
-Worker's parent branch in `projectAuthorization` stays for jobs queued before
-this change.
+Parent discovery for a Channel hosted in WorkspaceDO ran where it was
+enqueued: `enqueueAuthorizationDiscovery` answers a parent job in place only
+when `parent_metadata.parent_kind = 'workstream'`, registering the
+`parent_children` rows in the caller's transaction. That path is retired with
+the Channel host; no new parent of that kind is created. A Sidekick parent job
+still rides the Queue: an `authorization_delivery` row, the Worker's
+`projectAuthorization`, and `listAuthorizationChildren` back on WorkspaceDO.
+Per-conversation jobs ride the Queue too and read an `AgentLoopDO`.
+
+**Known gap: Canvases are not backfilled.** `beginAuthorizationBackfill`
+enumerates `channels UNION automation_directory`, with no `canvas_directory`,
+so `backfill` queues no parent discovery for a Canvas and `status` reports
+none.
 
 Deployment enables the core member read path for every workspace. There is no
 legacy/shadow mode, activation flag or comparison gate. `backfill` queues parent

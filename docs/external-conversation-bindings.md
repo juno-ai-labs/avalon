@@ -6,8 +6,10 @@ child (`parentKind: "automation"`, substream = the run id), so a reply there
 continues the run. Every Slack message is resolved against these rows before
 anything else is decided. The **room binding** that linked a Slack channel to
 a Space, so an addressed thread there opened a Channel, is retired with Spaces
-and Channels: nothing writes one and resolution routes none (see the
-2026-11-07 changelog entry).
+and Channels: nothing writes one, and WorkspaceDO migration 147 deleted every
+row that held one (`target_kind = 'space'`) along with every binding to a
+Thread (`parent_kind = 'workstream'`). The table's CHECK still admits those
+values; no row holds them.
 
 Read this before changing how a Slack message finds its run, or how a Sidekick
 run's Slack send becomes something a reply can answer. The product decision is
@@ -58,7 +60,6 @@ order:
    `pending`.)
 4. Otherwise `none`, which Slack answers with the retired-ingress copy
    ([`slack-integration.md`](slack-integration.md#agent-sessions-and-delivery)).
-   A room binding a Space still holds resolves `none` too.
 
 A `connection_disconnected` suspension found while Slack is delivering the
 installation's events is stale: the ingress lifts what the disconnect suspended
@@ -115,17 +116,17 @@ from the ingress claim key, so a retried job posts it once.
 
 | Event | Effect |
 | --- | --- |
-| Bot `member_joined_channel` | Links nothing (logged `room_bindings_retired`); a room's provider suspension is lifted. |
-| Bot `member_left_channel`, `channel_left`, `group_left` | Suspend the room's rows: `provider_membership_ended`. |
-| `channel_archive`, `group_archive` | Suspend the room's rows: `provider_room_archived`. |
-| `channel_id_changed` | Move the room's bindings and every descendant to the new id, or refuse on a conflict. |
+| Bot `member_joined_channel` | Links and reactivates nothing (logged `slack_room_invitation`, `room_bindings_retired`). |
+| Bot `member_left_channel`, `channel_left`, `group_left` | Retired in effect: suspends the room's own row (`[channel]`) as `provider_membership_ended`, and no such row exists since migration 147, so nothing changes. |
+| `channel_archive`, `group_archive` | Retired in effect: the same suspension as `provider_room_archived`, touching no row. |
+| `channel_id_changed` | Move every run-thread binding under the room to the new id, or refuse on a conflict. |
 | Workspace disconnect, uninstall, token revocation | Suspend the installation's active bindings: `connection_disconnected`. Reconnecting, or the installation's next delivered event, reactivates exactly those. |
 | Sidekick deleted | Suspend every binding targeting its runs: `sidekick_deleted`. |
 
-A suspended room suspends its threads through resolution rather than by
-rewriting them. A lasting suspension (the bot leaving, an archive, a deletion)
-replaces a disconnect's on the same row, so a reconnect cannot bring back what
-has since ended. `closed` is a reason the table accepts; no surface sets it.
+A suspended room row used to suspend its threads through resolution; with no
+room rows left, a thread binding is suspended only on its own row. A lasting
+suspension (a Sidekick deletion) replaces a disconnect's on the same row, so a
+reconnect cannot bring back what has since ended. `closed` is a reason the table accepts; no surface sets it.
 
 ### Sidekick Slack sources
 
@@ -160,8 +161,7 @@ Other Sidekicks whose sources match the message still receive it as a trigger.
   the row would orphan every binding on the first reconnect.
 - **Suspension is a state, not a delete.** The row keeps its target so a
   reconnect restores the same routing. A reconnect lifts only
-  `connection_disconnected`, and a room's return lifts only that room's
-  provider suspension; a deletion or `closed` stays. A lasting reason
+  `connection_disconnected`; a deletion or `closed` stays. A lasting reason
   overwrites a disconnect's, or the reconnect would undo it.
 - **A join links nothing.** Treating a bot join as an invitation would start
   routing a room nobody asked Rally into.
@@ -209,10 +209,14 @@ the object refuses the database as another workspace's.
 ## Data model
 
 `external_conversation_bindings` (WorkspaceDO, migration 85): `installation_id`,
-`path_json`, `target_kind` (`space` | `conversation`; a `space` row is a
-retired room link), `space_id` or (`parent_kind`, `parent_id`, `substream_id`),
-`state` (`pending` | `active` | `suspended`), `suspended_reason`, `claim_key`,
-timestamps, and `space_matched` (migration 90). CHECKs tie a target kind to
+`path_json`, `target_kind`, `space_id` or (`parent_kind`, `parent_id`,
+`substream_id`), `state` (`pending` | `active` | `suspended`),
+`suspended_reason`, `claim_key`, timestamps, and `space_matched` (migration
+90). Every live row is a `conversation` target with `parent_kind =
+'automation'`: a run child. The CHECK still admits `target_kind = 'space'`
+and a `workstream` parent, and `space_id` and `space_matched` remain as
+columns, but WorkspaceDO migration 147 deleted every row that used them, and
+nothing writes one. `pending` was written only by the retired Thread claim. CHECKs tie a target kind to
 its columns, a suspended state to a reason, and a pending state to a claim
 key. A partial index on the conversation target serves suspending one
 Sidekick's bindings.
@@ -231,9 +235,11 @@ cannot widen what the bot joins.
 **What changed:** `resolve` no longer answers `spawn` (an addressed message
 under a room bound to a Space created a Channel there) and its `none` no
 longer carries `roomBound`. `linkRoom`, `ExternalRoomLinkRequestSchema` and
-`ExternalRoomSpaceMatchRequestSchema` are deleted. Room rows (`target_kind =
-'space'`) stay in the table until plan step C-7's migration removes them; until
-then they resolve as `none`.
+`ExternalRoomSpaceMatchRequestSchema` are deleted. WorkspaceDO migration 147
+(plan step C-7) deleted every room row (`target_kind = 'space'`) and every
+binding to a Thread (`parent_kind = 'workstream'`); the CHECK still admits
+both, and no row holds either. A bot joining, leaving or archiving a room now
+changes no row.
 
 **Why:** Plan step C-4 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
 Spaces and Channels are retired, the Slack ingress already answered every
@@ -241,8 +247,9 @@ addressed message with where work starts now, and nothing called the link.
 Run-child bindings, the binding that lets a Slack reply continue a Sidekick
 run, are unchanged.
 
-**Consequences:** The room half of this document below describes the retired
-mechanism and is kept as its record until the documentation pass rewrites it.
+**Consequences:** The only bindings are run threads. The room lifecycle events
+still arrive and are logged; only `channel_id_changed` still moves rows,
+because a run's thread lives under the renumbered room.
 
 ### 2026-10-06 — A room's privacy belongs to its Channels, not its Space
 

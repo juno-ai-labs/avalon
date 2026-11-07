@@ -20,7 +20,7 @@ positive result still requires its canonical grant. New requests pass session an
 workspace-membership middleware, which reads D1. Checks inside `WorkspaceDO`
 (grants, invitations, Canvas and Sidekick viewer checks) read its local copy, `workspace_member_status`, which the
 `workspace_relationship_changed` consumer updates before it walks a revocation
-([`hosted-conversation-parents.md`](hosted-conversation-parents.md#workspace-relationships-are-local)).
+([`data-model.md`](data-model.md#conversations), `workspace_member_status`).
 This does not relax mutation checks, socket
 admission, or local socket visibility/revocation. Missing authority remains a
 retryable failure for direct reads and explicit partial status for search/lists.
@@ -51,7 +51,7 @@ the D1 intent for the existing scheduled recovery path.
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/worker-events.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate — and session expiry plus durable relationship dispatch on the existing cron. |
 | `apps/api/src/services/workspace-relationship-delivery.ts` | Retries D1-recorded membership changes through the existing revocation queue. Queue acceptance marks dispatch, not application. |
-| `apps/api/src/durable-objects/{workspace-do,substream-agent,artifact-host-do}.ts` | `revokeSocketAccess` on each socket-holding object. `WorkspaceDO.revokeSocketAccess` names every Canvas and its children's conversations in its answer, so the caller closes their feed sockets. A Sidekick holds no socket; the consumer asks `WorkspaceDO.listChildren` for it instead. |
+| `apps/api/src/durable-objects/{workspace-do,agent-loop-do,artifact-host-do}.ts` | `revokeSocketAccess` on each socket-holding object. `WorkspaceDO.revokeSocketAccess` names every Canvas and its children's conversations in its answer, so the caller closes their feed sockets. A Sidekick holds no socket; the consumer asks `WorkspaceDO.listChildren` for it instead. |
 | `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the expired-session backlog older than seven days revoked so the sweep starts clean, and indexes the query it runs every five minutes. The cutoff matters: marking a row suppresses its announcement forever, and migrations run before the Worker deploys, so anything recent is left for the sweep to announce properly. |
 
 ### The producer writes the fact and publishes it
