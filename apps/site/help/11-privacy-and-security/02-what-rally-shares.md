@@ -22,7 +22,7 @@ Open **Settings → Application** and look under **Privacy & diagnostics**. The
 Rally shares:
 
 - Product usage: which features you use and when, described as events such
-  as opening a Thread, not as the contents of what you wrote.
+  as opening a Canvas, not as the contents of what you wrote.
 - Error reports: details of errors in the app, cleaned of sensitive
   information first, with a short trail of the steps that led up to the error.
   Rally calls these steps *breadcrumbs*.
@@ -58,7 +58,7 @@ them to keep the service working, and they cannot be turned off.
 > The switch controls what the desktop app reports about your use of it.
 > Rally's servers also keep their own operational logs and traces, sent to the
 > analytics provider listed below. The public Sub-processors list says those
-> traces can include Thread titles, descriptions and message previews.
+> traces can include Canvas and Sidekick names, descriptions and message previews.
 
 ## The outside companies that help run Rally
 
@@ -76,7 +76,7 @@ Center. At the time of writing it names these:
 | Anthropic | A backup AI model, used when needed. |
 | Microsoft (Azure) | Dictation and transcription, only when that feature is turned on. |
 | PostHog | Product analytics, and Rally's server logs and traces. |
-| Resend | Email: invitations, notifications and mail sent in to Threads. |
+| Resend | Email: invitations, notifications and mail sent to Sidekicks. |
 | Firecrawl | Web searches and page reading that you or a task ask for. |
 
 Treat the Trust Center page as the authority, not this table. Rally updates

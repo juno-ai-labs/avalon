@@ -8,20 +8,20 @@ chooses what to do, and how to ask so you get what you meant.
 
 ## One Rally per conversation
 
-Each Thread has one agent, called Rally, working in the conversation
-alongside the people. Each Breakout has its own, and so does each conversation
-you have with a Sidekick. It is one ongoing thread of work per conversation,
+Each Canvas has one agent, called Rally, working in the conversation
+alongside the people. Each Sidekick has its own conversation too, and each of
+its runs works on its own. It is one ongoing thread of work per conversation,
 not a fresh agent for every message. That is why you can say "now do the same
 for March" and Rally knows what "the same" was.
 
-When you are alone in a Thread, every message goes to Rally. When other people
+When you are alone in a Canvas, every message goes to Rally. When other people
 are there too, Rally decides whether each message is meant for it. Mention
 **@Rally** to be sure. The details are in
-[People in the room](../02-working-in-a-channel/05-people-in-the-room.md).
+[People in a Canvas](../02-canvases/07-people-in-a-canvas.md).
 
 A message you send while Rally is busy does not interrupt it. Rally finishes
 the step it is on, then reads your message and takes it into account (that is
-steering, from [While Rally works](../02-working-in-a-channel/03-while-rally-works.md)).
+steering, from [While Rally works](../02-canvases/04-while-rally-works.md)).
 
 ## How it goes about a job
 
@@ -45,7 +45,7 @@ its head (more in [Code, data and the Terminal](03-code-files-and-the-terminal.m
 **It asks only when it must.** If a detail is missing and no tool can find it,
 Rally asks you. If a decision is yours, it puts a question card in the
 conversation, as described in
-[While Rally works](../02-working-in-a-channel/03-while-rally-works.md).
+[While Rally works](../02-canvases/04-while-rally-works.md).
 
 **It knows where to look.** For public facts, news and documentation, Rally
 searches the web. For your company's own information (your email, your issues,
@@ -123,7 +123,7 @@ The built-in skills are:
   sets up a Sidekick that watches for it. It prefers the other app's own
   notifications, and otherwise checks no more often than every ten minutes.
   Sidekicks have their own chapter, starting at
-  [What a Sidekick is](../07-sidekicks/01-what-a-sidekick-is.md).
+  [What a Sidekick is](../03-sidekicks/01-what-a-sidekick-is.md).
 - **Building live sites.** How to build and host a small web page or app (see
   [Live sites](../06-things-rally-makes/03-live-sites.md)).
 
@@ -152,8 +152,8 @@ A few things to know:
 - Rarely, a conversation is too big for Rally to take in at all.
   You then see a message that begins **This conversation is longer than the
   selected model will accept. Start a new thread to continue**. Start a
-  new Thread and tell Rally what it needs to know.
-- Rally does not reach into your other Threads to fill gaps. Each
+  new Canvas and tell Rally what it needs to know.
+- Rally does not reach into your other Canvases to fill gaps. Each
   conversation stands on its own.
 
 ## What you will not find
@@ -162,7 +162,7 @@ Two things people often look for:
 
 - **A model picker.** You cannot choose which AI model Rally uses.
 - **A meter.** There is no price, token count or credit counter in the
-  Thread, the message box or the conversation.
+  Canvas, the message box or the conversation.
 
 ## Asking well
 
@@ -178,6 +178,6 @@ A good request saves a round trip. These habits help:
 - **Attach the file** rather than describing it. Rally always answers a
   message with an attachment.
 - **Steer, don't restart.** If the first answer is close, tell Rally what to
-  change in the same Thread. It remembers the rest.
+  change in the same Canvas. It remembers the rest.
 
 Next: [Research and the built-in browser](02-research-and-the-web.md).

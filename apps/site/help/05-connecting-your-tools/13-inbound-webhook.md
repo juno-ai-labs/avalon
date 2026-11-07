@@ -5,7 +5,7 @@ description: Send activity into Rally from any system that has no ready-made con
 
 Not every tool your team uses has a card in Settings. If yours can send a web request when something happens, an inbound webhook lets it tell Rally anyway. This page leans a little technical, and is written for whoever on your team sets up that other system.
 
-A webhook is a web address that one system calls to tell another that something happened. Rally gives you the address and a secret, you put both into the other system, and from then on each event it sends arrives in Rally as activity. That activity can start a Sidekick or show up in a Thread. Your alerting tool, an internal admin panel, a form service: anything that can send a signed web request will do.
+A webhook is a web address that one system calls to tell another that something happened. Rally gives you the address and a secret, you put both into the other system, and from then on each event it sends arrives in Rally as activity. That activity can start a Sidekick. Your alerting tool, an internal admin panel, a form service: anything that can send a signed web request will do.
 
 ## Creating one
 
@@ -19,7 +19,7 @@ Both kinds of connection are offered. **Connect for me** makes a webhook whose e
 6. Copy the **Endpoint** (the address) and the **Signing secret** straight away, with **Copy endpoint** and **Copy secret**.
 
 > [!WARNING]
-> Rally shows the signing secret once and never again. Put it straight into the sending system's protected settings. Never paste it into a chat, a Thread, a Channel, an email or a support message: anyone with the secret can send Rally events that look genuine.
+> Rally shows the signing secret once and never again. Put it straight into the sending system's protected settings. Never paste it into a chat, a Canvas, an email or a support message: anyone with the secret can send Rally events that look genuine.
 
 You can create as many inbound webhooks as you need. One for each sending system keeps things tidy.
 
@@ -57,7 +57,7 @@ If the secret is lost or might have leaked, an owner or administrator clicks **R
 
 Rally has no way to check what an outside system says, so it treats the content of a webhook event as unverified. In particular, if an event claims something about a person, Rally does not take that as proof of who they are.
 
-To have events do something, build a Sidekick that starts on them. [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md) shows how.
+To have events do something, build a Sidekick that starts on them. [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md) shows how.
 
 ## When delivery fails
 

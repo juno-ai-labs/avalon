@@ -15,7 +15,7 @@ do, and does it.
 
 ## A colleague, not a search box
 
-Every Thread has its own Rally. It remembers what was said earlier in that
+Every Canvas has its own Rally. It remembers what was said earlier in that
 conversation, knows which files are in it, and picks up where it left off when
 you come back tomorrow. A search box forgets you the moment you press Return.
 Rally is closer to a colleague who sat in on the meeting.
@@ -31,7 +31,7 @@ page can be out of date. A memory can be stale. A spreadsheet can have a typo
 in it that Rally faithfully carries into its summary. When something matters
 (a number going to a client, an email going to your boss, a change to real
 code), read what Rally did before you rely on it. The activity rows and
-sources from [chapter 2](../02-working-in-a-channel/index.md) are there for
+sources from [chapter 2](../02-canvases/index.md) are there for
 exactly that.
 
 ## What is in this chapter

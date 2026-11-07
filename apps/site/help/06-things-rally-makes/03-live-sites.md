@@ -5,11 +5,11 @@ description: Ask for a web page or small app and Rally builds it, hosts it and g
 
 Some requests are not for documents at all. A landing page, a dashboard, a tip calculator, a habit tracker, a poll, a sign-up sheet for the team offsite: what you want there is a page people can open and click. For those, Rally builds a small website, puts it on the internet, and gives it its own web address. It does not paste a screenful of code into the chat and wish you luck.
 
-These are **live sites**, and they are artifacts like any other. They sit in the Thread's **Artifacts** list, they keep their versions, and you change them by asking.
+These are **live sites**, and they are artifacts like any other. They sit in their Canvas like any other artifact, they keep their versions, and you change them by asking.
 
 ## Asking for a site
 
-Describe the page or tool you want in the Thread. A few examples:
+Describe the page or tool you want in a Canvas. A few examples:
 
 - "Make a landing page for our bake sale, with the date, the place and a menu."
 - "Build a simple dashboard that shows the numbers in this spreadsheet as charts."
@@ -26,7 +26,7 @@ A site can be one of three things, and Rally picks from what you asked for:
 
 ### Changing a site
 
-Ask for changes in the same Thread: "make the button green", "add a field for t-shirt size". Rally updates the same site, and it stays at the same address, so a link you already sent keeps working and shows the new version.
+Ask for changes in the same Canvas, or leave a [comment](../02-canvases/06-comments.md) on the part of the page you mean: "make the button green", "add a field for t-shirt size". Rally updates the same site, and it stays at the same address, so a link you already sent keeps working and shows the new version.
 
 A request for a new thing makes a new site at a new address, even if it looks a lot like an existing one.
 
@@ -60,7 +60,7 @@ A site that remembers things, such as a poll or a sign-up sheet, has a **Stored 
 While the table loads you see **Reading…**. Before anyone has submitted anything, the view says **No data yet** and **Nothing has been submitted yet.** If it cannot read the data, it says **Data unavailable** and **Could not read this site's data.**
 
 > [!IMPORTANT]
-> The table shows at most the first 200 rows, and **Copy as CSV** copies those same 200 rows. If your sign-up sheet is more popular than that, ask Rally in the Thread about the full data. Rally can read what a site has collected and tell you about it.
+> The table shows at most the first 200 rows, and **Copy as CSV** copies those same 200 rows. If your sign-up sheet is more popular than that, ask Rally in the Canvas about the full data. Rally can read what a site has collected and tell you about it.
 
 ## Sharing a site, and who can see it
 
@@ -77,11 +77,11 @@ Some more detail on access:
 - If a site must be private, say so when you ask for it, for example "make this sign-up sheet only open to people in our Rally Organization". Rally then builds a site that checks who is visiting and turns away anyone who is not signed in to Rally. A plain page that looks the same for everyone cannot be made private.
 - The public address always shows the latest version. Earlier versions are only visible inside Rally, and they show the page as it was, never live data.
 - **Open in browser** and **Open in a new window** sign you in to the site as yourself for that visit. That sign-in lasts 24 hours. Use the buttons each time rather than reusing an address from your browser's history, because the sign-in part of that address only works once and expires within a minute.
-- People you have invited into a Thread as guests (see [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md)) can open a site that is part of what was shared with them.
+- People you have invited into the Canvas as guests (see [Sharing with people outside your Organization](../02-canvases/09-sharing-with-guests.md)) can open a site that is part of what was shared with them.
 
 ## Limits
 
 - Each published version of a site can be at most about 25 MB. That is a lot of web page, unless your bake sale has an ambitious photo gallery.
 - Rally does not paste a site's code into the chat. The site is the answer.
 
-Next: the other half of the shelf, things that come in from outside, in [Resources: things you bring in](04-resources.md).
+Next: things that come in from outside, in [Resources: things you bring in](04-resources.md).

@@ -8,43 +8,55 @@ A Sidekick that does its work and tells nobody is keeping a diary. This page
 covers getting the results in front of the right people, and keeping a
 repeating Sidekick from telling you the same thing twice.
 
-## The instructions decide
+## Its own conversation, always
 
-Rally does not send a run's result anywhere by itself. Where the work goes
-is part of the Sidekick's instructions, which means you choose it in plain
-words while you make the Sidekick, and you can change it the same way.
+Every run posts its reply as a row in the Sidekick's conversation, so everyone
+the Sidekick is shared with can see how it went. Beyond that, where the work goes is part of the
+Sidekick's instructions, which means you choose it in plain words while you
+make the Sidekick, and you can change it the same way.
 
-A Sidekick can deliver its work:
+A Sidekick can also deliver its work:
 
-- **into its home Thread or Breakout.** A Thread Sidekick posts into the
-  conversation it belongs to unless you tell it otherwise. "Post the summary
-  here" is all it takes.
-- **into other conversations you attach to it.** Ask the drafting assistant
-  to attach another Thread, and the Sidekick can post there too.
-- **out through your connected tools.** "Send me a Slack DM", "email the
-  team", "add a comment to the Linear issue". Anything Rally can do with a
-  connected tool, a run can do (see
+- **into a Canvas.** "Write the changelog up as a Canvas" makes a new Canvas on
+  each run, and "keep the incident Canvas up to date" publishes a new version
+  of the same one. A card for the Canvas appears in the conversation, and the
+  Canvas joins the Canvases list under **From Sidekicks**.
+- **out through your connected tools.** "Send me a Slack DM", "post in
+  #status", "email the team", "add a comment to the Linear issue". Anything
+  Rally can do with a connected tool, a run can do (see
   [Connecting your other tools](../05-connecting-your-tools/index.md)).
 
-Different runs can send to different places, too: "Post routine weeks here,
-but DM me if anything is on fire."
+Different runs can send to different places, too: "Update the Canvas on
+routine weeks, but DM me if anything is on fire."
 
-A Sidekick's post appears in the conversation under the Sidekick's own name,
-so everyone can tell it apart from a person or from Rally answering a
-question. Now and then a post is labelled "Automation", the old name for a
+A Sidekick's post appears under the Sidekick's own name, so everyone can tell
+it apart from a person or from Rally answering a question. Now and then a post
+is labelled "Automation", the old name for a Sidekick.
+
+## Canvases it writes to
+
+A Canvas a Sidekick makes starts out open to the people the Sidekick is shared
+with. From then on it is an ordinary Canvas: people can talk to Rally about it,
+comment on it and share it further, as
+[Who can see what](../02-canvases/08-who-can-see-what.md#canvases-from-a-sidekick)
+explains. When the Sidekick runs again and its instructions say to update that
+Canvas, it publishes a new version, and the version says it came from the
 Sidekick.
+
+Every Canvas a Sidekick writes to is listed in its details column, so you can
+find the latest report without scrolling back through the conversation.
 
 Three things trip people up.
 
-- **Say where.** A personal Sidekick with no home conversation and no
-  connected tools to send through can only leave its work in its
-  [Run history](04-the-sidekicks-window.md#run-history), where only a
-  summary is visible. If a Sidekick seems to run and say nothing, check that
-  its instructions tell it where to post.
-- **It can only post where you can.** A Sidekick can deliver only to places
-  the person who set it up is allowed to post.
+- **Say where.** If people outside the Sidekick's conversation need the result,
+  say so in its instructions. A Sidekick that only replies in its own
+  conversation is easy to miss.
+- **It can only post where its access allows.** A Sidekick delivers through the
+  access of the person it is acting as (see
+  [Tools and delegation](06-tools-and-delegation.md)), so it can post only
+  where that person could.
 - **Describing is not sending.** A run that only says it sent a message has
-  not sent one. If nothing arrived, look at the run history; the run may have
+  not sent one. If nothing arrived, unfold the run's row; the run may have
   stopped or be waiting for input.
 
 ## Delivering to Slack
@@ -67,13 +79,14 @@ morning with nothing worth sending, it stays quiet. If your Gmail or Slack conne
 stops working, the run waits for you with **Needs input**.
 
 When a Sidekick starts a Slack thread, people can reply in that thread and
-the run carries on with their reply in mind. More on that in
+the same run carries on with their reply in mind, and its row in the
+Sidekick's conversation updates. More on that in
 [Slack: reading, replies and your own connection](../08-rally-everywhere/02-more-from-slack.md).
 
 ## Remembering between runs
 
-Every run has its own conversation, but can reuse files left by the wizard
-or earlier runs. Sharing files does not automatically tell it what work was
+Every run starts fresh, but can reuse files left by the drafting assistant or
+earlier runs. Sharing files does not automatically tell it what work was
 completed. Without records, a Sidekick asked to "tell me what is new" could
 report the same five issues every hour.
 
@@ -88,8 +101,9 @@ What this means for you:
   exists without reporting it, then reports only what is new from then on.
   If you want to be caught up on everything already there, say so while
   drafting.
-- **Quiet runs stay quiet.** A run that finds nothing new finishes without
-  posting.
+- **Quiet runs stay quiet.** A run that finds nothing new sends nothing
+  anywhere else. Its row in the conversation says so, such as **No changes this
+  week**.
 - **What you tell it while drafting sticks.** The drafting conversation and
   every run share the Sidekick's memory. Say "remember I prefer short
   summaries" in the Sidekick's conversation and its runs will know.

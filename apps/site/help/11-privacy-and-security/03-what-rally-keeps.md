@@ -4,7 +4,7 @@ description: How long Rally keeps your content, what archiving and leaving do, a
 nav_title: What Rally keeps
 ---
 
-Rally is built to remember. A Thread you started in spring is still there in
+Rally is built to remember. A Canvas you started in spring is still there in
 autumn, with every message, file and artifact version. That is the point of
 it, and it also means you should know how long things stay and how to have
 them removed. This page summarizes section 8 of the
@@ -13,14 +13,14 @@ them removed. This page summarizes section 8 of the
 
 > [!NOTE]
 > The Privacy Policy still uses some of Rally's old names. Where it says
-> *workspace*, read Organization; *threads* are Threads; *automations*
-> are Sidekicks.
+> *workspace*, read Organization; *threads* are the conversations Rally had
+> before Canvases; *automations* are Sidekicks.
 
 ## How long Rally keeps things
 
 | What | How long |
 | --- | --- |
-| Your work: Threads, Breakouts, messages, files, artifacts, Sidekicks and their runs, including anything Rally fetched from your connected tools while doing the work | No automatic expiry. It stays until someone with the right to do so deletes it, or the Organization is deleted. |
+| Your work: Canvases, messages, files, artifacts, Sidekicks and their runs, including anything Rally fetched from your connected tools while doing the work | No automatic expiry. It stays until someone with the right to do so deletes it, or the Organization is deleted. |
 | The Organization's audit records (who joined, who changed what) | For as long as the Organization exists. |
 | The one-time check Rally uses when you link your Slack account | 15 minutes. |
 | Rally's own records of product events and deliveries | Up to 90 days. |
@@ -38,32 +38,31 @@ Two more points from the policy:
 
 ## Archiving is not deleting
 
-Throughout this manual you have met **Archive**: for Threads and Breakouts in
-[Arranging your Threads](../03-spaces-and-breakouts/02-arranging-channels.md),
-for Sidekicks and for resources. In every case archiving takes
-something out of sight. It does not erase it.
+Throughout this manual you have met **Archive**: for Sidekicks and for
+resources. In every case archiving takes something out of sight. It does not
+erase it.
 
-- A Thread. Archiving takes it out of the lists of everyone who can see
-  it, and nobody, you included, can open it again. Any run in progress stops,
-  scheduled follow-ups stop, and mail to its address is refused. As the dialog
-  says: **Nothing is deleted, but Rally has no way to bring a thread back.**
-- A Breakout. The same: it is kept, and there is no control in the app to
-  restore it.
 - A Sidekick. Its schedules stop, and its conversation and run history stay
   stored but can no longer be viewed. It cannot be unarchived.
-- A resource. It leaves the Thread's list. The original file in Google
-  Drive, Slack or wherever it came from is not touched.
+- A resource. It leaves the Canvas. The original file in Google Drive, Slack
+  or wherever it came from is not touched.
 
 Archive when you want something gone from view. If you need the content
 erased, ask for deletion as described below.
+
+## Conversations from before Canvases
+
+When Rally moved to Canvases and Sidekicks, the conversations it had before,
+in Channels, Threads and Breakouts, were removed and their links stopped
+opening. They cannot be brought back in the app.
 
 ## Disconnecting a tool
 
 When you delete a connection in
 [Settings → Connections](../05-connecting-your-tools/01-connections.md), Rally
 stops reaching that tool. Work Rally already did with it stays in your
-Threads. The Privacy Policy spells this out for Slack: disconnecting stops new
-access but does not delete Rally Threads, summaries or artifacts that already
+Canvases and Sidekicks. The Privacy Policy spells this out for Slack: disconnecting stops new
+access but does not delete Rally conversations, summaries or artifacts that already
 contain Slack information. To remove the Rally app from Slack itself, a Slack
 administrator also has to uninstall it in Slack.
 
@@ -78,31 +77,6 @@ have that data deleted, ask for it as described below.
 
 [Leaving, removing and closing](../10-running-an-organization/05-leaving-and-removing.md)
 walks through both.
-
-## On your iPhone
-
-The iPhone app's **Settings** has an **Account deletion** section with two
-items. Their names promise a little more than one of them does, so read this
-before you tap.
-
-**Delete account on this device** asks you to confirm in a box titled
-**Delete account on this device?**, then:
-
-- leaves the Organization you have open on the phone,
-- signs you out, and
-- removes your saved sign-in from the iPhone's Keychain.
-
-It does **not** erase your Rally account, and it does not erase the
-Organization's data for the other members. The screen says so, and so do we.
-
-**Request data deletion** opens Rally's Privacy Policy, which explains how to
-ask for real erasure.
-
-> [!WARNING]
-> **Delete account on this device** makes you leave your current Organization,
-> which affects every device you use, not only the phone. To come back you need
-> a new invitation. If you only want the phone signed out, tap **Sign out**
-> instead.
 
 ## Asking for your data to be deleted
 
@@ -124,5 +98,5 @@ What happens next:
 - Some records may be kept where the law allows or requires it, such as
   security and legal records.
 
-Chapter 12 has more on writing to the support team, including what to put in
+Chapter 11 has more on writing to the support team, including what to put in
 your message.

@@ -9,13 +9,13 @@ client who also works in Rally. One Rally account can belong
 to several Organizations, and you move between them from the account menu
 without signing out.
 
-As the [chapter opening](index.md) said, Organizations are separate worlds. Threads, Channels, Sidekicks, connections and members never cross from
+As the [chapter opening](index.md) said, Organizations are separate worlds. Canvases, Sidekicks, connections and members never cross from
 one to another. Rally shows you one Organization at a time.
 
 > [!NOTE]
 > Rally is turning on the Organization switcher gradually, so your account may
-> not have it yet. If the account menu shows only **Sidekicks**, **Settings**
-> and **Log out**, the switcher is not on for you. Everything else in Rally
+> not have it yet. If the account menu shows only **Log out**, the switcher is
+> not on for you. Everything else in Rally
 > works the same, and you can still accept invitations when you sign in, as
 > described in [Create or join an Organization](../01-getting-started/02-create-or-join-an-organization.md).
 
@@ -28,7 +28,7 @@ belong to.
 - A **check mark** sits beside the one you are in now.
 - A **green dot** beside another one means something has happened there. Hover
   over it for the details, such as how many mentions are waiting for you, or
-  how many Threads are waiting for your input. **Unread activity** means there
+  how many Sidekicks are waiting for your input. **Unread activity** means there
   is something new to look at, but nothing is waiting on you.
 - If you belong to Organizations in different regions, each row also shows its
   region.
@@ -44,7 +44,7 @@ over.
 
 Click its name in the **Organizations** section. A small spinner appears on the
 row while Rally gets it ready, then Rally reopens in that Organization, with
-its own Channels, Threads and settings.
+its own Canvases, Sidekicks and settings.
 
 Now and then Rally asks you to confirm who you are before it opens another
 Organization, usually because you have not been there for a while. The row
@@ -78,9 +78,9 @@ ready to switch to.
 ## Create another Organization
 
 On the Mac, the account menu does not currently offer a way to create a second
-Organization. On your iPhone, the **Organizations** screen has a **Create an
-organization** section, as described in
-[Rally on your iPhone](../08-rally-everywhere/06-rally-on-iphone.md). An
+Organization. In the web browser version, **Your organizations** has **Create
+an organization**, as described in
+[Rally in a web browser](../08-rally-everywhere/04-rally-in-a-browser.md#starting-an-organization). An
 Organization created there belongs to your account, so it appears in the Mac's
 account menu too when the switcher is on.
 
