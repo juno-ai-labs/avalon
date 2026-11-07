@@ -6,7 +6,6 @@ import {
   clientOpensGuestWorkspaces,
   clientReadsIndividualSpaces,
   clientReadsNewMessages,
-  clientReadsResolutionSuggestions,
   requireCurrentClientContract,
   type ClientRequestHeaders,
 } from "../src/lib/client-contract";
@@ -102,13 +101,11 @@ describe("who is shown a Space scoped individual", () => {
 });
 
 
-describe("human reply compatibility after resolution suggestions", () => {
-  it("withholds reply rows from resolution-only builds while admitting both in the new build", () => {
+describe("human reply compatibility", () => {
+  it("withholds reply rows from builds before contract 11 and admits them from it", () => {
     const resolutionBuild = request({ origin: "app://rallywithai", "x-rally-client-contract": "10" });
-    expect(clientReadsResolutionSuggestions(resolutionBuild)).toBe(true);
     expect(clientReadsNewMessages(resolutionBuild)).toBe(false);
     const replyBuild = request({ origin: "app://rallywithai", "x-rally-client-contract": "11" });
-    expect(clientReadsResolutionSuggestions(replyBuild)).toBe(true);
     expect(clientReadsNewMessages(replyBuild)).toBe(true);
   });
 });

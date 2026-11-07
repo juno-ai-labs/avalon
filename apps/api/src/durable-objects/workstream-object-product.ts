@@ -635,23 +635,6 @@ export class WorkstreamObjectProductService {
     );
   }
 
-  /** Parent-owned archive delivery; stop and archive share the local commit. */
-  async applyPrivateChildLifecycle(version: number, archivedAt: number | null): Promise<void> {
-    const now = Date.now();
-    await this.objectStore.commitWithRegionalEffects((sql) => {
-      const current = first(sql.exec<{ version: number; archived_at: number | null }>(
-        `SELECT version, archived_at FROM private_child_lifecycle_authority WHERE id = 1`));
-      if (current && current.version >= version) return false;
-      sql.exec(`INSERT INTO private_child_lifecycle_authority (id, version, archived_at) VALUES (1, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET version = excluded.version, archived_at = excluded.archived_at`, version, archivedAt);
-      if (archivedAt !== null) this.requestArchiveStopInTransaction(sql, now);
-      sql.exec(`UPDATE workstream SET archived_at = ?,
-        exact_state = CASE WHEN ? IS NOT NULL THEN 'archived' WHEN exact_state = 'archived' THEN 'idle' ELSE exact_state END,
-        listing_epoch = listing_epoch + 1, updated_at = ? WHERE id = 1`, archivedAt, archivedAt, now);
-      return true;
-    }, (_sql, changed) => changed ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }] : []);
-  }
-
   private beginInputPreparation(inputId: string, now: number): void {
     const claim = this.activeInputPreparations.get(inputId);
     this.activeInputPreparations.set(inputId, {
@@ -2280,39 +2263,6 @@ export class WorkstreamObjectProductService {
       throw new ApiError(409, "participant_reload_failed", "The participant was added but could not be read back");
     }
     return ParticipantSchema.parse(participant);
-  }
-
-  /** Commit the child's roster projection and participant-added notification together. */
-  privateChildMembershipEffects(input: {
-    substreamId: string;
-    userId: string;
-    actorUserId: string;
-    actorName: string;
-    recipientName: string;
-    active: boolean;
-    now: number;
-    suppressNotification?: boolean;
-  }): RegionalEffectCommand[] {
-    const root = this.root();
-    const viewer = { partitionKey: `user:${input.userId}`, effect: this.userEffect(root, input.userId) };
-    if (!input.active || input.userId === input.actorUserId || input.suppressNotification) return [viewer];
-    const epoch = first(this.storage.sql.exec<{ participant_epoch: number }>(
-      `SELECT participant_epoch FROM participants WHERE user_id = ?`,
-      input.userId,
-    ))?.participant_epoch ?? 0;
-    return [
-      viewer,
-      ...this.participantAddedEffects({
-        root,
-        userId: input.userId,
-        actorUserId: input.actorUserId,
-        actorName: input.actorName,
-        recipientName: input.recipientName,
-        epoch,
-        now: input.now,
-        substreamId: input.substreamId,
-      }),
-    ];
   }
 
   /** Request-local profiles shared by effects and realtime hydration; never access evidence. */

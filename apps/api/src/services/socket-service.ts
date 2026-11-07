@@ -1,7 +1,7 @@
 import { isConfiguredRegion } from "@rally/contracts/regions";
 import { TRANSCRIPTION_TICKET_LIFETIME_SECONDS } from "@rally/contracts/realtime-transcription";
 import type { Region } from "@rally/contracts/regions";
-import { RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT, RALLY_HEADERS, rallyHeaderAliases, readRallyHeader } from "@rally/contracts/http-headers";
+import { RALLY_HEADERS, rallyHeaderAliases, readRallyHeader } from "@rally/contracts/http-headers";
 import { jwtVerify, SignJWT } from "jose";
 import {
   asSubstreamId,
@@ -47,7 +47,6 @@ interface SocketClaims {
   afterSequence?: number;
   speculative?: true;
   admission?: WorkstreamSocketAdmission;
-  readsResolutionSuggestions?: boolean;
   /** The staff member behind a support session (`docs/impersonation.md`). */
   impersonatorUserId?: UserId;
 }
@@ -69,7 +68,6 @@ export interface WorkstreamSocketAdmission {
 export interface IssueWorkstreamSocketTicketOptions {
   admission?: Omit<WorkstreamSocketAdmission, "version">;
   issuedAt?: number;
-  readsResolutionSuggestions?: boolean;
 }
 
 interface WorkspaceSocketClaims {
@@ -151,7 +149,6 @@ export async function issueSocketTicket(
   const now = options.issuedAt ?? Math.floor(Date.now() / 1_000);
   return new SignJWT({
     purpose: "workstream_socket",
-    ...(options.readsResolutionSuggestions ? { resolution_suggestions: true } : {}),
     sid: auth.sessionId,
     wid: auth.workspaceId,
     pk: parent.kind,
@@ -258,7 +255,6 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       region: payload.region,
       ticketId: payload.jti,
       expiresAt: payload.exp,
-      readsResolutionSuggestions: payload.resolution_suggestions === true,
       ...(afterSequence === undefined ? {} : { afterSequence }),
       ...(speculative ? { speculative: true as const } : {}),
       ...(admission ? { admission } : {}),
@@ -494,7 +490,6 @@ export class SocketService {
         ),
       ));
       const headers = new Headers(request.headers);
-      headers.set(RALLY_HEADERS.CLIENT_CONTRACT, claims.readsResolutionSuggestions ? String(RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT) : "0");
       // The ticket has been verified; the room has no use for it and should not
       // receive a live credential on a subrequest it does not authenticate with.
       headers.delete("sec-websocket-protocol");

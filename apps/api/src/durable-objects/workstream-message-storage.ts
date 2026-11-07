@@ -130,7 +130,7 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
   return cursor.toArray()[0];
 }
 
-/** Identifies the source marker for both unread tracking and suggestion resolution. */
+/** Identifies a merge's source marker for unread tracking. */
 export function mergedIntoMarker(structuredContentJson: string | null | undefined): { mergedByUserId: string | null } | null {
   if (!structuredContentJson) return null;
   try {

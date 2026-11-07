@@ -13,7 +13,6 @@ import {
 } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
-import { clientReadsResolutionSuggestions } from "../lib/client-contract";
 import { requestDeferral } from "../lib/defer";
 import { workspaceRealtimeInvalidation } from "../middleware/workspace-realtime";
 import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
@@ -191,7 +190,6 @@ conversationRoutes.get(
           param.substreamId,
           afterSequence,
           speculative,
-          clientReadsResolutionSuggestions((name) => c.req.header(name)),
         ));
       // The upgrade this authorizes is a new connection, which the platform
       // traces as its own invocation with its own trace id. The ticket id is the
