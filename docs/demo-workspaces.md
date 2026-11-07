@@ -114,8 +114,9 @@ is a typed name; the **company's directory** — everyone with an account on the
 company's own email domain who has signed in to this region — is what the New
 demo form suggests, and the only accounts a request may name. `demo-cast.ts` holds that domain — the one
 place it is written down — and the query that reads it. The pack names each
-part it is casting for (`roleLabels`: Solutions engineer / IT, Sales lead / business owner, and
-Manager / finance approver for the pack in service), because a role token reads as this pack's own character and a
+part it is casting for (`roleLabels`: Finance lead for `theo` and Engineering
+lead for `priya` in the pack in service; the presenter is chosen from the
+template's members and is not labelled), because a role token reads as this pack's own character and a
 colleague put in the wrong part has its scripted words attributed to them under
 their real name.
 
@@ -184,6 +185,26 @@ pack never names a user id and one pack serves every demo.
 
 There is no Thread, Channel, Breakout, Space or room step, and no substream:
 those surfaces are retired, and the earlier steps went with them.
+
+#### The placeholder pack
+
+`PLACEHOLDER_DEMO_PACK` is the
+[mockup's](PRDs/2026-11-06_canvases-and-sidekicks/design.html) Organization,
+with the presenter as Maya, Theo (finance) and Priya (engineering):
+
+- **Q4 revenue review** — Maya's Canvas, shared with Theo. Rally drafts the
+  board review and publishes it, Theo asks for October churn and Rally
+  publishes version 2, and Theo keeps the accounts board-only. It shows shared
+  work with Rally and an artifact that versions.
+- **Launch plan** — Theo's Canvas, open to the Organization, with Priya's
+  attached checklist and Rally's answer to her. It shows planning across a
+  team, and a Canvas that is unread to the presenter.
+- **Weekly changelog** — an Organization Sidekick on a Friday schedule whose
+  one run wrote **Weekly changelog · Nov 6**. It shows a Sidekick that has
+  already done its job, and the Canvas it writes.
+- **Incident triage** — Priya's Sidekick shared with Maya and Theo, whose run
+  reported a rollback and whose conversation holds Priya taking the fix. It
+  shows a Sidekick shared with people, and talking in its conversation.
 
 What Rally says is part of the step that starts its run — `assistant`, a single
 turn that is either prose (`say`) or a question (`ask`). `@{role}` in any prose
@@ -649,6 +670,14 @@ and no Azure transport, because production's default model is Azure-first
 ## Open questions
 
 These are specified in the PRD and not implemented, or resolved differently:
+
+- **Abandoning does not yet close a demo's Canvases.** Abandon retires the
+  candidate through the retirement graph, which records Channels, Sidekicks and
+  Spaces (`workspace_retirement_graph` admits `workstream`, `automation` and
+  `space`), not `canvas_directory`. Until retirement learns Canvases — server
+  work in [`workspace-retirement.md`](workspace-retirement.md)'s module, not
+  this one — the invariant that abandon retires whatever the candidate made is
+  untrue for its Canvases, which stay open to their audiences.
 
 - **Open in Rally.** The PRD's Ready state carries an **Open in Rally** button.
   The desktop's deep-link contract addresses a workspace only together with a
