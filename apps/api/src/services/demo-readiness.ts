@@ -1,192 +1,200 @@
 /**
  * The readiness barrier: when a seeded demo is Ready.
  *
- * Seeding writes through the room objects, and what a presenter sees — the
- * sidebar, the mention badge, the home screen's "waiting for you" — is a
- * projection that arrives later, through the effect Queue: one hop for a room,
- * whose parent the Organization object hosts, and two for a Sidekick. Ready is therefore not
- * "the seeder finished": it is "every intended viewer's projection matches the
- * pack". This module states what should match and reads whether it does.
+ * Seeding writes through the conversation objects, and what a presenter sees —
+ * the Canvas list, a Sidekick's row, the run in its shared conversation — is a
+ * projection that arrives later, through the effect Queue and the Organization
+ * object's own alarms. Ready is therefore not "the seeder finished": it is
+ * "every verified viewer's lists and every seeded Canvas and Sidekick match
+ * the pack". This module states what should match and reads whether it does.
  *
  * Two rules from the PRD shape it:
  *
- * - **Read as each viewer, through the ordinary surfaces.** The directory read
- *   the sidebar makes and the attention read the home screen makes, as that
- *   person — following pagination, so a first page is never the barrier. Those
- *   reads open nothing. Canonical content is read as the room's creator, who
- *   opened the room by seeding it, and never as the presenter, whose unopened
- *   state is the demo.
+ * - **Read as each viewer, through the ordinary reads.** The Canvas list the
+ *   workspace socket carries and the Sidekick list the library reads, as that
+ *   person. Those reads open nothing. Canonical content — a Canvas's
+ *   artifacts and its Chat, a Sidekick's shared conversation — is read as the
+ *   one who made it, never as the presenter, whose unopened state is the demo.
  * - **Expect from the pack and the receipts, never from what the workspace
- *   happens to contain.** The pack says which rooms exist, who is in them, how
- *   each ends, and what each verified viewer should find; the receipts say
- *   which ids those rooms got. What the directory answers is compared against
- *   that, and a mismatch is a named gap the operator can read while it waits.
+ *   happens to contain.** The pack says which Canvases and Sidekicks exist,
+ *   who each is shared with, how each Chat ends and how many versions each
+ *   artifact has; the receipts say which ids they got. A mismatch is a named
+ *   gap the operator can read while it waits.
  *
  * No wait lives here. `checkDemoReadiness` is one comparison; the preparation
  * operation decides how often to ask and how long, which is the wait policy the
  * PRD hands to the team. `docs/demo-workspaces.md` owns the feature.
  */
-import type { DemoReadinessGapSchema } from "@rally/contracts";
+import { asWorkstreamId, type DemoReadinessGapSchema } from "@rally/contracts";
+import type { CanvasSidebarRow } from "@rally/contracts/canvases";
 import type { z } from "zod";
-import type { Workstream } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { AutomationService } from "./automation-service";
+import { CanvasService } from "./canvas-service";
 import {
-  packRoomFacts,
+  packCanvasFacts,
   packSidekickFacts,
-  visibleRoomsFor,
+  visibleCanvasesFor,
   visibleSidekicksFor,
   type DemoCast,
   type DemoPack,
-  type DemoPackRoomFacts,
+  type DemoPackSharedWith,
 } from "./demo-pack";
-import { demoMemberAuth, demoSeedSpaceId, type DemoSeedReceipt } from "./demo-seeder";
-import { personalSpaceIdFor } from "../durable-objects/workspace-space-protocol";
-import { SpaceService } from "./space-service";
-import { workspaceAttention } from "./workspace-attention-service";
-import { WorkstreamDirectoryService } from "./workstream-directory-service";
+import { demoMemberAuth, type DemoSeedReceipt } from "./demo-seeder";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 
-/** One room as one viewer should find it. */
-export interface DemoRoomExpectation {
-  room: string;
-  workstreamId: string;
+/** One Canvas as the pack and the receipts describe it. */
+export interface DemoCanvasExpectation {
+  /** The pack's name for it, which names it in a gap. */
+  canvas: string;
+  canvasId: string;
   title: string;
-  space?: { key: string; name: string };
-  scope: "workspace" | "personal";
-  harnessStatus: "idle" | "completed" | "needs_input";
-  /** Everyone in the room at the end, by user id. */
-  participantUserIds: string[];
-  /** The creator, by user id: who canonical content is read as. */
   creatorUserId: string;
-  unseen: boolean;
-  hasUnread: boolean;
-  mentioned: boolean;
-  /** The resources the room's uploads attached, from their receipts. */
-  resourceIds: string[];
-  /** Whether a real open elicitation is expected, from the closing run's receipt. */
+  writerSidekickId: string | null;
+  /** Each artifact at the version the pack publishes it to. */
+  artifacts: { resourceId: string; version: number }[];
+  /** Documents attached in its Chat. */
+  uploadResourceIds: string[];
+  /** How its Chat's loop ends, and the open question when it parks on one. */
+  harnessStatus: "idle" | "completed" | "needs_input";
   elicitationId: string | null;
 }
 
-/** One Sidekick as one viewer should find it in the Sidekicks directory. */
+/** One Sidekick as the pack and the receipts describe it. */
 export interface DemoSidekickExpectation {
-  /** The pack's step id, which names the Sidekick in a gap. */
-  stepId: string;
+  sidekick: string;
   sidekickId: string;
   name: string;
-  scope: "personal" | "workspace";
-  /** Whether the pack seeded a run for it, from its receipt. */
+  audience: "personal" | "workspace" | "people";
+  authorUserId: string;
+  /** The seeded run, whose row must sit in the shared conversation. */
   runId: string | null;
 }
 
-/** Everything one verified viewer should find, rooms newest first. */
+/**
+ * Everything one verified viewer should find. Canvases are in pack order,
+ * newest step first, for reading; the barrier does not compare the list's
+ * order, because a Canvas's recency is the moment its Chat's effects land in
+ * the Organization object, which no pack can state.
+ */
 export interface DemoViewExpectation {
   role: string;
   viewerUserId: string;
-  rooms: DemoRoomExpectation[];
+  /** `unread` is stated only for a Canvas this viewer neither made nor wrote in, which they have never opened. */
+  canvases: (DemoCanvasExpectation & { unread: boolean | null })[];
   sidekicks: DemoSidekickExpectation[];
-  attention: { waitingForYou: number; waitingReason: "mentioned" | "needs_input" | "unseen" | null };
 }
 
 export interface DemoReadinessManifest {
   packVersion: string;
+  canvases: DemoCanvasExpectation[];
+  sidekicks: DemoSidekickExpectation[];
   views: DemoViewExpectation[];
+}
+
+function sidekickAudience(sharedWith: DemoPackSharedWith): DemoSidekickExpectation["audience"] {
+  return sharedWith === "organization" ? "workspace" : sharedWith.length > 0 ? "people" : "personal";
 }
 
 /**
  * What the workspace should look like, from the pack's steps, its verified
  * viewers, and the seeder's receipts. Pure: it reads nothing.
  *
- * Every room the pack creates must have its create receipt, and every upload
- * and closing question its receipt — the barrier runs after seeding completed,
- * and a manifest for a half-seeded pack would describe a demo nobody asked for.
+ * Every Canvas, publish, upload, Sidekick and seeded run must have its receipt
+ * — the barrier runs after seeding completed, and a manifest for a half-seeded
+ * pack would describe a demo nobody asked for.
  */
 export function demoReadinessManifest(
   pack: DemoPack,
   cast: DemoCast,
   receipts: readonly DemoSeedReceipt[],
 ): DemoReadinessManifest {
-  if (pack.expect.length === 0) {
-    // A pack that names no viewer would be Ready on its first check, having
-    // proved nothing. That is a pack defect, and it stops preparation here.
-    throw new ApiError(409, "demo_pack_expects_nothing", "The pack names no viewer for the readiness check");
-  }
   const byAction = new Map(receipts.map((receipt) => [receipt.actionId, receipt]));
-  const created = new Map(
-    receipts.filter((receipt) => receipt.kind === "create_workstream").map((receipt) => [receipt.room, receipt]),
-  );
+  const required = (actionId: string, code: string, what: string) => {
+    const receipt = byAction.get(actionId);
+    if (!receipt) throw new ApiError(409, code, `${what} "${actionId}" has no receipt`);
+    return receipt;
+  };
   const sidekickFacts = packSidekickFacts(pack.steps);
   const sidekicks = new Map(sidekickFacts.map((facts) => {
-    const receipt = byAction.get(facts.stepId);
-    if (!receipt?.sidekickId) {
-      throw new ApiError(409, "demo_readiness_sidekick_unconfirmed", `Sidekick "${facts.stepId}" has no receipt`);
-    }
+    const receipt = required(facts.stepId, "demo_readiness_sidekick_unconfirmed", "Sidekick");
     if (facts.hasFirstRun && !receipt.sidekickRunId) {
       throw new ApiError(409, "demo_readiness_sidekick_run_unconfirmed", `Sidekick "${facts.stepId}" has no confirmed run`);
     }
-    return [facts.stepId, {
-      stepId: facts.stepId,
-      sidekickId: receipt.sidekickId,
-      name: facts.name,
-      scope: facts.scope,
-      runId: receipt.sidekickRunId,
-    } satisfies DemoSidekickExpectation];
-  }));
-  const facts = packRoomFacts(pack.steps);
-  const rooms = new Map<string, Omit<DemoRoomExpectation, "unseen" | "hasUnread" | "mentioned">>();
-  for (const room of facts.values()) {
-    const receipt = created.get(room.room);
-    if (!receipt?.workstreamId) throw new ApiError(409, "demo_readiness_room_unconfirmed", `Room "${room.room}" has no receipt`);
-    const resourceIds = room.uploads.map((actionId) => {
-      const upload = byAction.get(actionId);
-      if (!upload?.resourceId) throw new ApiError(409, "demo_readiness_upload_unconfirmed", `Upload "${actionId}" has no receipt`);
-      return upload.resourceId;
-    });
-    // The room's own question, from its main conversation. A substream may park
-    // on one of its own, and that receipt is not this room's closing state:
-    // `packRoomFacts` never counted the child's steps, so matching one here
-    // would answer a `finalState` the child did not contribute to.
-    const closing = room.finalState === "needs_input"
-      ? receipts.find((candidate) =>
-          candidate.room === room.room && candidate.substream === null && candidate.runOutcome === "needs_input") ?? null
-      : null;
-    if (room.finalState === "needs_input" && !closing?.elicitationId) {
-      throw new ApiError(409, "demo_readiness_question_unconfirmed", `Room "${room.room}" has no confirmed question`);
+    if (facts.writesCanvas && (!receipt.canvasId || !receipt.resourceId)) {
+      throw new ApiError(409, "demo_readiness_sidekick_canvas_unconfirmed", `Sidekick "${facts.stepId}" has no confirmed Canvas`);
     }
-    const opening = pack.steps.find((step) => step.kind === "create_workstream" && step.room === room.room);
-    const spaceKey = opening?.kind === "create_workstream" ? opening.space : undefined;
-    rooms.set(room.room, {
-      room: room.room,
-      ...(spaceKey ? { space: { key: spaceKey, name: pack.spaces![spaceKey]!.name } } : {}),
-      workstreamId: receipt.workstreamId,
-      title: room.title,
-      scope: room.scope,
-      harnessStatus: room.finalState,
-      participantUserIds: room.seated.map((role) => cast[role]!.userId),
-      creatorUserId: cast[room.creator]!.userId,
-      resourceIds,
+    return [facts.sidekick, {
+      expectation: {
+        sidekick: facts.sidekick,
+        sidekickId: receipt.sidekickId!,
+        name: facts.name,
+        audience: sidekickAudience(facts.sharedWith),
+        authorUserId: cast[facts.author]!.userId,
+        runId: receipt.sidekickRunId,
+      } satisfies DemoSidekickExpectation,
+      receipt,
+    }];
+  }));
+  const facts = packCanvasFacts(pack.steps);
+  const canvases = new Map<string, DemoCanvasExpectation>();
+  for (const canvas of facts.values()) {
+    let canvasId: string;
+    let artifacts: DemoCanvasExpectation["artifacts"];
+    if (canvas.writer !== null) {
+      const { receipt } = sidekicks.get(canvas.writer)!;
+      canvasId = receipt.canvasId!;
+      artifacts = [{ resourceId: receipt.resourceId!, version: 1 }];
+    } else {
+      const opening = pack.steps.find((step) => step.kind === "create_canvas" && step.canvas === canvas.canvas)!;
+      canvasId = required(opening.id, "demo_readiness_canvas_unconfirmed", "Canvas").canvasId!;
+      // One artifact per path, at the resource its publishes landed on and the
+      // version their count reaches.
+      const byPath = new Map<string, { resourceId: string; version: number }>();
+      for (const step of pack.steps) {
+        if (step.kind !== "canvas_artifact" || step.canvas !== canvas.canvas) continue;
+        const receipt = required(step.id, "demo_readiness_artifact_unconfirmed", "Artifact");
+        byPath.set(step.path, { resourceId: receipt.resourceId!, version: (byPath.get(step.path)?.version ?? 0) + 1 });
+      }
+      artifacts = [...byPath.values()];
+    }
+    const closing = canvas.finalState === "needs_input"
+      ? receipts.filter((receipt) => receipt.canvas === canvas.canvas && receipt.runOutcome === "needs_input").at(-1) ?? null
+      : null;
+    if (canvas.finalState === "needs_input" && !closing?.elicitationId) {
+      throw new ApiError(409, "demo_readiness_question_unconfirmed", `Canvas "${canvas.canvas}" has no confirmed question`);
+    }
+    canvases.set(canvas.canvas, {
+      canvas: canvas.canvas,
+      canvasId,
+      title: canvas.title,
+      creatorUserId: cast[canvas.creator]!.userId,
+      writerSidekickId: canvas.writer === null ? null : sidekicks.get(canvas.writer)!.expectation.sidekickId,
+      artifacts,
+      uploadResourceIds: canvas.uploads.map((actionId) =>
+        required(actionId, "demo_readiness_upload_unconfirmed", "Upload").resourceId!),
+      harnessStatus: canvas.finalState,
       elicitationId: closing?.elicitationId ?? null,
     });
   }
-  const newestFirst = (left: DemoPackRoomFacts, right: DemoPackRoomFacts) => right.lastStepIndex - left.lastStepIndex;
+  const newestFirst = [...facts.values()].sort((left, right) => right.lastStepIndex - left.lastStepIndex);
   return {
     packVersion: pack.version,
-    views: pack.expect.map((expectation) => ({
-      role: expectation.viewer,
-      viewerUserId: cast[expectation.viewer]!.userId,
-      rooms: visibleRoomsFor(expectation.viewer, facts.values()).sort(newestFirst).map((room) => ({
-        ...rooms.get(room.room)!,
-        ...expectation.rooms[room.room]!,
+    canvases: [...canvases.values()],
+    sidekicks: [...sidekicks.values()].map((entry) => entry.expectation),
+    views: pack.verify.map((viewer) => ({
+      role: viewer,
+      viewerUserId: cast[viewer]!.userId,
+      canvases: visibleCanvasesFor(viewer, newestFirst).map((canvas) => ({
+        ...canvases.get(canvas.canvas)!,
+        // A Canvas never opened is unread to anyone but its creator; a viewer
+        // who wrote in one has opened it, and what they have read since
+        // depends on what came after, which nothing here models.
+        unread: canvas.creator === viewer || canvas.actors.includes(viewer) ? null : true,
       })),
-      // Not part of `expect`: which Sidekicks a viewer is offered follows from
-      // scope and authorship alone, with none of the per-viewer opened/unread
-      // state a room carries, so there is nothing here for a pack to state that
-      // the steps do not already say.
-      sidekicks: visibleSidekicksFor(expectation.viewer, sidekickFacts)
-        .map((visible) => sidekicks.get(visible.stepId)!),
-      attention: expectation.attention,
+      sidekicks: visibleSidekicksFor(viewer, sidekickFacts).map((visible) => sidekicks.get(visible.sidekick)!.expectation),
     })),
   };
 }
@@ -200,16 +208,11 @@ export interface DemoReadinessReport {
   checkedAt: string;
 }
 
-/** Pages of this size, followed until the directory says there are no more. */
-const DIRECTORY_PAGE_SIZE = 100;
-
-async function viewerAuth(env: Env, operationId: string, workspaceId: string, userId: string): Promise<AuthContext> {
+async function memberAuth(env: Env, operationId: string, workspaceId: string, userId: string): Promise<AuthContext> {
   // The barrier reads as the viewer, and the viewer is whoever membership says
   // they are — the same resolution the seeder uses to write. A viewer the
   // workspace no longer seats is refused here rather than read with an
-  // invented role: the directory and attention reads below do not re-check
-  // membership, so an authority fabricated for them would be the one place a
-  // non-member's view of the workspace was ever computed.
+  // invented role.
   const member = await demoMemberAuth(env, { operationId, workspaceId, userId });
   if (!member) {
     throw new ApiError(409, "demo_readiness_viewer_not_member", `Viewer ${userId} is not an active member of the workspace`);
@@ -217,220 +220,121 @@ async function viewerAuth(env: Env, operationId: string, workspaceId: string, us
   return member.auth;
 }
 
-/** Every directory row the viewer would scroll to, across every page. */
-async function wholeDirectory(env: Env, auth: AuthContext): Promise<Workstream[]> {
-  const directory = new WorkstreamDirectoryService(env, auth);
-  const items: Workstream[] = [];
-  let before: string | undefined;
-  for (;;) {
-    const page = await directory.list(DIRECTORY_PAGE_SIZE, before);
-    items.push(...page.items);
-    if (page.nextCursor === null) return items;
-    before = page.nextCursor;
-  }
-}
+type Gap = (subject: string | null, code: string, detail: string) => void;
 
-function compareRoom(
-  expected: DemoRoomExpectation,
-  actual: Workstream,
-  viewerUserId: string,
-): DemoReadinessGap[] {
-  const gaps: DemoReadinessGap[] = [];
-  const gap = (code: string, detail: string) => gaps.push({ viewerUserId, room: expected.room, code, detail });
-  if (actual.title !== expected.title) gap("title", `"${actual.title}" instead of "${expected.title}"`);
-  if (actual.titleStatus !== "settled") gap("title_status", `title is ${actual.titleStatus}`);
-  if (actual.scope !== expected.scope) gap("scope", `${actual.scope} instead of ${expected.scope}`);
-  if (actual.harnessStatus !== expected.harnessStatus) {
-    gap("state", `${actual.harnessStatus} instead of ${expected.harnessStatus}`);
+function compareCanvasRow(expected: DemoViewExpectation["canvases"][number], actual: CanvasSidebarRow, gap: Gap): void {
+  const at = (code: string, detail: string) => gap(expected.canvas, code, detail);
+  if (actual.title !== expected.title) at("canvas_title", `"${actual.title}" instead of "${expected.title}"`);
+  if (actual.writerSidekickId !== expected.writerSidekickId) {
+    at("canvas_writer", `written by ${actual.writerSidekickId ?? "a person"} instead of ${expected.writerSidekickId ?? "a person"}`);
   }
-  if (actual.youAreMentioned !== expected.mentioned) {
-    gap("mentioned", expected.mentioned ? "the mention has not arrived" : "mentioned when the pack mentions nobody");
+  const kind = expected.artifacts.length > 0 ? "file" : null;
+  if (actual.artifactKind !== kind) at("canvas_artifact_kind", `${actual.artifactKind ?? "no artifact"} instead of ${kind ?? "no artifact"}`);
+  if (expected.unread !== null && actual.unread !== expected.unread) {
+    at("canvas_unread", expected.unread ? "not marked unread" : "marked unread");
   }
-  if (actual.unseen !== expected.unseen) gap("unseen", expected.unseen ? "not marked new" : "marked new");
-  if (actual.hasUnread !== expected.hasUnread) gap("unread", expected.hasUnread ? "not marked unread" : "marked unread");
-  if (expected.scope === "personal") {
-    const shown = actual.participantUserIds.length + actual.participantExtraCount;
-    const unexpected = actual.participantUserIds.filter((id) => !expected.participantUserIds.includes(id));
-    if (shown !== expected.participantUserIds.length || unexpected.length > 0) {
-      gap("participants", `${shown} shown, ${expected.participantUserIds.length} expected`);
-    }
-  }
-  return gaps;
 }
 
 /**
- * Compare one viewer's Sidekicks directory with what the pack published.
- *
- * The directory row is a projection, delivered by the same effect Queue the
- * sidebar's rooms arrive through, so a Sidekick that was published is not yet a
- * Sidekick anybody can see — which is exactly what this barrier exists to wait
- * for. `nextRunAt` is the part that proves the schedule was armed rather than
- * merely written down: an accepted definition whose apply died before its
- * schedule alarm would still be listed, and would never run.
- *
- * A seeded briefing is checked the same way and for the same reason: the run
- * finished inside its own conversation while seeding, and the row that puts it
- * in the Sidekick's history is a projection of that conversation, delivered
- * afterwards. A demo that shows a Sidekick which has apparently never run is
- * one whose effects have not all landed yet.
+ * Compare one viewer's Sidekick list with what the pack published. The row is
+ * a projection, so a Sidekick that was published is not yet one anybody can
+ * see. `nextRunAt` proves the schedule was armed rather than merely written
+ * down, and the run's history row that its briefing finished.
  */
-async function compareSidekicks(
-  env: Env,
-  auth: AuthContext,
-  view: DemoViewExpectation,
-  gap: (room: string | null, code: string, detail: string) => void,
-): Promise<void> {
-  if (view.sidekicks.length === 0) return;
+async function compareSidekicks(env: Env, auth: AuthContext, view: DemoViewExpectation, gap: Gap): Promise<void> {
   const service = new AutomationService(env, auth);
   const { items } = await service.listSidekicks();
+  const expectedIds = new Set(view.sidekicks.map((sidekick) => sidekick.sidekickId));
+  for (const item of items) {
+    if (!expectedIds.has(item.id)) gap(null, "sidekick_unexpected", `"${item.name}" (${item.id}) is listed and not in the pack`);
+  }
   const byId = new Map(items.map((item) => [item.id, item]));
   for (const expected of view.sidekicks) {
+    const at = (code: string, detail: string) => gap(expected.sidekick, code, detail);
     const actual = byId.get(expected.sidekickId);
     if (!actual) {
-      gap(null, "sidekick_missing", `"${expected.name}" is not listed`);
+      at("sidekick_missing", `"${expected.name}" is not listed`);
       continue;
     }
-    if (actual.name !== expected.name) {
-      gap(null, "sidekick_name", `"${actual.name}" instead of "${expected.name}"`);
+    if (actual.name !== expected.name) at("sidekick_name", `"${actual.name}" instead of "${expected.name}"`);
+    if ((actual.audience ?? actual.scope) !== expected.audience) {
+      at("sidekick_audience", `shared ${actual.audience ?? actual.scope} instead of ${expected.audience}`);
     }
-    if (actual.scope !== expected.scope) {
-      gap(null, "sidekick_scope", `"${expected.name}" is ${actual.scope} instead of ${expected.scope}`);
-    }
-    if (actual.status !== "active") {
-      gap(null, "sidekick_status", `"${expected.name}" is ${actual.status} instead of active`);
-    }
-    if (actual.nextRunAt === null) {
-      gap(null, "sidekick_schedule", `"${expected.name}" has no next run`);
-    }
+    if (actual.status !== "active") at("sidekick_status", `${actual.status} instead of active`);
+    if (actual.nextRunAt === null) at("sidekick_schedule", "has no next run");
     if (expected.runId !== null) {
-      const runs = await service.runs(expected.sidekickId);
-      const run = runs.items.find((candidate) => candidate.id === expected.runId) ?? null;
-      if (!run) gap(null, "sidekick_run_missing", `"${expected.name}" shows no briefing`);
-      else if (run.status !== "completed") {
-        gap(null, "sidekick_run_state", `"${expected.name}"'s briefing is ${run.status} instead of completed`);
-      }
+      const run = (await service.runs(expected.sidekickId)).items.find((candidate) => candidate.id === expected.runId) ?? null;
+      if (!run) at("sidekick_run_missing", "shows no run");
+      else if (run.status !== "completed") at("sidekick_run_state", `its run is ${run.status} instead of completed`);
     }
   }
 }
 
 /**
- * Every member of a demo, like every member anywhere, sits in General and owns
- * a Personal Channel (docs/spaces.md#the-personal-channel). Preparation seats
- * them; this is what holds Ready until that has landed for each viewer. Reads
- * only: a missing General is a gap, not something to make here.
- */
-async function compareSeating(
-  env: Env,
-  auth: AuthContext,
-  gap: (room: string | null, code: string, detail: string) => void,
-): Promise<void> {
-  const spaces = new SpaceService(env, auth);
-  const general = await spaces.general();
-  if (!general) gap(null, "general_missing", "the Organization has no General");
-  else if (!general.participants.some((participant) => participant.userId === auth.userId)) {
-    gap(null, "general_not_seated", "not a participant of General");
-  }
-  try {
-    const personal = await spaces.summary(await personalSpaceIdFor(auth.workspaceId, auth.userId));
-    if (personal.scope !== "individual" || personal.status !== "active") {
-      gap(null, "personal_channel_state", `Personal Channel is ${personal.status} and ${personal.scope}`);
-    }
-  } catch (error) {
-    if (!(error instanceof ApiError && error.code === "space_not_found")) throw error;
-    gap(null, "personal_channel_missing", "has no Personal Channel");
-  }
-}
-
-/**
- * Compare every verified viewer's projection with the manifest, once.
+ * Compare every verified viewer's lists, and every seeded Canvas's and
+ * Sidekick's canonical content, with the manifest, once.
  *
- * Reads the whole directory and the attention summary as each viewer, and the
- * canonical room detail as each room's creator; reports every gap rather than
- * the first, because the operator's "Waiting for workspace" state lists what
- * has not arrived.
+ * Reports every gap rather than the first, because the operator's "Waiting
+ * for workspace" state lists what has not arrived.
  */
 export async function checkDemoReadiness(
   env: Env,
   input: { operationId: string; workspaceId: string; manifest: DemoReadinessManifest },
 ): Promise<DemoReadinessReport> {
   const gaps: DemoReadinessGap[] = [];
-  const canonicalChecked = new Set<string>();
+  const auth = (userId: string) => memberAuth(env, input.operationId, input.workspaceId, userId);
   for (const view of input.manifest.views) {
-    const auth = await viewerAuth(env, input.operationId, input.workspaceId, view.viewerUserId);
-    const gap = (room: string | null, code: string, detail: string) =>
-      gaps.push({ viewerUserId: view.viewerUserId, room, code, detail });
-    const [items, attention] = await Promise.all([
-      wholeDirectory(env, auth),
-      workspaceAttention(env, auth),
-    ]);
-    // Cache only within this viewer's poll: two account Channels share a Space,
-    // while another viewer must still prove their own visibility.
-    const spaceChecks = new Map<string, { id: string; code: "space_state" | "space_missing" | null }>();
-    const byId = new Map(items.map((item) => [item.id, item]));
-    const expectedIds = new Set(view.rooms.map((room) => room.workstreamId));
-    for (const item of items) {
-      if (!expectedIds.has(item.id)) gap(null, "room_unexpected", `"${item.title}" (${item.id}) is listed and not in the pack`);
+    const viewer = await auth(view.viewerUserId);
+    const gap: Gap = (subject, code, detail) => gaps.push({ viewerUserId: view.viewerUserId, room: subject, code, detail });
+    const rows = await new CanvasService(env, viewer).list();
+    const expectedIds = new Set(view.canvases.map((canvas) => canvas.canvasId));
+    for (const row of rows) {
+      if (!expectedIds.has(row.id)) gap(null, "canvas_unexpected", `"${row.title}" (${row.id}) is listed and not in the pack`);
     }
-    for (const room of view.rooms) {
-      const actual = byId.get(room.workstreamId);
-      if (!actual) {
-        gap(room.room, "room_missing", "not listed");
-        continue;
-      }
-      gaps.push(...compareRoom(room, actual, view.viewerUserId));
-      if (room.space) {
-        let checked = spaceChecks.get(room.space.key);
-        if (!checked) {
-          const id = await demoSeedSpaceId(input.operationId, room.space.key);
-          let code: "space_state" | "space_missing" | null = null;
-          try {
-            const space = await new SpaceService(env, auth).summary(id);
-            if (space.name !== room.space.name || space.status !== "active" || space.scope !== "workspace") code = "space_state";
-          } catch (error) {
-            if (!(error instanceof ApiError && error.code === "space_not_found")) throw error;
-            code = "space_missing";
-          }
-          checked = { id, code };
-          spaceChecks.set(room.space.key, checked);
-        }
-        if (actual.spaceIds.length !== 1 || actual.spaceIds[0] !== checked.id) {
-          gap(room.room, "space_membership", `expected only ${room.space.name}`);
-        }
-        if (checked.code) gap(room.room, checked.code, `expected active Organization Space ${room.space.name}`);
-      }
+    const byId = new Map<string, CanvasSidebarRow>(rows.map((row) => [row.id, row]));
+    for (const canvas of view.canvases) {
+      const actual = byId.get(canvas.canvasId);
+      if (!actual) gap(canvas.canvas, "canvas_missing", "not listed");
+      else compareCanvasRow(canvas, actual, gap);
     }
-    const listedOrder = items.filter((item) => expectedIds.has(item.id)).map((item) => item.id);
-    const expectedOrder = view.rooms.map((room) => room.workstreamId);
-    if (listedOrder.length === expectedOrder.length && listedOrder.some((id, index) => id !== expectedOrder[index])) {
-      const byWorkstream = new Map(view.rooms.map((room) => [room.workstreamId, room.room]));
-      gap(null, "order", `listed ${listedOrder.map((id) => byWorkstream.get(id)).join(", ")}; expected ${view.rooms.map((room) => room.room).join(", ")}`);
+    await compareSidekicks(env, viewer, view, gap);
+  }
+  // Canonical content, once each, as whoever made it. The first viewer names
+  // the gap, because the gap's shape is per viewer and these are everyone's.
+  const subjectViewer = input.manifest.views[0]?.viewerUserId;
+  if (subjectViewer === undefined) return { ready: gaps.length === 0, gaps, checkedAt: new Date().toISOString() };
+  const gap: Gap = (subject, code, detail) => gaps.push({ viewerUserId: subjectViewer, room: subject, code, detail });
+  for (const canvas of input.manifest.canvases) {
+    const creator = await auth(canvas.creatorUserId);
+    const at = (code: string, detail: string) => gap(canvas.canvas, code, detail);
+    const detail = await new CanvasService(env, creator).detail(asWorkstreamId(canvas.canvasId));
+    for (const expected of canvas.artifacts) {
+      const actual = detail.artifacts.find((artifact) => artifact.resourceId === expected.resourceId);
+      if (!actual) at("artifact_missing", `${expected.resourceId} is not one of its artifacts`);
+      else if (actual.version !== expected.version) at("artifact_version", `${expected.resourceId} is at version ${actual.version} instead of ${expected.version}`);
     }
-    await compareSidekicks(env, auth, view, gap);
-    await compareSeating(env, auth, gap);
-    if (attention.waitingForYou !== view.attention.waitingForYou
-      || attention.waitingReason !== view.attention.waitingReason) {
-      gap(null, "attention", `${attention.waitingForYou} waiting (${attention.waitingReason ?? "none"}); expected ${view.attention.waitingForYou} (${view.attention.waitingReason ?? "none"})`);
+    if (detail.artifacts.length !== canvas.artifacts.length) {
+      at("artifact_count", `${detail.artifacts.length} artifacts instead of ${canvas.artifacts.length}`);
     }
-    // Canonical content, as the creator, once per room across viewers.
-    for (const room of view.rooms) {
-      if (canonicalChecked.has(room.workstreamId)) continue;
-      canonicalChecked.add(room.workstreamId);
-      const creator = await viewerAuth(env, input.operationId, input.workspaceId, room.creatorUserId);
-      const detail = await new WorkstreamObjectClient(env, creator, room.workstreamId, "0").get();
-      if (detail.harnessStatus !== room.harnessStatus) {
-        gap(room.room, "canonical_state", `${detail.harnessStatus} instead of ${room.harnessStatus}`);
-      }
-      if (room.elicitationId && !detail.openElicitations.some((open) => open.id === room.elicitationId)) {
-        gap(room.room, "elicitation_missing", "the question is not open");
-      }
-      const attached = new Set(detail.resources.map((resource) => resource.id));
-      for (const resourceId of room.resourceIds) {
-        if (!attached.has(resourceId)) gap(room.room, "resource_missing", `${resourceId} is not attached`);
-      }
-      const seated = new Set(detail.participants.map((participant) => participant.user.id));
-      for (const userId of room.participantUserIds) {
-        if (!seated.has(userId)) gap(room.room, "participant_missing", `${userId} is not in the room`);
-      }
+    const chat = await WorkstreamObjectClient.forParent(env, creator, "canvas", canvas.canvasId, "0").get();
+    if (chat.harnessStatus !== canvas.harnessStatus) at("canvas_state", `${chat.harnessStatus} instead of ${canvas.harnessStatus}`);
+    if (canvas.elicitationId && !chat.openElicitations.some((open) => open.id === canvas.elicitationId)) {
+      at("elicitation_missing", "the question is not open");
+    }
+    const attached = new Set(chat.resources.map((resource) => resource.id));
+    for (const resourceId of canvas.uploadResourceIds) {
+      if (!attached.has(resourceId)) at("upload_missing", `${resourceId} is not attached`);
+    }
+  }
+  for (const sidekick of input.manifest.sidekicks) {
+    if (sidekick.runId === null) continue;
+    // A run's row in the shared conversation is a projection of its run row,
+    // delivered on the Organization object's alarm.
+    const author = await auth(sidekick.authorUserId);
+    const boot = await WorkstreamObjectClient.forParent(env, author, "automation", sidekick.sidekickId, "0").boot();
+    const key = `sidekick-run:${sidekick.runId}`;
+    if (!boot.transcript.ranges.some((range) => range.turns.some((turn) => turn.clientMessageId === key))) {
+      gap(sidekick.sidekick, "sidekick_run_row_missing", "its run has no row in its conversation");
     }
   }
   return { ready: gaps.length === 0, gaps, checkedAt: new Date().toISOString() };
