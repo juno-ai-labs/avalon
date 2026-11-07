@@ -99,7 +99,7 @@ saying what happened, with a link:
 - [ ] in progress
 - [ ] completed
 
-Superseded by [`2026-09-02_workstream-notification-rules`](../2026-09-02_workstream-notification-rules/prd.md).
+Superseded by [`2026-09-02_workstream-notification-rules`](PRDs/2026-09-02_workstream-notification-rules/prd.md).
 Design only — no code shipped. Do not build against this PRD.
 ```
 
@@ -156,7 +156,7 @@ prose:
 >
 > A participant can silence a busy work stream for a fixed period without
 > leaving it. Standing contract:
-> [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
+> [the Rally implementation brief](PRDs/2026-08-05_avalon-implementation-brief/prd.md).
 ```
 
 It carries the creation date, a one-line scope, and links to the companion files
