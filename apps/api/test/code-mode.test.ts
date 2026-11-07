@@ -537,19 +537,11 @@ describe("programTestWarnings", () => {
   const clock = { tool: "rally_core.current_time" };
   const read = { tool: "plugin_rally.run_sql" };
 
-  it("warns a test past three quarters of the deadline only when the program does not stop on msLeft()", () => {
-    expect(programTestWarnings({ code: "await tools.plugin_rally.run_sql({});", calls: [], elapsedMs: 117_600 }))
-      .toEqual([expect.stringContaining("The test took 118 s of the 120 s a program has, and the program never calls msLeft()")]);
-    expect(programTestWarnings({ code: "await tools.plugin_rally.run_sql({});", calls: [], elapsedMs: 89_000 })).toEqual([]);
-    // Stopping on the time left is what the guide asks for, however late it runs.
-    expect(programTestWarnings({ code: "while (msLeft() > 6000) {}", calls: [], elapsedMs: 115_000 })).toEqual([]);
-  });
-
   it("warns a program that reads current_time more than once and never calls msLeft()", () => {
-    expect(programTestWarnings({ code: "const now = await tools.rally_core.current_time({});", calls: [clock, read, clock], elapsedMs: 1_000 }))
+    expect(programTestWarnings({ code: "const now = await tools.rally_core.current_time({});", calls: [clock, read, clock] }))
       .toEqual([expect.stringContaining("read current_time 2 times and never calls msLeft()")]);
     // One read works out the dates; msLeft() already times the share.
-    expect(programTestWarnings({ code: "x", calls: [clock, read], elapsedMs: 1_000 })).toEqual([]);
-    expect(programTestWarnings({ code: "while (msLeft() > 5000) {}", calls: [clock, clock], elapsedMs: 1_000 })).toEqual([]);
+    expect(programTestWarnings({ code: "x", calls: [clock, read] })).toEqual([]);
+    expect(programTestWarnings({ code: "while (msLeft() > 5000) {}", calls: [clock, clock] })).toEqual([]);
   });
 });

@@ -2242,14 +2242,13 @@ function createAvalonAutomationsPlugin(
       // without it there is no program runtime in this deployment.
       ...(codeMode && env.CODE_LOADER ? {
         testTool: async (tool, toolInput, context) => {
-          const started = Date.now();
           const result = await codeMode.runProgramForTool({ tool, input: toolInput, context }, {
             loader: env.CODE_LOADER!,
             input,
           });
-          // The run-time costs the guide asks the author to avoid, measured on this test.
+          // What the guide asks the author to avoid, read off this test's calls.
           const calls = (result.output as { calls?: Array<{ tool: string }> } | undefined)?.calls ?? [];
-          const warnings = programTestWarnings({ code: tool.code, calls, elapsedMs: Date.now() - started });
+          const warnings = programTestWarnings({ code: tool.code, calls });
           return { output: warnings.length ? { ...(result.output as Record<string, unknown>), warnings } : result.output };
         },
       } : {}),

@@ -32,4 +32,4 @@ export {
   type ProgramRun,
 } from "./plugin";
 export * from "./limits";
-export { programTestWarnings, TEST_WARNING_DEADLINE_SHARE } from "./test-warnings";
+export { programTestWarnings } from "./test-warnings";
