@@ -218,7 +218,7 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "member_preferences", // Read and written only by the member preference RPCs.
   "workspace_directory_state",
   "workspace_external_event_registrations",
-  "external_registration_generations", // Owned by typed registration RPC only.
+  "external_registration_generations", // The retired projection RPC's fence; no longer read or written.
   "retired_meeting_resources", // Operator-only cleanup manifest.
   "workspace_identity",
   "spaces",
