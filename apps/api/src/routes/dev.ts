@@ -1,12 +1,11 @@
-import { ConnectorParticipantAdmissionSchema } from "@rally/contracts/scope-grants";
 import { fallbackWorkspacePlacementAffinity } from "../lib/durable-object-namespace";
 import { Hono } from "hono";
 import {
   AutomationDraftSchema,
   asUserId,
   asWorkspaceId,
-  type WorkstreamId,
 } from "@rally/contracts";
+import { CanvasVisibilitySchema } from "@rally/contracts/canvases";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 
@@ -20,78 +19,14 @@ import {
 } from "../services/workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
-import { WorkstreamObjectClient } from "../services/workstream-object-client";
+import { attachWorkstreamRuntimeResource } from "../services/workstream-object-client";
 import { createAutomation } from "../services/automation-service";
-import {
-  openGeneralSpaceForNewWorkspace,
-  placeConnectorChannelInGeneral,
-} from "../services/space-bootstrap-service";
-import {
-  WorkspaceSpaceBootstrapPageSchema,
-  type SpaceBootstrapChannel,
-  type WorkspaceSpaceBootstrapPage,
-} from "../durable-objects/workspace-space-protocol";
+import { createCanvas } from "../services/canvas-service";
 import { enqueueWorkspaceConnectorEvent } from "../services/workspace-connector-event-ingress";
-import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createTranscriptObjectPort } from "../runtime/transcript-port";
-import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
-import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
-import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
-import type { PersistedRunStatus } from "../durable-objects/workstream-harness-run-storage";
 import { hostedParentStub } from "../services/conversation-parent-client";
 
 const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
-
-/**
- * Seed tool receipts through the work stream's typed receipt authority.
- *
- * The fixture is written in the vocabulary a reader of this repository knows —
- * `harness_run_id`, `input_hash`, ISO-8601 timestamps — and it stays that way,
- * because a checked-in seed is meant to be read. What used to translate it was
- * the `_runtime_tool_invocations` insert trigger, which also *invented* the
- * columns the old vocabulary never carried. Doing that here rather than in SQL
- * is the point of the change: every fabricated value is now visible at the one
- * place that fabricates it.
- *
- * `tool_position` is the row's index rather than a count of what is already
- * there. The trigger used `COUNT(*)`, which stops being injective the moment a
- * receipt is deleted — the defect object schema migration 16 repaired.
- */
-async function insertToolReceipts(
-  receiptsPort: ToolReceiptObjectPort,
-  receipts: z.infer<typeof row>[],
-  copied: Record<string, number>,
-): Promise<void> {
-  for (const [position, receipt] of receipts.entries()) {
-    const id = String(receipt.id);
-    const plan = typeof receipt.execution_plan_json === "string" ? receipt.execution_plan_json : null;
-    const at = (value: unknown): number | null =>
-      typeof value === "string" ? Date.parse(value) : null;
-    const status = receipt.status === "pending" ? "admitted"
-      : receipt.status === "started" ? "executing"
-        : String(receipt.status);
-    if (!["admitted", "executing", "completed", "failed", "ambiguous"].includes(status)) {
-      throw new Error("seed_tool_receipt_status_invalid");
-    }
-    await receiptsPort.seedDevelopmentReceipt({
-      effectIntentId: id,
-      runId: String(receipt.harness_run_id),
-      toolPosition: position,
-      toolCallId: String(receipt.tool_call_id),
-      toolName: String(receipt.tool_name),
-      mode: plan?.includes('"mode":"write"') ? "write" : "read",
-      requestHash: String(receipt.input_hash ?? "seed"),
-      status: status as "admitted" | "executing" | "completed" | "failed" | "ambiguous",
-      connectionId: typeof receipt.connection_id === "string" ? receipt.connection_id : null,
-      inputJson: typeof receipt.input_json === "string" ? receipt.input_json : "{}",
-      outputSummary: typeof receipt.output_summary === "string" ? receipt.output_summary : null,
-      executionPlanJson: plan,
-      startedAt: at(receipt.started_at),
-      settledAt: at(receipt.completed_at),
-    });
-  }
-  copied.tool_effects = receipts.length;
-}
 
 /**
  * The only tables this route will write, per authority. The fixture file is
@@ -114,17 +49,16 @@ export const SeedProductBodySchema = z.strictObject({
   workspaceId: z.string().uuid(),
   workspaceTables: z.record(z.string(), z.array(row)),
   automations: z.array(seedAutomation),
-  workstreams: z.array(z.object({
+  canvases: z.array(z.strictObject({
     id: z.string().uuid(),
     title: z.string().min(1),
-    objective: z.string(),
-    harnessStatus: z.string(),
-    nextSequenceNumber: z.number().int().positive(),
-    participants: z.array(row),
-    harnessRuns: z.array(row),
-    toolInvocations: z.array(row),
-    resourceIds: z.array(z.string().uuid()),
+    createdByUserId: z.string().uuid(),
+    visibility: CanvasVisibilitySchema,
+    participantUserIds: z.array(z.string().uuid()),
+    /** Chat turns in the published transcript vocabulary, as a captured fixture holds them. */
     messages: z.array(row),
+    /** Workspace resources this seed notes as the Canvas's artifacts, by Rally. */
+    artifactResourceIds: z.array(z.string().uuid()),
   })),
 });
 
@@ -136,26 +70,11 @@ const SeedProductResultSchema = z.strictObject({
     automationId: z.string().uuid(),
     lifecycle: z.enum(["active"]),
   })),
-  workstreams: z.array(z.object({
-    workstreamId: z.string().uuid(),
+  canvases: z.array(z.strictObject({
+    canvasId: z.string().uuid(),
     copied: z.record(z.string(), z.number()),
   })),
 });
-
-/**
- * The `exact_state` a captured `harnessStatus` restores to.
- *
- * The retired `_runtime_workstreams` update trigger's mapping, kept here
- * because only the seed route speaks the published vocabulary: a fixture is a
- * recorded API response, and the object stores its own states. Every state the
- * trigger did not name collapsed to `idle`, and so does every one here.
- */
-function storedWorkstreamState(harnessStatus: string): string {
-  return ["scheduled", "running", "needs_input", "completed", "failed"]
-    .includes(harnessStatus)
-    ? harnessStatus
-    : "idle";
-}
 
 export const devRoutes = new Hono<{ Bindings: Env }>();
 
@@ -208,9 +127,6 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
     workspaceId,
     fallbackWorkspacePlacementAffinity(env.AVALON_REGION),
   );
-  // The same step onboarding takes: every Channel this seed is about to write
-  // belongs to a Space, and the sidebar cannot be drawn without General.
-  await openGeneralSpaceForNewWorkspace(env, workspaceId);
   const workspaceDatabase = withWorkspaceRuntimeDatabase(env, workspaceId);
 
   const workspaceCounts: Record<string, number> = {};
@@ -260,220 +176,77 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
   }
 
   const results = [];
-  for (const workstream of body.workstreams) {
-    const routed = await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, workstream.id, "workstream");
-    const copied: Record<string, number> = {};
-
-    const identityPort = createIdentityObjectPort(env, workspaceId, workstream.id);
-    const existingIdentity = await identityPort.identity();
-    await identityPort.provision({ title: workstream.title, objective: workstream.objective,
-      scope: existingIdentity?.scope === "workspace" ? "workspace" : "personal",
-      createdByUserId: existingIdentity?.created_by_user_id ?? null, participantUserIds: [],
-      harnessStatus: "idle", emailAddress: existingIdentity?.email_address ?? null, emailRouteStatus: null,
-      systemKind: null, modelOverride: null, now: Date.now() });
-    await identityPort.seedFromFixture({
-      title: workstream.title,
-      // The fixture speaks the published vocabulary because it was captured
-      // from an API response; the object stores its own.
-      exactState: storedWorkstreamState(workstream.harnessStatus),
-      nextSequenceNumber: workstream.nextSequenceNumber,
-      now: Date.now(),
-    });
-
-    // Fixture hydration uses the same grant authority as other trusted
-    // producer audiences; it never reopens the source's participant writer.
-    const userIds = workstream.participants.map((participant) => String(participant.user_id));
-    const admission = await (await hostedParentStub(env, workspaceId)).admitConnectorParticipants(ConnectorParticipantAdmissionSchema.parse({
-      workspaceId, parentId: workstream.id, userIds, addedByUserId: existingIdentity?.created_by_user_id ?? null,
-      eventId: JSON.stringify(["dev-seed-participants", workstream.id, [...userIds].sort()]),
-    }));
-    if (admission.status !== "ready") throw new Error("dev_seed_participant_admission_pending");
-    copied.workstream_participants = workstream.participants.length;
-    const runs = createHarnessRunObjectPort(routed, workspaceId, workstream.id);
-    for (const fixtureRun of workstream.harnessRuns) {
-      const status = fixtureRun.status === "scheduled" ? "admitted"
-        : fixtureRun.status === "stopped" ? "cancelled"
-          : String(fixtureRun.status);
-      if (!["admitted", "running", "needs_input", "completed", "failed", "cancelled"].includes(status)) {
-        throw new Error("seed_harness_run_status_invalid");
-      }
-      const at = (value: unknown): number | null =>
-        typeof value === "string" ? Date.parse(value) : null;
-      const createdAt = at(fixtureRun.created_at);
-      const startedAt = at(fixtureRun.started_at) ?? createdAt;
-      if (createdAt === null || startedAt === null) throw new Error("seed_harness_run_timestamp_invalid");
-      await runs.seedDevelopmentRun({
-        runId: String(fixtureRun.id),
-        origin: String(fixtureRun.origin),
-        executionPrincipalJson: typeof fixtureRun.execution_principal_json === "string"
-          ? fixtureRun.execution_principal_json : "{}",
-        status: status as PersistedRunStatus,
-        startedAt,
-        completedAt: at(fixtureRun.completed_at),
-        terminalizedAt: at(fixtureRun.terminalized_at),
-        createdAt,
-      });
-    }
-    copied.harness_runs = workstream.harnessRuns.length;
-    await insertToolReceipts(
-      createToolReceiptObjectPort(routed, workspaceId, workstream.id),
-      workstream.toolInvocations,
-      copied,
-    );
-    const transcript = createTranscriptObjectPort(routed, workspaceId, workstream.id);
-    for (const message of workstream.messages) {
-      const authorType = String(message.author_type);
-      const actor = authorType === "agent" ? "assistant" : authorType;
-      if (actor !== "human" && actor !== "assistant"
-        && actor !== "external" && actor !== "system") {
-        throw new Error("seed_conversation_actor_invalid");
-      }
-      const messageType = String(message.message_type);
-      if (messageType !== "text" && messageType !== "system"
-        && messageType !== "elicitation" && messageType !== "tool") {
-        throw new Error("seed_conversation_type_invalid");
-      }
-      const fixtureHasAuthorSnapshot = (message.author_name_snapshot !== null
-        && message.author_name_snapshot !== undefined)
-        || (message.author_avatar_url_snapshot !== null
-          && message.author_avatar_url_snapshot !== undefined);
-      await transcript.seedDevelopmentConversationTurn({
-        turnId: String(message.id),
-        clientMessageId: message.client_message_id === null
-          || message.client_message_id === undefined
-          ? null
-          : String(message.client_message_id),
-        actor,
-        authorUserId: message.author_user_id === null || message.author_user_id === undefined
-          ? null
-          : String(message.author_user_id),
-        authorSnapshot: actor === "human" || fixtureHasAuthorSnapshot
-          ? {
-            displayName: String(message.author_name_snapshot ?? ""),
-            avatarUrl: message.author_avatar_url_snapshot === null
-              || message.author_avatar_url_snapshot === undefined
-              ? null
-              : String(message.author_avatar_url_snapshot),
-          }
-          : null,
-        externalActorJson: message.external_actor_json === null
-          || message.external_actor_json === undefined
-          ? null
-          : String(message.external_actor_json),
-        messageType,
-        text: String(message.text_content ?? ""),
-        structuredContentJson: message.structured_content_json === null
-          || message.structured_content_json === undefined
-          ? null
-          : String(message.structured_content_json),
-        producedByRunId: message.harness_run_id === null || message.harness_run_id === undefined
-          ? null
-          : String(message.harness_run_id),
-        expectedTranscriptSequence: Number(message.sequence_number),
-        createdAtUtc: String(message.created_at),
-      });
-    }
-    copied.participant_transcript_turns = workstream.messages.length;
-
-    if (workstream.resourceIds.length > 0) {
-      const creator = String(workstream.participants[0]?.user_id ?? "");
-      const client = new WorkstreamObjectClient(env, {
-        sessionId: "development",
-        userId: asUserId(creator),
-        workspaceId: asWorkspaceId(workspaceId),
-        region: env.AVALON_REGION,
-        role: "owner",
-      }, workstream.id);
-      for (const resourceId of workstream.resourceIds) {
-        // Re-runs repair partial seeds; an attachment that already exists is
-        // that repair finding nothing to do.
-        await client.attachResource(resourceId).catch((error: unknown) => {
-          const code = error instanceof ApiError ? error.code : "";
-          if (code !== "resource_already_attached" && code !== "conflict") throw error;
-        });
-      }
-      copied.resources_attached = workstream.resourceIds.length;
-    }
-    results.push({ workstreamId: workstream.id, copied });
+  for (const canvas of body.canvases) {
+    results.push({ canvasId: canvas.id, copied: await seedCanvas(env, workspaceId, canvas) });
   }
-
-  await placeSeededChannelsInGeneral(env, workspaceId, results.map((result) => result.workstreamId));
-  return { seeded: true, workspaceTables: workspaceCounts, automations, workstreams: results };
+  return { seeded: true, workspaceTables: workspaceCounts, automations, canvases: results };
 }
 
 /**
- * Give every Channel this seed wrote its home in General.
- *
- * Every non-deleted Channel belongs to a Space, and this route does not reach
- * `WorkstreamObjectCreationService` — it restores a captured fixture into
- * objects it provisions under the ids the fixture chose. So it is the second
- * creation path the coordinator's placement does not cover, and it takes the
- * same step the Slack agent's does, through the same
- * `placeConnectorChannelInGeneral`.
- *
- * **It waits for the Organization to know the Channel exists first**, which is
- * what the creation coordinator gets for free. Reserving a Channel's main
- * conversation writes the parent authority's own identity row and delivers a
- * provisional directory row synchronously; seeding writes through the
- * conversation instead, so the parent learns of the Channel from an effect
- * that drifts up on its outbox. A placement issued before that lands is
- * refused `conversation_parent_missing` by the Channel's own authority. The
- * directory row is published *by* that parent, so one page of the cutover's
- * own view of the Organization is exactly the signal: seeing the Channel there
- * means the authority the placement addresses exists.
- *
- * It is also the best answer to what to place: the page's item is the Channel
- * as the Organization records it — the scope its projection carries and the
- * participants who may act on it — rather than two facts this route would have
- * to assert about a Channel whose audience it does not set.
- *
- * **And the wait is what makes the fallback converge.** The participant half
- * of the projection arrives as its own effect, so a placement can still be
- * refused `space_bootstrap_no_active_actor` for a Channel whose directory row
- * has landed and whose viewers have not. That refusal reopens the cutover, and
- * the cutover's close asks whether any Channel in the directory is outside
- * every Space — a question that can only be answered about a Channel the
- * directory holds. Waiting for the row is therefore what stops the reopened
- * walk from finding an empty directory, closing as complete, and leaving the
- * Channel homeless with nothing left to notice.
- *
- * The wait has no deadline of its own. This is development tooling behind
- * `APP_ENV=development`, `pnpm db:open-authority` is its only caller and
- * already reports loudly, and an effect that never arrives is a local stack
- * broken in a way a timeout here would only disguise.
+ * One Canvas: made by `createCanvas` as its creator, shared, its Chat's turns
+ * restored from the fixture through the transcript port, and its artifacts
+ * attached to the Chat and noted on the Canvas as Rally's, the note a publish
+ * makes. A re-run finds the Canvas (`created: false`), replays each turn by
+ * its id, and notes each artifact again, which is idempotent.
  */
-async function placeSeededChannelsInGeneral(
-  env: Env,
-  workspaceId: string,
-  workstreamIds: readonly string[],
-): Promise<void> {
-  const workspace = await durableObjectStubForWorkspace(
-    env,
-    env.WORKSPACE_DOS,
-    workspaceId,
-    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
-  );
-  for (const workstreamId of workstreamIds) {
-    let channel: SpaceBootstrapChannel | undefined;
-    while (!channel) {
-      let cursor: WorkstreamId | null = null;
-      do {
-        const page: WorkspaceSpaceBootstrapPage = WorkspaceSpaceBootstrapPageSchema.parse(
-          await workspace.spaceBootstrapPage({ workspaceId, cursor }),
-        );
-        channel = page.items.find((item) => item.workstreamId === workstreamId);
-        cursor = page.nextCursor;
-      } while (!channel && cursor !== null);
-      // One directory round trip per poll, so the loop yields on real I/O
-      // rather than spinning; the interval is a cadence, not a limit.
-      if (!channel) await scheduler.wait(50);
-    }
-    // Idempotent on a warm container: a Channel General already holds settles
-    // the membership it has rather than staging a second one. A refusal this
-    // could not settle reopens the Organization's cutover, whose walk reaches
-    // the same Channel with the same directory record.
-    await placeConnectorChannelInGeneral(env, workspaceId, channel);
+async function seedCanvas(env: Env, workspaceId: string, canvas: z.infer<typeof SeedProductBodySchema>["canvases"][number]) {
+  const copied: Record<string, number> = {};
+  await createCanvas(env, { workspaceId, creatorUserId: canvas.createdByUserId, title: canvas.title, canvasId: canvas.id });
+  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, workspaceId,
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)));
+  const creator = { userId: asUserId(canvas.createdByUserId), actorRole: "owner" as const };
+  if (canvas.visibility !== "creator") {
+    await workspace.canvasSetAudience({ workspaceId, canvasId: canvas.id, actor: creator,
+      update: { visibility: canvas.visibility, userIds: canvas.participantUserIds.map(asUserId) } });
   }
+  copied.participants = canvas.participantUserIds.length;
+  // Idempotent: the Canvas's runtime environment is already routed, and this
+  // answers with it.
+  const routed = await bootstrapWorkstreamRuntimeEnvironment(env, workspaceId, canvas.id, "canvas");
+  const transcript = createTranscriptObjectPort(routed, workspaceId, canvas.id);
+  for (const message of canvas.messages) {
+    const authorType = String(message.author_type);
+    const actor = authorType === "agent" ? "assistant" : authorType;
+    if (actor !== "human" && actor !== "assistant" && actor !== "system") {
+      throw new Error("seed_conversation_actor_invalid");
+    }
+    const messageType = String(message.message_type);
+    if (messageType !== "text" && messageType !== "system") throw new Error("seed_conversation_type_invalid");
+    await transcript.seedDevelopmentConversationTurn({
+      turnId: String(message.id),
+      clientMessageId: message.client_message_id === null || message.client_message_id === undefined
+        ? null : String(message.client_message_id),
+      actor,
+      authorUserId: message.author_user_id === null || message.author_user_id === undefined
+        ? null : String(message.author_user_id),
+      authorSnapshot: actor === "human"
+        ? { displayName: String(message.author_name_snapshot ?? ""), avatarUrl: null }
+        : null,
+      externalActorJson: null,
+      messageType,
+      text: String(message.text_content ?? ""),
+      structuredContentJson: null,
+      producedByRunId: null,
+      expectedTranscriptSequence: Number(message.sequence_number),
+      createdAtUtc: String(message.created_at),
+    });
+  }
+  copied.chat_turns = canvas.messages.length;
+  for (const resourceId of canvas.artifactResourceIds) {
+    // The runtime attach port, as a publish attaches its resource: the route
+    // has no session for the conversation to verify. Re-runs repair partial
+    // seeds; an attachment that already exists is that repair finding
+    // nothing to do.
+    await attachWorkstreamRuntimeResource(env, {
+      workspaceId, workstreamId: canvas.id, substreamId: "0", resourceId, attachedByUserId: null,
+    }).catch((error: unknown) => {
+      const code = error instanceof Error ? error.message : "";
+      if (code !== "resource_already_attached" && code !== "conflict") throw error;
+    });
+    await workspace.canvasNoteArtifact({ workspaceId, canvasId: canvas.id, resourceId, editor: { kind: "rally", id: null } });
+  }
+  copied.artifacts = canvas.artifactResourceIds.length;
+  return copied;
 }
 
 /**

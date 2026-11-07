@@ -159,8 +159,14 @@ pnpm db:open-authority
 ```
 
 This advances the configured local authorities to `durable_object_open` and
-imports `packages/db/seed-product.json` through each Worker's development seed
-route. The Workers must be running for the product import. The command is
+posts `packages/db/seed-product.json` to each Worker's development seed route
+(`POST /dev/seed-product`), which makes the seed's two Canvases — **Q4 revenue
+review**, shared with Samantha, and **Launch plan**, open to the Organization —
+through `createCanvas`, restores their Chats' turns from the fixture, notes the
+fixture resource as Launch plan's artifact, and publishes the **Weekly
+changelog** Sidekick through `createAutomation` and its definition. `seed.sql`
+anchors no conversation: the creation paths anchor and route what they make,
+as in production. The Workers must be running for the product import. The command is
 idempotent and repairs partial imports; rerun it after starting a missing Worker.
 For a custom local port, set `PUBLIC_API_BASE_URL_GLOBAL` and run the command
 through `pnpm exec dotenv -e .env.local -- pnpm db:open-authority`.
@@ -170,18 +176,11 @@ between its `SELECT ... FROM workspaces` and `ON CONFLICT`. SQLite otherwise
 parses the `ON` as a possible join clause and rejects the fresh post-retirement
 seed before product fixtures reach the Durable Objects.
 
-`routes/dev.ts` seeds transcript rows through the canonical ordered-turn
+`routes/dev.ts` seeds a Chat's turns through the canonical ordered-turn
 storage API. It does not recreate the retired message tables or their runtime
-views merely to import development fixtures.
-
-It also places every Channel it seeds in the Organization's General Space,
-through the same `placeConnectorChannelInGeneral` the Slack agent uses, because
-every non-deleted Channel belongs to a Space and this route does not go through
-the creation coordinator. That is why the command can take a few seconds longer
-on a cold container than the import itself explains: each Channel's placement
-waits for the Organization to see it, which happens when the Channel's parent
-authority publishes its first directory projection.
-[`spaces.md`](spaces.md) owns the mechanism.
+views merely to import development fixtures. It seeds no Thread or Channel:
+until the 2026-11-07 change the seed held two work streams, and once the
+Thread server code was removed the command failed with `workstream_not_found`.
 
 ## 3. Start the API Workers
 
@@ -402,7 +401,7 @@ Capture the screens you touched and read the images.
 
 Development sign-in works end to end in this setup: **Use local development
 account** authenticates against the local Global Worker and opens the seeded
-workspace with its work streams, automations, and onboarding checklist.
+workspace with its Canvases, its Sidekick, and onboarding checklist.
 
 ## What cannot be verified in a sandbox
 
@@ -454,9 +453,10 @@ workspace with its work streams, automations, and onboarding checklist.
   macOS-only and must run on a Mac.
 - **Remote D1, deploys, and anything else that needs Cloudflare credentials.**
 
-`packages/db/seed.sql` includes the resource and connector fixtures required by
-the right-rail checks in `pnpm smoke:local`. Re-run `pnpm db:seed` after updating
-an older worktree so the smoke test sees both fixtures.
+`packages/db/seed-product.json` includes the resource and connector fixtures.
+Re-run `pnpm db:seed` and `pnpm db:open-authority` after updating an older
+worktree so a fresh database has the Canvases rather than the retired work
+streams.
 
 ## Quick reference
 

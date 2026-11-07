@@ -1,5 +1,5 @@
 {
-  "comment": "Product-authority seed fixtures. seed.sql owns only the regional control plane (users, workspaces, members, the workstreams index); everything here belongs to a Durable Object and is written through the Worker's runtime ports by `pnpm db:open-authority` via POST /dev/seed-product. Keeping these as data rather than SQL is what lets the legacy D1 product tables be dropped.",
+  "comment": "Product-authority seed fixtures. seed.sql owns only the regional control plane (users, workspaces, members); everything here belongs to a Durable Object and is written through the Worker's own paths by `pnpm db:open-authority` via POST /dev/seed-product: two Canvases (made by createCanvas, their Chats restored from these turns) and one Sidekick (createAutomation, its definition submitted and applied). Keeping these as data rather than SQL is what lets the legacy D1 product tables be dropped.",
   "workspaceId": "00000000-0000-7000-8000-000000000002",
   "workspaceTables": {
     "connector_connections": [
@@ -27,8 +27,8 @@
         "connection_id": null,
         "resource_type": "text",
         "provider": "fixture",
-        "provider_resource_id": "eng-142-status",
-        "title": "ENG-142 incident status",
+        "provider_resource_id": "launch-readiness",
+        "title": "Launch readiness notes",
         "mime_type": "text/plain",
         "content_ref": null,
         "canonical_url": null,
@@ -48,7 +48,7 @@
       "scope": "workspace",
       "draft": {
         "name": "Weekly changelog",
-        "description": "Prepare a concise changelog from completed work every Friday.",
+        "description": "Prepares a concise changelog Canvas from completed work every Friday.",
         "overview": "Review completed work and publish a concise weekly changelog.",
         "instructions": "Review work completed this week and prepare a readable changelog.",
         "triggers": [
@@ -71,225 +71,86 @@
         "elicitation": null,
         "ready": true
       }
-    },
-    {
-      "id": "00000000-0000-7000-8000-000000000016",
-      "authorUserId": "00000000-0000-7000-8000-000000000001",
-      "scope": "personal",
-      "draft": {
-        "name": "Former-client monitor",
-        "description": "Watch a public page for meaningful changes.",
-        "overview": "Check the configured page daily and report meaningful changes.",
-        "instructions": "Fetch the configured page and report only meaningful changes.",
-        "triggers": [
-          {
-            "type": "interval",
-            "intervalSeconds": 86400,
-            "summary": "Every 24 hours"
-          }
-        ],
-        "requiredCapabilities": [
-          "web.read"
-        ],
-        "expectedOutputs": [
-          "change summary"
-        ],
-        "defaultBehavior": {},
-        "recommendedPlugins": [],
-        "memoryTables": [],
-        "suggestedScope": "personal",
-        "followUpQuestion": null,
-        "elicitation": null,
-        "ready": true
-      }
     }
   ],
-  "workstreams": [
+  "canvases": [
     {
       "id": "00000000-0000-7000-8000-000000000020",
-      "title": "Prepare the Acme client follow-up",
-      "objective": "Turn the client call into a clear follow-up with owners and next steps.",
-      "harnessStatus": "needs_input",
-      "nextSequenceNumber": 4,
-      "participants": [
-        {
-          "user_id": "00000000-0000-7000-8000-000000000001",
-          "added_by_user_id": "00000000-0000-7000-8000-000000000001",
-          "participation_reason": "creator",
-          "joined_at": "2026-07-31T19:30:00.000Z"
-        },
-        {
-          "user_id": "00000000-0000-7000-8000-000000000003",
-          "added_by_user_id": "00000000-0000-7000-8000-000000000001",
-          "participation_reason": "explicit",
-          "joined_at": "2026-07-31T19:30:00.000Z"
-        }
+      "title": "Q4 revenue review",
+      "createdByUserId": "00000000-0000-7000-8000-000000000001",
+      "visibility": "participants",
+      "participantUserIds": [
+        "00000000-0000-7000-8000-000000000003"
       ],
-      "harnessRuns": [],
-      "toolInvocations": [],
-      "resourceIds": [],
       "messages": [
         {
           "id": "00000000-0000-7000-8000-000000000030",
-          "client_message_id": "seed-acme-1",
+          "client_message_id": "seed-q4-1",
           "author_type": "human",
           "author_user_id": "00000000-0000-7000-8000-000000000001",
           "author_name_snapshot": "Adam",
-          "author_avatar_url_snapshot": null,
           "message_type": "text",
-          "text_content": "Prepare the follow-up from today\u2019s Acme call. Capture every promised action and flag anything that still needs an owner.",
-          "structured_content_json": null,
+          "text_content": "Draft the Q4 revenue review for Monday's board prep: revenue, margin and retention against Q3.",
           "sequence_number": 1,
-          "created_at": "2026-07-31T19:30:00.000Z",
-          "harness_run_id": null
+          "created_at": "2026-07-31T19:30:00.000Z"
         },
         {
           "id": "00000000-0000-7000-8000-000000000031",
           "client_message_id": null,
           "author_type": "agent",
           "author_user_id": null,
+          "author_name_snapshot": null,
           "message_type": "text",
-          "text_content": "I found three follow-ups. Two have clear owners; the rollout date still needs a decision.",
-          "structured_content_json": null,
+          "text_content": "Here is a first draft. Net revenue was $4.82M, up 18% on Q3, with gross margin at 71.4% and net retention at 118%.",
           "sequence_number": 2,
-          "created_at": "2026-07-31T19:42:00.000Z",
-          "harness_run_id": null
+          "created_at": "2026-07-31T19:31:00.000Z"
+        },
+        {
+          "id": "00000000-0000-7000-8000-000000000032",
+          "client_message_id": "seed-q4-2",
+          "author_type": "human",
+          "author_user_id": "00000000-0000-7000-8000-000000000003",
+          "author_name_snapshot": "Samantha Lee",
+          "message_type": "text",
+          "text_content": "Add churn to \"What moved\". Use the October cohort, not the blended number.",
+          "sequence_number": 3,
+          "created_at": "2026-07-31T19:40:00.000Z"
         }
-      ]
+      ],
+      "artifactResourceIds": []
     },
     {
       "id": "00000000-0000-7000-8000-000000000021",
-      "title": "Investigate ENG-142",
-      "objective": "Find the cause of intermittent invoice retry failures.",
-      "harnessStatus": "idle",
-      "nextSequenceNumber": 6,
-      "participants": [
-        {
-          "user_id": "00000000-0000-7000-8000-000000000001",
-          "added_by_user_id": "00000000-0000-7000-8000-000000000001",
-          "participation_reason": "creator",
-          "joined_at": "2026-07-31T19:20:00.000Z"
-        }
-      ],
-      "harnessRuns": [
-        {
-          "id": "00000000-0000-7000-8000-000000000051",
-          "origin": "message",
-          "execution_principal_json": "{\"type\":\"user\",\"userId\":\"00000000-0000-7000-8000-000000000001\"}",
-          "status": "completed",
-          "started_at": "2026-07-31T19:34:58.000Z",
-          "completed_at": "2026-07-31T19:40:00.000Z",
-          "terminalized_at": "2026-07-31T19:40:00.000Z",
-          "created_at": "2026-07-31T19:34:58.000Z"
-        }
-      ],
-      "toolInvocations": [
-        {
-          "id": "00000000-0000-7000-8000-000000000052",
-          "harness_run_id": "00000000-0000-7000-8000-000000000051",
-          "tool_call_id": "seed-tool-1",
-          "tool_name": "Search invoice error events",
-          "connection_id": null,
-          "input_hash": "seed-search-invoice-errors",
-          "input_json": "{\"query\":\"invoice retry failures\"}",
-          "output_summary": "Found 18 related events across three deploys.",
-          "status": "completed",
-          "started_at": "2026-07-31T19:35:00.000Z",
-          "completed_at": "2026-07-31T19:35:42.000Z"
-        },
-        {
-          "id": "00000000-0000-7000-8000-000000000053",
-          "harness_run_id": "00000000-0000-7000-8000-000000000051",
-          "tool_call_id": "seed-tool-2",
-          "tool_name": "Inspect retry policy",
-          "connection_id": null,
-          "input_hash": "seed-inspect-retry-policy",
-          "input_json": "{\"ticket\":\"ENG-142\"}",
-          "output_summary": "The third retry overlaps the downstream timeout window.",
-          "status": "completed",
-          "started_at": "2026-07-31T19:36:00.000Z",
-          "completed_at": "2026-07-31T19:37:18.000Z"
-        },
-        {
-          "id": "00000000-0000-7000-8000-000000000054",
-          "harness_run_id": "00000000-0000-7000-8000-000000000051",
-          "tool_call_id": "seed-tool-3",
-          "tool_name": "Reproduce invoice failure",
-          "connection_id": null,
-          "input_hash": "seed-reproduce-invoice-failure",
-          "input_json": "{\"fixture\":\"safe\"}",
-          "output_summary": null,
-          "status": "completed",
-          "started_at": "2026-07-31T19:38:00.000Z",
-          "completed_at": "2026-07-31T19:39:00.000Z"
-        }
-      ],
-      "resourceIds": [
-        "00000000-0000-7000-8000-000000000041"
-      ],
+      "title": "Launch plan",
+      "createdByUserId": "00000000-0000-7000-8000-000000000003",
+      "visibility": "workspace",
+      "participantUserIds": [],
       "messages": [
         {
-          "id": "00000000-0000-7000-8000-000000000032",
-          "client_message_id": "seed-eng-1",
-          "author_type": "human",
-          "author_user_id": "00000000-0000-7000-8000-000000000001",
-          "author_name_snapshot": "Adam",
-          "author_avatar_url_snapshot": null,
-          "message_type": "text",
-          "text_content": "Investigate ENG-142 and summarize the evidence before proposing a fix.",
-          "structured_content_json": null,
-          "sequence_number": 1,
-          "created_at": "2026-07-31T19:20:00.000Z",
-          "harness_run_id": null
-        },
-        {
           "id": "00000000-0000-7000-8000-000000000033",
+          "client_message_id": "seed-launch-1",
+          "author_type": "human",
+          "author_user_id": "00000000-0000-7000-8000-000000000003",
+          "author_name_snapshot": "Samantha Lee",
+          "message_type": "text",
+          "text_content": "Turn the pricing launch into a plan: the date, who owns each step, and what has to be true before we announce.",
+          "sequence_number": 1,
+          "created_at": "2026-07-31T20:00:00.000Z"
+        },
+        {
+          "id": "00000000-0000-7000-8000-000000000034",
           "client_message_id": null,
-          "author_type": "system",
+          "author_type": "agent",
           "author_user_id": null,
-          "message_type": "system",
-          "text_content": "Reviewing the latest failure events and attached ticket context.",
-          "structured_content_json": null,
+          "author_name_snapshot": null,
+          "message_type": "text",
+          "text_content": "The launch is set for December 3. Three things gate the announcement: billing migrates annual plans, the help center pages are live, and support has the new macros.",
           "sequence_number": 2,
-          "created_at": "2026-07-31T19:40:00.000Z",
-          "harness_run_id": null
-        },
-        {
-          "id": "00000000-0000-7000-8000-000000000042",
-          "client_message_id": null,
-          "author_type": "agent",
-          "author_user_id": null,
-          "message_type": "tool",
-          "text_content": "",
-          "structured_content_json": "{\"invocation\":{\"id\":\"00000000-0000-7000-8000-000000000052\",\"harnessRunId\":\"00000000-0000-7000-8000-000000000051\",\"toolCallId\":\"seed-tool-1\",\"toolName\":\"Search invoice error events\",\"connectionId\":null,\"status\":\"completed\",\"inputSummary\":\"Search recent invoice retry failures\",\"outputSummary\":\"Found 18 related events across three deploys.\",\"startedAt\":\"2026-07-31T19:35:00.000Z\",\"completedAt\":\"2026-07-31T19:35:42.000Z\",\"error\":null}}",
-          "sequence_number": 3,
-          "created_at": "2026-07-31T19:35:42.000Z",
-          "harness_run_id": "00000000-0000-7000-8000-000000000051"
-        },
-        {
-          "id": "00000000-0000-7000-8000-000000000043",
-          "client_message_id": null,
-          "author_type": "agent",
-          "author_user_id": null,
-          "message_type": "tool",
-          "text_content": "",
-          "structured_content_json": "{\"invocation\":{\"id\":\"00000000-0000-7000-8000-000000000053\",\"harnessRunId\":\"00000000-0000-7000-8000-000000000051\",\"toolCallId\":\"seed-tool-2\",\"toolName\":\"Inspect retry policy\",\"connectionId\":null,\"status\":\"completed\",\"inputSummary\":\"Compare retry settings with failure timestamps\",\"outputSummary\":\"The third retry overlaps the downstream timeout window.\",\"startedAt\":\"2026-07-31T19:36:00.000Z\",\"completedAt\":\"2026-07-31T19:37:18.000Z\",\"error\":null}}",
-          "sequence_number": 4,
-          "created_at": "2026-07-31T19:37:18.000Z",
-          "harness_run_id": "00000000-0000-7000-8000-000000000051"
-        },
-        {
-          "id": "00000000-0000-7000-8000-000000000044",
-          "client_message_id": null,
-          "author_type": "agent",
-          "author_user_id": null,
-          "message_type": "tool",
-          "text_content": "",
-          "structured_content_json": "{\"invocation\":{\"id\":\"00000000-0000-7000-8000-000000000054\",\"harnessRunId\":\"00000000-0000-7000-8000-000000000051\",\"toolCallId\":\"seed-tool-3\",\"toolName\":\"Reproduce invoice failure\",\"connectionId\":null,\"status\":\"completed\",\"inputSummary\":\"Run the bounded reproduction against a safe fixture\",\"outputSummary\":null,\"startedAt\":\"2026-07-31T19:38:00.000Z\",\"completedAt\":null,\"error\":null}}",
-          "sequence_number": 5,
-          "created_at": "2026-07-31T19:38:00.000Z",
-          "harness_run_id": "00000000-0000-7000-8000-000000000051"
+          "created_at": "2026-07-31T20:01:00.000Z"
         }
+      ],
+      "artifactResourceIds": [
+        "00000000-0000-7000-8000-000000000041"
       ]
     }
   ]
