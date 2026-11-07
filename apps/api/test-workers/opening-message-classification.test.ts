@@ -27,9 +27,7 @@ const originalKey = mutableEnv.TYPESAFE_API_KEY;
 useSelectedModel();
 const provider = useOpenRouterDouble((call) => ({ say: call.stream
   ? "Here is the launch plan."
-  : JSON.stringify(call.body.response_format ?? {}).includes("substream_context_summary")
-    ? JSON.stringify({ summary: "Launch context." })
-    : JSON.stringify({ title: "Launch planning", icon: "megaphone" }) }));
+  : JSON.stringify({ title: "Launch planning", icon: "megaphone" }) }));
 
 function workspace() {
   return env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
