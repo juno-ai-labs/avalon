@@ -453,8 +453,11 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
 - `scripts/code-mode-evals.mjs`: prompt evaluations against the local API and
   the real models, run by hand when a prompt or a tool contract changes
   (`node scripts/code-mode-evals.mjs --suite final`). Three suites: fourteen
-  work-stream scenarios from one arithmetic call to a deliberate failure after
-  two writes, run on Sol and Terra; seven wizard scenarios with runs; and the
+  scenarios asked in a new Canvas's Chat, from one arithmetic call to a
+  deliberate failure after two writes, on the primary model (a Canvas has no
+  per-conversation model pin, so the Terra column of the earlier rounds is
+  gone); seven wizard scenarios with runs, each sent to the Sidekick's shared
+  conversation marked as an edit so the wizard answers it; and the
   final twenty wizard scenarios of rising complexity, from a Sidekick with no
   tool to one whose tool takes an input, dedupes by date and returns three
   results. The graders read transcripts and saved definitions, and the expected

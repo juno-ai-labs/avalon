@@ -3,6 +3,8 @@ import { test } from "node:test";
 
 import {
   TERMINAL_STATES,
+  artifactGateDecision,
+  artifactOutcomeOracle,
   buildPlan,
   modelGateDecision,
   runOutcomeOracle,
@@ -54,4 +56,22 @@ test("a missing model key refuses the lane unless degradation is chosen", () => 
   const degraded = modelGateDecision(false, true);
   assert.equal(degraded.run, true);
   assert.equal(degraded.degraded, true);
+});
+
+test("the artifact scenario runs only with a model and a Terminal, and says why otherwise", () => {
+  assert.deepEqual(artifactGateDecision(true, "supported"), { run: true });
+  const noModel = artifactGateDecision(false, "supported");
+  assert.equal(noModel.run, false);
+  assert.match(noModel.reason, /no model/);
+  const noTerminal = artifactGateDecision(true, "unsupported");
+  assert.equal(noTerminal.run, false);
+  assert.match(noTerminal.reason, /Terminal is unsupported/);
+  assert.match(artifactGateDecision(true, undefined).reason, /Terminal is unknown/);
+});
+
+test("a publish counts only when the Canvas lists a versioned artifact", () => {
+  assert.equal(artifactOutcomeOracle({ artifacts: [] }).ok, false);
+  assert.equal(artifactOutcomeOracle(null).ok, false, "an unreadable Canvas is not a publish");
+  assert.equal(artifactOutcomeOracle({ artifacts: [{ resourceId: "r", version: 1 }] }).ok, true);
+  assert.equal(artifactOutcomeOracle({ artifacts: [{ resourceId: "r", version: 0 }] }).ok, false);
 });
