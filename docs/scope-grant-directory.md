@@ -55,16 +55,11 @@ asks WorkspaceDO only for the visible Space marks and containment edges of those
 canonically admitted Channels. The response preserves parent archive state separately
 from each conversation, so clients do not offer a child restore while its parent is
 archived.
-The desktop's guest navigation opts into `?attention=1` on `/sharing/navigation`.
-The Channel's parent then derives one attention boolean from each *admitted*
-conversation's common and requesting-viewer projections. The default response
-keeps its previous shape for deployed clients with strict navigation parsers.
-`?shell=1` adds each Breakout's `originTurnId` and each Space's `systemRole`
-for the single-sidebar shell, behind a flag for the same reason.
-This remains a navigation snapshot, refreshed on directory invalidation; it
-adds no sidebar rows. The workspace socket lists a guest's Channels and Spaces
-([`listing-rules.md`](listing-rules.md)); this read says which conversations of
-each the guest holds, and so where a Breakout-only Channel opens.
+The guest navigation read (`/sharing/navigation`) that listed a guest's
+Channels, Spaces and Breakouts went with the Thread routes in plan step C-1; a
+guest's Canvases reach them through the workspace socket's Canvas list, decided
+by each Canvas's audience ([`canvases.md`](canvases.md)), not through this
+index.
 
 ## Invariants
 

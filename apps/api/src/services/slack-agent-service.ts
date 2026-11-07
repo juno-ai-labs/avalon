@@ -1468,11 +1468,11 @@ export class SlackAgentService {
       return;
     }
     // An unbound message in a DM with the bot: a top-level one, or a reply
-    // under the prompt below (every other DM thread is bound to its Agent
-    // Channel or its run). While a Sidekick run that sent a request here is
-    // still open, the answer belongs in that request's thread: ask for it
-    // there, once per event, and create no work. Once it has finished, the
-    // DM is ordinary Agent work again.
+    // under the prompt below (every other DM thread is bound to a Sidekick
+    // run). While a Sidekick run that sent a request here is still open, the
+    // answer belongs in that request's thread: ask for it there, once per
+    // event, and create no work. Once it has finished, the DM gets the
+    // answer that Rally no longer starts work from Slack.
     if (directMessage && resolution.outcome === "none"
       && await this.promptForBoundDmThread(connection, token, teamId, installationId, channelId, rootTs, claimKey)) {
       return;
@@ -2684,15 +2684,6 @@ function slackRoutingFailureText(reason: string): string {
   switch (reason) {
     case "conversation_ingress_retired":
       return "Rally no longer starts work from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack for you.";
-    case "space_archived":
-      return "This conversation's Rally channel is archived, so Rally did not start work here. A Rally admin can restore the channel in Rally.";
-    case "room_shared_externally":
-      return "This conversation is now shared with another organization, and its Rally channel holds this organization's own work, so Rally did not start work here.";
-    case "no_rally_member_in_private_room":
-      return "Rally didn't start work here because nobody in this private conversation has a Rally account it can recognize yet. Connect your Rally account in App Home, then mention Rally again.";
-    case "space_access_denied":
-    case "space_not_found":
-      return "Rally couldn't open a thread for this conversation in its Rally channel, because you can't open that Rally channel yet. Connect your Rally account in App Home, or ask a member of that Rally channel to add you, then mention Rally again.";
     default:
       return `Rally couldn't start work here (${reason}). Mention Rally again to retry, or ask a Rally admin if it keeps happening.`;
   }

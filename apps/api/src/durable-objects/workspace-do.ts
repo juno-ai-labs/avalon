@@ -5698,10 +5698,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private syncFollowUpTablePresent(): boolean {
-    return this.state.storage.sql.exec(
+    const present = this.state.storage.sql.exec(
       "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_directory_followups'",
     ).toArray().length > 0;
+    // Named once per instance: an Organization held below migration 72 has no
+    // follow-up lane, which is expected there and a defect anywhere else.
+    if (!present && !this.followUpTableAbsenceLogged) {
+      this.followUpTableAbsenceLogged = true;
+      logInfo(this.env, "workspace_directory_followups_absent", { reason: "below_migration_72" });
+    }
+    return present;
   }
+
+  private followUpTableAbsenceLogged = false;
 
   private nextSyncFollowUpDueAt(): number | null {
     return this.state.storage.sql.exec<{ due_at: number | null }>(
@@ -8004,16 +8013,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<{ sequence: number }>(
       `SELECT COALESCE(MAX(event_sequence), 0) AS sequence FROM workspace_connector_events`,
     ).one().sequence;
-  }
-
-  /**
-   * The viewer a Space read lists for, or null without an active relationship.
-   * A read admits a guest as well as a member: what each may be told is the
-   * listing rules' answer, not this gate's.
-   */
-  private async spaceReader(workspaceId: string, userId: string): Promise<Viewer | null> {
-    const relationship = await this.readRelationship(workspaceId, userId);
-    return relationship?.status === "active" ? { userId, accessClass: relationship.accessClass } : null;
   }
 
   /**

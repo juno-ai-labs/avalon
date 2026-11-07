@@ -149,9 +149,9 @@ WorkspaceDO migration 85 adds `external_conversation_bindings`, keyed by provide
 | `packages/db/test/baseline-migration.test.ts` | Replays every migration in order and proves the checked-in baseline leaves the same schema. |
 | `packages/db/seed.sql` | The local development seed. |
 | `apps/api/src/mappers/connection.ts` | D1 row schemas parsed at the read — the pattern the remaining hand-coercing control-plane readers are converging on. |
-| `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
+| `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `AgentLoopDO`. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical transcript fact ownership, participant and exact Bind projections, range snapshots, activities, and compaction checkpoints. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `hosted-parent-schema.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, Channel and Space parent state and child aggregation, and Channel control sockets. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-runtime-sql.ts`, `hosted-parent-schema.ts`, `canvas-schema.ts`, `hosted-sidekick-schema.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync routing, bounded invalidation replay, and the Canvas and Sidekick parents' state and child aggregation. `hosted-parent-schema.ts` still holds the Channel and Space parent tables' shipped migrations, which plan step C-7 drops. |
 | `apps/api/src/services/workspace-runtime-database.ts` | D1-compatible routing port that sends an allowlisted workspace-product statement to typed WorkspaceDO RPC while leaving global/regional control SQL in D1; mixed-authority batches fail closed, and so does any single statement — read or write — naming both a WorkspaceDO table and a regional-only one. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated query and effect contracts joining conversation-parent facts to WorkspaceDO serving state. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
@@ -1498,6 +1498,11 @@ Breakout, Activity, digest and suggested-work rows. Retired so far:
   `activity_event` effect is receipted and stored nowhere; a push Queue
   message for an Activity item is logged `activity_item_retired` and
   acknowledged; `GET /artifact-pins` answers an empty list.
+- **Listing rules.** `listing-rules.ts`, the ladder of who may be told a
+  Space, Channel or Breakout exists, once agent memory's fact visibility was
+  re-derived from Canvas and Sidekick participation
+  ([`agent-memory.md`](agent-memory.md)); `docs/listing-rules.md` is kept as a
+  retired record.
 - **Moved, not changed.** Every migration statement those modules exported is
   in `retired-workspace-schema.ts`, byte for byte: the WorkspaceDO migration
   ledger's statement hashes are identical before and after.

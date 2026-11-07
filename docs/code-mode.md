@@ -498,8 +498,9 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   to hold its Sidekick's tools after publication; today only runs do, and the
   wizard tests through `sidekick_tool_test`.
 - **Who may read a saved tool's code on the profile.** Everyone who can read
-  the Sidekick can read it today; whether a guest in the owning Thread counts
-  is a listing-rules question still open.
+  the Sidekick can read it today, a guest included only from the Sidekick's
+  own people list (`sidekickReaderAllows`); Sidekicks no longer have an owning
+  Thread.
 
 ## Changelog
 

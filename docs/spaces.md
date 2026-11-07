@@ -48,6 +48,25 @@ What survives, and why:
 
 ## Changelog
 
+### 2026-11-07 — The server half is deleted
+
+**What changed:** Plan step C-2 deleted every Space, Channel-rail, Channel-read
+and system-Channel module listed under "What was retired" above, the WorkspaceDO
+RPCs and socket commands that served them, and onboarding's seating of a new
+member in General and a Personal Channel. Their tables and shipped migration
+statements stay (`retired-workspace-schema.ts`) until plan step C-7 drops them;
+queued `space_*` messages are acknowledged as tombstones.
+
+**Why:** The [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+removes Channels from the product, and after the client cutover (steps B-1 to
+B-6) nothing reached this code. Keeping a second container for conversations
+beside Canvases would leave two answers to "who may open this".
+
+**Consequences:** A new member lands on Canvases with nothing seated. The
+generation fences, the claim/send/accept publisher and the waterline survive in
+the resource version ledger and the Canvas and Sidekick lists; this document
+is their only record of why.
+
 ### 2026-11-05 — A guest may be a Channel's participant, and works in it as a member does
 
 **What changed:** `noteSpaceAudience` accepts a guest in `participantUserIds`;

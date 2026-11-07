@@ -1687,9 +1687,11 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
 
   /**
    * Whether this conversation's own roster admits the person at the version
-   * their ticket carries. A Thread's conversation kept a roster of its own;
-   * Threads are retired (plan step C-2), so one admits nobody. A Canvas's
-   * and a Sidekick's parent decides alone.
+   * their ticket carries. A Canvas's and a Sidekick's parent decides alone,
+   * so theirs always does. A retired Thread's conversation still admits by
+   * its Main's implicit member grant (version 0) and by a participant
+   * authority transfer's projection, and otherwise nobody; plan step C-3
+   * removes this branch with Thread hosting.
    */
   private conversationMembershipAllows(userId: string, requiredVersion: number): boolean {
     if (this.objectStore.identity()?.parentKind !== "workstream") return true;
@@ -1701,8 +1703,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       const projection = transfer.projectionForUser(userId);
       return projection?.active === true && projection.revision === requiredVersion;
     }
-    // A Thread conversation is admitted by its roster until plan step C-3
-    // removes Thread hosting from this object; the import agents' reserved
+    // No roster answers for a Thread now: the import agents' reserved
     // children went with session import.
     return false;
   }

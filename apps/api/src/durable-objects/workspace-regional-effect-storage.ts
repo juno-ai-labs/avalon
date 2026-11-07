@@ -38,8 +38,9 @@ export function insertWorkstreamEffectReceipt(
 }
 
 /**
- * Apply one Channel or Space parent's activity/mention effect and its replay
- * receipt in a single WorkspaceDO transaction. Current D1 identity (surviving actor and
+ * Apply one conversation parent's person notification (a mention or an add)
+ * and its replay receipt in a single WorkspaceDO transaction; a retired
+ * `activity_event` is acknowledged by the receipt alone. Current D1 identity (surviving actor and
  * targets, mention-recipient membership) arrives as data on the request; this
  * function never reads outside the object, so the effect and the receipt that
  * acknowledges it can never commit separately.
