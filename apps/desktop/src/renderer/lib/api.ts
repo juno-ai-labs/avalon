@@ -7,13 +7,6 @@ import { ScopeSharingOptionsSchema, ScopeInvitationsListSchema, ScopeInvitationR
 import { WorkspaceRelationshipSchema, PromoteWorkspaceGuestSchema } from "@rally/contracts/scope-grants";
 import { MemberPreferencesSchema, MemoryForgetResponseSchema, MemoryReviewSchema, PersonalSystemPromptSchema, type MemoryForgetResponse, type MemoryReview, type MemberPreferences, type MemberPreferencesUpdate } from "@rally/contracts";
 import { WorkspaceDepartureSchema, type WorkspaceDeparture, type WorkspaceDepartureOutcome } from "@rally/contracts";
-import {
-  PinListSchema,
-  PeopleRankingSchema,
-  type PeopleRanking,
-  type PinKind,
-  type PinList,
-} from "@rally/contracts";
 import { WebPushConfigurationSchema, type RegisterPushDeviceRequest } from "@rally/contracts/push-notifications";
 import { AccountOnboardingSchema, OrganizationNameSuggestionSchema, UpdateAccountOnboardingSchema, type AccountOnboarding, type OrganizationNameSuggestion, type UpdateAccountOnboarding } from "@rally/contracts";
 
@@ -54,7 +47,6 @@ import {
   TerminalWorkspaceSettingsSchema as WireTerminalWorkspaceSettingsSchema,
   TerminalNetworkPolicyPreviewSchema as WireTerminalNetworkPolicyPreviewSchema,
   WorkstreamBootSchema as WireWorkstreamBootSchema,
-  DigestScheduleSchema as WireDigestScheduleSchema,
   WorkstreamSchema as WireWorkstreamSchema,
   type AutomationDraft as WireAutomationDraft,
   type AutomationRun as WireAutomationRun,
@@ -108,13 +100,11 @@ import type { TelemetrySurfaceEntrypoint } from './telemetry';
 import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
 import { isPastedText } from './pasted-text';
 import type {
-  DigestDeliveryTargetType,
   AutomationDetail,
   AutomationRun,
   AutomationScope,
   AutomationSummary,
   BackgroundTask,
-  DigestSchedule,
   ElicitationData,
   HarnessStatus,
   Participant,
@@ -888,18 +878,6 @@ export class RallyApi {
     return this.request(`/workspace/memory/${encodeURIComponent(factId)}`, { method: 'DELETE', schema: MemoryForgetResponseSchema });
   }
 
-  /** What Rally remembers about a Thread (its Main, `"0"`) or one of its Breakouts. */
-  getConversationMemory(workstreamId: string, substreamId: string, signal?: AbortSignal): Promise<MemoryReview> {
-    return this.request(`/workstreams/${encodeURIComponent(workstreamId)}/memory?substreamId=${encodeURIComponent(substreamId)}`, { schema: MemoryReviewSchema, signal });
-  }
-
-  forgetConversationMemory(workstreamId: string, substreamId: string, factId: string): Promise<MemoryForgetResponse> {
-    return this.request(
-      `/workstreams/${encodeURIComponent(workstreamId)}/memory/${encodeURIComponent(factId)}?substreamId=${encodeURIComponent(substreamId)}`,
-      { method: 'DELETE', schema: MemoryForgetResponseSchema },
-    );
-  }
-
   getMyTimezone(signal?: AbortSignal): Promise<UserTimezone> {
     return this.request('/workspace/me/timezone', { schema: UserTimezoneSchema, signal });
   }
@@ -965,23 +943,6 @@ export class RallyApi {
     return this.request('/workspace/terminal/network-policy/apply', {
       method: 'POST', body: input, schema: WireTerminalWorkspaceSettingsSchema,
     });
-  }
-
-  async getDigestSchedule(signal?: AbortSignal): Promise<DigestSchedule> {
-    return this.request('/digest', { schema: WireDigestScheduleSchema, signal });
-  }
-
-  /**
-   * Replaces the digest wholesale. A partial update could not express "no days"
-   * or "no destinations", and both are things someone can legitimately mean.
-   */
-  async updateDigestSchedule(input: {
-    enabled: boolean;
-    days: number[];
-    times: number[];
-    deliveryTargets: Array<{ type: DigestDeliveryTargetType; connectionId: string | null }>;
-  }): Promise<DigestSchedule> {
-    return this.request('/digest', { method: 'PUT', body: input, schema: WireDigestScheduleSchema });
   }
 
   /**
@@ -1314,18 +1275,6 @@ export class RallyApi {
     });
     this.pendingRunKeys.delete(id);
     return result;
-  }
-
-  getPeopleRanking(channelId: string | null, signal?: AbortSignal): Promise<PeopleRanking> {
-    const query = channelId === null ? '' : `?${new URLSearchParams({ channelId })}`;
-    return this.request(`/navigation/people-ranking${query}`, { schema: PeopleRankingSchema, signal });
-  }
-
-  setPinned(kind: PinKind, id: string, pinned: boolean, parentId?: string): Promise<PinList> {
-    const path = `/navigation/pins/${kind}/${encodeURIComponent(id)}`;
-    return pinned
-      ? this.request(path, { method: 'PUT', body: parentId ? { parentId } : {}, schema: PinListSchema })
-      : this.request(path, { method: 'DELETE', schema: PinListSchema });
   }
 
   /**

@@ -60,7 +60,7 @@ import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, IconB
 import { connectorBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
-import { DailyDigestSettings, NotificationChannelSettings } from '../components/notification-settings';
+import { NotificationChannelSettings } from '../components/notification-settings';
 import { UsageSettingsSection } from '../components/organization-usage';
 import { InlineEditableText } from '../components/inline-editable-text';
 import { useAppSession } from '../lib/app-session';
@@ -1634,13 +1634,6 @@ export function WorkspaceSettingsScreen({
                 email={session?.user.email ?? null}
                 pushAvailable={featureFlags.data?.pushNotificationsEnabled === true}
                 workspaceId={workspace.id}
-              />
-            )}
-            {activeSection === 'notifications' && api && (
-              <DailyDigestSettings
-                api={api}
-                connections={connections.data ?? []}
-                onEditTimezone={() => setActiveSection('account')}
               />
             )}
 
