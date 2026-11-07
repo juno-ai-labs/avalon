@@ -291,4 +291,17 @@ describe("runProgram on workerd", () => {
     });
     expect(second.result).toMatchObject({ ok: true, valueJson: '"undefined"' });
   });
+
+  it("tells the program how long it has left before its own deadline, falling as time passes", async () => {
+    const run = await runProgram({
+      loader: env.CODE_LOADER!,
+      code: "const before = msLeft(); await new Promise((resolve) => setTimeout(resolve, 300)); const after = msLeft(); return { before, after };",
+      gateway: stubSession().gateway, api: {}, programInput: undefined, signal: new AbortController().signal, deadlineMs: 5_000,
+    });
+    expect(run.result.ok).toBe(true);
+    const { before, after } = JSON.parse(run.result.ok ? run.result.valueJson : "{}") as { before: number; after: number };
+    expect(before).toBeGreaterThan(4_500);
+    expect(before).toBeLessThanOrEqual(5_000);
+    expect(before - after).toBeGreaterThanOrEqual(250);
+  });
 });
