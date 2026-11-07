@@ -12,9 +12,9 @@ const WORKSPACE_ID = asWorkspaceId('00000000-0000-7000-8000-000000000c01');
 const OWNER = '00000000-0000-7000-8000-000000000c02';
 const MEMBER = '00000000-0000-7000-8000-000000000c03';
 const OUTSIDER = '00000000-0000-7000-8000-000000000c04';
+/** A Canvas open to the Organization, and one only its creator and participants open. */
 const OPEN_ROOM = '00000000-0000-7000-8000-000000000c11';
 const PRIVATE_ROOM = '00000000-0000-7000-8000-000000000c12';
-const ARCHIVED_ROOM = '00000000-0000-7000-8000-000000000c13';
 const AUTOMATION = '00000000-0000-7000-8000-000000000c21';
 const CHILD = '00000000-0000-7000-8000-000000000c31';
 const RUN = '00000000-0000-7000-8000-000000000c32';
@@ -49,31 +49,20 @@ async function seededWorkspace(name = workspaceDOName('global', WORKSPACE_ID)) {
   const stub = env.WORKSPACE_DOS.getByName(name);
   await stub.initializeWorkspace(WORKSPACE_ID, 'wnam');
   const seeded = await runInDurableObject(stub, (_instance, state) =>
-    state.storage.sql.exec('SELECT 1 FROM channels WHERE workstream_id = ?', OPEN_ROOM).toArray().length > 0);
+    state.storage.sql.exec('SELECT 1 FROM canvas_directory WHERE canvas_id = ?', OPEN_ROOM).toArray().length > 0);
   if (seeded) return stub;
   await runInDurableObject(stub, (_instance, state) => {
     const sql = state.storage.sql;
-    const room = (id: string, scope: string, archivedAt: number | null, n: number) => sql.exec(`INSERT INTO channels
-      (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview, scope, exact_state,
-       system_kind, last_activity_at, completed_at, archived_at, email_address, origin_type, origin_label, created_by_user_id,
-       automation_subscription_id, automation_run_id, planned_for, title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
-       next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at, source_created_at, source_updated_at, projected_at)
-      VALUES (?, 1, ?, ?, 'test', ?, '', '', ?, 'idle', NULL, ?, NULL, ?, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL, 'settled', 0, 0, NULL, NULL, NULL, ?, ?, ?)`,
-    id, n, `00000000-0000-7000-8000-${String(n).padStart(12, '0')}`, `Room ${n}`, scope, n, archivedAt, OWNER, n, n, n);
-    room(OPEN_ROOM, 'workspace', null, 1);
-    room(PRIVATE_ROOM, 'personal', null, 2);
-    room(ARCHIVED_ROOM, 'workspace', 5, 3);
-    const viewer = (roomId: string, userId: string, participant: number, n: number) => sql.exec(`INSERT INTO channel_viewers
-      (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant, participant_added_at,
-       unread_count, you_are_mentioned, unseen, listable, seen_attention_ordinal, manual_unread_from_ordinal, manual_unread_generation,
-       latest_mention_attention_ordinal, projected_at) VALUES (?, ?, 1, 1, ?, 'test', ?, 1, 0, 0, 0, 1, 0, NULL, 0, 0, 1)`,
-    roomId, userId, `00000000-0000-7000-8001-${String(n).padStart(12, '0')}`, participant);
-    viewer(PRIVATE_ROOM, OWNER, 1, 1);
-    viewer(PRIVATE_ROOM, MEMBER, 0, 2);
-    viewer(PRIVATE_ROOM, OUTSIDER, 1, 3);
+    const canvas = (id: string, visibility: string) => sql.exec(`INSERT INTO canvas_directory (canvas_id, workspace_id, title,
+        created_by_user_id, created_at, updated_at, visibility, authority_generation) VALUES (?, ?, 'Canvas', ?, 1, 1, ?, 1)`,
+    id, WORKSPACE_ID, OWNER, visibility);
+    canvas(OPEN_ROOM, 'workspace');
+    canvas(PRIVATE_ROOM, 'participants');
+    // A participant who has left the Organization is not reached.
+    sql.exec(`INSERT INTO canvas_participants (canvas_id, user_id, source, added_at) VALUES (?, ?, 'added', 1)`, PRIVATE_ROOM, OUTSIDER);
     sql.exec(`INSERT INTO automation_directory (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope,
-      owning_workstream_id, title, description, next_run_at, projected_at) VALUES (?, ?, ?, 1, 'test', 'active', 'workstream', ?, 'Auto', '', NULL, 1)`,
-    AUTOMATION, WORKSPACE_ID, MEMBER, PRIVATE_ROOM);
+      title, description, next_run_at, projected_at) VALUES (?, ?, ?, 1, 'test', 'active', 'personal', 'Auto', '', NULL, 1)`,
+    AUTOMATION, WORKSPACE_ID, MEMBER);
     sql.exec(`INSERT INTO authorization_inventories (parent_id, substream_id, revision, validated_at) VALUES (?, ?, 1, 1), (?, ?, 1, 1)`,
       PRIVATE_ROOM, CHILD, AUTOMATION, RUN);
     const connect = (id: string, scope: string, owner: string | null) => sql.exec(`INSERT INTO connector_connections
@@ -87,13 +76,13 @@ async function seededWorkspace(name = workspaceDOName('global', WORKSPACE_ID)) {
     file(SYNCED_FILE, 'google_drive', WORKSPACE_CONNECTION, null);
     file(UPLOAD, 'avalon_upload', null, MEMBER);
   });
-  await stub.applyAuthorizationLocations({ workspaceId: WORKSPACE_ID, parentId: OPEN_ROOM, substreamId: '0', parentKind: 'workstream',
+  await stub.applyAuthorizationLocations({ workspaceId: WORKSPACE_ID, parentId: OPEN_ROOM, substreamId: '0', parentKind: 'canvas',
     revision: 1, validatedAt: 1, resourceIds: [UPLOAD, SYNCED_FILE] });
   return stub;
 }
 
 describe('search projection universe', () => {
-  it('reaches every member of an open room, only participants of a private one, and nobody for an unknown parent', async () => {
+  it('reaches every member for an open Canvas, its creator and participants for a private one, and nobody for an unknown parent', async () => {
     const stub = await seededWorkspace('search-universe-parents');
     const open = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'parent', id: OPEN_ROOM } });
     expect(sorted(open.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, MEMBER]));
@@ -102,9 +91,9 @@ describe('search projection universe', () => {
     const closed = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'parent', id: PRIVATE_ROOM } });
     expect(closed.map((pair) => pair.subject.userId)).toEqual([OWNER]);
     expect(sorted(closed[0]!.resources)).toEqual(sorted([conversation(PRIVATE_ROOM, '0'), conversation(PRIVATE_ROOM, CHILD)]));
-    // A room-owned automation inherits the room's participants and adds its author.
+    // A personal Sidekick reaches its author.
     const automation = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'parent', id: AUTOMATION } });
-    expect(sorted(automation.map((pair) => pair.subject.userId))).toEqual(sorted([OWNER, MEMBER]));
+    expect(automation.map((pair) => pair.subject.userId)).toEqual([MEMBER]);
     expect(automation[0]!.resources).toEqual([conversation(AUTOMATION, RUN)]);
     expect(await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'parent', id: crypto.randomUUID() } })).toEqual([]);
   });
@@ -122,7 +111,7 @@ describe('search projection universe', () => {
     expect(upload[0]!.resources).toEqual([resource(UPLOAD)]);
   });
 
-  it('reaches everything one member could read, skipping archived rooms and rooms they are not in', async () => {
+  it('reaches everything one member could read, skipping a Canvas they cannot open', async () => {
     const stub = await seededWorkspace('search-universe-member');
     const [member, ...rest] = await stub.enumerateSearchAuthorization({ workspaceId: WORKSPACE_ID, target: { kind: 'member', id: MEMBER } });
     expect(rest).toEqual([]);
