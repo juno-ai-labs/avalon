@@ -61,7 +61,7 @@ broadcast and replay delivery for older enum decoders; see
 | `packages/contracts/src/workspace-reach-watch.ts` | `watchWorkspaceSocket`, the connection loop for a host without the renderer's provider, and the heartbeat and reconnect numbers every workspace-socket client shares. |
 | `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
 | `apps/api/src/durable-objects/workspace-resource-versions.ts`, `apps/desktop/src/renderer/lib/resource-heads.ts` | The one ledger of new resource versions, drained for `workspace_resource_versions` and the pinned-artifact announcement, and the client's merge of each announced head into the conversation details and popped-out windows that show it. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Owns the SubstreamAgent feed protocol, ticket request, snapshot/replay application, heartbeat, pagination, and reconnect state machine. `ConversationSurface` calls it for the one conversation on screen. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Owns the AgentLoopDO feed protocol, ticket request, snapshot/replay application, heartbeat, pagination, and reconnect state machine. `ConversationSurface` calls it for the one conversation on screen. |
 | `apps/desktop/src/renderer/lib/workstream-socket-resume.tsx` | The workspace-scoped resume registry: each conversation's last room sequence and delayed-inference set, kept across a remount so a revisit resumes rather than re-snapshotting. |
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Presents a browser-shaped socket to the feed hook and maps Electron sockets onto one socket-ID-multiplexed preload listener. Browser development falls back to the native `WebSocket` constructor. |
 | `apps/desktop/src/common/realtime-socket.ts` | Defines the closed IPC schemas for opening, sending, closing, and receiving brokered socket events. |
@@ -109,7 +109,7 @@ Electron renderer
   |
   |-- typed preload IPC --> Electron main --> Node ws ----> regional Worker
           one feed socket for the conversation on screen         |
-          (a Canvas's Chat or a Sidekick's conversation)         +--> SubstreamAgent
+          (a Canvas's Chat or a Sidekick's conversation)         +--> AgentLoopDO
 ```
 
 The Worker remains in every public connection path. Durable Objects do not
@@ -124,7 +124,7 @@ The WorkspaceDO socket stays in Chromium because there is exactly one for the
 active workspace and therefore no swarm to serialize. It supplies the sidebar's
 authoritative Canvases and Sidekicks lists and presence. There is no
 per-conversation metadata socket; the Channel control socket that used to carry
-metadata is retired (see the 2026-09-25 changelog entry). The matching SubstreamAgent socket for the
+metadata is deleted (see the 2026-09-25 and 2026-11-07 changelog entries). The matching AgentLoopDO socket for the
 addressed conversation supplies the canonical feed snapshot, ordered live
 events, replay, older-page responses, and the private receipts for message and
 conversation commands sent directly by the composer. WorkspaceDO's explicit
@@ -302,7 +302,7 @@ already on the client from the workspace socket, so nothing else is asked for.
 Foregrounding a Canvas sends `set_presence` on the workspace socket, which is
 how the Canvas's face pile and live dot learn who is in it.
 For the main feed, the Worker also starts a best-effort ticket-scoped
-SubstreamAgent preparation without awaiting it, so admission and snapshot work
+AgentLoopDO preparation without awaiting it, so admission and snapshot work
 can overlap the ticket's return trip and native handshake. A room retains only
 the newest admission and newest completed snapshot; a newer ticket replaces
 them, so speculative traffic cannot grow room memory.
@@ -336,14 +336,14 @@ audience, region, and target identity. It strips the bearer ticket before
 forwarding the upgrade and passes only verified identity and the ticket ID to
 the target object. A feed ticket additionally carries a signed role and
 authority generation. If its in-memory preparation still matches every claim
-and the object's local generation, SubstreamAgent reuses the session/membership
+and the object's local generation, AgentLoopDO reuses the session/membership
 decision prepared from D1 during ticket transit and, when safe, its prepared
 snapshot. Both prepared and fallback paths still read current regional
 authority because maintenance can close a generation in place. Either way the
 object enforces local visibility, consumes the ticket ID once, accepts the
 server socket, and serializes the attachment needed after eviction.
 
-WorkspaceDO (for the workspace socket, and the retired Channel control socket older clients still open) and SubstreamAgent use Cloudflare's
+WorkspaceDO (for the workspace socket) and AgentLoopDO use Cloudflare's
 [WebSocket Hibernation API](https://developers.cloudflare.com/durable-objects/best-practices/websockets/).
 Idle objects can be evicted while the platform keeps their sockets connected;
 incoming application frames wake the object and recover connection identity
@@ -354,79 +354,21 @@ useful sockets warm without requiring an always-running Durable Object instance.
 ### Who the workspace socket tells, and how often
 
 Every workspace socket in an Organization lands in one `WorkspaceDO`, so each
-send that object makes is decided per socket. Two kinds of send carry most of
-the traffic, and neither goes to every socket by default.
+send that object makes is decided per socket. Three kinds of send carry most
+of the traffic, and each is read or filtered for the socket it goes to.
 
-**A Channel's row** (`workspace_workstream_state`) goes to:
-
-- everybody who can see the Channel now, for a change to the Channel itself
-  (its common row, its facepile, its breakout total, its running agents); a
-  Channel is seen when it is not archived and is either Organization-wide or
-  the person is one of its participants at the Channel's authority generation;
-- the one person whose own row moved (unread, mention, breakout list), if they
-  can see it;
-- **the people the write may have taken the Channel from**, who are sent the
-  row if they still see it and the `workstream: null` tombstone if they do not.
-
-Nobody else is sent anything. A tombstone to someone who never saw the Channel
-would name a private Channel and say when it moved, and it has no job to do on
-the client: the desktop's receiver removes the row, and there is no row to
-remove. The people who may have lost a Channel are named inside the
-directory transaction, against the rows as they were before it, because once
-the batch commits "who could see it a moment ago" is no longer answerable, and
-a follow-up can run long after its write (the alarm retries one that failed).
-They are carried in the directory follow-up (`channelLosses`) as user ids,
-never as "everyone": expanded against whoever is connected when the follow-up
-runs, "everyone" would send a Channel's tombstone, and so its id, to a member
-who joined after the write and never had it.
-
-| What the write did | Who is owed the tombstone |
-| --- | --- |
-| A viewer row stopped being a participant, or was deleted for a person who is no longer an active member | That person. |
-| The Channel was archived | Everyone who could see it (`channelReadersBefore`): its participants, and for an Organization-wide Channel every member socket subscribed at the write. |
-| An Organization-wide Channel narrowed to its participants | As for an archive; the participants still see it and get the row. |
-| A new authority generation replaced the row | As for an archive; each participant's row reappears when their viewer row arrives at the new generation. |
-| A person left the Organization (`applyMemberStatus`) | That person, for each Channel they sat in; their socket stays open until the revocation walk closes it. |
-
-The subscribed sockets stand in for an Organization-wide Channel's readers
-because they are exactly the people holding it: a member with no socket is
-answered, when they connect, with a sidebar that already reflects the write,
-and `workspace_member_status` cannot list every member, since it learns one
-from before it existed only when something asks.
-
-`channelLosses` is required and holds only user-id lists. A follow-up in an
-older shape (one recorded before the field existed, or one holding `"all"`)
-does not parse, so it is kept as `failed` and logged
-`directory_followup_unreadable`, like any other unreadable row. Every
-production Organization was checked before the fallback that read those shapes
-was removed, and none held one.
-
-Each person's rows are **built once** for all of their sockets and all of the
-Channels they are owed, from one set of reads, and sent to each socket.
-Whether each person can see each Channel is decided from two reads for every
-planned Channel together, so a person who cannot see a Channel costs nothing.
-
-The rows are **coalesced per post-commit pass.** A batch of child effects
-applies each envelope in its own transaction and records a follow-up per
-envelope; the pass (`runDirectoryFollowUps`, reached through
-`afterParentWrite`) collects every Channel those follow-ups touched, and the
-hosted parent's own republish (a breakout roster or the running agents moving)
-joins the same plan, so a turn's burst of changes sends each Channel once per
-socket. The sync topics the pass's activity records moved are published once
-the same way. Nothing here waits on anything: the plan is sent synchronously
-after the last follow-up ran, with no `await` or round trip added to the
-request.
-
-**The rows are best effort, and never hold a follow-up back.**
-`publishChannelRows` does not throw: a person whose row cannot be built is
-logged (`channel_row_publish_failed`, with the reason's code) and skipped, and
-everybody else is still sent theirs. A follow-up that ran is deleted whatever
-the sends did, because re-running it would repeat its reconciliations,
-archival notices and presence broadcast to re-send a row, and a socket that
-missed one is answered with the current sidebar when it reconnects. The pass's
-sync topics are the durable part: if publishing them throws, they are recorded
-as a follow-up of their own (`directory_followup_sync_deferred`), and only
-they are retried.
+**A list push** (`workspace_sidebar_list` for the Sidekicks,
+`workspace_canvas_list` for the Canvases) is read per socket for that
+socket's viewer, so a row reaches only someone the Canvas's or the Sidekick's
+audience admits, and a row the viewer may no longer open is absent from the
+next push rather than sent as a tombstone. A change to a row itself (a
+Canvas's row, participants, latest message or who is in it; a Sidekick's
+directory row or its shared conversation's latest message) goes to every
+socket; one person's read or pins go to that person's sockets alone. Each push
+carries the list's waterline, advanced in the write's own transaction, and is
+sent synchronously after the commit, so there is no follow-up ledger and
+nothing to retry: a socket that missed one is answered with the current
+sidebar when it reconnects.
 
 **A sync topic** (`workspace_sync`) goes to everybody unless its event names an
 audience, live and on replay; how an event names one, and each topic's
@@ -442,7 +384,7 @@ An unlisted resource is never named. It covers every resource
 type and every producer, because versions are only ever written by the
 `resources` triggers: a trigger on `resource_versions` notes each new version
 in `workspace_resource_version_changes` (WorkspaceDO migration 114), and the
-write hook that drains the Channel rail's ledger drains it too, after the
+post-write drain `sql-write-observer.ts` schedules drains it after the
 write's transaction. It is the one ledger of new versions: the same drain
 feeds the pinned-artifact announcement, which keeps only the causes a pin
 counts as news ([`pinning.md`](pinning.md#artifact-pins)).
@@ -542,7 +484,7 @@ desktop, two consecutive online ticket timeouts for the same ticket path escalat
 to `session.defaultSession.closeAllConnections()` in main. The user chose this
 trigger on 2026-10-05 because a reset interrupts other Chromium requests. An
 accepted ticket or a non-timeout outcome clears only its own path's streak: healthy Organization traffic
-must not mask a selectively stalled Channel. HTTP errors, owner cancellation and
+must not mask a selectively stalled conversation feed. HTTP errors, owner cancellation and
 explicit offline timeouts do not count. The whole-open deadline identifies a
 ticket timeout explicitly when it aborts ticket acquisition.
 
@@ -634,17 +576,11 @@ success.
   Sidekick's metadata is its row on the workspace socket; a per-conversation
   metadata socket would bring back the second copy of that row this topology
   removed.
-- **A Channel's row reaches only the people who can see the Channel, and the
-  people a write just took it from.** A null row sent to anybody else names a
-  private Channel and when it moved; a tombstone withheld from somebody who
-  lost the Channel leaves it on their screen. A new way to take a Channel from
-  someone has to add them to the batch's `channelLosses`, by user id and read
-  inside the batch's transaction, or it has to be one of the transitions
-  `applyDirectoryEnvelope` already compares.
-- **A Channel row never holds a directory follow-up back.** A failed row send
-  is logged and skipped; making it defer the follow-up re-runs every
-  reconciliation and notice in the pass on each alarm retry, for a row the
-  next reconnect would send anyway.
+- **A list is read per socket for its viewer, and a row the viewer may not
+  open is absent, never a tombstone.** A tombstone would name a private Canvas
+  to somebody who may not know it exists; a list read once and sent to every
+  socket would show one person's private Canvas to the rest. A new list goes
+  on its own event type and is read per socket the same way.
 - **A per-person sync event is stored with its audience and replayed only to
   it.** Replaying it to everyone after a reconnect would undo the live send's
   narrowing for every client that was briefly away.
@@ -669,19 +605,19 @@ success.
 - **Idle server sockets remain hibernatable.** Adding an object-side interval,
   in-memory-only connection registry, or non-hibernation acceptance keeps
   compute active or loses required state on eviction.
-- **A warm connection is not presence.** Foreground work-stream identity is
+- **A warm connection is not presence.** The foreground Canvas is
   reported separately over WorkspaceDO; proactively opening a feed must not make
   another member appear to be viewing it. Current Electron feed subscriptions
-  explicitly disable the legacy SubstreamAgent presence publication, and the UI
+  explicitly disable the legacy AgentLoopDO presence publication, and the UI
   ignores that legacy event in favor of WorkspaceDO's foreground snapshot.
 - **The client and both object endpoints share one frame ceiling.** Raising or
-  lowering the 1 MB bound in only Node, the hosted Channel parent, or SubstreamAgent creates a
+  lowering the 1 MB bound in only Node, WorkspaceDO, or AgentLoopDO creates a
   transport-dependent protocol and must not be done.
 - **A brokered socket kind is a closed enum with its own route shape.** Adding
   one means adding it to `DesktopRealtimeSocketKindSchema` *and* to
   `validSocketPath`, which is what keeps the renderer from turning main into a
   general network client. A kind whose path check falls through to the
-  work-stream branch would accept a URL its own protocol never uses.
+  conversation feed branch would accept a URL its own protocol never uses.
 - **The Organization-sync relay: one socket per desktop, no gap at a hand-over, names
   and never state.** A consumer dials only while main reports no publisher;
   it listens for its whole life and a fallback socket subscribes from `0`;
@@ -706,10 +642,10 @@ success.
   whenever its reader rendered last, failed the next invalidation ("Query data
   cannot be undefined"), and left the list never read again. Guard:
   `lib/fetch-through-owner.test.ts`.
-- **A change that arrives as a push does not invalidate the work-stream
-  list.** Invalidating it is a whole Space walk, and a walk answered before
-  WorkspaceDO had a thread's new title put the old one back. Keep it for the
-  debug toggle, a connect that carried no rows, imports and Sidekick runs.
+- **A change that arrives as a push does not invalidate its list.** The push
+  is the list, at a newer waterline; a refetch answered before WorkspaceDO had
+  the change would put the old row back, which is how a Thread's new title was
+  once lost.
 
 ## Boundary
 
@@ -784,7 +720,7 @@ Unit and integration tests do not prove Chromium's native connection reset; that
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (`the organization-sync relay between windows`) | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workspace-socket.test.tsx` | The main window publishing state and every topic (`initial` included, a flag push as `feature_flags`, an `automations` list push as `automations`); detaching when unmounted with no successor and not across a switch or StrictMode; a consumer with a live publisher asking for no ticket, reading once, and refetching on relayed topics for its own region and UUID only; dialling only while nobody publishes, closing when somebody does, resubscribing from `0` after; and waiting, socketless, while the publisher serves another Organization. |
 | `apps/desktop/src/renderer/lib/realtime-socket.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/realtime-socket.test.ts` | Browser-shaped state/events, IPC calls, and one multiplexed preload listener for every brokered socket. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-workstream-socket.test.tsx` | The feed hook: recovery confirmed only by a usable live snapshot, the canonical feed kept while its owner is retained, a stable connection object, and the opening deadlines. |
-| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Who the workspace socket tells, on real sockets: a private Channel's change reaches nobody outside it; the tombstone reaches a removed participant, the readers of a narrowed or archived Channel, every reader of an Organization-wide Channel re-generated for its participants, the participants of a re-generated personal one, and a member who left the Organization, and nobody who never saw the Channel, including a member who joined before a held follow-up ran; one person's two sockets get the same row, built once (a counting wrapper on `channelRowPayloads`); a burst of five changes in one delivery, and two held follow-ups run in one pass, are one row per socket; a row that cannot be built for one person still reaches the others and the follow-up is deleted; a per-person topic and a personal connection's change reach their audience alone, live and on replay, and a replay answers at the log's waterline; an Organization connection's change reaches everyone; a route's `noteChangedConnection` reaches the middleware's publish. |
+| `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Who the workspace socket tells, on real sockets: a per-person topic and a personal connection's change reach their audience alone, live and on replay, and a replay answers at the log's waterline; a stored event naming a retired topic drops it on replay and still answers the resume; an Organization connection's change, and an Organization-wide one, reach everyone; a route's `noteChangedConnection` reaches the middleware's publish. Who a Canvas list push reaches is in [`canvases.md`](canvases.md#testing). |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/durable-object-runtime.test.ts` | Real-workerd upgrade, hibernation, attachment, snapshot, replay, read-only feed, and revocation behavior. |
 
 The broker tests use a socket factory double because they prove Electron
@@ -795,8 +731,8 @@ semantics.
 
 The broker's destination-confinement cases name the one brokered route kind,
 the conversation feed, and refuse the retired Channel control path under either
-kind name; an automation's feed is the same kind with an automation id in the
-parent position, so it is covered by the same path check.
+kind name; a Canvas's and a Sidekick's feed are the same kind with their id in
+the parent position, so they are covered by the same path check.
 
 For a manual acceptance check, run the local regional Worker and Electron client
 as described in [`dev-environment.md`](dev-environment.md), sign in, and inspect
@@ -820,8 +756,8 @@ The sandboxed renderer is untrusted at the IPC boundary. Main accepts realtime
 socket operations only from the primary Rally window, parses every operation,
 and keys authority to that window's `webContents` ID. An open URL must use
 `ws`/`wss`, match a configured regional origin exactly, contain no username,
-password or fragment, and match the path declared for its kind — one of
-the Channel control or SubstreamAgent shapes. Query data is discarded before the
+password or fragment, and match the path declared for its kind,
+the conversation feed shape. Query data is discarded before the
 connection opens; it never selects a protocol capability. The first protocol
 must be the public ticket sentinel;
 main supplies `app://rallywithai` as Origin and accepts no renderer-selected
@@ -858,8 +794,8 @@ performance log rather than polluting user-visible open percentiles. For package
 also appear in Unified Logging. The `workstream_open` `handshake` phase spans
 renderer-to-main IPC plus the network/Worker/object upgrade. Its direct-route
 PAC, DNS, TCP, TLS, and edge-upgrade annotations locate that total; proxied
-attempts expose one aggregate. Chromium NetLog no longer contains Channel control
-and SubstreamAgent handshakes.
+attempts expose one aggregate. Chromium NetLog no longer contains the feed's
+handshake.
 
 Worker traces and `perf_flow` rows cover ticket issue, edge upgrade, Durable
 Object binding, acceptance, subscription, and snapshot assembly. Correlate the
@@ -885,7 +821,7 @@ platform resources.
 
 ## Changelog
 
-### 2026-11-07 — The workspace socket carries only what Canvases and Sidekicks use
+### 2026-11-07 — The workspace socket carries only what Canvases and Sidekicks use, and one feed serves the conversation on screen
 
 **What changed:** The subscribe answer's sidebar is the Sidekick and Canvas
 lists: `spaces`, `ordering`, `pinnedOrder`, `pins`, `artifactPins`,
@@ -902,37 +838,17 @@ The client commands `list_workstreams`, `channel_rails`, `space_channels` and
 `workspace_navigation_state`, `space_conversations_changed`,
 `workspace_workstream_state`, `workspace_reach_changed`,
 `workspace_sidekick_activity` and the notes sidebar list leave the contract.
-On the conversation socket, `set_workstream_appearance` and the
-`initial_context_snapshot_chunk` frame (with the snapshot's
-`initialContextChunkCount`) go. The renderer loses the composer's running
-counts (the `workstream-background-agents` query key with them),
-`watchWorkspaceReach`, `retainConversationChildren` and
+The Channel row's per-viewer fan-out went with its rows: the directory
+follow-up's `channelLosses`, `publishChannelRows` and the per-person row build
+are deleted, and a list push is read per socket instead. On the conversation
+socket, `set_workstream_appearance` and the `initial_context_snapshot_chunk`
+frame (with the snapshot's `initialContextChunkCount`) go. The renderer loses
+the composer's running counts (the `workstream-background-agents` query key
+with them), `watchWorkspaceReach`, `retainConversationChildren` and
 `conversationSidekickMentions`.
 
-**Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-retired every producer: the server already sent an empty directory page and
-no Channel rows, and each of these named a Thread, Channel, note, Activity
-item or Breakout. A contract that still admits them invites a new caller to a
-mechanism with no server behind it. The composer counts were deleted rather
-than kept at zero because an indicator that never lights looks like a bug; the
-body records where a running signal would come from.
-
-**Consequences:** A sync event or follow-up WorkspaceDO stored before this
-change can still name a retired topic, so the stored-topic reader drops those
-names (`RETIRED_SYNC_TOPICS`) and still fails on any other unknown topic;
-`workspace-socket-fanout.test.ts` replays such a row, and each drop is logged
-as `workspace_sync_retired_topics_dropped`. A retired command from a desktop
-released before the pivot is an unknown type, which WorkspaceDO ignores under
-the socket's ignore-protocol-additions rule, logging
-`workspace_socket_retired_command_ignored`; refusing would close its socket
-for good. Such a desktop parses the subscribe answer only because the empty
-`workstreams` page and `notes` list are still sent: the compatibility window,
-which ends in the release after every desktop has updated.
-
-### 2026-11-07 — A new version is announced to a Canvas's readers, and narrowing a Canvas clears presence
-
-**What changed:** The proactive feed swarm is gone: `WorkspaceWorkstreamSockets`,
-which chose every pinned, five recent and every running Thread, and the
+The proactive feed swarm is gone: `WorkspaceWorkstreamSockets`, which chose
+every pinned, five recent and every running Thread, and the
 `WorkstreamSocketPool` that kept those feeds warm, retained them for five
 minutes and warmed one on hover, are deleted with the Channel row's client
 writer (`channel-viewer-state.ts`). `ConversationSurface` dials the feed of the
@@ -947,37 +863,52 @@ longer admits stops being shown in it and is backgrounded, and the unused
 `publishNavigationState` (the `workspace_navigation_state` sender) is gone.
 
 **Why:** Plan steps B-2, B-3, B-9 and C-2 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
-The pool existed to warm pinned and recent Threads ahead of a click; with no
-Thread list there is nothing to warm, a Canvas's transcript paints from the
-local cache before its socket answers, and a pool with one caller would be
-indirection with no second implementation. Sidekicks moved into the main
-window, which holds the socket; the relay is kept rather than deleted because
-Settings still consumes it, and deleting it would give the prewarmed Settings
-window its own socket again for the whole session, the cost the 2026-09-26
-entry removed. Only the retired Thread directory projection wrote
-`workspace_workstream_resource_links`, so after C-2 no Canvas artifact's new
-version reached an open preview; and presence was re-checked only on socket
-changes and revocations, never on a Canvas's audience, so a person removed from
-a Canvas stayed listed in it. The restored runtime tests
-(`workspace-resource-versions.test.ts`, the presence case in
-`durable-object-runtime.test.ts`) were what showed both.
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+retired every producer: the server already sent an empty directory page and
+no Channel rows, and each of these named a Thread, Channel, note, Activity
+item or Breakout. A contract that still admits them invites a new caller to a
+mechanism with no server behind it. The composer counts were deleted rather
+than kept at zero because an indicator that never lights looks like a bug; the
+body records where a running signal would come from. The pool existed to warm
+pinned and recent Threads ahead of a click; with no Thread list there is
+nothing to warm, a Canvas's transcript paints from the local cache before its
+socket answers, and a pool with one caller would be indirection with no second
+implementation. Sidekicks moved into the main window, which holds the socket;
+the relay is kept rather than deleted because Settings still consumes it, and
+deleting it would give the prewarmed Settings window its own socket again for
+the whole session, the cost the 2026-09-26 entry removed. Only the retired
+Thread directory projection wrote `workspace_workstream_resource_links`, so
+after C-2 no Canvas artifact's new version reached an open preview; and
+presence was re-checked only on socket changes and revocations, never on a
+Canvas's audience, so a person removed from a Canvas stayed listed in it. The
+restored runtime tests (`workspace-resource-versions.test.ts`, the presence
+case in `durable-object-runtime.test.ts`) were what showed both.
 
 **Considered and rejected:** Keeping the pool for Canvases, warming pinned and
 recent ones. No product signal yet says which Canvas a person opens next, and
 [adding proactive coverage](#best-practices-for-adding-proactive-coverage)
 asks for one before any warmth is spent.
 
-**Consequences:** A click pays a cold ticket, handshake and snapshot; the
-local cache keeps reading off that path, sending does not. The composer's
-background-agent count arrived on the Channel row, and nothing writes it now.
-The relay's consumer list is one window; a second secondary window that reads
-workspace state joins it the way Sidekicks did. `/parent-socket`,
-`WorkstreamControlSocketService` and `GET /workstreams/:id/control-socket`,
-kept partly for iOS and for desktops released before the workspace-socket
-breakout list, went with the Thread host in C-2. The server sections' Channel-row
-description (who the workspace socket tells, `channelLosses`) still describes
-the Thread era and is left for the server-docs pass.
+**Consequences:** A sync event or follow-up WorkspaceDO stored before this
+change can still name a retired topic, so the stored-topic reader drops those
+names (`RETIRED_SYNC_TOPICS`) and still fails on any other unknown topic;
+`workspace-socket-fanout.test.ts` replays such a row, and each drop is logged
+as `workspace_sync_retired_topics_dropped`. A retired command from a desktop
+released before the pivot is an unknown type, which WorkspaceDO ignores under
+the socket's ignore-protocol-additions rule, logging
+`workspace_socket_retired_command_ignored`; refusing would close its socket
+for good. Such a desktop parses the subscribe answer only because the empty
+`workstreams` page and `notes` list are still sent: the compatibility window,
+which ends in the release after every desktop has updated. A click pays a
+cold ticket, handshake and snapshot; the local cache keeps reading off that
+path, sending does not. The relay's consumer list is one window; a second
+secondary window that reads workspace state joins it the way Sidekicks did.
+`/parent-socket`, `WorkstreamControlSocketService` and
+`GET /workstreams/:id/control-socket`, kept partly for iOS and for desktops
+released before the workspace-socket breakout list, went with the Thread host
+in C-2.
+
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — Push exact-target Sidekick counts to open composers
 
