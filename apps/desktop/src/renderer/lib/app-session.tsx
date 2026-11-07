@@ -1037,7 +1037,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return activeSession;
       };
       if (intent.kind === 'new-workstream') {
-        if (!requireActiveWorkspace('Sign in before starting a thread.')) return;
+        if (!requireActiveWorkspace('Sign in before starting a Canvas.')) return;
         setDeepLinkError(null);
         markSurfaceEntrypoint(navigation.entrypoint);
         // A Channel is started from a Space, which this link does not name, so

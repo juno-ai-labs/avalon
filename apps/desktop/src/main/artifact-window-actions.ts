@@ -30,7 +30,7 @@ export function artifactWindowActionRequest(preview: DesktopArtifactWindowReques
     const [first, second] = preview.annotationScope?.split(':') ?? [];
     const canvas = first === 'canvas';
     const parent = IdSchema.safeParse(canvas ? second : first);
-    if (preview.editable !== true || !parent.success || (!canvas && second !== '0')) throw new Error('This artifact has no editable thread context');
+    if (preview.editable !== true || !parent.success || (!canvas && second !== '0')) throw new Error('This artifact cannot be edited here');
     if (canvas && (action.type === 'link' || action.type === 'pin')) {
       // A Canvas artifact's pin and link belong to the Canvas, not a thread;
       // neither has a route from a detached window yet (plan step B-5).

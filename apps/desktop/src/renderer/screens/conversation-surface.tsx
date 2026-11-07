@@ -4,7 +4,7 @@ import { validateAnnotationSend } from '../lib/use-annotation-pins';
 import { TranscriptHistoryStatus } from '../components/transcript-history-status';
 import { loadAnnotationPreview, readAnnotationVersion } from '../lib/annotation-preview';
 import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artifact-annotations';
-import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES } from "../lib/workspace-invitees";
+import { EmailMentionContext, emailMentionDirectory, NO_INVITEES } from "../lib/workspace-invitees";
 import { mentionLinksAsText } from "@rally/contracts/citations";
 import { useWorkspaceMembers } from "../lib/workspace-members";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
@@ -102,7 +102,7 @@ import { AttachmentPanel } from '../components/attachment-panel';
 import type { AttachmentPreview } from '../components/attachments';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import { HumanMessageBody } from '../components/workstream-blocks';
-import { Avatar, Badge, Button, EmptyState, IconButton, ErrorNotice, LoadingState, Modal } from '../components/primitives';
+import { Button, EmptyState, IconButton, ErrorNotice, LoadingState, Modal } from '../components/primitives';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import {
@@ -591,177 +591,6 @@ export function manualElicitationResponse(
 export function refusalMessage(error: unknown): string | undefined {
   return error instanceof ApiError && error.status >= 400 && error.status < 500 && error.code
     ? error.message : undefined;
-}
-
-export function AddParticipantDialog({
-  current,
-  privateSubstream = false,
-  failure,
-  failureMessage,
-  members,
-  invitees = [],
-  open,
-  pending,
-  onAdd,
-  onInvite,
-  onRemove,
-  onOpenChange,
-  sharing,
-}: {
-  sharing?: React.ReactNode;
-  /**
-   * Addresses invited to the Organization that have not joined, and not yet
-   * shared this conversation. Adding one shares it with the address; absent
-   * `onInvite`, none are offered.
-   */
-  invitees?: readonly string[];
-  onInvite?: ((email: string) => void) | undefined;
-  current: WorkspaceMember[];
-  privateSubstream?: boolean;
-  failure?: 'add' | 'remove' | undefined;
-  /** The server's own sentence for a refusal, shown in place of the generic one. */
-  failureMessage?: string | undefined;
-  members: WorkspaceMember[];
-  open: boolean;
-  pending: boolean;
-  onAdd: (member: WorkspaceMember) => void;
-  onRemove: (member: WorkspaceMember) => void;
-  onOpenChange: (open: boolean) => void;
-}): React.JSX.Element {
-  const currentById = new Map(current.map((member) => [member.id, member]));
-  // A participant read from the conversation may not say how they belong to
-  // the Organization; the roster does.
-  const guestIds = new Set([...members, ...current].filter((member) => member.accessClass === 'guest').map((member) => member.id));
-  const guestBadge = (member: WorkspaceMember) => guestIds.has(member.id) ? <Badge className="role-badge">Guest</Badge> : null;
-  const activeMembers = members.filter((member) => (member.status ?? 'active') === 'active');
-  const activeMemberIds = new Set(activeMembers.map((member) => member.id));
-  // A membership that is not active is one the work-stream endpoint refuses,
-  // so offering it here would only produce a failure the person cannot act on.
-  // Still retain any current participant missing from the active roster: the
-  // work-stream object is authoritative for who is already in this room.
-  const listed = [
-    ...activeMembers.map((member) => currentById.get(member.id) ?? member),
-    ...current.filter((member) => !activeMemberIds.has(member.id)),
-  ];
-  return (
-    <Modal
-      description={privateSubstream
-        ? 'Added participants can read this breakout and its shared context. This does not grant access to the parent thread.'
-        : 'Add people to the main conversation. Opening or viewing never adds someone as a participant.'}
-      onOpenChange={onOpenChange}
-      open={open}
-      title="Add a participant"
-    >
-      {failure ? <ErrorNotice>{failureMessage ?? (failure === 'add'
-        ? 'That participant couldn’t be added.'
-        : 'That participant couldn’t be removed.')}</ErrorNotice> : null}
-      {sharing}
-      <div className="member-action-list">
-        {listed.map((member) => {
-          const isParticipant = currentById.has(member.id);
-          if (!isParticipant) {
-            return (
-              <button
-                aria-label={`Add ${member.name} to ${privateSubstream ? 'breakout' : 'main conversation'}`}
-                className="member-action-row"
-                disabled={pending}
-                key={member.id}
-                onClick={() => onAdd(member)}
-                type="button"
-              >
-                <Avatar member={member} size="medium" />
-                <span><strong>{member.name}</strong><small>{member.email}</small></span>
-                {guestBadge(member)}
-                {pending ? <LoaderCircle className="spin" size={15} /> : <Plus aria-hidden="true" size={15} />}
-              </button>
-            );
-          }
-          return (
-            <div className="member-action-row" key={member.id}>
-              <Avatar member={member} size="medium" />
-              <span><strong>{member.name}</strong><small>{member.email}</small></span>
-              {guestBadge(member)}
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <IconButton
-                    disabled={pending}
-                    label={`${member.name} participant actions`}
-                    showTooltip={false}
-                  >
-                    {pending ? <LoaderCircle className="spin" size={15} /> : <Ellipsis size={16} />}
-                  </IconButton>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content align="end" className="menu-content" sideOffset={6}>
-                    <DropdownMenu.Item
-                      className="menu-item menu-item-danger"
-                      disabled={current.length <= 1 || pending}
-                      onSelect={() => onRemove(member)}
-                    >
-                      Remove from {privateSubstream ? 'breakout' : 'main conversation'}
-                    </DropdownMenu.Item>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
-            </div>
-          );
-        })}
-        {onInvite && invitees.map((email) => (
-          <button
-            aria-label={`Add ${email} to ${privateSubstream ? 'breakout' : 'main conversation'}`}
-            className="member-action-row is-invited"
-            disabled={pending}
-            key={email}
-            onClick={() => onInvite(email)}
-            type="button"
-          >
-            <Avatar member={inviteeAsMember(email)} size="medium" />
-            <span><strong>{email}</strong><small>Invited</small></span>
-            {pending ? <LoaderCircle className="spin" size={15} /> : <Plus aria-hidden="true" size={15} />}
-          </button>
-        ))}
-      </div>
-    </Modal>
-  );
-}
-
-/**
- * The second step of taking someone out of a conversation from its title
- * menu: what it means, and a way back. It stays open on a refusal so the
- * reason is read where it was asked.
- */
-export function RemoveParticipantDialog({ failure, member, noun, onCancel, onContinue, pending, self }: {
-  failure?: string | undefined;
-  member: WorkspaceMember | undefined;
-  noun: 'channel' | 'thread' | 'breakout';
-  onCancel: () => void;
-  onContinue: () => void;
-  pending: boolean;
-  self: boolean;
-}): React.JSX.Element {
-  // A member keeps a public conversation or Channel: Organization-wide scope
-  // admits them. A guest reads a Channel's public threads only while they
-  // are in it (`docs/spaces.md`), so leaving it takes those threads too,
-  // except the ones they take part in.
-  const who = self ? 'You' : member?.name ?? 'They';
-  const keeps = self ? 'You keep' : 'They keep';
-  const description = noun === 'channel' && member?.accessClass === 'guest'
-    ? `${who} will be taken off this channel and lose its threads, except those ${self ? 'you' : 'they'} take part in.`
-    : `${who} will be taken off this ${noun}. ${keeps} access only if it’s public.`;
-  return (
-    <Modal
-      description={description}
-      footer={<>
-        <Button disabled={pending} onClick={onCancel}>Cancel</Button>
-        <Button className="button-danger" disabled={pending} onClick={onContinue}>Continue</Button>
-      </>}
-      onOpenChange={(next) => { if (!next && !pending) onCancel(); }}
-      open={member !== undefined}
-      title={self ? `Leave the ${noun}?` : `Remove ${member?.name ?? 'this person'} from the ${noun}?`}
-    >
-      {failure ? <ErrorNotice>{failure}</ErrorNotice> : null}
-    </Modal>
-  );
 }
 
 function readableResourceKind(value: string): string {
