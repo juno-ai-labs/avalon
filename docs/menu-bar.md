@@ -27,6 +27,7 @@ The shared workspace watcher recovery policy and phase diagnostics are owned by
 | --- | --- |
 | `apps/desktop/src/main/menu-bar-menu.ts` | The drop-down as a plain Electron template, and `menuBarTitle`, the count beside the icon. No Electron objects, no I/O. |
 | `apps/desktop/src/main/menu-bar-content.ts` | `menuBarContent`: Needs attention and Recent Canvases from the two lists `SidebarListsWatch` holds. |
+| `apps/desktop/src/common/sidebar-attention.ts` | `canvasNeedsAttention` and `sidekickNeedsAttention`: the one rule for what counts as needing attention, read by `menuBarContent` here and by the rail's `useSectionCounts`. |
 | `apps/desktop/src/main/sidebar-lists-watch.ts` | `SidebarListsWatch`: the Organization's Canvases and Sidekicks lists, held over the main process's workspace socket from the frames the renderer's socket applies. |
 | `packages/contracts/src/workspace-reach-watch.ts` | `watchWorkspaceSocket`, the listen-only workspace socket transport (ticket, subscribe, heartbeat, reconnect) this rides on. |
 | `apps/desktop/src/main/menu-bar.ts` | The status item's lifecycle: whether it exists, and rebuilding its menu and title when its content moves. |
@@ -61,8 +62,9 @@ signed out.
 **It is the rail's number.** The rail's two badges and the dock badge are
 `useSectionCounts` in `navigation-sidebar.tsx`: Canvases counts each Canvas
 whose row is `unread`, Sidekicks each Sidekick whose row is `needsInput` or
-`unread`. `menuBarContent` applies the same two rules to the same two lists,
-read from the same socket frames, so the menu bar, the rail and the dock
+`unread`. Both rules are two predicates in `common/sidebar-attention.ts`, and
+`menuBarContent` calls the same two on the same two lists, read from the same
+socket frames, so the menu bar, the rail and the dock
 cannot disagree for longer than one push takes to land.
 
 ### The menu
@@ -77,8 +79,9 @@ immediately. In order:
    order each list draws them. Under the header, **Still loading** until both
    lists have arrived, and **Nothing needs your attention** only after they
    have, so a waiting list is never called empty.
-2. **Recent Canvases**: the first five Canvases, newest `updatedAt` first, as
-   the Canvases list orders them. With none, **Still loading Canvases** until
+2. **Recent Canvases**: the first five Canvases, re-sorted here by
+   `updatedAt`, newest first, with the id breaking a tie so equal times keep
+   one order. With none, **Still loading Canvases** until
    the list has arrived, and **No Canvases yet** only after it has.
 3. A separator, then **Open Rally** and **Quit Rally**.
 
@@ -148,7 +151,8 @@ socket applies, but only the fields the menu reads: a Canvas's id, title,
   held, and is dropped otherwise — the same rule `applyVersionedSidebarList`
   applies in the renderer, so a push overtaken by a fresher answer cannot
   bring an old list back.
-- The socket sends nothing: no request, no presence, no command.
+- The socket sends nothing beyond subscribe and the heartbeat ping: no
+  request, no presence, no command.
 
 Changes are coalesced to one menu rebuild per microtask, so a subscribe answer
 and a burst of pushes do not each rebuild the native menu.
@@ -250,8 +254,9 @@ destination, so the hidden state is not sticky.
 - **One count, one rule.** The number beside the icon is the Needs attention
   rows, all of them, and those rows are what the rail counts. A row or a count
   from anywhere else would disagree with the rail and the dock, which is the
-  mismatch this design exists to avoid. A change to what the rail counts
-  changes `menuBarContent` in the same change.
+  mismatch this design exists to avoid. The rule is shared, not copied: both
+  call the predicates in `common/sidebar-attention.ts`, so a change to what
+  counts is one edit there.
 - **A list is "none" only once it has arrived.** `null` is not yet heard and
   `[]` is empty; the menu says **Still loading** for the first and the empty
   copy only for the second.
@@ -314,8 +319,8 @@ Adding a menu row that navigates somewhere new means adding the link there
 first, not a second navigation channel here.
 
 What counts as needing attention is the rail's (`useSectionCounts` in
-[`desktop-shell.md`](desktop-shell.md)), not this module's; this module
-mirrors it.
+[`desktop-shell.md`](desktop-shell.md)), not this module's; both read it from
+`common/sidebar-attention.ts`.
 
 ## Failure modes and limits
 
@@ -396,8 +401,8 @@ received rather than anything a renderer supplied.
 
 `rallyApiRequest` is a main-process caller of the stored credential. Here it
 reaches only `GET /workspace/socket` for a ticket, and adds no credential
-storage of its own. The socket is listen-only; it sends no request, presence or
-command. Canvas and Sidekick titles are workspace content and are held in
+storage of its own. The socket is listen-only; it sends nothing beyond subscribe and
+the heartbeat ping — no request, presence or command. Canvas and Sidekick titles are workspace content and are held in
 main-process memory only — never written to disk — and are dropped on sign-out
 (`stopMenuBarDirectory`).
 

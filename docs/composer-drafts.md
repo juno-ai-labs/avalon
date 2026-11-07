@@ -44,6 +44,13 @@ the `new-automation` keys and `draft-cache.ts` still migrates their legacy
 spellings, because a released build may have rows under them; no screen writes
 them now.
 
+The same holds for the Channel composer and the Thread and Breakout screens,
+which the client cutover deleted: only the Canvas and Sidekick families are
+written. The `new-workstream` and Breakout key builders in
+`common/draft-keys.ts` stay, as does the legacy migration, so drafts already
+stored under them expire on the ordinary schedule rather than being deleted on
+upgrade.
+
 ### What is stored, and where
 
 Drafts live in an IndexedDB database named `rally-composer-drafts` in the
@@ -307,12 +314,6 @@ scope to confine its actions (`main/artifact-window-actions.ts`): for a Canvas
 it renames and deletes through `/conversations/<canvasId>/resources/…` and
 refuses pin and link with a reason naming the Canvas, since a Canvas artifact's
 pin and link belong to the Canvas (its link form is plan step B-5).
-
-The client cutover then deleted the Channel composer and the Thread and
-Breakout screens, so only the Canvas and Sidekick families are written. The
-`new-workstream` and Breakout key builders in `common/draft-keys.ts` stay, as
-does the legacy migration: drafts already stored under them expire on the
-ordinary schedule rather than being deleted on upgrade.
 
 ### 2026-10-20 — Persist confirmed artifact comments with composer drafts
 

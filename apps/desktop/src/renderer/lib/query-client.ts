@@ -13,7 +13,6 @@ export const createQueryClient = () => {
   });
   // Socket-owned viewer state has no fetcher and must outlive individual screens.
   // Set these before either an observer or the first directory write creates a query.
-  client.setQueryDefaults(["workstream-children"], { gcTime: Number.POSITIVE_INFINITY });
   client.setQueryDefaults(["workstream-background-agents"], { gcTime: Number.POSITIVE_INFINITY });
   return client;
 };

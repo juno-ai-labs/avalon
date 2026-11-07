@@ -18,7 +18,6 @@ import { useShellCapabilities } from '../lib/collaboration-session';
 import { isWindowSurfaceRoute } from '../lib/window-surface';
 import { MacDownloadLink } from './mac-download-link';
 import { MAC_APP_DOWNLOADABLE } from '../lib/browser-connectors';
-import { useDockBadge } from '../lib/dock-badge';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
@@ -31,11 +30,11 @@ import { useRailFillsPane } from '../lib/rail-split';
 import { SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
-import { canvasRoute, openCanvasId } from '../lib/canvases';
+import { canvasTurnRoute, openCanvasId } from '../lib/canvases';
 import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
 import { SearchModal } from './search-modal';
-import { NavigationSidebar, useSectionCounts } from './navigation-sidebar';
+import { NavigationSidebar, useRailDockBadge } from './navigation-sidebar';
 import { PHONE_NAVIGATION_CONTROL, PhoneHeaderContext, type PhoneHeader } from '@rally/ui/components/title-pill';
 import { useSheetOpener } from '../lib/sheet-opener';
 import { IconSearch } from '@tabler/icons-react';
@@ -162,8 +161,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const railFillsPane = useRailFillsPane(sidebarWidth);
   const railExpanded = useUiStore((state) => state.railExpanded);
   // The dock badge is the rail's counts added up, sent once both lists arrive.
-  const sectionCounts = useSectionCounts();
-  useDockBadge(sectionCounts.counts.canvases + sectionCounts.counts.sidekicks, sectionCounts.complete);
+  useRailDockBadge();
   const downloadedUpdate = useDownloadedUpdate();
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
@@ -456,7 +454,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           const target = result.location;
           if (target.kind === 'message') {
             // A message's conversation is a Canvas's Chat: open the Canvas on it.
-            navigate(`${canvasRoute(target.workstreamId)}?turn=${encodeURIComponent(target.turnId)}&sequence=${target.transcriptSequence}`);
+            navigate(canvasTurnRoute(target.workstreamId, target.turnId, target.transcriptSequence));
           } else if (target.kind === 'link') {
             void openLink(target.url);
           } else {

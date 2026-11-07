@@ -1040,8 +1040,8 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         if (!requireActiveWorkspace('Sign in before starting a Canvas.')) return;
         setDeepLinkError(null);
         markSurfaceEntrypoint(navigation.entrypoint);
-        // A Channel is started from a Space, which this link does not name, so
-        // it opens the app; the sidebar's plus asks for the Space.
+        // The link names no Canvas, so it opens the Canvases home; the
+        // sidebar's plus is what starts one.
         navigateAppRoute('/');
         return;
       }
