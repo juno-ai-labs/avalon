@@ -66,7 +66,6 @@ function evictCachedWorkstreamContent(
 ): void {
   const queryPrefixes = [
     ['workstream', workstreamId],
-    ['workstream-background-agents', workstreamId],
     ['ordered-transcript', workstreamId],
     ['transcript-overlays', workstreamId],
     ['workstream-feed-source', workstreamId],

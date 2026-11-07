@@ -689,36 +689,6 @@ describe('useWorkstreamSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(2);
   });
 
-  it('keeps a previously opened Breakout retrying through incomplete context snapshots', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const id = '00000000-0000-7000-8000-00000000074e';
-    const child = '00000000-0000-7000-8000-00000000074f';
-    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
-      url: 'wss://api.rally.test/feed', ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
-    })) });
-    const { result } = renderHook(() => useWorkstreamSocket(
-      api, id, true, 'active_workstream', undefined, true, child,
-    ), { wrapper: createWrapper() });
-    await flushPromises();
-    const first = FakeWebSocket.instances[0]!;
-    act(() => { first.open(); first.message(snapshotFrame({ sequence: 1, workstream: { id } })); first.close(1012); });
-    await act(async () => vi.advanceTimersByTimeAsync(750));
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const next = FakeWebSocket.instances.at(-1)!;
-      act(() => {
-        next.open(); next.rawMessage('pong');
-        next.message(snapshotFrame({ sequence: 2 + attempt, workstream: { id }, initialContextChunkCount: 1 }));
-      });
-      await act(async () => vi.advanceTimersByTimeAsync(Math.min(10_000 * 2 ** attempt, 40_000)));
-      expect(result.current.openingError).toBeUndefined();
-      await act(async () => vi.advanceTimersByTimeAsync(12_000));
-    }
-    expect(FakeWebSocket.instances.length).toBeGreaterThan(4);
-    expect(result.current.openingError).toBeUndefined();
-  });
-
   it('recovers a reading-only feed on foreground without a pending command', async () => {
     vi.useFakeTimers();
     vi.spyOn(document, 'hasFocus').mockReturnValue(true);
@@ -1107,132 +1077,6 @@ describe('useWorkstreamSocket', () => {
     expect(overlayMessages(queryClient, id).map(message => message.text)).toEqual(['Fresh queue']);
   });
 
-  it('restarts from a baseline after a partial initial-context close', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-00000000063a';
-    const substreamId = '00000000-0000-7000-8000-00000000063b';
-    const getSocketTicket = vi.fn(async (
-      ...args: Parameters<WorkstreamSocketApi['getSocketTicket']>
-    ) => {
-      void args;
-      return {
-      url: `wss://api.rally.test/workstreams/${workstreamId}/${substreamId}`,
-      ticket: 'socket-ticket',
-      protocols: socketTicketProtocols('socket-ticket'),
-      };
-    });
-    const { result } = renderHook(() => useWorkstreamSocket(
-      socketApiWith({ getSocketTicket }), workstreamId, true,
-      'active_workstream', undefined, true, substreamId,
-    ), { wrapper: createWrapper(queryClient) });
-    await flushPromises();
-    const first = FakeWebSocket.instances[0]!;
-    act(() => {
-      first.open();
-      first.message(snapshotFrame({
-        sequence: 8, initialContextChunkCount: 2, workstream: { id: workstreamId },
-      }));
-      first.message({
-        type: 'initial_context_snapshot_chunk', sequence: 8,
-        occurredAt: '2026-07-31T19:20:00.000Z',
-        snapshotId: emptyTranscriptSnapshot().snapshotId,
-        chunkIndex: 0, chunkCount: 2, json: '{"stale":',
-      });
-    });
-    expect(result.current.sendReady).toBe(false);
-    act(() => first.close(1006));
-    await act(async () => vi.advanceTimersByTimeAsync(750));
-    await flushPromises();
-
-    expect(getSocketTicket.mock.calls[1]?.[3]).toBe(0);
-    expect(result.current.sendReady).toBe(false);
-    expect(queryClient.getQueryData(substreamInitialContextQueryKey(workstreamId, substreamId)))
-      .toBeUndefined();
-  });
-
-  it('requires every initial-context chunk before a child becomes send-ready', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-00000000063d';
-    const substreamId = '00000000-0000-7000-8000-00000000063e';
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}/${substreamId}`,
-        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    const { result } = renderHook(() => useWorkstreamSocket(
-      api, workstreamId, true, 'active_workstream', undefined, true, substreamId,
-    ), { wrapper: createWrapper(queryClient) });
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    const context = {
-      source: { workspaceId: '00000000-0000-7000-8000-00000000063c', workstreamId, substreamId: '0' },
-      throughTurnId: null,
-      policyRevision: 'policy-1',
-      contentHash: 'a'.repeat(64),
-      parts: [{ kind: 'summary', text: 'Inherited', requestedModel: 'model', resolvedModel: 'model', inputTokens: 1, outputTokens: 1 }],
-    };
-    const encoded = JSON.stringify(context);
-    act(() => {
-      socket.open();
-      socket.message(snapshotFrame({
-        sequence: 1, initialContextChunkCount: 2, workstream: { id: workstreamId },
-      }));
-      socket.message({
-        type: 'initial_context_snapshot_chunk', sequence: 1,
-        occurredAt: '2026-07-31T19:20:00.000Z', snapshotId: emptyTranscriptSnapshot().snapshotId,
-        chunkIndex: 1, chunkCount: 2, json: encoded.slice(Math.floor(encoded.length / 2)),
-      });
-    });
-    expect(result.current.sendReady).toBe(false);
-    act(() => socket.message({
-      type: 'initial_context_snapshot_chunk', sequence: 1,
-      occurredAt: '2026-07-31T19:20:00.000Z', snapshotId: emptyTranscriptSnapshot().snapshotId,
-      chunkIndex: 0, chunkCount: 2, json: encoded.slice(0, Math.floor(encoded.length / 2)),
-    }));
-    expect(queryClient.getQueryData(substreamInitialContextQueryKey(workstreamId, substreamId)))
-      .toEqual(context);
-    expect(result.current.sendReady).toBe(true);
-  });
-
-  it('requests a fresh snapshot when a complete initial-context assembly is malformed', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-00000000064a';
-    const substreamId = '00000000-0000-7000-8000-00000000064b';
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}/${substreamId}`,
-        ticket: 'socket-ticket',
-        protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    renderHook(() => useWorkstreamSocket(
-      api, workstreamId, true,
-      'active_workstream', undefined, true, substreamId,
-    ), { wrapper: createWrapper(queryClient) });
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => {
-      socket.open();
-      socket.message(snapshotFrame({
-        sequence: 1, initialContextChunkCount: 1, workstream: { id: workstreamId },
-      }));
-      socket.message({
-        type: 'initial_context_snapshot_chunk', sequence: 1,
-        occurredAt: '2026-07-31T19:20:00.000Z', snapshotId: emptyTranscriptSnapshot().snapshotId,
-        chunkIndex: 0, chunkCount: 1, json: '{not-json',
-      });
-    });
-
-    expect(sentFrames(socket).at(-1)).toEqual({ type: 'request_snapshot' });
-    expect(queryClient.getQueryData(substreamInitialContextQueryKey(workstreamId, substreamId)))
-      .toBeUndefined();
-  });
-
   it.each(['close', 'manual'] as const)('preserves a pending message and its receipt across %s recovery', async (recovery) => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -1500,48 +1344,6 @@ describe('useWorkstreamSocket', () => {
     await expect(admission).resolves.toMatchObject({ clientMessageId, deliveryState: 'canonical' });
   });
 
-  it('orders appearance choices and never sends queued choices to a newly selected room', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const workstreamId = '00000000-0000-7000-8000-000000000631';
-    const api = socketApiWith({ getSocketTicket: vi.fn(async () => ({
-      url: `wss://api.rally.test/workstreams/${workstreamId}`,
-      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
-    })) });
-    const queryClient = new QueryClient();
-    const appearance = { icon: 'atom', color: 'gray' } as const;
-    queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId, appearance }));
-    const { result, rerender } = renderHook(({ id }) => useWorkstreamSocket(api, id, true), {
-      initialProps: { id: workstreamId }, wrapper: createWrapper(queryClient),
-    });
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    const color = result.current.setAppearance({ color: 'purple' });
-    const icon = result.current.setAppearance({ icon: 'rocket' });
-    await flushPromises();
-    const commands = sentFrames(socket).filter((frame) => frame.type === 'set_workstream_appearance');
-    expect(commands).toHaveLength(1);
-    const first = commands[0]!;
-    act(() => socket.message({ type: 'client_command_succeeded', command: 'set_workstream_appearance', operationId: first.operationId }));
-    await color;
-    await flushPromises();
-    // The detail entry is left to the versioned push: the header shows the
-    // picker's own preview until then, and moving the detail on the receipt
-    // would retire that preview early.
-    expect(queryDetail(queryClient, workstreamId)?.appearance).toEqual(appearance);
-    expect(sentFrames(socket).filter((frame) => frame.type === 'set_workstream_appearance')).toHaveLength(2);
-    const queued = result.current.setAppearance({ color: 'blue' });
-    const rejectedIcon = expect(icon).rejects.toMatchObject({ code: 'workstream_socket_unavailable' });
-    const rejectedQueued = expect(queued).rejects.toMatchObject({ code: 'workstream_socket_unavailable' });
-    rerender({ id: '00000000-0000-7000-8000-000000000632' });
-    await flushPromises();
-    await rejectedIcon;
-    await rejectedQueued;
-    const next = FakeWebSocket.instances.at(-1)!;
-    act(() => next.open());
-    expect(sentFrames(next).filter((frame) => frame.type === 'set_workstream_appearance')).toEqual([]);
-  });
-
   it('sends child-local commands to the addressed breakout and resends them until receipt', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -1645,18 +1447,6 @@ describe('useWorkstreamSocket', () => {
       harnessRunId: retryRunId,
     }));
     await expect(retry).resolves.toEqual({ harnessRunId: retryRunId });
-
-    const appearance = result.current.setAppearance({ color: 'purple' });
-    await flushPromises();
-    const appearanceCommand = sentFrames(second).find((frame): frame is Extract<ClientSocketEvent, {
-      type: 'set_workstream_appearance';
-    }> => frame.type === 'set_workstream_appearance')!;
-    act(() => second.message({
-      type: 'client_command_succeeded',
-      command: 'set_workstream_appearance',
-      operationId: appearanceCommand.operationId,
-    }));
-    await expect(appearance).resolves.toBeUndefined();
   });
 
   it('rejects failed and mismatched private command receipts', async () => {

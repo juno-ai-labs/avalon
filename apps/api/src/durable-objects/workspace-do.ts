@@ -32,8 +32,6 @@ import {
   type InvalidAppearanceReport,
 } from "./sidekick-directory-sql";
 import { SIDEKICK_SOURCE_CONNECTION_SCHEMA_STATEMENTS } from "./sidekick-source-registrations";
-import { SidekickActivityTargetSchema, type WorkspaceSidekickActivityEvent, type SidekickActivityTarget } from "@rally/contracts";
-import { runningSidekickCount, SidekickActivityRequestSchema, type SidekickActivityRequest } from "./sidekick-activity";
 import { RESOURCE_READ_PROJECTION_SQL } from '../services/resource-read-projection';
 import { WorkspaceConversationView, WORKSPACE_CONVERSATION_VIEW_MIGRATION } from "./workspace-conversation-view";
 import { ConversationViewProjectionSchema } from "./conversation-view-projection";
@@ -935,8 +933,6 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
   subscribed: boolean;
   firstFrameReported: boolean;
   lastWaterline: number;
-  sidekickActivityRevision?: number;
-  sidekickActivityTargets?: SidekickActivityTarget[];
   presenceRevision: number;
   applicationState: "foreground" | "background";
   foregroundWorkstreamId: string | null;
@@ -4448,8 +4444,6 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       // after a deployment may emit this phase once.
       firstFrameReported: z.boolean().default(false),
       lastWaterline: z.number().int().nonnegative(),
-      sidekickActivityRevision: z.number().int().nonnegative().default(0),
-      sidekickActivityTargets: z.array(SidekickActivityTargetSchema).default([]),
       // Sockets accepted by the previous deployment carry none of these fields. They
       // resume safely as backgrounded and write the explicit shape on their
       // first presence event instead of being disconnected during rollout.
@@ -4631,9 +4625,23 @@ function connectorEventFromRow(
  * also carries that batch's directory work; only its topics are read now, and
  * the rest describes rows nothing shows (plan step C-2).
  */
+/**
+ * Topics retired with Threads, Channels, meeting notes, Activity and the
+ * Sidekick running count (plan step C-2) that a stored sync event or follow-up
+ * written before then may still name. They are dropped on read: no client
+ * reads them, and refusing the row would fail a resume or a follow-up for a
+ * change that is already applied. Any other unknown topic still fails.
+ */
+const RETIRED_SYNC_TOPICS = new Set([
+  "digest_schedule", "sidekick_activity", "notes", "projects", "activity", "work_opportunities", "workstream_directory",
+]);
+const StoredSyncTopicsSchema = z.array(z.string())
+  .transform((topics) => topics.filter((topic) => !RETIRED_SYNC_TOPICS.has(topic)))
+  .pipe(z.array(WorkspaceSyncTopicSchema));
+
 const SyncFollowUpSchema = z.object({
   workspaceId: z.string().min(1),
-  syncTopics: z.array(WorkspaceSyncTopicSchema),
+  syncTopics: StoredSyncTopicsSchema,
 });
 type SyncFollowUp = z.infer<typeof SyncFollowUpSchema>;
 
@@ -5503,7 +5511,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // sends opened stop routing to them; the rows stay, suspended.
         if (deleted) this.externalBindings().suspendDeletedSidekick(automationId, new Date(now).toISOString());
         this.sidekickDirectoryMoved = true;
-        this.noteSidekickActivityChanged(this.workspaceId()!);
       },
       noteViewerReadChanged: (userId) => {
         // The waterline is the list's, so it moves; only this reader is sent it.
@@ -5512,7 +5519,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         );
         this.sidekickReadersMoved.add(userId);
       },
-      noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
       sendRunProvision: async (message) => {
         await this.env.ACTIVITY_QUEUE.send(SidekickRunProvisionQueueMessageSchema.parse({
@@ -5540,61 +5546,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     await this.ensureParentWorkspace(workspaceId);
     return new HostedSidekick(this.hostedSidekickHost(), automationId);
-  }
-
-  /** Activity is visible through the receiving conversation, without granting Sidekick history access. */
-  async readSidekickActivity(input: SidekickActivityRequest): Promise<{ count: number }> {
-    const { count } = await this.sidekickActivitySnapshot(parseRpcInput(SidekickActivityRequestSchema, input, "sidekick_activity"));
-    return { count };
-  }
-
-  private async sidekickActivitySnapshot(input: SidekickActivityRequest): Promise<{ count: number; waterline: number }> {
-    await this.initialized;
-    const request = input;
-    this.assertWorkspace(request.workspaceId);
-    // A Channel's running Sidekicks went with Channels; a request naming a
-    // Channel is a conversation this object cannot admit.
-    const decision = request.parentKind === "space" ? { authorized: false }
-      : await this.conversationToolAdmission(request.workspaceId, request, request.userId);
-    if (!decision.authorized) throw new ApiError(404, "conversation_not_found", "Conversation not found");
-    // Count and version are read without an await between them. A slower
-    // previous publish cannot replace a newer snapshot on the client.
-    return {
-      count: runningSidekickCount(this.state.storage.sql, request, []),
-      waterline: this.state.storage.sql.exec<{ waterline: number }>(
-        `SELECT COALESCE(MAX(waterline), 0) AS waterline FROM workspace_sync_events`,
-      ).one().waterline,
-    };
-  }
-
-  /** Re-admit each exact target and push only the counts this socket watches. */
-  private async pushSidekickActivity(socket: WebSocket): Promise<void> {
-    const attachment = readAttachment(socket);
-    if (!attachment?.subscribed) return;
-    const revision = attachment.sidekickActivityRevision ?? 0;
-    for (const target of attachment.sidekickActivityTargets ?? []) {
-      let snapshot: { count: number; waterline: number };
-      try {
-        snapshot = await this.sidekickActivitySnapshot({ ...target, workspaceId: attachment.workspaceId, userId: attachment.userId });
-      } catch (error) {
-        if (!(error instanceof ApiError) || error.status !== 404) throw error;
-        snapshot = { count: 0, waterline: this.state.storage.sql.exec<{ waterline: number }>(
-          `SELECT COALESCE(MAX(waterline), 0) AS waterline FROM workspace_sync_events`,
-        ).one().waterline };
-      }
-      const current = readAttachment(socket);
-      if (!current?.subscribed || current.sidekickActivityRevision !== revision) return;
-      try {
-        socket.send(JSON.stringify({
-          type: "workspace_sidekick_activity", revision, target, ...snapshot,
-        } satisfies WorkspaceSidekickActivityEvent));
-      } catch { return; } // A closed transport refreshes its watched targets on reconnect.
-    }
-  }
-
-  /** Reuse the durable post-commit lane without changing any directory waterline. */
-  private noteSidekickActivityChanged(workspaceId: string): void {
-    this.pendingSyncFollowUps.push(this.recordSyncFollowUp({ workspaceId, syncTopics: ["sidekick_activity"] }));
   }
 
   /**
@@ -6246,15 +6197,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       this.logWorkspaceSocketHandshake(attachment, "subscribe_authorized", parsed.data.diagnosticAttemptId);
       await this.subscribe(socket, attachment, parsed.data.afterWaterline, parsed.data.diagnosticAttemptId);
-      return;
-    }
-    if (parsed.data.type === "sidekick_activity") {
-      if (!await this.sessionAuth(attachment)) return;
-      const current = readAttachment(socket);
-      if (!current?.subscribed || parsed.data.revision <= (current.sidekickActivityRevision ?? 0)) return;
-      socket.serializeAttachment({ ...current, sidekickActivityRevision: parsed.data.revision,
-        sidekickActivityTargets: parsed.data.targets });
-      await this.pushSidekickActivity(socket);
       return;
     }
     if (parsed.data.type === "conversation_view") {
@@ -7089,9 +7031,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // full invalidation or replays the bounded SQL log.
       }
     }
-    if (requested.has("sidekick_activity") || requested.has("automations")) {
-      for (const socket of this.state.getWebSockets()) await this.pushSidekickActivity(socket);
-    }
     if (requested.has('member_directory')) await this.armNextAlarm();
     return waterline;
   }
@@ -7457,7 +7396,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         userId: request.userId, now: Date.now(),
       });
       this.pendingSyncFollowUps.push(this.recordSyncFollowUp({
-        workspaceId: request.workspaceId, syncTopics: ["automations", "sidekick_activity"],
+        workspaceId: request.workspaceId, syncTopics: ["automations"],
       }));
       return result;
     });
@@ -11440,36 +11379,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * One person's `workspace_workstream_state` frames for these Channels, from
-   * one set of reads for all of them: the row, or `workstream: null` where the
-   * person no longer sees it. Per person rather than once: the Spaces a
-   * Channel is in are the ones *this* viewer may see (a personal Space's id on
-   * somebody else's row is the existence of a private Space leaking through a
-   * shared Channel), and the breakouts and agents are theirs.
-   */
-
-  /**
-   * The whole sidebar for one viewer, from three local reads with no `await`
-   * between them, so it is one consistent snapshot rather than three answers a
-   * concurrent write could land between.
-   *
-   * `includeSystem` is false and not a parameter: this is the connect payload
-   * every window gets, and system rows belong to a debug preference the server
-   * does not hold. A client with it on asks for the wider directory afterwards.
+   * The whole sidebar for one viewer: the Sidekick and Canvas lists, from local
+   * reads with no `await` between them, so it is one consistent snapshot rather
+   * than two answers a concurrent write could land between.
    */
   private sidebarPayload(attachment: WorkspaceSocketAttachment): WorkspaceSidebar {
-    // Threads and Channels are retired (plan step C-2): the directory page the
-    // contract still carries is always empty, and the Canvas and Sidekick
-    // lists are the sidebar.
     return WorkspaceSidebarSchema.parse({
-      workstreams: { directoryWaterline: 0, items: [], stateVersions: [], nextCursor: null },
       automations: {
         waterline: this.sidebarListWaterline("automations"),
         items: this.sidekickLibrary(attachment),
       },
-      notes: { waterline: 0, items: [], nextCursor: null },
       canvases: { waterline: this.canvasListWaterline(), items: this.canvasList(attachment) },
-      spacesReady: true,
     });
   }
 
@@ -11481,24 +11401,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Re-send one sidebar list to every subscribed socket, per viewer.
-   *
-   * Read once per socket rather than once per workspace because the list is
-   * scoped — a personal automation belongs to its owner, and sending
-   * one reader's list to another would leak it. This mirrors
-   * `channelRowPayloads`, which reads its row per viewer for the same
-   * reason.
-   *
-   * The event carries the list's waterline, read once here so every socket is
-   * told the same version of the same read. Transport ordering is not relied on
-   * for that: `WorkspaceSidebarListEventSchema` carries the number because the
-   * connect payload sends these lists too, and two producers cannot be ordered
-   * by one of their transports.
-   */
-  /**
    * Send the Sidekick list what moved since it was last sent: every socket for
    * a change to a Sidekick's row, or only the sockets of the people whose read
-   * of a shared conversation moved, as a Channel's `viewerChanges` does.
+   * of a shared conversation moved.
    */
   private publishSidekickList(): void {
     if (this.sidekickDirectoryMoved) {
@@ -11512,6 +11417,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
   }
 
+  /**
+   * Re-send one sidebar list to every subscribed socket, per viewer.
+   *
+   * Read once per socket rather than once per workspace because the list is
+   * scoped — a personal automation belongs to its owner, and sending
+   * one reader's list to another would leak it.
+   *
+   * The event carries the list's waterline, read once here so every socket is
+   * told the same version of the same read. Transport ordering is not relied on
+   * for that: `WorkspaceSidebarListEventSchema` carries the number because the
+   * connect payload sends these lists too, and two producers cannot be ordered
+   * by one of their transports.
+   */
   private publishSidebarList(list: SidebarList, onlyUserIds?: ReadonlySet<string>): void {
     const occurredAt = new Date().toISOString();
     const waterline = this.sidebarListWaterline(list);
@@ -11537,42 +11455,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
   }
-
-  /**
-   * Tell each socket whose reach includes a person that the person's reach
-   * moved: they joined or left a Channel or Breakout, or the people they may
-   * act as changed.
-   *
-   * Addressed to the person and to whoever can act as them through the
-   * **can impersonate** relationship. It names people and
-   * no conversation, so it discloses no membership the receiver could not
-   * already list; the receiver rereads its own view. Not on the waterline and
-   * never replayed: a client that was away rereads when it subscribes.
-   *
-   * One relationship read per publish, whatever the number of sockets.
-   */
-
-  /**
-   * Re-send both Space directories to every subscribed socket, shaped for its
-   * user.
-   *
-   * The mechanism the Project snapshot used, kept because the reasons are
-   * unchanged: every Space write shares one waterline, personal-Space
-   * visibility and order are per viewer, and sending the complete pair means a
-   * participant removal is represented by *absence* for the person removed
-   * rather than by an event they have to interpret.
-   *
-   * `spacesReady` rides along because a Space write can be the write that
-   * finishes the cutover — a client holding `false` would otherwise keep
-   * showing the Organization-opening state until it reconnected.
-   *
-   * `onlyUserId` narrows the audience to one person's own sessions, for a write
-   * that changed nothing anybody else can see. Everything here is per viewer
-   * and costs a `list()` transaction plus a full directory serialization per
-   * socket, so a change to one person's view preference published to all of
-   * them is that work times the Organization — for a snapshot identical to the
-   * one every other person already holds.
-   */
 
   private async activeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
     return (await this.readRelationship(workspaceId, userId))?.status === "active";
@@ -11726,7 +11608,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const newest = rows.at(-1);
       const changedTopics = new Set<WorkspaceSyncTopic>();
       for (const row of rows) {
-        for (const topic of z.array(WorkspaceSyncTopicSchema).parse(JSON.parse(row.topics_json))) {
+        for (const topic of StoredSyncTopicsSchema.parse(JSON.parse(row.topics_json))) {
           changedTopics.add(topic);
         }
       }

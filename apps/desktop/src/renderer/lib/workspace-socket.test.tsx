@@ -1,4 +1,3 @@
-import { useSidekickActivity } from './use-sidekick-activity';
 import {
   ClientFeatureFlagsSchema,
   asSubstreamId,
@@ -9,7 +8,7 @@ import {
 } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { onlineManager, QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { StrictMode, useEffect, type JSX } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
@@ -172,10 +171,9 @@ function initialSidebarFrame() {
   return {
     type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000008',
     waterline: 8, occurredAt: '2026-08-17T20:00:00.000Z',
-    topics: ['workstream_directory'], reason: 'initial',
+    topics: ['automations'], reason: 'initial',
     sidebar: {
-      workstreams: { directoryWaterline: 8, nextCursor: null, stateVersions: [], items: [] },
-      automations: { waterline: 0, items: [] }, notes: { waterline: 0, items: [] },
+      automations: { waterline: 0, items: [] },
     },
   };
 }
@@ -618,12 +616,10 @@ describe('WorkspaceSocketProvider', () => {
       ['connector-installation'],
       ['github-repository-access'],
       ['terminal-workspace-settings'],
-      ['digest-schedule'],
       ['automation'],
       ['automation-draft'],
       ['automation-runs'],
       ['sidekicks-library'],
-      ['note'],
       ['resources'],
       ['workstream-context'],
       ['telemetry-preference'],
@@ -632,12 +628,9 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryState(runsKey)?.isInvalidated).toBe(true);
     // The two sidebar lists are pushed whole, so a topic must never invalidate
     // them: nothing would refetch, and naming them here would suggest otherwise.
-    for (const pushed of [['automations'], ['notes']]) {
+    for (const pushed of [['automations'], ['canvases']]) {
       expect(invalidatedRoots).not.toContain(JSON.stringify(pushed));
     }
-    // The Thread directory is gone: its topic, which a server mid-deployment
-    // can still send, asks nothing to be read again.
-    expect(invalidatedRoots).not.toContain(JSON.stringify(['workstreams']));
     const invalidationCount = invalidations.mock.calls.length;
     act(() => socket.message({
       type: 'workspace_sync',
@@ -856,12 +849,10 @@ describe('WorkspaceSocketProvider', () => {
       eventId: '00000000-0000-7000-8000-000000000008',
       waterline: 8,
       occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory'],
+      topics: ['automations'],
       reason: 'initial',
       sidebar: {
-        workstreams: { directoryWaterline: 8, nextCursor: null, stateVersions: [], items: [] },
         automations: { waterline: 0, items: [] },
-        notes: { waterline: 0, items: [] },
       },
     }));
 
@@ -1154,7 +1145,7 @@ describe('WorkspaceSocketProvider', () => {
       eventId: '00000000-0000-7000-8000-000000000017',
       waterline: 4,
       occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory'],
+      topics: ['automations'],
       reason: 'initial',
       featureFlags: {
         developerSettings: false,
@@ -1162,46 +1153,6 @@ describe('WorkspaceSocketProvider', () => {
         controlTowerRefreshSeconds: 60,
       },
       sidebar: {
-      workstreams: {
-        directoryWaterline: 7,
-        nextCursor: null,
-        stateVersions: [{
-          workstreamId: '00000000-0000-7000-8000-000000000002',
-          commonEventId: '00000000-0000-7000-8000-000000000007',
-          viewerEventId: '00000000-0000-7000-8001-000000000004',
-          authorityGeneration: 1,
-          commonWaterline: 7,
-          viewerWaterline: 4,
-        }],
-        items: [{
-          id: '00000000-0000-7000-8000-000000000002',
-          workspaceId: '00000000-0000-7000-8000-000000000001',
-          title: 'Socket-owned directory',
-          titleStatus: 'settled',
-          objective: 'Served by WorkspaceDO SQL',
-          emailAddress: null,
-          createdByUserId: '00000000-0000-7000-8000-000000000003',
-          harnessStatus: 'running',
-          latestAttentionSequenceNumber: 4,
-          readThroughSequenceNumber: 2,
-          manualUnreadFromSequenceNumber: null,
-          manualUnreadGeneration: 0,
-          hasUnread: true,
-          youAreMentioned: true,
-          firstUnreadSequenceNumber: 3,
-          lastActivityAt: '2026-08-17T20:00:00.000Z',
-          createdAt: '2026-08-17T19:00:00.000Z',
-          updatedAt: '2026-08-17T20:00:00.000Z',
-          archivedAt: null,
-          scope: 'workspace',
-          systemKind: null,
-          nextPendingWakeup: null,
-          pinPosition: null,
-          participantUserIds: [],
-          participantExtraCount: 0,
-          spaceIds: [],
-        }],
-      },
       automations: { waterline: 3, items: [{
         id: '00000000-0000-7000-8000-000000000005',
         name: 'Monday brief',
@@ -1213,33 +1164,12 @@ describe('WorkspaceSocketProvider', () => {
         lastRunAt: null,
         updatedAt: '2026-08-17T19:00:00.000Z',
       }] },
-      notes: { waterline: 1, items: [{
-        id: '00000000-0000-7000-8000-000000000006',
-        workspaceId: '00000000-0000-7000-8000-000000000001',
-        resourceId: '00000000-0000-7000-8000-000000000009',
-        ownerUserId: '00000000-0000-7000-8000-000000000003',
-        scope: 'workspace',
-        title: 'Standup',
-        recordingStatus: 'idle',
-        recordedMs: 0,
-        startedAt: null,
-        endedAt: null,
-        generatedAt: null,
-        lastActivityAt: '2026-08-17T21:00:00.000Z',
-        createdAt: '2026-08-17T19:00:00.000Z',
-        updatedAt: '2026-08-17T21:00:00.000Z',
-        archivedAt: null,
-      }] },
       },
     }));
 
-    // Painted from a frame nobody asked for. The Thread rows a server still
-    // sends are not read.
-    expect(queryClient.getQueryData(['workstreams'])).toBeUndefined();
+    // Painted from a frame nobody asked for.
     expect(queryClient.getQueryData(['automations']))
       .toEqual([expect.objectContaining({ id: '00000000-0000-7000-8000-000000000005', scope: 'workspace' })]);
-    expect(queryClient.getQueryData(['notes']))
-      .toBeUndefined();
     expect(queryClient.getQueryData(['feature-flags']))
       .toMatchObject({ suggestedWorkEnabled: false });
     const handshakePhases = reportTelemetryProductIntent.mock.calls
@@ -1271,57 +1201,6 @@ describe('WorkspaceSocketProvider', () => {
     await vi.advanceTimersByTimeAsync(10 * 60_000);
     expect(keys.map((key) => queryClient.getQueryData(key))).toEqual(keys.map(() => undefined));
     queryClient.clear();
-  });
-
-  it('subscribes composer targets and consumes versioned socket counts through reconnect and unmount', async () => {
-    const queryClient = new QueryClient();
-    const target = { parentKind: 'workstream' as const, parentId: '00000000-0000-7000-8000-000000000002', substreamId: '0' };
-    const other = { parentKind: 'space' as const, parentId: '00000000-0000-7000-8000-000000000003', substreamId: '0' };
-    function Count(): JSX.Element { return <div data-testid="sidekick-count">{useSidekickActivity(target) ?? 'unknown'}</div>; }
-    const getWorkspaceSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
-      ticket: 'workspace-ticket', protocols: socketTicketProtocols('workspace-ticket'),
-    }));
-    const view = (show: boolean) => <QueryClientProvider client={queryClient}>
-      <WorkspaceSocketProvider region="global" api={{ getWorkspaceSocketTicket }}
-        workspaceId="00000000-0000-7000-8000-000000000001">{show && <Count />}</WorkspaceSocketProvider>
-    </QueryClientProvider>;
-    const rendered = render(view(true));
-    await flushPromises();
-    let socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    const sync = { type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000008',
-      waterline: 8, occurredAt: '2026-08-17T20:01:00.000Z', topics: ['sidekick_activity'], reason: 'initial' };
-    act(() => socket.message(sync));
-    const commands = () => socket.send.mock.calls.map(([raw]) => JSON.parse(String(raw)) as { type: string; revision: number; targets: unknown[] })
-      .filter((command) => command.type === 'sidekick_activity');
-    expect(commands().at(-1)).toMatchObject({ type: 'sidekick_activity', revision: 1, targets: [target] });
-    const event = { type: 'workspace_sidekick_activity', revision: 1, target, waterline: 8, count: 2 };
-    act(() => socket.message(event));
-    await flushPromises();
-    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('2'));
-    act(() => socket.message({ ...event, waterline: 7, count: 0 }));
-    act(() => socket.message({ ...event, target: other, waterline: 9, count: 10 }));
-    await flushPromises();
-    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('2'));
-    act(() => socket.message({ ...event, waterline: 10, count: 0 }));
-    await flushPromises();
-    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('0'));
-    // A transport's new subscribe answer re-registers the retained composer target.
-    act(() => { socket.close(1012); window.dispatchEvent(new Event('online')); });
-    await flushPromises();
-    socket = FakeWebSocket.instances[1]!;
-    act(() => socket.open());
-    act(() => socket.message({ ...sync, waterline: 11 }));
-    expect(commands().at(-1)).toMatchObject({ revision: 2, targets: [target] });
-    act(() => socket.message({ ...event, revision: 1, waterline: 12, count: 5 }));
-    await flushPromises();
-    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('unknown'));
-    act(() => socket.message({ ...event, revision: 2, waterline: 12, count: 1 }));
-    await flushPromises();
-    await waitFor(() => expect(screen.getByTestId('sidekick-count')).toHaveTextContent('1'));
-    rendered.rerender(view(false));
-    expect(commands().at(-1)).toMatchObject({ revision: 3, targets: [] });
   });
 
   it('refetches an open automation page when its list row is pushed', async () => {
@@ -1490,57 +1369,16 @@ describe('WorkspaceSocketProvider', () => {
 describe('the organization socket over the local cache', () => {
   const scope = 'global:00000000-0000-7000-8000-000000000001';
 
-  function syncPayload(ids: readonly string[]): Record<string, unknown> {
+  function syncPayload(): Record<string, unknown> {
     return {
       type: 'workspace_sync',
       eventId: '00000000-0000-7000-8000-000000000017',
       waterline: 4,
       occurredAt: '2026-08-17T20:00:00.000Z',
-      topics: ['workstream_directory'],
+      topics: ['automations'],
       reason: 'initial',
       sidebar: {
-        workstreams: {
-          directoryWaterline: 7,
-          nextCursor: null,
-          stateVersions: ids.map((id, index) => ({
-            workstreamId: id,
-            commonEventId: `00000000-0000-7000-8000-00000000001${index}`,
-            viewerEventId: `00000000-0000-7000-8001-00000000001${index}`,
-            authorityGeneration: 1,
-            commonWaterline: 7,
-            viewerWaterline: 4,
-          })),
-          items: ids.map((id) => ({
-            id,
-            workspaceId: '00000000-0000-7000-8000-000000000001',
-            title: 'Live row',
-            titleStatus: 'settled',
-            objective: '',
-            emailAddress: null,
-            createdByUserId: null,
-            harnessStatus: 'completed',
-            latestAttentionSequenceNumber: 0,
-            readThroughSequenceNumber: 0,
-            manualUnreadFromSequenceNumber: null,
-            manualUnreadGeneration: 0,
-            hasUnread: false,
-            youAreMentioned: false,
-            firstUnreadSequenceNumber: null,
-            lastActivityAt: '2026-08-17T20:00:00.000Z',
-            createdAt: '2026-08-17T19:00:00.000Z',
-            updatedAt: '2026-08-17T20:00:00.000Z',
-            archivedAt: null,
-            scope: 'workspace',
-            systemKind: null,
-            nextPendingWakeup: null,
-            pinPosition: null,
-            participantUserIds: [],
-            participantExtraCount: 0,
-            spaceIds: [],
-          })),
-        },
         automations: { waterline: 1, items: [] },
-        notes: { waterline: 1, items: [], nextCursor: null },
       },
     };
   }
@@ -1579,7 +1417,7 @@ describe('the organization socket over the local cache', () => {
     act(() => socket.open());
 
     // A plan change made while this socket was away is not replayed.
-    act(() => socket.message(syncPayload([])));
+    act(() => socket.message(syncPayload()));
     expect(queryClient.getQueryState(usageKey)?.isInvalidated).toBe(true);
 
     act(() => socket.message({ type: 'workspace_usage', occurredAt: '2026-10-03T00:01:00.000Z', usage: growth }));
@@ -1685,9 +1523,7 @@ describe('the organization-sync relay between windows', () => {
       topics: WORKSPACE_SYNC_TOPICS,
       reason: 'initial',
       sidebar: {
-        workstreams: { directoryWaterline: 1, nextCursor: null, stateVersions: [], items: [] },
         automations: { waterline: 1, items: [] },
-        notes: { waterline: 1, items: [], nextCursor: null },
       },
       featureFlags: { suggestedWorkEnabled: false },
     }));

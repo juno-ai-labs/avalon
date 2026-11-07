@@ -7094,69 +7094,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 }
 .inference-delay-notice > svg { flex-shrink: 0; }
 
-.background-agent-count {
-  color: var(--av-sys-color-text-muted);
-  display: grid;
-  font-size: 12px;
-  grid-template-rows: 0fr;
-  padding: 0;
-  pointer-events: none;
-  transition: grid-template-rows 320ms cubic-bezier(.22, 1, .36, 1);
-}
-.background-agent-count[data-active="true"] { grid-template-rows: 1fr; }
-.background-agent-reveal { min-height: 0; overflow: hidden; }
-.background-agent-label {
-  align-items: baseline;
-  display: flex;
-  gap: .3em;
-  line-height: 18px;
-  opacity: 0;
-  padding: 0 12px 6px;
-  transform: translateY(24px);
-  transition: transform 320ms cubic-bezier(.22, 1, .36, 1), opacity 220ms ease;
-}
-.background-agent-count[data-active="true"] .background-agent-label { opacity: 1; transform: translateY(0); }
-@starting-style {
-  .background-agent-count[data-active="true"] { grid-template-rows: 0fr; }
-  .background-agent-count[data-active="true"] .background-agent-label { opacity: 0; transform: translateY(24px); }
-}
-.background-agent-shimmer {
-  animation: background-agent-shimmer 2.8s linear infinite;
-  background: linear-gradient(105deg, var(--av-sys-color-text-muted) 35%, var(--av-sys-color-text-default) 50%, var(--av-sys-color-text-muted) 65%) 100% 0 / 250% 100%;
-  background-clip: text;
-  color: transparent;
-}
-.background-agent-count[data-active="false"] .background-agent-shimmer { animation-play-state: paused; }
-.background-agent-wheel {
-  --wheel-travel: 100%;
-  display: inline-grid;
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  perspective: 80px;
-  vertical-align: bottom;
-}
-.background-agent-wheel[data-direction="down"] { --wheel-travel: -100%; }
-.background-agent-digit { grid-area: 1 / 1; text-align: center; }
-.background-agent-digit-in { animation: background-agent-digit-in 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
-.background-agent-digit-out { animation: background-agent-digit-out 280ms ease-out both, background-agent-shimmer 2.8s linear infinite; }
-@keyframes background-agent-shimmer { to { background-position: -100% 0; } }
-@keyframes background-agent-digit-in {
-  from { opacity: 0; transform: translateY(var(--wheel-travel)) rotateX(-55deg); }
-  to { opacity: 1; transform: translateY(0) rotateX(0); }
-}
-@keyframes background-agent-digit-out {
-  from { opacity: 1; transform: translateY(0) rotateX(0); }
-  to { opacity: 0; transform: translateY(calc(-1 * var(--wheel-travel))) rotateX(55deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .background-agent-count, .background-agent-label { transition: none; }
-  .background-agent-shimmer, .background-agent-digit { animation: none; }
-  .background-agent-digit-out { display: none; }
-}
-@media (forced-colors: active) {
-  .background-agent-shimmer { background: none; color: CanvasText; }
-}
-
 .scope-sharing-panel { padding: 12px 0; }
 .scope-sharing-panel h3 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
 .scope-sharing-panel label { display: grid; gap: 6px; font-size: 13px; }

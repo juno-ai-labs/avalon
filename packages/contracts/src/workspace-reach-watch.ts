@@ -1,9 +1,7 @@
 import {
-  WorkspaceReachChangedEventSchema,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
 } from "./index";
-import { safeParseSocketEvent } from "./socket-events";
 
 /**
  * How a client keeps a workspace socket alive: a `ping` after this much quiet,
@@ -61,19 +59,6 @@ export type ReachWatchDiagnostic =
   | { code: "stopped"; closeCode: number }
   | { code: "transport_error"; phase: "heartbeat" | "send" | "socket" }
   | { code: "timeout"; phase: "ticket" | "open" | "sync" | "heartbeat" };
-
-export interface ReachWatchDependencies {
-  /** A fresh workspace socket ticket from `GET /workspace/socket`. */
-  ticket(signal?: AbortSignal): Promise<{ url: string; ticket: string }>;
-  open(url: string, ticket: string): ReachSocket;
-  /**
-   * The host's list may no longer match the server: somebody it shows joined
-   * or left a Channel or Breakout, or the socket (re)subscribed after a gap in
-   * which that could have happened unheard.
-   */
-  onStale(): void;
-  onDiagnostic?(diagnostic: ReachWatchDiagnostic): void;
-}
 
 /**
  * One subscribed connection, as a host of {@link watchWorkspaceSocket} sees it.
@@ -319,32 +304,4 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
     socket = null;
     current?.close();
   };
-}
-
-/**
- * Hold one workspace socket and report when a list drawn from membership went
- * stale.
- *
- * For a host with no workspace socket of its own that needs only to hear that
- * somebody it shows joined or left a Channel or Breakout, so it ignores
- * everything but `workspace_reach_changed` and the subscribe answer. No shipped
- * host uses it since Sideline was removed; the desktop's menu bar uses
- * `watchWorkspaceSocket` directly.
- *
- * Every subscribe answer reports stale, the first included: nothing is
- * replayed across a reconnect, and the host's opening read can finish before
- * the first subscribe does.
- *
- * @returns stop, which closes the socket and cancels any reconnect.
- */
-export function watchWorkspaceReach(dependencies: ReachWatchDependencies): () => void {
-  return watchWorkspaceSocket({
-    ticket: (signal) => dependencies.ticket(signal),
-    open: (url, ticket) => dependencies.open(url, ticket),
-    onSubscribed: () => dependencies.onStale(),
-    onMessage: (message) => {
-      if (safeParseSocketEvent(WorkspaceReachChangedEventSchema, message).success) dependencies.onStale();
-    },
-    ...(dependencies.onDiagnostic ? { onDiagnostic: (diagnostic) => dependencies.onDiagnostic?.(diagnostic) } : {}),
-  });
 }

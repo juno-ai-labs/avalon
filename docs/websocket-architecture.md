@@ -4,7 +4,7 @@ Rally keeps a small set of long-lived WebSockets open so workspace state, the
 Canvases and Sidekicks lists, and the open conversation's feed are already
 available when a person navigates. Electron deliberately uses two client
 transports: the singleton workspace connection stays in Chromium and carries
-the Canvases and Sidekicks lists and running background agents, while each
+the Canvases and Sidekicks lists, while each
 open conversation's substream `0` feed is dialled by a Node broker in the main
 process. The split
 lets the desktop open a useful swarm in parallel without moving protocol state
@@ -34,10 +34,10 @@ same set the desktop does — the full workspace socket and the proactive feed
 swarm — over native `WebSocket`s, with presence from page visibility and focus.
 See [browser-client.md](browser-client.md).
 
-`watchWorkspaceReach` in `@rally/contracts/workspace-reach-watch`, the
-listen-only workspace socket for a host without one of its own, has had no
-caller since Sideline was removed; it shares the desktop workspace socket's
-heartbeat and reconnect numbers.
+`watchWorkspaceSocket` in `@rally/contracts/workspace-reach-watch` is the
+workspace-socket connection loop a host without the renderer's provider uses
+(the menu bar's watch in main); it holds the heartbeat and reconnect numbers
+every workspace-socket client shares.
 
 This document owns the end-to-end topology, connection-selection policy, process
 boundaries, and lifecycle. [`realtime-sockets.md`](realtime-sockets.md) owns the
@@ -61,7 +61,7 @@ broadcast and replay delivery for older enum decoders; see
 | `apps/desktop/src/common/workspace-sync-relay.ts` | The relay's IPC channel names and message types, the `{ region, workspaceId }` comparison every hop uses, the preload's structural check, and the preload's inbox that holds news arriving before any listener. Dependency-free for the sandboxed preload. |
 | `apps/desktop/src/main/workspace-sync-relay.ts` | Main's relay state: the closed Zod parse of what the main window publishes, which Organization is attached, the revision that orders source changes, and forwarding news only for the attached Organization. |
 | `apps/desktop/src/main/workspace-sync-relay-ipc.ts` | The relay's two invoke channels and their sender checks: publish from the main window only, read the source from the Settings window only. `main/index.ts` registers it and owns the one receiver and the release points. |
-| `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for a host without one of its own (no caller since Sideline was removed), and the heartbeat and reconnect numbers every workspace-socket client shares. |
+| `packages/contracts/src/workspace-reach-watch.ts` | `watchWorkspaceSocket`, the connection loop for a host without the renderer's provider, and the heartbeat and reconnect numbers every workspace-socket client shares. |
 | `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one substream `0` feed per selected work stream above the route, retains recently viewed feeds for five minutes, and supports presence-free feed warming on deliberate hover. |
 | `apps/api/src/durable-objects/workspace-resource-versions.ts`, `apps/desktop/src/renderer/lib/resource-heads.ts` | The one ledger of new resource versions, drained for `workspace_resource_versions` and the pinned-artifact announcement, and the client's merge of each announced head into the conversation details and popped-out windows that show it. |
@@ -93,15 +93,14 @@ topic, which is all a window that reads the detail surfaces and never the list
 needs. No additional broadcast
 channel or polling is involved.
 
-Composer execution counts stay on the workspace socket as data. The
-`sidekick_activity` client command replaces the socket's exact target set;
-WorkspaceDO stores that set and its revision in the hibernating attachment,
-re-admits each target, and sends `workspace_sidekick_activity` count snapshots.
-The initial registration and every durable activity/default change push the
-same shape. Reconnect re-registers open composers, unmount removes them, and
-revision/waterline fences discard obsolete responses. Background-agent counts
-already arrive in Thread viewer-state rows; neither composer indicator fetches
-counts over REST.
+The composer shows no running count. Its two indicators, running background
+agents and running Sidekicks, were fed by a Thread's viewer-state row and by the
+`sidekick_activity` command's counts for a Thread or Channel target; with
+Threads and Channels retired nothing wrote either, so both are deleted rather
+than kept empty. The future source for a Sidekick is a running flag on its
+`automation_directory` row, pushed with the `automations` sidebar list the
+socket already sends; a background-agent count would ride the same way on the
+conversation that started it.
 
 ### The topology
 
@@ -928,6 +927,43 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-11-07 — The workspace socket carries only what Canvases and Sidekicks use
+
+**What changed:** The subscribe answer's sidebar is the Sidekick and Canvas
+lists alone: `workstreams`, `notes`, `spaces`, `ordering`, `pinnedOrder`,
+`pins`, `artifactPins`, `channelStats`, `spacesReady` and `channelsBySpace`
+leave `WorkspaceSidebarSchema`, and `accessRequests` leaves the sync event.
+The client commands `list_workstreams`, `channel_rails`, `space_channels` and
+`sidekick_activity`, the sync topics `digest_schedule`, `sidekick_activity`,
+`notes`, `projects`, `activity`, `work_opportunities` and
+`workstream_directory`, and the events `workspace_workstream_page`,
+`workspace_workstream_recency`, `workspace_space_channels`,
+`workspace_channel_rails`, `workspace_space_snapshot`,
+`workspace_navigation_state`, `space_conversations_changed`,
+`workspace_workstream_state`, `workspace_reach_changed`,
+`workspace_sidekick_activity` and the notes sidebar list leave the contract.
+On the conversation socket, `set_workstream_appearance` and the
+`initial_context_snapshot_chunk` frame (with the snapshot's
+`initialContextChunkCount`) go. The renderer loses the composer's running
+counts (the `workstream-background-agents` query key with them),
+`watchWorkspaceReach`, `retainConversationChildren` and
+`conversationSidekickMentions`.
+
+**Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+retired every producer: the server already sent an empty directory page and
+no Channel rows, and each of these named a Thread, Channel, note, Activity
+item or Breakout. A contract that still admits them invites a new caller to a
+mechanism with no server behind it. The composer counts were deleted rather
+than kept at zero because an indicator that never lights looks like a bug; the
+body records where a running signal would come from.
+
+**Consequences:** A sync event or follow-up WorkspaceDO stored before this
+change can still name a retired topic, so the stored-topic reader drops those
+names (`RETIRED_SYNC_TOPICS`) and still fails on any other unknown topic;
+`workspace-socket-fanout.test.ts` replays such a row. A desktop released
+before the pivot that sends a retired command is closed as invalid, which is
+what its retired routes already meant.
 
 ### 2026-11-07 — A new version is announced to a Canvas's readers, and narrowing a Canvas clears presence
 

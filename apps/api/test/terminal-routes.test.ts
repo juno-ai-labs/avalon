@@ -97,7 +97,7 @@ function fixture(options: { authenticated?: boolean; role?: "owner" | "member" }
           "failTerminalPolicyApplication",
           "commitTerminalPolicyApplication",
         ]),
-        terminalSandboxParents: async () => [{ workstreamId: S, title: "Terminal route" }],
+        terminalSandboxParents: async () => [{ parentKind: "canvas" as const, workstreamId: S, title: "Terminal route" }],
       },
     }),
   });

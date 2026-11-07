@@ -1,4 +1,3 @@
-import { sidekickProjectionRunning } from "./sidekick-activity";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
 import { recordSidekickRunNotices } from "./workspace-notification-intent-storage";
@@ -393,8 +392,6 @@ export interface HostedSidekickHost {
    * to that person's sockets, since nobody else's row moved.
    */
   noteViewerReadChanged(userId: string): void;
-  /** Record an activity-only refresh inside the projection transaction. */
-  noteSidekickActivityChanged(workspaceId: string): void;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** Hand a run to the activity Queue, whose consumer provisions it. */
   sendRunProvision(message: { workspaceId: string; automationId: string; runId: string }): Promise<void>;
@@ -1704,7 +1701,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   /**
    * What a child's newer projection moves: the sidebar row for the shared
    * conversation's latest message (for anyone who has read it) and for
-   * whether it waits on input, the running count, and a run's own row.
+   * whether it waits on input, and a run's own row.
    */
   protected onChildProjection(substreamId: string, effect: DirectoryCommonEffect,
     prior: PriorChildProjection | null, now: number): void {
@@ -1713,12 +1710,6 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       if (unreadMoved || (prior?.state === "needs_input") !== (effect.state === "needs_input")) {
         this.host.noteDirectoryChanged(this.sidekickId, false, now);
       }
-    }
-    const wasRunning = prior ? sidekickProjectionRunning({
-      state: prior.state, archivedAt: prior.archivedAt, backgroundAgent: prior.backgroundAgent,
-    }) : false;
-    if (wasRunning !== sidekickProjectionRunning(effect)) {
-      this.host.noteSidekickActivityChanged(this.row()!.workspace_id);
     }
     this.onChildCommonProjection(substreamId, effect, now);
   }
