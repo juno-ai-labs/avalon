@@ -23,27 +23,26 @@ administrator cannot do that the owner can are change the owner's role and
 remove the owner.
 
 **Member.** An ordinary member of the team. Members can do everything the
-earlier chapters describe: start Threads and Channels, work with Rally, build
+earlier chapters describe: start and share Canvases, work with Rally, build
 Sidekicks, connect their own tools, and use the connections the Organization
 shares. They cannot invite people or change Organization-wide settings.
 
-**Guest.** Someone from outside who was invited into one conversation, as
-described in [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md).
-A guest holds no role at all. They see the conversations shared with them, the
-Channels they have been added to with the public Threads in those, and who is
-in the Organization, and nothing else. In a Channel they have been added to,
-they post and start Threads as a member does.
+**Guest.** Someone from outside who was invited into a Canvas, as described
+in [Sharing with people outside your Organization](../02-canvases/09-sharing-with-guests.md).
+A guest holds no role at all. They see the Canvases shared with them and who is
+in the Organization, and nothing else. In those Canvases they write, comment
+and work with Rally as a member does.
 
 ## Who can do what
 
 | What | Owner | Administrator | Member | Guest |
 | --- | --- | --- | --- | --- |
-| Read and write in conversations they are part of | Yes | Yes | Yes | Yes |
-| Browse the Organization's Channels | Yes | Yes | Yes | No |
-| Start Channels and Threads | Yes | Yes | Yes | No |
-| Start a Breakout | Yes | Yes | Yes | Only from a Thread shared with them |
+| Read and write in Canvases they can open | Yes | Yes | Yes | Yes |
+| Open Canvases shared with the whole Organization | Yes | Yes | Yes | No |
+| Start and share Canvases | Yes | Yes | Yes | No |
+| Change who can open any Canvas | Yes | Yes | Only their own | No |
 | Build Sidekicks | Yes | Yes | Yes | No |
-| Add a Sidekick to a conversation | Yes | Yes | Yes | Only one the Thread already offers |
+| Talk to Sidekicks shared with them | Yes | Yes | Yes | No |
 | See the members list | Yes | Yes | Yes | No |
 | Invite people and revoke invitations | Yes | Yes | No | No |
 | Make someone an administrator, or remove that | Yes | Yes | No | No |
@@ -53,7 +52,7 @@ they post and start Threads as a member does.
 | Add, refresh and delete Organization connections | Yes | Yes | No | No |
 | Set GitHub repository access and MCP tool rules for shared connections | Yes | Yes | No | No |
 | Connect, refresh and delete your own personal connections | Yes | Yes | Yes | No |
-| Use the Organization's shared connections in Threads | Yes | Yes | Yes | Only in conversations shared with them |
+| Use the Organization's shared connections | Yes | Yes | Yes | Only in Canvases shared with them |
 | Leave the Organization | Yes, with one exception | Yes | Yes | No |
 
 The exception: an owner who is the only owner cannot leave while other people
@@ -69,7 +68,7 @@ Guests see even less. Their Settings has only **Account** in a browser, plus
 **Application** in the Mac app. They never see the members list or any
 Organization setting. A guest cannot
 leave the Organization themselves; to end their access, see
-[Taking access back](../03-spaces-and-breakouts/05-sharing-with-guests.md#taking-access-back).
+[Taking access back](../02-canvases/09-sharing-with-guests.md#taking-access-back).
 
 > [!NOTE]
 > Each connected tool keeps its own rules too. Being a Rally administrator does

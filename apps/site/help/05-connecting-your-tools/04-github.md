@@ -17,7 +17,7 @@ With GitHub connected, Rally can:
 
 The connection itself does not merge pull requests or push code. When Rally works on code, it does so on its own private Linux computer, in the Terminal described in [Code, data and the Terminal](../04-working-with-rally/03-code-files-and-the-terminal.md). Whether it may push from there is one of the settings below.
 
-Activity in GitHub, such as a new issue, a pull request, a comment, a review, a release or a finished check, can also start a Sidekick. See [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md).
+Activity in GitHub, such as a new issue, a pull request, a comment, a review, a release or a finished check, can also start a Sidekick. See [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md).
 
 ## Connecting
 

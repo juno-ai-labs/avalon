@@ -14,14 +14,13 @@ There are three ways in:
   that opens settings in almost every Mac app, so your fingers may already know
   it.
 - Choose **Rally → Settings…** from the menu bar at the top of the screen.
-- Click your avatar at the bottom left of the window to open the account menu, then
-  choose **Settings**.
+- Click **Settings** at the bottom of the rail, on the left edge of the window.
 
 Some links and buttons elsewhere in Rally open Settings straight at the right
 section, so you may land in the middle of it rather than at the top.
 
-Rally only ever keeps one Settings window. Opening it again brings the existing
-one to the front instead of making a second.
+Settings opens in the main window, in place of whatever you had open. Close it
+and you are back where you were.
 
 Changes take effect the moment you make them. There is no **Save** button to
 forget.
@@ -43,7 +42,7 @@ Rally on this Mac.
 | Section | What you find there | More in |
 | --- | --- | --- |
 | **Account** | Your profile, your default time zone, and **Sign out of Rally**. | This page, and [Signing in, signing out and Lockdown mode](../11-privacy-and-security/01-signing-in-and-out.md) |
-| **Notifications** | Whether this Mac shows alerts, how each kind of Activity reaches you, and your daily digest. | [Notifications](../08-rally-everywhere/04-notifications.md), [The digest](../08-rally-everywhere/05-the-digest.md) |
+| **Notifications** | Whether this Mac shows alerts, and how mentions, Needs input and finished runs reach you. | [Notifications](../08-rally-everywhere/03-notifications.md) |
 | **Organization** | The Organization's name, its default time zone, its members and invitations. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
 | **Security** | Where code Rally runs is allowed to connect. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
 | **Connections** | Every tool you or your Organization have connected, and the ones you could add. | [Settings → Connections](../05-connecting-your-tools/01-connections.md) |
@@ -53,8 +52,6 @@ Rally on this Mac.
 
 Not everyone sees every section, and a missing one is not a fault:
 
-- **Daily digest**, inside **Notifications**, is hidden if digests have been
-  switched off for your account.
 - **On this Mac**, inside **Notifications**, appears only once notifications
   on the Mac have been turned on for your account.
 - **GitHub** appears only after someone has connected GitHub, and **MCP tools**
@@ -126,15 +123,13 @@ computer you sign in on.
 Under **Account → Preferences** is **Default timezone**. Pick your time zone
 from the list.
 
-Rally uses it in two places:
+Rally uses it for:
 
 - **Your Sidekicks.** When one of your personal Sidekicks runs "every weekday at
   9" and does not name a time zone of its own, it means 9 in this one. The
   description under the setting still calls them "personal automations", which
   is the old name for Sidekicks. See
-  [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md).
-- **Your digest.** Digest times are in this time zone too. **Change**, next to
-  the digest's **Days**, brings you back here to change it.
+  [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md).
 
 This is your own time zone. The Organization has a separate **Default timezone**
 under **Organization**, used for Sidekicks that belong to the whole

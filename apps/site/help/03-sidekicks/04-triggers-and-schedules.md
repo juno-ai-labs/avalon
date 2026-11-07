@@ -10,14 +10,14 @@ conversations (see [What a Sidekick is](01-what-a-sidekick-is.md)).
 
 You never pick triggers from a list. You say when you want the Sidekick to
 work, in the Sidekick's conversation, and the drafting assistant sets it up.
-The triggers it chose then appear in plain words in the details panel under
+The triggers it chose then appear in plain words in the details column under
 **When to expect it**, along with **Next** and how long until the next run.
 
 ## The kinds of trigger
 
 | Trigger | You might say | Shows in Run history as |
 | --- | --- | --- |
-| By hand | (press **Run now**) | Manual |
+| By hand | (press **Run now**, or ask it in its conversation) | Manual |
 | A schedule | "Every Monday at 9am" | Scheduled |
 | An interval | "Check my inbox every hour" | Scheduled |
 | An event in a connected tool | "Whenever a new Granola note lands" | Event |
@@ -27,8 +27,9 @@ The triggers it chose then appear in plain words in the details panel under
 
 A Sidekick can have more than one trigger. A weekly report that you also
 want to run on demand needs no extra setup: **Run now** works on any active
-Sidekick that has at least one trigger. That is covered in
-[The Sidekicks window](04-the-sidekicks-window.md#run-now).
+Sidekick that has at least one trigger, and anyone it is shared with can ask
+it for a run in its conversation. Both are covered in
+[The Sidekicks section](05-the-sidekicks-section.md#run-now).
 
 ## Schedules and intervals
 
@@ -47,7 +48,7 @@ A schedule is always read in a time zone. Rally picks it like this:
 
 1. If you named one while drafting ("9am Pacific"), that one.
 2. Otherwise, for an **Only you** Sidekick, your own default time zone.
-3. Otherwise, for an **Organization** Sidekick, the Organization's default
+3. Otherwise, for a shared Sidekick, the Organization's default
    time zone.
 
 You set your own default with the **Default timezone** setting in your
@@ -126,15 +127,15 @@ filed, or a long thread to be summarized.
 
 To set it up, ask the drafting assistant for an email trigger ("I want to be
 able to forward emails to you"). Once the Sidekick has an address, its
-details panel shows an **Email this Sidekick** section. Click it to reveal
+details column shows an **Email this Sidekick** section. Click it to reveal
 the address, which is at `automation.rallywith.ai`.
 
-Who can email it depends on the Sidekick's scope.
+Who can email it depends on who the Sidekick is shared with.
 
-| Scope | Accepts mail from |
+| Shared with | Accepts mail from |
 | --- | --- |
 | **Only you** | Its owner |
-| **Organization** or **Thread** | The email address of any active member of the Organization |
+| Particular people, or the **Organization** | The email address of any active member of the Organization |
 
 Mail from anyone else is refused. A paused Sidekick refuses all mail, and
 starts accepting it again when you resume it; the address stays the same.
@@ -150,5 +151,5 @@ Archiving a Sidekick retires its address for good.
 > see the Sidekick can see its address.
 
 Instructions-only Sidekicks have no email address, since they never run on
-their own. Every Thread has an address too, which works differently; see
-[Email into Rally](../08-rally-everywhere/03-email-into-rally.md).
+their own. Email sent to Rally anywhere else does not start anything: an
+email trigger on a Sidekick is the way to hand Rally work by email.

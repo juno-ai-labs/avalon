@@ -29,7 +29,7 @@ the machinery.
 | `apps/site/build/help/plugin.ts` | The Vite plugin: serves pages on request under `vite dev`, and emits every output during `vite build`, linking the `help` entry's hashed script and stylesheet, and naming other entries a page script loads itself (`entryMeta`, the PostHog SDK) in meta tags. |
 | `apps/site/src/help.ts`, `src/help-search.ts` | The browser script: phone menu, copy buttons, the outline's current-section marker, and search. Ranking lives in `help-search.ts` so it can be tested without a DOM. |
 | `apps/site/build/help/og.ts` | Each page's social card: a 1200×630 PNG laid out by Satori and rasterized by resvg (WebAssembly), named by a hash of its words. |
-| `apps/site/public/_redirects` | Sends every retired `/support/...` address to its page in the manual. |
+| `apps/site/public/_redirects` | Sends every retired `/support/...` address, and every help page removed or renamed since, with its `.md` copy, to the page that now covers its subject. |
 | `apps/site/src/help.css` | All styling. Colours and type are `--help-*` tokens; the light and dark themes are the only places colours are set. |
 
 ## How it works
@@ -217,6 +217,31 @@ Visual changes are checked in a browser: `pnpm --filter @rally/site build`,
 phone widths.
 
 ## Changelog
+
+### 2026-11-07 — Manual restructured around Canvases and Sidekicks
+
+**What changed:** The two chapters on working in a Channel and on Spaces and
+Breakouts became one Canvases chapter (chapter 2), and the Sidekicks chapter
+moved up to chapter 3. Getting started, the tour, who-can-see-what and the
+glossary were rewritten for the new rail, sidebar and per-Canvas sharing, and
+every other chapter's wording followed. Pages whose subject no longer exists
+(Channel name and icon, session import, Sidekicks in Channels, email into
+Rally, the digest, the two iPhone pages) were deleted. Every removed or
+renamed page, and its Markdown copy, has a 301 in `_redirects` to the page that
+now covers its subject, or to its chapter when nothing does. The authoring
+guide's list of today's names changed with it.
+
+**Why:** The Canvases and Sidekicks PRD
+(`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`) removes Channels,
+Threads, Breakouts, Activity, digests and the iPhone app, and its decision log
+puts the help center and site copy in the same cutover train as the code, so
+the manual cannot describe a product that is gone. The Sidekicks folder
+moved from `07-` to `03-` and kept its pages' addresses, because the number
+never reaches a URL; only changed slugs needed redirects. Redirects are
+exact paths rather than chapter splats, so a page added later under an old
+chapter slug is never shadowed. Old names stay only in the glossary and in
+"where did it go" notes, in the past tense, because readers arrive with old
+links and old words.
 
 ### 2026-10-01 — Help center built from Markdown at /help/
 

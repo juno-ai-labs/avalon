@@ -5,7 +5,7 @@ nav_title: Privacy and security
 ---
 
 By this point in the book you have given Rally quite a lot. Your conversations
-live in it. Your files sit in its Threads. If you followed Chapter 5, it can
+live in it. Your files sit in its Canvases. If you followed Chapter 5, it can
 read your mail, your calendar and your issue tracker, and act in them for you.
 It is fair to ask what happens to all of that, and to want the answer in
 plain words.
@@ -20,11 +20,11 @@ grateful if you told us at help@rallywith.ai so we can fix the manual.
 
 ## Who it belongs to, and who sees it
 
-The first idea is that Rally works for your Organization. Your Threads,
+The first idea is that Rally works for your Organization. Your Canvases,
 files, artifacts and Sidekicks belong to the Organization they were made in.
 In legal terms, Juno acts as a processor for that content: it handles it to do
 the work you and your colleagues ask for, following the Organization's
-instructions. That is why some requests, such as deleting a Thread's content,
+instructions. That is why some requests, such as deleting a Canvas's content,
 start with the people who run your Organization and not with Rally's support
 team.
 

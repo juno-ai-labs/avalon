@@ -12,7 +12,7 @@ If you went through [the guided setup](../01-getting-started/03-guided-setup.md)
 
 Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> (or **Rally → Settings…** in the menu bar) and click **Connections** in the list on the left. You can also type "connectors" or "integrations" into the Settings search box and it will take you there.
 
-You can manage connections in the Mac app or the browser version. The browser version can connect every tool except Canva, which you connect from the Mac app. The iPhone app does not have this screen.
+You can manage connections in the Mac app or the browser version. The browser version can connect every tool except Canva, which you connect from the Mac app.
 
 The page is headed **Your connections**. It has two halves.
 
@@ -50,9 +50,9 @@ Each card shows the tool, a one-line description, and one of these words under i
 
 A card can have two buttons.
 
-**Connect for me** makes a personal connection. Rally signs in to the tool as you, sees what you can see there, and acts with your name on it. Nobody else in the Organization can use it. Being in a Thread with someone does not lend them your connections.
+**Connect for me** makes a personal connection. Rally signs in to the tool as you, sees what you can see there, and acts with your name on it. Nobody else in the Organization can use it. Sharing a Canvas or a Sidekick with someone does not lend them your connections.
 
-**Connect for organization** makes one shared connection. Every member can ask Rally to use its tools in their Threads. It acts for the Organization, or as the one account the administrator signed in with when setting it up, never as the member who happened to ask. Only owners and administrators see this button.
+**Connect for organization** makes one shared connection. Every member can ask Rally to use its tools in their Canvases and Sidekicks. It acts for the Organization, or as the one account the administrator signed in with when setting it up, never as the member who happened to ask. Only owners and administrators see this button.
 
 Not every tool offers both. A card shows only the buttons that apply to it, and each page in this chapter says which ones its tool has. For example, Google Mail + Calendar, Canva and Fireflies are personal only, and X is Organization only.
 
@@ -65,11 +65,11 @@ For most tools, your web browser opens on that tool's own sign-in page, where yo
 A few tools ask for a key or an address instead of a browser sign-in. Their pages walk you through it.
 
 > [!WARNING]
-> A personal connection is private, but what Rally finds with it is not, once it is in a conversation. If you ask Rally to look something up in your personal Gmail inside a Thread your teammates share, they can read the answer. Use a Thread only you are in when the results are private.
+> A personal connection is private, but what Rally finds with it is not, once it is in a conversation. If you ask Rally to look something up in your personal Gmail inside a Canvas your teammates share, they can read the answer. Use a Canvas only you can open when the results are private.
 
 ### What Organization Sidekicks use
 
-A Sidekick that belongs to the Organization uses only the Organization connections it was set up with. A published Sidekick cannot quietly switch to somebody's personal account. [Sidekicks](../07-sidekicks/index.md) has the details.
+A Sidekick uses personal connections only through the people on its **Delegation allowed** list, and only for runs they or its triggers start. A teammate who talks to a shared Sidekick never borrows someone else's personal account that way. [Tools and delegation](../03-sidekicks/06-tools-and-delegation.md) has the details.
 
 ## Status, Refresh and Delete
 

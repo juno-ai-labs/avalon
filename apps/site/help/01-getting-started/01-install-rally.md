@@ -53,6 +53,6 @@ The Mac app does not ask where in the world to keep your data. Every Organizatio
 
 ## Other ways in
 
-The Mac app is the place to begin, and it is the one this chapter describes. Once you are set up, you can also follow your Threads from [your iPhone](../08-rally-everywhere/06-rally-on-iphone.md), and people you share a conversation with can join it from [a web browser](../08-rally-everywhere/08-rally-in-a-browser.md).
+The Mac app is the place to begin, and it is the one this chapter describes. Once you are set up, you can also use Rally from [a web browser](../08-rally-everywhere/04-rally-in-a-browser.md), which is also how people you share a Canvas with join it.
 
 Once you are signed in, [create or join an Organization](02-create-or-join-an-organization.md).

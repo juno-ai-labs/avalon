@@ -31,7 +31,7 @@ companies in parallel."
 While helpers are running, a quiet, shimmering line above the message box
 counts them, such as **2 background agents running**. It disappears when they
 are all done. (You met this line in
-[While Rally works](../02-working-in-a-channel/03-while-rally-works.md).)
+[While Rally works](../02-canvases/04-while-rally-works.md).)
 
 In the conversation you see rows such as **Delegating to a background agent**,
 **Messaging a teammate** and **Stopping a background agent**. "Teammate" here
@@ -64,18 +64,12 @@ message.
 
 ## Reaching other conversations
 
-Rally in a Thread works in that Thread. It does not go reading your other
-Threads. Two kinds of conversation can reach a little further, because their
-job needs it:
-
-- **A Breakout** can read the main conversation of the Thread it branched
-  from. That way, Rally in a Breakout knows what the main thread decided
-  without you copying it across. It can read, but not post there. (Breakouts
-  are explained in [Breakouts](../03-spaces-and-breakouts/03-breakouts.md).)
-- **A Sidekick** can read and post to its home Thread or Breakout and to any
-  conversation attached to it. This is how a Sidekick reports its results
-  where the team will see them. See
-  [Where a Sidekick's results go](../07-sidekicks/05-where-results-go.md).
+Rally in a Canvas works in that Canvas. It does not go reading your other
+Canvases. A Sidekick's runs reach a little further, because their job needs it:
+a run can read and post to its Sidekick's own conversation, and publish to the
+Canvases it writes to. This is how a Sidekick reports its results where the
+team will see them. See
+[Where a Sidekick's results go](../03-sidekicks/07-where-results-go.md).
 
 You see this as rows that say **Reading a conversation** and **Posting to a
 conversation**.
@@ -104,7 +98,7 @@ retry does not send the same email twice.
 
 Click any activity row in the conversation to see what Rally sent to the tool
 (**Input**) and what came back (**Result**), as described in
-[While Rally works](../02-working-in-a-channel/03-while-rally-works.md).
+[While Rally works](../02-canvases/04-while-rally-works.md).
 
 ### When Rally cannot tell
 
