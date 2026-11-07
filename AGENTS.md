@@ -23,8 +23,17 @@ A **Substream** became a **Breakout**.
 
 Then, in the navigation redesign ([PRD](docs/PRDs/2026-10-10_channels-threads-navigation/prd.md)),
 a **Space** became a **Channel** and a **Channel** became a **Thread**.
-Storage names did not change: `spaces` holds Channels, and `channels` and
-`workstream` hold Threads.
+Storage names did not change: `spaces` held Channels, and `channels` and
+`workstream` held Threads.
+
+Then, in the Canvases and Sidekicks pivot ([PRD](docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md)),
+a **Thread**, a **Channel** and a **Breakout** became nothing: they were
+deleted, not renamed. The product is two sections, **Canvases** and
+**Sidekicks**; a **Canvas** is a conversation (its Chat) and the artifacts it
+generates. Storage names did not change: a Canvas id is a `workstream` id
+(`WorkstreamId`, `artifact_registry.workstream_id`), a Sidekick is an
+`automation`, and the conversation Durable Object, renamed `AgentLoopDO`,
+keeps its `SUBSTREAM_AGENTS` binding and `workstream:…:substream:…` ids.
 
 ## How we build
 
