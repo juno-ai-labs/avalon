@@ -30,7 +30,7 @@ Rally can read Google Slides but cannot edit them.
 
 Rally can read anything the connected Google account can open. Writing is stricter. Rally can change Docs and Sheets it created itself, and other files only once someone allows it, file by file.
 
-When Rally needs to edit an existing file, it puts a card in the Thread saying Google needs you to allow Rally to edit this file, with an **Allow editing** button. Click it and Google opens its own approval page for that one file. Only the person who owns the connection can approve a personal one, and only an administrator can approve for an Organization one. Everyone else sees **Owner required** or **Admin required** on the button.
+When Rally needs to edit an existing file, it puts a card in the conversation saying Google needs you to allow Rally to edit this file, with an **Allow editing** button. Click it and Google opens its own approval page for that one file. Only the person who owns the connection can approve a personal one, and only an administrator can approve for an Organization one. Everyone else sees **Owner required** or **Admin required** on the button.
 
 Text Rally writes into a Doc goes in as plain text. If you see asterisks and hash signs where you expected bold and headings, that is why. Ask Rally to keep formatting out of anything it writes into a Doc.
 
@@ -49,7 +49,7 @@ Rally has the groundwork for watching a Google file for changes, but the switch 
 
 - "Find the Q3 planning doc in Drive and tell me what changed in the budget section."
 - "Read the pipeline sheet and list every deal over 20,000 that has not moved this month."
-- "Write up this Thread's decisions as a new Google Doc."
+- "Write up this Canvas's decisions as a new Google Doc."
 - "Add this week's numbers to the bottom of the metrics sheet."
 
 ## When it stops working

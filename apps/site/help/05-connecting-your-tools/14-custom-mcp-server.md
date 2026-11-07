@@ -6,7 +6,7 @@ nav_title: Custom MCP
 
 The last connector is the most open-ended. If your team runs its own tools, or uses a service that has no card in Settings, you can often still connect it to Rally through MCP. Like the inbound webhook, this page leans a little technical.
 
-MCP (Model Context Protocol) is a standard way for a tool to tell an AI what it can do, and to let the AI do it. A service that speaks MCP runs an MCP server: a web address that lists its tools and carries them out when asked. Point Rally at one and Rally can use its tools in your Threads, alongside everything else in this chapter.
+MCP (Model Context Protocol) is a standard way for a tool to tell an AI what it can do, and to let the AI do it. A service that speaks MCP runs an MCP server: a web address that lists its tools and carries them out when asked. Point Rally at one and Rally can use its tools in your Canvases and Sidekicks, alongside everything else in this chapter.
 
 ## Adding a server
 
@@ -29,7 +29,7 @@ You can add as many custom servers as you like.
 **Send request headers I provide** is for servers that want a key with every request. Add each header's name (such as `Authorization`) and its value. Click **Add another header** for more. Rally encrypts the values, sends them with every request, and never shows them again. To change one, add the server again with the new value and delete the old connection.
 
 > [!WARNING]
-> Header values are secrets. Type them only into this dialog, never into a chat, a Thread, a Channel, an email or a support message.
+> Header values are secrets. Type them only into this dialog, never into a chat, a Canvas, an email or a support message.
 
 ### Tools Rally may use
 

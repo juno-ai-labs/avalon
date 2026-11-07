@@ -3,8 +3,8 @@ title: Search and links
 description: Find any message, link, artifact or file, and share links that open the right place in Rally.
 ---
 
-Shelves keep things tidy. Search is how you find something when you have
-forgotten which shelf you put it on. Links are how you point someone else at the
+Pins keep things close. Search is how you find something when you have
+forgotten where you left it. Links are how you point someone else at the
 exact spot.
 
 ## Search your Organization
@@ -17,7 +17,7 @@ over everything else.
 Start typing. Results appear after a short pause, with no need to press
 anything. Search looks through:
 
-- **Messages** in every Thread and Breakout you can read.
+- **Messages** in every Canvas and Sidekick conversation you can read.
 - **Links** that people and Rally have shared in conversations.
 - **Artifacts**, the documents and files Rally has made.
 - **Files** that people have attached or brought in.
@@ -33,7 +33,7 @@ The tabs along the top, **All**, **Messages**, **Links**, **Artifacts** and
 
 Click a result, or move to it and press <kbd>Return</kbd>.
 
-- **A message** opens its Thread or Breakout and jumps to that exact message.
+- **A message** opens its Canvas or Sidekick and jumps to that exact message.
 - **A link** opens in your web browser.
 - **An artifact or a file** opens in a preview. See
   [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md).
@@ -55,10 +55,9 @@ Every shortcut in Rally is collected in
 
 - **Things you cannot read.** Search only shows results from conversations you
   have access to, and checks again when you open one.
-- **Channels and Threads by name.** Search looks inside conversations, not at
-  their titles. To find a Thread by name, open the **Threads** list and sort it
-  **A–Z**. To find a Channel by name, open **Channels**, where the list starts
-  A to Z (or switch its sort back to **A–Z**).
+- **Canvases and Sidekicks by name.** This search looks inside conversations,
+  not at their titles. To find a Canvas or a Sidekick by name, use the search
+  box on the Canvases or Sidekicks home page.
 - **Anything, while you are signed out.** The Search button is greyed out and the
   shortcut does nothing until you are signed in.
 
@@ -72,36 +71,29 @@ click **Retry loading more results**.
 
 ## Links to the right place
 
-Every Channel, Thread, Breakout and Sidekick has a web link of its own. Send one
+Every Canvas and Sidekick has a web link of its own. Send one
 to a teammate and it opens Rally at exactly that place.
 
 | To copy a link to | Do this |
 | --- | --- |
-| A Thread | Click the Thread's name in its title pill and choose **Copy link**. |
-| A Breakout | Click the Breakout's name in its title pill and choose **Copy link**. |
+| A Canvas | Click the Canvas's name in its header pill and choose **Copy link**. |
+| A Sidekick | Open the Sidekick, click **…** and choose **Copy sidekick link**. |
 
 If the copy fails, Rally says so and you can try again.
 
 The links are ordinary web addresses starting with `https://rallywith.ai/app/`,
 which beats a link only the app understands in two ways:
 
-- **They look right in other places.** Paste a Thread link in Slack and it
-  unfurls into a small card with the Thread's name and when it was last active.
-  While Rally is running in it, waiting for input, or has failed, the card shows
-  that too. See [Rally in Slack](../08-rally-everywhere/01-rally-in-slack.md).
-- **They work in email and documents**, anywhere a normal link works.
+- **They work in email, Slack and documents**, anywhere a normal link works.
+- **They survive being forwarded.** Whoever opens one signs in as themselves,
+  so the link shows each person only what they are allowed to see.
 
 ### What happens when someone clicks one
 
 On a Mac with Rally installed, the link opens straight in the app. Otherwise it
-opens a short web page that says **Opening this thread in Rally** (or channel,
-breakout or sidekick) and hands over to the app a moment later. If nothing
+opens a short web page that says it is opening Rally and hands over to the app a moment later. If nothing
 happens, click **Open Rally**. If Rally is not installed, the page says to
 install it and come back.
-
-On an iPhone, links to Threads and Breakouts open in the Rally app. Links to
-Channels and Sidekicks ask you to use the Mac. See
-[Rally on your iPhone](../08-rally-everywhere/06-rally-on-iphone.md).
 
 If you belong to several Organizations and the link is for a different one,
 Rally switches to that Organization first.
@@ -109,10 +101,10 @@ Rally switches to that Organization first.
 > [!IMPORTANT]
 > A link is an address, not a key. Opening one uses the person's own Rally
 > account and permissions, so it grants nothing by itself. A teammate who cannot
-> see a private Thread still cannot see it after you send them the link. To let
-> them in, add them as a participant or follow
-> [Who can see what](04-who-can-see-what.md). For someone outside your
-> Organization, see [Sharing with people outside your Organization](05-sharing-with-guests.md).
+> open a Canvas still cannot open it after you send them the link. To let
+> them in, add them as a participant, as
+> [Who can see what](08-who-can-see-what.md) explains. For someone outside your
+> Organization, see [Sharing with people outside your Organization](09-sharing-with-guests.md).
 
 ### For the curious: rallywithai:// links
 
@@ -122,8 +114,9 @@ the same kind of link to bring you back to the right place in the app. You will
 rarely see one, and you never need to type one.
 
 Links from the earliest days of Rally began with `avalon://`, Rally's old code
-name. They still open, though Rally no longer makes them. Older web links in an
-earlier format keep working too, so nothing in your inbox goes stale.
+name. They still open, though Rally no longer makes them. Links to Channels, Threads and
+Breakouts, the conversations Rally had before Canvases, no longer open, because
+those conversations are gone.
 
 If a link will not open, Rally tells you why in a small window. Every message,
 and what to do about it, is in
