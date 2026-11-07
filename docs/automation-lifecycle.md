@@ -437,16 +437,10 @@ command, and went with them (plan step C-2);
 [`websocket-architecture.md`](websocket-architecture.md#sidekick-library-synchronization)
 records where a running signal would come from.
 
-Execution, attachment, audience, visibility, and Channel-default changes use the durable
-post-commit lane to push watched counts. Subscription revisions and snapshot
-waterlines discard obsolete targets and older snapshots; reconnect re-registers
-the open composers. Counts have no REST fetch, polling, or per-Sidekick socket.
-
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/sidekick-activity.ts` | Target-scoped running count from accepted Sidekick execution projections and the target's attachment relationships. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `runNow`, `runSeeded`, `admitConversationMessage`, `allowsManager`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, `reviewDelivery`, `reviewDelivered`, the parent contract (`onChildCommonProjection` moves the run row, counts its finish and arms its notice), and the schedule, run, review, memory-table and `sidekick_run_notice` alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: opens a run's conversation and starts its loop from the `sidekick_run_provision` Queue message the run's alarm entry sends. |
 | `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; the refusal text the run's transcript records; `routeSidekickConversationMessage` with `SIDEKICK_MESSAGE_REFUSAL_TEXT`, the shared conversation's call to `admitConversationMessage` and what it says when a message started no run; and `sidekickAllowsManager`, which the shared conversation asks before it records an answer to the wizard. |

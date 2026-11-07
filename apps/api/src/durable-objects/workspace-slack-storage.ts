@@ -678,10 +678,8 @@ export function createWorkspaceSlackSession(
 ): WorkspaceSlackSessionResult {
   return storage.transactionSync(() => {
     // The thread's binding is the routing authority, so a session that exists
-    // without one would be a Channel nobody's reply could reach. A spawn under
-    // a linked room has already claimed and activated it; every other path (a
-    // DM, a slash command, a Channel placed in General) gets it here, first
-    // binding wins, in the same transaction as the session row.
+    // without one would be a conversation nobody's reply could reach. It gets
+    // it here, first binding wins, in the same transaction as the session row.
     const bound = new ExternalConversationBindingStorage(storage).recordOutbound(
       `slack:${request.teamId}`,
       [request.channelId, request.threadTs],

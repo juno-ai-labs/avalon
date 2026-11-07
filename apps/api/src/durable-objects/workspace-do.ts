@@ -133,7 +133,6 @@ import {
   WorkspaceSidebarListEventSchema,
   WorkspaceCanvasListEventSchema,
   WorkspaceSidebarSchema,
-  WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WorkspaceSocketClientEventSchema,
   WorkspaceFeatureFlagsEventSchema,
   WorkspacePresenceEventSchema,
@@ -4508,10 +4507,7 @@ type WorkspaceSocketOperation =
   | "decode"
   | "validate"
   | "subscribe"
-  | "presence"
-  | "list_workstreams"
-  | "channel_rails"
-  | "space_channels";
+  | "presence";
 
 interface WorkspaceSocketCloseInput {
   code: number;
@@ -4638,6 +4634,12 @@ const RETIRED_SYNC_TOPICS = new Set([
 const StoredSyncTopicsSchema = z.array(z.string())
   .transform((topics) => topics.filter((topic) => !RETIRED_SYNC_TOPICS.has(topic)))
   .pipe(z.array(WorkspaceSyncTopicSchema));
+/** The retired topics a stored row names, for the log line its drop writes. */
+function retiredSyncTopics(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((topic): topic is string => typeof topic === "string" && RETIRED_SYNC_TOPICS.has(topic)) : [];
+}
+/** Workspace socket commands retired with Threads, Channels and the Sidekick running count (plan step C-2). */
+const RETIRED_WORKSPACE_SOCKET_COMMANDS = new Set(["list_workstreams", "channel_rails", "space_channels", "sidekick_activity"]);
 
 const SyncFollowUpSchema = z.object({
   workspaceId: z.string().min(1),
@@ -4726,11 +4728,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * so a hibernation wake judges them again, once.
    */
   private heldUnheardSockets = new Set<string>();
-  /**
-   * `WORKSTREAM_REALTIME_MAX_FRAME_BYTES` for `channel_rails` answers, held
-   * per instance so a runtime test can pack frames without megabytes of rows.
-   */
-  private channelRailFrameBytes = WORKSTREAM_REALTIME_MAX_FRAME_BYTES;
   /**
    * Whether this object has the first-frame ledger (migration 71). An object
    * held at schema 57 for meeting-notes retirement does not, and the watch
@@ -5580,7 +5577,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         `SELECT followup_json, attempts FROM workspace_directory_followups WHERE id = ? AND state = 'pending'`, id,
       ).toArray()[0];
       if (!row || (typeof entry !== "number" && row.followup_json !== entry.json)) continue;
-      const parsed = SyncFollowUpSchema.safeParse(JSON.parse(row.followup_json));
+      const stored: unknown = JSON.parse(row.followup_json);
+      const parsed = SyncFollowUpSchema.safeParse(stored);
+      const retired = retiredSyncTopics((stored as { syncTopics?: unknown } | null)?.syncTopics);
+      if (retired.length > 0) {
+        logInfo(this.env, "workspace_sync_retired_topics_dropped", {
+          workspace_id: this.workspaceId(), followup_id: id, source: "sync_followup", topics: retired,
+        });
+      }
       if (!parsed.success) {
         const code = zodDiagnosticCode(parsed.error, "directory_followup") ?? "directory_followup_invalid";
         this.state.storage.sql.exec(
@@ -6167,7 +6171,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       });
       return;
     }
-    if (isUnknownSocketEvent(decoded, WorkspaceSocketClientEventTypeSchema)) return;
+    if (isUnknownSocketEvent(decoded, WorkspaceSocketClientEventTypeSchema)) {
+      // Ignored, not refused: a refusal is a permanent close. A retired
+      // command is named so a pre-pivot desktop still sending one is visible.
+      const type = (decoded as { type: string }).type;
+      if (RETIRED_WORKSPACE_SOCKET_COMMANDS.has(type)) {
+        logInfo(this.env, "workspace_socket_retired_command_ignored", {
+          workspace_id: attachment?.workspaceId ?? null, connection_id: attachment?.connectionId ?? null, command: type,
+        });
+      }
+      return;
+    }
     const parsed = safeParseSocketEvent(WorkspaceSocketClientEventSchema, decoded);
     if (!parsed.success) {
       this.closeSocket(socket, attachment, {
@@ -6268,8 +6282,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (presenceChanged) this.broadcastPresence();
       return;
     }
-    // `space_channels`, `list_workstreams` and `channel_rails` asked about
-    // Channels and Threads, which are retired; no client sends them now.
   }
 
   /** A Sidekick directory row whose stored appearance no longer parses is listed without one. */
@@ -10277,8 +10289,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /**
    * Resolve one verified external message's path, in one read: deliver to a
-   * bound conversation, hold behind a creation in flight, spawn a Channel in
-   * the room's Space, stop at a suspended binding, or do nothing. See
+   * bound conversation, hold behind a creation in flight, stop at a suspended
+   * binding, or do nothing. See
    * `docs/external-conversation-bindings.md`.
    */
   async resolveExternalConversation(input: unknown): Promise<ExternalBindingResolution> {
@@ -10286,24 +10298,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ExternalBindingResolveRequestSchema, input, "resolve_external_conversation");
     this.assertWorkspace(request.workspaceId);
     const resolution = this.externalBindings().resolve(request);
-    if (resolution.outcome !== "spawn") return ExternalBindingResolutionSchema.parse(resolution);
-    // Only a spawn reads further, and only this object's own Space row.
-    const space = this.state.storage.sql.exec<{
-      scope: "personal" | "workspace"; created_by_user_id: string | null; archived_at: number | null;
-    }>(
-      "SELECT scope, created_by_user_id, archived_at FROM spaces WHERE space_id = ?",
-      resolution.spaceId,
-    ).toArray()[0];
-    return ExternalBindingResolutionSchema.parse({
-      ...resolution,
-      ...(space ? {
-        space: {
-          scope: space.scope,
-          createdByUserId: space.created_by_user_id,
-          archived: space.archived_at !== null,
-        },
-      } : {}),
-    });
+    return ExternalBindingResolutionSchema.parse(resolution);
   }
 
   /** One binding by its key, whatever its state. */
@@ -11390,6 +11385,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         items: this.sidekickLibrary(attachment),
       },
       canvases: { waterline: this.canvasListWaterline(), items: this.canvasList(attachment) },
+      // One release of compatibility for a pre-pivot desktop; see the schema.
+      workstreams: { directoryWaterline: 0, items: [], stateVersions: [], nextCursor: null },
+      notes: { waterline: 0, items: [], nextCursor: null },
     });
   }
 
@@ -11608,7 +11606,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const newest = rows.at(-1);
       const changedTopics = new Set<WorkspaceSyncTopic>();
       for (const row of rows) {
-        for (const topic of StoredSyncTopicsSchema.parse(JSON.parse(row.topics_json))) {
+        const stored: unknown = JSON.parse(row.topics_json);
+        const retired = retiredSyncTopics(stored);
+        if (retired.length > 0) {
+          logInfo(this.env, "workspace_sync_retired_topics_dropped", {
+            workspace_id: attachment.workspaceId, waterline: row.waterline, source: "sync_event", topics: retired,
+          });
+        }
+        for (const topic of StoredSyncTopicsSchema.parse(stored)) {
           changedTopics.add(topic);
         }
       }
