@@ -18,7 +18,6 @@
 import type { HarnessToolContext } from "@rally/agent-harness";
 import { createAgentCommunicationPlugin } from "../src/services/agent-communication-plugin";
 import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
-import { createAvalonTerminalPlugin } from "../src/services/terminal/plugin";
 import { createWorkstreamAttachmentTools } from "../src/services/workstream-attachment-tools";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
 import { TerminalSandboxCoordinator } from "../src/services/terminal/coordinator";
@@ -44,13 +43,11 @@ import {
 } from "@rally/contracts";
 
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
-import { resolveTerminalPublicationHome } from "../src/services/terminal/authority";
 import { loadVisibleWorkstreamResourcePage, loadVisibleWorkstreamResourcesByIds } from "../src/services/workstream-resource-visibility";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { createConversationResourceLinks, createResourcePortFactory } from "../src/runtime/resource-port";
 import type { AuthContext, Env } from "../src/env";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
-import { AuthorizationService } from "../src/services/authorization-service";
 import { projectAuthorization } from "../src/services/authorization-projection-service";
 import { validateAttachmentToolReceiptReplay } from "../src/services/attachment-tool-receipts";
 import { createArtifactDataToolContext } from "../src/services/workstream-artifact-data-wiring";
@@ -63,10 +60,10 @@ import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { consumeEffectBodies, deliverChildEffects, deliverEffectsToWorkspace, pendingChildEffects } from "./helpers/conversation-effects";
+import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { listVisiblePrivateChildren, withHostedParent } from "./helpers/hosted-parent";
-import { applySidekick, sidekickWorkspace } from "./helpers/sidekick";
+import { applySidekick } from "./helpers/sidekick";
 import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { placeMembership, removeMembership } from "./helpers/space-membership";
 import { countingEnv } from "./helpers/counting-namespace";
@@ -106,7 +103,7 @@ const DEFINITION: AutomationDraft = {
   recommendedPlugins: [],
   memoryTables: [],
   customTools: [],
-  suggestedScope: "workstream",
+  suggestedScope: "workspace",
   followUpQuestion: null,
   elicitation: null,
   ready: true,
@@ -217,11 +214,10 @@ async function seedBreakout(title: string, roomId = ROOM_ID): Promise<SubstreamI
   return reserved.substreamId;
 }
 
-/** A room Sidekick whose home is `home`, created the way authoring creates one, applied and projected. */
-async function seedSidekick(home: SubstreamId | "0", automationId = AUTOMATION_ID): Promise<void> {
+/** An Organization Sidekick, created the way authoring creates one, applied and projected. */
+async function seedSidekick(_home: "0", automationId = AUTOMATION_ID): Promise<void> {
   await createAutomation(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workstream",
-    owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId,
+    workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workspace", automationId,
   });
   const addressed = { workspaceId: WORKSPACE_ID, automationId };
   await workspace().sidekickSubmitDefinition({ ...addressed, draft: DEFINITION, evaluatorRules: null, submittedByRunId: null });
@@ -409,190 +405,6 @@ describe("conversations in the current thread's Channels", () => {
   });
 });
 
-describe("a Sidekick's home conversation", () => {
-  it("carries a Breakout home from the Sidekick to the Organization and lists it first", async () => {
-    const breakout = await seedBreakout("Weekly call");
-    await seedSidekick(breakout);
-
-    expect(await workspace().automationOwner({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID }))
-      .toEqual({ owningWorkstreamId: ROOM_ID, owningSubstreamId: breakout });
-    const listed = await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      scope: sidekickScope() });
-    // The Sidekick's own conversation, admitted by the Sidekick, comes first; its id is the Sidekick's.
-    expect(listed.conversations).toEqual([{
-      conversationId: AUTOMATION_ID, parentId: AUTOMATION_ID, substreamId: "0",
-      kind: "sidekick", title: "Weekly call prep", isHome: false, isOwn: false, isParent: true,
-    }, {
-      conversationId: `${ROOM_ID}/${breakout}`, parentId: ROOM_ID, substreamId: breakout,
-      kind: "breakout", title: "Weekly call", isHome: true, isOwn: false, isParent: false,
-    }]);
-    // Leaving the conversation out of a post means the home.
-    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      scope: sidekickScope(), reference: null })).toMatchObject({
-      ok: true, sidekickName: "Weekly call prep", conversation: { conversationId: `${ROOM_ID}/${breakout}` },
-    });
-  });
-
-  it("narrows a Breakout-homed Sidekick to the Breakout's members, wherever it is asked", async () => {
-    // The colleague is in the room, not in the Breakout.
-    const breakout = await seedBreakout("Weekly call");
-    await seedSidekick(breakout);
-
-    expect((await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID,
-      userId: COLLEAGUE_ID })).authorized).toBe(false);
-    const authorization = new AuthorizationService(TEST_ENV);
-    expect(await authorization.checkMany({ workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID, delegation: null },
-      [{ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, substreamId: asSubstreamId("0") }]))
-      .toMatchObject([{ status: "denied" }]);
-    // Nor can the colleague make a Sidekick homed there from its loop.
-    const loop = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
-      parentKind: "workstream", parentId: ROOM_ID, substreamId: breakout, loopId: `workstream:${ROOM_ID}:substream:${breakout}:loop`,
-      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
-      executionPrincipal: { type: "user", userId: COLLEAGUE_ID }, reason: "test" });
-    const context = { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, harnessRunId: loop.harnessRunId,
-      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(),
-      executionPrincipal: loop.executionPrincipal, signal: new AbortController().signal };
-    await expect(new AgentCommunicationService(TEST_ENV, loop).createSidekick("workstream", context))
-      .rejects.toMatchObject({ code: "sidekick_owning_workstream_forbidden" });
-  });
-
-  it("sends an archived Thread's row only once its Sidekicks are archived, with their list in the same turn", async () => {
-    await seedSidekick("0");
-    const response = await workspace().fetch("https://workspace.test/socket", { headers: {
-      Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-placement-affinity": "wnam",
-      "x-rally-user-id": AUTHOR_ID, "x-rally-session-id": SESSION_ID,
-      "x-rally-socket-ticket-id": crypto.randomUUID(),
-      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
-    } });
-    expect(response.status).toBe(101);
-    const socket = response.webSocket!;
-    socket.accept();
-    const frames: Array<Record<string, unknown>> = [];
-    socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
-    try {
-      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
-      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
-      frames.length = 0;
-
-      expect((await post(conversation(ROOM_ID), "/internal/product", {
-        operation: "update", auth: AUTH, input: { archived: true },
-      })).status).toBe(200);
-      await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
-
-      // The archived Thread's row and the updated Sidekick list arrive together.
-      const archivedRow = () => frames.findIndex((frame) => frame.type === "workspace_workstream_state"
-        && frame.workstreamId === ROOM_ID && frame.workstream === null);
-      await expect.poll(archivedRow, { timeout: 5_000 }).toBeGreaterThanOrEqual(0);
-      const list = frames[archivedRow() + 1];
-      expect(list).toMatchObject({ type: "workspace_sidebar_list", list: "automations", items: [] });
-      expect(await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
-        .toEqual({ authorized: false, archived: true });
-      // No earlier automations list told the client before its Channel did.
-      expect(frames.slice(0, archivedRow()).filter((frame) => frame.list === "automations")).toEqual([]);
-    } finally {
-      socket.close();
-    }
-  });
-
-  it.each(["Thread", "Breakout"] as const)("retains the %s archive cascade when restore is delivered first", async (kind) => {
-    const home = kind === "Thread" ? "0" : await seedBreakout("Weekly call");
-    await seedSidekick(home);
-    for (const archived of [true, false]) {
-      if (kind === "Thread") {
-        expect((await post(conversation(ROOM_ID), "/internal/product", {
-          operation: "update", auth: AUTH, input: { archived },
-        })).status).toBe(200);
-      } else {
-        await workspace().setPrivateChildArchived({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-          substreamId: asSubstreamId(home), actorUserId: AUTHOR_ID, archived });
-      }
-    }
-    const effects = (await pendingChildEffects(conversation(ROOM_ID, home)))
-      .filter((envelope) => envelope.effect.kind === "directory_common")
-      .sort((a, b) => b.sourceVersion - a.sourceVersion);
-    const restored = effects[0]!;
-    expect(restored.effect).toMatchObject({ archivedAt: null, archiveGeneration: 1 });
-    expect(effects.some((envelope) => envelope.effect.kind === "directory_common" && envelope.effect.archivedAt !== null)).toBe(true);
-    expect(await consumeEffectBodies(TEST_ENV, [restored])).toEqual({ acked: 1, retried: 0 });
-    expect(await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
-      .toEqual({ authorized: false, archived: true });
-
-    // New work in the restored room must survive old archive deliveries/replays.
-    const newSidekick = asAutomationId(crypto.randomUUID());
-    await seedSidekick(home, newSidekick);
-    for (const envelope of [...effects.slice(1), restored]) {
-      expect(await consumeEffectBodies(TEST_ENV, [envelope])).toEqual({ acked: 1, retried: 0 });
-    }
-    expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: newSidekick,
-      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true } }))
-      .toMatchObject({ lifecycle: "active" });
-  });
-
-  it("keeps new Sidekicks when a restored Breakout's directory projection is delayed", async () => {
-    const home = await seedBreakout("Weekly call");
-    await seedSidekick(home);
-    await workspace().setPrivateChildArchived({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: home, actorUserId: AUTHOR_ID, archived: true });
-    await workspace().setPrivateChildArchived({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: home, actorUserId: AUTHOR_ID, archived: false });
-    const newSidekick = asAutomationId(crypto.randomUUID());
-    await seedSidekick(home, newSidekick);
-    // Accept the archive projection after the registry has already restored
-    // the Breakout and admitted new work, before delivering its restore.
-    const archived = (await pendingChildEffects(conversation(ROOM_ID, home)))
-      .find((envelope) => envelope.effect.kind === "directory_common" && envelope.effect.archivedAt !== null);
-    expect(archived).toBeDefined();
-    expect(await consumeEffectBodies(TEST_ENV, [archived])).toEqual({ acked: 1, retried: 0 });
-    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, home));
-    expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: newSidekick,
-      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true } }))
-      .toMatchObject({ lifecycle: "active" });
-  });
-
-  it.each(["active", "paused", "draft"] as const)("archives a Sidekick in %s state with its home Breakout and keeps Main and sibling Sidekicks", async (lifecycle) => {
-    const breakout = await seedBreakout("Weekly call");
-    const sibling = await seedBreakout("Hiring");
-    const mainSidekick = asAutomationId(crypto.randomUUID());
-    const siblingSidekick = asAutomationId(crypto.randomUUID());
-    await seedSidekick("0", mainSidekick);
-    await seedSidekick(sibling, siblingSidekick);
-    if (lifecycle === "draft") {
-      await createAutomation(TEST_ENV, {
-        workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workstream",
-        owningWorkstreamId: ROOM_ID, owningSubstreamId: breakout, automationId: AUTOMATION_ID,
-      });
-    } else {
-      await seedSidekick(breakout);
-      if (lifecycle === "paused") await workspace().sidekickPause({ workspaceId: WORKSPACE_ID, automationId: AUTOMATION_ID,
-        actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true } });
-    }
-
-    await workspace().setPrivateChildArchived({
-      workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakout, actorUserId: AUTHOR_ID, archived: true,
-    });
-    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, breakout));
-
-    const row = await runInDurableObject(sidekickWorkspace(TEST_ENV, WORKSPACE_ID), (_instance, state) =>
-      state.storage.sql.exec<{ lifecycle: string; paused_by: string | null; owning_room_archived_at: number | null }>(
-        `SELECT lifecycle, paused_by, owning_room_archived_at FROM automation_directory WHERE automation_id = ?`, AUTOMATION_ID,
-      ).one());
-    expect(row).toMatchObject({ lifecycle: "deleted", paused_by: null });
-    expect(row.owning_room_archived_at).not.toBeNull();
-    for (const automationId of [mainSidekick, siblingSidekick]) {
-      expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId,
-        actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true } }))
-        .toMatchObject({ lifecycle: "active" });
-    }
-
-    await workspace().setPrivateChildArchived({
-      workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakout, actorUserId: AUTHOR_ID, archived: false,
-    });
-    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, breakout));
-    expect(await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, userId: AUTHOR_ID }))
-      .toEqual({ authorized: false, archived: true });
-  });
-});
-
 describe("attaching a conversation to a Sidekick", () => {
   it("refuses a person who cannot post there, and records one row however often it is asked", async () => {
     await seedRoom(OTHER_ROOM_ID, "Founders");
@@ -624,7 +436,7 @@ describe("attaching a conversation to a Sidekick", () => {
 
     // The author can open Founders, but the Sidekick is not attached to it.
     expect(await resolve(OTHER_ROOM_ID))
-      .toEqual({ ok: false, code: "conversation_not_in_scope", available: [AUTOMATION_ID, ROOM_ID], resourceId: null });
+      .toEqual({ ok: false, code: "conversation_not_in_scope", available: [AUTOMATION_ID], resourceId: null });
     await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
     expect(await resolve("Founders")).toMatchObject({ ok: true, conversation: { conversationId: OTHER_ROOM_ID } });
@@ -639,7 +451,7 @@ describe("a conversation tool's scope", () => {
       userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: `${ROOM_ID}/${breakout}` });
     const listed = async () => (await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID,
       userId: AUTHOR_ID, scope: sidekickScope() })).conversations.map((entry) => entry.conversationId);
-    expect(await listed()).toEqual([AUTOMATION_ID, ROOM_ID, `${ROOM_ID}/${breakout}`]);
+    expect(await listed()).toEqual([AUTOMATION_ID, `${ROOM_ID}/${breakout}`]);
 
     // The author adds someone, then leaves; the Breakout goes on without them.
     await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
@@ -652,7 +464,7 @@ describe("a conversation tool's scope", () => {
     // participant_notification this suite's D1 has no tables to deliver.
     await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, breakout));
 
-    expect(await listed()).toEqual([AUTOMATION_ID, ROOM_ID]);
+    expect(await listed()).toEqual([AUTOMATION_ID]);
     expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
       scope: sidekickScope(), reference: `${ROOM_ID}/${breakout}` }))
       .toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: breakout });
@@ -689,7 +501,7 @@ describe("a conversation tool's scope", () => {
     await deliverEffectsToWorkspace(TEST_ENV, conversation(OTHER_ROOM_ID));
 
     expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      scope: sidekickScope() })).conversations.map((entry) => entry.conversationId)).toEqual([AUTOMATION_ID, ROOM_ID]);
+      scope: sidekickScope() })).conversations.map((entry) => entry.conversationId)).toEqual([AUTOMATION_ID]);
     expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
       scope: sidekickScope(), reference: OTHER_ROOM_ID }))
       .toEqual({ ok: false, code: "conversation_archived", available: [], resourceId: OTHER_ROOM_ID });
@@ -775,18 +587,9 @@ describe("sidekick_attach_resource", () => {
     expect(await directLinks()).toEqual([]);
   });
 
-  it("refuses a Sidekick owned by another thread even when the user can open both", async () => {
-    await seedRoom(OTHER_ROOM_ID, "Another thread");
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
-      scope: "workstream", owningWorkstreamId: OTHER_ROOM_ID, automationId: AUTOMATION_ID });
-    await expect(tool()(AUTOMATION_ID, await source()))
-      .rejects.toMatchObject({ code: "sidekick_owned_by_another_thread" });
-    expect(await directLinks()).toEqual([]);
-  });
-
   it("refuses an inaccessible personal Sidekick", async () => {
     await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: COLLEAGUE_ID,
-      scope: "personal", owningWorkstreamId: null, automationId: AUTOMATION_ID });
+      scope: "personal", automationId: AUTOMATION_ID });
     await expect(tool()(AUTOMATION_ID, await source()))
       .rejects.toMatchObject({ code: "sidekick_contact_forbidden" });
     expect(await directLinks()).toEqual([]);
@@ -1092,76 +895,7 @@ describe("a Breakout's access to its Channel", () => {
     });
   }
 
-  it.each(["wizard", "activation", "worker"])("gives a Sidekick %s its home and attached conversations' resources without copying links", async (kind) => {
-    const home = await seedBreakout("Calendar setup");
-    const sibling = await seedBreakout("Private sibling");
-    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: sibling, actorUserId: AUTHOR_ID, userId: COLLEAGUE_ID, operationId: crypto.randomUUID() });
-    await workspace().removePrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: sibling, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: crypto.randomUUID() });
-    await seedRoom(OTHER_ROOM_ID, "Attached source");
-    const attached = await seedBreakout("Source details", OTHER_ROOM_ID);
-    await seedSidekick(home);
-    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      automationId: AUTOMATION_ID, reference: `${OTHER_ROOM_ID}/${attached}` });
-    const attachedId = "00000000-0000-7000-8000-0000000c0ae3";
-    const siblingId = "00000000-0000-7000-8000-0000000c0ae4";
-    await link(conversation(ROOM_ID), CHANNEL_RESOURCE_ID, 1_000);
-    await link(conversation(ROOM_ID, home), BREAKOUT_RESOURCE_ID, 2_000);
-    await link(conversation(OTHER_ROOM_ID, attached), attachedId, 3_000);
-    await link(conversation(ROOM_ID, sibling), siblingId, 4_000);
-    await runInDurableObject(workspace(), (_instance, state) => {
-      for (const id of [CHANNEL_RESOURCE_ID, BREAKOUT_RESOURCE_ID, attachedId, siblingId]) {
-        state.storage.sql.exec(`INSERT INTO resources
-          (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
-          VALUES (?, ?, 'generated_document', 'avalon_generated', 'Calendar source', '{}', 'attached', ?, ?)`,
-        id, WORKSPACE_ID, NOW, NOW);
-      }
-    });
-    const child = kind === "wizard" ? "0" : asSubstreamId(crypto.randomUUID());
-    if (child !== "0") await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "automation", AUTOMATION_ID, child);
-    if (kind === "worker") await runInDurableObject(conversation(AUTOMATION_ID, child), (_instance, state) => {
-      state.storage.sql.exec("INSERT INTO background_agent (id, execution_principal_json) VALUES (1, ?)",
-        JSON.stringify({ type: "user", userId: AUTHOR_ID }));
-    });
-    const principal = { type: "user" as const, userId: AUTHOR_ID };
-    await projectResourceAccess();
-    const resources = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, child, principal);
-    const database = withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID).DB;
-    const before = await resources.inventoryFingerprint();
-    const page = await loadVisibleWorkstreamResourcePage(database, resources,
-      { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal, attachmentKind: null, limit: 25 });
-    expect(page.rows.map((row) => row.id).sort()).toEqual([CHANNEL_RESOURCE_ID, BREAKOUT_RESOURCE_ID, attachedId].sort());
-    expect((await loadVisibleWorkstreamResourcesByIds(database, resources,
-      { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal, resourceIds: [CHANNEL_RESOURCE_ID, siblingId] }))
-      .map((row) => row.id)).toEqual([CHANNEL_RESOURCE_ID]);
-    expect(await runInDurableObject(conversation(AUTOMATION_ID, child), (_instance, state) =>
-      state.storage.sql.exec("SELECT resource_id FROM workstream_resource_links").toArray())).toEqual([]);
-    // New attachments are inherited by the same reader, not a setup-time snapshot.
-    await link(conversation(OTHER_ROOM_ID), "00000000-0000-7000-8000-0000000c0ae5", 5_000);
-    expect(await resources.attachedResourceIds()).toContain("00000000-0000-7000-8000-0000000c0ae5");
-    expect(await resources.inventoryFingerprint()).not.toBe(before);
-    // Detaching the conversation removes both its own and inherited resources.
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec("DELETE FROM sidekick_conversation_attachments WHERE automation_id = ?", AUTOMATION_ID);
-    });
-    expect((await resources.attachedResourceIds()).sort()).toEqual([CHANNEL_RESOURCE_ID, BREAKOUT_RESOURCE_ID].sort());
-    // Being an editor of the home Thread does not grant its private Breakout.
-    const colleague = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, child,
-      { type: "user", userId: COLLEAGUE_ID });
-    expect(await colleague.attachedResourceIds()).toEqual([]);
-    const targetInput = { workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId: AUTOMATION_ID, executionPrincipal: principal };
-    expect(await resolveTerminalPublicationHome(TEST_ENV, targetInput)).toEqual({ parentId: ROOM_ID, substreamId: home });
-    await expect(resolveTerminalPublicationHome(TEST_ENV, { ...targetInput, executionPrincipal: { type: "user", userId: COLLEAGUE_ID } }))
-      .rejects.toMatchObject({ code: "conversation_access_denied" });
-    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: home, actorUserId: AUTHOR_ID, userId: COLLEAGUE_ID, operationId: "add-home-colleague" });
-    await workspace().removePrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: home, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: "leave-home" });
-    expect(await resources.attachedResourceIds()).toEqual([]);
-  });
-
-  it.each(["home", "unattached"])("imports and retains an authorized %s site until access is lost", async (kind) => {
+  it.each(["unattached"])("imports and retains an authorized %s site until access is lost", async (kind) => {
     await seedSidekick("0");
     const artifactId = crypto.randomUUID();
     const bytes = new TextEncoder().encode("<h1>Original calendar</h1>");
@@ -1231,183 +965,6 @@ describe("a Breakout's access to its Channel", () => {
       destinationPath: ".rally-output/content-calendar" }, ".rally-output/content-calendar", 1, "sandbox", provider))
       .rejects.toMatchObject({ code: "resource_not_found" });
     expect(writes).toHaveLength(1);
-  });
-
-  it("follows every page of a Sidekick's inherited resource inventory", async () => {
-    await seedSidekick("0");
-    await seedRoom(OTHER_ROOM_ID, "Source files");
-    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
-    const ids = [CHANNEL_RESOURCE_ID, BREAKOUT_RESOURCE_ID, crypto.randomUUID()];
-    await runInDurableObject(workspace(), (_instance, state) => {
-      for (const id of ids) state.storage.sql.exec(`INSERT INTO resources
-        (id, workspace_id, resource_type, provider, title, metadata_json, attachment_status, created_at, updated_at)
-        VALUES (?, ?, 'generated_document', 'avalon_generated', 'Source file', '{}', 'attached', ?, ?)`, id, WORKSPACE_ID, NOW, NOW);
-    });
-    await link(conversation(ROOM_ID), ids[0]!, 1_000);
-    await link(conversation(ROOM_ID), ids[1]!, 2_000);
-    await link(conversation(OTHER_ROOM_ID), ids[2]!, 3_000);
-    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
-      parentKind: "automation", parentId: AUTOMATION_ID, substreamId: "0", loopId: "pagination-test",
-      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
-      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
-    const list = createWorkstreamAttachmentTools(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID), input)
-      .find((tool) => tool.definition.name === "list_resources")!;
-    const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID,
-      harnessRunId: input.harnessRunId, toolCallId: "resource-page", executionPrincipal: input.executionPrincipal,
-      signal: new AbortController().signal };
-    const first = await list.execute({ limit: 1 }, context);
-    const second = await list.execute(first.pagination!.continuations[0]!.input, context);
-    const third = await list.execute(second.pagination!.continuations[0]!.input, context);
-    expect([first, second, third].map((result) => result.output)).toMatchObject([
-      { items: [{ resourceId: ids[2] }] }, { items: [{ resourceId: ids[1] }] }, { items: [{ resourceId: ids[0] }] },
-    ]);
-    expect(third.pagination!.continuations).toEqual([]);
-  });
-
-  function publication(sidekickId = AUTOMATION_ID) {
-    const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
-      parentKind: "automation", parentId: sidekickId, substreamId: "0", loopId: "publication-test",
-      harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
-      executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
-    const context: HarnessToolContext = { workspaceId: WORKSPACE_ID, workstreamId: sidekickId,
-      harnessRunId: input.harnessRunId, effectIntentId: crypto.randomUUID(), toolCallId: "publish-agenda",
-      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal };
-    return { input, context, bridge: createTerminalResourceBridge(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID),
-      createTerminalPortFactory(TEST_ENV, undefined, "0"), undefined, () => resolveTerminalPublicationHome(TEST_ENV, input)) };
-  }
-
-  it.each(["file", "site"] as const)("isolates same-path %s publications in Main and two private Sidekick homes", async (kind) => {
-    await TEST_ENV.PLATFORM_DB.prepare(`CREATE TABLE IF NOT EXISTS artifact_hostname_routes (
-      hostname_stub TEXT PRIMARY KEY, region TEXT NOT NULL, artifact_id TEXT NOT NULL, created_at TEXT NOT NULL,
-      UNIQUE(region, artifact_id))`).run();
-    const homes = ["0" as const, await seedBreakout("Private calendar"), await seedBreakout("Private agenda")];
-    const sidekicks = [AUTOMATION_ID, asAutomationId(crypto.randomUUID()), asAutomationId(crypto.randomUUID())];
-    for (let i = 0; i < homes.length; i++) await seedSidekick(homes[i]!, sidekicks[i]!);
-    const publishes = sidekicks.map((id) => publication(id));
-    const publish = async (index: number, text: string) => {
-      const { bridge, context } = publishes[index]!;
-      const bytes = new TextEncoder().encode(text);
-      const attempt = { ...context, effectIntentId: crypto.randomUUID() };
-      return kind === "file" ? bridge.publishResource(attempt, { filePath: "agenda.md" }, bytes)
-        : bridge.publishSiteResource(attempt, { filePath: "agenda" }, { mode: "static", stateful: false,
-          files: [{ path: "index.html", bytes, sha256: await sha256Hex(bytes) }], serverModuleSha256: null });
-    };
-    const main = await publish(0, "Main agenda");
-    const privateA = await publish(1, "Private A agenda");
-    const privateB = await publish(2, "Private B agenda");
-    expect(new Set([main.resourceId, privateA.resourceId, privateB.resourceId]).size).toBe(3);
-    expect((await publish(0, "Updated Main agenda")).resourceId).toBe(main.resourceId);
-    expect((await publish(1, "Updated Private A agenda")).resourceId).toBe(privateA.resourceId);
-    for (const [i, resourceId] of [main.resourceId, privateA.resourceId, privateB.resourceId].entries()) {
-      expect(await runInDurableObject(conversation(ROOM_ID, homes[i]!), (_instance, state) =>
-        state.storage.sql.exec("SELECT resource_id FROM workstream_resource_links").toArray()))
-        .toEqual([{ resource_id: resourceId }]);
-    }
-    expect(await runInDurableObject(workspace(), (_instance, state) =>
-      state.storage.sql.exec("SELECT COUNT(*) AS count FROM resources WHERE provider = 'avalon_generated'").one()))
-      .toEqual({ count: 3 });
-    if (kind === "file") {
-      const { bridge, context } = publishes[2]!;
-      expect(await bridge.reconcilePublishedResource({ ...context, attemptStartedAt: 0 },
-        { filePath: "agenda.md" })).toMatchObject({ outcome: "landed", result: { output: { resourceId: privateB.resourceId } } });
-    }
-  });
-
-  it.each(["file", "site"] as const)("preserves a legacy wizard %s's resource identity when publishing to its home", async (kind) => {
-    await TEST_ENV.PLATFORM_DB.prepare(`CREATE TABLE IF NOT EXISTS artifact_hostname_routes (
-      hostname_stub TEXT PRIMARY KEY, region TEXT NOT NULL, artifact_id TEXT NOT NULL, created_at TEXT NOT NULL,
-      UNIQUE(region, artifact_id))`).run();
-    await seedSidekick("0");
-    const { bridge, context } = publication();
-    const legacy = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID),
-      createTerminalPortFactory(TEST_ENV, undefined, "0"));
-    const path = kind === "file" ? "agenda.md" : "calendar";
-    const publish = async (publisher: typeof bridge, text: string) => {
-      const bytes = new TextEncoder().encode(text);
-      const attempt = { ...context, effectIntentId: crypto.randomUUID() };
-      return kind === "file" ? publisher.publishResource(attempt, { filePath: path }, bytes)
-        : publisher.publishSiteResource(attempt, { filePath: path }, { mode: "static", stateful: false,
-          files: [{ path: "index.html", bytes, sha256: await sha256Hex(bytes) }], serverModuleSha256: null });
-    };
-    const original = await publish(legacy, "Original wizard output");
-    const previousKind = await bridge.publishedKindForPath(context, path);
-    const recovered = await bridge.reconcilePublishedResource({ ...context, attemptStartedAt: 0 }, { filePath: path });
-    const refreshed = await publish(bridge, "Refreshed wizard output");
-    expect(refreshed.resourceId).toBe(original.resourceId);
-    expect(previousKind).toBe(kind);
-    expect(recovered).toMatchObject({ outcome: "landed", result: { output: { resourceId: original.resourceId } } });
-    if ("url" in original && "url" in refreshed) expect(refreshed.url).toBe(original.url);
-    expect(await runInDurableObject(workspace(), (_instance, state) =>
-      state.storage.sql.exec("SELECT COUNT(*) AS count FROM resources WHERE provider = 'avalon_generated'").one()))
-      .toEqual({ count: 1 });
-    expect(await runInDurableObject(conversation(ROOM_ID), (_instance, state) =>
-      state.storage.sql.exec("SELECT resource_id FROM workstream_resource_links").toArray()))
-      .toEqual([{ resource_id: original.resourceId }]);
-  });
-
-  it("keeps Terminal available and refuses publication and recovery after home access ends", async () => {
-    const home = await seedBreakout("Private calendar");
-    await seedSidekick(home);
-    const { input, context, bridge } = publication();
-    const configuredEnv: Env = { ...TEST_ENV, TERMINAL_REGION_CAPABILITY: "supported", DAYTONA_API_KEY: "test-only",
-      DAYTONA_API_URL: "https://daytona.example.test", DAYTONA_TARGET: "us", DAYTONA_TERMINAL_SNAPSHOT: "test" };
-    const plugin = await createAvalonTerminalPlugin(configuredEnv, input);
-    expect(plugin?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["run_command", "import_resource", "publish_resource"]));
-    const first = await bridge.publishResource(context, { filePath: "agenda.md" }, new TextEncoder().encode("Original"));
-    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: home, actorUserId: AUTHOR_ID, userId: COLLEAGUE_ID, operationId: "add-home-member" });
-    await workspace().removePrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: home, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: "leave-home" });
-    await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, home));
-    const publishTool = plugin!.tools.find((tool) => tool.definition.name === "publish_resource")!;
-    await expect(publishTool.reconcileEffect!({ filePath: "agenda.md" },
-      { ...context, attemptStartedAt: 0 })).rejects.toMatchObject({ code: "conversation_access_denied" });
-    await expect(bridge.publishResource(context, { filePath: "agenda.md" }, new TextEncoder().encode("Forbidden")))
-      .rejects.toMatchObject({ code: "conversation_access_denied" });
-    await expect(bridge.publishSiteResource(context, { filePath: "calendar" }, { mode: "static", stateful: false,
-      files: [], serverModuleSha256: null })).rejects.toMatchObject({ code: "conversation_access_denied" });
-    const after = await createAvalonTerminalPlugin(configuredEnv, input);
-    expect(after?.tools.map((tool) => tool.definition.name)).toEqual(expect.arrayContaining(["run_command", "import_resource", "publish_resource"]));
-    expect(await runInDurableObject(workspace(), (_instance, state) =>
-      state.storage.sql.exec("SELECT content_sha256 FROM resources WHERE id = ?", first.resourceId).one()))
-      .toEqual({ content_sha256: await sha256Hex("Original") });
-    plugin?.[Symbol.dispose]();
-    after?.[Symbol.dispose]();
-  });
-
-  it("refuses to reuse a legacy Main identity attached only to a private Breakout", async () => {
-    const privateHome = await seedBreakout("Legacy private output");
-    await seedSidekick("0");
-    const { context, bridge } = publication();
-    const resourceId = crypto.randomUUID();
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(`INSERT INTO resources
-        (id, workspace_id, resource_type, provider, provider_resource_id, title, metadata_json, attachment_status, created_at, updated_at)
-        VALUES (?, ?, 'generated_document', 'avalon_generated', ?, 'Private agenda', '{}', 'attached', ?, ?)`,
-      resourceId, WORKSPACE_ID, `terminal:${ROOM_ID}:agenda.md`, NOW, NOW);
-    });
-    await link(conversation(ROOM_ID, privateHome), resourceId, 1_000);
-    await expect(bridge.publishResource(context, { filePath: "agenda.md" }, new TextEncoder().encode("Forbidden")))
-      .rejects.toMatchObject({ code: "resource_not_found" });
-    expect(await runInDurableObject(conversation(ROOM_ID), (_instance, state) =>
-      state.storage.sql.exec("SELECT resource_id FROM workstream_resource_links").toArray())).toEqual([]);
-  });
-
-  it("publishes into the exact home Breakout during setup without exposing the output in Main", async () => {
-    const home = await seedBreakout("Private calendar");
-    await seedSidekick(home);
-    const input = { workspaceId: WORKSPACE_ID, parentId: AUTOMATION_ID, parentKind: "automation" as const,
-      executionPrincipal: { type: "user" as const, userId: AUTHOR_ID } };
-    const bridge = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID),
-      createTerminalPortFactory(TEST_ENV, undefined, "0"), undefined, () => resolveTerminalPublicationHome(TEST_ENV, input));
-    const result = await bridge.publishResource({ workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID,
-      harnessRunId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(), toolCallId: "publish-agenda",
-      executionPrincipal: input.executionPrincipal, signal: new AbortController().signal },
-    { filePath: "agenda.md" }, new TextEncoder().encode("# Private calendar agenda"));
-    const linked = (child: string) => createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, ROOM_ID, undefined, child).attachedResourceIds();
-    expect(await linked(home)).toEqual([result.resourceId]);
-    expect(await linked("0")).toEqual([]);
   });
 
   it("sees every resource its Channel's Main has attached, beside its own", async () => {
@@ -1551,7 +1108,7 @@ describe("a guest", () => {
 
   it("opens a Sidekick to a guest from its people list, not through its home's grants", async () => {
     const breakout = await seedBreakout("Weekly call");
-    await seedSidekick(breakout);
+    await seedSidekick("0");
     await seedGuest([asSubstreamId("0"), breakout]);
     const opens = async () => (await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID,
       parentId: AUTOMATION_ID, userId: GUEST_ID, requireGrantAuthority: true })).authorized;

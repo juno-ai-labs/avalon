@@ -10,13 +10,9 @@ export const sidekickSkillRef = (id: string): string => codeSkillRef(`sidekick-$
 
 export async function recommendedSidekickRefs(env: Env, input: WorkstreamWorkflowInput): Promise<string[]> {
   if (input.parentKind !== "workstream") return [];
-  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId, workspaceDOName(env.AVALON_REGION, input.workspaceId));
   const room = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId, workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)));
-  const [owned, attached] = await Promise.all([
-    workspace.automationIdsOwnedByWorkstream({ workspaceId: input.workspaceId, workstreamId: input.parentId }),
-    room.recommendedSidekickIds({ workspaceId: input.workspaceId, parentId: input.parentId }),
-  ]);
-  return [...new Set([...owned.automationIds, ...attached])].map(sidekickSkillRef);
+  const recommended = await room.recommendedSidekickIds({ workspaceId: input.workspaceId, parentId: input.parentId });
+  return [...new Set(recommended)].map(sidekickSkillRef);
 }
 /** One candidate rule for discovery, management and execution. */
 export function conversationSidekickCandidateIds(recommended: readonly string[], loaded: readonly string[]): Set<string> {

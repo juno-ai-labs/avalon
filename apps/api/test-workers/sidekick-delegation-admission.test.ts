@@ -46,10 +46,8 @@ beforeEach(async () => {
   ]);
 });
 
-async function create(withCreator = true, scope: "workspace" | "workstream" = "workspace") {
-  await stub().sidekickCreate({ ...address, authorUserId: creator, scope,
-    owningWorkstreamId: scope === "workstream" ? homeId : null, authorityGeneration: 1,
-  });
+async function create(withCreator = true, scope: "workspace" = "workspace") {
+  await stub().sidekickCreate({ ...address, authorUserId: creator, scope, authorityGeneration: 1 });
   if (!withCreator) await consent(creator, false);
 }
 
@@ -537,7 +535,7 @@ describe("shared Sidekick delegation admission", () => {
     expect(await runs()).toEqual([]);
   });
 
-  it.each(["workstream", "workspace"] as const)("admits a %s-owned personal Sheet event and an hourly occurrence through the same delegate, then refuses that source after withdrawal", async (scope) => {
+  it.each(["workspace"] as const)("admits a %s-owned personal Sheet event and an hourly occurrence through the same delegate, then refuses that source after withdrawal", async (scope) => {
     await create(true, scope);
     await runInDurableObject(stub(), (_instance, state) => {
       insertChannelRow(state, homeId, "Content planning");

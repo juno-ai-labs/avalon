@@ -70,7 +70,7 @@ async function seed(): Promise<void> {
   for (const id of Object.values(AUTOMATIONS)) {
     await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: id,
       authorUserId: id === AUTOMATIONS.personalOfOther ? OTHER_MEMBER_ID : AUTHOR_ID,
-      scope: id === AUTOMATIONS.workspaceWide ? "workspace" : "personal", owningWorkstreamId: null,
+      scope: id === AUTOMATIONS.workspaceWide ? "workspace" : "personal",
       authorityGeneration: 1 });
     // Routing needs active authority, without publishing a workflow to execute.
     await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(

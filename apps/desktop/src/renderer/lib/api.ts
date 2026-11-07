@@ -47,7 +47,6 @@ import {
   AutomationExecutionPrincipalClaimSchema,
   AutomationRunSchema as WireAutomationRunSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
-  WorkstreamAutomationSummarySchema as WireWorkstreamAutomationSummarySchema,
   WorkstreamBatchAcceptedSchema as WireWorkstreamBatchAcceptedSchema,
   WorkstreamBatchPreviewSchema as WireWorkstreamBatchPreviewSchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
@@ -115,9 +114,6 @@ import {
   ConnectorInstallationReadResponseSchema,
   ConnectorInstallationSetupResponseSchema,
   OnboardingJourneySchema,
-  SidekickAttachmentsSchema,
-  SidekickRecommendationOptionsSchema,
-  type SidekickAttachment,
   type UpdateOnboardingJourney
 } from '@rally/contracts';
 import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
@@ -155,7 +151,6 @@ import type {
   AutomationRun,
   AutomationScope,
   AutomationSummary,
-  WorkstreamAutomationSummary,
   BackgroundTask,
   CreatedWorkstream,
   DigestSchedule,
@@ -290,9 +285,6 @@ const wireChannelFeedPageSchema = ChannelFeedPageSchema.extend({
 });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
 const wireExecutionPrincipalClaimSchema = AutomationExecutionPrincipalClaimSchema;
-const wireWorkstreamAutomationPageSchema = z.object({
-  items: z.array(WireWorkstreamAutomationSummarySchema),
-});
 const wireConnectionPageSchema = z.object({ items: z.array(WireConnectionSchema) });
 const wireAutomationRunPageSchema = z.object({ items: z.array(WireAutomationRunSchema) });
 const createdAutomationSchema = z.object({ automationId: z.string() });
@@ -574,32 +566,6 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     description: automation.description,
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     scope: mapAutomationScope(automation.scope),
-    ...(automation.owningWorkstreamId ? { owningWorkstreamId: automation.owningWorkstreamId } : {}),
-    ...(automation.owningThread ? { owningThread: automation.owningThread } : {}),
-    status: automation.status,
-    ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
-    ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
-    updatedAt: automation.updatedAt,
-  };
-}
-
-/**
- * The rail's rows.
- *
- * Written out rather than delegating to {@link mapAutomationSummary} with an
- * invented scope: the wire row has no scope, and manufacturing one to throw
- * away would put a value in the type that no caller may trust.
- */
-export function mapWorkstreamAutomationSummary(
-  automation: z.infer<typeof WireWorkstreamAutomationSummarySchema>,
-): WorkstreamAutomationSummary {
-  return {
-    id: automation.id,
-    loadable: automation.loadable,
-    ...(automation.appearance ? { appearance: automation.appearance } : {}),
-    name: automation.name,
-    description: automation.description,
-    ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     status: automation.status,
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
     ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
@@ -1228,31 +1194,6 @@ export class RallyApi {
     await this.requestVoid(`/onboarding/invitations/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
-  async getAttachedSidekicks(workstreamId: string, signal?: AbortSignal, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
-  }
-
-  async removeAttachedSidekick(workstreamId: string, sidekickId: string, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekicks/${encodeURIComponent(sidekickId)}`, { method: 'DELETE', schema: SidekickAttachmentsSchema })).items;
-  }
-
-  async getRecommendedSidekicks(workstreamId: string, signal?: AbortSignal, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/recommended-sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
-  }
-
-  getSidekickRecommendationOptions(workstreamId: string, substreamId = '0', signal?: AbortSignal) {
-    return this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekick-recommendation-options`, {
-      signal, schema: SidekickRecommendationOptionsSchema,
-    });
-  }
-
-  async setRecommendedSidekick(workstreamId: string, sidekickId: string, attached: boolean, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/recommended-sidekicks/${encodeURIComponent(sidekickId)}`, {
-      method: attached ? 'PUT' : 'DELETE', schema: SidekickAttachmentsSchema,
-    })).items;
-  }
-
-
   async getSidekicks(signal?: AbortSignal): Promise<AutomationSummary[]> {
     const result = await this.request('/sidekicks', { signal, schema: wireAutomationPageSchema });
     return result.items.map(mapAutomationSummary);
@@ -1295,27 +1236,6 @@ export class RallyApi {
 
   async getSharedNavigationDirectory(signal?: AbortSignal) {
     return this.request('/sharing/navigation?attention=1&shell=1&resolution=1', { schema: SharedNavigationDirectorySchema, signal });
-  }
-
-  /**
-   * What one work stream owns: the Sidekicks created in it, whose managers are
-   * its participants. Its own rail and the library are where these are listed.
-   *
-   * Under `/sidekicks` rather than `/automations`, which serves the same rows
-   * through the same handler: a new client reads the Sidekick surface, and the
-   * legacy prefix exists for installed builds that cannot parse a modern
-   * detail. A caller who is not a participant is refused, so a viewer's 403 is
-   * an answer about them rather than about the room.
-   */
-  async getWorkstreamSidekicks(
-    workstreamId: string,
-    signal?: AbortSignal,
-  ): Promise<WorkstreamAutomationSummary[]> {
-    const page = await this.request(
-      `/sidekicks/workstream/${encodeURIComponent(workstreamId)}`,
-      { schema: wireWorkstreamAutomationPageSchema, signal },
-    );
-    return page.items.map(mapWorkstreamAutomationSummary);
   }
 
   /**

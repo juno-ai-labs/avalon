@@ -879,7 +879,7 @@ describe("the other Space operations", () => {
     expect(await conversationInitialized(created.id)).toBe(false);
   });
 
-  it("archives exclusive threads and their Sidekicks while shared threads and attached workspace Sidekicks stay active", async () => {
+  it("archives exclusive threads while shared threads and every Sidekick stay active", async () => {
     const opened = await workspace().openGeneralSpace({
       workspaceId: WORKSPACE_ID, userId: OWNER, spaceId: asSpaceId(crypto.randomUUID()),
     });
@@ -893,9 +893,9 @@ describe("the other Space operations", () => {
     const exclusiveSidekick = crypto.randomUUID();
     const sharedSidekick = crypto.randomUUID();
     const attachedSidekick = crypto.randomUUID();
-    for (const [automationId, owningWorkstreamId] of [[exclusiveSidekick, exclusive], [sharedSidekick, shared], [attachedSidekick, null]] as const) {
-      await createAutomation(routeEnv(), { workspaceId: WORKSPACE_ID, authorUserId: OWNER,
-        scope: owningWorkstreamId ? "workstream" : "workspace", owningWorkstreamId, automationId });
+    // No thread owns a Sidekick, so archiving one archives none.
+    for (const automationId of [exclusiveSidekick, sharedSidekick, attachedSidekick]) {
+      await createAutomation(routeEnv(), { workspaceId: WORKSPACE_ID, authorUserId: OWNER, scope: "workspace", automationId });
     }
     await workspace().setSidekickRecommendation({ workspaceId: WORKSPACE_ID, parentId: exclusive,
       userId: OWNER, sidekickId: attachedSidekick, attached: true });
@@ -914,10 +914,10 @@ describe("the other Space operations", () => {
     expect(await lifecycle(shared)).toEqual({ exact_state: "idle", archived: 0 });
     await deliverEffectsToWorkspace(env, spaceConversation(exclusive));
     expect(await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: exclusiveSidekick, userId: OWNER }))
-      .toEqual({ authorized: false, archived: true });
+      .toEqual({ authorized: true, archived: false });
     const sidekickIds = async () => (await workspace().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: OWNER }))
       .items.map((item) => item.id).sort();
-    expect(await sidekickIds()).toEqual([attachedSidekick]);
+    expect(await sidekickIds()).toEqual([exclusiveSidekick, sharedSidekick, attachedSidekick].sort());
     expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: sharedSidekick,
       actor: { userId: OWNER, actorRole: "owner", participantOfOwningWorkstream: true } })).toMatchObject({ lifecycle: "draft" });
     expect(await channelSpaceIds(exclusive)).not.toContain(opened.space.id);
@@ -928,7 +928,7 @@ describe("the other Space operations", () => {
     expect(await request(`/spaces/${channel.id}/restore`, OWNER_AUTH, {}, "POST"))
       .toMatchObject({ status: 200, body: { status: "active" } });
     expect(await lifecycle(exclusive)).toEqual({ exact_state: "archived", archived: 1 });
-    expect(await sidekickIds()).toEqual([attachedSidekick]);
+    expect(await sidekickIds()).toEqual([exclusiveSidekick, sharedSidekick, attachedSidekick].sort());
     expect(await workspace().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId: sharedSidekick,
       actor: { userId: OWNER, actorRole: "owner", participantOfOwningWorkstream: true } })).toMatchObject({ lifecycle: "draft" });
     expect(await channelSpaceIds(shared)).toEqual([channel.id, other.id].sort());

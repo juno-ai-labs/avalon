@@ -431,9 +431,10 @@ what the row says.
 Who reads a Sidekick is its own audience (`sidekickReaderAllows`): its author,
 the person it runs as, the people on its `people` list (`sidekick_audience`,
 WorkspaceDO migration 136) and, for an Organization one, every member; a
-guest only from the list. A home Channel or Breakout admits nobody any more.
-Who may manage the owning Channel still manages a Channel-scoped Sidekick until
-that scope is converted (plan step A-5). The library listing takes the caller's
+guest only from the list. No Channel or Breakout owns a Sidekick: WorkspaceDO
+migration 137 converted every Channel-scoped one to the Organization's, and
+archiving a Thread, Breakout or Channel archives no Sidekick, so the hosted
+parent's `archiveOwnedSidekicks` host callback is gone. The library listing takes the caller's
 access class and role from its authentication rather than reading them again.
 
 **How Sidekicks moved.** Migration 91 put every Sidekick the directory held on
@@ -516,7 +517,6 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | --- | --- |
 | A local apply fails inside a parent write (a viewer row before its Channel row, a constraint, a schema rejection) | The parent transaction rolls back. A child's delivery throws and the Queue redelivers it; a request fails with the error. Nothing is left in the outbox. |
 | A write meets somebody the member table has never heard of | The transaction rolls back with `workspace_member_unknown`; the ids are learned with one D1 read each and the write runs once more. A second miss fails the write with that code. |
-| One Sidekick's archive fails in the canonical cascade | The Breakout registry change or Thread projection acceptance rolls back with its Sidekicks, preserving retryable work. Legacy post-commit reconciliation retains per-Sidekick rollback and logs `sidekick_owning_room_archival_failed`. |
 | A `parent_outbox` send fails | The row stays `pending`, with its code in `last_error_code`, and is due again on the alarm's retry schedule. `parent_effect_delivery_deferred` names the rows. |
 | A `parent_outbox` or `workspace_directory_followups` row does not parse (a follow-up row in the shape written before #989 is one), or an outbox row's destination refuses its shape | It is kept as `failed` with a `zodDiagnosticCode` naming the field, logged (`parent_outbox_row_unreadable`, `directory_followup_unreadable`), and never retried. An operator reads it with `run_workspace_sql` and deletes or repairs it. |
 | A directory row is found in `parent_outbox` | It is kept as `failed` with `parent_outbox_directory_row` and not applied. Directory rows apply in the parent's own transaction, so nothing writes one there. |
@@ -675,6 +675,14 @@ audience borrowed from one would outlive it. It also keeps each reader's read
 state of `"0"` (`sidekick_viewer_reads`, from `"0"`'s `directory_user`
 effects), which the Sidekick parent ignored before, so the sidebar row can
 say what that reader has not read.
+
+Then the `workstream` scope went (plan step A-5, the PRD's decision that a
+Thread no longer owns a Sidekick): migration 137 made every Channel-scoped
+Sidekick an Organization one, and the Sidekick parent stops reading
+`channels` and `breakouts` for a home color, `isChannelParticipant`,
+`channelColor` and `announcementSpaceId` leave its host, and a Thread or
+Breakout archive no longer cascades into `setOwningRoomArchived`. The owning
+columns stay as dead columns, since released CHECKs name them.
 
 ### 2026-11-06 — The iOS client is deleted
 

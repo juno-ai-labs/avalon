@@ -26,6 +26,8 @@ const OPENROUTER_MEMORY_EMBEDDING_VERSION = 23;
 const ARTIFACT_REGISTRY_VERSION = 28;
 const ARTIFACT_HOSTNAME_VERSION = 29;
 const RANKING_PENDING_DUE_VERSION = 30;
+/** The Thread-owned (`workstream`) Sidekick scope is retired. */
+const SIDEKICK_SCOPE_RETIREMENT_VERSION = 137;
 
 /** Apply the ledger's versions in `(after, through]`, the way a deploy does. */
 function apply(database: DatabaseSync, through: number, after = 0): void {
@@ -890,5 +892,39 @@ describe("the WorkspaceDO hosted-Sidekick migration", () => {
     expect(database.prepare(`SELECT automation_id, title, region FROM automation_directory`).all()).toEqual([
       { automation_id: "00000000-0000-7000-8000-0000000000c1", title: "Morning briefing", region: "global" },
     ]);
+  });
+
+  it("turns every Thread-owned Sidekick into an Organization one, and archives one a room archive paused", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, SIDEKICK_SCOPE_RETIREMENT_VERSION - 1);
+    seedIdentity(database);
+    const insert = database.prepare(
+      `INSERT INTO automation_directory
+         (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, paused_by, scope,
+          owning_workstream_id, owning_substream_id, owning_room_archived_at, title, description, next_run_at,
+          projected_at, region)
+       VALUES (?, ?, ?, 1, 'h', ?, ?, ?, ?, ?, ?, ?, '', NULL, 1, 'global')`,
+    );
+    const author = "00000000-0000-7000-8000-0000000000c3";
+    const room = "00000000-0000-7000-8000-0000000000d1";
+    insert.run("00000000-0000-7000-8000-0000000000c1", WORKSPACE_ID, author, "active", null, "workstream",
+      room, "00000000-0000-7000-8000-0000000000d2", null, "Breakout helper");
+    insert.run("00000000-0000-7000-8000-0000000000c2", WORKSPACE_ID, author, "paused", "room_archive", "workstream",
+      room, "0", 5, "Archived with its room");
+    insert.run("00000000-0000-7000-8000-0000000000c4", WORKSPACE_ID, author, "active", null, "personal",
+      null, "0", null, "Mine");
+
+    apply(database, SIDEKICK_SCOPE_RETIREMENT_VERSION, SIDEKICK_SCOPE_RETIREMENT_VERSION - 1);
+
+    expect(database.prepare(
+      `SELECT title, lifecycle, paused_by, scope, owning_workstream_id, owning_substream_id
+         FROM automation_directory ORDER BY automation_id`,
+    ).all()).toEqual([
+      { title: "Breakout helper", lifecycle: "active", paused_by: null, scope: "workspace", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Archived with its room", lifecycle: "deleted", paused_by: null, scope: "workspace", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Mine", lifecycle: "active", paused_by: null, scope: "personal", owning_workstream_id: null, owning_substream_id: "0" },
+    ]);
+    expect(database.prepare(`SELECT name FROM sqlite_master WHERE name = 'channel_rail_sidekick_owner_update'`).all()).toEqual([]);
   });
 });

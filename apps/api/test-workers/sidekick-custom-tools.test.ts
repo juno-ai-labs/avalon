@@ -73,7 +73,7 @@ const DEFINITION: AutomationDraft = {
   recommendedPlugins: [],
   memoryTables: [],
   customTools: [DAY_MATH],
-  suggestedScope: "workstream",
+  suggestedScope: "workspace",
   followUpQuestion: null,
   elicitation: null,
   ready: true,
@@ -150,7 +150,7 @@ async function seedRoom(): Promise<void> {
 
 async function seedSidekick(definition: AutomationDraft): Promise<void> {
   const created = await createAutomation(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workstream", owningWorkstreamId: ROOM_ID, automationId: AUTOMATION_ID,
+    workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workspace", automationId: AUTOMATION_ID,
   });
   expect(created.created).toBe(true);
   await sidekickHost().sidekickSubmitDefinition({ ...addressed(), draft: definition, evaluatorRules: null, submittedByRunId: null });
@@ -218,7 +218,7 @@ describe("a Sidekick's saved tools", () => {
 
   it("refuses a tool on an instruction-only Sidekick by field", async () => {
     const created = await createAutomation(TEST_ENV, {
-      workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workstream", owningWorkstreamId: ROOM_ID, automationId: AUTOMATION_ID,
+      workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workspace", automationId: AUTOMATION_ID,
     });
     expect(created.created).toBe(true);
     const refusal = await runInDurableObject(sidekickHost(), async (instance: WorkspaceDO) => {

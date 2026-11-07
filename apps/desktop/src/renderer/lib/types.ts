@@ -89,11 +89,8 @@ export interface PendingWorkspaceInvitation extends WorkspaceInvitationPreview {
   invitedByName: string;
 }
 
-/**
- * Who can see an automation and who may change it, in the words the UI uses.
- * `workstream` is the room that owns it, which `Scope` has no value for.
- */
-export type AutomationScope = 'you' | 'workspace' | 'workstream';
+/** Who can see an automation and who may change it, in the words the UI uses. */
+export type AutomationScope = 'you' | 'workspace';
 
 export interface AutomationSummary {
   loadable?: boolean;
@@ -108,27 +105,12 @@ export interface AutomationSummary {
   description: string;
   emailAddress?: string;
   scope: AutomationScope;
-  /** The room that owns a `workstream`-scoped automation. */
-  owningWorkstreamId?: string;
-  /**
-   * That room's name and glyph, when the server named it: only to a reader
-   * who is in it. Absent otherwise, and the label falls back to "Thread".
-   */
-  owningThread?: { id: string; title: string; appearance?: WorkstreamAppearance };
   status: AutomationStatus;
   nextRunAt?: string;
   lastRunAt?: string;
   /** Last time the automation itself changed — a draft's only activity. */
   updatedAt: string;
 }
-
-/**
- * One automation in a work stream's context rail.
- *
- * The sidebar summary without its scope and owner: every row in that rail
- * belongs to the work stream showing it.
- */
-export type WorkstreamAutomationSummary = Omit<AutomationSummary, 'scope' | 'owningWorkstreamId' | 'owningThread'>;
 
 export interface WorkstreamSummary {
   resolved?: boolean;
@@ -633,7 +615,7 @@ export interface Message {
     automationName: string;
     description: string;
     triggerSummaries: string[];
-    suggestedScope: 'personal' | 'workspace' | 'workstream';
+    suggestedScope: 'personal' | 'workspace';
     ready: boolean;
   };
   /**
