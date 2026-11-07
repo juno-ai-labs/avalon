@@ -54,17 +54,18 @@ export const AuthorizationDecisionSchema = z.discriminatedUnion('status', [
 export type AuthorizationDecision = z.infer<typeof AuthorizationDecisionSchema>;
 
 /**
- * A member reads a Sidekick's conversations through the Sidekick itself: its
- * scope, having written it, or running it. The one copy of this rule;
- * canonical reads and search both apply it.
+ * Who reads a Sidekick's conversations: the people it is shared with. Its
+ * author, the person it runs as and anyone on its `people` list read it
+ * whatever their access class; a member also reads it through Organization
+ * scope. The
+ * one copy of this rule; canonical reads, the library and search all apply it.
  */
-export function sidekickAdmitsMember(sidekick: { scope: string; author: boolean; executor: boolean }): boolean {
-  return sidekick.scope === 'workspace' || sidekick.author || sidekick.executor;
-}
-
-/** A member reads a Channel-owned Sidekick as a participant of that Channel while it is not archived. */
-export function owningChannelAdmitsMember(owner: { archived: boolean; participant: boolean }): boolean {
-  return !owner.archived && owner.participant;
+export function sidekickAdmits(
+  sidekick: { scope: string; author: boolean; executor: boolean; shared: boolean },
+  member: boolean,
+): boolean {
+  if (sidekick.shared || sidekick.author || sidekick.executor) return true;
+  return member && sidekick.scope === 'workspace';
 }
 
 /** Who reads a connection's resources: its owner, or anyone for a workspace connection, while it is enabled. */

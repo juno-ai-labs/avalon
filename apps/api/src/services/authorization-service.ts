@@ -4,7 +4,6 @@ import { durableObjectStubForWorkspace } from '../lib/durable-object-namespace';
 import { workspaceDOName } from '../durable-objects/names';
 import { authorizationSnapshotKey } from '../durable-objects/authorization-storage';
 import { createResourceObjectPort } from '../runtime/resource-port';
-import { createIdentityObjectPort } from '../runtime/identity-port';
 import { conversationParentStub } from './conversation-parent-client';
 import { ApiError } from '../lib/api-error';
 import { logWarn } from '../observability/logger';
@@ -12,7 +11,7 @@ import type { HostedSidekick } from '../durable-objects/hosted-sidekick';
 import type { WorkspaceDO } from '../durable-objects/workspace-do';
 import type { WorkstreamResourceStorage } from '../durable-objects/workstream-resource-storage';
 import {
-  AccessContext, evaluateReadPolicy, owningChannelAdmitsMember, sidekickAdmitsMember,
+  AccessContext, evaluateReadPolicy, sidekickAdmits,
   type AuthorizationDecision, type AuthorizationEvidence, type AuthorizationResource,
   type AuthorizationSubject, type ReadPolicy,
 } from './authorization-policy';
@@ -118,8 +117,6 @@ class AuthorizationBatch {
   readonly readMetadata = new Map<string, ResourceReadMetadata>();
   private readonly parents = new Map<string, Promise<Awaited<ReturnType<WorkspaceDO['readAuthorizationFacts']>>>>();
   private readonly automations = new Map<string, Promise<ReturnType<HostedSidekick['readAuthorizationFacts']>>>();
-  private readonly automationViewers = new Map<string, Promise<Awaited<ReturnType<HostedSidekick['authorizeViewer']>> & { validatedAt: number }>>();
-  private readonly identities = new Map<string, Promise<Awaited<ReturnType<ReturnType<typeof createIdentityObjectPort>['readAuthorizationFacts']>>>>();
   private readonly attachments = new Map<string, Promise<ReturnType<WorkstreamResourceStorage['readAuthorizationFacts']>>>();
   private readonly memberships = new Map<string, Promise<{ active: boolean; guest: boolean; validatedAt: number }>>();
   private guest = false;
@@ -245,30 +242,9 @@ class AuthorizationBatch {
       evidence: [{ owner: resource.parentId, revision: 'absent', validatedAt: Math.min(workstream.validatedAt, facts.validatedAt) }] };
     const evidence = { owner: resource.parentId, revision: facts.revision, validatedAt: facts.validatedAt };
     if (!facts.children.includes(resource.substreamId)) return { status: 'not_found', resource, evidence: [evidence] };
-    if (this.guest) {
-      const userId = subject.userId;
-      const admission = await ownerEvidence(this.automationViewers, JSON.stringify([subject, resource.parentId, resource.substreamId]),
-        async () => ({ ...await automation.authorizeViewer({ workspaceId: subject.workspaceId, parentId: resource.parentId,
-          userId, substreamId: resource.substreamId, requireGrantAuthority: true }), validatedAt: Date.now() }));
-      return evaluateReadPolicy(fact(admission.authorized, 'not_participant', evidence), Date.now());
-    }
-    const policies = [fact(sidekickAdmitsMember(facts), 'not_participant', evidence)];
-    if (facts.scope === 'workstream' && facts.owningWorkstreamId) {
-      const owningWorkstreamId = facts.owningWorkstreamId;
-      // A Breakout home narrows the Sidekick's audience to that Breakout's
-      // members: its own conversation object holds its participants.
-      const owningSubstreamId = facts.owningSubstreamId ?? '0';
-      const userId = subject.userId;
-      const owner = await ownerEvidence(this.identities, JSON.stringify([subject, owningWorkstreamId, owningSubstreamId]),
-        () => createIdentityObjectPort(this.env, subject.workspaceId, owningWorkstreamId, undefined, owningSubstreamId)
-          .readAuthorizationFacts({ userId }));
-      policies.push(fact(owner.exists && owningChannelAdmitsMember(owner), 'not_participant', {
-        owner: `${owningWorkstreamId}/${owningSubstreamId}`, revision: owner.revision, validatedAt: owner.validatedAt,
-      }));
-    }
-    // Automation existence/scope must remain evidence even when another relationship grants access.
-    return evaluateReadPolicy({ kind: 'all', policies: [fact(true, 'not_participant', evidence),
-      { kind: 'any', policies, reason: 'not_participant' }] }, Date.now());
+    // Who the Sidekick is shared with decides, for a guest as for a member:
+    // a guest reads it only from its `people` list.
+    return evaluateReadPolicy(fact(sidekickAdmits(facts, !this.guest), 'not_participant', evidence), Date.now());
   }
 
   /** The same predicate `resource()` applies to a connector resource, decided once per connection. */

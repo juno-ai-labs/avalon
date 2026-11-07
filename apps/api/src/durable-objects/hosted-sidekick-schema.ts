@@ -206,3 +206,33 @@ export const SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS: readonly string[] = [
        NEW.updated_at, NEW.updated_at);
    END`,
 ];
+
+/**
+ * WorkspaceDO migration 136: who a Sidekick is shared with, and what each
+ * reader of its shared conversation has read.
+ *
+ * `sidekick_audience` is the `people` audience's list; a Sidekick with rows
+ * here is stored with scope `personal`, so the released scope CHECK and every
+ * reader of `scope` are unchanged. `sidekick_viewer_reads` is a projection of
+ * the shared conversation's (`"0"`) own read state, its `directory_user`
+ * effect per person, so the sidebar can say what a viewer has not read
+ * without asking the conversation; the conversation's `member_attention`
+ * stays the authority. `docs/automation-lifecycle.md` owns both.
+ */
+export const SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS: readonly string[] = [
+  `CREATE TABLE sidekick_audience (
+    sidekick_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    added_at INTEGER NOT NULL CHECK (added_at >= 0),
+    PRIMARY KEY (sidekick_id, user_id)
+  ) STRICT`,
+  `CREATE TABLE sidekick_viewer_reads (
+    sidekick_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    source_version INTEGER NOT NULL CHECK (source_version >= 0),
+    seen_attention_ordinal INTEGER NOT NULL CHECK (seen_attention_ordinal >= 0),
+    manual_unread_from_ordinal INTEGER CHECK (manual_unread_from_ordinal IS NULL OR manual_unread_from_ordinal >= 0),
+    updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+    PRIMARY KEY (sidekick_id, user_id)
+  ) STRICT`,
+];

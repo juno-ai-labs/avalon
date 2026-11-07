@@ -8,6 +8,7 @@ import {
   AutomationSummarySchema,
   WorkstreamAutomationSummarySchema,
   WorkstreamAppearancePatchSchema,
+  SidekickAudienceUpdateSchema,
   IdSchema,
   SidekickDelegatesResultSchema, SidekickDelegationMutationResultSchema,
 } from "@rally/contracts";
@@ -107,6 +108,14 @@ automationRoutes.post("/:id/appearance", zValidator("param", idParam),
   c.json(AutomationDetailSchema.parse(detailResponse(
     await new AutomationService(c.env, getWorkspaceAuth(c))
       .setAppearance(c.req.valid("param").id, c.req.valid("json")),
+  ))));
+// Who the Sidekick is shared with: its author alone, the Organization, or
+// named people. A manager's; answers with the whole detail, as appearance does.
+automationRoutes.post("/:id/audience", zValidator("param", idParam),
+  zValidator("json", SidekickAudienceUpdateSchema), async (c) =>
+  c.json(AutomationDetailSchema.parse(detailResponse(
+    await new AutomationService(c.env, getWorkspaceAuth(c))
+      .setAudience(c.req.valid("param").id, c.req.valid("json")),
   ))));
 automationRoutes.post("/:id/pause", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getWorkspaceAuth(c)).pause(c.req.valid("param").id); return c.body(null, 204); });
 automationRoutes.post("/:id/resume", zValidator("param", idParam), async (c) => { await new AutomationService(c.env, getWorkspaceAuth(c)).resume(c.req.valid("param").id); return c.body(null, 204); });
