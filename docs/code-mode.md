@@ -83,7 +83,9 @@ stub lives for that call and nothing else reaches the isolate.
 Inside, the entry builds `tools` as a proxy: the names in `api` are real
 functions, and any other name a program reaches for is forwarded too, so the
 gateway refuses it by name instead of the program seeing `undefined`. It
-captures `console`, races the program against the deadline, and answers with
+captures `console`, gives the program `msLeft()` (the milliseconds before the
+deadline, on the clock the entry's own timer runs on), races the program against
+the deadline, and answers with
 the serialized return value and the logs, or the error with its message, the
 code it carried and the index of the call that threw. The host parses that
 answer with a schema and trusts none of it on its own: `finishProgram` reads
@@ -492,6 +494,39 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   is a listing-rules question still open.
 
 ## Changelog
+
+### 2026-11-07 — A program reads its own time left
+
+**What changed:** The entry module passes the program `msLeft()`, the
+milliseconds before its deadline, as a fourth argument to the wrapped
+function (`run(tools, console, input, msLeft)`). `CODE_SYSTEM_MESSAGE` names it,
+and `CUSTOM_TOOLS_GUIDE` has a saved tool keep taking groups while `msLeft()` is
+more than its slowest group has taken, rather than reading `current_time` and
+comparing against "three quarters of two minutes". The guide also has a tool
+read every page within its budget, cut requests per item, raise a source's page
+size and its concurrency while finished items per call keep rising, and report
+the requests it made.
+
+**Why:** A writing program may not read the clock (`write_with_clock_or_random`),
+so a tool timed its share with `current_time`, a nested call and receipt per
+check, against 90 seconds copied into its code from the guide's prose. A change
+to `CODE_PROGRAM_DEADLINE_MS` would have left every saved tool stopping at the
+old number. `msLeft()` lives in the entry, not the program, so the pre-run check
+still keeps clock values out of write inputs.
+
+**Considered and rejected:** Allowing `Date.now()` in a writing program: a clock
+value in a write's input makes a re-run's call differ from its receipt. Passing
+only a recorded deadline: comparing against it still needs a clock. A replayed
+clock (`msLeft()` answered from receipts on a re-run): it would need a recorded
+time per call for a decision that already converges, below.
+
+**Consequences:** `msLeft()` is live on a re-run. Replayed calls return faster
+than the original live ones, so a re-run reaches each group with at least as
+much time left and takes at least the groups the original did; calls line up
+with their receipts. A re-run whose replay ran slower than the original calls,
+and so stopped earlier, would meet a recorded call at that index with other
+input and halt as ambiguous, never writing twice. The guide's sizing no longer
+names the deadline, so moving `CODE_PROGRAM_DEADLINE_MS` needs no guide edit.
 
 ### 2026-11-06 — Size a tool's share by time, and let a program's writes run together
 

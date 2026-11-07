@@ -130,7 +130,9 @@ id, together with the answer.
 
 Loops are fine; a program may make as many calls as the work needs. It has
 ${Math.round(CODE_PROGRAM_DEADLINE_MS / 1000)} seconds of runtime, then it is
-stopped; split work larger than that across programs.
+stopped. msLeft() returns the milliseconds left before that; a program doing a
+share of a larger job keeps taking work while msLeft() exceeds what the next
+step takes, then returns what remains.
 
 A write made from a program is made for real. Compute first and write last, so a
 failure before the write leaves nothing half done. Before it runs, a program is
