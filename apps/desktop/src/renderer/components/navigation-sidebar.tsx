@@ -129,8 +129,6 @@ export function NavigationSidebar({
   return <ResizableSidebar
     aria-label="Rally navigation"
     className={clsx('sidebar single-sidebar navigation-sidebar', sidebarOpen && 'is-mobile-open')}
-    collapsible={false}
-    compact={false}
     id={NAVIGATION_SHEET_ID}
     onResize={setSidebarWidth}
     resizeLabel="Resize navigation"
