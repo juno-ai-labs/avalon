@@ -531,8 +531,8 @@ const BRANCH_PROVENANCE_TURNS = 5;
  * The turns shown, faded, above a substream's composer: the message it branches
  * from and the ones that led to it, oldest first.
  *
- * Only written rows, counted in turns: see "What reaches a Breakout" in
- * docs/substream-creation.md.
+ * Only written rows, counted in turns. (The rule was "What reaches a
+ * Breakout" in the retired docs/substream-creation.md.)
  *
  * A substream started from the sidebar branches from wherever the conversation
  * has reached rather than from a message somebody pointed at, and it shows
