@@ -1687,9 +1687,13 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    * admitted the person to the Organization, and a guest asks with
    * `requireGrantAuthority`, so only that path withholds Organization scope.
    */
-  protected admitsViewer(request: ConversationParentAuthorizeViewerRequest): boolean {
+  protected async admitsViewer(request: ConversationParentAuthorizeViewerRequest): Promise<boolean> {
     const row = this.row()!;
-    return sidekickReaderAllows(row, {
+    // The answer does not need it, but the read records the person in the
+    // Organization's member table (a table read once they are known), which
+    // is how an audience narrowing finds whose open conversation to close.
+    await this.host.readRelationship(row.workspace_id, request.userId);
+    return sidekickReaderAllows(this.row() ?? row, {
       userId: request.userId, actorRole: request.requireGrantAuthority ? null : "member",
     }, this.sql);
   }
