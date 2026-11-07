@@ -216,6 +216,11 @@ import {
 } from "./automation-do-protocol";
 import { sidekickRunRowText } from "./sidekick-run-row";
 import {
+  insertCanonicalTranscriptPayload,
+  prepareCanonicalTranscriptFact,
+  type PreparedCanonicalTranscriptFact,
+} from "./ordered-transcript-sqlite/canonical-payload-store";
+import {
   continuationSource,
   continueSidekickRun,
   routeSidekickConversationMessage,
@@ -2324,12 +2329,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * A Sidekick run's row in this conversation, the Sidekick's own `"0"`: a
    * collapsed `automation_activation` turn that shows the run as it stands.
    *
-   * The turn is written once, when the run's first projection arrives, and
-   * keyed `sidekick-run:<runId>`; `sidekick_run_rows` holds what it shows now,
-   * which the transcript joins in whenever the turn is read. A projection
-   * older than the one held is dropped, so deliveries in any order converge,
-   * and one that changes what the row shows moves the turn's revision and
-   * sends it to the room. Like a `conversation_post` it never wakes this
+   * The turn is appended when the run's first projection arrives, keyed
+   * `sidekick-run:<runId>`; `sidekick_run_rows` holds what it shows now, which
+   * the transcript joins in whenever the turn is read, and the turn's stored
+   * text is replaced with each change. A projection older than the one held is
+   * dropped, so deliveries in any order converge, unless it is a replay's; one
+   * that changes what the row shows moves the turn's revision and sends it to
+   * the room. Like a `conversation_post` it never wakes this
    * conversation's agent. The Sidekick's `sidekick_runs` row is authoritative;
    * this is its projection, rebuilt from that table by a replay.
    */
@@ -2337,7 +2343,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(SidekickRunRowProjectionSchema, input, "project_sidekick_run_row");
     const identity = this.objectStore.identity();
-    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentKind !== "automation"
+    if (!identity) return { outcome: "refused", code: "sidekick_conversation_uninitialized" };
+    if (identity.workspaceId !== request.workspaceId || identity.parentKind !== "automation"
       || identity.parentId !== request.automationId || this.externalSubstreamId() !== "0") {
       return { outcome: "refused", code: "sidekick_conversation_mismatch" };
     }
@@ -2345,14 +2352,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const held = () => this.ctx.storage.sql.exec<{ turn_id: string; source_version: number }>(
       `SELECT turn_id, source_version FROM sidekick_run_rows WHERE run_id = ?`, request.runId,
     ).toArray()[0];
-    const prepared = held() ? null : await this.messages.prepareMessage({
+    const text = sidekickRunRowText(request.state, request.reply);
+    const existing = held();
+    const prepared = existing ? null : await this.messages.prepareMessage({
       messageId: uuidV7(request.createdAt),
       clientMessageId,
       authorType: "system",
       authorUserId: null,
       externalActorJson: null,
       messageType: "automation_activation",
-      text: sidekickRunRowText(request.state, null),
+      text,
       structuredContentJson: JSON.stringify({
         type: "automation_activation",
         schemaVersion: 1,
@@ -2366,6 +2375,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       producedByRunId: null,
       now: Date.now(),
     });
+    // The turn's canonical text follows the row too, so every reader of the
+    // stored turn (conversation_read, gap-fill, a conversation as text) sees
+    // what the row shows, not only the transcript that joins the row in.
+    const content = existing ? await this.sidekickRunRowContent(existing.turn_id, text) : null;
     const result = await this.product.commitRuntimeMutation(() => {
       const now = Date.now();
       const current = held();
@@ -2379,7 +2392,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         );
         return { outcome: "appended" as const, code: "sidekick_run_row_appended" };
       }
-      if (current.source_version > request.version) return { outcome: "unchanged" as const, code: "sidekick_run_row_stale" };
+      if (current.source_version > request.version && !request.replay) return { outcome: "unchanged" as const, code: "sidekick_run_row_stale" };
       const changed = this.ctx.storage.sql.exec(
         `UPDATE sidekick_run_rows SET state = ?, step_count = ?, reply = ?, source_version = ?, updated_at = ?
           WHERE run_id = ? AND (state IS NOT ? OR step_count IS NOT ? OR reply IS NOT ?)
@@ -2388,11 +2401,51 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         request.runId, request.state, request.stepCount, request.reply,
       ).toArray().length > 0;
       if (!changed) return { outcome: "unchanged" as const, code: "sidekick_run_row_unchanged" };
+      if (content && content.turnId === current.turn_id) {
+        // Content-addressed, so the new text is a new payload the turn's root
+        // fact points at; the old one is dropped once nothing points at it.
+        insertCanonicalTranscriptPayload(this.ctx.storage.sql, content.prepared, now);
+        this.ctx.storage.sql.exec(
+          `UPDATE transcript_facts SET payload_id = ? WHERE fact_id = ? AND payload_id = ?`,
+          content.prepared.payloadId, content.factId, content.payloadId,
+        );
+        this.ctx.storage.sql.exec(
+          `DELETE FROM transcript_payloads WHERE payload_id = ?
+             AND NOT EXISTS (SELECT 1 FROM transcript_facts WHERE payload_id = ?)`,
+          content.payloadId, content.payloadId,
+        );
+      }
       this.transcript.reviseParticipantTurnInTransaction(current.turn_id, now);
       return { outcome: "updated" as const, code: "sidekick_run_row_updated" };
     }, true);
     if (result.outcome === "appended" || result.outcome === "updated") await this.flushSemanticRealtimeOutboxBestEffort();
     return result;
+  }
+
+  /**
+   * The run row turn's stored payload with its text replaced, when the text
+   * differs; prepared outside the write because hashing is asynchronous.
+   */
+  private async sidekickRunRowContent(turnId: string, text: string): Promise<{
+    turnId: string; factId: string; payloadId: string; prepared: PreparedCanonicalTranscriptFact;
+  } | null> {
+    const stored = this.ctx.storage.sql.exec<{ fact_id: string; payload_id: string; audience: "shared" | "participant" | "model"; payload_json: string }>(
+      `SELECT fact.fact_id, payload.payload_id, payload.audience, payload.payload_json
+         FROM participant_transcript_turns turn
+         JOIN transcript_facts fact ON fact.fact_id = turn.root_fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        WHERE turn.turn_id = ?`, turnId,
+    ).toArray()[0];
+    if (!stored) return null;
+    const payload = JSON.parse(stored.payload_json) as Record<string, unknown>;
+    if (payload.content === text) return null;
+    const prepared = await prepareCanonicalTranscriptFact({
+      factId: stored.fact_id, factKind: "sidekick_run_row", audience: stored.audience,
+      payload: { ...payload, content: text },
+      origin: { originKind: "canonical", sourceKind: null, sourceId: null, sourceRevision: null },
+      runId: null, turnId, toolCallId: null,
+    });
+    return { turnId, factId: stored.fact_id, payloadId: stored.payload_id, prepared };
   }
 
   /** Internal runtime metadata, never a transcript or a participant-facing inspection API. */

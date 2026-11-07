@@ -9430,7 +9430,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const sidekickReadable = new Set<string>();
     for (const conversation of unarchived) {
       if (conversation.parentKind !== "automation") continue;
-      const admission = await this.conversationToolAdmission(workspaceId, conversation, userId);
+      const admission = await this.conversationToolAdmission(workspaceId, conversation, userId, relationship);
       if (admission.authorized && !admission.archived) sidekickReadable.add(conversation.parentId);
     }
     if (!this.hostedParentSchemaPresent()) {
@@ -9459,8 +9459,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     workspaceId: string,
     address: { parentId: string; substreamId: string },
     userId: string,
+    /** The person's relationship when the caller already read it. */
+    known?: WorkspaceRelationship | null,
   ): Promise<{ authorized: boolean; archived: boolean }> {
-    const relationship = await this.readRelationship(workspaceId, userId);
+    const relationship = known ?? await this.readRelationship(workspaceId, userId);
     if (relationship?.status !== "active") return { authorized: false, archived: false };
     return this.authorizeViewer({
       workspaceId: asWorkspaceId(workspaceId),

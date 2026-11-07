@@ -38,24 +38,33 @@ export async function prepareCanonicalTranscriptFact<T extends CanonicalTranscri
   };
 }
 
-export function insertPreparedCanonicalTranscriptFact(
+/** The payload half of `insertPreparedCanonicalTranscriptFact`: store it once, by its hash. */
+export function insertCanonicalTranscriptPayload(
   sql: SqlStorage,
   prepared: PreparedCanonicalTranscriptFact,
   now: number,
 ): void {
-  const { material } = prepared;
   sql.exec(
     `INSERT INTO transcript_payloads
        (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
      VALUES (?, ?, 'application/json', ?, ?, ?, ?)
      ON CONFLICT(audience, payload_sha256, byte_length) DO NOTHING`,
     prepared.payloadId,
-    material.audience,
+    prepared.material.audience,
     prepared.canonical,
     prepared.hash,
     new TextEncoder().encode(prepared.canonical).byteLength,
     now,
   );
+}
+
+export function insertPreparedCanonicalTranscriptFact(
+  sql: SqlStorage,
+  prepared: PreparedCanonicalTranscriptFact,
+  now: number,
+): void {
+  const { material } = prepared;
+  insertCanonicalTranscriptPayload(sql, prepared, now);
   sql.exec(
     `INSERT INTO transcript_facts
        (fact_id, fact_kind, payload_id, origin_kind, source_kind, source_id,
