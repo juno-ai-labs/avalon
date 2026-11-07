@@ -103,7 +103,7 @@ has gone away.
 The renderer owns navigation and inline layout. Electron main owns native
 window placement. The API owns resource visibility and fresh artifact access.
 The registry is not synchronized across devices; pinned order remains
-server-owned as described in [pinning](workstream-pinning.md).
+server-owned as described in [pinning](pinning.md).
 
 ## Failure modes and limits
 

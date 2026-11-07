@@ -572,7 +572,7 @@ the safe route to leave for, so archiving the room someone was reading handed
 them an empty draft rather than their next conversation. The rule, the
 `skipWorkstreamIds` state that keeps the just-archived row from being reopened,
 and the one deliberate exception are recorded in
-[`workstream-pinning.md`](workstream-pinning.md#leaving-for-the-first-work-stream),
+[`pinning.md`](pinning.md#leaving-for-the-first-work-stream),
 which owns the root route.
 
 **Consequences:** `returnTo` still lets the sidebar's New close back to where it

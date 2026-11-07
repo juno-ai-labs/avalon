@@ -73,7 +73,7 @@ broadcast and replay delivery for older enum decoders; see
 | `apps/desktop/src/main/network-recovery.ts`, `network-recovery-ipc.ts`, `common/network-recovery.ts`, and `renderer/lib/network-recovery.ts` | One Chromium-session connection reset after repeated ticket timeouts, generation-fenced observations and the cross-window request barrier. |
 | `apps/api/src/routes/socket.ts` | Receives public WebSocket upgrades and sends each accepted request through the correct regional Durable Object namespace. |
 | `apps/api/src/services/socket-service.ts` | Issues and verifies purpose-specific socket tickets and constructs the clean upgrade subrequest. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API and publishes each Channel's row, with that viewer's breakouts and running background agents, on it. Still accepts the retired Channel control socket at the internal `/parent-socket` path, tagged `parent-control:<id>`, for clients released before this change. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API and publishes the Canvases and Sidekicks lists on it. (The Channel-row description in this document's server sections is pending the server-docs pass.) |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | `AgentLoopDO` (the class `SubstreamAgent` was renamed to): accepts the substream feed socket, sends the canonical snapshot, and publishes ordered transcript/runtime events. |
 
 ## Sidekick library synchronization
@@ -448,7 +448,7 @@ in `workspace_resource_version_changes` (WorkspaceDO migration 114), and the
 write hook that drains the Channel rail's ledger drains it too, after the
 write's transaction. It is the one ledger of new versions: the same drain
 feeds the pinned-artifact announcement, which keeps only the causes a pin
-counts as news ([`workstream-pinning.md`](workstream-pinning.md#artifact-pins)).
+counts as news ([`pinning.md`](pinning.md#artifact-pins)).
 Each person's payload is built once for all of their sockets. It carries each resource's head (version, title, MIME
 type, update time, whether content exists, size) and nothing about how a
 conversation links it, so the client merges it over the resource it holds.

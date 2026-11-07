@@ -49,7 +49,7 @@ without using either table for access or cross-Organization discovery.
 **thread**, and a **substream** is a **breakout**. Tables, columns, RPCs and
 telemetry keep the storage words; only user-facing copy uses the product ones.
 WorkspaceDO migration 97 adds `workspace_pins` (one pin list per person per
-kind; [`workstream-pinning.md`](workstream-pinning.md)) and
+kind; [`pinning.md`](pinning.md)) and
 `workspace_activity_seen` (the Activity tab's read mark;
 `digests.md` (retired)).
 
@@ -116,7 +116,7 @@ workstream, with an integer server timestamp and cascading deletion from the
 directory row. It is private object state, accessed through the workspace socket
 and directory RPCs, not the generic D1 facade. Foreground visits update it;
 read-watermark and child projection writes do not. See
-[sidebar ordering](workstream-pinning.md#recent-work-streams).
+[sidebar ordering](pinning.md#recent-work-streams).
 
 ## Sidekick loading and attachment storage
 
@@ -513,7 +513,7 @@ SQL joins.
   drops every legacy Organization-wide pin before creating this key, because
   the old row cannot identify which of several Spaces should own it.
   An archived or narrowed work stream contributes no row while remaining
-  removable by its owner. See [`workstream-pinning.md`](workstream-pinning.md).
+  removable by its owner. See [`pinning.md`](pinning.md).
 - **WorkspaceDO migration 64 drops the eight Project tables** — `projects`,
   `project_participants`, `workspace_project_order`, `workspace_project_state`,
   `project_workstream_memberships`, `project_default_resources`,
@@ -557,7 +557,7 @@ SQL joins.
   `workspace_pins` (migration 97) is one person's pins of every kind, keyed
   `(user_id, item_kind, item_id)` with `item_kind` `thread`, `channel` or
   `breakout` and the breakout's thread in `parent_id`, and is the one source of
-  pin state; see [`workstream-pinning.md`](workstream-pinning.md). The same
+  pin state; see [`pinning.md`](pinning.md). The same
   migration adds `workspace_activity_seen(user_id, seen_through)`, how far each
   person has read the Activity tab
   (`digests.md` (retired)), the `(user_id,
@@ -1222,7 +1222,7 @@ has a document, and the column notes above point at it rather than restating it:
 | The local-only snapshot a fresh development database starts from | [`d1-baseline-migrations.md`](d1-baseline-migrations.md) |
 | The surfaces, flows, and contract boundaries around this schema | [`architecture.md`](architecture.md) |
 | Which region a row lives in and what crosses | [`regionalization.md`](regionalization.md) |
-| Pinning and the pinned sidebar section | [`workstream-pinning.md`](workstream-pinning.md) |
+| Pinning and the pinned sidebar section | [`pinning.md`](pinning.md) |
 | The automation lifecycle and every `sidekick_*` table | [`automation-lifecycle.md`](automation-lifecycle.md) |
 | The conversation-parent contract and the effect legs between the objects | [`workstream-durable-object.md`](workstream-durable-object.md) |
 | Channel, Space and Sidekick parent tables in WorkspaceDO, and how they moved from the legacy objects | [`hosted-conversation-parents.md`](hosted-conversation-parents.md) |

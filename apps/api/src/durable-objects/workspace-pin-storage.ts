@@ -11,7 +11,7 @@
  * a thread pinned in two Spaces is one pin now, placed by All's order where the
  * person had arranged it and by its earliest Space position after that. The old
  * tables stay, and the old routes keep writing them, so a Worker from before
- * this migration still reads what it wrote; see `docs/workstream-pinning.md`.
+ * this migration still reads what it wrote; see `docs/pinning.md`.
  *
  * No foreign key to `channels` or `spaces`, for the reason `space_invitees`
  * gives: a key would make a future rebuild of either cascade here. A pin whose
@@ -182,7 +182,7 @@ export const WORKSPACE_ARTIFACT_UPDATES_MIGRATION: readonly string[] = [
  * The kinds this repository writes now: a Canvas's and a Sidekick's pins, each
  * read back on its own sidebar row as `pinnedPosition`. The table's CHECK still
  * admits the retired Thread, Channel, Breakout and artifact kinds, whose rows
- * nothing reads (`docs/workstream-pinning.md`).
+ * nothing reads (`docs/pinning.md`).
  */
 export type StoredPinKind = "canvas" | "sidekick";
 

@@ -8,7 +8,7 @@ that simply vanishes from one slot and materialises in another reads as two
 events rather than one move. This module makes it one: the row
 slides out of frame to the left, the rows between its two slots close the gap,
 and it slides back in from the left at its new slot. A row whose arrival or
-departure is itself the change, which a list marks `data-motion-insert`, plays
+departure is itself the change, which a list may mark `data-motion-insert`, plays
 the same two halves on their own: in from the left when it appears, and out to the
 left, through a stand-in, when it is removed.
 
@@ -62,8 +62,7 @@ passes that list's heading without the heading being the thing seen to leave. Th
 and has focus inside it is one the reader is acting on, such as the click that
 opened it, and it stays under them rather than flying off through the slot
 they are looking at. A remounted
-row with focus is not the reader's doing, since the sidebar repairs focus onto
-a pinned row, and it travels.
+row with focus is not the reader's doing, and it travels.
 
 A row with no layout — one under `display: none` — is neither measured nor
 remembered. It is closer to not being there than to being at the top of the
@@ -302,7 +301,7 @@ The module owns which rows move, how, and for how long. It exposes one hook,
 the four data attributes, and `LIST_MOTION`.
 
 It does not decide *where* rows go — the server's list order and `splitPinned`
-do that, and [`workstream-pinning.md`](workstream-pinning.md) owns the Pinned
+do that, and [`pinning.md`](pinning.md) owns the Pinned
 group. It does not scroll; no sidebar list scrolls a pinned row into view
 today, and one that does composes with the hook on two conditions: the hook measures against the scroll box's content rather than the
 viewport, so the scroll does not read as movement, and the scroll runs as a
