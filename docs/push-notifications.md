@@ -57,7 +57,7 @@ references to readable plain text before carrying the first
 1,000 Unicode code points with an ellipsis when shortened, fitted further to
 Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to the number
 the sidebar's **Threads** button counts, less pending access requests
-([`attention-menu.md`](attention-menu.md)):
+(the attention menu, retired):
 each Main and each Breakout the recipient takes part in, in an unarchived,
 non-system Channel, that is unread, unseen or mentions them, plus each Main
 that mentions them without their taking part. Other activity in an

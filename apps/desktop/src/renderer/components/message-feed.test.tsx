@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { feedRowGap, measureMessageFeedRow, MessageFeed } from './message-feed';
 import type { Message } from '../lib/types';
@@ -151,72 +151,4 @@ describe('MessageFeed', () => {
     expect(screen.getByText(/Rally noted something\./)).toBeInTheDocument();
   });
 
-  it('draws a turn\'s Breakout cards once, after the last row of that turn', () => {
-    const onOpen = vi.fn();
-    const rows = [
-      message({ id: 'question', transcriptTurnId: 'turn-1', text: 'What changed?' }),
-      message({ id: 'work', transcriptTurnId: 'turn-1', messageType: 'tool_event', text: undefined, toolEvent: { id: 't', name: 'Search', status: 'completed' } }),
-      message({ id: 'answer', transcriptTurnId: 'turn-1', text: 'Pricing moved.' }),
-      message({ id: 'later', transcriptTurnId: 'turn-2', text: 'Anything else?' }),
-      message({ id: 'untracked', text: 'No turn at all.' }),
-    ];
-    render(<MessageFeed
-      breakoutCards={{
-        byTurn: new Map([['turn-1', [
-          { substreamId: 'b1', title: 'Pricing deep dive', unreadCount: 2 },
-          { substreamId: 'b2', title: 'Competitors' },
-        ]]]),
-        onOpen,
-        openSubstreamId: 'b2',
-        renderMeta: (breakout) => `Started by ${breakout.substreamId === 'b1' ? 'Ada' : 'Grace'}`,
-      }}
-      messages={rows}
-      onAnswerElicitation={answer}
-    />);
-
-    const groups = screen.getAllByRole('group', { name: 'Breakouts from this message' });
-    expect(groups).toHaveLength(1);
-    const owner = [...document.querySelectorAll<HTMLElement>('[data-arrival-id]')]
-      .filter((row) => row.contains(groups[0]!))
-      .map((row) => row.dataset.arrivalId);
-    expect(owner).toEqual(['answer']);
-    const cards = within(groups[0]!).getAllByRole('button');
-    expect(cards.map((card) => card.getAttribute('aria-label')))
-      .toEqual(['Pricing deep dive, 2 new', 'Competitors, Open']);
-    expect(cards.map((card) => card.textContent))
-      .toEqual(['2 newPricing deep diveStarted by Ada', 'CompetitorsStarted by Grace']);
-    expect(cards.map((card) => card.getAttribute('aria-pressed'))).toEqual(['false', 'true']);
-    fireEvent.click(within(groups[0]!).getByRole('button', { name: /Pricing deep dive/u }));
-    expect(onOpen).toHaveBeenCalledWith('b1');
-  });
-
-  it('draws no Breakout cards for a surface without Breakouts', () => {
-    render(<MessageFeed
-      messages={[message({ id: 'answer', transcriptTurnId: 'turn-1', text: 'Pricing moved.' })]}
-      onAnswerElicitation={answer}
-    />);
-
-    expect(screen.queryByRole('group', { name: 'Breakouts from this message' })).not.toBeInTheDocument();
-  });
-
-  it('offers the breakout action on hover for every message, Rally\'s newest reply included', () => {
-    const onStart = vi.fn();
-    render(<MessageFeed
-      messages={[
-        message({ id: 'first', transcriptTurnId: 'turn-1', text: 'An earlier answer.' }),
-        message({ id: 'asked', transcriptTurnId: 'turn-2', authorType: 'human', text: 'And then?' }),
-        message({ id: 'newest', transcriptTurnId: 'turn-3', text: 'The newest answer.' }),
-      ]}
-      onAnswerElicitation={answer}
-      onStartSubstream={onStart}
-    />);
-
-    // No line of its own under the newest reply: one hover action per message.
-    expect(screen.queryByRole('button', { name: /Start a breakout from this message/u })).toBeNull();
-    const hover = screen.getAllByRole('button', { name: 'New breakout from this message' });
-    expect(hover.map((button) => [...document.querySelectorAll<HTMLElement>('[data-arrival-id]')]
-      .find((row) => row.contains(button))?.dataset.arrivalId)).toEqual(['first', 'asked', 'newest']);
-    fireEvent.click(hover[2]!);
-    expect(onStart).toHaveBeenCalledWith('turn-3');
-  });
 });

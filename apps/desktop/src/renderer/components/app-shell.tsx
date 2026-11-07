@@ -1,12 +1,8 @@
 import { NavigationHistoryProvider } from './navigation-history';
-import { AccessRequestDialog } from './access-request-dialog';
 import { AddMembersDialog } from './add-members-dialog';
 import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
-import { useAccessRequests } from '../lib/access-requests';
 import type { WorkspaceAttention } from '@rally/contracts';
-import type { ClientSession } from '@rally/contracts/client-session';
-import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PropsWithChildren, useContext } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { DesktopWorkspaceOnboardingState, DesktopWorkspaceSummary } from '../../common/desktop';
@@ -22,30 +18,24 @@ import { useShellCapabilities } from '../lib/collaboration-session';
 import { isWindowSurfaceRoute } from '../lib/window-surface';
 import { MacDownloadLink } from './mac-download-link';
 import { MAC_APP_DOWNLOADABLE } from '../lib/browser-connectors';
-import { useAttentionItems } from '../lib/attention-items';
 import { useDockBadge } from '../lib/dock-badge';
 import { MemberPresentationContext } from '../lib/member-presentation';
 import { openLink } from '../lib/browser-rail-links';
-import { associativeWorkstreamsForSidebar, conversationDirectoryQueryKey } from '../lib/conversation-directory';
 import { desktopBridge } from '../lib/platform';
 import { useSupportWorkspaces } from '../lib/use-support-workspaces';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { restorableRoute } from '../lib/landing';
 import { uuidV7 } from '../lib/telemetry';
-import type { Workspace, WorkstreamSummary } from '../lib/types';
+import type { Workspace } from '../lib/types';
 import { useRailFillsPane } from '../lib/rail-split';
 import { SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
-import { useSpaceDirectories } from '../lib/use-space-directories';
-import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
-import { channelDestination } from '../lib/workstream-landing';
-import { openCanvasId } from '../lib/canvases';
-import { heldChannelBreakouts, isWorkstreamChildrenQueryKey, type ChannelBreakoutLists } from '../lib/channel-viewer-state';
+import { canvasRoute, openCanvasId } from '../lib/canvases';
 import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
-import { SearchModal, type SearchPlace } from './search-modal';
-import { NavigationSidebar } from './navigation-sidebar';
+import { SearchModal } from './search-modal';
+import { NavigationSidebar, useSectionCounts } from './navigation-sidebar';
 import { PHONE_NAVIGATION_CONTROL, PhoneHeaderContext, type PhoneHeader } from '@rally/ui/components/title-pill';
 import { useSheetOpener } from '../lib/sheet-opener';
 import { IconSearch } from '@tabler/icons-react';
@@ -99,55 +89,17 @@ export function invitationAccountMismatch(invitationEmail: string, accountEmail:
 /** How long the panes take to fade up on a new workspace; matches `workspace-enter` in `app.css`. */
 const WORKSPACE_ENTER_MS = 320;
 
-/**
- * Whether the active workspace shell has a Space rail. A session without an
- * active workspace never mounts this shell; null remains enabled for the
- * legacy startup frame.
- */
-export function spacesEnabledForSession(session: ClientSession | null): boolean {
-  return session === null || session.workspace !== undefined;
-}
-
-/**
- * The Channels search lists, each followed by its Breakouts: the ones the
- * socket holds for this reader as a member (`held`), and the ones a grant
- * reaches, which only the shared navigation directory lists. A Channel still
- * being created is left to the caller to drop.
- */
-export function searchChannelPlaces(
-  channels: readonly WorkstreamSummary[],
-  held: ChannelBreakoutLists,
-  directory: SharedNavigationDirectory | undefined,
-): SearchPlace[] {
-  const shared = new Map((directory?.workstreams ?? []).map((entry) => [entry.parentId, entry.conversations]));
-  return channels.flatMap((channel): SearchPlace[] => {
-    const breakouts = new Map<string, { title: string; appearance?: WorkstreamSummary['appearance'] }>();
-    for (const conversation of shared.get(channel.id) ?? []) {
-      if (conversation.substreamId !== '0' && !conversation.archived) breakouts.set(conversation.substreamId, conversation);
-    }
-    for (const breakout of held[channel.id] ?? []) breakouts.set(breakout.substreamId, breakout);
-    return [
-      { kind: 'channel', id: channel.id, name: channel.title, substreamId: channel.associativeSubstreamId, appearance: channel.appearance },
-      ...[...breakouts].map(([substreamId, breakout]): SearchPlace => ({
-        kind: 'breakout', id: substreamId, channelId: channel.id, channelName: channel.title,
-        name: breakout.title, appearance: breakout.appearance, channelAppearance: channel.appearance })),
-    ];
-  });
-}
-
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
   const personalPresentation = useContext(MemberPresentationContext).get(workspace.currentUser.id);
   const {
     acceptInvitation,
     activateWorkspace,
     api,
-    clearPendingAccessRequest,
     clearPendingInvitation,
     declineInvitation,
     finishWorkspaceSetup,
     getOnboardingState,
     invitationApi,
-    pendingAccessRequestId,
     pendingInvitation,
     abandonAccountSignIn,
     runtime,
@@ -159,10 +111,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     endSupportSession,
   } = useAppSession();
   const { host, guest: guestSession } = useShellCapabilities();
-  const accessRequests = useAccessRequests(workspace.id);
-  // A request row chosen in the attention menu; the menu bar's arrives as
-  // `pendingAccessRequestId` instead. Either opens the one dialog.
-  const [openAccessRequestId, setOpenAccessRequestId] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [addMembersOpen, setAddMembersOpen] = useState(false);
   // Inviting is an administrator's; the server refuses anyone else. The
@@ -187,7 +135,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     const path = restorableRoute(location.pathname);
     if (path) writeLayout(layoutKey(workspace.id, workspace.currentUser.id, 'last-route'), path);
   }, [location.pathname, workspace.id, workspace.currentUser.id]);
-  const queryClient = useQueryClient();
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
   const railLeaving = useUiStore((state) => state.railLeaving);
@@ -210,59 +157,14 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       onSelect: () => setSearchOpen(true),
     }],
   }), [api, openNavigation]);
-  const spacesEnabled = spacesEnabledForSession(session);
   // The main pane keeps room for a sidebar that is still fading out.
   const showShellRail = railOpen || railLeaving;
   const railFillsPane = useRailFillsPane(sidebarWidth);
   const railExpanded = useUiStore((state) => state.railExpanded);
-  // Nothing here loads the sidebar. Subscribing to the workspace socket is
-  // answered with the whole of it — the first page of work streams, the
-  // Sidekicks and the notes — and WorkspaceDO pushes each list again whenever
-  // it changes a row. This query exists for what a person asks for afterwards:
-  // scrolling past page one, or widening the list with Debug enabled.
-  const workstreams = useWorkstreamsQuery();
-  const { active: spaces } = useSpaceDirectories();
-  const associativeNavigation = useQuery({
-    queryKey: conversationDirectoryQueryKey(workspace.id),
-    queryFn: ({ signal }) => api!.getSharedNavigationDirectory(signal),
-    enabled: Boolean(api),
-    // Says which conversation a Channel the socket lists opens on when Main is
-    // not this person's. Refreshed by the socket's own signals — a Channel's
-    // tombstone, a listed Channel's metadata frame — not on every focus.
-    refetchOnWindowFocus: false,
-  });
-  const sidebarWorkstreams = useMemo(
-    () => associativeWorkstreamsForSidebar(associativeNavigation.data, workstreams.data),
-    [associativeNavigation.data, workstreams.data],
-  );
-  const { items: attentionItems, breakoutListsLoaded } = useAttentionItems(sidebarWorkstreams);
-  // The menu only says "nothing" once every Channel is loaded: the Space walk
-  // has finished, no page is left unread, and the walk did not fail.
-  const attentionComplete = workstreams.data !== undefined && !workstreams.hasMore
-    && !workstreams.isFetching && !workstreams.isError;
-  // A Breakout list still on its way would make the count a floor, and the
-  // dock would then lower the badge APNs set from the full count.
-  // The attention button's number: waiting conversations and access requests.
-  useDockBadge(attentionItems.length + accessRequests.length, attentionComplete && breakoutListsLoaded);
+  // The dock badge is the rail's counts added up, sent once both lists arrive.
+  const sectionCounts = useSectionCounts();
+  useDockBadge(sectionCounts.counts.canvases + sectionCounts.counts.sidekicks, sectionCounts.complete);
   const downloadedUpdate = useDownloadedUpdate();
-  // While search is open, a Breakout list the socket writes re-reads the
-  // places, so a Breakout created or renamed meanwhile shows at once.
-  const [breakoutListsVersion, setBreakoutListsVersion] = useState(0);
-  useEffect(() => {
-    if (!searchOpen) return;
-    return queryClient.getQueryCache().subscribe((event) => {
-      if (event.type === 'updated' && isWorkstreamChildrenQueryKey(event.query.queryKey)) setBreakoutListsVersion((version) => version + 1);
-    });
-  }, [searchOpen, queryClient]);
-  const searchChannels = useMemo(() => {
-    if (!searchOpen) return [];
-    const channels = sidebarWorkstreams.filter((channel) => !channel.pending);
-    return searchChannelPlaces(channels, heldChannelBreakouts(queryClient, channels.map((channel) => channel.id)),
-      associativeNavigation.data);
-    // `breakoutListsVersion` is how a Breakout list written to the cache reaches this read.
-  }, [searchOpen, sidebarWorkstreams, associativeNavigation.data, breakoutListsVersion, queryClient]);
-  const searchSpaces = useMemo(() => (spaces.data?.items ?? []).map((space): SearchPlace => (
-    { kind: 'space', id: space.id, name: space.name, iconKey: space.iconKey, colorKey: space.colorKey })), [spaces.data]);
   const featureFlags = useClientFeatureFlags(api);
   const multipleWorkspacesEnabled = featureFlags.data?.multipleWorkspacesEnabled === true;
   const workspaceDirectory = useQuery<DesktopWorkspaceOnboardingState>({
@@ -432,12 +334,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   return (
     <>
       <AddMembersDialog api={api ?? null} open={addMembersOpen} onClose={() => setAddMembersOpen(false)} />
-      <AccessRequestDialog
-        api={api ?? null}
-        onClose={() => { setOpenAccessRequestId(null); clearPendingAccessRequest(); }}
-        requestId={openAccessRequestId ?? pendingAccessRequestId}
-        workspaceId={workspace.id}
-      />
       <div className={shellClassName} style={shellStyle}>
       <NavigationSidebar
         onOpenSearch={api ? () => setSearchOpen(true) : undefined}
@@ -556,16 +452,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
       {api && <SearchModal key={`${workspace.id}:${workspace.currentUser.id}`} workspaceId={`${workspace.id}:${workspace.currentUser.id}`}
         open={searchOpen} onOpenChange={setSearchOpen}
         search={(request, signal) => api.searchWorkspace(request, signal)}
-        channels={searchChannels} spaces={spacesEnabled ? searchSpaces : undefined}
-        onSelectPlace={(place) => {
-          if (place.kind === 'space') navigate(`/spaces/${encodeURIComponent(place.id)}`);
-          else if (place.kind === 'breakout') navigate(channelDestination({ id: place.channelId, associativeSubstreamId: place.id }));
-          else navigate(channelDestination({ id: place.id, associativeSubstreamId: place.substreamId }));
-        }}
         onSelect={(result) => {
           const target = result.location;
           if (target.kind === 'message') {
-            navigate(`/workstreams/${target.workstreamId}?substream=${encodeURIComponent(target.substreamId)}&turn=${encodeURIComponent(target.turnId)}&sequence=${target.transcriptSequence}`);
+            // A message's conversation is a Canvas's Chat: open the Canvas on it.
+            navigate(`${canvasRoute(target.workstreamId)}?turn=${encodeURIComponent(target.turnId)}&sequence=${target.transcriptSequence}`);
           } else if (target.kind === 'link') {
             void openLink(target.url);
           } else {

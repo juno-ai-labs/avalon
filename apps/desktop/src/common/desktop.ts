@@ -606,12 +606,6 @@ export interface RallyDesktopBridge {
    * hands it to the same deep link an in-app link takes.
    */
   openSidekick: (sidekickId: string) => Promise<void>;
-  /**
-   * Open a Thread in the main window and bring it forward, from a window that
-   * cannot route there itself. Main checks the id and hands it to the same
-   * deep link an in-app link takes.
-   */
-  openThread: (workstreamId: string) => Promise<void>;
   openSettings: (section?: DesktopSettingsSection) => Promise<void>;
   startSystemAudioCapture: () => Promise<DesktopSystemAudioCaptureInfo>;
   stopSystemAudioCapture: () => Promise<void>;

@@ -1,25 +1,8 @@
-import { asSpaceId, type WorkstreamBatchFilter } from '@rally/contracts';
-
-import { groupActivityItems, hourInMilliseconds, workstreamRecencyAt, type RecencyGroup } from '../../common/recency-groups';
-
-import type { HarnessStatus, WorkstreamSummary } from './types';
-
-export {
-  groupActivityItems,
-  nextRecencyBoundary,
-  recencyTimestamp,
-  workstreamRecencyAt,
-  type RecencyGroup,
-} from '../../common/recency-groups';
+import { formatDayLabel } from '@rally/ui/lib/format';
 
 const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const shortTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
-
-export function compareWorkstreamRecency(left: WorkstreamSummary, right: WorkstreamSummary): number {
-  return Date.parse(workstreamRecencyAt(right)) - Date.parse(workstreamRecencyAt(left))
-    || left.id.localeCompare(right.id);
-}
 
 export function formatRelative(value: string, now = new Date()): string {
   const date = new Date(value);
@@ -122,81 +105,3 @@ export function formatDuration(milliseconds?: number): string | undefined {
 }
 
 export { formatDayLabel, statusLabel, statusDescription, harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
-import { formatDayLabel, harnessMarkerStatus, type WorkstreamMarkerStatus } from '@rally/ui/lib/format';
-import { MARKER_PRECEDENCE } from './attention-ranking';
-
-export { markerRank, readerMarkerStatus, type ReaderMarkerStatus } from './attention-ranking';
-
-/**
- * The marker a work stream shows this viewer.
- *
- * The single answer every surface asks for, so the sidebar and the home screen
- * cannot disagree about which of a work stream's states is the one worth
- * showing. Surfaces may omit that result: the sidebar hides `completed`. The
- * run's own status arrives through `harnessMarkerStatus`, so `scheduled` is
- * ranked as `running` and never reaches the list under its own name.
- */
-export function workstreamMarkerStatus(
-  workstream: { harnessStatus: HarnessStatus; hasUnread?: boolean; unseen?: boolean; youAreMentioned?: boolean },
-): WorkstreamMarkerStatus {
-  const own = harnessMarkerStatus(workstream.harnessStatus);
-  const active = new Set<WorkstreamMarkerStatus>([own]);
-  if (workstream.unseen === true) active.add('unseen');
-  if (workstream.youAreMentioned === true) active.add('mentioned');
-  if (workstream.hasUnread === true) active.add('unread');
-  // The fallback is unreachable — `scheduled` was the only member of the union
-  // outside the ranking, and it cannot reach here now — but `find` is typed
-  // `| undefined`, so the arm has to say something.
-  return MARKER_PRECEDENCE.find((status) => active.has(status)) ?? own;
-}
-
-/** The server-side range that describes one visible recency heading. */
-export function recencyGroupBatchFilter(
-  label: RecencyGroup,
-  now = new Date(),
-  spaceId?: string,
-): WorkstreamBatchFilter {
-  const nowTimestamp = now.getTime();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
-  const startOfWeek = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() - now.getDay(),
-  ).getTime();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-  const range = (() => {
-    switch (label) {
-      case 'Last hour': return { atOrAfter: new Date(nowTimestamp - hourInMilliseconds).toISOString() };
-      case 'Today': return {
-        atOrAfter: new Date(startOfToday).toISOString(),
-        before: new Date(nowTimestamp - hourInMilliseconds).toISOString(),
-      };
-      case 'Yesterday': return {
-        atOrAfter: new Date(startOfYesterday).toISOString(),
-        before: new Date(startOfToday).toISOString(),
-      };
-      case 'This week': return {
-        atOrAfter: new Date(startOfWeek).toISOString(),
-        before: new Date(startOfYesterday).toISOString(),
-      };
-      case 'This month': return {
-        atOrAfter: new Date(startOfMonth).toISOString(),
-        before: new Date(startOfWeek).toISOString(),
-      };
-      case 'Before this month': return { before: new Date(startOfMonth).toISOString() };
-    }
-  })();
-  return {
-    lastActivityAt: range,
-    ...(spaceId === undefined ? {} : { pinned: false, spaceId: asSpaceId(spaceId) }),
-    includeSystem: false,
-  };
-}
-
-export function groupWorkstreams(
-  streams: WorkstreamSummary[],
-  now = new Date(),
-): Array<{ label: RecencyGroup; streams: WorkstreamSummary[] }> {
-  return groupActivityItems(streams, now);
-}

@@ -9,10 +9,11 @@ import { useCreateCanvas } from '../lib/canvases';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace } from '../lib/types';
 import { useUiStore, type SidebarSection } from '../lib/ui-store';
-import { CanvasesSection, useUnreadCanvasCount } from './canvas-sidebar-section';
+import { useCanvasList } from '../lib/canvases';
+import { CanvasesSection } from './canvas-sidebar-section';
 import { ErrorNotice, IconButton } from './primitives';
 import { RailItem } from './rail-item';
-import { SidekicksSection, useSidekickAttentionCount } from './sidekick-sidebar-section';
+import { SidekicksSection, useSidekickList } from './sidekick-sidebar-section';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
 import { PHONE_LAYOUT_MAX_WIDTH } from '@rally/ui/lib/phone-layout';
 
@@ -27,6 +28,25 @@ const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNo
   { id: 'canvases', label: 'Canvases', icon: <ShapeOutline shape="sheet" /> },
   { id: 'sidekicks', label: 'Sidekicks', icon: <IconHexagon aria-hidden="true" size={22} stroke={1.8} /> },
 ];
+
+/**
+ * Each section's count, and whether both lists have arrived so the counts are
+ * whole. Canvases counts each Canvas holding something this person has not
+ * read; Sidekicks each Sidekick waiting on input or holding something unread.
+ * The rail draws these and the dock badge adds them up, so the two cannot
+ * disagree.
+ */
+export function useSectionCounts(): { counts: Record<SidebarSection, number>; complete: boolean } {
+  const canvases = useCanvasList();
+  const sidekicks = useSidekickList();
+  return {
+    counts: {
+      canvases: (canvases ?? []).filter((row) => row.unread).length,
+      sidekicks: (sidekicks ?? []).filter((row) => row.needsInput || row.unread).length,
+    },
+    complete: canvases !== undefined && sidekicks !== undefined,
+  };
+}
 
 /**
  * The sidebar: a rail of two sections (Canvases, Sidekicks) beside one list.
@@ -93,12 +113,7 @@ export function NavigationSidebar({
   const panel = useRef<HTMLElement>(null);
   const scroll = useRef<HTMLElement | null>(null);
   const guest = workspace.currentUser.accessClass === 'guest';
-  const badges: Record<SidebarSection, number> = {
-    // Each Canvas holding something this person has not read; each Sidekick
-    // waiting on input or holding something unread.
-    canvases: useUnreadCanvasCount(),
-    sidekicks: useSidekickAttentionCount(),
-  };
+  const badges = useSectionCounts().counts;
   const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Canvases';
   const createCanvas = useCreateCanvas();
   const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);

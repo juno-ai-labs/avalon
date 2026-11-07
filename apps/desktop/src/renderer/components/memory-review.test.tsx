@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../lib/api';
 import { MemoryFactList, useMemoryFacts } from './memory-review';
 
-const openThread = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ openThread, openSidekick: vi.fn() }) }));
+const openSidekick = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ openSidekick }) }));
 
 function fact(factId: string, text: string, extra: Partial<MemoryReviewFact> = {}): MemoryReviewFact {
   return {
@@ -60,16 +60,19 @@ describe('MemoryFactList', () => {
     show(fakeApi([
       fact('one', 'Prefers short answers.', { conflict: true }),
       fact('two', 'Works in Go.', { source: { kind: 'channel', spaceId: 'outbound', title: 'Outbound' } }),
+      fact('three', 'Writes the changelog.', { source: { kind: 'sidekick', automationId: 'changelog', title: 'Weekly changelog' } }),
     ]));
 
     await screen.findByText('Prefers short answers.');
     const list = screen.getByRole('region', { name: 'What Rally remembers about you' });
     expect(within(list).queryAllByRole('heading')).toEqual([]);
     const rows = within(list).getAllByRole('listitem');
-    expect(rows.map((row) => row.querySelector('p')?.textContent)).toEqual(['Prefers short answers.Disagreement', 'Works in Go.']);
-    // A Thread opens in the main window; a Channel, which a settings window cannot open, is named.
-    fireEvent.click(within(rows[0]!).getByRole('button', { name: 'Q4 plan' }));
-    expect(openThread).toHaveBeenCalledWith('plan');
+    expect(rows.map((row) => row.querySelector('p')?.textContent)).toEqual(['Prefers short answers.Disagreement', 'Works in Go.', 'Writes the changelog.']);
+    // A Sidekick opens in the main window; a Canvas and a Channel, which a
+    // settings window cannot open, are named.
+    expect(within(rows[0]!).queryByRole('button', { name: 'Q4 plan' })).toBeNull();
+    fireEvent.click(within(rows[2]!).getByRole('button', { name: 'Weekly changelog' }));
+    expect(openSidekick).toHaveBeenCalledWith('changelog');
     expect(rows[1]).toHaveTextContent('from Outbound');
     expect(within(rows[1]!).queryByRole('button', { name: 'Outbound' })).toBeNull();
   });

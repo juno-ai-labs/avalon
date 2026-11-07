@@ -703,9 +703,6 @@ const browserBridge: RallyDesktopBridge = {
   async openSidekick(sidekickId) {
     window.location.hash = `#/sidekicks/${encodeURIComponent(sidekickId)}`;
   },
-  async openThread(workstreamId) {
-    window.location.hash = `#/workstreams/${encodeURIComponent(workstreamId)}`;
-  },
   async openSettings(section) {
     const target = section ? `/settings?section=${encodeURIComponent(section)}` : '/settings';
     window.location.hash = `#${target}`;
