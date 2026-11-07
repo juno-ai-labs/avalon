@@ -18,14 +18,14 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationDetail, type AutomationScope } from "@rally/contracts";
+import { asAutomationId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationDetail, type AutomationScope } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 import { AutomationService, createAutomation } from "../src/services/automation-service";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
+
 import { writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -90,41 +90,6 @@ async function seedRegionalDatabase(): Promise<void> {
   ]);
 }
 
-/**
- * A personal room with the author as its one participant, registered the way
- * creation registers it: the parent reserves the main conversation and puts
- * the provisional directory row, viewer included, into the workspace. The
- * parent is hosted by the workspace object itself.
- */
-async function seedRoom(): Promise<void> {
-  await hostedParentStub(env, WORKSPACE_ID).reserveChild({
-    workspaceId: WORKSPACE_ID,
-    parentId: ROOM_ID,
-    substreamId: asSubstreamId("0"),
-    kind: "main",
-    createdByUserId: AUTHOR_ID,
-    authorityGeneration: 1,
-    directory: {
-      title: "Release room",
-      description: "",
-      scope: "personal",
-      systemKind: null,
-      emailAddress: null,
-      titleStatus: "settled",
-      createdAt: NOW,
-    },
-  });
-  const membership = await env.DB.prepare("SELECT incarnation FROM workspace_members WHERE workspace_id = ? AND user_id = ?")
-    .bind(WORKSPACE_ID, AUTHOR_ID).first<{ incarnation: string }>();
-  await withHostedParent(workspaceStub(), ROOM_ID, (parent) => {
-    parent["scopeGrants"]({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID }).mutate({
-      operationId: crypto.randomUUID(), actorUserId: AUTHOR_ID, userId: AUTHOR_ID,
-      target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID },
-      active: true, expectedRevision: 0,
-    }, membership!.incarnation);
-  });
-}
-
 /** `create`, which writes the Sidekick's directory row in the Organization object. */
 async function createAndPublish(scope: AutomationScope): Promise<string> {
   const automationId = nextAutomationId();
@@ -153,7 +118,6 @@ beforeEach(async () => {
   await reset();
   await seedRegionalDatabase();
   await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam");
-  await seedRoom();
 });
 
 describe("automation directory", () => {

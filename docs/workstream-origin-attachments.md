@@ -1,48 +1,22 @@
-# Work-stream origin attachments
+# Work-stream origin attachments (retired host half)
 
-A work stream that exists because of a place in a connected tool — the Slack
-thread `@Rally` was mentioned in, the Linear issue an automation fired on, the
-GitHub pull request a suggestion was built out of — carries that place as a
-resource attached to it, from the moment it is created. The **Sources** section
-of the inspector rail shows it, and the agent's `list_resources` tool lists it
-with the relationship `origin`.
+**The host half is deleted.** A work stream that started from a place in a
+connected tool (the Slack thread `@Rally` was mentioned in, the Linear issue a
+Sidekick fired on, the object a suggestion was built from) carried that place
+as an `origin` resource. Threads left the product with the Canvases and
+Sidekicks pivot ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)), and
+plan step C-2 deleted `workstream-origin-resource.ts` and every create path
+that attached an origin (`slack-workspace-workstream-service.ts`, the Slack
+Thread-creating path, the suggestion start).
 
-The promise is narrow and worth stating exactly: **where a work stream came from
-is written down once, at creation, by the connector that knows what the place
-is.** Nothing reconstructs it afterwards — a Slack thread timestamp is not
-recoverable from a transcript, and the person reading the work stream a week
-later is the reason it is recorded at all.
-
-Describing an origin is part of the connector contract rather than a per-provider
-special case in the host. Every connector answers for its own activities without
-writing a line of code, because the connector base derives an origin from the
-object normalization already recorded; a connector whose work streams start
-somewhere an activity cannot describe — a Slack thread, a provider-hosted agent
-session — implements `ConnectorOriginSource` and the same host path carries it.
-Read this alongside [`connectors.md`](connectors.md) for what a resource is, and
-[`contextual-routing.md`](contextual-routing.md) for the historical card path
-that was removed. Current connector activity reaches an existing work stream
-only through an explicit watch or deterministic automation.
-
-Origin resources are always references at the model boundary. The message
-attachment manifest cutover does not copy connector origin content into a
-trigger: the agent discovers the origin through `list_resources` and
-hydrates a currently authorized derivative only when the task needs it.
-
-## Where the code lives
-
-| Path | Responsibility |
-| --- | --- |
-| `packages/contracts/src/index.ts` | `ConnectorOriginResourceSchema` — what a connector says about a place, and the one bound on its fields. |
-| `packages/connectors/src/types.ts` | The connector base: `ConnectorOriginLocator`, `ConnectorOriginSource`, `connectorOriginFromActivity` (the derivation every connector gets free), and `describeConnectorOrigin` (the single entry point, which also enforces the manifest check). `ConnectorAdapter.origin` is where an adapter opts in. |
-| `packages/connectors/src/slack.ts` | `slackOriginSource` — the only connector that implements one today: the thread an Agent invocation arrived in, plus `chat.getPermalink` for its URL. |
-| `apps/api/src/lib/activity-visibility.ts` | `restrictedActivityUserIds` and `activityIsWorkspaceVisible` — the one implementation of who a connector activity may reach, shared with the activity queue. |
-| `apps/api/src/services/workstream-origin-resource.ts` | The host half: `describeWorkstreamOrigin` binds a connector's answer to the connection it was reached through, `resolveOriginResource` is the one place a connector resource row is looked up or created, and `attachWorkstreamOriginResource` writes and broadcasts the attachment. |
-| `apps/api/src/services/slack-agent-service.ts` | `slackSessionOrigin` hands the Slack locator to the adapter through the credential door; `createSlackWorkstreamSession` passes the result to whichever create path runs. |
-| `apps/api/src/services/workstream-service.ts` | `create` attaches `input.originResource`; `createFromOpportunity` attaches a suggestion's activity provenance roots; `describeActivityOrigin` is the shared stored-row path both it and `attachActivityResource` use. |
-| `apps/api/src/services/slack-workspace-workstream-service.ts` | `create` attaches the origin for a Slack member who is not a Rally user. |
-| `apps/api/src/telemetry/workstream-creation.ts` | Resolves a started suggestion's canonical connector types from the same retained activity provenance roots, without copying source content or connection IDs into telemetry. |
-| `packages/db/migrations/0001_initial.sql` | `workstream_resources.relationship_type`, which carries the `origin` label. |
+What survives is the connector half: `ConnectorOriginLocator`,
+`connectorOriginFromActivity`, `describeConnectorOrigin` and `slackOriginSource`
+in `packages/connectors`, and `ConnectorOriginResourceSchema` in
+`packages/contracts`. No API code calls them any more; they go with the
+contracts cleanup (plan step B-8) unless a Canvas or Sidekick takes them up.
+Stored `workstream_resources` rows keep their `origin` label. The sections
+below describe the mechanism as it ran, and are accurate for the connector half
+only.
 
 ## How it works
 

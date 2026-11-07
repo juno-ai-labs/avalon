@@ -51,7 +51,6 @@ import {
 } from "./resource-object-cleanup";
 import { backfillResourceSlugs } from "./resource-slug";
 import { SLACK_LINK_CHALLENGE_GRACE_MS, SlackAgentService } from "./slack-agent-service";
-import { refreshSlackWorkstreamUnfurls } from "./slack-unfurl-refresh";
 import { parseTerminalRegionConfiguration } from "./terminal/contract";
 import type { TerminalLifecycleTransition } from "./terminal/lifecycle";
 import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from "./terminal/lifecycle";
@@ -113,7 +112,6 @@ export const WORKSPACE_ALARM_SOURCE_KINDS: ReadonlyMap<string, readonly Workspac
   ["slack_agent_thread_claims", ["maintenance"]],
   ["slack_agent_pending_prompts", ["maintenance"]],
   ["slack_link_challenges", ["maintenance"]],
-  ["slack_unfurled_links", ["maintenance"]],
 ]);
 
 export interface WorkspaceScheduleTarget {
@@ -235,7 +233,10 @@ const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promi
     })
   ).reapedIntentIds.length),
   slack_ingress: async (ctx) => { await new SlackAgentService(ctx.workspaceEnv).maintainIngress(ctx.workspaceId, 100); },
-  slack_unfurls: async (ctx) => { await refreshSlackWorkstreamUnfurls(ctx.workspaceEnv, ctx.workspaceId); },
+  // A Thread's Slack card was refreshed here; Threads are retired (plan step
+  // C-2). An entry armed before that finds nothing, and the next reconcile
+  // drops it, since no query below names it.
+  slack_unfurls: async () => {},
 };
 
 /**
@@ -354,22 +355,6 @@ export const SCHEDULE_TARGET_QUERIES: readonly { kind: WorkspaceScheduleTargetKi
                                         '+${SLACK_LINK_CHALLENGE_GRACE_MS / 1_000} seconds', '+1 second')
                           FROM slack_link_challenges
             ) HAVING MIN(due_at) IS NOT NULL`,
-  },
-  {
-    kind: "maintenance",
-    // The sweep loads a link only through a connection that is not disabled
-    // (`loadDurableObjectStaleUnfurls`), so a disabled connection's links are
-    // not counted here either: a row the sweep never loads never advances.
-    // Match the sweep's ISO cutoff, including milliseconds: datetime's space
-    // sorts before 'T' and would include expired links for the entire UTC day.
-    scoped: false,
-    sql: `SELECT 'slack_unfurls' AS id,
-                 strftime('%Y-%m-%dT%H:%M:%SZ', MIN(link.refreshed_at), '+5 minutes', '+1 second') AS due_at
-            FROM slack_unfurled_links link
-           WHERE link.shared_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')
-             AND EXISTS (SELECT 1 FROM connector_connections connection
-                          WHERE connection.id = link.connection_id AND connection.status <> 'disabled')
-           HAVING COUNT(*) > 0`,
   },
 ];
 

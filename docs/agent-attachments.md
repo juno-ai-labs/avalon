@@ -642,7 +642,7 @@ sidebar uses the same visibility boundary.
   contract constants rather than a literal;
   `apps/desktop/src/renderer/lib/use-citations.test.tsx` proves a citation
   resolves by alias as well as by id.
-- `apps/api/test-workers/participant-notification.test.ts` proves a real object
+- `apps/api/test-workers/participant-notification.test.ts` (deleted in plan step C-2) proves a real object
   snapshot hydrates message-local attachment descriptors from the durable part
   relationship; `apps/desktop/src/renderer/lib/transcript.test.ts` proves those
   descriptors survive canonical flattening and become attachment tiles.

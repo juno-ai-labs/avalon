@@ -1,6 +1,5 @@
 import {
   WorkspaceSyncTopicSchema,
-  asUserId,
   asWorkspaceId,
   type WorkspaceSyncTopic,
 } from "@rally/contracts";
@@ -24,22 +23,6 @@ export interface WorkspaceSyncDetail {
   audienceUserIds?: readonly string[];
   /** The connection the change was to: its owner hears of it when it is personal, everyone when it is not. */
   connectionId?: string;
-}
-
-/** Seat a member who just accepted their invitation in the Spaces that listed its address. */
-export async function seatSpaceInvitee(env: Env, workspaceId: string, userId: string, email: string): Promise<string[]> {
-  const placementAffinity = await workspacePlacementAffinity(env, workspaceId);
-  const workspace = await durableObjectStubForWorkspace(
-    env,
-    env.WORKSPACE_DOS,
-    workspaceId,
-    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
-    placementAffinity,
-  );
-  const result = await workspace.seatSpaceInvitee({
-    workspaceId: asWorkspaceId(workspaceId), userId: asUserId(userId), email: email.toLowerCase(),
-  });
-  return result.seatedSpaceIds;
 }
 
 /** Publish one durable, replayable invalidation through the workspace control plane. */

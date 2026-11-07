@@ -78,12 +78,6 @@ async function outboxRow(objectRef: string): Promise<Record<string, unknown> | n
 beforeEach(async () => {
   await reset();
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
-  // Close the Space cutover, the way the path that opens a new Organization
-  // does before its first session. A `pending` one is due at the epoch — that
-  // is how the fleet migration starts without anybody signing in — so an
-  // object left with one wakes into its full alarm handler, whose resource
-  // sweep would reap the drafts these cases are about before they ask for it.
-  await workspace().finalizeSpaceBootstrap({ workspaceId: WORKSPACE_ID });
   await disarm();
 });
 

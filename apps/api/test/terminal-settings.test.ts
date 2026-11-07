@@ -14,7 +14,6 @@ import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
-  testWorkstreamContract,
   testWorkstreamObjectStore,
   workstreamObjectGet,
   workstreamObjectRun,
@@ -136,26 +135,10 @@ function fixture(role: AuthContext["role"] = "owner") {
           "failTerminalPolicyApplication",
           "commitTerminalPolicyApplication",
         ]),
-        listWorkstreams: async () => {
-          const rows = database.prepare(
-            "SELECT id, title FROM workstreams WHERE workspace_id = ? ORDER BY id",
-          ).all(W) as Array<{ id: string; title: string }>;
-          return {
-            items: rows.map((row) => testWorkstreamContract({
-              id: row.id, workspaceId: W, title: row.title, harnessStatus: "idle",
-            })),
-            stateVersions: rows.map((row) => ({
-              workstreamId: row.id,
-              commonEventId: "00000000-0000-7000-8000-0000000000e1",
-              viewerEventId: null,
-              authorityGeneration: 1,
-              commonWaterline: 1,
-              viewerWaterline: 0,
-            })),
-            nextCursor: null,
-            directoryWaterline: 0,
-          };
-        },
+        terminalSandboxParents: async () => (database.prepare(
+          "SELECT id, title FROM workstreams WHERE workspace_id = ? ORDER BY id",
+        ).all(W) as Array<{ id: string; title: string }>)
+          .map((row) => ({ workstreamId: row.id, title: row.title })),
       },
     }),
     // The final-diff preserver stages the diff in R2 before it writes the

@@ -5,7 +5,7 @@ import {
   type ModelMessage,
   type StructuredModelDiagnostic,
 } from "@rally/agent-harness";
-import { type AgentModelRouting } from "@rally/contracts";
+import { AgentModelRoutingSchema, type AgentModelRouting } from "@rally/contracts";
 import type { Env } from "../env";
 import { createDeadline } from "../lib/deadline";
 import { runtimeDeferral, type WorkDeferral } from "../lib/defer";
@@ -200,7 +200,9 @@ export async function runStructuredInference<T>(
   inputTokens: number | null;
   outputTokens: number | null;
 }> {
-  const routing = await resolveAgentModelRouting(env, input.role, input.context);
+  const routing = input.routing
+    ? AgentModelRoutingSchema.parse(input.routing)
+    : await resolveAgentModelRouting(env, input.role, input.context);
   const feature = structuredInferenceFeature(input.role);
   const substreamId = input.context.workstreamId
     ? input.context.substreamId ?? "0"

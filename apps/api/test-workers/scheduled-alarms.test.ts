@@ -9,7 +9,7 @@
  * was called. `docs/durable-object-alarms.md` is the module document.
  */
 import { env } from "cloudflare:workers";
-import { asSubstreamId, asWorkspaceId, asWorkstreamId, conversationEffectHash } from "@rally/contracts";
+import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -93,13 +93,7 @@ function workspaceStub() {
 async function initializedWorkspace() {
   const stub = workspaceStub();
   await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
-  // Close the Space cutover, the way the path that opens a new Organization
-  // does before its first session. A `pending` one is due at the epoch — that
-  // is how the fleet migration starts without anybody signing in — so every
-  // assertion below about *which* instant the alarm is armed at would be
-  // measuring the cutover instead of the entry it scheduled.
-  await stub.finalizeSpaceBootstrap({ workspaceId: WORKSPACE_ID });
-  // And take back the wake-up the pending cutover armed on the way through.
+  // Take back any wake-up the object armed while constructing.
   // The platform was told about it while the object was constructing, so it is
   // delivered as a real `alarm()` — a second run of the whole handler, racing
   // whichever one a case is about.
@@ -269,26 +263,11 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "recovery_rearm", alarmKind: undefined },
         { phase: "authority_check", alarmKind: undefined },
         { phase: "stored_target", alarmKind: "schedule_bootstrap" },
-        // Hosted parents' outbox runs first: a row there is a directory update
-        // somebody is waiting on.
-        { phase: "parent_outbox", alarmKind: undefined },
-        { phase: "parent_breakouts", alarmKind: undefined },
-        // Post-commit work a directory write recorded and did not finish.
+        // Post-commit sync topics a write recorded and did not send.
         { phase: "directory_followup", alarmKind: undefined },
-        // The Space authority's publishing phases sit before the sweep: each
-        // publishes onto the activity Queue, and a rejected send has to leave
-        // its rows claimed and pending rather than spin this alarm.
-        { phase: "space_default_publish", alarmKind: undefined },
-        { phase: "space_bootstrap", alarmKind: undefined },
-        { phase: "import_reservation_reclaim", alarmKind: undefined },
         { phase: "memory_digest_sync", alarmKind: undefined },
-        { phase: "activity_reap", alarmKind: undefined },
         { phase: "connector_event_reap", alarmKind: undefined },
         { phase: "schedule_reconcile", alarmKind: undefined },
-        // Interrupted Space operations last: each step waits on a Channel's
-        // conversation, and one step per intent per alarm keeps the phases
-        // above from waiting behind a large Space.
-        { phase: "space_intent_resume", alarmKind: undefined },
         { phase: "final_rearm", alarmKind: undefined },
       ]);
       expect(finished).toBe(1);
@@ -372,31 +351,6 @@ describe("the shared Durable Object alarm list", () => {
       await scheduling(instance).armAlarmBeforeDueWork(now);
 
       expect(await state.storage.getAlarm()).toBe(future);
-    });
-  });
-
-  it("parks an overdue workspace retention sweep instead of normalizing it to now", async () => {
-    const stub = await initializedWorkspace();
-
-    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
-      state.storage.sql.exec(
-        `INSERT INTO workspace_activity_events
-           (event_id, event_type, subject_type, subject_id, subject_sequence_number,
-            actor_type, actor_user_id, actor_label, title, body, canonical_url,
-            audience_kind, audience_user_id, audience_workstream_id, digestible,
-            occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json)
-         VALUES ('expired-retention', 'test', 'workspace', NULL, NULL,
-                 'system', NULL, '', 'Expired', '', NULL,
-                 'workspace', NULL, NULL, 0,
-                 0, 0, 'test', NULL, 'expired-retention', '{}')`,
-      );
-      const now = Date.now();
-
-      await scheduling(instance).armAlarmBeforeDueWork(now);
-
-      expect(await state.storage.getAlarm()).toBe(
-        now + SCHEDULED_ALARM_CANCELLATION_RECOVERY_MS,
-      );
     });
   });
 
@@ -655,21 +609,6 @@ describe("a workspace's derived alarm lanes", () => {
     return phases;
   }
 
-  function insertActivityEvent(sql: SqlStorage, eventId: string, createdAt: number): void {
-    sql.exec(
-      `INSERT INTO workspace_activity_events
-         (event_id, event_type, subject_type, subject_id, subject_sequence_number,
-          actor_type, actor_user_id, actor_label, title, body, canonical_url,
-          audience_kind, audience_user_id, audience_workstream_id, digestible,
-          occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json)
-       VALUES (?, 'test', 'workspace', NULL, NULL,
-               'system', NULL, '', 'Event', '', NULL,
-               'workspace', NULL, NULL, 0,
-               ?, ?, 'test', NULL, ?, '{}')`,
-      eventId, createdAt, createdAt, eventId,
-    );
-  }
-
   it("runs a lane that is due, skips every lane that is not, and arms for the one it skipped", async () => {
     await seedOpenAuthority();
     const stub = await initializedWorkspace();
@@ -677,18 +616,17 @@ describe("a workspace's derived alarm lanes", () => {
     await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
       const sql = state.storage.sql;
       const now = Date.now();
-      // Past retention: the activity sweep is due.
-      insertActivityEvent(sql, "expired", 0);
-      // Inside retention, so the sweep must leave it.
-      insertActivityEvent(sql, "recent", now);
-      // A directory update waiting out a backoff: its lane is not due yet.
-      const outboxDueAt = now + 10 * 60_000;
+      // A sync follow-up a write recorded and did not send: its lane is due.
       sql.exec(
-        `INSERT INTO parent_outbox
-           (parent_id, message_id, partition_key, source_version, source_epoch, effect_kind,
-            payload_json, payload_hash, state, attempts, not_before, created_at)
-         VALUES (?, 'waiting', 'partition', 1, 1, 'directory_common', '{}', 'hash', 'pending', 1, ?, ?)`,
-        WORKSTREAM_ID, outboxDueAt, now,
+        `INSERT INTO workspace_directory_followups (followup_json, attempts, not_before, created_at)
+         VALUES (?, 0, ?, ?)`,
+        JSON.stringify({ workspaceId: WORKSPACE_ID, syncTopics: ["automations"] }), now - 1_000, now - 1_000,
+      );
+      // An authorization delivery waiting out a backoff: its lane is not due yet.
+      const deliveryDueAt = now + 10 * 60_000;
+      sql.exec(
+        "INSERT INTO authorization_delivery(job_key, payload_json, not_before) VALUES ('waiting', '{}', ?)",
+        deliveryDueAt,
       );
       const phases = recordPhases(instance);
 
@@ -697,20 +635,19 @@ describe("a workspace's derived alarm lanes", () => {
       expect(phases).toEqual([
         "recovery_rearm",
         "authority_check",
-        "activity_reap",
+        "directory_followup",
         // The one phase with no due time of its own.
         "schedule_reconcile",
         "final_rearm",
       ]);
-      expect(sql.exec<{ event_id: string }>("SELECT event_id FROM workspace_activity_events").toArray())
-        .toEqual([{ event_id: "recent" }]);
-      expect(sql.exec<{ message_id: string; attempts: number }>(
-        "SELECT message_id, attempts FROM parent_outbox",
-      ).toArray()).toEqual([{ message_id: "waiting", attempts: 1 }]);
+      expect(sql.exec("SELECT id FROM workspace_directory_followups").toArray()).toEqual([]);
+      expect(sql.exec<{ job_key: string }>("SELECT job_key FROM authorization_delivery").toArray())
+        .toEqual([{ job_key: "waiting" }]);
       // Skipped, not dropped: the alarm now points at the row it skipped.
-      expect(await state.storage.getAlarm()).toBe(outboxDueAt);
+      expect(await state.storage.getAlarm()).toBe(deliveryDueAt);
     });
   });
+;
 
   it("re-arms a register call only when it queued a delivery", async () => {
     await seedOpenAuthority();
@@ -1064,58 +1001,6 @@ describe("a workspace's schedule", () => {
       store.reconcile("schedule", targets.slice(0, 200), now);
       expect(store.list("schedule")).toHaveLength(200);
       expect(store.get("schedule", "schedule-249")).toBeNull();
-    });
-  });
-
-  it("arms a Terminal deadline as soon as the directory effect that wrote it lands", async () => {
-    await seedOpenAuthority();
-    const stub = await initializedWorkspace();
-    const dueAt = Date.now() + 300_000;
-    const effect = {
-      kind: "directory_common" as const,
-      title: "Terminal",
-      description: "",
-      preview: "",
-      scope: "workspace" as const,
-      state: "idle",
-      systemKind: null,
-      lastActivityAt: new Date().toISOString(),
-      completedAt: null,
-      archivedAt: null,
-      nextTerminalActionAt: new Date(dueAt).toISOString(),
-    };
-
-    // Driven through the real entry point, not the private helper: the failure
-    // this guards against is the reconcile not being wired to the only writer
-    // of `next_terminal_action_at`, which a direct helper call cannot see.
-    // Inspect in the same event, before an immediate mutation-push alarm can fire.
-    await runInDurableObject(stub, async (instance: WorkspaceDO, state) => {
-      await instance.applyWorkstreamDirectoryEffects({
-        workspaceId: WORKSPACE_ID,
-        envelopes: [{
-          kind: "parent_effect" as const,
-          contractVersion: 1 as const,
-          region: "global" as const,
-          workspaceId: WORKSPACE_ID,
-          parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
-          generation: 1,
-          messageId: "00000000-0000-7000-8000-0000000000e9",
-          partitionKey: "common",
-          sourceVersion: 1,
-          requiredProjectionVersion: null,
-          payloadHash: conversationEffectHash(effect),
-          effect,
-        }],
-      });
-
-      const entries = new ScheduledAlarmStore(state.storage.sql).list("terminal");
-      expect(entries.map((entry) => entry.key)).toEqual([WORKSTREAM_ID]);
-      expect(entries[0]!.dueAt).toBe(dueAt);
-      // The directory mutation may also have an earlier authorization push.
-      // Its shared alarm must still wake in time for the registered deadline.
-      const alarm = await state.storage.getAlarm();
-      expect(alarm).not.toBeNull();
-      expect(alarm!).toBeLessThanOrEqual(dueAt);
     });
   });
 

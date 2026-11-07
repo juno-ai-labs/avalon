@@ -14,20 +14,16 @@ import { workspaceSearchIndex, searchChunkIdentity } from '../services/text-sear
 import { ResourceSearchProjectionSchema } from '../durable-objects/resource-search-projection';
 import { SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from '../durable-objects/search-projection-outbox';
 import { AuthorizationProjectionJobSchema } from '../durable-objects/authorization-projection';
-import { MemorySweepMessageSchema, runMemorySweep } from "../services/memory-sweep-service";
-import { MemoryDigestSyncMessageSchema } from "../durable-objects/memory-digest-sync";
-import { refreshMemoryDigestCopies } from "../services/memory-digest-service";
+
 import { projectAuthorization } from '../services/authorization-projection-service';
 import { createSearchIndexingPipeline, indexSemanticBatch } from '../services/search-indexing-pipeline';
 import { projectConversationDisplay } from '../services/search-conversation-display';
-import { ConnectorError, connectorOriginUrl } from "@rally/connectors";
+
 import {
-  ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
   WorkspaceExternalEventDeliveryQueueMessageSchema,
   asSubstreamId,
   asWorkspaceId,
-  asUserId,
   WorkspaceExternalEventMatchResultSchema,
   type WorkspaceId,
 } from "@rally/contracts";
@@ -39,11 +35,6 @@ import {
   ParentEffectEnvelopeSchema,
 } from "@rally/contracts/conversation-effects";
 import { codeShaped, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
-import {
-  SpaceBootstrapQueueMessageSchema,
-  SpaceDefaultQueueMessageSchema,
-  SpaceIntentResumeQueueMessageSchema,
-} from "../durable-objects/workspace-space-protocol";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventClaimResultSchema,
@@ -56,13 +47,13 @@ import { runInteractiveMessage } from "./interactive-consumer";
 import { InteractiveQueueMessageSchema } from "../services/interactive-queue";
 import { runtimeDeferral } from "../lib/defer";
 import { admitExternalEventWithSemanticGate } from "../services/semantic-trigger-admission";
-import type { AuthContext } from "../env";
+
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { consumeGitHubDeliveryMessage, isGitHubDeliveryQueueMessage } from "../services/github-routing-service";
-import { recordActivityEvent } from "../services/activity-event-service";
+
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
-import { connectorRegistryForEnv } from "../lib/connector-registry";
+
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { admitConnectorEvent } from "../services/workspace-connector-event-ingress";
 import {
@@ -71,10 +62,6 @@ import {
 } from "../services/conversation-effect-service";
 import { conversationParentStub } from "../services/conversation-parent-client";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-update";
-import { SpaceBootstrapService, spaceBootstrapDriver } from "../services/space-bootstrap-service";
-import { SpaceService } from "../services/space-service";
-import { WorkstreamService } from "../services/workstream-service";
 import { hostedParentStub } from "../services/conversation-parent-client";
 
 /**
@@ -87,10 +74,16 @@ import { hostedParentStub } from "../services/conversation-parent-client";
  * line needs is the whole contract — there is nothing left to act on, so
  * parsing the rest would be describing a payload in order to throw it away.
  */
-const RetiredQueueMessageSchema = z.object({
-  type: z.enum(["project_default_resource", "thread_backfill", "channel_color_sync"]),
-  workspaceId: z.string(),
-});
+const RetiredQueueMessageSchema = z.union([
+  z.object({
+    type: z.enum(["project_default_resource", "thread_backfill", "channel_color_sync",
+      "space_default", "space_bootstrap", "space_intent_resume"]),
+    workspaceId: z.string(),
+  }),
+  // A Thread batch update names its type by `kind`.
+  z.object({ kind: z.literal("workstream_batch_update"), workspaceId: z.string() })
+    .transform(({ kind, workspaceId }) => ({ type: kind, workspaceId })),
+]);
 
 interface ActivityRow {
   id: string;
@@ -123,22 +116,12 @@ interface ActivityRow {
   processing_status: "pending" | "processing" | "processed" | "failed";
 }
 
-
-
 function parseRecord(value: string): Record<string, unknown> {
   try {
     const parsed: unknown = JSON.parse(value);
     return z.record(z.string(), z.unknown()).parse(parsed);
   } catch {
     return {};
-  }
-}
-
-function parseStrings(value: string): string[] {
-  try {
-    return z.array(z.string()).parse(JSON.parse(value));
-  } catch {
-    return [];
   }
 }
 
@@ -158,7 +141,6 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
   };
   return Object.entries(filters).every(([key, expected]) => deepEqual(available[key], expected));
 }
-
 
 const SearchChildJobTypeSchema = z.object({ type: z.literal('search_embedding_batch_v1') });
 
@@ -240,31 +222,20 @@ async function loadSearchSource(env: Env, reference: SearchSourceReference, capt
       workspaceDOName(reference.region, reference.workspaceId));
     return stub.prepareResourceSearchDocument(reference, documentId);
   }
-  if (reference.type === 'channel_message_search_projection_v1') {
-    // A Channel message is one document, so the id needs no selecting.
-    const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
-      workspaceDOName(reference.region, reference.workspaceId));
-    return stub.prepareChannelMessageSearch(reference);
-  }
+  // A Channel message's job published before Channels were retired: nothing to index.
+  if (reference.type === 'channel_message_search_projection_v1') return { documents: [], retry: false };
   const stub = await durableObjectStubForWorkspace(env, env.SUBSTREAM_AGENTS, reference.workspaceId,
     conversationObjectName(reference.region, reference.workspaceId, reference.parentId, reference.substreamId));
   return stub.prepareSearchTurnDocument(reference, documentId, captureLinks);
 }
 
 /**
- * A resource's or a Channel message's watermark, without extracting its
- * text. Every input of its search text bumps it (`resource-search-projection.ts`,
- * `channel-message-search-projection.ts`), so an equal revision is equal text. A turn has no such read: a link capture can
+ * A resource's watermark, without extracting its text. Every input of its
+ * search text bumps it (`resource-search-projection.ts`), so an equal
+ * revision is equal text. A turn has no such read: a link capture can
  * change a page's text at the same revision, so a turn is re-read in full.
  */
 function searchSourceRevision(env: Env, reference: SearchSourceReference): (() => Promise<number | null>) | undefined {
-  if (reference.type === 'channel_message_search_projection_v1') {
-    return async () => {
-      const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
-        workspaceDOName(reference.region, reference.workspaceId));
-      return stub.channelMessageSearchRevision({ workspaceId: reference.workspaceId, messageId: reference.messageId });
-    };
-  }
   if (reference.type !== 'resource_search_projection_v1') return undefined;
   return async () => {
     const stub = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, reference.workspaceId,
@@ -540,294 +511,6 @@ async function consumeOne(message: Message<unknown>, env: Env,
     message.ack();
     return;
   }
-  const spaceDefault = SpaceDefaultQueueMessageSchema.safeParse(message.body);
-  if (spaceDefault.success) {
-    const target = spaceDefault.data;
-    if (target.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      target.workspaceId,
-      workspaceDOName(env.AVALON_REGION, target.workspaceId),
-    );
-    let current: boolean;
-    try {
-      current = await workspace.spaceDefaultTargetCurrent(target);
-    } catch (error) {
-      // A retired Organization's default target is never current again.
-      if (!isRetirementRefusal(error)) throw error;
-      message.ack();
-      return;
-    }
-    if (!current) {
-      message.ack();
-      return;
-    }
-    // The delivery runs as the person whose action staged it: whoever put the
-    // Channel in the Space, or added the default. A Space's own roster has no
-    // say over its Channels, so it is never the actor.
-    const member = await env.DB.prepare(
-      `SELECT user_id, role FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND status = 'active' AND access_class = 'member'`,
-    ).bind(target.workspaceId, target.requestedByUserId)
-      .first<{ user_id: string; role: AuthContext["role"] }>();
-    if (!member) {
-      await workspace.failSpaceDefaultTarget(target);
-      message.ack();
-      return;
-    }
-    const auth: AuthContext = {
-      sessionId: `space-default:${target.spaceId}:${target.kind}:${target.defaultGeneration}`,
-      userId: asUserId(member.user_id),
-      workspaceId: target.workspaceId,
-      region: env.AVALON_REGION,
-      role: member.role,
-      analyticsWorkspaceId: null,
-      principal: "connector",
-    };
-    try {
-      // One handler, two consumers. The staging, the fence, the currency
-      // recheck and the receipt are identical; what a resource and a Sidekick
-      // differ in is the canonical operation that applies them.
-      const workstreams = new WorkstreamService(env, auth);
-      if (target.kind === "resource") await workstreams.attachResource(target.workstreamId, target.targetId);
-      else await workstreams.setSidekickRecommendation(target.workstreamId, target.targetId, true);
-      await workspace.completeSpaceDefaultTarget(target);
-      message.ack();
-    } catch (error) {
-      // The reason, not the fact. `last_error_code` is the only durable record
-      // of why a default has not reached a Channel, and the fixed
-      // `space_default_apply_failed` it used to carry said only that it had
-      // not — which the row's existence already said.
-      const errorCode = diagnosticErrorCode(error, "space_default_apply_failed");
-      await workspace.recordSpaceDefaultTargetFailure({ ...target, errorCode }).catch(() => undefined);
-      logWarn(env, "space_default_delivery_failed", {
-        workspace_id: target.workspaceId,
-        space_id: target.spaceId,
-        workstream_id: target.workstreamId,
-        kind: target.kind,
-        reason: errorCode,
-      });
-      const attempts = Math.max(1, message.attempts);
-      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
-    }
-    return;
-  }
-  const memorySweep = MemorySweepMessageSchema.safeParse(message.body);
-  if (memorySweep.success) {
-    const target = memorySweep.data;
-    if (target.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    // Acked whatever happens, as colour sync and the backfill are: the
-    // conversation's own claim and rest decide when it is tried again, and
-    // `runMemorySweep` has already released the claim before it throws.
-    try {
-      await runMemorySweep(env, target);
-    } catch (error) {
-      if (!isRetirementRefusal(error)) {
-        logWarn(env, "memory_sweep_delivery_failed", {
-          workspace_id: target.workspaceId,
-          workstream_id: target.parentId,
-          substream_id: target.substreamId,
-          attempt: target.attempt,
-          reason: diagnosticErrorCode(error, "memory_sweep_delivery_failed"),
-        });
-      }
-    }
-    message.ack();
-    return;
-  }
-  const digestSync = MemoryDigestSyncMessageSchema.safeParse(message.body);
-  if (digestSync.success) {
-    const target = digestSync.data;
-    if (target.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      target.workspaceId,
-      workspaceDOName(env.AVALON_REGION, target.workspaceId),
-    );
-    try {
-      const work = await workspace.memoryDigestSyncWork(target);
-      if (work) {
-        // Every copy the conversation holds, re-read as its own principal.
-        // A copy that failed keeps the row: released, so the alarm sends it
-        // again at its gate, rather than completed over a stale copy. Each
-        // failure was logged with its reason by the refresh.
-        const refreshed = await refreshMemoryDigestCopies(env, { workspaceId: target.workspaceId, ...work });
-        if (refreshed.failed > 0) await workspace.releaseMemoryDigestSync(target);
-        else await workspace.completeMemoryDigestSync(target);
-      }
-    } catch (error) {
-      // A retired Organization's conversation is never read again.
-      if (!isRetirementRefusal(error)) {
-        // Acked rather than retried, as colour sync is: the row's own gate
-        // sends it again, and releasing it lets the rest of its batch go.
-        logWarn(env, "memory_digest_sync_failed", {
-          workspace_id: target.workspaceId,
-          revision: target.revision,
-          reason: diagnosticErrorCode(error, "memory_digest_sync_failed"),
-        });
-        await workspace.releaseMemoryDigestSync(target).catch(() => undefined);
-      }
-    }
-    message.ack();
-    return;
-  }
-  const bootstrap = SpaceBootstrapQueueMessageSchema.safeParse(message.body);
-  if (bootstrap.success) {
-    const work = bootstrap.data;
-    if (work.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    // Nobody is signed in. The cutover's actor is resolved from current
-    // membership rather than carried on the message, because the message may
-    // be redelivered days later and the person it named may have left.
-    const driver = await spaceBootstrapDriver(env, work.workspaceId, env.AVALON_REGION);
-    if (!driver) {
-      // An Organization with no active member has nobody the disclosure could
-      // be attributed to, and nobody to render the hierarchy for either.
-      logInfo(env, "space_bootstrap_skipped", {
-        workspace_id: work.workspaceId,
-        outcome: "skipped",
-        reason: "no_active_member",
-      });
-      message.ack();
-      return;
-    }
-    try {
-      const cutover = new SpaceBootstrapService(env, driver);
-      if (work.kind === "general") await cutover.runGeneral();
-      else if (work.kind === "preflight") await cutover.runPreflight(work.cursor);
-      else if (work.kind === "memberships") await cutover.runMemberships(work.cursor);
-      else await cutover.runFinalize();
-      message.ack();
-    } catch (error) {
-      if (isRetirementRefusal(error)) {
-        message.ack();
-        return;
-      }
-      // Said out loud, for the reason a resume says its own: the alarm
-      // republishes this on its retry gate as well, so a silent catch turns a
-      // half-migrated Organization into a dead-letter message with no reason
-      // on it.
-      logWarn(env, "space_bootstrap_failed", {
-        workspace_id: work.workspaceId,
-        kind: work.kind,
-        attempts: message.attempts,
-        reason: diagnosticErrorCode(error, "space_bootstrap_failed"),
-      });
-      const attempts = Math.max(1, message.attempts);
-      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
-    }
-    return;
-  }
-  const spaceResume = SpaceIntentResumeQueueMessageSchema.safeParse(message.body);
-  if (spaceResume.success) {
-    const intent = spaceResume.data;
-    if (intent.region !== env.AVALON_REGION) {
-      message.ack();
-      return;
-    }
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      intent.workspaceId,
-      workspaceDOName(env.AVALON_REGION, intent.workspaceId),
-    );
-    // The person who staged it, if they are still here. A Space operation is
-    // applied through the Channel's canonical operations, and those authorize
-    // an actor — so a resume needs one, and the requester is the only actor the
-    // original authorization covered.
-    const member = await env.DB.prepare(
-      `SELECT user_id, role FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND status = 'active' AND access_class = 'member'`,
-    ).bind(intent.workspaceId, intent.requestedByUserId)
-      .first<{ user_id: string; role: AuthContext["role"] }>();
-    if (!member) {
-      try {
-        await workspace.recordSpaceIntentFailure({
-          workspaceId: intent.workspaceId,
-          userId: intent.requestedByUserId,
-          operationId: intent.operationId,
-          errorCode: "space_intent_requester_inactive",
-        });
-      } catch (error) {
-        if (!isRetirementRefusal(error)) throw error;
-      }
-      message.ack();
-      return;
-    }
-    const auth: AuthContext = {
-      sessionId: `space-intent:${intent.operationId}`,
-      userId: asUserId(member.user_id),
-      workspaceId: intent.workspaceId,
-      region: env.AVALON_REGION,
-      role: member.role,
-      analyticsWorkspaceId: null,
-      principal: "connector",
-    };
-    try {
-      // WorkspaceDO resumes the intent from its row, whatever its kind.
-      const resumed = await new SpaceService(env, auth).resumeIntent(intent.operationId);
-      // An intent that settled without doing its work is the one outcome
-      // nothing else would say out loud: the row reads `settled`, the queue is
-      // clear, and the operation the person asked for never reached its member
-      // Channels. Named here rather than inside the service because this is
-      // where the failing resume is already logged, and a reader comparing the
-      // two lines should not have to know which layer wrote which.
-      if (resumed.outcome === "abandoned") {
-        logWarn(env, "space_intent_resume_abandoned", {
-          workspace_id: intent.workspaceId,
-          space_id: intent.spaceId,
-          operation_id: intent.operationId,
-          kind: intent.kind,
-          reason: resumed.reason,
-        });
-      }
-      message.ack();
-    } catch (error) {
-      if (isRetirementRefusal(error)) {
-        message.ack();
-        return;
-      }
-      // Said out loud, and written down. A resume that keeps failing is
-      // retried by the alarm and here as well, so a silent catch makes a
-      // half-finished operation a thing that shows up only as a dead-letter
-      // message with no reason on it — which is the diagnosis this costs on the
-      // way in. The code goes on the intent as well as into the log, the way a
-      // default target's does: the row outlives the log line, and whoever finds
-      // it unsettled otherwise has the fact without the reason.
-      const reason = diagnosticErrorCode(error, "space_intent_resume_failed");
-      await workspace.recordSpaceIntentFailure({
-        workspaceId: intent.workspaceId,
-        userId: intent.requestedByUserId,
-        operationId: intent.operationId,
-        errorCode: reason,
-      }).catch(() => undefined);
-      logWarn(env, "space_intent_resume_failed", {
-        workspace_id: intent.workspaceId,
-        space_id: intent.spaceId,
-        operation_id: intent.operationId,
-        kind: intent.kind,
-        attempts: message.attempts,
-        reason,
-      });
-      const attempts = Math.max(1, message.attempts);
-      message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
-    }
-    return;
-  }
-  if (await consumeWorkstreamBatchUpdate(message, env)) return;
   const runProvision = SidekickRunProvisionQueueMessageSchema.safeParse(message.body);
   if (runProvision.success) {
     // A Sidekick's run, handed off by its Organization's alarm entry. The entry
@@ -1325,7 +1008,6 @@ export async function processConnectorEvent(
     workspaceId: activity.workspace_id,
     eventId: activity.id,
   }));
-  await projectActivityEvent(env, activity);
   await Promise.all(matched.deliveries.map((delivery) => sendConnectorEventDelivery(env, delivery)));
   logInfo(env, "connector_event_processing_completed", {
     workspace_id: activity.workspace_id,
@@ -1373,125 +1055,6 @@ function activityRowFromWorkspaceEvent(event: WorkspaceConnectorEvent): Activity
   };
 }
 
-/**
- * Projects a processed connector activity into the first-party activity log.
- *
- * It happens here, after routing, rather than at ingest: an activity is only
- * something a person should hear about once it has survived verification and
- * routing, and `activities` rows are rewritten during processing. The
- * connection's own scope is the audience — a personal connection speaks only to
- * its owner, a workspace-wide one to the whole workspace — which is the same
- * rule the rest of the product already applies to connector data.
- */
-async function projectActivityEvent(env: Env, activity: ActivityRow): Promise<void> {
-  // The same rule the rest of the consumer applies, rather than a second one:
-  // null means the whole workspace may see it, an empty list means nobody may,
-  // and a populated list names exactly who may. A Slack private channel or DM
-  // arrives on a workspace-wide connection but is restricted to the people in
-  // it, so `connection_scope` alone is not the audience.
-  const restrictedUserIds = restrictedActivityUserIds(activity);
-  if (restrictedUserIds?.length === 0) return;
-
-  const digestible = activityIsDigestible(env, activity);
-  const shared = {
-    digestible,
-    workspaceId: asWorkspaceId(activity.workspace_id),
-    eventType: `connector.${activity.provider}.${activity.event_type}`,
-    subjectType: activity.resource_type ?? "connector_activity",
-    subjectId: activity.provider_resource_id ?? activity.id,
-    actorType: "external" as const,
-    actorLabel: connectorActorLabel(activity),
-    title: activity.title,
-    body: activity.summary || activity.text_snippet,
-    canonicalUrl: connectorOriginUrl(parseRecord(activity.metadata_json)),
-    occurredAt: activity.occurred_at,
-    sourceKind: "activity",
-    sourceId: activity.id,
-    metadata: { provider: activity.provider, connectorType: activity.connector_type },
-  };
-
-  if (!restrictedUserIds) {
-    await recordActivityEvent(env, {
-      ...shared,
-      audience: { kind: "workspace" },
-      dedupeKey: `activity:${activity.id}`,
-      // The provider already told us who it concerns; `target_user_ids_json`
-      // holds the Avalon users it resolved to.
-      targets: parseStrings(activity.target_user_ids_json).map((userId) => ({ userId, relation: "involved" })),
-    });
-    return;
-  }
-
-  // A restricted activity becomes one event per permitted reader. `audience`
-  // names a single user by design — a set-valued audience would need a join
-  // table to answer the one question this table exists to answer quickly — and
-  // these lists are small, because they come from a mention or a private
-  // conversation's membership.
-  for (const userId of restrictedUserIds) {
-    await recordActivityEvent(env, {
-      ...shared,
-      audience: { kind: "user", userId },
-      dedupeKey: `activity:${activity.id}:${userId}`,
-      targets: [{ userId, relation: "involved" }],
-    });
-  }
-}
-
-/**
- * Whether this connector activity may be read back to a person in a digest.
- *
- * Digests are retired (plan step C-2); the flag is still recorded on the
- * activity row, which is all that reads it now.
- *
- * The connector's manifest is the authority, keyed on the event type — the one
- * thing an activity durably carries all the way from the provider to the log.
- * A polling stream may additionally withhold its own output, and says so
- * through the metadata the poll host stamps; a stream can only ever subtract,
- * so the two declarations cannot contradict each other into a digest.
- *
- * Everything unknown is withheld. An unregistered connector in this region, a
- * manifest that has dropped an event type it used to emit, an activity from a
- * connector that predates the declaration — none of those are somebody
- * confirming that a person wants this in their inbox, and the cost of being
- * wrong runs one way only: a withheld event is still logged, still routes, and
- * still triggers automations.
- */
-function activityIsDigestible(env: Env, activity: ActivityRow): boolean {
-  if (parseRecord(activity.metadata_json)[ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY] === true) {
-    return false;
-  }
-  try {
-    return connectorRegistryForEnv(env)
-      .get(activity.connector_type)
-      .manifest.digestibleActivityTypes
-      .includes(activity.event_type);
-  } catch (error) {
-    // Two very different things reach here, and only one of them is ordinary.
-    //
-    // `unsupported_capability` is a connector this region does not register —
-    // expected, and withholding is the whole point of failing closed. Anything
-    // else means the registry could not be built at all: one malformed
-    // credential fails every adapter, which would withhold *every* connector's
-    // activity region-wide, settle every digest as empty, and advance every
-    // cursor over the discarded windows. That is indistinguishable from a quiet
-    // week unless it says so, so it is logged rather than swallowed.
-    if (!(error instanceof ConnectorError) || error.code !== "unsupported_capability") {
-      logWarn(env, "connector_registry_unavailable_for_digestibility", {
-        workspace_id: activity.workspace_id,
-        connector_type: activity.connector_type,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-    }
-    return false;
-  }
-}
-
-function connectorActorLabel(activity: ActivityRow): string {
-  const displayName = parseRecord(activity.actor_json).displayName;
-  if (typeof displayName === "string" && displayName.length > 0) return displayName;
-  return activity.provider;
-}
-
 function workspaceDirectory(env: Env, workspaceId: WorkspaceId) {
   return durableObjectStubForWorkspace(
     env,
@@ -1503,6 +1066,5 @@ function workspaceDirectory(env: Env, workspaceId: WorkspaceId) {
 
 export const __testing = {
   matchesFilters,
-  projectActivityEvent,
   restrictedActivityUserIds,
 };

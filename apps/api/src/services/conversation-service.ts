@@ -56,8 +56,8 @@ export class ConversationService {
   }
 
   /**
-   * `resolveParent`, and for a hosted Channel the viewer's decision from the
-   * same call when a viewer is named.
+   * `resolveParent`, and the viewer's decision from the same call when a
+   * viewer is named. A retired Thread's or Channel's id is not found.
    */
   private async resolveParentFor(
     parentId: string,
@@ -72,12 +72,6 @@ export class ConversationService {
     const hosted = await workspace.resolveHostedParent({
       workspaceId: this.auth.workspaceId, parentId, ...(viewer ? { viewer } : {}),
     });
-    if (hosted.kind === "workstream") {
-      return {
-        parent: { kind: "workstream", id: parentId, membershipVersion: 0, ...hosted.authority },
-        ...(hosted.viewer ? { decision: hosted.viewer } : {}),
-      };
-    }
     if (hosted.kind === "automation" || hosted.kind === "canvas") {
       return {
         parent: { kind: hosted.kind, id: parentId, membershipVersion: 0, ...hosted.authority },

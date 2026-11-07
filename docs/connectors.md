@@ -303,7 +303,7 @@ preparation, and a refresh does not trigger a second authorization read before
 the provider effect. Revocation during that invocation may let it finish; the
 next creator tool checks again.
 
-The claim is scoped to adapter entry points. A few host paths need only a fresh token rather than a connection to hand an adapter — `slack-agent-service.ts`, `slack-unfurl-refresh.ts`, and `slack-notification-service.ts` each call `ensureFreshConnectorCredentials` directly to read a bot token — and the brand correctly does not apply to them. They get freshness, but not the mid-call recovery below, because they are not making a call an adapter would recover.
+The claim is scoped to adapter entry points. A few host paths need only a fresh token rather than a connection to hand an adapter — `slack-agent-service.ts` and `slack-notification-service.ts` each call `ensureFreshConnectorCredentials` directly to read a bot token — and the brand correctly does not apply to them. They get freshness, but not the mid-call recovery below, because they are not making a call an adapter would recover.
 
 Rotation is available to every connection a person has not disabled. The coordinator's lease claim, its credential reload, and the write that stores a rotated credential all admit any row except `disabled`, so a connection this database believes is broken is refreshed and rotated exactly like one it believes is fine, and the provider gets to say whether the belief was still true. A successful token refresh preserves status: it proves token liveness, not that every required scope is present. Reauthorization and explicit connection tests can heal authorization diagnoses; successful polls heal only polling diagnoses.
 
@@ -399,7 +399,13 @@ ownerless instead of guessing a member.
 
 ### A work stream's audience is the conversation it started in
 
-`connector-workstream-audience.ts` holds the second half of the same idea, and it is
+> **Retired.** `connector-workstream-audience.ts` was deleted with the Thread
+> create paths in plan step C-2: a connector no longer opens a work stream, so
+> nothing derives one's audience. The rule is kept here for whoever lets a
+> connector start a Canvas or seat a Sidekick's audience from a provider
+> conversation.
+
+`connector-workstream-audience.ts` held the second half of the same idea, and it is
 connector-wide for the same reason: **a work stream starts with the audience of the
 conversation it came from.**
 
@@ -1632,7 +1638,6 @@ independent change condition, mixed batches, and URL/metadata merge behavior.
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 | `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
-| `apps/api/test-workers/message-to-output-pipeline.test.ts`, `apps/api/test/slack-workspace-assignment.test.ts` | A completed composite-id transcript turn is reloaded before terminal side effects settle; Slack never opens or appends a response stream, posts only the complete saved turn, and emits no result message when no saved turn exists. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/connector-credential-freshness.test.ts`

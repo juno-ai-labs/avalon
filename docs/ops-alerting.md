@@ -158,7 +158,7 @@ Cloudflare administration credentials never become Worker variables
   thrown message that is not a code reaches the channel as the error's class,
   and a handler's own schema rejection reaches it naming the field and not
   the value.
-- `apps/api/test/slack-workspace-assignment.test.ts` ("Slack ingress jobs given
+- `apps/api/test/slack-workspace-assignment.test.ts` (deleted in plan step C-2) ("Slack ingress jobs given
   up on") — the exhausted-job notice is posted once at the ceiling, a Queue
   redelivery of the dead job posts nothing, and a failure the queue will retry
   posts nothing.

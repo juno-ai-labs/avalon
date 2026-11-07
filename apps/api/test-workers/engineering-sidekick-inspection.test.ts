@@ -23,7 +23,7 @@ import { EngineeringInspectionBridge } from "../src/engineering-inspection-bridg
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub } from "./helpers/hosted-parent";
+
 import { seedInspectableWorkspace } from "./helpers/engineering-inspection-fixture";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 
@@ -61,27 +61,10 @@ async function seedRegionalDatabase(): Promise<void> {
 }
 
 /**
- * A work stream that owns an active route and no directory row: the id shape
- * the Sidekick tools must refuse.
+ * A conversation id that owns an active route and has no parent the
+ * Organization hosts: the id shape the Sidekick tools must refuse.
  */
 async function seedRoom(): Promise<void> {
-  await hostedParentStub(env, WORKSPACE_ID).reserveChild({
-    workspaceId: WORKSPACE_ID,
-    parentId: ROOM_ID,
-    substreamId: asSubstreamId("0"),
-    kind: "main",
-    createdByUserId: AUTHOR_ID,
-    authorityGeneration: 1,
-    directory: {
-      title: "Release room",
-      description: "",
-      scope: "personal",
-      systemKind: null,
-      emailAddress: null,
-      titleStatus: "settled",
-      createdAt: NOW,
-    },
-  });
   await env.DB.prepare(`INSERT INTO workstream_authority_routes
     (workspace_id, workstream_id, generation, object_name, state, source_fence_sequence, updated_at)
     VALUES (?, ?, 1, ?, 'active', 0, ?)`)

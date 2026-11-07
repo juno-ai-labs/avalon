@@ -30,7 +30,7 @@ import {
   type InvitationEmailDelivery,
 } from "./invitation-email-service";
 import { dispatchWorkspaceRelationshipChanges } from "./workspace-relationship-delivery";
-import { publishWorkspaceSync, seatSpaceInvitee } from "./workspace-realtime-service";
+import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
 import { workspaceDOName } from "../durable-objects/names";
 import { PersonalSystemPromptRecordSchema } from "../durable-objects/personal-system-prompt";
@@ -291,13 +291,6 @@ export async function acceptInvitationForUser(
     try { await publishWorkspaceSync(env, invitation.workspace_id, ["member_directory"], { memberUserIds: [user.id] }); }
     catch (error) {
       logWarn(env, "search_authorization_member_push_failed", { workspace_id: invitation.workspace_id, user_id: user.id,
-        error_code: error instanceof Error ? error.message : "unknown" });
-    }
-    // Spaces that listed this address before they joined now seat them. A
-    // failure leaves them out of those Spaces, and the warning is the notice.
-    try { await seatSpaceInvitee(env, invitation.workspace_id, user.id, invitation.email); }
-    catch (error) {
-      logWarn(env, "space_invitee_seat_failed", { workspace_id: invitation.workspace_id, user_id: user.id,
         error_code: error instanceof Error ? error.message : "unknown" });
     }
     await notifyInvitationResolution(env, invitation, user, "accepted");
@@ -947,8 +940,6 @@ export class WorkspaceService {
       "The workspace membership changed while leaving. Check it and try again.",
     );
   }
-
-
 
   async promoteGuest(userId: string, input: { incarnation: string; expectedRevision: number }) {
     if (this.auth.role !== "owner" && this.auth.role !== "admin") {

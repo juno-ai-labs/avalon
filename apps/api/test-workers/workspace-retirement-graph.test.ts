@@ -24,7 +24,7 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
+import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { RETIREMENT_REFUSAL_CODE } from "../src/durable-objects/object-retirement";
 import { retireWorkspaceGraph } from "../src/services/workspace-retirement-service";
@@ -162,37 +162,6 @@ async function seedDirectory(stub: DurableObjectStub<WorkspaceDO>, workspaceId: 
       Date.now(),
       Date.now(),
       Date.now(),
-      Date.now(),
-    );
-    void instance;
-  });
-}
-
-/**
- * A Channel parent's identity and its one Main child, written the way a
- * projection and a reservation leave them. Going through `reserveChild` would
- * drag in this suite's empty D1, and what is under test here is the walk.
- */
-async function seedMainChild(stub: DurableObjectStub<WorkspaceDO>, workspaceId: string): Promise<void> {
-  await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
-    state.storage.sql.exec(
-      `INSERT INTO parent_metadata
-         (parent_id, parent_kind, workspace_id, region, authority_generation, revision,
-          created_at, updated_at)
-       VALUES (?, 'workstream', ?, ?, 1, 1, ?, ?)
-       ON CONFLICT (parent_id) DO NOTHING`,
-      FIRST_ROOM_ID,
-      workspaceId,
-      TEST_ENV.AVALON_REGION,
-      Date.now(),
-      Date.now(),
-    );
-    state.storage.sql.exec(
-      `INSERT OR IGNORE INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at)
-       VALUES (?, ?, 'main', ?, ?)`,
-      FIRST_ROOM_ID,
-      asSubstreamId("0"),
-      ACTOR_ID,
       Date.now(),
     );
     void instance;
@@ -354,88 +323,4 @@ describe("workspace retirement graph", () => {
     expect(receipt.parents).toBe(4);
   });
 
-  it("leaves a parent whose child could not be closed unreceipted, names why, and finishes on the next pass", async () => {
-    // The one outcome that is a failure, and the only path that produces a
-    // non-empty `failed`, the receipt shape the route and the Ace page render.
-    // The child's object answering overloaded is the platform's failure, which
-    // cannot be produced here, so only that one call is stood in for.
-    const workspaceId = freshWorkspaceId();
-    const stub = workspaceStub(workspaceId);
-    await seedDirectory(stub, workspaceId);
-    await seedMainChild(stub, workspaceId);
-    const agents = TEST_ENV.SUBSTREAM_AGENTS;
-    const unreachable = {
-      idFromName: (name: string) => agents.idFromName(name),
-      idFromString: (id: string) => agents.idFromString(id),
-      jurisdiction: () => unreachable,
-      get: () => ({ retireObject: () => Promise.reject(new Error("durable_object_overloaded")) }),
-    };
-    const failingEnv = new Proxy(TEST_ENV, {
-      get: (target, property, receiver) => property === "SUBSTREAM_AGENTS"
-        ? unreachable
-        : Reflect.get(target, property, receiver),
-    });
-    const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" } as const;
-
-    const failed = await retireWorkspaceGraph(failingEnv, { workspaceId, ...tombstone });
-    expect(failed.complete).toBe(false);
-    expect(failed.remaining).toBe(1);
-    expect(failed.failed).toEqual([
-      { parentKind: "workstream", parentId: FIRST_ROOM_ID, error: "durable_object_overloaded" },
-    ]);
-
-    const resumed = await retireWorkspaceGraph(TEST_ENV, { workspaceId, ...tombstone });
-    expect(resumed.failed).toEqual([]);
-    expect(resumed.retiredChildren).toBe(1);
-    expect(resumed.complete).toBe(true);
-  });
-
-  it("closes children before parents and reports the pass", async () => {
-    const workspaceId = freshWorkspaceId();
-    const stub = workspaceStub(workspaceId);
-    await publishDemo(workspaceId);
-    await seedDirectory(stub, workspaceId);
-    // A real child on one of the parents. Without it every `childrenForRetirement`
-    // answers `missing`, `retiredChildren` is zero, and the test named for
-    // closing children before parents closes no children at all.
-    await seedMainChild(stub, workspaceId);
-
-    const receipt = await retireWorkspaceGraph(TEST_ENV, {
-      workspaceId,
-      retiredAt: Date.parse(COMPLETED_AT),
-      operationId: OPERATION_ID,
-      // An internal actor, never the author of what is being closed. The spike
-      // impersonated an automation's author to make its transitions go through,
-      // which put a person's name on work they did not do.
-      actorUserId: null,
-      reason: "demo_replaced",
-    });
-
-    expect(receipt.failed).toEqual([]);
-    expect(receipt.parents).toBe(4);
-    expect(receipt.retiredParents).toBe(4);
-    // The child was found and closed, which is only possible because it was
-    // asked for before its parent was tombstoned.
-    expect(receipt.retiredChildren).toBe(1);
-    expect(receipt.complete).toBe(true);
-    expect(receipt.remaining).toBe(0);
-
-    // Every parent is closed, and the workspace with them.
-    const progress = await stub.workspaceRetirementProgress();
-    expect(progress.nodes.every((node) => node.retired)).toBe(true);
-    expect((await stub.objectRetirementState()).retired).toBe(true);
-
-    // Re-running a finished retirement is a no-op rather than a second walk.
-    const again = await retireWorkspaceGraph(TEST_ENV, {
-      workspaceId,
-      retiredAt: Date.parse(COMPLETED_AT),
-      operationId: OPERATION_ID,
-      actorUserId: null,
-      reason: "demo_replaced",
-    });
-    expect(again.retiredParents).toBe(0);
-    expect(again.complete).toBe(true);
-    // The register's retired instant is the first pass's, not the replay's.
-    expect(await registerRetiredAt(workspaceId)).toBe(COMPLETED_AT);
-  });
 });

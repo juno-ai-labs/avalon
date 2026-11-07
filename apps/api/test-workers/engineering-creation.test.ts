@@ -126,7 +126,8 @@ describe("engineering Organization creation", () => {
     expect((await env.DB.prepare("SELECT user_id, role, status FROM workspace_members WHERE workspace_id = ? ORDER BY user_id").bind(ORG).all()).results)
       .toEqual([{ user_id: CREATOR, role: "owner", status: "active" }, { user_id: MEMBER, role: "member", status: "active" }]);
     const spaces = await bridge.listSpaces({ workspaceId: ORG });
-    expect(spaces.found && spaces.value.items.map((space) => space.scope).sort()).toEqual(["individual", "individual", "workspace"]);
+    // Nobody is seated anywhere: there is no General and no Personal Channel.
+    expect(spaces.found && spaces.value.items).toEqual([]);
     expect((await env.DB.prepare("SELECT id FROM workspaces WHERE id = ?").bind(ORG).all()).results).toEqual([{ id: ORG }]);
     expect((await env.DB.prepare("SELECT id FROM sessions WHERE workspace_id = ?").bind(ORG).all()).results).toEqual([]);
     const audits = (await env.AUDIT_DB.prepare(

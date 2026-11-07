@@ -1,4 +1,3 @@
-import { ScopeGrantSchema } from "@rally/contracts/scope-grants";
 import "../../../tests/isolated-region";
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 import { env } from "cloudflare:workers";
@@ -9,7 +8,6 @@ import { WorkspaceRelationshipSchema } from "@rally/contracts/scope-grants";
 import { writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { searchAudienceGroup, searchAudienceGroupIds } from "../src/services/search-audience";
-import { insertChannelRow } from "./helpers/hosted-parent";
 
 /**
  * Search's person side (`WorkspaceDO.readSearchAudience`) against the rule
@@ -28,10 +26,7 @@ const EXECUTOR = "00000000-0000-7000-8000-00000000a004";
 const GUEST = "00000000-0000-7000-8000-00000000a005";
 const SUSPENDED = "00000000-0000-7000-8000-00000000a006";
 const REJOINED = "00000000-0000-7000-8000-00000000a007";
-const OPEN = "00000000-0000-7000-8000-00000000c001";
 const PRIVATE = "00000000-0000-7000-8000-00000000c002";
-const GRANTED = "00000000-0000-7000-8000-00000000c003";
-const BREAKOUT = "00000000-0000-7000-8000-00000000b001";
 const SIDEKICK_WORKSPACE = "00000000-0000-7000-8000-00000000d001";
 const SIDEKICK_PERSONAL = "00000000-0000-7000-8000-00000000d002";
 const SIDEKICK_OWNED = "00000000-0000-7000-8000-00000000d003";
@@ -65,43 +60,6 @@ async function seedOrganization() {
   await relate(REJOINED, "member");
   await runInDurableObject(workspace(), (_instance, state) => {
     const sql = state.storage.sql;
-    // Two legacy-roster Channels: one open to the Organization, one personal
-    // whose creator is its only participant (Main has not reported yet, so the
-    // creator stands in), with a ready Breakout only its own member reads.
-    for (const [parentId, scope] of [[OPEN, "workspace"], [PRIVATE, "personal"]] as const) {
-      sql.exec(`INSERT INTO parent_metadata (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
-        VALUES (?, 'workstream', ?, 'global', 1, 1, 1)`, parentId, WORKSPACE_ID);
-      insertChannelRow(state, parentId, parentId === OPEN ? "Open" : "Private", scope);
-      sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, status, updated_at)
-        VALUES (?, '0', 'main', ?, 1, 'ready', 1)`, parentId, PARTICIPANT);
-    }
-    sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, status, updated_at)
-      VALUES (?, ?, 'child', ?, 2, 'ready', 2)`, PRIVATE, BREAKOUT, BREAKOUT_MEMBER);
-    sql.exec(`INSERT INTO parent_breakout_members (parent_id, substream_id, user_id, active, version, added_by_user_id, added_at, updated_at)
-      VALUES (?, ?, ?, 1, 1, ?, 2, 2)`, PRIVATE, BREAKOUT, BREAKOUT_MEMBER, BREAKOUT_MEMBER);
-    for (const [parentId, substreamId, userId] of [[OPEN, null, PARTICIPANT], [PRIVATE, null, PARTICIPANT], [PRIVATE, BREAKOUT, BREAKOUT_MEMBER]] as const) {
-      const grant = ScopeGrantSchema.parse({ id: crypto.randomUUID(), userId,
-        target: substreamId === null ? { kind: "workstream", workspaceId: WORKSPACE_ID, parentId }
-          : { kind: "conversation", workspaceId: WORKSPACE_ID, parentId, substreamId },
-        active: true, revision: 1, membershipIncarnation: `incarnation-${userId}` });
-      sql.exec("INSERT INTO parent_grants(parent_id,user_id,scope_kind,substream_id,grant_json) VALUES (?,?,?,?,?)",
-        parentId, userId, grant.target.kind, substreamId ?? "", JSON.stringify(grant));
-    }
-    // A Channel whose Main has moved to grant authority: only a grant bound to
-    // the reader's current membership admits them. The guest holds one; the
-    // re-added member holds one from an earlier membership.
-    sql.exec(`INSERT INTO parent_metadata (parent_id, parent_kind, workspace_id, region, authority_generation, created_at, updated_at)
-      VALUES (?, 'workstream', ?, 'global', 1, 1, 1)`, GRANTED, WORKSPACE_ID);
-    insertChannelRow(state, GRANTED, "Granted", "personal");
-    sql.exec(`INSERT INTO parent_children (parent_id, substream_id, kind, created_by_user_id, created_at, status, updated_at)
-      VALUES (?, '0', 'main', ?, 1, 'ready', 1)`, GRANTED, GUEST);
-    sql.exec(`INSERT INTO parent_participant_migrations (parent_id, substream_id, transfer_id, phase)
-      VALUES (?, '0', 'transfer-granted', 'complete')`, GRANTED);
-    for (const [userId, incarnation] of [[GUEST, `incarnation-${GUEST}`], [REJOINED, "incarnation-before-removal"]] as const) {
-      sql.exec(`INSERT INTO parent_grants (parent_id, user_id, scope_kind, substream_id, grant_json) VALUES (?, ?, 'workstream', '', ?)`,
-        GRANTED, userId, JSON.stringify({ id: userId === GUEST ? "00000000-0000-7000-8000-00000000f001" : "00000000-0000-7000-8000-00000000f002", userId, active: true, revision: 1, membershipIncarnation: incarnation,
-          target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: GRANTED } }));
-    }
     const sidekick = (id: string, scope: string, author: string, runAs: string | null, owning: string | null, lifecycle = "active") =>
       sql.exec(`INSERT INTO automation_directory (automation_id, workspace_id, author_user_id, run_as_user_id, source_version,
           payload_hash, lifecycle, scope, owning_workstream_id, title, description, projected_at)
@@ -123,37 +81,33 @@ async function seedOrganization() {
 
 const groups = (userId: string) => workspace().readSearchAudience({ workspaceId: WORKSPACE_ID, userId });
 const expected = async (names: string[]) => (await searchAudienceGroupIds(names)).sort();
-const { user, members, conversation, sidekick, connection } = searchAudienceGroup;
+const { user, members, sidekick, connection } = searchAudienceGroup;
 
 describe("search audience: the person side", () => {
   it("lists exactly what each person may read under every canonical rule", async () => {
     await seedOrganization();
-    // A member: the open Channel, the workspace Sidekick they wrote, the
-    // workspace connection. Not the personal Channel, its Breakout, or any
-    // Sidekick or connection that is someone else's.
+    // A member: the workspace Sidekick they wrote and the workspace
+    // connection, not any Sidekick or connection that is someone else's.
+    // Threads and Channels contribute no group.
     expect((await groups(MEMBER)).sort()).toEqual(await expected([user(MEMBER), members(WORKSPACE_ID),
-      conversation(OPEN, "0"), sidekick(SIDEKICK_WORKSPACE), connection(CONNECTION_WORKSPACE)]));
-    // The personal Channel's participant reads its Main but not its Breakout,
-    // and the Sidekick they wrote; a Channel they are in lends them none.
+      sidekick(SIDEKICK_WORKSPACE), connection(CONNECTION_WORKSPACE)]));
+    // The Sidekick and the connection they own.
     expect((await groups(PARTICIPANT)).sort()).toEqual(await expected([user(PARTICIPANT), members(WORKSPACE_ID),
-      conversation(OPEN, "0"), conversation(PRIVATE, "0"), sidekick(SIDEKICK_WORKSPACE), sidekick(SIDEKICK_PERSONAL),
+      sidekick(SIDEKICK_WORKSPACE), sidekick(SIDEKICK_PERSONAL),
       connection(CONNECTION_WORKSPACE), connection(CONNECTION_PERSONAL)]));
-    // A Breakout's roster is its own: its member reads it without reading Main,
-    // and the personal Sidekick they wrote.
+    // The personal Sidekick they wrote.
     expect((await groups(BREAKOUT_MEMBER)).sort()).toEqual(await expected([user(BREAKOUT_MEMBER), members(WORKSPACE_ID),
-      conversation(OPEN, "0"), conversation(PRIVATE, BREAKOUT), sidekick(SIDEKICK_WORKSPACE), sidekick(SIDEKICK_OWNED),
+      sidekick(SIDEKICK_WORKSPACE), sidekick(SIDEKICK_OWNED),
       connection(CONNECTION_WORKSPACE)]));
     // Who a Sidekick runs as reads its conversations, as its author does.
     expect((await groups(EXECUTOR)).sort()).toEqual(await expected([user(EXECUTOR), members(WORKSPACE_ID),
-      conversation(OPEN, "0"), sidekick(SIDEKICK_WORKSPACE), sidekick(SIDEKICK_PERSONAL), connection(CONNECTION_WORKSPACE)]));
+      sidekick(SIDEKICK_WORKSPACE), sidekick(SIDEKICK_PERSONAL), connection(CONNECTION_WORKSPACE)]));
     // A guest gets nothing workspace-wide: not the Organization's group, not a
-    // legacy open Channel, not a workspace Sidekick or connection. Their grant
-    // admits the granted Channel's Main; they read the Sidekick they wrote.
-    expect((await groups(GUEST)).sort()).toEqual(await expected([user(GUEST), conversation(GRANTED, "0"),
-      sidekick(SIDEKICK_GRANTED)]));
-    // A grant from an earlier membership admits nothing after being re-added.
+    // workspace Sidekick or connection. They read the Sidekick they wrote.
+    expect((await groups(GUEST)).sort()).toEqual(await expected([user(GUEST), sidekick(SIDEKICK_GRANTED)]));
+    // A member re-added after removal reads what any member does.
     expect((await groups(REJOINED)).sort()).toEqual(await expected([user(REJOINED), members(WORKSPACE_ID),
-      conversation(OPEN, "0"), sidekick(SIDEKICK_WORKSPACE), connection(CONNECTION_WORKSPACE)]));
+      sidekick(SIDEKICK_WORKSPACE), connection(CONNECTION_WORKSPACE)]));
     // Relationship status overrides everything; so does being unknown.
     expect(await groups(SUSPENDED)).toEqual([]);
   });

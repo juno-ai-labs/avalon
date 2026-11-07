@@ -325,7 +325,7 @@ beforeEach(async () => {
   never calls one can still be made to wait for a sibling's. That surfaces as a
   `beforeAll`/`beforeEach` timing out on its *first* test and passing when the
   file is run alone — which reads as flakiness and is not. Two things fix it,
-  and `workspace-directory-reads.test.ts` does both: the `beforeEach` rule
+  and `workspace-directory-reads.test.ts` (deleted in plan step C-2) does both: the `beforeEach` rule
   below, and a hook budget well above the work the hook does. The suite-wide
   budget in `vitest.workers.config.ts` is now that budget, 30 seconds for every
   test and hook in the directory, so a hook writes its own only to ask for
@@ -338,7 +338,7 @@ beforeEach(async () => {
   Tests that are not *about* that replay must not share an `initialize` identity
   with a neighbour that already opened that object. More importantly, a test
   that asserts pre-inference state must not start a model loop merely to create
-  its fixture: `participant-notification.test.ts` provisions existing rooms and
+  its fixture: `participant-notification.test.ts` (deleted in plan step C-2) provisions existing rooms and
   calls the create mutation without the endpoint's activation step. Minting a
   fresh id for every case does not fix unnecessary draining work; under a
   sharded workers run it only leaves more live objects for promotion polls to
@@ -349,7 +349,7 @@ beforeEach(async () => {
   rather than repaired. Paying for setup per test costs milliseconds, because
   every seed here is already idempotent — `CREATE TABLE IF NOT EXISTS`,
   `INSERT OR REPLACE`, `ON CONFLICT DO UPDATE`.
-  `workspace-directory-reads.test.ts`'s `establishWorkspace` is the worked
+  `workspace-directory-reads.test.ts` (deleted in plan step C-2)'s `establishWorkspace` is the worked
   example. The directory holds no `beforeAll` today; the rule is what keeps the
   next one from being reintroduced as an optimization.
 - **Object names are not isolated per file — storage is.** Two files naming the
@@ -434,7 +434,7 @@ beforeEach(async () => {
   - **"Nothing is owed now" must name what may be.** Closing the Space cutover
     queues the seating pass (`personal_channel_backfill`) due at once, and under
     load it can still be pending when the object next wakes.
-    `space-bootstrap.test.ts` accepts an alarm due now only when that pass is
+    `space-bootstrap.test.ts` (deleted in plan step C-2) accepts an alarm due now only when that pass is
     what is due.
 
   `runDurableObjectAlarm` introduces its own variant of the race when the alarm
@@ -797,7 +797,7 @@ and the test waiting on it times out on an assertion that has nothing to do with
 what broke.
 
 That failure is worse than it sounds, because the passing case is not
-necessarily better. `participant-notification.test.ts` used to start an opening
+necessarily better. `participant-notification.test.ts` (deleted in plan step C-2) used to start an opening
 model run in every fixture even though it asserted only committed product state
 and regional effects. Under shard contention those live alarms crossed the
 next test's `reset()`: one create silently replayed against the previous root,
@@ -805,7 +805,7 @@ one parent receipt was absent, and an elicitation precondition stayed
 `executing:1`. Isolating selected object ids reduced the frequency but could not
 remove a run the tests had no reason to start.
 
-`unseen-workstream-state.test.ts` hit the same failure in PR #630: a speculative
+`unseen-workstream-state.test.ts` (deleted in plan step C-2) hit the same failure in PR #630: a speculative
 open case inherited the previous case's first-open timestamp before connecting
 its socket. The original fixture failed its first shuffled repetition. Its
 creation now calls the real product service before endpoint execution activation,

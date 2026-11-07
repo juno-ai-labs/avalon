@@ -1,4 +1,3 @@
-import { RESERVED_CHILD_MEMBERSHIP_VERSION } from "./hosted-parent";
 import { readCompletionVerificationSnapshot } from "./completion-verification-storage";
 import { projectConversationView } from "@rally/contracts/conversation-view";
 import { ConversationViewDeliverySchema, ConversationViewJobSchema, ConversationViewProjectionSchema, completeConversationViewDelivery, nextConversationViewAt, publishConversationViews } from "./conversation-view-projection";
@@ -8,8 +7,8 @@ import { parseRpcInput } from "../lib/rpc-input";
 import { ToolPageError } from "./tool-page-storage";
 import { ParticipantAuthorityTransferStorage, ParticipantProjectionSchema, ParticipantTransferRequestSchema,
   type ParticipantTransferRequest, type ParticipantProjection } from "./participant-authority-transfer";
-import { workstreamImportHash } from "./workstream-import-hash";
-import { PreparedConversationSchema, type PreparedConversation } from "@rally/contracts";
+
+import { PreparedConversationSchema } from "@rally/contracts";
 import { MergeResourceTokenSchema } from "@rally/contracts";
 import { settledBackfillOutcome } from "../services/suggestion-backfill-service";
 import { AGENT_HANDOFF_TOOL_NAMES, AgentCommunicationService } from "../services/agent-communication-service";
@@ -33,7 +32,7 @@ import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchConversat
 import { searchDocumentId } from '../services/text-search';
 import { conversationSearchAudience } from '../services/search-audience';
 import { ConversationParentKindSchema } from "@rally/contracts/conversation-parent";
-import { SubstreamAddressSchema, type SubstreamContextCapture } from "@rally/contracts/substream-creation";
+
 import { workspaceDOName } from "./names";
 import { initialContextFrames } from "./substream-context-transfer";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -168,10 +167,6 @@ import { refreshTerminalProviderObservation } from "../services/terminal/observa
 import { createTerminalProviderRpcClient } from "../services/terminal/provider-rpc-client";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import { loadWorkstreamWakeup } from "../services/workstream-wakeup-service";
-import {
-  WorkstreamBatchUpdateQueueMessageSchema,
-  type WorkstreamBatchUpdateQueueMessage,
-} from "../services/workstream-batch-update";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import type { WorkstreamRuntimeResourceAttacher } from "../services/workstream-object-client";
 import { recordSupportAction } from "../services/support-access";
@@ -1690,6 +1685,12 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return results.map(({ result }) => result);
   }
 
+  /**
+   * Whether this conversation's own roster admits the person at the version
+   * their ticket carries. A Thread's conversation kept a roster of its own;
+   * Threads are retired (plan step C-2), so one admits nobody. A Canvas's
+   * and a Sidekick's parent decides alone.
+   */
   private conversationMembershipAllows(userId: string, requiredVersion: number): boolean {
     if (this.objectStore.identity()?.parentKind !== "workstream") return true;
     // Zero is issued by parent authorization for implicit workspace-member
@@ -1700,14 +1701,10 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       const projection = transfer.projectionForUser(userId);
       return projection?.active === true && projection.revision === requiredVersion;
     }
-    // Unpublished import agents use the parent's creator-only reservation,
-    // never a ready conversation's roster. Its signed bootstrap version is
-    // distinct from grant registration, which advances the grant revision.
-    if (requiredVersion !== RESERVED_CHILD_MEMBERSHIP_VERSION || this.externalSubstreamId() === "0") return false;
-    const reservation = this.state.storage.sql.exec<{ active: number; version: number }>(
-      "SELECT active, version FROM private_child_membership_authority WHERE user_id = ?", userId,
-    ).toArray()[0];
-    return reservation?.active === 1 && reservation.version === RESERVED_CHILD_MEMBERSHIP_VERSION;
+    // A Thread conversation is admitted by its roster until plan step C-3
+    // removes Thread hosting from this object; the import agents' reserved
+    // children went with session import.
+    return false;
   }
 
   /**
@@ -2051,47 +2048,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   ): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptProductRequest(this.rpcRequest(input), traced));
-  }
-
-  /**
-   * Trusted regional Queue delivery for one member-initiated batch mutation.
-   * The HTTP request authenticated the person before enqueue; delivery rechecks
-   * active workspace membership, but deliberately does not depend on the login
-   * session still being alive after the durable handoff.
-   */
-  async applyQueuedBatchUpdate(input: WorkstreamBatchUpdateQueueMessage) {
-    await this.initialized;
-    const request = WorkstreamBatchUpdateQueueMessageSchema.parse(input);
-    const identity = this.objectStore.identity();
-    if (!identity
-      || identity.workspaceId !== request.workspaceId
-      || identity.parentId !== request.workstreamId
-      || this.externalSubstreamId() !== "0"
-      || request.region !== this.env.AVALON_REGION) {
-      return { outcome: "skipped" as const, reason: "workstream_identity_mismatch" };
-    }
-    const membership = await this.activeMembership(
-      asWorkspaceId(request.workspaceId),
-      asUserId(request.userId),
-    );
-    if (!membership) return { outcome: "skipped" as const, reason: "member_revoked" };
-    const auth: AuthContext = {
-      sessionId: `batch:${request.operationId}`,
-      userId: asUserId(request.userId),
-      workspaceId: asWorkspaceId(request.workspaceId),
-      region: this.env.AVALON_REGION,
-      role: membership.role,
-      analyticsWorkspaceId: membership.analytics_workspace_id ?? null,
-    };
-    try {
-      const outcome = await this.product.applyQueuedBatchUpdate(auth, request);
-      return { outcome, reason: null };
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 404) {
-        return { outcome: "skipped" as const, reason: error.code };
-      }
-      throw error;
-    }
   }
 
   async attachRuntimeResource(input: SubstreamRuntimeResourceRequest): Promise<DurableObjectRpcResult> {
@@ -2711,37 +2667,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return responseToRpcResult(await this.acceptRuntimeBootstrap(this.rpcRequest(input)));
   }
 
-  async captureInitialSubstreamContext(input: {
-    source: { workspaceId: string; workstreamId: string; substreamId: string };
-    operationId: string;
-    userId: string;
-    throughTurnId: string | null;
-  }): Promise<SubstreamContextCapture> {
-    await this.initialized;
-    const source = SubstreamAddressSchema.parse(input.source);
-    const identity = this.objectStore.identity();
-    if (!identity || identity.parentKind !== "workstream"
-      || identity.workspaceId !== source.workspaceId || identity.parentId !== source.workstreamId
-      || source.substreamId !== "0" || this.externalSubstreamId() !== "0") {
-      throw new Error("substream_source_identity_mismatch");
-    }
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
-      source.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(source.workspaceId)));
-    const authorization = await parent.authorizeViewer({
-      workspaceId: source.workspaceId, parentId: source.workstreamId,
-      substreamId: asSubstreamId("0"), userId: asUserId(input.userId),
-    });
-    const operation = await parent.readPrivateChildPreparation({
-      workspaceId: source.workspaceId, parentId: source.workstreamId, operationId: input.operationId,
-    });
-    if (!authorization.authorized || authorization.archived || !operation
-      || operation.creatorUserId !== input.userId
-      || operation.sourceThroughTurnId !== input.throughTurnId) throw new Error("substream_capture_forbidden");
-    return this.transcript.captureSubstreamContext({
-      operationId: input.operationId, source, throughTurnId: input.throughTurnId,
-    });
-  }
-
   /**
    * The Breakout a suggestion asked for exists: the open row on its cutoff
    * turn is taken. Called by the creation service once the child is ready,
@@ -2754,59 +2679,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       this.suggestions.resolveBreakoutAt(input.throughTurnId, input.userId, Date.now()));
     if (resolved) await this.publishSuggestionChanged(resolved);
     return { resolved: resolved !== null };
-  }
-
-  /** Provisioned by the coordinator, seeded from the parent's durable receipt, never client text. */
-  async installPreparedSubstreamContext(input: {
-    workspaceId: string; workstreamId: string; substreamId: string; operationId: string;
-  }): Promise<{ installed: true }> {
-    await this.initialized;
-    const address = SubstreamAddressSchema.parse({
-      workspaceId: input.workspaceId, workstreamId: input.workstreamId, substreamId: input.substreamId,
-    });
-    const identity = this.objectStore.identity();
-    if (!identity || identity.parentKind !== "workstream"
-      || identity.workspaceId !== address.workspaceId || identity.parentId !== address.workstreamId
-      || address.substreamId === "0" || this.externalSubstreamId() !== address.substreamId) {
-      throw new Error("substream_target_identity_mismatch");
-    }
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
-      address.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(address.workspaceId)));
-    const operation = await parent.readPrivateChildPreparation({
-      workspaceId: address.workspaceId, parentId: address.workstreamId, operationId: input.operationId,
-    });
-    if (!operation || operation.substreamId !== address.substreamId || !operation.preparedContext
-      || (operation.status !== "confirming" && operation.status !== "ready")) {
-      throw new Error("substream_preparation_not_ready");
-    }
-    this.transcript.installInitialContext({ operationId: operation.operationId, context: {
-      source: { workspaceId: address.workspaceId, workstreamId: address.workstreamId, substreamId: asSubstreamId("0") },
-      throughTurnId: operation.preparedContext.capture?.throughTurnId ?? null,
-      policyRevision: operation.recipe.policy.revision,
-      contentHash: operation.preparedContext.contentHash,
-      parts: operation.preparedContext.parts.map((part) => part.content),
-    } });
-    return { installed: true };
-  }
-
-  /** The private-child receipt authorizes initialization before parent publication. */
-  async installPreparedConversation(input: {
-    workspaceId: string; workstreamId: string; substreamId: string;
-    operationId: string; conversation: PreparedConversation;
-  }) {
-    await this.initialized;
-    const identity = this.objectStore.identity();
-    if (!identity || identity.workspaceId !== input.workspaceId || identity.parentId !== input.workstreamId
-      || this.externalSubstreamId() !== input.substreamId || input.substreamId === "0") throw new Error("substream_target_identity_mismatch");
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
-      asWorkspaceId(input.workspaceId), workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(input.workspaceId)));
-    const conversation = parseRpcInput(PreparedConversationSchema, input.conversation, "prepared_conversation");
-    const operation = await parent.readPrivateChildPreparation({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.workstreamId, operationId: input.operationId });
-    if (!operation || operation.substreamId !== input.substreamId || !["confirming", "ready"].includes(operation.status)) throw new Error("substream_preparation_not_ready");
-    if (operation.preparedConversationHash !== workstreamImportHash(conversation)) throw new Error("private_child_initialization_conflict");
-    return this.product.installPreparedConversation({ workspaceId: asWorkspaceId(input.workspaceId),
-      userId: asUserId(operation.creatorUserId), sessionId: input.operationId, region: this.env.AVALON_REGION, role: "member" },
-      input.operationId, conversation, operation.status === "ready");
   }
 
   /** Internal content-only RPC. The Worker has already admitted these candidates through search authz. */
@@ -3880,31 +3752,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         return jsonResponse(await this.product.markUnread(current));
       }
       if (request.operation === "resolve_suggestion") {
+        // Resolving was a Thread's; Threads are retired (plan step C-2).
         await this.product.authorize(current);
-        if (identity.parentKind !== "workstream") return jsonResponse({ error: "conversation_resolution_unavailable" }, 409);
-        const existing = this.suggestions.byId(request.suggestionId);
-        if (!existing || existing.kind !== "mark_resolved") return jsonResponse({ error: "suggestion_not_found" }, 404);
-        if (existing.status !== "open") {
-          if (existing.status !== "accepted") return jsonResponse({ error: "suggestion_not_open" }, 409);
-          return jsonResponse({ suggestionId: existing.suggestion_id, status: existing.status, replayed: true });
-        }
-        const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
-          current.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(current.workspaceId)));
-        const accepting = this.state.storage.transactionSync(() => this.suggestions.beginResolution(existing.suggestion_id, current.userId));
-        if (!accepting) return jsonResponse({ error: "suggestion_not_open" }, 409);
-        const resolution = await parent.resolveConversation({
-          workspaceId: current.workspaceId, parentId: identity.parentId,
-          substreamId: this.externalSubstreamId(), userId: current.userId,
-        });
-        if (resolution.outcome !== "resolved" && resolution.outcome !== "unchanged") {
-          this.state.storage.transactionSync(() => this.suggestions.cancelResolution(existing.suggestion_id));
-          const error = resolution.outcome === "forbidden" ? "conversation_participant_required"
-            : resolution.outcome === "not_ready" ? "conversation_not_ready" : "conversation_archived";
-          return jsonResponse({ error }, resolution.outcome === "forbidden" ? 403 : 409);
-        }
-        const accepted = this.state.storage.transactionSync(() => this.suggestions.resolveCompleted(current.userId, Date.now()));
-        for (const row of accepted) await this.publishSuggestionChanged(row);
-        return jsonResponse({ suggestionId: existing.suggestion_id, status: "accepted", replayed: !accepted.some((row) => row.suggestion_id === existing.suggestion_id) });
+        return jsonResponse({ error: "conversation_resolution_unavailable" }, 409);
       }
       if (request.operation === "dismiss_suggestion") {
         // Archived included: an open row outlives archiving, and its readers keep the feed.
@@ -3933,34 +3783,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         const result = await this.product.updateImportedSession(current, request.operationId, request.conversation);
         await this.flushSemanticRealtimeOutboxBestEffort();
         return jsonResponse(result);
-      }
-      if ((request.operation === "add_participant" || request.operation === "remove_participant")
-        && identity.parentKind === "workstream") {
-        const active = request.operation === "add_participant";
-        if (active) await this.product.authorizeParticipantAddition(current, request.userId);
-        else await this.product.authorize(current);
-        const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
-          identity.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
-        const substreamId = this.externalSubstreamId();
-        const mutation = { operationId: request.operationId ?? uuidV7(),
-          actorUserId: current.userId, userId: UserIdSchema.parse(request.userId), active,
-          target: { kind: "conversation" as const, workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId } };
-        const result = !active && request.owningThread
-          ? await parent.removeThreadParticipant(mutation) : await parent.mutateParticipantGrant(mutation);
-        if (result.status === "denied") {
-          if (result.reason === "inherited_access") throw new ApiError(409, "participant_inherited_access", "This person has thread access. Remove that share from thread sharing first.");
-          if (result.reason === "participant_required") throw new ApiError(409, "workstream_participant_required", "At least one participant must remain in this thread");
-          if (result.reason === "migration_pending") throw new ApiError(409, "participant_migration_pending", "Participant authority is moving; retry this operation");
-          throw new ApiError(403, "participant_grant_forbidden", "This participant change is not allowed");
-        }
-        if (result.status === "conflict") throw new ApiError(409, "participant_grant_conflict", "Participant access changed; refresh and retry");
-        const participant = await this.product.participant(request.userId);
-        if (active) {
-          if (!participant) throw new ApiError(409, "participant_change_superseded", "A later change removed this participant");
-          return jsonResponse(participant);
-        }
-        if (participant) throw new ApiError(409, "participant_change_superseded", "This person still has access through a later share. Refresh and try again.");
-        return jsonResponse({ ok: true });
       }
       if (request.operation === "set_appearance") {
         await this.product.setAppearance(current, request.operationId, request.patch);
@@ -6261,20 +6083,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           ? { title: identityRow.title, description: identityRow.description, scope: identityRow.scope,
               archived_at: identityRow.archived_at, system_kind: identityRow.system_kind }
           : null,
-        readResolved: async () => {
-          try {
-            const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
-              input.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(input.workspaceId)));
-            return await parent.readConversationResolved({ workspaceId: input.workspaceId, parentId: input.parentId, substreamId });
-          } catch (error) {
-            if (input.parentReadFailure === "throw") throw error;
-            logWarn(executionEnv, "turn_disposition_resolution_read_failed", {
-              workstream_id: input.parentId, substream_id: substreamId,
-              reason: diagnosticErrorCode(error, "turn_disposition_resolution_read_failed"),
-            });
-            return false;
-          }
-        },
+        // Resolving was a Thread's, and Threads are retired (plan step C-2).
+        readResolved: () => Promise.resolve(false),
         readParent: () => this.readSuggestionParent(executionEnv, input.workspaceId, input.parentId, substreamId, input.parentReadFailure),
         onDiagnostic: sink.record,
         traceId,
@@ -6376,10 +6186,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         if (!thread) return null;
         return { kind: "thread", id: workstreamId, title: thread.title, purpose: thread.description.trim() || undefined };
       }
-      const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
-        workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)));
-      const placement = await parent.threadMergePlacement({ workspaceId: asWorkspaceId(workspaceId), workstreamId: asWorkstreamId(workstreamId) });
-      return placement.ok ? { kind: "channel", id: placement.spaceId, title: placement.title, purpose: undefined } : null;
+      // A Main's parent was its Channel, which is retired (plan step C-2).
+      return null;
     } catch (error) {
       logWarn(executionEnv, "turn_disposition_parent_read_failed", {
         workspace_id: workspaceId, workstream_id: workstreamId, substream_id: substreamId,
@@ -6832,7 +6640,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       return null;
     }
   }
-
 
   /**
    * Deliver the outbound bindings this run child's sends committed, to the

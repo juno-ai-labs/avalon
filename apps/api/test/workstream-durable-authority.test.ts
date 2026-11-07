@@ -2,8 +2,7 @@ import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/c
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AuthContext } from "../src/env";
-import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
+import { launchWorkstreamHarness } from "../src/services/workstream-service";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
@@ -24,14 +23,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const auth: AuthContext = {
-  sessionId: "session-1",
-  userId: memberId,
-  workspaceId,
-  region: "global",
-  role: "member",
-};
-
 function seed(database: DatabaseSync): void {
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -51,30 +42,6 @@ function seed(database: DatabaseSync): void {
     VALUES ('${workstreamId}', '${memberId}', '${memberId}', 'creator', '${at}');
   `);
 }
-
-/** Creation still needs the regional generation and refuses an unopened stack. */
-describe("creation before the durable-object authority opens", () => {
-  it("refuses before opening an object", async () => {
-    const database = preRetirementProductSqliteDatabase();
-    databases.push(database);
-    seed(database);
-    const objectStores = new Map<string, DatabaseSync>();
-    const env = createTestEnv({
-      DB: sqliteD1(database),
-      AVALON_REGION: "global",
-      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
-    });
-
-    await expect(new WorkstreamService(env, auth).create({
-      openingMessage: "Start",
-      clientMessageId: "client-2",
-      mentions: [],
-      participantUserIds: [],
-      attachmentIds: [],
-    } as never)).rejects.toMatchObject({ status: 503, code: "workstream_maintenance" });
-    expect(objectStores.size).toBe(0);
-  });
-});
 
 describe("launching a run against the open authority", () => {
   it.each([

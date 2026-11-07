@@ -122,7 +122,6 @@ export type ResourceReadMetadata = NonNullable<Extract<Awaited<ReturnType<Worksp
 /** Owner observations, including settled reads, live for exactly one batch. */
 class AuthorizationBatch {
   readonly readMetadata = new Map<string, ResourceReadMetadata>();
-  private readonly parents = new Map<string, Promise<Awaited<ReturnType<WorkspaceDO['readAuthorizationFacts']>>>>();
   private readonly automations = new Map<string, Promise<HostedConversationFacts>>();
   private readonly attachments = new Map<string, Promise<ReturnType<WorkstreamResourceStorage['readAuthorizationFacts']>>>();
   private readonly memberships = new Map<string, Promise<{ active: boolean; guest: boolean; validatedAt: number }>>();
@@ -223,22 +222,8 @@ class AuthorizationBatch {
     const request = { workspaceId: subject.workspaceId, parentId: resource.parentId, userId: subject.userId,
       substreamIds: [...(this.parentScopes.get(resource.parentId) ?? [resource.substreamId])].map(asSubstreamId),
       ...(this.relationship ? { relationship: this.relationship } : {}) };
-    const workstream = await ownerEvidence(this.parents, JSON.stringify([subject, resource.parentId]), async () => {
-      // Through the one dispatch point, so the namespace a parent kind resolves
-      // to is decided in exactly one place in the tree.
-      const parent = await conversationParentStub(this.env, {
-        workspaceId: subject.workspaceId, parentKind: 'workstream', parentId: resource.parentId,
-      }) as DurableObjectStub<WorkspaceDO>;
-      return parent.readAuthorizationFacts(request);
-    });
-    if (workstream.exists) {
-      const scope = workstream.scopes.find((value) => value.substreamId === resource.substreamId);
-      if (!scope) return unavailable();
-      const evidence = { owner:resource.parentId,revision:scope.revision,validatedAt:workstream.validatedAt };
-      if (!scope.access.allowed && scope.access.reason === "not_found") return { status:"not_found",resource,evidence:[evidence] };
-      if (!scope.access.allowed && scope.access.reason === "not_ready") return { status:"unavailable",reason:"projection_incomplete",retryable:true };
-      return evaluateReadPolicy(fact(scope.access.allowed,"not_participant",evidence),Date.now());
-    }
+    // Every conversation is a Sidekick's or a Canvas's (Threads are retired,
+    // plan step C-2), and its hosted parent answers in one call.
     // A hosted conversation, a Sidekick's or a Canvas's, answers in one call.
     const hosted = await conversationParentStub(this.env, {
       workspaceId: subject.workspaceId, parentKind: 'automation', parentId: resource.parentId,
@@ -247,7 +232,7 @@ class AuthorizationBatch {
       async () => await hosted.hostedConversationAuthorizationFacts({ ...request, substreamIds: [resource.substreamId] }) as
         HostedConversationFacts);
     if (!facts.exists) return { status: 'not_found', resource,
-      evidence: [{ owner: resource.parentId, revision: 'absent', validatedAt: Math.min(workstream.validatedAt, facts.validatedAt) }] };
+      evidence: [{ owner: resource.parentId, revision: 'absent', validatedAt: facts.validatedAt }] };
     const evidence = { owner: resource.parentId, revision: facts.revision, validatedAt: facts.validatedAt };
     if (!facts.children.includes(resource.substreamId)) return { status: 'not_found', resource, evidence: [evidence] };
     // Who it is shared with decides, for a guest as for a member: a guest
@@ -280,11 +265,6 @@ class AuthorizationBatch {
     ] };
     const baseDecision = evaluateReadPolicy(base, Date.now());
     if (baseDecision.status !== 'allowed' || (!facts.requiresAttachment && (!this.guest || facts.owned))) return baseDecision;
-    if (facts.sharedThrough !== null) {
-      return evaluateReadPolicy({ kind: 'all', policies: [base, fact(true, 'resource_not_shared', {
-        owner: `space:${facts.sharedThrough}/resources`, revision: facts.revision, validatedAt: facts.validatedAt,
-      })] }, Date.now());
-    }
     let incomplete = false;
     for (const location of facts.locations) {
       // Do not await a top-level batch that may itself contain this conversation.

@@ -29,8 +29,7 @@ import {
   transcriptionSessionUpdate,
 } from "../src/services/realtime-transcription-service";
 import { __resourceServiceTesting } from "../src/services/resource-service";
-import { __workstreamServiceTesting } from "../src/services/workstream-service";
-import { __originResourceTesting } from "../src/services/workstream-origin-resource";
+import { memberSafeHarnessError } from "../src/services/workstream-service";
 import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
 
 describe("API security utilities", () => {
@@ -84,7 +83,7 @@ describe("API security utilities", () => {
   });
 
   it("never exposes persisted harness exception or provider detail to members", () => {
-    const providerFailure = __workstreamServiceTesting.memberSafeHarnessError(JSON.stringify({
+    const providerFailure = memberSafeHarnessError(JSON.stringify({
       code: "provider_error",
       message: "OpenRouter rejected sk-secret with upstream body: private",
     }));
@@ -99,12 +98,12 @@ describe("API security utilities", () => {
       "not-json",
       JSON.stringify({ message: "filesystem path and stack" }),
     ]) {
-      expect(__workstreamServiceTesting.memberSafeHarnessError(unsafeValue)).toEqual({
+      expect(memberSafeHarnessError(unsafeValue)).toEqual({
         code: "harness_execution_failed",
         message: "Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support",
       });
     }
-    expect(__workstreamServiceTesting.memberSafeHarnessError(null)).toBeNull();
+    expect(memberSafeHarnessError(null)).toBeNull();
   });
 
   it("resolves both provider failure codes to their own member-safe sentence", () => {
@@ -112,26 +111,20 @@ describe("API security utilities", () => {
     // action, and neither falls through to the generic bucket — the whole point
     // of adding the codes was that `harness_execution_failed` tells a member
     // Avalon broke and gives them no reason to try again.
-    expect(__workstreamServiceTesting.memberSafeHarnessError(JSON.stringify({
+    expect(memberSafeHarnessError(JSON.stringify({
       code: "provider_unavailable",
       message: "upstream body that must never be shown",
     }))).toEqual({
       code: "provider_unavailable",
       message: "The model service could not complete this request. This usually clears on its own — try again in a moment",
     });
-    expect(__workstreamServiceTesting.memberSafeHarnessError(JSON.stringify({
+    expect(memberSafeHarnessError(JSON.stringify({
       code: "provider_circuit_open",
       message: "upstream body that must never be shown",
     }))).toEqual({
       code: "provider_circuit_open",
       message: "Rally has paused requests to this model. Try again shortly — if it keeps happening, copy the request ID for support",
     });
-  });
-
-  it("binds suggested and origin provider resources to their originating connection", () => {
-    const sql = __originResourceTesting.originResourceLookupSql.replace(/\s+/gu, " ");
-    expect(sql).toContain("workspace_id = ? AND connection_id = ?");
-    expect(sql).toContain("provider = ? AND provider_resource_id = ?");
   });
 
   it("attaches resources with watching off until a canonical watch is activated", () => {

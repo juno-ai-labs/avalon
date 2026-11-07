@@ -66,7 +66,7 @@ it("processes promotion through real WorkspaceDO invalidation before recording r
   await consume(message());
   await runInDurableObject(workspace(), (_instance, state) => {
     const row = state.storage.sql.exec<{ topics_json: string }>("SELECT topics_json FROM workspace_sync_events ORDER BY waterline DESC LIMIT 1").one();
-    expect(JSON.parse(row.topics_json)).toEqual(expect.arrayContaining(["workspace_profile", "member_directory", "workstream_directory"]));
+    expect(JSON.parse(row.topics_json)).toEqual(expect.arrayContaining(["workspace_profile", "member_directory"]));
   });
   expect((await env.DB.prepare("SELECT processed_at FROM workspace_relationship_deliveries").first<{ processed_at: string | null }>())?.processed_at).not.toBeNull();
 });

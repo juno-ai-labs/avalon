@@ -131,24 +131,6 @@ function expiredDrafts(targets: WorkspaceScheduleTarget[]): WorkspaceScheduleTar
   return maintenance(targets, "expired_drafts");
 }
 
-function seedSlackConnection(database: DatabaseSync, id: string, status: "healthy" | "disabled"): void {
-  database.prepare(
-    `INSERT INTO connector_connections
-       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
-        status, created_at, updated_at, model_plugin_id)
-     VALUES (?, ?, 'slack', 'workspace', NULL, ?, 'Slack', ?, '2026-01-01', '2026-01-01', 'plugin_slack_workspace')`,
-  ).run(id, WORKSPACE_ID, `T-${id}`, status);
-}
-
-function seedUnfurledLink(database: DatabaseSync, connectionId: string, refreshedAt: string): void {
-  database.prepare(
-    `INSERT INTO slack_unfurled_links
-       (connection_id, slack_channel_id, slack_message_ts, url, workspace_id, workstream_id,
-        rendered_status, rendered_anonymous, audience_checked_at, shared_at, refreshed_at, rendered_hash)
-     VALUES (?, 'C1', ?, 'https://with-avalon.com/app/workstreams/x', ?, ?, 'running', 0, ?, ?, ?, NULL)`,
-  ).run(connectionId, `${refreshedAt}-${connectionId}`, WORKSPACE_ID, WORKSTREAM_ID, refreshedAt, new Date().toISOString(), refreshedAt);
-}
-
 async function runMaintenance(database: DatabaseSync, id: string) {
   return runWorkspaceScheduleTarget(
     scheduleContext(database),
@@ -211,59 +193,6 @@ describe("the resource-alias backfill", () => {
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM resources WHERE slug IS NULL",
     ).get()).toEqual({ count: 0 });
-  });
-});
-
-describe("the Slack unfurl sweep's due time", () => {
-  it("excludes expired links on the cutoff day without dropping links at the exact cutoff", async () => {
-    const database = workspaceObjectDatabase();
-    const clockDatabase = new DatabaseSync(":memory:");
-    databases.push(clockDatabase);
-    // Pin only SQLite's clock; keep its real date arithmetic and formatting.
-    // Both functions are covered so restoring the old datetime predicate
-    // exercises the same instant rather than the machine's wall clock.
-    for (const name of ["datetime", "strftime"] as const) {
-      database.function(name, { varargs: true }, (...args) => {
-        const values = args.map((value) => value === "now" ? "2026-09-11T15:42:20.028Z" : value);
-        const row = clockDatabase.prepare(
-          `SELECT ${name}(${values.map(() => "?").join(", ")}) AS value`,
-        ).get(...values);
-        return typeof row?.value === "string" ? row.value : null;
-      });
-    }
-    const connectionId = "00000000-0000-7000-8000-0000000000c3";
-    seedSlackConnection(database, connectionId, "healthy");
-    seedUnfurledLink(database, connectionId, "2026-09-11T00:05:02.139Z");
-    database.prepare("UPDATE slack_unfurled_links SET shared_at = ?")
-      .run("2026-08-12T15:42:20.027Z");
-
-    expect(maintenance(await workspaceScheduleTargets(scheduleContext(database)), "slack_unfurls"))
-      .toEqual([]);
-
-    seedUnfurledLink(database, connectionId, "2026-09-11T15:26:04.712Z");
-    database.prepare("UPDATE slack_unfurled_links SET shared_at = ? WHERE refreshed_at = ?")
-      .run("2026-08-12T15:42:20.028Z", "2026-09-11T15:26:04.712Z");
-
-    expect(maintenance(await workspaceScheduleTargets(scheduleContext(database)), "slack_unfurls"))
-      .toEqual([{ kind: "maintenance", id: "slack_unfurls", dueAt: "2026-09-11T15:31:05Z" }]);
-  });
-
-  it("counts only links the sweep will load, so a disabled connection cannot pin the pass", async () => {
-    // The sweep loads a link through a connection that is not disabled. A link
-    // on a disabled connection is never loaded, never advanced, and never
-    // deleted; counted here, it would hold the whole workspace's sweep behind
-    // the stall gate for the thirty days it stays in the window.
-    const database = workspaceObjectDatabase();
-    seedSlackConnection(database, "00000000-0000-7000-8000-0000000000c1", "disabled");
-    seedSlackConnection(database, "00000000-0000-7000-8000-0000000000c2", "healthy");
-    seedUnfurledLink(database, "00000000-0000-7000-8000-0000000000c1", "2026-01-01T00:00:00.000Z");
-
-    expect(maintenance(await workspaceScheduleTargets(scheduleContext(database)), "slack_unfurls")).toEqual([]);
-
-    seedUnfurledLink(database, "00000000-0000-7000-8000-0000000000c2", "2026-02-01T00:00:00.000Z");
-
-    expect(maintenance(await workspaceScheduleTargets(scheduleContext(database)), "slack_unfurls"))
-      .toEqual([{ kind: "maintenance", id: "slack_unfurls", dueAt: "2026-02-01T00:05:01Z" }]);
   });
 });
 

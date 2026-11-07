@@ -52,23 +52,28 @@ function fixture() {
   const objectStore = testWorkstreamObjectStore();
   databases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
+  workstreamObjectRun(objectStore, "UPDATE workstream SET parent_kind = 'canvas' WHERE id = 1");
   seedWorkstreamObjectParticipant(objectStore, { userId: U, participationReason: "creator" });
   const objectStores = new Map<string, DatabaseSync>([[S, objectStore]]);
-  const canReadWorkstream = vi.fn(async () => true);
+  // Visibility is the hosting parent's answer: the fixture conversation is a
+  // Canvas's, and its creator-participant reads it.
+  const resolveHostedParent = vi.fn(async () => ({
+    kind: "canvas",
+    authority: { exists: true, authorityGeneration: 1, archived: false },
+    viewer: { authorized: true, archived: false },
+  }));
   const env = createTestEnv({
     DB: sqliteD1(database), AVALON_REGION: "global", TERMINAL_REGION_CAPABILITY: "supported",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
-    // Visibility is answered by the WorkspaceDO directory after the cutover;
-    // the fixture member is the creator-participant, so it reads as visible.
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-      extra: { canReadWorkstream },
+      extra: { resolveHostedParent },
     }),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: vi.fn(async () => undefined) }),
     DAYTONA_API_KEY: "key", DAYTONA_API_URL: "https://app.daytona.io/api", DAYTONA_TARGET: "us",
     DAYTONA_TERMINAL_SNAPSHOT: "snapshot", TERMINAL_EMERGENCY_DISABLED: "false",
   });
   const auth: AuthContext = { sessionId: "session", userId: U, workspaceId: W, region: "global", role: "member" };
-  return { database, objectStore, env, auth, canReadWorkstream, service: new TerminalWorkstreamService(env, auth) };
+  return { database, objectStore, env, auth, resolveHostedParent, service: new TerminalWorkstreamService(env, auth) };
 }
 
 describe("Terminal work-stream state", () => {
@@ -112,7 +117,7 @@ describe("Terminal work-stream state", () => {
   });
 
   it("starts fresh using the participant authority without repeating directory visibility", async () => {
-    const { canReadWorkstream, service } = fixture();
+    const { resolveHostedParent, service } = fixture();
 
     await expect(service.startFresh(S)).resolves.toMatchObject({
       availability: "supported",
@@ -120,6 +125,6 @@ describe("Terminal work-stream state", () => {
       repository: null,
     });
 
-    expect(canReadWorkstream).not.toHaveBeenCalled();
+    expect(resolveHostedParent).not.toHaveBeenCalled();
   });
 });

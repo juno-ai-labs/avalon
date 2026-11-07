@@ -21,6 +21,7 @@
  * the production ordering the continuation has to survive.
  */
 
+import { createCanvas } from "../src/services/canvas-service";
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -44,13 +45,10 @@ import type { Env } from "../src/env";
 import { encryptString } from "../src/lib/crypto";
 import { createAutomation } from "../src/services/automation-service";
 import { SlackAgentService } from "../src/services/slack-agent-service";
-import {
-  bootstrapWorkstreamRuntimeEnvironment,
-  provisionWorkstreamObject,
-} from "../src/services/workstream-runtime-database";
+
 import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { useOpenRouterDouble } from "./helpers/openrouter-double";
+import { memberInputs, useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms } from "./helpers/sidekick";
@@ -108,7 +106,7 @@ const DEFINITION: AutomationDraft = {
 let opening: "send" | { read: string } = "send";
 const provider = useOpenRouterDouble((call) => {
   if (call.messages.at(-1)?.role === "tool") return { say: "Done." };
-  const lastUser = text(call.messages.filter((message) => message.role === "user").at(-1)?.content);
+  const lastUser = text(memberInputs(call).at(-1)?.content);
   if (lastUser.startsWith("This run is continuing because")) {
     return { callTool: { name: "conversation_post", arguments: { text: FORWARDED_TEXT } } };
   }
@@ -207,7 +205,6 @@ function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-
 function conversation(parentId: string, substreamId: SubstreamId | "0" = "0") {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", WORKSPACE_ID, parentId, substreamId)));
@@ -279,18 +276,7 @@ async function seedSlackConnection(): Promise<void> {
 }
 
 async function seedRoom(): Promise<void> {
-  await workspace().reserveChild({
-    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: asSubstreamId("0"), kind: "main",
-    createdByUserId: AUTHOR_ID, authorityGeneration: 1,
-    directory: { title: "Investors", description: "", scope: "personal", systemKind: null, emailAddress: null,
-      titleStatus: "settled", createdAt: NOW },
-  });
-  await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, ROOM_ID, "workstream");
-  await provisionWorkstreamObject(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, title: "Investors", objective: "", scope: "personal",
-    createdByUserId: AUTHOR_ID, participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled",
-    emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
-  });
+  await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR_ID, canvasId: ROOM_ID, title: "Investors" });
   await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
 }
 
@@ -462,7 +448,7 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
       ).one());
     expect(trigger).toEqual({ author_type: "external", content: REPLY_TEXT });
     const continuedCall = provider.calls.find((call) =>
-      text(call.messages.filter((message) => message.role === "user").at(-1)?.content) === CONTINUATION_NOTE);
+      text(memberInputs(call).at(-1)?.content) === CONTINUATION_NOTE);
     expect(continuedCall, "the continued run never reached the model with its note").toBeDefined();
     expect(continuedCall!.messages.some((message) => text(message.content).includes(REPLY_TEXT))).toBe(true);
 
@@ -492,9 +478,8 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
 
     // 4. The request's run has finished, so a top-level message in the bot DM
     //    is no longer redirected to its thread (the prompt applies only while
-    //    the run is open; slack-workspace-assignment.test.ts covers it). It is
-    //    ordinary Agent work, which this fixture's installation, holding no
-    //    Agent grant, refuses; either way it reaches no run.
+    //    the run is open). It is a new conversation, which Slack no longer
+    //    starts, so it reaches no run.
     //    The run child has finished; the Sidekick must hear it before the DM
     //    arrives, or the run still reads as open and the prompt is right.
     await expect.poll(async () => {
@@ -503,7 +488,13 @@ describe("a Sidekick's Slack request, answered in its thread, forwarded home", (
     }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 100 }).toBe("completed");
     const postsBefore = slackCalls.filter((call) => call.method === "chat.postMessage").length;
     await founderSays("EvE2EStray", { text: "Also, one more thing", ts: "1790000060.000300" }).catch(() => undefined);
-    expect(slackCalls.filter((call) => call.method === "chat.postMessage").slice(postsBefore)).toEqual([]);
+    // Rally starts no work from Slack, so the stray DM hears that once, in its
+    // own thread, and nothing reaches the run.
+    expect(slackCalls.filter((call) => call.method === "chat.postMessage").slice(postsBefore)).toMatchObject([{
+      method: "chat.postMessage",
+      body: { thread_ts: "1790000060.000300",
+        text: "Rally no longer starts work from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack for you." },
+    }]);
     expect(await executions(runId)).toHaveLength(2);
     expect(await runInDurableObject(runChild(runId), (_instance, state) =>
       state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM pending_loop_inputs`).one().count)).toBe(0);
