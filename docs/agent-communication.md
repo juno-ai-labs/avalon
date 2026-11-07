@@ -207,23 +207,11 @@ its reply is still the thing to wait for. A stopped background agent reports
 no pending work until an explicit continuation resumes it.
 
 Background identity travels in the existing child common-state projection,
-with the agent's root conversation beside the flag. The conversation parent
-counts running background substreams, including nested workers, grouped by
-root, and sends the counts with control metadata as `backgroundAgentCounts`.
-A composer shows only its own conversation's count, so agents a Breakout starts
-never appear in Main or in a sibling Breakout. Each viewer's map holds only Main
-and the private Breakouts they belong to, the same set as `privateChildren`, so
-a Breakout's id never reaches someone outside it. Archiving a Breakout does not
-stop the workers rooted in it: they finish as usual, counted only in the total,
-since no composer shows an archived Breakout. An agent from before roots were
-recorded counts in Main. `backgroundAgentCount`, the Channel total, stays on
-the frame for desktop builds that predate the split. The desktop holds the
-counts only while that connection is available and renders a singular or
-plural line above the composer. It exposes no worker inspection or direct
-chat. The count shimmers subtly, emerges from behind the composer, and retreats
-behind it when work ends or the count becomes unavailable. Count changes roll
-vertically with fading digits. Reduced-motion preferences disable these effects.
-Participant messages use the ordinary safe-boundary admission path.
+with the agent's root conversation beside the flag. No composer shows a running
+background-agent count any longer: the count rode the Channel row's
+`backgroundAgentCounts`, which went with Channels, and
+[`websocket-architecture.md`](websocket-architecture.md#sidekick-library-synchronization)
+records where one would come from.
 
 Agent tools are preloaded through the existing persisted plugin-activation path,
 so they are available on the first model call. Bind still validates live execution
