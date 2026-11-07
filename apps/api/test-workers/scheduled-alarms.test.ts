@@ -647,7 +647,6 @@ describe("a workspace's derived alarm lanes", () => {
       expect(await state.storage.getAlarm()).toBe(deliveryDueAt);
     });
   });
-;
 
   it("re-arms a register call only when it queued a delivery", async () => {
     await seedOpenAuthority();

@@ -19,6 +19,23 @@ gone. `workstreams` stays in D1 as the conversation-parent anchor.
 
 ## Changelog
 
+### 2026-11-07 — Thread creation is deleted
+
+**What changed:** Plan step C-2 deleted `workstream-object-creation-service.ts`,
+the `HostedParent` host that committed a Thread's directory row, and the Slack
+and connector paths that created Threads; `POST /workstreams` went in step C-1.
+`workstreams` stays in D1 as the anchor every conversation parent registers.
+
+**Why:** The [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+starts every conversation as a Canvas's Chat or a Sidekick's run, created by
+its parent; a second creation path would have to keep its own row, address and
+audience in step with those.
+
+**Consequences:** Slack no longer starts work ("Rally no longer starts work
+from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack
+for you."). The optimistic hand-off and email-address reservation lessons
+recorded below are what a Canvas create follows.
+
 ### 2026-10-19 — Carry annotations through the opening turn
 
 **What changed:** Ordinary creation accepts a commented annotation-only opening and derives its provisional title from authored comments.
