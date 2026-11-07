@@ -304,8 +304,9 @@ rows in one transaction:
   event, after the method returns, so it would fail the RPC rather than reach
   the service's per-parent catch;
 - a Thread's `channels`, `channel_viewers`, `breakouts` and `breakout_viewers`
-  rows, or a Channel's `spaces` and `space_viewers` rows, and with them what
-  cascades from those (pins, resource links, Channel access rows).
+  rows, or a Channel's `spaces` and `space_viewers` rows. Nothing else
+  cascades from them since migration 147 dropped the pin, resource-link and
+  access tables that referenced them.
 
 What it leaves: the Organization object, untombstoned,
 Canvases, Sidekicks, resources, and memory. The other Thread- and
