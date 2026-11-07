@@ -762,7 +762,7 @@ export const PLACEHOLDER_DEMO_PACK = {
       canvas: {
         title: "Weekly changelog · Nov 6",
         path: "weekly-changelog.md",
-        content: "# Weekly changelog · Nov 6\n\n## Shipped\n\n- Annual plan pricing on the billing page.\n- Canvases open faster on a slow connection.\n- Two fixes to email delivery for long threads.\n\n## Held back\n\n- The new invoice layout waits on the billing migration.",
+        content: "# Weekly changelog · Nov 6\n\n## Shipped\n\n- Annual plan pricing on the billing page.\n- Canvases open faster on a slow connection.\n- Two fixes to email delivery for long email conversations.\n\n## Held back\n\n- The new invoice layout waits on the billing migration.",
       },
     },
     {
