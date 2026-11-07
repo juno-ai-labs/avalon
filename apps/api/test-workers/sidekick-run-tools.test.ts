@@ -139,6 +139,47 @@ describe("Sidekick wizard run inspection", () => {
     expect(JSON.stringify(result.output)).not.toContain("sidekick-history/");
   });
 
+  it("opens a run with what it spent: model calls and tokens, each tool's calls and time, and each call's duration", async () => {
+    await seedRuns(SIDEKICK, 1);
+    await seedHistory();
+    await runInDurableObject(child(runId(1)), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE tool_effects SET started_at = 40 WHERE tool_call_id = 'delivery-call'`);
+      // Two requests a saved tool's program made: counted apart from the model's own calls.
+      for (const [index, startedAt, settledAt] of [[0, 10, 30], [1, 30, 80]] as const) {
+        state.storage.sql.exec(`INSERT INTO tool_effects
+          (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name, mode, request_hash,
+           authority_revision, status, tool_call_id, input_json, started_at, settled_at)
+          VALUES (?, ?, 0, ?, ?, 'run_sql', 'read', 'hash', '1', 'completed', ?, '{}', ?, ?)`,
+        `nested-${index}`, ACTIVATION, index + 1, `nested-${index}`, `scan-call:call:${index}`, startedAt, settledAt);
+      }
+      // A write whose outcome is unknown: ambiguous, not a failure.
+      state.storage.sql.exec(`INSERT INTO tool_effects
+        (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name, mode, request_hash,
+         authority_revision, status, tool_call_id, input_json, started_at, settled_at)
+        VALUES ('post-effect', ?, 0, 3, 'post', 'post_update', 'write', 'hash', '1', 'ambiguous', 'post-call', '{}', 0, 5)`,
+      ACTIVATION);
+      // Three provider attempts: two calls whose input grew with the conversation, and one retry.
+      for (const [id, outcome, input, created] of [["a1", "success", 1000, 1], ["a2", "retry", 1500, 2], ["a3", "success", 2500, 3]] as const) {
+        state.storage.sql.exec(`INSERT INTO inference_attempts
+          (inference_attempt_id, run_id, attempt_id, turn_id, endpoint_attempt, fallback_attempt, provider, model,
+           workspace_identity_hash, routing_decision_json, outcome, latency_ms, input_tokens, output_tokens,
+           cached_tokens, cost_micros, started_at, completed_at, created_at)
+          VALUES (?, ?, 'attempt', 'turn', 1, 0, 'openrouter', 'model', 'hash', '{}', ?, 400, ?, 50, 800, 25000, 0, 0, ?)`,
+        id, ACTIVATION, outcome, input, created);
+      }
+    });
+    const result = await tool("runs_read").execute({ runId: runId(1) }, context);
+    expect(evidence(result.output).usage).toEqual({ model: { calls: 2, failedAttempts: 1, inputTokens: 5000,
+      outputTokens: 150, cachedInputTokens: 2400, costUsd: 0.075, firstCallInputTokens: 1000, lastCallInputTokens: 2500,
+      largestCallInputTokens: 2500, ms: 1200 }, note: expect.stringContaining("sends the whole conversation"), tools: [
+      { toolName: "run_sql", fromProgram: true, calls: 2, failed: 0, ambiguous: 0, ms: 70, maxMs: 50 },
+      // Failed and ambiguous calls count, but carry no time: a sweep or retry stamps their settlement.
+      { toolName: "post_update", fromProgram: false, calls: 1, failed: 0, ambiguous: 1, ms: null, maxMs: null },
+      { toolName: "slack_send_message", fromProgram: false, calls: 1, failed: 1, ambiguous: 0, ms: null, maxMs: null },
+    ] });
+    expect(toolsIn(result.output)).toEqual([expect.not.objectContaining({ ms: expect.anything() })]);
+  });
+
   it("continues transcript pages under their original fence and marks missing detailed results", async () => {
     await seedRuns(SIDEKICK, 1);
     await seedHistory();

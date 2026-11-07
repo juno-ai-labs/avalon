@@ -23,6 +23,7 @@
  * vocabulary; the published spelling is the port's caller's business.
  */
 
+import type { SidekickRunUsage } from "@rally/contracts";
 import { boundParameterChunks } from "./bound-parameters";
 import {
   type PreparedConversationTurn,
@@ -440,6 +441,9 @@ function usageCounterAssignments(usageExpression: string): string {
   ].join(",\n                ");
 }
 
+/** A conversation's model calls, as the provider counted them. */
+export type ModelUsage = SidekickRunUsage["model"];
+
 export class WorkstreamHarnessRunStorage {
   /**
    * The ordered transcript authority, over this same object storage.
@@ -459,6 +463,30 @@ export class WorkstreamHarnessRunStorage {
 
   private get sql(): SqlStorage {
     return this.storage.sql;
+  }
+
+  /**
+   * What this conversation's model calls cost, from the provider's own counts
+   * on each attempt. A call is a successful attempt; the others were retried
+   * or fell back. Input tokens are the whole conversation each call sent, so
+   * the first and last show how far the context grew.
+   */
+  modelUsage(): ModelUsage {
+    const totals = this.sql.exec<{ calls: number; failed: number; input: number | null; output: number | null;
+      cached: number | null; cost: number | null; ms: number | null; max_input: number | null } & Record<string, SqlStorageValue>>(
+      `SELECT sum(outcome = 'success') AS calls, sum(outcome <> 'success') AS failed,
+              sum(input_tokens) AS input, sum(output_tokens) AS output, sum(cached_tokens) AS cached,
+              sum(cost_micros) AS cost, sum(latency_ms) AS ms, max(input_tokens) AS max_input
+         FROM inference_attempts`,
+    ).one();
+    const end = (order: "ASC" | "DESC") => this.sql.exec<{ input_tokens: number | null } & Record<string, SqlStorageValue>>(
+      `SELECT input_tokens FROM inference_attempts WHERE outcome = 'success'
+        ORDER BY created_at ${order}, inference_attempt_id ${order} LIMIT 1`,
+    ).toArray()[0]?.input_tokens ?? null;
+    return { calls: totals.calls ?? 0, failedAttempts: totals.failed ?? 0, inputTokens: totals.input ?? 0,
+      outputTokens: totals.output ?? 0, cachedInputTokens: totals.cached ?? 0, costUsd: (totals.cost ?? 0) / 1_000_000,
+      firstCallInputTokens: end("ASC"), lastCallInputTokens: end("DESC"),
+      largestCallInputTokens: totals.max_input, ms: totals.ms ?? 0 };
   }
 
   /** One run, or nothing. */

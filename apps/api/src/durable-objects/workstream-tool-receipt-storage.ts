@@ -33,7 +33,7 @@ import {
 import { uuidV7 } from "../lib/uuid-v7";
 import { ToolPageError, ToolPageStorage, type PageClaim, type PageIssueSchema, type PageClaimSchema } from "./tool-page-storage";
 import type { z } from "zod";
-import type { ToolExecutionAccount, ToolExecutionAccountRecord } from "@rally/contracts";
+import type { SidekickRunUsage, ToolExecutionAccount, ToolExecutionAccountRecord } from "@rally/contracts";
 import {
   TOOL_ACCOUNT_CHECKPOINT, readToolExecutionAccount,
   ExecutionAccountReadSchema, RecordExecutionAccountSchema, parseExecutionAccountRequest,
@@ -192,6 +192,9 @@ export interface ToolReceiptRecord {
   settledAt: number | null;
   checkpointIndex: number;
 }
+
+/** One tool's calls in a conversation; `ms` sums the calls that both started and settled. */
+export type ToolUsage = SidekickRunUsage["tools"][number];
 
 /** One resource version a replayable attachment read depended on. */
 export interface AttachmentDependency {
@@ -825,6 +828,25 @@ export class WorkstreamToolReceiptStorage {
       ...input.capabilities,
       Math.max(1, Math.min(input.limit, 500)),
     ).toArray().map(receiptRecord).reverse();
+  }
+
+  /**
+   * Every tool this conversation called: calls, definite failures, writes left
+   * ambiguous, and time. A call a program made (`<id>:call:<n>`) is counted
+   * apart from one the model made; the program's own call's time includes it.
+   * Time counts completed calls only: a call settled by a sweep or a retry is
+   * stamped when that ran, not when the call stopped.
+   */
+  toolUsage(): ToolUsage[] {
+    return this.sql.exec<{ tool_name: string; nested: number; calls: number; failed: number; ambiguous: number;
+      ms: number | null; max_ms: number | null } & Record<string, SqlStorageValue>>(
+      `SELECT tool_name, tool_call_id LIKE '%:call:%' AS nested, count(*) AS calls,
+              sum(status = 'failed') AS failed, sum(status = 'ambiguous') AS ambiguous,
+              sum(CASE WHEN status = 'completed' THEN settled_at - started_at END) AS ms,
+              max(CASE WHEN status = 'completed' THEN settled_at - started_at END) AS max_ms
+         FROM tool_effects GROUP BY tool_name, nested ORDER BY ms DESC, tool_name`,
+    ).toArray().map((row) => ({ toolName: row.tool_name, fromProgram: row.nested === 1, calls: row.calls,
+      failed: row.failed, ambiguous: row.ambiguous, ms: row.ms, maxMs: row.max_ms }));
   }
 
   receiptsForRun(input: { runId: string; capabilities: readonly string[] }): ToolReceiptRecord[] {

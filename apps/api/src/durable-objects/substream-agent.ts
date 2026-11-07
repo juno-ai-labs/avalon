@@ -3666,8 +3666,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const end = Math.min(through + 1, start + (request.input.limit ?? DEFAULT_TRANSCRIPT_READ_TURNS));
         const range = this.transcript.range({ snapshotId: "run-review", snapshotThrough: through, snapshotAtUtc: new Date().toISOString() },
           { startInclusive: start, endExclusive: end }, "requested", false);
+        // The run's cost comes with its first page, so a review reads totals
+        // rather than counting turns across every page by hand.
+        const usage = request.input.afterSequence === 0
+          ? { model: this.harnessRuns.modelUsage(), tools: this.toolReceipts.toolUsage() }
+          : undefined;
         return jsonResponse(SidekickRunTranscriptResultSchema.parse({ transcriptAvailability: "available", turns: range.turns,
-          throughSequence: through, nextAfterSequence: end <= through ? end - 1 : null }));
+          throughSequence: through, nextAfterSequence: end <= through ? end - 1 : null, ...(usage ? { usage } : {}) }));
       }
       if (request.operation === "read_transcript") {
         const root = await this.product.authorize(current);
