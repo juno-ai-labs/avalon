@@ -1,12 +1,11 @@
 import { z } from 'zod';
 import type { MessageRow } from '../durable-objects/workstream-message-storage';
-import { agentMessageNotice, asSpaceId, asUserId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
+import { agentMessageNotice } from '@rally/contracts';
 import type { CreateMessageIssue, MessageIssueReceipt } from '@rally/contracts/message-issues';
-import { workspaceDOName } from '../durable-objects/names';
-import { WorkspaceChannelMessageIssueResultSchema } from '../durable-objects/workspace-space-protocol';
+
 import type { AuthContext, Env } from '../env';
 import { ApiError } from '../lib/api-error';
-import { durableObjectStubForWorkspace } from '../lib/durable-object-namespace';
+
 import { createMessageObjectPort } from '../runtime/message-port';
 import { ConversationService } from './conversation-service';
 
@@ -15,48 +14,26 @@ export class MessageIssueService {
   constructor(private readonly env: Env, private readonly auth: AuthContext) {}
 
   async create(input: CreateMessageIssue): Promise<MessageIssueReceipt> {
-    const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
-      this.auth.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
     const target = input.target;
-    let parentKind: 'workstream' | 'automation' | 'space' | 'canvas';
-    let parentId: string;
-    let threadId: string | null = null;
-    let channelId: string | null = null;
-    let metadata: Record<string, unknown>;
-    if (target.kind === 'conversation') {
-      const parent = await new ConversationService(this.env, this.auth).authorizeViewer(target.parentId, target.substreamId);
-      const message = await createMessageObjectPort(this.env, this.auth.workspaceId, target.parentId,
-        undefined, target.substreamId).message({ messageId: input.messageId });
-      if (!message || !reportableMessage(message)) throw messageNotFound();
-      parentId = parent.id;
-      parentKind = parent.kind;
-      if (parent.kind === 'workstream') {
-        threadId = parent.id;
-        const placement = await workspace.canonicalChannelSpace({
-          workspaceId: asWorkspaceId(this.auth.workspaceId), workstreamId: asWorkstreamId(parent.id),
-        });
-        channelId = placement.spaceId;
-      }
-      metadata = {
-        authorType: message.author_type, authorUserId: message.author_user_id,
-        messageType: message.message_type, messageCreatedAt: message.created_at,
-        sequenceNumber: message.sequence_number, harnessRunId: message.harness_run_id,
-        harnessAttemptId: message.harness_attempt_id,
-      };
-    } else {
-      const message = WorkspaceChannelMessageIssueResultSchema.parse(await workspace.channelMessageIssueContext({
-        workspaceId: asWorkspaceId(this.auth.workspaceId), userId: asUserId(this.auth.userId),
-        spaceId: asSpaceId(target.channelId), messageId: input.messageId,
-      }));
-      if (!message) throw messageNotFound();
-      parentKind = 'space';
-      parentId = target.channelId;
-      channelId = target.channelId;
-      threadId = message.sourceWorkstreamId;
-      metadata = message;
-    }
+    // A Channel message was reportable from its feed; Channels are retired
+    // (plan step C-2), so a report names a Canvas's or a Sidekick's message.
+    if (target.kind !== 'conversation') throw messageNotFound();
+    const parent = await new ConversationService(this.env, this.auth).authorizeViewer(target.parentId, target.substreamId);
+    const message = await createMessageObjectPort(this.env, this.auth.workspaceId, target.parentId,
+      undefined, target.substreamId).message({ messageId: input.messageId });
+    if (!message || !reportableMessage(message)) throw messageNotFound();
+    const parentId = parent.id;
+    const parentKind = parent.kind;
+    const threadId: string | null = null;
+    const channelId: string | null = null;
+    const metadata: Record<string, unknown> = {
+      authorType: message.author_type, authorUserId: message.author_user_id,
+      messageType: message.message_type, messageCreatedAt: message.created_at,
+      sequenceNumber: message.sequence_number, harnessRunId: message.harness_run_id,
+      harnessAttemptId: message.harness_attempt_id,
+    };
     const substreamId = target.kind === 'conversation' ? target.substreamId : null;
-    const breakoutId = parentKind === 'workstream' && substreamId !== '0' ? substreamId : null;
+    const breakoutId: string | null = null;
     const requestJson = JSON.stringify({ target, messageId: input.messageId, description: input.description, blockId: input.blockId ?? null });
     const createdAt = new Date().toISOString();
     await this.env.MESSAGE_ISSUES_DB.prepare(`INSERT INTO message_issues

@@ -16,6 +16,8 @@
  */
 
 import type { HarnessToolContext } from "@rally/agent-harness";
+import { createCanvas } from "../src/services/canvas-service";
+import { substreamLoopId } from "../src/durable-objects/names";
 import { createAgentCommunicationPlugin } from "../src/services/agent-communication-plugin";
 import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
 import { createWorkstreamAttachmentTools } from "../src/services/workstream-attachment-tools";
@@ -46,7 +48,7 @@ import { conversationObjectName, workspaceDOName } from "../src/durable-objects/
 import { loadVisibleWorkstreamResourcePage, loadVisibleWorkstreamResourcesByIds } from "../src/services/workstream-resource-visibility";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { createConversationResourceLinks, createResourcePortFactory } from "../src/runtime/resource-port";
-import type { AuthContext, Env } from "../src/env";
+import type { Env } from "../src/env";
 import { AgentCommunicationService } from "../src/services/agent-communication-service";
 import { projectAuthorization } from "../src/services/authorization-projection-service";
 import { validateAttachmentToolReceiptReplay } from "../src/services/attachment-tool-receipts";
@@ -56,15 +58,12 @@ import { artifactHostDOName } from "../src/durable-objects/names";
 import { createAutomation } from "../src/services/automation-service";
 import {
   bootstrapConversationChildRuntime,
-  bootstrapWorkstreamRuntimeEnvironment,
-  provisionWorkstreamObject,
 } from "../src/services/workstream-runtime-database";
-import { deliverChildEffects, deliverEffectsToWorkspace } from "./helpers/conversation-effects";
+import { deliverEffectsToWorkspace } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { withHostedParent } from "./helpers/hosted-parent";
+
 import { applySidekick } from "./helpers/sidekick";
-import { post, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
-import { placeMembership, removeMembership } from "./helpers/space-membership";
+import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { countingEnv } from "./helpers/counting-namespace";
 
 /** Its own workspace: object names are shared across files, storage is not. */
@@ -72,22 +71,15 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c0a10");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000c0a11");
 const COLLEAGUE_ID = asUserId("00000000-0000-7000-8000-0000000c0a12");
 const SESSION_ID = "00000000-0000-7000-8000-0000000c0a13";
-const GUEST_ID = asUserId("00000000-0000-7000-8000-0000000c0a14");
 /** A member of the Organization who is in no Channel this suite makes. */
 const OUTSIDER_ID = asUserId("00000000-0000-7000-8000-0000000c0a15");
 const CHANNEL_RESOURCE_ID = "00000000-0000-7000-8000-0000000c0ae1";
-const BREAKOUT_RESOURCE_ID = "00000000-0000-7000-8000-0000000c0ae2";
 const NOW = "2026-09-27T10:00:00.000Z";
 const TEST_ENV: Env = env;
-
-const AUTH: AuthContext = {
-  sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: "global", role: "member",
-};
 
 /** Reassigned per test so a finished test's still-draining objects are not the next test's. */
 let ordinal = 0;
 let ROOM_ID = asWorkstreamId("00000000-0000-7000-8000-00000c0a0001");
-let OTHER_ROOM_ID = asWorkstreamId("00000000-0000-7000-8000-00000c0a0002");
 let AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-00000c0a0003");
 
 const DEFINITION: AutomationDraft = {
@@ -113,7 +105,6 @@ useHeldEffectQueue();
 function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
-
 
 function conversation(parentId: string, substreamId: SubstreamId | "0" = "0") {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
@@ -154,63 +145,24 @@ async function seedRegionalDatabase(): Promise<void> {
   ]);
 }
 
-/** A personal room with only the author in it, made the way creation makes one. */
+/**
+ * A room: a Canvas made the way creation makes one, open to the people named
+ * (or to the Organization) beside its author.
+ */
 async function seedRoom(
   roomId: string,
   title: string,
   participantUserIds: string[] = [AUTHOR_ID],
   scope: "personal" | "workspace" = "personal",
 ): Promise<void> {
-  await workspace().reserveChild({
-    workspaceId: WORKSPACE_ID, parentId: roomId, substreamId: asSubstreamId("0"), kind: "main",
-    createdByUserId: AUTHOR_ID, authorityGeneration: 1,
-    directory: { title, description: "", scope, systemKind: null, emailAddress: null,
-      titleStatus: "settled", createdAt: NOW },
-  });
-  await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, roomId, "workstream");
-  await provisionWorkstreamObject(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, workstreamId: roomId, title, objective: "", scope,
-    createdByUserId: AUTHOR_ID, participantUserIds, harnessStatus: "idle", titleStatus: "settled",
-    emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
-  });
+  await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR_ID, canvasId: roomId, title });
+  const others = participantUserIds.filter((userId) => userId !== AUTHOR_ID).map(asUserId);
+  if (scope === "workspace" || others.length > 0) {
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: roomId,
+      actor: { userId: asUserId(AUTHOR_ID), actorRole: "member" },
+      update: scope === "workspace" ? { visibility: "workspace", userIds: [] } : { visibility: "participants", userIds: others } });
+  }
   await deliverEffectsToWorkspace(TEST_ENV, conversation(roomId));
-}
-
-/** A ready private Breakout of the room with only the author in it, as creation makes one. */
-async function seedBreakout(title: string, roomId = ROOM_ID): Promise<SubstreamId> {
-  const parent = workspace();
-  const operationId = crypto.randomUUID();
-  const recipe = {
-    policy: { revision: "test-empty-v1", strategy: { id: "empty", version: 1 }, config: {} },
-    capture: "none" as const,
-    parts: [],
-  };
-  const reserved = await parent.beginPrivateChildPreparation({
-    workspaceId: WORKSPACE_ID, parentId: roomId, operationId, creatorUserId: AUTHOR_ID, title,
-    sourceSubstreamId: "0" as const, sourceThroughTurnId: null, recipe,
-    membershipInitializer: { plugin: { id: "creator-only", version: 1 }, config: {}, memberUserIds: [AUTHOR_ID] },
-  });
-  const hash = "0".repeat(64);
-  await parent.savePreparedPrivateChildContext({
-    workspaceId: WORKSPACE_ID, parentId: roomId, operationId,
-    preparedContext: { schemaVersion: 1, recipe, recipeHash: hash, capture: null, captureHash: null, parts: [], contentHash: hash },
-  });
-  await parent.claimPrivateChildConfirmation({ workspaceId: WORKSPACE_ID, parentId: roomId, operationId, actorUserId: AUTHOR_ID });
-  await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, "workstream", roomId, reserved.substreamId);
-  await provisionWorkstreamObject(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, workstreamId: roomId, substreamId: reserved.substreamId,
-    title, objective: "", scope: "personal", createdByUserId: AUTHOR_ID,
-    participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled", emailAddress: null,
-    emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
-  });
-  await conversation(roomId, reserved.substreamId).installPreparedSubstreamContext({
-    workspaceId: WORKSPACE_ID, workstreamId: roomId, substreamId: reserved.substreamId, operationId,
-  });
-  await parent.setPrivateChildTerminalStatus({
-    workspaceId: WORKSPACE_ID, parentId: roomId, operationId, status: "ready", errorCode: null,
-  });
-  await deliverEffectsToWorkspace(TEST_ENV, conversation(roomId, reserved.substreamId));
-  return reserved.substreamId;
 }
 
 /** An Organization Sidekick, created the way authoring creates one, applied and projected. */
@@ -224,8 +176,6 @@ async function seedSidekick(_home: "0", automationId = AUTOMATION_ID): Promise<v
     ...addressed, actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true },
   });
 }
-
-const sidekickScope = () => ({ kind: "sidekick" as const, automationId: AUTOMATION_ID });
 
 /** Deliver canonical attachment discovery for every parent this fixture creates. */
 async function projectResourceAccess() {
@@ -246,7 +196,6 @@ beforeEach(async () => {
   ordinal += 1;
   const suffix = String(ordinal).padStart(4, "0");
   ROOM_ID = asWorkstreamId(`00000000-0000-7000-8000-${suffix}000c0a01`);
-  OTHER_ROOM_ID = asWorkstreamId(`00000000-0000-7000-8000-${suffix}000c0a02`);
   AUTOMATION_ID = asAutomationId(`00000000-0000-7000-8000-${suffix}000c0a03`);
   await reset();
   await seedRegionalDatabase();
@@ -258,265 +207,6 @@ beforeEach(async () => {
     incarnation: "existing-member", revision: 1,
   } });
   await seedRoom(ROOM_ID, "Investors", [AUTHOR_ID, COLLEAGUE_ID]);
-});
-
-describe("conversations in the current thread's Channels", () => {
-  async function channel(name: string, threads: typeof ROOM_ID[]) {
-    const result = await workspace().reserveSpace({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      space: { name, iconKey: "briefcase", colorKey: "blue", scope: "workspace" } });
-    if (!result.ok) throw new Error(`reserveSpace refused: ${result.code}`);
-    for (const workstreamId of threads) {
-      await placeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-        spaceId: result.space.id, workstreamId });
-    }
-    return result.space.id;
-  }
-
-  const scope = (substreamId: SubstreamId | "0" = "0") => ({ kind: "conversation" as const,
-    parentId: ROOM_ID, substreamId });
-  const list = (substreamId: SubstreamId | "0" = "0", userId = AUTHOR_ID) => workspace().conversationToolScope({
-    workspaceId: WORKSPACE_ID, userId, scope: scope(substreamId),
-  });
-  const resolve = (reference: string, substreamId: SubstreamId | "0" = "0", userId = AUTHOR_ID) =>
-    workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId, scope: scope(substreamId), reference });
-
-  it("reaches every thread and breakout across its Channels once, without following a sibling into another Channel", async () => {
-    const second = asWorkstreamId("00000000-0000-7000-8000-0000000c0af1");
-    const outside = asWorkstreamId("00000000-0000-7000-8000-0000000c0af2");
-    await seedRoom(OTHER_ROOM_ID, "Founders");
-    await seedRoom(second, "Planning");
-    await seedRoom(outside, "Elsewhere");
-    const ownBreakout = await seedBreakout("Own side work");
-    const peerBreakout = await seedBreakout("Peer side work", OTHER_ROOM_ID);
-    const firstChannel = await channel("First", [ROOM_ID, OTHER_ROOM_ID]);
-    const secondChannel = await channel("Second", [ROOM_ID, OTHER_ROOM_ID, second]);
-    await channel("Outside", [OTHER_ROOM_ID, outside]);
-
-    for (const substreamId of ["0", ownBreakout] as const) {
-      const listed = (await list(substreamId)).conversations;
-      const parentsFirst = substreamId === "0" ? [ROOM_ID, firstChannel, secondChannel]
-        : [`${ROOM_ID}/${ownBreakout}`, ROOM_ID, firstChannel, secondChannel];
-      expect(listed.slice(0, parentsFirst.length).map((entry) => entry.conversationId)).toEqual(parentsFirst);
-      const entries = listed.filter((entry) => entry.kind !== "space");
-      expect(entries.map((entry) => entry.conversationId).sort()).toEqual([
-        ROOM_ID, `${ROOM_ID}/${ownBreakout}`, OTHER_ROOM_ID, `${OTHER_ROOM_ID}/${peerBreakout}`, second,
-      ].sort());
-      expect(entries.find((entry) => entry.isOwn)?.substreamId).toBe(substreamId);
-      expect(entries.find((entry) => entry.conversationId === `${OTHER_ROOM_ID}/${peerBreakout}`))
-        .toMatchObject({ isOwn: false, isParent: false });
-      for (const [reference, conversationId] of [[OTHER_ROOM_ID, OTHER_ROOM_ID], ["Founders", OTHER_ROOM_ID],
-        [`${OTHER_ROOM_ID}/${peerBreakout}`, `${OTHER_ROOM_ID}/${peerBreakout}`],
-        ["Peer side work", `${OTHER_ROOM_ID}/${peerBreakout}`], [second, second]] as const) {
-        expect(await resolve(reference, substreamId)).toMatchObject({ ok: true, conversation: { conversationId } });
-      }
-      expect(await resolve(outside, substreamId)).toMatchObject({ ok: false, code: "conversation_not_in_scope" });
-    }
-  });
-
-  it("rechecks conversation access, archives and current placement on each call", async () => {
-    await seedRoom(OTHER_ROOM_ID, "Founders", [AUTHOR_ID, COLLEAGUE_ID]);
-    const breakout = await seedBreakout("Private side work", OTHER_ROOM_ID);
-    const shared = await channel("Shared", [ROOM_ID, OTHER_ROOM_ID]);
-    await channel("Other home", [OTHER_ROOM_ID]);
-
-    expect((await list("0", COLLEAGUE_ID)).conversations.map((entry) => entry.conversationId))
-      .toEqual([ROOM_ID, shared, OTHER_ROOM_ID]);
-    expect(await resolve(`${OTHER_ROOM_ID}/${breakout}`, "0", COLLEAGUE_ID))
-      .toMatchObject({ ok: false, code: "conversation_access_denied" });
-    expect(await resolve("Private side work", "0", COLLEAGUE_ID))
-      .toMatchObject({ ok: false, code: "conversation_not_in_scope", resourceId: null });
-    expect(await resolve(`${OTHER_ROOM_ID}/${breakout}`)).toMatchObject({ ok: true });
-    await workspace().setPrivateChildArchived({ workspaceId: WORKSPACE_ID, parentId: OTHER_ROOM_ID,
-      substreamId: breakout, actorUserId: AUTHOR_ID, archived: true });
-    await deliverEffectsToWorkspace(TEST_ENV, conversation(OTHER_ROOM_ID, breakout));
-    expect((await list()).conversations.map((entry) => entry.conversationId))
-      .toEqual([ROOM_ID, shared, OTHER_ROOM_ID]);
-    expect(await resolve(`${OTHER_ROOM_ID}/${breakout}`)).toMatchObject({ ok: false, code: "conversation_archived" });
-
-    await removeMembership(workspace(), { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      spaceId: shared, workstreamId: OTHER_ROOM_ID });
-    expect((await list()).conversations.map((entry) => entry.conversationId)).toEqual([ROOM_ID, shared]);
-    expect(await resolve(OTHER_ROOM_ID)).toMatchObject({ ok: false, code: "conversation_not_in_scope" });
-  });
-
-  it("does not disclose private peers when resolving a duplicate title or a private Channel", async () => {
-    await seedRoom(OTHER_ROOM_ID, "Investors");
-    const breakout = await seedBreakout("Investors", OTHER_ROOM_ID);
-    const shared = await channel("Shared", [ROOM_ID, OTHER_ROOM_ID]);
-
-    expect(await resolve("Investors", "0", COLLEAGUE_ID))
-      .toMatchObject({ ok: true, conversation: { conversationId: ROOM_ID } });
-    expect(await resolve("Investors")).toMatchObject({ ok: false, code: "conversation_ambiguous",
-      available: [ROOM_ID, OTHER_ROOM_ID, `${OTHER_ROOM_ID}/${breakout}`] });
-    expect(await resolve(OTHER_ROOM_ID, "0", COLLEAGUE_ID))
-      .toMatchObject({ ok: false, code: "conversation_access_denied" });
-    await workspace().noteSpaceAudience({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, spaceId: shared,
-      audience: { scope: "personal", participantUserIds: [AUTHOR_ID] } });
-    // The colleague still reads the current thread, but the private Channel
-    // no longer supplies peers to that thread's tools.
-    expect((await list("0", COLLEAGUE_ID)).conversations.map((entry) => entry.conversationId)).toEqual([ROOM_ID]);
-    expect(await resolve(OTHER_ROOM_ID, "0", COLLEAGUE_ID))
-      .toMatchObject({ ok: false, code: "conversation_not_in_scope" });
-  });
-
-  it.each([
-    "00000000-0000-7000-8000-0000000c0af3",
-    "00000000-0000-7000-8000-0000000c0af4/00000000-0000-7000-8000-0000000c0af5",
-  ])("keeps a private peer with UUID-shaped title %s opaque, including when archived", async (title) => {
-    await seedRoom(OTHER_ROOM_ID, title);
-    const shared = await channel("Shared", [ROOM_ID, OTHER_ROOM_ID]);
-    expect(await resolve(title, "0", COLLEAGUE_ID)).toEqual({
-      ok: false, code: "conversation_not_in_scope", resourceId: null, available: [ROOM_ID, shared],
-    });
-    // A normalized id really naming the peer keeps the specific refusal.
-    expect(await resolve(OTHER_ROOM_ID.toUpperCase(), "0", COLLEAGUE_ID))
-      .toMatchObject({ ok: false, code: "conversation_access_denied", resourceId: OTHER_ROOM_ID });
-    expect((await post(conversation(OTHER_ROOM_ID), "/internal/product", {
-      operation: "update", auth: AUTH, input: { archived: true },
-    })).status).toBe(200);
-    await deliverEffectsToWorkspace(TEST_ENV, conversation(OTHER_ROOM_ID));
-    expect(await resolve(title, "0", COLLEAGUE_ID)).toEqual({
-      ok: false, code: "conversation_not_in_scope", resourceId: null, available: [ROOM_ID, shared],
-    });
-    expect(await resolve(OTHER_ROOM_ID.toUpperCase(), "0", COLLEAGUE_ID))
-      .toMatchObject({ ok: false, code: "conversation_archived", resourceId: OTHER_ROOM_ID });
-  });
-
-  it("preserves specific refusals for own and parent conversations named by title", async () => {
-    const breakout = await seedBreakout("Own side work");
-    for (const [title, resourceId] of [["Own side work", breakout], ["Investors", ROOM_ID]] as const) {
-      expect(await resolve(title, breakout, COLLEAGUE_ID))
-        .toEqual({ ok: false, code: "conversation_access_denied", resourceId, available: [] });
-    }
-    await workspace().setPrivateChildArchived({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: breakout, actorUserId: AUTHOR_ID, archived: true });
-    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID, breakout));
-    expect(await resolve("Own side work", breakout))
-      .toEqual({ ok: false, code: "conversation_archived", resourceId: breakout, available: [] });
-    expect((await post(conversation(ROOM_ID), "/internal/product", {
-      operation: "update", auth: AUTH, input: { archived: true },
-    })).status).toBe(200);
-    await deliverEffectsToWorkspace(TEST_ENV, conversation(ROOM_ID));
-    for (const substreamId of ["0", breakout] as const) {
-      expect(await resolve("Investors", substreamId))
-        .toEqual({ ok: false, code: "conversation_archived", resourceId: ROOM_ID, available: [] });
-    }
-  });
-});
-
-describe("attaching a conversation to a Sidekick", () => {
-  it("refuses a person who cannot post there, and records one row however often it is asked", async () => {
-    await seedRoom(OTHER_ROOM_ID, "Founders");
-    await seedSidekick("0");
-
-    const refused = await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
-      userId: COLLEAGUE_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
-    expect(refused).toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: OTHER_ROOM_ID });
-
-    const attached = await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
-      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: "founders" });
-    expect(attached).toMatchObject({ ok: true, alreadyAttached: false,
-      conversation: { conversationId: OTHER_ROOM_ID, kind: "channel", title: "Founders" } });
-    expect(await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
-      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID }))
-      .toMatchObject({ ok: true, alreadyAttached: true });
-    expect(await runInDurableObject(workspace(), (_instance, state) =>
-      state.storage.sql.exec<{ parent_id: string }>(
-        `SELECT parent_id FROM sidekick_conversation_attachments WHERE automation_id = ?`, AUTOMATION_ID,
-      ).toArray())).toEqual([{ parent_id: OTHER_ROOM_ID }]);
-  });
-
-  it("reads and posts only where the Sidekick is attached", async () => {
-    await seedRoom(OTHER_ROOM_ID, "Founders");
-    await seedSidekick("0");
-    const resolve = (reference: string) => workspace().resolveConversationToolTarget({
-      workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope: sidekickScope(), reference,
-    });
-
-    // The author can open Founders, but the Sidekick is not attached to it.
-    expect(await resolve(OTHER_ROOM_ID))
-      .toEqual({ ok: false, code: "conversation_not_in_scope", available: [AUTOMATION_ID], resourceId: null });
-    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
-      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
-    expect(await resolve("Founders")).toMatchObject({ ok: true, conversation: { conversationId: OTHER_ROOM_ID } });
-  });
-});
-
-describe("a conversation tool's scope", () => {
-  it("re-admits on every list, omitting a Breakout the person has left", async () => {
-    const breakout = await seedBreakout("Weekly call");
-    await seedSidekick("0");
-    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
-      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: `${ROOM_ID}/${breakout}` });
-    const listed = async () => (await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID,
-      userId: AUTHOR_ID, scope: sidekickScope() })).conversations.map((entry) => entry.conversationId);
-    expect(await listed()).toEqual([AUTOMATION_ID, `${ROOM_ID}/${breakout}`]);
-
-    // The author adds someone, then leaves; the Breakout goes on without them.
-    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: breakout, actorUserId: AUTHOR_ID, userId: COLLEAGUE_ID, operationId: "add-colleague" });
-    await workspace().removePrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: breakout, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: "author-leaves" });
-    // The Breakout reports its roster to its parent, which the Organization
-    // hosts; the parent applies the Breakout's viewer rows in the same object.
-    // The parent outbox is left alone: adding a member queued a
-    // participant_notification this suite's D1 has no tables to deliver.
-    await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, breakout));
-
-    expect(await listed()).toEqual([AUTOMATION_ID]);
-    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      scope: sidekickScope(), reference: `${ROOM_ID}/${breakout}` }))
-      .toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: breakout });
-  });
-
-  it("reaches nothing for a person whose membership has ended", async () => {
-    await seedSidekick("0");
-    const scope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: asSubstreamId("0") };
-    const listed = async () => (await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID,
-      userId: COLLEAGUE_ID, scope })).conversations.map((entry) => entry.conversationId);
-    expect(await listed()).toEqual([ROOM_ID]);
-
-    await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: true, relationship: {
-      workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID, accessClass: "member", role: "member", status: "active",
-      incarnation: "existing-member", revision: 1,
-    } });
-
-    expect(await listed()).toEqual([]);
-    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: COLLEAGUE_ID,
-      scope, reference: ROOM_ID }))
-      .toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: ROOM_ID });
-  });
-
-  it("refuses an archived conversation by name, and lists it no longer", async () => {
-    await seedRoom(OTHER_ROOM_ID, "Founders");
-    await seedSidekick("0");
-    await workspace().attachSidekickConversation({ workspaceId: WORKSPACE_ID,
-      userId: AUTHOR_ID, automationId: AUTOMATION_ID, reference: OTHER_ROOM_ID });
-
-    const archived = await post(conversation(OTHER_ROOM_ID), "/internal/product", {
-      operation: "update", auth: AUTH, input: { archived: true },
-    });
-    expect(archived.status).toBe(200);
-    await deliverEffectsToWorkspace(TEST_ENV, conversation(OTHER_ROOM_ID));
-
-    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      scope: sidekickScope() })).conversations.map((entry) => entry.conversationId)).toEqual([AUTOMATION_ID]);
-    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      scope: sidekickScope(), reference: OTHER_ROOM_ID }))
-      .toEqual({ ok: false, code: "conversation_archived", available: [], resourceId: OTHER_ROOM_ID });
-  });
-
-  it("gives a Breakout loop its own Breakout and its Channel's Main, and nothing else", async () => {
-    const breakout = await seedBreakout("Weekly call");
-    await seedRoom(OTHER_ROOM_ID, "Founders");
-    const scope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: breakout };
-
-    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope }))
-      .conversations.map((entry) => [entry.conversationId, entry.isOwn]))
-      .toEqual([[`${ROOM_ID}/${breakout}`, true], [ROOM_ID, false]]);
-    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-      scope, reference: OTHER_ROOM_ID })).toMatchObject({ ok: false, code: "conversation_not_in_scope" });
-  });
 });
 
 describe("sidekick_attach_resource", () => {
@@ -533,9 +223,9 @@ describe("sidekick_attach_resource", () => {
       resourceId, attachedByUserId: AUTHOR_ID });
     return resourceId;
   }
-  function tool(parentId: string = ROOM_ID, parentKind: "workstream" | "automation" = "workstream") {
+  function tool(parentId: string = ROOM_ID, parentKind: "canvas" | "automation" = "canvas") {
     const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
-      parentKind, parentId, substreamId: "0", loopId: `${parentKind}:${parentId}:substream:0:loop`,
+      parentKind, parentId, substreamId: "0", loopId: substreamLoopId(parentId),
       harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
       executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "test" });
     const plugin = createAgentCommunicationPlugin(new AgentCommunicationService(TEST_ENV, input), "");
@@ -650,34 +340,6 @@ describe("Sidekick resource reads by ID", () => {
     const threadResources = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, ROOM_ID, undefined, "0", input.executionPrincipal);
     expect((await loadVisibleWorkstreamResourcesByIds(database, threadResources, { workspaceId: WORKSPACE_ID,
       workstreamId: ROOM_ID, principal: input.executionPrincipal, resourceIds: [await source()] }))).toEqual([]);
-  });
-
-  it("uses current private-conversation access for a resource outside the Sidekick's home", async () => {
-    await seedSidekick("0");
-    const privateSource = await seedBreakout("Private source");
-    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: privateSource, actorUserId: AUTHOR_ID, userId: COLLEAGUE_ID, operationId: crypto.randomUUID() });
-    const resourceId = await source(COLLEAGUE_ID);
-    await attachWorkstreamRuntimeResource(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID,
-      substreamId: privateSource, resourceId, attachedByUserId: COLLEAGUE_ID });
-    await projectResourceAccess();
-    const principal = { type: "user" as const, userId: AUTHOR_ID };
-    const resources = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, "0", principal);
-    const database = withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID).DB;
-    const read = () => loadVisibleWorkstreamResourcesByIds(database, resources,
-      { workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, principal, resourceIds: [resourceId] });
-    expect((await read()).map((row) => row.title)).toEqual(["Calendar instructions"]);
-    await workspace().removePrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: privateSource, actorUserId: AUTHOR_ID, userId: AUTHOR_ID, operationId: crypto.randomUUID() });
-    await projectResourceAccess();
-    expect(await read()).toEqual([]);
-    // The source still exists for its remaining member; knowing its ID alone
-    // did not preserve the former reader's access.
-    const colleague = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, AUTOMATION_ID, undefined, "0",
-      { type: "user", userId: COLLEAGUE_ID });
-    expect((await loadVisibleWorkstreamResourcesByIds(database, colleague, { workspaceId: WORKSPACE_ID,
-      workstreamId: AUTOMATION_ID, principal: { type: "user", userId: COLLEAGUE_ID }, resourceIds: [resourceId] }))
-      .map((row) => row.title)).toEqual(["Calendar instructions"]);
   });
 
   it("resolves an unattached site's stored data by its ID or alias", async () => {
@@ -810,7 +472,7 @@ describe("Sidekick resource reads by ID", () => {
     await expect(service.start({ name: "Reader", description: "Read the resource", message: "Read the attached resource",
       attachmentIds: [resourceId] }, context))
       .rejects.toMatchObject({ code: "agent_attachment_unavailable" });
-    const threadAgent = agentIdForAddress({ parentKind: "workstream", parentId: ROOM_ID, substreamId: asSubstreamId("0") });
+    const threadAgent = agentIdForAddress({ parentKind: "canvas", parentId: ROOM_ID, substreamId: asSubstreamId("0") });
     const { teamId } = await workspace().ensureAgentTeam({ workspaceId: WORKSPACE_ID, originAgentId: service.senderId });
     await workspace().joinAgentTeam({ workspaceId: WORKSPACE_ID, teamId, agentId: threadAgent });
     await expect(service.send({ agentId: threadAgent, message: "Use this resource", attachmentIds: [resourceId] },
@@ -966,189 +628,5 @@ describe("a Breakout's access to its Channel", () => {
     expect(writes).toHaveLength(1);
   });
 
-  it("sees every resource its Channel's Main has attached, beside its own", async () => {
-    const breakout = await seedBreakout("Weekly call");
-    await link(conversation(ROOM_ID), CHANNEL_RESOURCE_ID, 1_000);
-    await link(conversation(ROOM_ID, breakout), BREAKOUT_RESOURCE_ID, 2_000);
-
-    const seen = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, ROOM_ID, undefined, breakout);
-    expect((await seen.links({})).links.map((row) => row.resource_id))
-      .toEqual([BREAKOUT_RESOURCE_ID, CHANNEL_RESOURCE_ID]);
-    // A point lookup, which is what read_resource makes, finds the Channel's.
-    expect((await seen.links({ resourceIds: [CHANNEL_RESOURCE_ID] })).links.map((row) => row.resource_id))
-      .toEqual([CHANNEL_RESOURCE_ID]);
-    expect(await seen.inventoryFingerprint()).toBe("inventory:1/1");
-
-    // The Channel attaching something changes what the Breakout sees, so a
-    // Breakout's cursor or compaction checkpoint must not keep matching.
-    await link(conversation(ROOM_ID), "00000000-0000-7000-8000-0000000c0ae3", 3_000);
-    expect(await seen.inventoryFingerprint()).toBe("inventory:1/2");
-
-    // The Channel inherits nothing from its Breakouts.
-    const channel = createConversationResourceLinks(TEST_ENV, WORKSPACE_ID, ROOM_ID, undefined, "0");
-    expect((await channel.links({ resourceIds: [BREAKOUT_RESOURCE_ID] })).links).toEqual([]);
-    expect(await channel.inventoryFingerprint()).toBe("inventory:2");
-  });
-
-  it("admits a Breakout's member to its Channel's Main, though the Channel itself would not", async () => {
-    await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
-      workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID, accessClass: "member", role: "member", status: "active",
-      incarnation: "outsider", revision: 1,
-    } });
-    const breakout = await seedBreakout("Weekly call");
-    await workspace().addPrivateChildParticipant({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: breakout, actorUserId: AUTHOR_ID, userId: OUTSIDER_ID, operationId: "add-outsider" });
-    // The parent outbox is left alone, as above: the add queued a
-    // participant_notification this suite's D1 has no tables to deliver.
-    await deliverChildEffects(TEST_ENV, conversation(ROOM_ID, breakout));
-    expect((await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID,
-      substreamId: asSubstreamId("0"), userId: OUTSIDER_ID })).authorized).toBe(false);
-
-    const scope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: breakout };
-    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID, scope }))
-      .conversations.map((entry) => entry.conversationId))
-      .toEqual([`${ROOM_ID}/${breakout}`, ROOM_ID]);
-    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID,
-      scope, reference: ROOM_ID })).toMatchObject({ ok: true, conversation: { conversationId: ROOM_ID } });
-
-    // The standing is the Breakout's: without it, the Channel's Main is
-    // refused like any conversation they cannot open.
-    const mainScope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: asSubstreamId("0") };
-    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID,
-      scope: mainScope, reference: ROOM_ID }))
-      .toEqual({ ok: false, code: "conversation_access_denied", available: [], resourceId: ROOM_ID });
-  });
-});
-
-describe("a conversation post", () => {
-  function postRequest(substreamId: SubstreamId, clientMessageId: string) {
-    return {
-      schemaVersion: 1 as const, workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, substreamId, clientMessageId,
-      text: "Adam: nothing from me this week.",
-      post: {
-        type: "automation_activation" as const, schemaVersion: 1 as const, automationId: AUTOMATION_ID,
-        automationName: "Weekly call prep", runId: crypto.randomUUID(), deliveryId: clientMessageId,
-        trigger: { kind: "manual" as const }, occurredAt: Date.now(),
-        externalSource: { provider: "slack", displayName: "Adam" },
-      },
-    };
-  }
-
-  it("lands once in a Breakout, as the Sidekick, without waking its agent", async () => {
-    const breakout = await seedBreakout("Weekly call");
-    const target = conversation(ROOM_ID, breakout);
-
-    const first = await target.appendConversationPost(postRequest(breakout, "conversation-post:run:receipt"));
-    expect(first).toMatchObject({ outcome: "appended", code: "conversation_post_appended" });
-    const again = await target.appendConversationPost(postRequest(breakout, "conversation-post:run:receipt"));
-    expect(again).toEqual({ outcome: "replayed", code: "conversation_post_replayed", messageId: first.messageId });
-
-    const stored = await runInDurableObject(target, (_instance, state) => ({
-      posts: state.storage.sql.exec<{ id: string; message_type: string; structured_content_json: string }>(
-        `SELECT id, message_type, structured_content_json FROM canonical_conversation_turn_details
-          WHERE client_message_id LIKE 'conversation-post:%'`,
-      ).toArray(),
-      pending: state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM pending_loop_inputs`).one().count,
-      runs: state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM runs`).one().count,
-    }));
-    expect(stored.posts).toHaveLength(1);
-    expect(stored.posts[0]).toMatchObject({ id: first.messageId, message_type: "automation_activation" });
-    expect(JSON.parse(stored.posts[0]!.structured_content_json)).toMatchObject({
-      automationName: "Weekly call prep", externalSource: { provider: "slack", displayName: "Adam" },
-    });
-    expect({ pending: stored.pending, runs: stored.runs }).toEqual({ pending: 0, runs: 0 });
-    await deliverChildEffects(TEST_ENV, target);
-  });
-
-  it("refuses an archived conversation and one it is not addressed to", async () => {
-    const breakout = await seedBreakout("Weekly call");
-    const target = conversation(ROOM_ID, breakout);
-    expect(await target.appendConversationPost(postRequest(asSubstreamId("0"), "conversation-post:run:wrong")))
-      .toEqual({ outcome: "refused", code: "workstream_destination_mismatch", messageId: null });
-
-    await workspace().setPrivateChildArchived({
-      workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakout, actorUserId: AUTHOR_ID, archived: true,
-    });
-    expect(await target.appendConversationPost(postRequest(breakout, "conversation-post:run:late")))
-      .toEqual({ outcome: "refused", code: "workstream_archived", messageId: null });
-  });
-});
-
-describe("a guest", () => {
-  type GrantTarget =
-    | { kind: "workstream"; workspaceId: typeof WORKSPACE_ID; parentId: string }
-    | { kind: "conversation"; workspaceId: typeof WORKSPACE_ID; parentId: string; substreamId: SubstreamId };
-
-  /**
-   * A guest of the Organization, with the room's conversations under grant
-   * authority: a guest reaches only what a grant gives them.
-   */
-  async function seedGuest(substreamIds: SubstreamId[]): Promise<void> {
-    await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
-      workspaceId: WORKSPACE_ID, userId: GUEST_ID, accessClass: "guest", role: null, status: "active",
-      incarnation: "guest", revision: 1,
-    } });
-    await runInDurableObject(workspace(), (_instance, state) => {
-      for (const substreamId of substreamIds) {
-        state.storage.sql.exec(`INSERT OR IGNORE INTO parent_participant_migrations (parent_id, substream_id, transfer_id, incarnations_json, phase) VALUES (?, ?, ?, NULL, 'complete')`,
-          ROOM_ID, substreamId, crypto.randomUUID());
-      }
-    });
-  }
-
-  async function grant(target: GrantTarget): Promise<void> {
-    await withHostedParent(workspace(), ROOM_ID, (hosted) => {
-      hosted["scopeGrants"]({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID }).mutate({
-        operationId: crypto.randomUUID(), actorUserId: AUTHOR_ID, userId: GUEST_ID, target, active: true,
-        expectedRevision: 0,
-      }, "guest");
-    });
-  }
-
-  it("opens a Sidekick to a guest from its people list, not through its home's grants", async () => {
-    const breakout = await seedBreakout("Weekly call");
-    await seedSidekick("0");
-    await seedGuest([asSubstreamId("0"), breakout]);
-    const opens = async () => (await workspace().authorizeViewer({ workspaceId: WORKSPACE_ID,
-      parentId: AUTOMATION_ID, userId: GUEST_ID, requireGrantAuthority: true })).authorized;
-
-    await grant({ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: breakout });
-    expect(await opens()).toBe(false);
-    await runInDurableObject(workspace(), (_instance, state) => {
-      state.storage.sql.exec(`INSERT INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, 1)`,
-        AUTOMATION_ID, GUEST_ID);
-    });
-    expect(await opens()).toBe(true);
-  });
-
-  it("reaches only by grant: an Organization-wide Channel is not theirs to read", async () => {
-    // Every member reads an Organization-wide Channel without a seat; a guest
-    // reads only what a grant gives them, and has none here. (A guest cannot
-    // be seated in a Breakout without a share, so a seat is not a way in.)
-    await seedRoom(OTHER_ROOM_ID, "Announcements", [AUTHOR_ID], "workspace");
-    await seedGuest([]);
-    const scope = { kind: "conversation" as const, parentId: OTHER_ROOM_ID, substreamId: asSubstreamId("0") };
-
-    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: GUEST_ID, scope }))
-      .conversations).toEqual([]);
-    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: GUEST_ID,
-      scope, reference: OTHER_ROOM_ID })).toMatchObject({ ok: false, code: "conversation_access_denied" });
-  });
-
-  it("lists a conversation a grant gives them, as it resolves it", async () => {
-    await seedSidekick("0");
-    await seedGuest([asSubstreamId("0")]);
-    await grant({ kind: "conversation", workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: asSubstreamId("0") });
-    const scope = { kind: "conversation" as const, parentId: ROOM_ID, substreamId: asSubstreamId("0") };
-
-    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: GUEST_ID,
-      scope, reference: ROOM_ID })).toMatchObject({ ok: true, conversation: { conversationId: ROOM_ID } });
-    expect((await workspace().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: GUEST_ID, scope }))
-      .conversations.map((entry) => entry.conversationId)).toEqual([ROOM_ID]);
-    // A reference outside the scope is refused with the same list, not the
-    // directory's viewer rows, which record no grant.
-    expect(await workspace().resolveConversationToolTarget({ workspaceId: WORKSPACE_ID, userId: GUEST_ID,
-      scope, reference: "Nowhere" })).toMatchObject({ ok: false, code: "conversation_not_in_scope", available: [ROOM_ID] });
-  });
 });
 

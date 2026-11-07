@@ -276,8 +276,6 @@ own:
 | `apps/desktop/src/renderer/lib/format.test.ts` | The ranking, pair by pair, and the queued-run fold. | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/format.test.ts` |
 | `apps/desktop/src/renderer/screens/workstream.test.tsx` | The header draws a queued run as running, which is what holds the second call site to the fold. | `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/workstream.test.tsx` |
 | `apps/desktop/src/renderer/components/sidebar.test.tsx` | A Channel row counts Main and Breakout attention together and marks Breakout-only news as unread. | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/sidebar.test.tsx` |
-| `apps/api/test-workers/unseen-workstream-state.test.ts` | On real workerd: added at creation, added later, cleared by the first open, unchanged by a duplicate add, set again by a re-add. | `pnpm --filter @rally/api test:workers` |
-| `apps/api/test-workers/workspace-directory-reads.test.ts` | The flag survives the workspace projection as the viewer's rather than the row's. | as above |
 | `apps/api/test/workstream-object-schema.test.ts` | Both compatibility views reset the column on a re-add, and leave it alone on a removal. | `pnpm --filter @rally/api exec vitest run test/workstream-object-schema.test.ts` |
 
 The workers suite starts with no schema and seeds the D1 tables it needs; the

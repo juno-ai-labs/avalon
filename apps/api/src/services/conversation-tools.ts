@@ -8,12 +8,9 @@ import {
   asAutomationId,
   asSubstreamId,
   asWorkspaceId,
-  asUserId,
   parseLinkTarget,
   ConversationMergeErrorCodeSchema,
   type AutomationActivationV1,
-  type ChannelFeedPage,
-  type ChannelMessage,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { logWarn, diagnosticErrorCode } from "../observability/logger";
@@ -35,11 +32,6 @@ import type {
   ConversationToolScopeResult,
 } from "../durable-objects/workspace-conversation-tool-protocol";
 import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
-import { CHANNEL_MESSAGE_SEARCH_SOURCE } from "../durable-objects/channel-message-search-projection";
-import type {
-  WorkspaceChannelFeedResult,
-  WorkspaceSpaceChannelPageRequest,
-} from "../durable-objects/workspace-space-protocol";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { searchAudienceGroup, searchAudienceGroupIds } from "./search-audience";
@@ -141,8 +133,6 @@ export interface ConversationWorkspacePort {
   conversationToolScope(input: ConversationToolScopeRequest): Promise<ConversationToolScopeResult>;
   resolveConversationToolTarget(input: ConversationToolResolveRequest): Promise<ConversationToolResolveResult>;
   attachSidekickConversation(input: ConversationToolAttachRequest): Promise<ConversationToolAttachResult>;
-  /** A Channel's feed as this person may read it; the Channel screen's own read. */
-  listChannelFeed(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceChannelFeedResult>;
 }
 
 /**
@@ -231,9 +221,6 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
         { source: "messages", load,
           scopeIds: [...new Set(request.conversations.filter((conversation) => conversation.kind !== "space")
             .map((conversation) => conversation.parentId))] },
-        { source: CHANNEL_MESSAGE_SEARCH_SOURCE, load,
-          scopeIds: request.conversations.filter((conversation) => conversation.kind === "space")
-            .map((conversation) => conversation.parentId) },
       ];
       // Fetch at the existing supported page size; a small output limit must
       // not turn the complete newest-hit scan into one request per result.
@@ -321,9 +308,6 @@ export function conversationIndexHit(candidate: TextSearchCandidate): Conversati
     return null;
   }
   const sentAt = new Date(candidate.occurred_at).toISOString();
-  if (candidate.source === CHANNEL_MESSAGE_SEARCH_SOURCE) {
-    return { parentId: candidate.scope_id, substreamId: "0", messageId: candidate.source_id, sentAt, text: candidate.text };
-  }
   const separator = candidate.source_id.indexOf("/");
   // Rows written before `substream_id` existed name the substream first in `source_id`.
   const substreamId = candidate.substream_id ?? candidate.source_id.slice(0, Math.max(0, separator));
@@ -428,19 +412,6 @@ const ReadCursorSchema = z.strictObject({
   beforeSequence: z.number().int().positive(),
   limit: LimitSchema,
 });
-/**
- * A Channel's continuation: the feed page to read again, and the last item
- * already returned from it. The feed's own pages are larger than a read's, so
- * a read resumes inside one. It resumes after that item, never after a count:
- * a merge landing or a message removed between pages moves every item below
- * it, and an offset would then repeat one or skip one.
- */
-const ChannelReadCursorSchema = z.strictObject({
-  conversationId: z.string().min(1),
-  feedCursor: z.string().min(1).nullable(),
-  after: z.strictObject({ placedAt: z.string().min(1), id: z.string().min(1) }).nullable(),
-  limit: LimitSchema,
-});
 
 function inputSchema(schema: z.ZodType): Record<string, unknown> {
   return z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>;
@@ -534,29 +505,6 @@ function fitPage<T, R>(
   return messages;
 }
 
-type ChannelFeedItem = ChannelFeedPage["items"][number];
-
-/**
- * A Channel's feed item as a message. A thread placed there reads as its
- * starter opening it, with its title and description; a merge reads as the
- * person who merged it, naming where it came from unless that is private to
- * this reader. Nothing names a Channel or a Thread as such.
- */
-function channelItemText(item: ChannelFeedItem): string {
-  if (item.kind === "thread") {
-    const objective = item.thread.objective.trim();
-    return `Started the conversation "${item.thread.title}"${objective ? `: ${objective}` : "."}`;
-  }
-  return channelMessageText(item.message);
-}
-
-function channelMessageText(message: ChannelMessage): string {
-  const merge = message.merge;
-  if (!merge) return message.body;
-  const source = merge.private || !merge.title ? "a conversation" : `"${merge.title}"`;
-  return `Merged the result of ${source} here:\n\n${message.body}`;
-}
-
 /** One `conversation_search` match: where it was said, and the message. */
 export interface ConversationSearchMatch {
   conversationId: string;
@@ -565,28 +513,6 @@ export interface ConversationSearchMatch {
   sentAt: string;
   text: string;
   textTruncated: boolean;
-}
-
-function channelItemId(item: ChannelFeedItem): string {
-  return item.kind === "thread" ? item.thread.id : item.message.id;
-}
-
-function channelItemMessage(
-  item: ChannelFeedItem,
-  names: ReadonlyMap<string, string>,
-  text: string,
-  truncated: boolean,
-): ConversationReadMessage {
-  const userId = item.kind === "thread" ? item.thread.createdByUserId
-    : item.message.author.kind === "member" ? item.message.author.userId : null;
-  return {
-    messageId: channelItemId(item),
-    author: userId ? { kind: "person", name: names.get(userId) ?? "A person" } : { kind: "agent", name: "Rally" },
-    sentAt: item.placedAt,
-    text,
-    textTruncated: truncated,
-    externalSource: null,
-  };
 }
 
 /**
@@ -664,13 +590,15 @@ export function createConversationsPlugin(
     execute: async (raw) => {
       const args = ConversationReadArgumentsSchema.parse(raw);
       const state = args.cursor !== undefined
-        ? parseCursor(z.union([ReadCursorSchema, ChannelReadCursorSchema]), args.cursor)
+        ? parseCursor(ReadCursorSchema, args.cursor)
         : null;
       const limit = state?.limit ?? args.limit ?? CONVERSATION_DEFAULT_PAGE_SIZE;
       // Admitted again on every page: a continuation is never standing access.
       const target = (await resolve(state?.conversationId ?? args.conversation)).conversation;
+      // A Channel's feed was readable here; Channels are retired (plan step C-2).
       if (target.kind === "space") {
-        return readChannel(target, state && "feedCursor" in state ? state : null, limit);
+        throw conversationRefusalError({ ok: false, code: "conversation_not_in_scope", available: [],
+          resourceId: target.parentId }, target.conversationId);
       }
       const rows = await ports.readMessages(target, {
         beforeSequence: state && "beforeSequence" in state ? state.beforeSequence : Number.MAX_SAFE_INTEGER,
@@ -694,60 +622,6 @@ export function createConversationsPlugin(
       };
     },
   };
-
-  /**
-   * A Channel's feed, newest first, as the same messages any read returns.
-   * The feed RPC admits the person on every page, as the Channel screen does.
-   */
-  async function readChannel(
-    target: ConversationToolEntry,
-    state: z.infer<typeof ChannelReadCursorSchema> | null,
-    limit: number,
-  ) {
-    const feedCursor = state?.feedCursor ?? null;
-    const result = await (await ports.workspace()).listChannelFeed({
-      workspaceId, userId: asUserId(actingUserId), spaceId: target.parentId as never, cursor: feedCursor,
-    });
-    if (!result.ok) {
-      if (result.code === "space_cursor_invalid") {
-        throw new ConversationToolError("invalid_cursor",
-          "That page is no longer valid. Call the first-page tool again to start a new read.");
-      }
-      throw conversationRefusalError({ ok: false, code: "conversation_access_denied", available: [],
-        resourceId: target.parentId }, target.conversationId);
-    }
-    // The feed's own order: newest placement first, then id. Everything at or
-    // above the last item returned was read, or is newer than what this read
-    // pages back through.
-    const after = state?.after ?? null;
-    const items = after === null ? result.page.items : result.page.items.filter((item) => {
-      const placed = Date.parse(item.placedAt);
-      const anchor = Date.parse(after.placedAt);
-      return placed < anchor || (placed === anchor && channelItemId(item) > after.id);
-    });
-    // Only the items this page can render: a feed page holds up to 250, and
-    // their authors would overrun one D1 statement's bound parameters.
-    const names = await ports.userNames([...new Set(items.slice(0, limit).flatMap((item) => {
-      const userId = item.kind === "thread" ? item.thread.createdByUserId
-        : item.message.author.kind === "member" ? item.message.author.userId : null;
-      return userId ? [userId] : [];
-    }))]);
-    const messages = fitPage(items, limit, channelItemText,
-      (item, text, truncated) => channelItemMessage(item, names, text, truncated));
-    const last = items[messages.length - 1];
-    const next = messages.length < items.length && last
-      ? { feedCursor, after: { placedAt: last.placedAt, id: channelItemId(last) } }
-      : result.page.nextCursor ? { feedCursor: result.page.nextCursor, after: null } : null;
-    return {
-      output: { conversationId: target.conversationId, title: target.title, messages },
-      summary: `Read ${messages.length} messages from ${target.title || "a conversation"}`,
-      pagination: { continuations: next
-        ? [{ operation: "read", slot: "nextPageId" as const, input: { conversation: target.conversationId, cursor: JSON.stringify({
-          conversationId: target.conversationId, ...next, limit,
-        }) } }]
-        : [] },
-    };
-  }
 
   const search: HarnessTool = {
     definition: {

@@ -3,7 +3,6 @@ import type {
   WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
 import { isPersonNotificationEffect } from "@rally/contracts/conversation-effects";
-import { isBreakoutActivityEvent } from "./breakout-activity";
 
 // Conversation-parent effect receipts are a replay fence, not history. After this
 // window a redelivery falls back to the idempotent product guards
@@ -36,14 +35,6 @@ export function insertWorkstreamEffectReceipt(
       )`,
     now - WORKSTREAM_EFFECT_RECEIPT_RETENTION_MS,
   );
-}
-
-function epochMs(value: string): number {
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new Error("workstream_effect_timestamp_invalid");
-  }
-  return parsed;
 }
 
 /**
@@ -80,63 +71,10 @@ export function applyWorkstreamRegionalEnvelope(
       };
     }
     let notificationIntentId: string | null = null;
-    // A breakout's mention is its author's to read back and nobody else's: the
-    // parent thread's participants are not the breakout's
-    // (`breakout-activity.ts`). Its target edges are what the Activity tab
-    // reads. With no author to give it to, it is not stored at all: falling
-    // back to the parent thread's audience would show the breakout to people
-    // outside it.
+    // An `activity_event` fed the Activity log, which is retired (plan step
+    // C-2): it is acknowledged by the receipt below and stored nowhere.
     if (effect.kind === "activity_event") {
-      const breakout = isBreakoutActivityEvent(effect);
-      if (!(breakout && request.actorUserId === null)) {
-        storage.sql.exec(
-          `INSERT OR IGNORE INTO workspace_activity_events (
-            event_id, event_type, subject_type, subject_id, subject_sequence_number,
-            actor_type, actor_user_id, actor_label, title, body, canonical_url,
-            audience_kind, audience_user_id, audience_workstream_id, digestible,
-            occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json
-          ) VALUES (?, ?, 'workstream', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          effect.eventId,
-          effect.eventType,
-          envelope.parentId,
-          effect.subjectSequenceNumber ?? null,
-          effect.actorType,
-          request.actorUserId,
-          effect.actorLabel,
-          effect.title,
-          effect.body,
-          effect.canonicalUrl,
-          breakout ? "user" : "workstream",
-          breakout ? request.actorUserId : null,
-          breakout ? null : envelope.parentId,
-          effect.digestible ? 1 : 0,
-          epochMs(effect.occurredAt),
-          now,
-          effect.sourceKind,
-          effect.sourceId,
-          effect.dedupeKey,
-          JSON.stringify(effect.metadata ?? {}),
-        );
-        const canonical = storage.sql.exec<{ event_id: string }>(
-          `SELECT event_id FROM workspace_activity_events WHERE dedupe_key = ?`,
-          effect.dedupeKey,
-        ).one().event_id;
-        if (canonical !== effect.eventId) {
-          throw new Error("workstream_effect_activity_id_conflict");
-        }
-        const currentTargets = new Set(request.targetUserIds);
-        for (const target of effect.targets) {
-          if (!currentTargets.has(target.userId)) continue;
-          storage.sql.exec(
-            `INSERT OR IGNORE INTO workspace_activity_event_targets
-               (event_id, user_id, relation, created_at) VALUES (?, ?, ?, ?)`,
-            canonical,
-            target.userId,
-            target.relation,
-            now,
-          );
-        }
-      }
+      // Nothing to store.
     } else if (isPersonNotificationEffect(effect)) {
       if (request.recipientIsActiveMember) {
         // A mention is identified by the message that carried it; being added

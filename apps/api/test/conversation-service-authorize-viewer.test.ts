@@ -1,6 +1,5 @@
 import {
   asAutomationId,
-  asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -21,7 +20,6 @@ const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000a001");
 const userId = asUserId("00000000-0000-7000-8000-00000000a002");
 const channelId = asWorkstreamId("00000000-0000-7000-8000-00000000a003");
 const sidekickId = asAutomationId("00000000-0000-7000-8000-00000000a004");
-const breakoutId = asSubstreamId("00000000-0000-7000-8000-00000000a005");
 const auth: AuthContext = { sessionId: "session-1", userId, workspaceId, region: "global", role: "member" };
 
 type ViewerDecision = { authorized: boolean; archived: boolean; membershipVersion?: number };
@@ -61,22 +59,6 @@ function environment(workspace: ReturnType<typeof organization>) {
 }
 
 describe("ConversationService.authorizeViewer", () => {
-  it("opens a Channel conversation with one Organization call that carries the viewer's decision", async () => {
-    const workspace = organization("workstream", { authorized: true, archived: false, membershipVersion: 6 });
-    const { env, workspaceGets } = environment(workspace);
-
-    const parent = await new ConversationService(env, auth).authorizeViewer(channelId, breakoutId);
-
-    expect(parent).toMatchObject({
-      kind: "workstream", id: channelId, authorityGeneration: 4, archived: false, membershipVersion: 6,
-    });
-    expect(workspaceGets).toHaveBeenCalledTimes(1);
-    expect(workspace.resolveHostedParent).toHaveBeenCalledTimes(1);
-    expect(workspace.resolveHostedParent).toHaveBeenCalledWith({
-      workspaceId, parentId: channelId, viewer: { userId, substreamId: breakoutId },
-    });
-    expect(workspace.authorizeViewer).not.toHaveBeenCalled();
-  });
 
   it("refuses a Channel viewer the Organization object turned away as not found", async () => {
     const workspace = organization("workstream", { authorized: false, archived: false });

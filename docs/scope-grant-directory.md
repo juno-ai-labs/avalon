@@ -11,12 +11,10 @@ The lite browser consumes a canonical directory endpoint for shared navigation.
 | File | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/scope-grant-storage.ts` | Grant mutation and existing parent outbox enqueue in one transaction. |
-| `apps/api/src/durable-objects/hosted-parent.ts` | Owns grant mutation and writes the projection to `parent_outbox`. |
 | `packages/contracts/src/conversation-effects.ts` | Typed parent effect carrying the grant. |
 | `apps/api/src/queues/activity-consumer.ts` | Applies a grant effect that arrives on the Queue. |
 | `apps/api/src/durable-objects/scope-grant-directory.ts` | Versioned projection and incarnation-specific candidate query. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Workspace identity checks, schema and typed RPC boundary. |
-| `apps/api/src/services/shared-directory-service.ts` | Candidate lookup followed by canonical owner reads and relationship revalidation. |
 | `apps/api/src/routes/sharing.ts` | Authenticated compatibility `/sharing/directory` and hierarchical `/sharing/navigation` routes. |
 
 ## How it works
@@ -105,8 +103,8 @@ canonical owner. No new numeric limits are introduced.
 
 ## Testing
 
-Run the API workerd files `scope-grant-authority.test.ts`,
-`scope-grant-directory.test.ts` and `scope-grant-storage.test.ts`. The authority
+Run the API workerd files `scope-grant-authority.test.ts` (deleted in plan step C-2),
+`scope-grant-directory.test.ts` and `scope-grant-storage.test.ts` (deleted in plan step C-2). The authority
 test refuses Queue transport, inspects the real persisted outbox, and delivers
 its exact bodies through the production consumer. Receiver tests exercise
 revocation ordering, replay, replacement incarnations and generation fences.

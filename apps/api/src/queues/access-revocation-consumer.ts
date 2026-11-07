@@ -20,7 +20,6 @@ import {
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
 import { logInfo, logWarn } from "../observability/logger";
 import { WorkspaceRelationshipChangeMessageSchema, type WorkspaceRelationshipChangeMessage } from "../services/workspace-relationship-delivery";
-import { seatOrganizationMember } from "../services/space-bootstrap-service";
 import { publishWorkspaceSync } from "../services/workspace-realtime-service";
 import {
   AccessRevocationMessageSchema,
@@ -55,41 +54,11 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     ...(message.membershipIncarnation ? { membershipIncarnation:message.membershipIncarnation } : {}),
   };
 
-  if (target.scope === "workstream_audience_narrowed") {
-    // The one hop that arrives without a name. The room closes what it can no
-    // longer admit and answers with whose sockets those were; from there each
-    // one is an ordinary per-user revocation, which is what reaches the
-    // substreams and the automations the room owns. Nobody holding a socket
-    // means nobody to publish for — the members who lost access and were not
-    // connected have nothing open to close.
-    // The room's parent is hosted by the Organization object, which holds its
-    // control sockets too.
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      workspaceId,
-      workspaceDOName(env.AVALON_REGION, workspaceId),
-      placementAffinity,
-    );
-    const { closedUserIds = [], substreams } = await workspace.revokeNarrowedAudienceAccess({
-      workspaceId,
-      parentId: target.workstreamId,
-    });
-    if (substreams) {
-      // The object ran each person's Channel step in the same call, so only
-      // the leaves go out: each conversation. A Channel owns no Sidekick.
-      await publishDescendantRevocations(env, substreams.flatMap(({ userId, substreamIds }) => substreamIds.map((substreamId) =>
-        descendantRevocation({ ...carried, userId }, {
-          scope: "substream", workstreamId: target.workstreamId, substreamId,
-        }))));
-      return;
-    }
-    // An object from before the combined step answers with names only.
-    await publishDescendantRevocations(env, closedUserIds.flatMap((userId) => [
-      descendantRevocation({ ...carried, userId }, { scope: "workstream", workstreamId: target.workstreamId }),
-      descendantRevocation({ ...carried, userId },
-        { scope: "workstream_automations", workstreamId: target.workstreamId }),
-    ]));
+  // A Thread's narrowed audience, a Thread's own hop and a Channel's
+  // children: Threads and Channels are retired (plan step C-2), and their
+  // conversations with them, so a hop queued before that has nothing to close.
+  if (target.scope === "workstream_audience_narrowed" || target.scope === "workstream"
+    || target.scope === "space" || target.scope === "workstream_automations") {
     return;
   }
 
@@ -121,10 +90,8 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
       automationIds = [],
       artifactIds = [],
     } = await workspace.revokeSocketAccess(revocation);
-    // A Channel in `channels` had its own hop run inside that call, so only
-    // its conversations go out. The rest (a Channel still waiting for its
-    // legacy import, or every Channel when an older object answered) get the
-    // `workstream` hop.
+    // `channels` names every Canvas with its conversations, each its own
+    // `substream` hop. `workstreamIds` once named Threads and is now empty.
     const handled = new Set(channels.map((channel) => channel.workstreamId));
     await publishDescendantRevocations(env, [
       ...workstreamIds.filter((workstreamId) => !handled.has(workstreamId)).map((workstreamId) =>
@@ -184,58 +151,7 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
     return;
   }
 
-  if (target.scope === "space") {
-    // No `revokeSocketAccess` call: a Space admits no client socket, so there
-    // is nothing here to close and asking would be a subrequest whose answer is
-    // always empty. Its children are addressed by the Space id exactly as a
-    // work stream's substreams are addressed by its own.
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      workspaceId,
-      workspaceDOName(env.AVALON_REGION, workspaceId),
-      placementAffinity,
-    );
-    const { children } = await workspace.listChildren({
-      workspaceId,
-      parentId: target.spaceId,
-    });
-    await publishDescendantRevocations(env, children.map((child) => descendantRevocation(revocation, {
-      scope: "substream",
-      workstreamId: target.spaceId,
-      substreamId: child.substreamId,
-    })));
-    return;
-  }
-
-  if (target.scope === "workstream_automations") {
-    // A room owns no Sidekick any more, so a person who lost one lost no
-    // Sidekick with it; a hop queued before that has nothing to name.
-    return;
-  }
-
   const workstreamId = asWorkstreamId(target.workstreamId);
-
-  if (target.scope === "workstream") {
-    // The Channel's parent — and its control sockets — live in the
-    // Organization object.
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      workspaceId,
-      workspaceDOName(env.AVALON_REGION, workspaceId),
-      placementAffinity,
-    );
-    const { substreamIds } = await workspace.revokeParentSocketAccess({ parentId: workstreamId, revocation });
-    await publishDescendantRevocations(env, [
-      ...substreamIds.map((substreamId) => descendantRevocation(revocation, {
-        scope: "substream",
-        workstreamId: target.workstreamId,
-        substreamId,
-      })),
-    ]);
-    return;
-  }
 
   if (target.scope === "substream") {
     const agent = await durableObjectStubForWorkspace(
@@ -350,14 +266,10 @@ export async function applyWorkspaceRelationshipChange(env: Env, message: Worksp
         sessionId: null, membershipIncarnation:relationship.incarnation, target: { scope: "workspace" }, occurredAt: new Date().toISOString(),
       });
     }
+    // A new member is seated nowhere: there is no General or Personal
+    // Channel any more (plan step C-2); the Canvases home is where they land.
     await publishWorkspaceSync(env, relationship.workspaceId,
-      ["workspace_profile", "member_directory", "workstream_directory"], { memberUserIds: [relationship.userId] });
-    // Joining, or a guest becoming a member: General and their own Personal
-    // Channel. Last, so a failure here retries a message whose earlier steps
-    // are all fenced against applying twice.
-    if (!removed && relationship.status === "active" && relationship.accessClass === "member") {
-      await seatOrganizationMember(env, relationship.workspaceId, relationship.userId);
-    }
+      ["workspace_profile", "member_directory"], { memberUserIds: [relationship.userId] });
   } catch (error) {
     // Retirement is terminal and has already fenced the object's readers.
     // Match the existing revocation consumer's terminal treatment.

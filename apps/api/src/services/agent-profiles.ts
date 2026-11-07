@@ -1,12 +1,9 @@
-import { READING_AI_CHATS_SKILLS, renderSessionImportSystemPrompt, type HarnessPlugin, type HarnessSkill } from "@rally/agent-harness";
+import type { HarnessPlugin, HarnessSkill } from "@rally/agent-harness";
 import type { AgentModelRole, WorkstreamWorkflowInput } from "@rally/contracts";
 
 import type { Env } from "../env";
 
-import { createBrowserPlugin } from "./desktop-actions/browser-plugin";
 import type { DesktopActionExecutor } from "./desktop-actions/executor";
-import { createSessionImportPlugin } from "./desktop-actions/session-import-plugin";
-import { reclaimUnopenedImport } from "./session-import-reclaim";
 
 /**
  * A conversation that does one fixed job rather than a person's open-ended
@@ -37,20 +34,12 @@ export interface AgentProfile {
   ended?(env: Env, run: { workspaceId: string; parentId: string; userId: string | null }): Promise<void>;
 }
 
+/**
+ * Every profile. The one there was, `session_import`, read a person's AI chat
+ * into a Thread, and went with Threads (plan step C-2); a conversation stored
+ * with it is refused as `agent_profile_unknown`.
+ */
 export const AGENT_PROFILES = {
-  session_import: {
-    role: "session_import",
-    systemPrompt: renderSessionImportSystemPrompt,
-    plugins: (input, desktop) => [
-      createBrowserPlugin(input, desktop),
-      createSessionImportPlugin(input, desktop),
-    ],
-    skills: READING_AI_CHATS_SKILLS,
-    ended: async (env, run) => {
-      if (run.userId === null) return;
-      await reclaimUnopenedImport(env, { workspaceId: run.workspaceId, workstreamId: run.parentId, userId: run.userId });
-    },
-  },
 } as const satisfies Record<string, AgentProfile>;
 
 export type AgentProfileId = keyof typeof AGENT_PROFILES;

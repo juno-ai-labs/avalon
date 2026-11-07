@@ -267,6 +267,13 @@ characters per page (`read_resource`'s). They live as constants at the top of
 bound of its own. Every cut, the read budget's included, keeps a character
 whole rather than splitting it.
 
+**A Canvas Chat is not in reach yet.** A conversation tool or a Sidekick
+attach that names a Canvas Chat answers not found:
+`workspace-sidekick-conversation-storage.ts` still reads the Thread directories
+(`channels`, `breakouts`), which nothing writes any more, so only a Sidekick's
+own conversation is in scope. Reaching a Canvas Chat needs that read ported to
+`canvas_directory`; it is not built.
+
 ## Testing
 
 - `apps/api/test/conversation-tools.test.ts` (Node): which loop gets which
@@ -300,7 +307,7 @@ whole rather than splitting it.
   and specific own/parent refusal codes.
   A Breakout member outside its Channel: listed Main and admitted to it from the
   Breakout's scope, and refused it from the Channel's own.
-- `apps/api/test-workers/channels-threads-navigation.test.ts` (workerd): a
+- `apps/api/test-workers/channels-threads-navigation.test.ts` (deleted in plan step C-2) (workerd): a
   thread's Channel listed as a parent and resolved by id and by name, from the
   Thread and from one of its Breakouts, and a
   private Channel neither listed nor resolved for a member outside it.

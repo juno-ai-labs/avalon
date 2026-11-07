@@ -8,11 +8,14 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
 // Durable identity is independent of the readable catalog name.
 export const sidekickSkillRef = (id: string): string => codeSkillRef(`sidekick-${id}`);
 
-export async function recommendedSidekickRefs(env: Env, input: WorkstreamWorkflowInput): Promise<string[]> {
-  if (input.parentKind !== "workstream") return [];
-  const room = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId, workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)));
-  const recommended = await room.recommendedSidekickIds({ workspaceId: input.workspaceId, parentId: input.parentId });
-  return [...new Set(recommended)].map(sidekickSkillRef);
+/**
+ * The Sidekicks a conversation's parent recommends as skills. A Channel's
+ * defaults recommended them to its Threads; both are retired (plan step C-2),
+ * so no parent recommends one.
+ */
+export function recommendedSidekickRefs(env: Env, input: WorkstreamWorkflowInput): Promise<string[]> {
+  void env; void input;
+  return Promise.resolve([]);
 }
 /** One candidate rule for discovery, management and execution. */
 export function conversationSidekickCandidateIds(recommended: readonly string[], loaded: readonly string[]): Set<string> {

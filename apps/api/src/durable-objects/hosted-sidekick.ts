@@ -383,7 +383,6 @@ export interface HostedSidekickHost {
   noteViewerReadChanged(userId: string): void;
   /** Record an activity-only refresh inside the projection transaction. */
   noteSidekickActivityChanged(workspaceId: string): void;
-  readManagementAccess(input: { workspaceId: string; parentId: string; userId: string }): Promise<{ allowed: boolean; writable: boolean }>;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** Hand a run to the activity Queue, whose consumer provisions it. */
   sendRunProvision(message: { workspaceId: string; automationId: string; runId: string }): Promise<void>;

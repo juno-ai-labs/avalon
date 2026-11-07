@@ -278,7 +278,7 @@ system-workstream suppression still need a complete visibility matrix.
 
 
 **Observed.** Two suites appeared to cover this and did not.
-`test/activity-event-projection.test.ts` and the "activity event visibility"
+`test/activity-event-projection.test.ts` (deleted in plan step C-2) and the "activity event visibility"
 suite in `test/digest-schedule.test.ts` both wrote and read through
 `recordActivityEventOrThrow` / `listActivityEventsForUser` — but through their
 **D1 arms**, a parallel implementation selected only when the authority was not

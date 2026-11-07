@@ -18,7 +18,7 @@ import { parseTerminalRegionConfiguration } from "./contract";
 import type { TerminalSandboxProvider } from "./provider-contract";
 import { withAuthorizedConnection } from "../connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "../connector-credential-envelope";
-import { WorkstreamDirectoryService } from "../workstream-directory-service";
+import { ConversationService } from "../conversation-service";
 import { createIdentityObjectPort } from "../../runtime/identity-port";
 
 export interface TerminalCatalogRepository {
@@ -182,10 +182,8 @@ export class TerminalWorkstreamService {
   }
 
   private async requireVisible(workstreamId: string): Promise<void> {
-    const visible = await new WorkstreamDirectoryService(this.env, this.auth).visible(workstreamId);
-    if (!visible) {
-      throw new ApiError(404, "workstream_not_found", "Thread not found");
-    }
+    // The conversation's own parent decides, as opening it does.
+    await new ConversationService(this.env, this.auth).authorizeViewer(workstreamId);
   }
 
   private async requireParticipant(workstreamId: string): Promise<void> {

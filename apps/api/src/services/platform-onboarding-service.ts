@@ -8,8 +8,6 @@ import {
   PendingWorkspaceInvitationSchema,
   SessionSchema,
   WorkspaceIdSchema,
-  asSpaceId,
-  asUserId,
   asWorkspaceId,
   WorkspaceAttentionSchema,
   WorkspaceSchema,
@@ -37,15 +35,7 @@ import {
 import { workspaceDOName } from "../durable-objects/names";
 import { BrowserSessionService } from "./browser-session-service";
 import { AuthService } from "./auth-service";
-import { openGeneralSpaceForNewWorkspace, seatOrganizationMember } from "./space-bootstrap-service";
-import {
-  acceptsNewWorkstreamWork,
-  readWorkstreamAuthorityControl,
-  type WorkstreamAuthorityControl,
-} from "./workstream-authority";
-import { parentRouteStatement, regionalWorkstreamAnchorStatement } from "./workstream-runtime-database";
-import { personalSpaceIdFor, type WorkspaceGeneralOpening } from "../durable-objects/workspace-space-protocol";
-import { uuidV7 } from "../lib/uuid-v7";
+
 import {
   demoWorkspaceAdmission,
   withheldDemoWorkspaceIds,
@@ -435,10 +425,9 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     const input = regionalCreateSchema.parse(rawInput);
     this.requireCompatiblePlacementAffinity(input.placementAffinity);
     const user = await this.ensureRegionalUser(input.identity);
-    const [, replay, authority] = await Promise.all([
+    const [, replay] = await Promise.all([
       applyRegionalPreferenceProjection(this.env, user.id, input.preference),
       this.loadOperation(input.operationId),
-      readWorkstreamAuthorityControl(this.env),
     ]);
     if (replay) {
       this.assertOperation(replay, input, "create", null);
@@ -449,7 +438,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     }
 
     const session = await new AuthService(this.env).prepareWorkspaceSession(user.id, input.workspaceId);
-    const results = await this.createOwnedWorkspace(user.id, input, authority, session.statements);
+    const results = await this.createOwnedWorkspace(user.id, input, session.statements);
     return session.issue(results);
   }
 
@@ -496,62 +485,39 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       name: input.name,
       placementAffinity,
     };
-    const [replay, authority] = await Promise.all([
-      this.loadOperation(input.operationId),
-      readWorkstreamAuthorityControl(this.env),
-    ]);
+    const replay = await this.loadOperation(input.operationId);
     if (replay) {
       this.assertOperation(replay, reference, "create", null);
       await this.requireMembership(user.id, input.workspaceId);
       await this.requirePlacementAffinity(input.workspaceId, placementAffinity);
       await this.initializeWorkspaceObject(input.workspaceId, placementAffinity);
-      for (const id of members) {
-        await this.requireMembership(id, input.workspaceId);
-        await seatOrganizationMember(this.env, input.workspaceId, id);
-      }
+      for (const id of members) await this.requireMembership(id, input.workspaceId);
       return;
     }
-    await this.createOwnedWorkspace(user.id, reference, authority, members.map((id) => this.env.DB.prepare(
+    await this.createOwnedWorkspace(user.id, reference, members.map((id) => this.env.DB.prepare(
       `INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
        VALUES (?, ?, 'member', 'active', ?)`,
     ).bind(input.workspaceId, id, nowIso())));
-    for (const id of members) await seatOrganizationMember(this.env, input.workspaceId, id);
   }
 
   /**
-   * The rows, the journal entry, General's anchor and the object, for both
-   * creators above. One D1 batch writes the workspace, its owner, the journal
-   * entry and General's anchor and route; `trailing` statements (initial
-   * members or the creator's session) go last, after the owner, and their
-   * results are returned. The batch is all or nothing and the workspace insert
-   * has no conflict clause, so a committed batch is the proof of the rows: no
-   * read-back follows. One object call then initializes the Organization and
-   * opens General in it. An authority that does not accept new work (closed,
-   * or mid-migration with a positive generation) gets no anchor here, and
-   * General is left to the slower path, which asks again.
+   * The rows, the journal entry and the object, for both creators above. One
+   * D1 batch writes the workspace, its owner and the journal entry;
+   * `trailing` statements (initial members or the creator's session) go
+   * last, after the owner, and their results are returned. The batch is all
+   * or nothing and the workspace insert has no conflict clause, so a
+   * committed batch is the proof of the rows: no read-back follows. One
+   * object call then initializes the Organization. A new member is seated
+   * nowhere: there is no General or Personal Channel (plan step C-2), and the
+   * client lands on the Canvases home.
    */
   private async createOwnedWorkspace(
     userId: string,
     input: OperationReference & { name: string; placementAffinity: WorkspacePlacementAffinity },
-    authority: WorkstreamAuthorityControl,
     trailing: D1PreparedStatement[],
   ): Promise<D1Result[]> {
     const at = nowIso();
     const slug = workspaceSlug(input.name, input.workspaceId);
-    // Minted here, or derived from the Organization this call creates, and
-    // never seen outside it, so no Channel create can have claimed either and
-    // the claim read `claimParentAnchor` makes is not needed.
-    const general = acceptsNewWorkstreamWork(authority) && authority.generation >= 1
-      ? {
-        creatorUserId: asUserId(userId),
-        spaceId: asSpaceId(uuidV7()),
-        // The creator's Personal Channel, anchored in this batch too so the
-        // object makes it in the same call. Derived, so the relationship
-        // change that follows names the same one rather than a second.
-        personalSpaceId: await personalSpaceIdFor(input.workspaceId, userId),
-        authorityGeneration: authority.generation,
-      }
-      : undefined;
     const results = await this.env.DB.batch([
       this.env.DB.prepare(
         `INSERT INTO workspaces
@@ -576,15 +542,9 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
          ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = 'active'`,
       ).bind(input.workspaceId, userId, at, input.workspaceId, this.env.AVALON_REGION),
       this.operationStatement(input, "create", null, at),
-      ...(general ? [general.spaceId, general.personalSpaceId].flatMap((parentId) => [
-        regionalWorkstreamAnchorStatement(this.env, input.workspaceId, parentId),
-        parentRouteStatement(this.env, {
-          workspaceId: input.workspaceId, parentId, generation: general.authorityGeneration, at,
-        }),
-      ]) : []),
       ...trailing,
     ]);
-    await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity, general);
+    await this.initializeWorkspaceObject(asWorkspaceId(input.workspaceId), input.placementAffinity);
     return trailing.length === 0 ? [] : results.slice(-trailing.length);
   }
 
@@ -880,19 +840,10 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     }
   }
 
-  /**
-   * Initialize the Organization's object before the session this call is about
-   * to issue, with General open in it. Every Channel belongs to a Space, so an
-   * Organization without General is one whose sidebar cannot be drawn, and
-   * the client shows the opening card until it can. The object answers that in
-   * the same call, for an Organization already open or for a new one whose
-   * General anchor `general` names; anything else takes the slower path that
-   * makes General and closes the cutover itself.
-   */
+  /** Initialize the Organization's object before the session this call is about to issue. */
   private async initializeWorkspaceObject(
     workspaceId: WorkspaceId,
     placementAffinity: WorkspacePlacementAffinity,
-    general?: WorkspaceGeneralOpening,
   ): Promise<void> {
     const workspaceObject = await durableObjectStubForWorkspace(
       this.env,
@@ -901,9 +852,7 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
       workspaceDOName(this.env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const opened = await workspaceObject.initializeWorkspace(workspaceId, placementAffinity, general);
-    if (opened?.spacesReady === true) return;
-    await openGeneralSpaceForNewWorkspace(this.env, workspaceId);
+    await workspaceObject.initializeWorkspace(workspaceId, placementAffinity);
   }
 
   private async loadOperation(operationId: string): Promise<OperationRow | null> {

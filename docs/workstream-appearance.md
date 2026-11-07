@@ -95,7 +95,6 @@ the old icon back. The route itself is [`spaces.md`](spaces.md)'s.
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Orders the picker's choices on the addressed conversation socket; a receipt resolves the choice and writes no cache. |
 | `apps/desktop/src/renderer/lib/channel-viewer-state.ts` | Reconciles a receipt-backed Breakout row with parent directory snapshots: a pre-command snapshot cannot undo the commit, while a genuinely different authoritative appearance wins. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Authoritative Channel-or-Breakout write, command receipt, and common-state publication. |
-| `apps/api/src/durable-objects/hosted-parent.ts` | Projects each Breakout's stored appearance into the parent-owned Breakout directory. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Every conversation object's nullable `workstream.appearance_json`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Directory projection for all workspace surfaces. |
 | `apps/api/src/durable-objects/workstream-identity-storage.ts` | `rename`, the second writer: it offers the naming pass's icon and refuses it where one is stored. See [`workstream-naming.md`](workstream-naming.md). |
@@ -265,7 +264,7 @@ icon, commits the projection, writes nothing on a repeat, and refuses an older
 revision); the
 `message-to-output-pipeline.test.ts` appearance case proves a client's colour
 is dropped. `workspace-channel-color-migration.test.ts` proves the backfill.
-`space-creation.test.ts` proves a thread is born in its Channel's colour on
+`space-creation.test.ts` (deleted in plan step C-2) proves a thread is born in its Channel's colour on
 Main and on its directory row before the lane runs; `identity-authority.test.ts`
 proves `provision` stores it and keeps an appearance already stored; and the
 cache suite proves the pending row carries it through the naming pass's icon.
