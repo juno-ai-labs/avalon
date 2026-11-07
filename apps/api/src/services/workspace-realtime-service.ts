@@ -166,19 +166,13 @@ export function workspaceSyncPublicationsForMutation(
   if (pathname === "/workspace/support-access") return organization("workspace_profile");
   if (pathname === "/connections" || pathname.startsWith("/connections/")) return connectionPublications(pathname);
   // A digest belongs to one person (`routes/digest.ts`).
-  if (pathname.startsWith("/digest")) return [{ topics: ["digest_schedule"], audience: ACTOR }];
   if (
     pathname.startsWith("/automations")
     || pathname.startsWith("/automation-subscriptions")
     || pathname.startsWith("/automation-templates")
   ) return organization("automations", "workstream_directory");
   if (pathname.startsWith("/notes")) return organization("notes", "resources");
-  // Retired. Every `/projects` request is answered `410` by a route that
-  // reads nothing and writes nothing, so there is no state for an
-  // invalidation to be about.
-  if (pathname.startsWith("/projects")) return [];
   if (pathname.startsWith("/resources")) return organization("resources", "workstream_directory");
-  if (pathname.startsWith("/workstreams")) return organization("workstream_directory");
   // A person's own analytics choice.
   if (pathname.startsWith("/telemetry/preference")) return [{ topics: ["viewer_preferences"], audience: ACTOR }];
   return [];

@@ -5253,7 +5253,7 @@ now has; `workstream-object-product.ts` had already arrived at the same shape.
 which is where the rest of the facade is going.
 [`connectors.md`](connectors.md) rejects converting `connector_connections`
 deliberately — it carries the AES-GCM credential envelope and interlocks with
-regional control-plane writes — and [`digests.md`](digests.md) rejects carving
+regional control-plane writes — and `digests.md` (retired) rejects carving
 out one of its reads because it would leave that domain's boundary drawn in two
 places. Routed SQL is the correct interim here; these three reads convert when
 `connector_connections` does, and not before.

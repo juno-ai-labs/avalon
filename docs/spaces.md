@@ -1825,7 +1825,7 @@ Its `joined_at` (migration 134, `NOT NULL`) is when the person last became a
 participant, stamped by WorkspaceDO's writers rather than projected; rows from
 before the migration are dated at their Channel's earliest known creation. It is what keeps a
 Channel's history out of a new participant's Activity
-([`digests.md`](digests.md#who-is-told-about-channel-news)).
+(`digests.md` (retired)).
 `workspace_container_order` is `(user_id, container_kind, container_id,
 item_id) → position` — every list a person arranges by hand, keyed by the
 container it belongs to, with a `CHECK` narrowing `container_kind` to the three

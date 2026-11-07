@@ -149,7 +149,7 @@ Owns: the preview, the stored request, the emails, the approve page, and the
 request rows and dialog. Does not own who may add a participant (the add paths
 in [`workstream-durable-object.md`](workstream-durable-object.md) and
 [`substream-creation.md`](substream-creation.md)), what the Activity tab lists
-otherwise ([`digests.md`](digests.md#the-activity-tab)), the menu bar
+otherwise (`digests.md` (retired)), the menu bar
 ([`menu-bar.md`](menu-bar.md)), or link parsing
 ([`workstream-links.md`](workstream-links.md)).
 

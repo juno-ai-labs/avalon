@@ -131,7 +131,7 @@ this module's rule would trade a rendering artifact for a delivery defect.
 It does not own what any reader does with the answer:
 [`markdown-rendering.md`](markdown-rendering.md) owns the desktop renderer and
 its streaming splitter, [`model-text-normalization.md`](model-text-normalization.md)
-the TeX repair, and [`digests.md`](digests.md) the email renderer. The citation
+the TeX repair, and `digests.md` (retired) the email renderer. The citation
 protocol that `citations.ts` holds is
 [`markdown-rendering.md`](markdown-rendering.md)'s too.
 
