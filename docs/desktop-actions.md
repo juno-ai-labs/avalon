@@ -146,9 +146,7 @@ with an answer — the import's finish and fail actions are handled by
 creator has that conversation's socket open in a desktop can be answered. The
 import window is the one non-conversation window the desktop's main process lets
 open a realtime socket, and it closes that socket when the window navigates,
-crashes or closes. A
-Channel's main loop reaching the person's main window is a later consumer of the
-same frames. Per Rally's policy, no action asks the person to confirm it.
+crashes or closes. Per Rally's policy, no action asks the person to confirm it.
 
 ## Failure modes and limits
 

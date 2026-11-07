@@ -36,15 +36,14 @@ and extracted text is labeled separately. See [session import](session-import.md
 | `apps/api/src/durable-objects/workspace-resources-protocol.ts` | The typed request/result contracts for every resource-domain WorkspaceDO method, with refusals as outcomes rather than throws. |
 | `apps/api/src/durable-objects/workspace-resources-storage.ts` | The resource domain's SQL against the object's own storage: upload commit, draft delete, connector resolve, hydration swaps, watches, version reads, cleanup claims, alias claims, inbound-email receipts, webhook resource upserts, and the maintenance bounds beside them. |
 | `apps/api/src/services/resource-listing.ts` | The listing flag that separates a resource being *reachable* from its being *advertised*, the SQL predicate every enumerating statement applies, and the metadata helper its one producer writes. |
-| `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries, all over `ConversationResourceLinks`: a conversation's own links, and for a Breakout its Channel's Main links as well. |
+| `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries, all over `ConversationResourceLinks`: a conversation's own links. |
 | `apps/api/src/runtime/resource-port.ts` | `createConversationResourceLinks`, the one way a reader builds those links from a conversation's address. |
 | `apps/api/src/services/workstream-resource-inventory.ts` | Renders the bounded current-principal inventory appended to live and replayed compaction checkpoints. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
-| `apps/api/src/services/automation-draft-attachment-tools.ts` | Reuses those operations behind a frozen compiler-request ID set and fresh draft ownership checks. |
 | `apps/api/src/services/attachment-model-content.ts` | Renders manifest-only non-image projection and bounded same-ID current-turn image derivatives; `normalizeModelImageBytes` applies the same format, pixel, edge and byte limits to bytes that are not a resource, for Terminal's `view_image`. |
 | `apps/api/src/services/attachment-tool-receipts.ts` | Atomically binds completed attachment results to current derivative hashes and revalidates replay dependencies. |
 | `apps/api/src/services/integrations.ts` | Current message projection, work-stream resource-tool registration, and authorization-aware receipt replay. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Hydrates attachment descriptors from durable participant-turn parts into ordered transcript snapshots. |
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects, and serves authorized person-facing previews from the original image/text or the reusable document derivative. |
 | `packages/contracts/src/workstream-transcript.ts` | Defines the attachment descriptor carried by a participant transcript text block. |

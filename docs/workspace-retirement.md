@@ -30,7 +30,7 @@ that first needed it ships separately, calling what is here.
 | `apps/api/src/services/workspace-retirement-service.ts` | The pass that walks the recorded graph, closing children before parents, and the operator door in front of it. |
 | `apps/api/src/routes/workspace-operations.ts` | `/internal/workspaces/:id/retire`, behind the operator credential in the `demos` role. |
 | `apps/api/src/middleware/errors.ts` | Maps a refusal that reaches an HTTP route to `409 workspace_retired`. |
-| `apps/api/src/queues/access-revocation-consumer.ts`, `product-feature-flag-consumer.ts`, `activity-consumer.ts`, `apps/api/src/workflows/connector-event.ts`, `apps/api/src/services/digest-service.ts` | The background callers that can meet a retired object; each acknowledges a refusal as terminal. |
+| `apps/api/src/queues/access-revocation-consumer.ts`, `product-feature-flag-consumer.ts`, `activity-consumer.ts`, `apps/api/src/workflows/connector-event.ts` | The background callers that can meet a retired object; each acknowledges a refusal as terminal. |
 | `apps/api/src/telemetry/operator-auth.ts` | The operator credentials: `requireOperatorFrom` verifies a bearer token against one of two same-shaped secrets — `DEMO_OPERATORS_JSON` for the `demos` role Ace holds, `TELEMETRY_OPERATORS_JSON` for the telemetry roles — and `requireOperatorRole`, which every operator router narrows with. |
 | `packages/contracts/src/workspace-retirement.ts` | The receipt a retirement answers with. |
 | `packages/contracts/src/conversation-parent.ts` | `childrenForRetirement`'s three-way answer. |

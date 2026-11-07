@@ -361,34 +361,3 @@ alarm: one active and one dormant member both due, assert only the active one's
 ranking workflow is launched and the dormant one's `due_at` survives; a member
 whose `due_at` is older than the starvation window is treated as urgent; and a
 set stored empty against a live fingerprint does not clear its own request.
-
-## A Breakout's settlement may refresh its own description, not Main's
-
-**Observed.** `settleAgentRun` in `apps/api/src/durable-objects/substream-agent.ts`
-(around lines 5545–5565) calls `refreshWorkstreamDescription` with
-`workstreamId: input.parentId` and no `substreamId`, under a comment saying the
-description "stays addressed at the main conversation". `localWorkstreamAuthority`
-in `apps/api/src/runtime/local-authorities.ts` (around lines 140–160) resolves a
-port with no `substreamId` to the executing object: "a loop-side port means
-where it runs". So when the settling run is a Breakout's, the description loop's
-identity, scheduling and message ports resolve to the Breakout, and the window
-it reads and the row it rewrites appear to be the Breakout's own.
-
-**Why it is suspicious.** The comment and the resolution rule disagree, and
-[`workstream-descriptions.md`](workstream-descriptions.md) (retired) said both that "the
-loop below only reads Main" and that "a Breakout's run settlement writes one
-from its first message while it is still empty". Either Main's description is
-never re-evaluated from Breakout activity (a gap the loop's `rest_until` would
-hide), or the Breakout's is, and the comment is stale. Found while mapping the
-settlement lane for the memory research
-([`PRDs/2026-10-18_agent-memory/research.md`](PRDs/2026-10-18_agent-memory/research.md));
-not verified beyond reading the code.
-
-**What would settle it.** A `test-workers/` case that settles a terminal run in
-a Breakout whose Main has a stale derived description and enough new human
-messages to clear the gates, then asserts which conversation's
-`description_refresh_state` row advanced and which `description` changed.
-
-**Severity.** `waste` if the Breakout is evaluated on purpose and only the
-comment is wrong; `wrong-answer` if Main's description was meant to follow its
-Breakouts and never does.

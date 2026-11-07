@@ -1414,7 +1414,6 @@ served them is deleted rather than left dormant so the next change does not
 have to reason about it. Tables are dropped worker-first: the Worker that no
 longer reads them deploys before the migration that drops them.
 
-
 **Consequences:** WorkspaceDO migration 147 (plan step C-7) dropped the
 Activity, digest (but `digest_schedules`), suggested-work, Space-ledger,
 Thread pin, order, access, resource-link and batch-dispatch tables, the

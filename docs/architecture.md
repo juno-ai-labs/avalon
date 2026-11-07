@@ -674,7 +674,6 @@ Canvas and Sidekick lists.
 sections of the product, and deletes iOS rather than carrying a prototype
 client forward.
 
-
 **Consequences:** `platform: "ios"` push registration stays in the contracts
 (`push-notifications.ts`) with no client sending it. The owning documents for
 the hosting and the conversation object are
