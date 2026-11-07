@@ -19,6 +19,7 @@ import {
   IconCornerDownRight,
   IconDeviceDesktopDown,
   IconDots,
+  IconHexagon,
   IconLock,
   IconMenu2,
   IconPin,
@@ -61,6 +62,9 @@ import { useWorkspaceMembers } from '../lib/workspace-members';
 import { resourceKindLabel } from './markdown-citations';
 import { Avatar, Button, IconButton, ErrorNotice, Modal, RallyAvatar, TitleSkeleton, Tip } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
+import { CanvasesSection, useUnreadCanvasCount } from './canvas-sidebar-section';
+import { SidekicksSection, useSidekickAttentionCount } from './sidekick-sidebar-section';
+import { useCreateCanvas } from '../lib/canvases';
 import { ghostProps, opensElsewhere, PinnedSection, pinnedPosition, RowLayout, SectionHeading } from './navigation-rows';
 import { RailItem } from './rail-item';
 import { RelativeTime } from './relative-time';
@@ -91,6 +95,17 @@ const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNo
   { id: 'artifacts', label: 'Artifacts', icon: <ShapeOutline shape="sheet" /> },
 ];
 type Section = (typeof SECTIONS)[number];
+
+/**
+ * The sections the rail switches to at cutover (plan step B-1): Canvases,
+ * whose outline is the page every artifact tile draws, and Sidekicks, the
+ * hexagon a Sidekick is drawn in. Their bodies, badges and header actions are
+ * wired below; nothing in the rail selects them yet.
+ */
+const PIVOT_SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNode }> = [
+  { id: 'canvases', label: 'Canvases', icon: <ShapeOutline shape="sheet" /> },
+  { id: 'sidekicks', label: 'Sidekicks', icon: <IconHexagon aria-hidden="true" size={22} stroke={1.8} /> },
+];
 
 /**
  * How many sections the phone's tab row draws before folding the rest into a
@@ -250,8 +265,14 @@ export function NavigationSidebar({
     // Each pinned artifact with a version this person has not seen.
     artifacts: unreadArtifacts,
     activity: unreadActivity,
+    // Each Canvas holding something this person has not read; each Sidekick
+    // waiting on input or holding something unread.
+    canvases: useUnreadCanvasCount(),
+    sidekicks: useSidekickAttentionCount(),
   };
-  const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
+  const title = [...SECTIONS, ...PIVOT_SECTIONS].find((candidate) => candidate.id === section)?.label ?? 'Threads';
+  const createCanvas = useCreateCanvas();
+  const navigate = useNavigate();
   // The phone's tab row has room for four sections beside More and Settings;
   // the rest fold into More. A guest's four all fit, so they get no More.
   const phone = usePhoneLayout();
@@ -309,6 +330,12 @@ export function NavigationSidebar({
             {section === 'channels' && <IconButton label="New channel" onClick={() => setCreatingChannel(true)}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
+            {section === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { void createCanvas().catch(() => undefined); }}>
+              <IconPlus aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>}
+            {section === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
+              <IconPlus aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>}
             {section === 'activity' && <IconButton label="Mark all read" onClick={markActivityRead}>
               <IconChecks aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
@@ -323,6 +350,8 @@ export function NavigationSidebar({
           {section === 'threads' && <ThreadsSection guest={guest} scroll={scroll} />}
           {section === 'artifacts' && <ArtifactsSection scroll={scroll} />}
           {section === 'channels' && <ChannelsSection scroll={scroll} />}
+          {section === 'canvases' && <CanvasesSection scroll={scroll} />}
+          {section === 'sidekicks' && <SidekicksSection scroll={scroll} />}
           {section === 'activity' && <ActivitySection
             accessDecisionFailed={accessDecisionFailed}
             accessRequests={accessRequests}
@@ -340,7 +369,7 @@ export function NavigationSidebar({
 }
 
 /** What a section's count says it counts, for its accessible name. */
-const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned with news', channels: 'with new threads', threads: 'waiting', artifacts: 'updated', activity: 'unread' };
+const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned with news', channels: 'with new threads', threads: 'waiting', artifacts: 'updated', activity: 'unread', canvases: 'unread', sidekicks: 'waiting' };
 
 /** What a section's count says, for its accessible name: "3 waiting". */
 function badgeLabel(section: SidebarSection, count: number): string {
