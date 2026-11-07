@@ -410,6 +410,29 @@ Development sign-in works end to end in this setup: **Use local development
 account** authenticates against the local Global Worker and opens the seeded
 workspace with its Canvases, its Sidekick, and onboarding checklist.
 
+**Settings is a second page that has to be opened before it can be captured.**
+Once a session has an Organization, the main process builds the
+`?surface=settings` window ahead of time and keeps it hidden (`show: false`), so
+it is listed among the CDP pages from the start but never paints: a
+`Page.captureScreenshot` against it, or a Playwright `screenshot()`, waits for a
+frame that does not come and times out. Open it the way a person does, from the
+main page: click the account tile at the bottom of the rail (its accessible name
+starts `Settings, ` and goes on with the person and the Organization), then the
+**Settings** item in the menu it opens. The window is then shown, and the page
+whose URL contains `surface=settings` answers screenshots:
+
+```javascript
+await page.getByRole('button', { name: /^Settings, / }).click();
+await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
+const settings = browser.contexts()[0].pages().find((p) => p.url().includes('surface=settings'));
+await settings.screenshot({ path: '/tmp/settings.png' });
+```
+
+The action row under a Chat message (**Oopsie**, Copy, Speak, Image, PDF) is
+in the DOM, and so in `innerText`, under every message, but drawn at opacity 0
+with `pointer-events: none` until its message is hovered or focused. Hover the
+message before capturing or clicking the row.
+
 ## What cannot be verified in a sandbox
 
 - **Workers AI PDF OCR** (`env.AI`) and **Flagship**
