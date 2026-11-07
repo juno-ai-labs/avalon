@@ -1,122 +1,87 @@
 # Scope grant directory
 
-The scope grant directory finds candidate workstreams for a user's current
-workspace relationship. The Channel's parent, hosted in `WorkspaceDO`
-([hosted conversation parents](hosted-conversation-parents.md)), remains the
-grant authority; `WorkspaceDO` also stores a discovery projection. The projection alone never authorizes a read.
-The lite browser consumes a canonical directory endpoint for shared navigation.
+The scope grant directory is a discovery index in `WorkspaceDO` of the
+conversations a person holds a direct grant in, keyed by their membership
+incarnation. It never authorizes a read. Its producer was the Channel's hosted
+parent and its readers the guest directory and navigation routes; both went
+with Channels and Threads. A Canvas share's grant has its own directory step
+(`HostedCanvas.applyGrant`, which adds the guest to `canvas_participants`) and
+writes nothing here, and a guest's Canvases reach them through the workspace
+socket's Canvas list ([`canvases.md`](canvases.md#guests)). What remains is the
+table, its apply path and its candidate query, kept because a grant effect
+already in the Queue still lands through them.
 
 ## Where the code lives
 
 | File | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/scope-grant-storage.ts` | Grant mutation and existing parent outbox enqueue in one transaction. |
-| `packages/contracts/src/conversation-effects.ts` | Typed parent effect carrying the grant. |
-| `apps/api/src/queues/activity-consumer.ts` | Applies a grant effect that arrives on the Queue. |
-| `apps/api/src/durable-objects/scope-grant-directory.ts` | Versioned projection and incarnation-specific candidate query. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Workspace identity checks, schema and typed RPC boundary. |
-| `apps/api/src/routes/sharing.ts` | Authenticated compatibility `/sharing/directory` and hierarchical `/sharing/navigation` routes. |
+| `apps/api/src/durable-objects/scope-grant-directory.ts` | `SCOPE_GRANT_DIRECTORY_SCHEMA`, `applyScopeGrantDirectory` (the versioned projection) and `scopeGrantCandidates` (the incarnation-specific candidate query). |
+| `apps/api/src/durable-objects/workspace-do.ts` | `applyScopeGrantDirectory` and `listScopeGrantCandidates`, the typed RPC boundary; the second has no caller. |
+| `apps/api/src/queues/activity-consumer.ts` | Applies a `scope_grant_directory` effect that arrives on the Queue. |
+| `packages/contracts/src/conversation-effects.ts` | The typed parent effect carrying the grant. |
 
 ## How it works
 
-Every *direct* grant mutation invokes the parent's existing projection writer
-within its SQLite transaction, including a claimed invitation. A grant a Space
-seated before WorkspaceDO migration 94 does not
-([a Space seats nobody now](authorization.md#space-derived-access)): it carries
-`scope_grants.source_kind = 'space'` and the writer is suppressed for it,
-because that reader discovers the Channel through the Organization's Space
-directory instead. General holds every Channel in the Organization, so publishing one row per Space-derived
-reader per Channel would size this index at the Organization times its
-Channels. Direct provenance wins where both apply, in both directions — a Space
-can neither claim such a row nor deactivate it — so a Channel a person also
-holds directly stays published. The parent's `parent_outbox` row owns versioning
-and retries. `WorkspaceDO` applies it to this index right after the write, with
-no Queue hop and no separate delivery alarm; the alarm only retries an apply that
-failed. The one-time import of each legacy parent republished its direct
-grants, deduplicated against the projection keys it carried, so a delivery the
-legacy object never sent was not lost.
-
-The WorkspaceDO index supplies candidates only, and it is one of two sources:
-a Channel where this person may list a Breakout but cannot see the Channel
-itself is a candidate too, read from `breakout_viewers`. That is how
-a member seated in a legacy Breakout of a Channel they cannot read finds it;
-the parent's `canReadConversation` then admits the Breakout alone.
-Directory reads admit every candidate at its canonical parent in one
-`WorkspaceDO.readSharedWorkstreams` call, which loops the hosted Channels
-locally and answers in candidate order; each Channel still makes its own
-admission decision. A final relationship
-incarnation/revision check fences the combined response. For hierarchical navigation,
-a child-only share names its Channel so the browser can place the authorized Breakout
-under the right container, while Main, sibling Breakouts, Main participants and Main
-transcript remain withheld. The compatibility directory scrubs that title back to
-`null` unless Main is admitted, preserving its original response semantics. Channel
-appearance is still withheld unless Main is shared. The hierarchical response then
-asks WorkspaceDO only for the visible Space marks and containment edges of those
-canonically admitted Channels. The response preserves parent archive state separately
-from each conversation, so clients do not offer a child restore while its parent is
-archived.
-The guest navigation read (`/sharing/navigation`) that listed a guest's
-Channels, Spaces and Breakouts went with the Thread routes in plan step C-1; a
-guest's Canvases reach them through the workspace socket's Canvas list, decided
-by each Canvas's audience ([`canvases.md`](canvases.md)), not through this
-index.
+A `scope_grant_directory` parent effect names a grant at a version; the
+consumer hands it to `WorkspaceDO.applyScopeGrantDirectory`, which upserts the
+row if the version is newer and keeps a revoked row as a versioned tombstone.
+`scopeGrantCandidates` lists the parent ids where a person holds a live grant
+under their current membership incarnation. A Canvas share's grant is written
+by `ScopeGrantStorage` with the Canvas's own directory step, so no new effect
+reaches this index.
 
 ## Invariants
 
-- Grant mutation and outbox insertion are atomic. Otherwise a crash can
-  make an accepted share permanently undiscoverable.
-- Revocation retains its version. Deleting the row would let a delayed addition
-  recreate a stale candidate.
+- Revocation retains its version. Deleting the row would let a delayed
+  addition recreate a stale candidate.
 - Membership incarnation is part of lookup. Rejoining a workspace must not
   expose grants from the user's previous membership lifetime.
-- Candidates require current owner admission before returning product content.
-  Queue lag must never extend access after revocation.
+- A candidate is never access. Nothing may treat a row, or its absence, as an
+  authorization answer; the owner's admission decides.
 - The generic WorkspaceDO SQL API rejects this table. Only the typed projection
   and candidate RPCs own its lifecycle.
-- The index is complete for direct grants and deliberately incomplete for
-  Space-derived ones. An absent candidate row is not absent access, and nothing
-  may treat it as a negative answer — it narrows a search, and the owner's
-  admission is what decides.
 
 ## Boundary
 
-This module owns discovery delivery and candidate indexing. Identity and active
-relationships belong to D1; canonical grants belong to the Channel's parent in
-`WorkspaceDO`. Claiming an
-invitation is described in [scope invitations](scope-invitations.md). Browser
-entry and its limited collaboration surface belong to
-[browser client](browser-client.md). There is no new Queue or socket multiplexer.
+This module owns the index alone. Canonical grants and their receipts are
+`ScopeGrantStorage`'s ([`scope-invitations.md`](scope-invitations.md)); who may
+read a Canvas is `canvasAdmits` ([`authorization.md`](authorization.md)).
 
 ## Failure modes and limits
 
-A failed apply leaves the `parent_outbox` row in place, and the alarm retries
-it. Identical deliveries are idempotent;
-older deliveries are ignored. Equal-version conflicting payloads fail rather
-than silently selecting one. Malformed addresses or hashes fail delivery.
-Discovery can lag grant acceptance, but the direct shared link still uses the
-canonical owner. No new numeric limits are introduced.
+Identical deliveries are idempotent; older deliveries are ignored.
+Equal-version conflicting payloads fail rather than silently selecting one.
+Malformed addresses or hashes fail delivery. No numeric limits.
 
 ## Testing
 
-Run the API workerd files `scope-grant-authority.test.ts` (deleted in plan step C-2),
-`scope-grant-directory.test.ts` and `scope-grant-storage.test.ts` (deleted in plan step C-2). The authority
-test refuses Queue transport, inspects the real persisted outbox, and delivers
-its exact bodies through the production consumer. Receiver tests exercise
-revocation ordering, replay, replacement incarnations and generation fences.
-A populated migration test preserves both pending and inflight deliveries.
-Negative controls remove the source handoff and stale-delivery guard separately;
-the corresponding tests must fail. Additional canonical tests prove that a stale
-candidate cannot expose revoked content, a child-only share releases its Channel
-label only through hierarchical navigation without releasing Main, two shared
-Breakouts in different Channels produce both visible containing Spaces with one
-admission call whatever the number of Channels (a counted namespace from
-`test-workers/helpers/counting-namespace.ts` records it), one batch withholds a
-Channel while releasing the next in candidate order, a private
-Space invisible to the guest is withheld, and unready/restricted children are absent.
-Negative controls bypass canonical admission, truncate the admitted Channel set, or
-flatten the browser's Space filter; the corresponding tests fail.
+`apps/api/test-workers/scope-grant-directory.test.ts` (`pnpm --filter @rally/api
+test:workers`) projects queued grants without letting a late addition undo a
+revocation, isolates membership incarnations and fences previous parent
+generations, and retains legacy grants without a current relationship without
+making them discoverable.
 
 ## Changelog
+
+### 2026-11-07 — The index has no producer or reader left
+
+**What changed:** The Channel host that wrote this index and the
+`/sharing/directory` and `/sharing/navigation` routes that read it are deleted
+(plan steps C-1 and C-2). A Canvas share's grant uses the Canvas's own
+directory step, which adds the guest to the participant list, and writes no
+row here; `listScopeGrantCandidates` has no caller.
+
+**Why:** In the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+a guest reaches what is shared with them through the workspace socket's
+Canvas list, decided by each Canvas's audience, so there is no cross-parent
+discovery for this index to narrow.
+
+**Considered and rejected:** Writing Canvas grants here as well: nothing reads
+the index, and the participant list is already the Canvas's answer.
+
+**Consequences:** The table, the apply path and the candidate query stay so
+an effect already in the Queue still lands; removing them is a WorkspaceDO
+migration that drops `scope_grant_directory` with the consumer branch.
 
 ### 2026-09-28 — Admit every shared Channel in one Organization call
 
