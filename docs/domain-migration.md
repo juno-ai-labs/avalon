@@ -231,7 +231,7 @@ not own what any individual host does: [`regionalization.md`](regionalization.md
 owns the configured deployment split and the shared ingress design,
 [`provider-apps.md`](provider-apps.md) owns the registrations,
 [`workstream-email-addresses.md`](workstream-email-addresses.md) owns the
-address format and allocator, [`workstream-links.md`](workstream-links.md) owns
+address format and allocator, [`links.md`](links.md) owns
 the canonical link shape, and [`security.md`](security.md) owns the origin
 policy. Certificate and DNS procedure is in [`runbook.md`](runbook.md).
 
@@ -261,7 +261,7 @@ compatibility window — nothing outside a build reads either.
 
 No automated test covers the site's route list, CSP, canonical tags, sitemap or
 deep-link hostnames. Those are deploy configuration, and the deploy is their
-test ([`testing.md`](testing.md#what-to-test-and-what-not-to)). `packages/contracts/src/workstream-links.test.ts` covers
+test ([`testing.md`](testing.md#what-to-test-and-what-not-to)). `packages/contracts/src/links.test.ts` covers
 minting the new scheme and reading the old, including a test that asserts the
 *writing* side alone: parsing accepts both, so minting the wrong scheme would
 otherwise still round-trip and no other test would notice.
@@ -279,7 +279,7 @@ The Apple association is another hostname-coupled release surface. Only
 `rallywith.ai` and `www.rallywith.ai` appear in desktop associated-domain
 entitlements. Moving either requires serving the association on the new host
 before releasing the corresponding entitlement; legacy origins remain browser
-handoffs. See [work-stream links](workstream-links.md#apple-universal-links).
+handoffs. See [links](links.md#apple-universal-links).
 
 ## Changelog
 

@@ -1040,7 +1040,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   link, plus a hash of the attachment posted on it, so a posted unfurl card is
   rewritten exactly when it would render differently. Slack reports a shared link
   only once, so a row that is not written as the card is posted can never be
-  recovered — see [`workstream-links.md`](workstream-links.md).
+  recovered — see [`links.md`](links.md).
 
 - `WorkspaceDO.webhook_receipts` stores connection-scoped signed-delivery replay
   receipts for generic, Granola and Ashby webhooks. `provider_webhook_receipts` remains

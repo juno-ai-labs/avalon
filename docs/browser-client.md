@@ -76,10 +76,10 @@ the proof in document memory until the person clicks Continue. Merely opening a
 link never redeems it. Reloading after removing the fragment requires reopening
 the email link or requesting another one; no proof is written to local storage.
 
-A shared conversation has no entry of its own. Its emailed link is the ordinary
-addressed conversation path, which opens its Canvas like any canonical link: signed out, the
+A shared Canvas has no entry of its own. Its emailed link is the Canvas's
+canonical link, so it opens like any other: signed out, the
 entry asks the person to sign in with the address the link was sent to; signed
-in, it opens the Organization and the conversation. Signing in is what claims
+in, it opens the Organization and the Canvas. Signing in is what claims
 the share ([scoped invitations](scope-invitations.md#claiming)), on the server,
 before the session is described, so there is no acceptance screen, button or
 request after it. An old `/invite#…` link from before this is a plain sign-in
@@ -90,11 +90,12 @@ For an unaddressed entry, the client lists the user's regional workspaces and ca
 out through the ordinary browser-session logout. Once the list is on screen it
 reads `GET /browser/workspaces/attention` and gives each row with new activity a
 count badge ([multiple workspaces](multiple-workspaces.md#the-account-menus-directory)). Workspace roots mount the shell,
-and canonical conversation and Sidekick links activate the addressed
-workspace and open in it: a conversation link opens its Canvas, a Channel's
-link the Canvases home, and a Sidekick's link the Sidekick. A copied link reaches here from the site's handoff
+and canonical Canvas and Sidekick links activate the addressed workspace and
+open in it. A retired Space, Channel, Breakout or Thread link opens nothing:
+the entry says "This link is to something that no longer exists" above the
+list, or in place of the sign-in line. A copied link reaches here from the site's handoff
 page, whose **Continue in browser** keeps the path and swaps the host
-([`workstream-links.md`](workstream-links.md#the-handoff-page)). A guest sees no setup or onboarding view.
+([`links.md`](links.md#the-handoff-page)). A guest sees no setup or onboarding view.
 
 Returning focus refreshes both the root session and the selected workspace
 relationship, even when the user ID is unchanged. The feed stays mounted while
@@ -228,19 +229,22 @@ authorizes every call. `GET /workspace` answers guests too, with
 else; the rest of `/workspace` stays member-only.
 
 The desktop shell routes by hash. Before its router mounts, the shell rewrites a
-canonical conversation, Channel or Sidekick link, or an addressed conversation path such as an invitation email's, into
-the workspace path plus a hash route (`shellLocation`): `#/canvases/:id` for a
-conversation, `#/canvases` for a Channel, `#/sidekicks/:id` for a Sidekick. A
-link's Breakout and artifact are dropped; the Canvas opens its newest artifact. Losing access or a 401 asks the entry to re-read the server
+canonical Canvas or Sidekick link into the workspace path plus the hash the
+desktop's own deep links navigate to (`shellLocation`): `#/canvases/:id`, with
+`?artifact=:id` when the link opens one of its artifacts, or `#/sidekicks/:id`. Losing access or a 401 asks the entry to re-read the server
 session, which unmounts the shell when the session is gone. The shell keeps
 transcripts in the local cache, so the entry wipes it alongside drafts on
 sign-out and account change.
 
-The cookie adapter forwards the member route families (`canvases`,
-`onboarding/account`, `onboarding/organization-suggestion`, `push-devices`,
-`workspaces`) in addition to the ones guests use. `spaces`, `projects`,
-`workstreams`, `navigation`, `work-opportunities` and `digest` stopped being
-forwarded when the server deleted those routes (plan step C-1). The list is
+The cookie adapter forwards the families the Canvases and Sidekicks shell
+calls: `canvases`, `conversations` (a Canvas's Chat and a Sidekick's
+conversation), `sidekicks`, `automations`, `sharing`, `resources`, `search`,
+`connections`, `workspace`, `workspaces`, `push-devices`, `digest` (the
+schedule in Settings), `onboarding/account` and
+`onboarding/organization-suggestion`, with `feature-flags`, `telemetry`,
+`message-issues`, `favicons`, `speech` and `realtime`. The Thread, Channel and
+Space families (`workstreams`, `spaces`, `projects`, `navigation`,
+`work-opportunities`) are not forwarded. The list is
 `BROWSER_ROUTE_FAMILIES` in `apps/api/src/routes/browser.ts`: a new route family
 the browser calls must be added there, or the browser's request for it is not
 forwarded. Each route keeps its own role
@@ -636,22 +640,26 @@ Substream Archive stays in the right-click menu, away from the header Share cont
 
 ## Changelog
 
-### 2026-11-07 — Links open Canvases and Sidekicks; the Channel shell is gone
+### 2026-11-07 — The browser opens Canvas and Sidekick links, and forwards the Canvas routes
 
-**What changed:** `shellLocation` turns a canonical conversation link into
-`#/canvases/:id`, a Channel link into `#/canvases`, and a Sidekick link into
-`#/sidekicks/:id`, dropping a link's Breakout and artifact. The shell mounts
-the two-section sidebar (Canvases, Sidekicks) rather than Channels, Threads
-and Activity, and a guest's sidebar lists what was shared with them there.
+**What changed:** `shellLocation` rewrites a Canvas link to `#/canvases/:id`
+(with `?artifact=`) and a Sidekick link to `#/sidekicks/:id`; the Thread,
+Channel and Space branches are gone, and a retired link gets a line on the
+entry screen saying what it named no longer exists. `BROWSER_ROUTE_FAMILIES`
+gains `canvases`, which it lacked, so a browser could not create or open a
+Canvas, and loses `workstreams`, `spaces`, `projects`, `navigation` and
+`work-opportunities`, which nothing in the shell calls now.
 
-**Why:** The client pivot to Canvases and Sidekicks removed the Thread and
-Channel screens, and `App.tsx` redirects their old hash routes to the Canvases
-home, so a link rewritten to `#/workstreams/:id` would have lost its target.
+**Why:** Plan step B-5 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+the Thread surfaces are deleted, and the Canvas is what a shared link names.
 
-**Consequences:** An artifact link opens its Canvas on the newest artifact,
-not the one linked, until Canvases get links of their own. The server still
-forwards the `spaces`, `projects` and `work-opportunities` families; retiring
-them is the server half's work.
+**Considered and rejected:** Keeping the retired families forwarded "in case".
+Forwarding is the whole of the browser's reach; a family nothing calls is reach
+nobody needs.
+
+**Consequences:** A route family a later step adds to the shell must be added
+to the list in the same change. `digest` stays while Settings shows the
+schedule. The links themselves are [`links.md`](links.md)'s.
 
 ### 2026-11-07 — Sidekicks are a pane beside the sidebar, not a full-tab surface
 

@@ -329,9 +329,12 @@ does not list the section yet (plan step B-1), so `/canvases` and
   (`useRowPinDrop`). A pin lands at the end of the group: the order is
   `reorderSidebarPins` in `WorkspaceDO`, which no route exposes yet.
 
-Not built yet, because nothing on the server answers them: renaming a Canvas
-(no route writes `canvas_directory.title`) and copying its link (the Canvas
-link form is plan step B-5).
+Copying a Canvas's link is the pill menu's **Copy link**, the Canvas form
+`/app/<region>/<organization>/cv/<canvas>/` ([`links.md`](links.md)); a
+detached artifact window's **Copy link** adds the artifact's segment, and a
+link with one opens the Canvas with that artifact in the rail. Not built yet,
+because nothing on the server answers it: renaming a Canvas (no route writes
+`canvas_directory.title`).
 
 ## Invariants
 
@@ -452,23 +455,20 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 ## Changelog
 
-### 2026-11-07 — A Canvas can be retitled, and a Pinned group reordered
+### 2026-11-07 — A Canvas has its own link
 
-**What changed:** `PATCH /canvases/:id` writes the title (`HostedCanvas.rename`)
-for anyone the Canvas admits and moves the list's waterline for every open
-socket. `PUT /workspace/pinned-order` now takes `{ kind, itemIds }` and calls
-`reorderSidebarPins` for the Canvases or Sidekicks list; the Space-era
-container order (`PUT /workspace/order`) and the All Pinned order it replaced
-were deleted with the Channel routes.
+**What changed:** A Canvas is linked as `/app/<region>/<organization>/cv/<canvas>/`
+(deep link `.../canvases/<canvas>`), copied from the pill menu or a detached
+artifact window (with `a/<artifact>/`). A notification, email or Slack message
+about a Canvas's Chat links to the Canvas, and the handoff page names it from
+`canvas_directory`.
 
-**Why:** The routes land ahead of the client: no renderer code renames a
-Canvas yet, and both sidebar sections pass `reorderable={false}`, so a pin
-lands at the end of its group with no way to move it. Retitling is open to
-anyone the Canvas admits rather than only to its managers because anyone it
-admits already changes its artifacts from its Chat; the title is no more
-protected than what it names (recorded in the PRD's decision log as open to
-the product owner's reversal). The order route kept its path, which the
-browser's `workspace` route family already forwards.
+**Why:** Until plan step B-5 of the [pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md) a Canvas borrowed
+the Thread link forms, which went with Threads.
+
+**Consequences:** [`links.md`](links.md) owns the form; a Canvas's id being its
+conversation's parent id is what lets a server mint the link from a
+conversation alone.
 
 ### 2026-11-07 — Document created: a Canvas is a hosted conversation with its own audience
 
