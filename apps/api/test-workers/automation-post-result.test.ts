@@ -186,7 +186,8 @@ const provider = useOpenRouterDouble(async (call) => {
   }
   const tool = call.toolNames.find((name) => name === "conversation_post");
   const toolAnswered = call.messages.some((message) => message.role === "tool");
-  if (tool && !toolAnswered) return { callTool: { name: tool, arguments: { text: RESULT_TEXT } } };
+  // Names the home: a post that names nothing lands in the Sidekick's own conversation.
+  if (tool && !toolAnswered) return { callTool: { name: tool, arguments: { conversation: ROOM_ID, text: RESULT_TEXT } } };
   return { say: tool ? "Posted the count." : "Acknowledged." };
 });
 useSelectedModel();
@@ -1986,9 +1987,9 @@ describe("a room Sidekick's run and the room's agents", () => {
     const deliveredBefore = (await postTurns()).length;
     await runInDurableObject(roomParent(), (_instance, state) => state.storage.sql.exec(
       "UPDATE channels SET archived_at=? WHERE workstream_id=?", Date.now(), ROOM_ID));
-    const plugin = createConversationsPlugin(input, conversationToolPorts(TEST_ENV, input), (tool) => [tool], { home: true })!;
+    const plugin = createConversationsPlugin(input, conversationToolPorts(TEST_ENV, input), (tool) => [tool])!;
     const postTool = plugin.tools.find((tool) => tool.definition.name === "post")!;
-    await expect(postTool.execute({ text: "The source cannot be read. Restore its sharing to unblock the summary." }, {
+    await expect(postTool.execute({ conversation: ROOM_ID, text: "The source cannot be read. Restore its sharing to unblock the summary." }, {
       workspaceId: WORKSPACE_ID, workstreamId: AUTOMATION_ID, harnessRunId: input.harnessRunId,
       toolCallId: "permission-report", effectIntentId: crypto.randomUUID(), executionPrincipal: input.executionPrincipal,
       signal: new AbortController().signal,

@@ -2255,7 +2255,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * A Sidekick's `conversation_post`, appended to this conversation as a
    * message from the Sidekick, and nothing else.
    *
-   * It accepts any conversation, a Breakout as well as Main, and it does not
+   * It accepts a Thread's Main or a Breakout, or a Sidekick's own shared
+   * conversation (parent kind `automation`, substream `"0"`, never a run's,
+   * which no post may reach), and it does not
    * wake this conversation's agent: a post is something people here read, not
    * a request to the agent here. The agent's next run still reads it: the
    * gap-fill appends it to the model's context, attributed to the Sidekick.
@@ -2275,9 +2277,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const identity = this.objectStore.identity();
     if (!identity
       || identity.workspaceId !== request.workspaceId
-      || identity.parentKind !== "workstream"
+      || identity.parentKind !== request.parentKind
       || identity.parentId !== request.workstreamId
-      || this.externalSubstreamId() !== request.substreamId) {
+      || this.externalSubstreamId() !== request.substreamId
+      || (request.parentKind === "automation" && request.substreamId !== "0")) {
       return { outcome: "refused", code: "workstream_destination_mismatch", messageId: null };
     }
     const existing = this.messages.messageByClientId({ clientMessageId: request.clientMessageId });
