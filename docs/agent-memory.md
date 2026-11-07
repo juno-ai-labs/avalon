@@ -2,18 +2,21 @@
 
 Agent memory is what Rally remembers on its own from the conversations it takes
 part in, and what a person asks it to remember or forget. A background **sweep**
-reads a window of a Thread, Breakout or Sidekick conversation after it settles
+reads a window of a Canvas's Chat or a Sidekick conversation after it settles
 and asks a strong model which facts to record, revise or retract; the facts live
-in `WorkspaceDO`, each filed under a subject (the Organization, a Channel, a
-Thread, a Breakout, a person, a Sidekick) and carrying the conversations it was
-learned from. Three tools let a run recall, remember and forget. Nothing is
-recalled automatically at run start in this release; the per-activation digest
-is the next rollout step of the PRD.
+in `WorkspaceDO`, each filed under a subject (the Organization, a Canvas, a
+person, a Sidekick) and carrying the conversations it was learned from. Three
+tools let a run recall, remember and forget, and every activation starts with
+a digest of the facts relevant to it ([The digest](#the-digest)). The stored
+subject kinds still carry their Thread-era names: a Canvas's facts are filed
+as `thread` with the Canvas id, and `channel` and `breakout` subjects are read
+by no conversation now.
 
 The promise this module makes: **a fact reaches a reader only while they may
 open every conversation it came from today, and only when its subject admits
 them.** Visibility is computed at read time from the directory `WorkspaceDO`
-already keeps, never from a scope the model names. Read this before changing the
+already keeps (a Canvas's audience, a Sidekick's), never from a scope the
+model names. Read this before changing the
 fact store, the sweep lane, the tools, or anything that decides who may see a
 conversation.
 
@@ -31,13 +34,13 @@ conversation.
 | `apps/api/src/services/memory-sweep-service.ts` | The lane: `attemptMemorySweep` (gates, claim, one Queue send) and `runMemorySweep` (window, candidates, model, apply, settle). The open limits. |
 | `apps/api/src/services/memory-service.ts` | The `rally:memory` tools (`recall`, `remember`, `forget`), who a run reads as (`readerOf`), the trust class of a remembered fact, and the scope resolution `rally_tables` still uses. |
 | `packages/agent-harness/src/prompts/memory-sweep.ts` | The sweep prompt and its strict JSON schema. Golden-hashed in `prompts.test.ts`. |
-| `apps/api/src/durable-objects/substream-agent.ts` | The two sweep triggers (the settlement step after the description loop, and the alarm lane `nextMemorySweepAt`), the digest copy refresh at settlement, and the synchronous copy read the run renders from (`memoryDigest` on the persistent-loop runtime). |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | The two sweep triggers (the settlement step, and the alarm lane `nextMemorySweepAt`), the digest copy refresh at settlement, and the synchronous copy read the run renders from (`memoryDigest` on the persistent-loop runtime). |
 | `apps/api/src/services/integrations.ts` | `principalSystemSectionFor`: the digest rendered into the harness's per-principal system section. |
 | `apps/api/src/services/memory-review-service.ts` | The review surface's one read and one removal for every scope (`readMemoryReview`, `forgetReviewedMemory`), mapped from the `reviewMemoryFacts` and `forgetReviewedMemoryFact` RPCs to the `MemoryReview` contract by `memoryReviewFact`. |
-| `apps/api/src/routes/workspace.ts`, `routes/workstreams.ts`, `routes/spaces.ts` and their services | The review routes: `/workspace/me/memory` and `/workspace/memory` (`WorkspaceService`), `/workstreams/:id/memory` (`WorkstreamService`), `/spaces/:id/memory` (`SpaceService`), each a `GET` and a `DELETE …/:factId` naming its scope. |
+| `apps/api/src/routes/workspace.ts` and `WorkspaceService` | The review routes: `/workspace/me/memory` and `/workspace/memory`, each a `GET` and a `DELETE …/:factId` naming its scope. |
 | `packages/contracts/src/memory.ts` | `MemoryReviewSchema`, `MemoryReviewFactSchema`, `MemoryReviewSourceSchema`, `MemoryForgetResponseSchema`: what the review surface reads. |
-| `packages/ui/src/components/memory-fact-rows.tsx` | `MemoryFactRows`: one scope's facts as rows (text, disagreement, horizon, source link, Remove), shared by the title-pill Memory level (`conversation-menus.tsx`) and Settings. |
-| `apps/desktop/src/renderer/components/memory-review.tsx` | `useMemoryFacts` (one scope's read and removal, cache and refusals), `MemoryFactList` (a scope on a Settings page), and opening a fact's source. Used by `screens/channel.tsx` and `screens/workstream.tsx` (the title pop-out) and `screens/workspace-settings.tsx` (Account and Organization). |
+| `packages/ui/src/components/memory-fact-rows.tsx` | `MemoryFactRows`: one scope's facts as rows (text, disagreement, horizon, source link, Remove), used by Settings. |
+| `apps/desktop/src/renderer/components/memory-review.tsx` | `useMemoryFacts` (one scope's read and removal, cache and refusals), `MemoryFactList` (a scope on a Settings page), and opening a fact's source. Used by `screens/workspace-settings.tsx` (Account and Organization). |
 | `apps/api/src/queues/activity-consumer.ts` | The `memory_sweep` and `memory_digest_sync` Queue branches. |
 | `apps/api/src/services/memory-scope-cache.ts`, `workspace-memory-storage.ts` | The scopes and typed tables of `rally_tables`, unchanged by this module and documented in [`agent-harness.md`](agent-harness.md#scoped-durable-memory). |
 
@@ -53,8 +56,9 @@ it (`person`, `agent`, `external`, or `mixed` when its evidence, or an update
 and its predecessor, span two);
 `conflict`, set when two people disagree and the fact states both positions;
 `evidence`, transcript sequence numbers; and `sourceConversations`, one or more
-of `<channelId>` (a Thread's Main), `<channelId>/<breakoutId>`,
-`sidekick:<automationId>`, `space:<spaceId>`. A fact is never without a source:
+of `canvas:<canvasId>` (a Canvas's Chat) and `sidekick:<automationId>`; the
+Thread-era forms `<channelId>`, `<channelId>/<breakoutId>` and `space:<spaceId>`
+name retired conversations and open to nobody. A fact is never without a source:
 an Organization fact was promoted *from* somewhere, and that somewhere decides
 who may see it. A fact is **active** while it is not retracted, not superseded,
 and not past `validUntil`; an upcoming fact (`validFrom` in the future) is
@@ -62,10 +66,9 @@ active and is shown as such.
 
 ### The sweep
 
-**Trigger.** `settleAgentRun` calls `attemptMemorySweep` after the description
-loop's step, for conversations whose parent is a Thread or a Sidekick (a
-Channel's own feed is not swept: PRD non-goal 9). The conversation object's
-alarm calls the same attempt when `memory_sweep_state.retry_at` is due.
+**Trigger.** `settleAgentRun` calls `attemptMemorySweep` for conversations
+whose parent is a Canvas or a Sidekick. The conversation object's alarm calls
+the same attempt when `memory_sweep_state.retry_at` is due.
 
 **Gate**, cheapest first: model access; the conversation exists and is not
 archived; the conversation has rested (`rest_until`); the window since the
@@ -102,14 +105,13 @@ first until `MEMORY_SWEEP_MAXIMUM_WINDOW_CHARACTERS` runs out, and the attempt
 ends the range at the last one kept, so what did not fit is the next sweep's
 rather than skipped. Members are named from the regional `users` table, on
 their messages and in the placement's people. Ask `WorkspaceDO` for the **placement** (the conversation's subject,
-its Thread, the Channels it sits in, whether it is Organization-wide, the
-speakers who may be the subject of a `person` fact) and the **candidates**:
-active facts on the conversation's subjects matching the window's terms, plus
-every active situational fact on those subjects, **restricted to facts every
-current participant of the conversation may open and whose subject the
-placement admits** (`sweepVisibleFacts`: an Organization fact only in an
-Organization-wide conversation, a Channel fact only for a Channel every
-participant may list, a person fact only for a speaker). Render the prompt, call
+whether it is Organization-wide, the speakers who may be the subject of a
+`person` fact) and the **candidates**: active facts on the conversation's
+subjects matching the window's terms, plus every active situational fact on
+those subjects, **restricted to facts every current participant of the
+conversation may open and whose subject the placement admits**
+(`sweepVisibleFacts`: an Organization fact only in an Organization-wide
+conversation, a person fact only for a speaker). Render the prompt, call
 `runStructuredInference` on role `memory_sweep` (flag
 `agent-model-memory-sweep`, default the primary model, metered `memory_sweep`,
 Organization pays). The model returns a flat list of operations (`add`,
@@ -132,7 +134,7 @@ own conversation and each of its runs share the fact source
 applied and the stored receipt is answered; ahead of it, a range was skipped and
 `cursor_ahead` names the stored `to_seq`; equal, the operations apply in order.
 An `add` is refused by code when its subject is wider than the placement allows
-(`subject_above_placement`), names a Channel or person outside it
+(`subject_above_placement`), names a subject or person outside it
 (`subject_id_not_in_placement`), or is situational without a horizon
 (`horizon_required`). An `update`, `confirm` or `retract` is refused when the
 fact is not among the candidates this sweep was handed, or is no longer one
@@ -188,15 +190,16 @@ SQL (one query per source kind over a JSON list, never one per fact):
    read their own subject and the Organization's.
 3. **Audience.** Inside a conversation, every fact but the reader's own
    `person` facts must also be one every current participant may open, so a
-   Breakout member acting in the Thread above is not handed the Breakout's words
-   where others read the reply. An Organization-wide conversation's audience is
+   participant of a Canvas acting in a Sidekick's conversation is not handed
+   the Canvas's words where others read the reply. An Organization-wide
+   conversation's audience is
    every member, answered structurally (the source itself must be
    Organization-wide); a private one's is its participant list, intersected.
 
 A reader is a person (resolved to their relationship: access class and whether
 they administer), a Sidekick (opens itself; sees Organization facts
 only when its scope is `workspace`), or the conversation itself (a workspace
-principal acting in a Thread, which reads what every participant may). A run of
+principal acting in a conversation, which reads what every participant may). A run of
 a Sidekick, or any run in its conversation, reads as the Sidekick even though
 it executes as a person (`run_as_user`): `readerOf` checks the Sidekick first,
 or the run would be handed that person's own facts. The FTS
@@ -219,7 +222,7 @@ Personal instructions travel in user-message history instead
 ([`personal-system-prompt.md`](personal-system-prompt.md)).
 
 **Who reads what** (`digestReaderFor`). A Sidekick run reads as its Sidekick:
-its home conversation's facts and its own. A person whose own act started the
+its own facts and the Organization's when it is Organization-wide. A person whose own act started the
 run (`PERSONAL_SYSTEM_PROMPT_REASONS`: a message, an answer, a retry, in Rally
 or from a linked Slack account) reads as themselves: the shared facts every
 participant may see, plus their own `person` facts whatever the room. Every
@@ -235,8 +238,9 @@ row key is the principal: `user:<id>`, `sidekick:<automationId>`, or
 conflict, trust class, recorded at) and the read's `source_revision`, the
 `WorkspaceDO`'s `memory_revision` when it read them.
 The run renders at start from its own object, synchronously, through
-`renderMemoryDigest`: subjects widest to narrowest (Organization, Channel,
-Thread, Breakout, Sidekick, the person), current facts before upcoming ones,
+`renderMemoryDigest`: subjects widest to narrowest (Organization, then the
+stored `channel`, `thread` (a Canvas) and `breakout` kinds, Sidekick, the
+person), current facts before upcoming ones,
 standing before situational, newest first; a `conflict` fact prefixed
 `Disagreement:`; a future `validFrom` as `From <date>:`; a horizon as
 `(until <date>)`; the full fact id in brackets so `memory_forget`, which
@@ -262,9 +266,9 @@ in the same call, so the person who forgot it never sees it again where they
 forgot it. (4) `provisionSidekickRun` reads the Sidekick's copy into each new
 run conversation before its first activation, since a run is a conversation
 nobody has settled in yet. (5) The **copy-sync lane** reaches every other
-conversation. A holder is keyed by `memoryConversationKeyOf` (a Thread's id, a
-Breakout's `<thread>/<breakout>`, `sidekick:<id>/<substream>`, `space:<id>`,
-`canvas:<id>`), not by the fact source, because every conversation of one
+conversation. A holder is keyed by `memoryConversationKeyOf`
+(`canvas:<id>`, `sidekick:<id>/<substream>`; a retired Thread's, Breakout's
+or Space's key settles as dead), not by the fact source, because every conversation of one
 Sidekick shares the source `sidekick:<id>` but holds its own copies;
 `memory_digest_holder_facts` records which facts each principal's copy there
 was read with. `WorkspaceDO`
@@ -292,7 +296,8 @@ marks holders in `memory_digest_sync` with a revision:
   holders, because a wider audience hides nothing;
 - the Thread, Breakout and Channel triggers of migration 117 (`channels`,
   `breakouts`, `spaces` and their `*_viewers`) still sit on their tables,
-  which nothing writes, until plan step C-7 drops them.
+  which migration 147 kept for the Thread retirement's inventory and nothing
+  writes.
 
 The alarm lane `memory_digest_sync` publishes one batch of up to 100
 `memory_digest_sync` messages with one batch in flight per Organization; the
@@ -315,7 +320,7 @@ every copy in its conversation to the retraction's revision, so a refresh that
 read before the forget and lands after it is refused.
 
 The cost is lag, as for the personal system prompt: a principal's first run in
-a Thread or Breakout has no digest, a new fact reaches a run from the next
+a conversation has no digest, a new fact reaches a run from the next
 refresh, and a run that starts in the moments before the lane reaches its
 conversation can see a retracted fact once more; `memory_recall` never can,
 because it reads the store. There are no `DELETE` triggers on the viewer
@@ -326,7 +331,7 @@ a participant a rebuild removed reaches copies at their next refresh.
 ### The tools
 
 `rally:memory` (wire prefix `memory_`) is preloaded in every root run of a
-Thread Main, a Breakout, and a Sidekick's conversation and runs; an inline child
+Canvas's Chat and a Sidekick's conversation and runs; an inline child
 reaches nothing (`resolveMemoryAccess` answers it an empty union, the gate every
 tool call passes).
 
@@ -347,11 +352,9 @@ tool call passes).
   subject is compared, not a page. Idempotent on the provider key: a replay answers from
   `memory_fact_receipts`.
 - `memory_forget(factId)`: retracts, when the reader may. A person forgets
-  their own facts and what the conversation they stand in established; a
-  Channel's or the Organization's facts take an administrator (owner or admin),
-  except that a Personal Channel's owner forgets its Channel facts too, since
-  nobody else is listed it; a Sidekick forgets what came from itself and its
-  home. Seeing a fact never
+  their own facts and what the conversation they stand in established; the
+  Organization's facts take an administrator (owner or admin); a Sidekick
+  forgets what came from itself. Seeing a fact never
   implies the right to retract it.
 
 Failure codes: `memory_horizon_required`, `memory_horizon_forbidden`,
@@ -364,12 +367,12 @@ hook, which names the field.
 ### The review surface
 
 Memory is reviewed where its subject lives, so each surface shows one subject
-and nothing is grouped:
+and nothing is grouped. The Thread and Channel title pop-outs
+(`/workstreams/:id/memory`, `/spaces/:id/memory`) went with those routes; a
+Canvas's own facts have no review surface yet.
 
 | Where | Route | Lists | Removed by |
 | --- | --- | --- | --- |
-| A Thread's or Breakout's title pop-out | `/workstreams/:id/memory?substreamId=` (`"0"` for Main) | that conversation's own facts | anyone who may open it (a participant) |
-| A Channel's title pop-out | `/spaces/:id/memory` | that Channel's facts | an administrator; a Personal Channel's, its owner |
 | Settings → Account | `/workspace/me/memory` | the person's own facts | the person |
 | Settings → Organization | `/workspace/memory` | the Organization's facts | an administrator |
 
@@ -377,36 +380,20 @@ Each `GET` answers `MemoryReview` (`facts`, newest first, expired included,
 retracted and superseded excluded) and each `DELETE …/:factId` answers
 `MemoryForgetResponse`. Both go through one pair of `WorkspaceDO` RPCs,
 `reviewMemoryFacts` and `forgetReviewedMemoryFact`, which take a scope (`own`,
-`organization`, or `conversation` with a `MemoryConversation`, a `space`
-parent being a Channel) and `memory-review-service.ts` maps them for every
-route. The decisions behind it:
+`organization`, or `conversation` with a `MemoryConversation`, which no route
+sends now) and `memory-review-service.ts` maps them for every route. The decisions behind it:
 
 - **One visibility rule and one removal rule.** Which facts a scope lists is
   `visibleFacts`; whether each is removable is `mayForget`, computed in the
   store and returned per fact, so no service re-derives authority and the
   Remove button and the `DELETE` cannot disagree. Seeing a fact still never
   implies removing it (design decision 14).
-- **A Thread's or Breakout's facts read as recall reads them there**, audience
-  intersection included: the pop-out shows what Rally would recall in that
-  conversation. The store checks the conversation is open to the person in the
-  same read and answers `404 conversation_not_found` otherwise, so the route
-  makes no separate admission round trip. Anyone who may open it may remove
-  its own facts, the same rule `memory_forget` applies to a participant.
-- **A Channel's facts read with no conversation**, as the Organization's do:
-  the Channel listed to the person and every source openable. Reading them
-  with the Channel feed's audience would hide a Channel fact learned in a
-  private Thread from everyone, administrators included, and the pop-out is
-  the only place it can be removed. An unlisted Channel answers
-  `404 space_not_found` from the same read. A Personal Channel is listed to
-  its owner alone, so its facts are removable by its owner as well as by an
-  administrator (`mayForget`, in the tool and the review alike); otherwise a
-  fact the surface lists would be removable by nobody.
 - **A person's own facts ignore the source rule, but their titles do not.**
   They are listed whether or not the person can still open the conversation
   each came from, because a fact about them learned in a room they have since
   left is exactly the one they most need to remove; recall and the digest
   still hold it back. The "from" link's title is resolved only for a source
-  they may open today and is `null` otherwise, so a private Thread they were
+  they may open today and is `null` otherwise, so a private Canvas they were
   removed from does not keep telling them its name. Only the first source is
   titled, since only it is rendered.
 - **The Organization's facts** are listed to a member who may open every
@@ -459,15 +446,16 @@ nine items in one Organization and none to one elsewhere when this shipped.
   fact ids it was handed. Breaking it lets a prompt widen what a run reads.
   Guard: the tool input schemas and `test/scoped-memory.test.ts`.
 - **A fact may be filed no wider than its conversation's placement.** An
-  `organization` fact needs an Organization-wide conversation; a `channel` fact
-  a Channel the conversation sits in; a `person` fact a listed speaker. Breaking
+  `organization` fact needs an Organization-wide conversation; a `person` fact
+  a listed speaker. Breaking
   it promotes a private room's words to everyone. Guard: `applyMemorySweep`'s
   refusal codes, `test-workers/memory-facts.test.ts`.
 - **Candidates and updates are fenced by the audience and the placement.** A
   sweep is handed only facts every participant may open under a subject the
   placement admits; an `update`, `confirm` or `retract` must name one of those
-  candidates; and an update carries the union of sources, so a public Thread's
-  sweep can never restate a private Breakout's words under the public source,
+  candidates; and an update carries the union of sources, so an
+  Organization-wide Canvas's sweep can never restate a private Canvas's words
+  under the public source,
   and a fact id quoted in a transcript cannot reach a fact the sweep was not
   shown. Guard: `sweepVisibleFacts` and `candidateFactIds` in
   `memorySweepCandidates` and `applyMemorySweep`; the workerd suite above.
@@ -527,9 +515,7 @@ structured-inference gateway and model flags
 ([`feature-flags.md`](feature-flags.md)), usage metering
 ([`usage-metering.md`](usage-metering.md)), and the activity Queue.
 
-Does not: inject anything at run start (PRD step 2, the digest); show facts to
-people (step 3, the review surface); sweep a Channel's own feed; embed or
-vector-index facts (Turbopuffer, when wanted:
+Does not: embed or vector-index facts (Turbopuffer, when wanted:
 [`text-search.md`](text-search.md)); own `rally_tables`
 ([`agent-harness.md`](agent-harness.md#scoped-durable-memory)).
 
@@ -582,7 +568,8 @@ declared as `LIMIT UNSET` constants in `memory-sweep-service.ts`:
 
 Arithmetic the placeholders came from: a Sol-class call on a 300-message
 window costs one call per conversation per rest period, and Juno Labs' busiest
-Thread settles a few dozen runs a day, so the floor bounds a Thread at roughly
+conversation (a Thread, when this was measured) settles a few dozen runs a
+day, so the floor bounds a conversation at roughly
 one call an hour and the ceiling at one a day when nothing new was learned. The
 tool-side bounds (`text` at most 600 characters, `limit` at most 25, the recall
 query at `MEMORY_RECALL_QUERY_LIMIT`) are from the PRD's design and are not
@@ -603,7 +590,7 @@ defensive numbers.
 | `apps/api/test-workers/sidekick-run-continuation.test.ts` | A Sidekick run's first activation starts with the Sidekick's facts, copied in at provisioning. |
 | `apps/api/test/message-run-context.test.ts` | Which runs carry the personal prompt; the section is empty with no copy and no prompt. |
 | `apps/api/test/memory-review.test.ts` | The review routes over a real `WorkspaceDO`: own facts only under `/me/memory`, newest first; an own fact's source untitled once its Canvas is closed to its person; the Organization's facts read-only to a member and every one removable by an administrator; a member's removal refused; not found outside the scope and for a superseded fact; a repeat removal. |
-| `apps/desktop/src/renderer/components/memory-review.test.tsx`, `title-pill-menu.test.tsx`, `screens/channel.test.tsx`, `screens/workspace-settings.test.tsx` | The rows' order, horizons judged from the fact's own dates (and turning Expired while open), Remove visibility, removal, refusal, a 404 as already removed, concurrent removals, the empty state; the pill's Memory level for a conversation and a Channel; Account's list. |
+| `apps/desktop/src/renderer/components/memory-review.test.tsx`, `screens/workspace-settings.test.tsx` | The rows' order, horizons judged from the fact's own dates (and turning Expired while open), Remove visibility, removal, refusal, a 404 as already removed, concurrent removals, the empty state; Account's list. |
 | `apps/api/test/scoped-memory.test.ts`, `test-workers/workspace-memory.test.ts` | The scopes and typed tables this module leaves in place. |
 
 Traps: the Node fixtures set a Canvas's `canvas_directory` visibility by hand,
@@ -643,74 +630,58 @@ authority. `retracted_by` records who forgot a fact.
 
 ## Changelog
 
-### 2026-11-07 — Memory visibility is derived from Canvases and Sidekicks alone
+### 2026-11-07 — Memory is learned in Canvases and Sidekicks, and its visibility is derived from them alone
 
-**What changed:** A fact's sources open through `canvasReaderAllows` and
-`sidekickAdmits` only; Thread, Breakout and Channel sources, a Thread's or
-Channel's audience, a Sidekick's home Thread and the Personal Channel removal
-rule are gone, and a Canvas's Chat now reads its own `thread:<canvasId>`
-subject (it read only the Organization's before). The review lists a Canvas
+**What changed:** A conversation whose parent is a Canvas is memory source
+`canvas:<canvasId>`, filed under the stored subject kind `thread` with the
+Canvas id; its audience is the Canvas's (`canvasReaderAllows`, every member
+when the Canvas or its writer Sidekick is Organization-wide). WorkspaceDO
+migration 143 rebuilds `memory_digest_holders` with `parent_kind` admitting
+`canvas`, dropping and restoring its triggers with the same text. A fact's
+sources open through `canvasReaderAllows` and `sidekickAdmits` only; Thread,
+Breakout and Channel sources, a Thread's or Channel's audience, a Sidekick's
+home Thread and the Personal Channel removal rule are gone, and a Canvas's
+Chat reads its own `thread:<canvasId>` subject. The review lists a Canvas
 source as the contract's `thread` source, which the client opens as the
-Canvas, and a Canvas's or Sidekick's audience change now refreshes copies. The activity consumer's `memory_sweep` and `memory_digest_sync`
-branches, dropped by mistake with the Space handlers beside them, are back.
+Canvas; the Thread and Channel review routes went with their routers.
+Migration 144 adds the copy-sync triggers for the parents that remain: a
+Canvas's visibility, creator or writing Sidekick changing, or the Canvas being
+deleted, marks every holder; a participant joining marks that Canvas's
+holders and one leaving also marks every copy holding a fact learned there; a
+Sidekick's people list changing marks every holder. The activity consumer's
+`memory_sweep` and `memory_digest_sync` branches, dropped by mistake with the
+Space handlers beside them, are back.
 
-**Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+**Why:** The Canvases and Sidekicks plan replaces `workstream:<id>` with
+`canvas:<id>` for a Canvas's Chat. The stored subject kind stays `thread`
+because `memory_facts.subject_kind` is under a CHECK, and widening it means
+rebuilding the table, which a later step that renames every subject kind does
+once. Every run in a Canvas's Chat refreshes its digest copy, and the holder's
+CHECK (migration 117) predated Canvases, so the write failed inside
+`refreshMemoryDigestCopy`, which logged and moved on: no Canvas Chat ever got
+a digest copy; that failure logged only a generic reason, so a kind the CHECK
+refuses is now reported by name
+(`memory_digest_holder_kind_unadmitted:<kind>`). Plan step C-2 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
 deletes the listing rules, whose last reader this was; the Thread directory
 they read is no longer written, so its answers were already stale. Without the
 consumer branches every Canvas and Sidekick sweep was acknowledged as a legacy
 message and digest rows were republished every alarm.
 
-**Considered and rejected:** Keeping Thread-sourced facts readable to the
-people who could read them before retirement. Their conversations are closed;
-withdrawing their facts is the rule a conversation made private already
-follows.
-
-WorkspaceDO migration 144 adds the copy-sync triggers for the parents that
-remain: a Canvas's visibility, creator or writing Sidekick changing, or the
-Canvas being deleted, marks every holder; a participant joining marks that
-Canvas's holders and one leaving also marks every copy holding a fact learned
-there; a Sidekick's people list changing marks every holder.
-
-**Consequences:** The Thread, Breakout and Channel triggers of migration 117
-stay on their tables until plan step C-7 drops them, and a new trigger set goes
-in its own migration: `MEMORY_DIGEST_SYNC_TRIGGERS` is hashed into migrations
-117 and 143.
-
-### 2026-11-07 — A Canvas's Chat can hold a memory digest copy
-
-**What changed:** WorkspaceDO migration 143 rebuilds `memory_digest_holders`
-with `parent_kind` admitting `canvas`. Its triggers read the table by name, so
-the migration drops them, copies the table, and puts them back with the same
-text.
-
-**Why:** Every run in a Canvas's Chat refreshes its digest copy, and the
-holder's CHECK (migration 117) predates Canvases, so the write failed inside
-`refreshMemoryDigestCopy`, which logged and moved on: no Canvas Chat ever got
-a digest copy. The shipped migration cannot be edited, so the CHECK widens in
-a new one. That failure logged only a generic reason, so a kind the CHECK
-refuses is now reported by name (`memory_digest_holder_kind_unadmitted:<kind>`):
-the next unadmitted kind is diagnosed from one log line.
-
-### 2026-11-07 — A Canvas's Chat has its own memory source
-
-**What changed:** A conversation whose parent is a Canvas is memory source
-`canvas:<canvasId>`, filed under the stored subject kind `thread` with the
-Canvas id. Its audience is the Canvas's: a person reads its facts when
-`canvasReaderAllows` admits them, every member when the Canvas or its writer
-Sidekick is Organization-wide.
-
-**Why:** The Canvases and Sidekicks plan replaces `workstream:<id>` with
-`canvas:<id>` for a Canvas's Chat. The stored subject kind stays `thread`
-because `memory_facts.subject_kind` is under a CHECK, and widening it means
-rebuilding the table, which the memory step that renames every subject kind
-(plan step C-5) does once.
-
-**Considered and rejected:** Leaving a Canvas's Chat with no memory until C-5,
-which would make it the one conversation Rally forgets in.
+**Considered and rejected:** Leaving a Canvas's Chat with no memory until the
+subject kinds are renamed, which would make it the one conversation Rally
+forgets in. Keeping Thread-sourced facts readable to the people who could read
+them before retirement: their conversations are closed, and withdrawing their
+facts is the rule a conversation made private already follows.
 
 **Consequences:** A reader of `subject_kind = 'thread'` must not assume the id
-names a Channel; the titles a fact shows are looked up in `canvas_directory`
-as well.
+names a Thread; the titles a fact shows are looked up in `canvas_directory`
+as well. The Thread, Breakout and Channel triggers of migration 117 stay on
+their tables, which migration 147 kept for the Thread retirement, and a new
+trigger set goes in its own migration: `MEMORY_DIGEST_SYNC_TRIGGERS` is hashed
+into migrations 117 and 143. A Canvas's own facts have no review surface yet.
+
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-19 — A person reviews and removes what Rally remembers where it lives
 
