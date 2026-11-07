@@ -120,48 +120,6 @@ it('rechecks access after queueing and defers a directory that is still catching
   expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
   expect(send).not.toHaveBeenCalled();
 });
-it('sets the APNs and Web Push badge to the conversations waiting for the reader, leaving out a needs-input run already read', async () => {
-  const needsInputId = asWorkstreamId('00000000-0000-7000-8000-00000000f105');
-  const archivedId = asWorkstreamId('00000000-0000-7000-8000-00000000f106');
-  await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec(`UPDATE channels SET latest_attention_ordinal = 2`);
-    state.storage.sql.exec(
-      `INSERT INTO channels
-       (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview,
-        scope, exact_state, last_activity_at, origin_type, title_status, latest_attention_ordinal,
-        unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
-       VALUES (?, 1, 1, 'needs', 'hash-needs', 'Needs input', '', '', 'personal', 'needs_input', 0, 'ad_hoc', 'settled', 1, 0, 0, 0, 0)`,
-      needsInputId,
-    );
-    state.storage.sql.exec(
-      `INSERT INTO channel_viewers
-       (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
-        unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at)
-       VALUES (?, ?, 1, 1, 'needs-viewer', 'hash-needs', 1, 0, 0, 1, 1, 0, 0, 0)`,
-      needsInputId, userId,
-    );
-    state.storage.sql.exec(
-      `INSERT INTO channels
-       (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title, description, preview,
-        scope, exact_state, last_activity_at, archived_at, origin_type, title_status, latest_attention_ordinal,
-        unread_tracking_start_ordinal, source_created_at, source_updated_at, projected_at)
-       VALUES (?, 1, 1, 'archived', 'hash-archived', 'Archived unread', '', '', 'personal', 'idle', 0, 1, 'ad_hoc', 'settled', 4, 0, 0, 0, 0)`,
-      archivedId,
-    );
-    state.storage.sql.exec(
-      `INSERT INTO channel_viewers
-       (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
-        unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at)
-       VALUES (?, ?, 1, 1, 'archived-viewer', 'hash-archived', 1, 4, 0, 1, 0, 0, 0, 0)`,
-      archivedId, userId,
-    );
-  });
-  const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
-  expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
-  expect(send).toHaveBeenCalledTimes(2);
-  expect(payloads(send).map((payload) => JSON.parse(payload.apns).aps.badge)).toEqual([1, 1]);
-  expect(payloads(send).map((payload) => JSON.parse(payload.web).badge)).toEqual([1, 1]);
-});
 it('removes personal instructions and reduces mention Markdown before push delivery', async () => {
   const intentId = 'mention:markdown';
   await addIntent(
@@ -280,23 +238,15 @@ it('sends each device the payload of the transport it registered with', async ()
 });
 
 
-it('keeps mention alerts distinct from each other and from ordinary replies in the same conversation', async () => {
+it('keeps mention alerts distinct from each other in the same conversation', async () => {
   await addIntent('mention:two');
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
   await deliverPush(pushEnv(), message('mention:one'), send);
   await deliverPush(pushEnv(), message('mention:two'), send);
-  await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec(`INSERT INTO workspace_activity_events (
-      event_id, event_type, subject_type, subject_id, actor_type, actor_user_id, actor_label, title, body,
-      audience_kind, audience_workstream_id, digestible, occurred_at, created_at, source_kind, source_id, dedupe_key, metadata_json
-    ) VALUES ('reply', 'workstream_message_created', 'workstream', ?, 'user', ?, 'Author', 'Planning', 'Follow up',
-      'workstream', ?, 0, ?, ?, 'workstream_message', 'reply', 'reply', '{"substreamId":"0","attentionOrdinal":1}')`,
-      workstreamId, actorId, workstreamId, Date.now(), Date.now());
-  });
-  await deliverPush(pushEnv(), { workspaceId, recipientUserId: userId, region: 'global', activityItemId: 'message:reply' }, send);
   const calls = send.mock.calls as unknown as Array<[unknown, unknown, PushPayloads, string]>;
-  // Each alert reaches two devices. Compare the three actual transport tags.
-  expect(new Set([calls[0]![3], calls[2]![3], calls[4]![3]]).size).toBe(3);
+  // Each alert reaches two devices. Compare the two actual transport tags.
+  expect(new Set([calls[0]![3], calls[2]![3]]).size).toBe(2);
   expect(payloads(send).map((payload) => JSON.parse(payload.apns).aps['thread-id']))
-    .toEqual([workstreamId, workstreamId, workstreamId, workstreamId, workstreamId, workstreamId]);
+    .toEqual([workstreamId, workstreamId, workstreamId, workstreamId]);
 });
+

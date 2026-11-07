@@ -3054,40 +3054,10 @@ export class WorkstreamObjectProductService {
 
   /** Narrowing must seat through the same grant authority as any explicit add. */
   private async migratedRosterSeat(auth: AuthContext): Promise<boolean> {
-    const identity = this.objectStore.identity();
-    if (identity?.parentKind !== "workstream" || this.externalSubstreamId() !== "0") return false;
-    await this.ensureParticipantAuthority(auth.userId);
-    const parent = await durableObjectStubForWorkspace(
-      this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)),
-    );
-    const result = await parent.mutateParticipantGrant({
-      operationId: await stableUuid(["narrow-scope-seat", identity.parentId, auth.userId]),
-      actorUserId: asUserId(auth.userId),
-      userId: asUserId(auth.userId),
-      active: true,
-      target: {
-        kind: "conversation",
-        workspaceId: identity.workspaceId,
-        parentId: identity.parentId,
-        substreamId: this.externalSubstreamId(),
-      },
-    });
-    if (result.status === "denied" || result.status === "conflict") {
-      throw new ApiError(
-        403,
-        "workstream_scope_narrow_forbidden",
-        "Share this thread with yourself before making it private",
-      );
-    }
-    if (!this.isParticipant(auth.userId)) {
-      throw new ApiError(
-        409,
-        "participant_access_changed",
-        "Participant access changed; refresh and try again",
-      );
-    }
-    return true;
+    // Narrowing seated the narrower on a Thread's Main; Threads are retired
+    // (plan step C-2), and no other parent narrows through a roster seat.
+    void auth;
+    return false;
   }
 
   private async convergeParentVisibility(envelopes: readonly ConversationEffectEnvelope[]): Promise<void> {
@@ -3102,54 +3072,18 @@ export class WorkstreamObjectProductService {
 
   /** Historical and creation rows are frozen once, before normal admission. */
   async ensureParticipantAuthority(userId?: string): Promise<boolean> {
-    const identity = this.objectStore.identity();
-    if (identity?.parentKind !== "workstream") return true;
-    // A source commit can precede a failed parent delivery. Resume that
-    // handoff on retry instead of serving its still-unprojected bootstrap rows.
-    if (this.storage.sql.exec(`SELECT 1 FROM participant_authority_transfer WHERE phase = 'projection'
-      AND NOT EXISTS (SELECT 1 FROM participants participant WHERE participant.status = 'active'
-        ${userId === undefined ? "" : "AND participant.user_id = ?"}
-        AND NOT EXISTS (SELECT 1 FROM participant_projection_revisions revision WHERE revision.user_id = participant.user_id))`,
-    ...(userId === undefined ? [] : [userId])).toArray().length) return true;
-    const root = this.root();
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
-    const substreamId = this.externalSubstreamId();
-    if (substreamId === "0") {
-      // System provisioning and historical imports may precede the directory
-      // effect. Reservation is idempotent and never overwrites a live parent.
-      await parent.reserveChild({ workspaceId: identity.workspaceId, parentId: identity.parentId,
-        substreamId, kind: "main", createdByUserId: root.created_by_user_id ? asUserId(root.created_by_user_id) : null,
-        authorityGeneration: root.authority_generation, directory: {
-          title: root.title, description: root.description, scope: root.scope, systemKind: root.system_kind,
-          emailAddress: root.email_address, titleStatus: root.title_status, createdAt: new Date(root.created_at).toISOString(),
-        } });
-    }
-    return await parent.ensureParticipantAuthority({ workspaceId: identity.workspaceId, parentId: identity.parentId, substreamId }) === "ready";
+    // A Thread's conversation moved its roster into its parent's grants
+    // first; Threads are retired (plan step C-2), and a Canvas's or a
+    // Sidekick's parent holds its audience from the start.
+    void userId;
+    return this.objectStore.identity()?.parentKind !== "workstream";
   }
 
   private async prepareParticipantAccess(auth: AuthContext, operationId: string, userIds: readonly string[],
     options: { participationReason?: "message" } = {}): Promise<void> {
-    const identity = this.objectStore.identity();
-    if (identity?.parentKind !== "workstream") return;
-    // An unpublished child is still installing its bootstrap content. Its
-    // parent imports the approved bootstrap audience atomically at publication.
-    if (!await this.ensureParticipantAuthority(auth.userId)) return;
-    const target = { kind: "conversation" as const, workspaceId: identity.workspaceId,
-      parentId: identity.parentId, substreamId: this.externalSubstreamId() };
-    const parent = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, identity.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(identity.workspaceId)));
-    const participants = await Promise.all([...new Set(userIds)].map(async (userId) => ({
-      userId: asUserId(userId),
-      operationId: await stableUuid(["participant-access", target, auth.userId, operationId, userId]),
-    })));
-    const result = await parent.admitParticipants({ target, actorUserId: auth.userId, participants,
-      ...(options.participationReason ? { participationReason: options.participationReason } : {}) });
-    // The callback applies current revisions before replying. A receipt replay
-    // cannot restore a later revocation; inspect the resulting local projection.
-    if (result.status !== "ready" || participants.some(({ userId }) => !this.isParticipant(userId))) {
-      throw new ApiError(409, "participant_access_changed", "Participant access changed; refresh and try again");
-    }
+    // Seated people through a Thread's parent grants; a Canvas's or a
+    // Sidekick's parent decides its audience itself (plan step C-2).
+    void auth; void operationId; void userIds; void options;
   }
 
   async addParticipant(

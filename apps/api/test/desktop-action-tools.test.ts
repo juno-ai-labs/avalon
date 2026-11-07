@@ -1,19 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  AVALON_SKILL_TOOL_DEFINITIONS, createSkillRuntime, hasAvalonToolProse, toolActivityName, type HarnessToolContext,
+  type HarnessToolContext,
 } from "@rally/agent-harness";
 import { asHarnessRunId, asUserId } from "@rally/contracts";
 import { agentProfileFor } from "../src/services/agent-profiles";
 import { createBrowserPlugin, DesktopActionToolError } from "../src/services/desktop-actions/browser-plugin";
 import type { DesktopActionExecutor } from "../src/services/desktop-actions/executor";
-import { createSessionImportPlugin } from "../src/services/desktop-actions/session-import-plugin";
-
-const verification = {
-  checks: [{ name: "page content", passed: true, basis: "Compared the displayed turns." }],
-  branch: { complete: true as const, basis: 'Selected leaf reaches the root.' },
-  page: { messageCount: 4, firstSourceMessageId: 'm0', lastSourceMessageId: 'm1', sampledSourceMessageIds: ['m1'], basis: 'Both rendered turns compared.' },
-  fileCount: 0,
-};
 
 const RUN_ID = asHarnessRunId("00000000-0000-7000-8000-0000000000e1");
 const context: HarnessToolContext = {
@@ -22,23 +14,13 @@ const context: HarnessToolContext = {
 };
 
 function tool(name: string, executor: DesktopActionExecutor | undefined) {
-  const plugins = [createBrowserPlugin({ harnessRunId: RUN_ID }, executor), createSessionImportPlugin({ harnessRunId: RUN_ID }, executor)];
+  const plugins = [createBrowserPlugin({ harnessRunId: RUN_ID }, executor)];
   const found = plugins.flatMap((plugin) => plugin.tools).find((candidate) => candidate.definition.name === name);
   if (!found) throw new Error(`no tool ${name}`);
   return found;
 }
 
 describe("desktop action tools", () => {
-  it("executes recorded contract-2 tool input without synthesizing checks", async () => {
-    const legacy = { branch: verification.branch, page: verification.page, fileCount: verification.fileCount };
-    const executor = vi.fn<DesktopActionExecutor>(async () => ({ ok: true, result: { workstreamId: "channel", messages: 4 } }));
-    expect((await tool("import_finish", executor).execute({ title: "Old", messages: "old-handle", verification: legacy }, { ...context, replaying: true })).output)
-      .toEqual({ imported: true, messages: 4 });
-    await expect(tool("import_finish", executor).execute({ title: "New", messages: "handle", verification: legacy }, context))
-      .rejects.toThrow();
-    expect(executor).toHaveBeenCalledTimes(1);
-    expect(executor.mock.calls[0]?.[0].action).toEqual({ kind: "session_import.finish", title: "Old", messages: "old-handle", verification: legacy });
-  });
 
   it("keeps the browser call's title in its settled summary", async () => {
     const executor: DesktopActionExecutor = async () => ({ ok: true, result: { output: [] } });
@@ -75,43 +57,14 @@ describe("desktop action tools", () => {
     await expect(tool("browser_js", undefined).execute({ code: "await cua.getState()" }, context)).rejects.toMatchObject({ code: "desktop_unavailable" });
   });
 
-  it("returns to the model once the import finishes or fails, so the run ends on its reply", async () => {
-    const executor: DesktopActionExecutor = async (input) => ({ ok: true,
-      result: input.action.kind === "session_import.finish" ? { workstreamId: "p", messages: 4 } : {} });
-    const finished = await tool("import_finish", executor).execute({ title: "Plan", messages: "h1", verification }, context);
-    expect(finished).toMatchObject({ output: { imported: true, messages: 4 }, summary: "Imported 4 messages" });
-    expect(finished).not.toHaveProperty("halt");
-    const failed = await tool("import_fail", executor).execute({ reason: "sign_in_required" }, context);
-    expect(failed).toMatchObject({ output: { stopped: true } });
-    expect(failed).not.toHaveProperty("halt");
-  });
 });
 
 describe("agent profiles", () => {
   it("names an ordinary conversation null and refuses a profile this Worker does not have", () => {
     expect(agentProfileFor(null)).toBeNull();
-    expect(agentProfileFor("session_import")?.role).toBe("session_import");
+    // The conversation importer's profile went with Threads.
+    expect(() => agentProfileFor("session_import")).toThrow(expect.objectContaining({ code: "agent_profile_unknown" }));
     expect(() => agentProfileFor("retired_profile")).toThrow(expect.objectContaining({ code: "agent_profile_unknown" }));
-  });
-
-  it("lists every step an import can take in plain words, not its tool name", () => {
-    const profile = agentProfileFor("session_import")!;
-    const names = [
-      ...profile.plugins({ harnessRunId: RUN_ID } as never, undefined).flatMap((plugin) => plugin.tools.map((entry) => entry.definition.name)),
-      ...AVALON_SKILL_TOOL_DEFINITIONS.map((definition) => definition.name),
-    ];
-    expect(names.filter((name) => !hasAvalonToolProse(name))).toEqual([]);
-    expect(toolActivityName({ toolName: "browser_network_read", status: "started" })).toBe("Reading data the page loaded");
-  });
-
-  it("offers its run every skill it names, because each skill's owner is one of its plugins", async () => {
-    const profile = agentProfileFor("session_import")!;
-    const runtime = await createSkillRuntime({
-      skills: profile.skills,
-      eligiblePlugins: profile.plugins({ harnessRunId: RUN_ID } as never, undefined).map((plugin) => plugin.canonicalId),
-    });
-    expect(runtime.summaries.map((summary) => summary.name).sort())
-      .toEqual(["reading-an-ai-chat", "reading-chatgpt-conversations", "reading-claude-conversations"]);
   });
 
   it("exposes only the script and reset tools, with no model-family-specific naming", async () => {

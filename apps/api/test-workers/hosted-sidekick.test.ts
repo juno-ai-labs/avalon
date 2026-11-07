@@ -20,16 +20,14 @@
  */
 
 import { env } from "cloudflare:workers";
-import { evictDurableObject, reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   asAutomationId,
-  asSpaceId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
-  asWorkstreamId,
   AutomationSetEvaluatorRulesModelInputV1Schema,
   AutomationDetailSchema,
   type AutomationDraft,
@@ -61,14 +59,14 @@ import { conversationObjectName, workspaceDOName } from "../src/durable-objects/
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
 import { AuthorizationService } from "../src/services/authorization-service";
-import { bootstrapConversationChildRuntime, bootstrapWorkstreamRuntimeEnvironment, provisionWorkstreamObject } from "../src/services/workstream-runtime-database";
+
 import { readWorkstreamAuthorityControl } from "../src/services/workstream-authority";
 import {
   consumeEffectBodies,
   deliverChildEffects,
 } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub } from "./helpers/hosted-parent";
+
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { runSidekickAlarms } from "./helpers/sidekick";
@@ -458,51 +456,6 @@ async function settledChildRun(runId: string): Promise<{ status: string; error_j
   return settled!;
 }
 
-async function knowledgeConversation() {
-  const workstreamId = asWorkstreamId(crypto.randomUUID());
-  const parent = hostedParentStub(env, WORKSPACE_ID);
-  const root = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName('global', WORKSPACE_ID, workstreamId)));
-  await parent.reserveChild({ workspaceId: WORKSPACE_ID, parentId: workstreamId, substreamId: asSubstreamId('0'), kind: 'main', createdByUserId: AUTHOR_ID,
-    authorityGeneration: 1, directory: { title: 'Knowledge', description: '', scope: 'workspace', systemKind: null, emailAddress: null, titleStatus: 'settled', createdAt: NOW } });
-  await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, workstreamId, 'workstream');
-  await provisionWorkstreamObject(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId, title: 'Knowledge', objective: '', scope: 'workspace', createdByUserId: AUTHOR_ID,
-    participantUserIds: [AUTHOR_ID], harnessStatus: 'idle', titleStatus: 'settled', emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: 'double/primary', now: Date.now() });
-  await deliverChildEffects(TEST_ENV, root);
-  async function child(operationId: string, childWorkstreamId = workstreamId) {
-    const recipe = { policy: { revision: 'test-empty-v1', strategy: { id: 'empty', version: 1 }, config: {} }, capture: 'none' as const, parts: [] };
-    const reserved = await parent.beginPrivateChildPreparation({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId, creatorUserId: AUTHOR_ID, title: operationId,
-      sourceSubstreamId: '0', sourceThroughTurnId: null, recipe, membershipInitializer: { plugin: { id: 'creator-only', version: 1 }, config: {}, memberUserIds: [AUTHOR_ID] } });
-    const hash = '0'.repeat(64);
-    await parent.savePreparedPrivateChildContext({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId,
-      preparedContext: { schemaVersion: 1, recipe, recipeHash: hash, capture: null, captureHash: null, parts: [], contentHash: hash } });
-    await parent.claimPrivateChildConfirmation({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId, actorUserId: AUTHOR_ID });
-    await bootstrapConversationChildRuntime(TEST_ENV, WORKSPACE_ID, 'workstream', childWorkstreamId, reserved.substreamId);
-    await provisionWorkstreamObject(TEST_ENV, { workspaceId: WORKSPACE_ID, workstreamId: childWorkstreamId, substreamId: reserved.substreamId, title: operationId, objective: '', scope: 'personal', createdByUserId: AUTHOR_ID,
-      participantUserIds: [AUTHOR_ID], harnessStatus: 'idle', titleStatus: 'settled', emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: 'double/primary', now: Date.now() });
-    const agent = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName('global', WORKSPACE_ID, childWorkstreamId, asSubstreamId(reserved.substreamId))));
-    await agent.installPreparedSubstreamContext({ workspaceId: WORKSPACE_ID, workstreamId: childWorkstreamId, substreamId: reserved.substreamId, operationId });
-    await parent.setPrivateChildTerminalStatus({ workspaceId: WORKSPACE_ID, parentId: childWorkstreamId, operationId, status: 'ready', errorCode: null });
-    await deliverChildEffects(TEST_ENV, agent);
-    return agent;
-  }
-  let messageOrdinal = 0;
-  async function execute(agent: typeof root, script: typeof sidekickToolScript = []) {
-    sidekickToolScript = script;
-    const before = provider.calls.length;
-    const runCount = await runInDurableObject(agent, (_instance, state) => state.storage.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM runs').one().n);
-    const response = await agent.fetch('https://object.test/internal/product', { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ operation: 'create_message', auth: { sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: 'global', role: 'member' },
-        input: { text: 'Use relevant knowledge.', clientMessageId: `recommend-${++messageOrdinal}`, mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } }) });
-    expect(response.status, await response.text()).toBe(200);
-    await expect.poll(() => runInDurableObject(agent, (_instance, state) => {
-      const rows = state.storage.sql.exec<{ status: string }>('SELECT status FROM runs ORDER BY created_at').toArray();
-      return rows.length > runCount ? rows.at(-1)?.status : 'waiting';
-    }), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe('completed');
-    return provider.calls.slice(before).map((call) => call.messages.filter((message) => message.role === 'system').map((message) => promptText(message.content)).join('\n')).join('\n');
-  }
-  return { workstreamId, parent, root, child, execute };
-}
-
 beforeEach(async () => {
   sidekickToolScript = [];
   loadSkillOnNextTurn = false;
@@ -515,21 +468,6 @@ beforeEach(async () => {
 });
 
 describe("a hosted Sidekick", () => {
-  it("revalidates a loaded Breakout Skill after pause and resume", async () => {
-    const { workstreamId, child, execute } = await knowledgeConversation();
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: 'workspace', automationId: AUTOMATION_ID });
-    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...DEFINITION, suggestedScope: 'workspace', definitionVersion: 2, triggers: [], instructions: 'Secret body loaded only on request.' }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    const target = await child('lifecycle-child');
-    expect(await execute(target, [{ name: 'load_skill', arguments: { name: 'skill-manual-helper' } }]))
-      .toContain('Secret body loaded only on request.');
-    expect(await target.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId })).toEqual([AUTOMATION_ID]);
-    // Saved local attachments do not bypass lifecycle on the next execution.
-    await workspaceStub().sidekickPause({ ...addressed(), actor: actor() });
-    expect(await execute(target)).not.toContain('Secret body loaded only on request.');
-    await workspaceStub().sidekickResume({ ...addressed(), actor: actor() });
-    expect(await execute(target)).toContain('Secret body loaded only on request.');
-  });
-
   it("publishes through the authoring conversation and completes with a durable final reply", async () => {
     await createDraft();
     const root = childStub("0");
@@ -693,66 +631,6 @@ describe("a hosted Sidekick", () => {
     expect(source?.loadable).toBe(true);
     expect(await workspaceStub().sidekickReconcileLoadable({ ...addressed(), actor: actor() })).toEqual({ loadable: false });
     expect(await workspaceStub().sidekickSkillCandidates({ workspaceId: WORKSPACE_ID })).not.toContain(AUTOMATION_ID);
-  });
-
-  it("attaches a loaded main-stream Sidekick and pins the latest revision for later executions", async () => {
-    await createDraft();
-    const draft: AutomationDraft = { ...DEFINITION, definitionVersion: 2, triggers: [], instructions: "First accepted Sidekick instructions." };
-    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    const earlierId = asAutomationId("00000000-0000-7000-8000-000000000001");
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "personal", automationId: earlierId });
-    await workspaceStub().sidekickSaveDefinition({ workspaceId: WORKSPACE_ID, automationId: earlierId, draft, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-00000000ad99");
-    await hostedParentStub(env, WORKSPACE_ID).reserveChild({
-      workspaceId: WORKSPACE_ID, parentId: workstreamId, substreamId: asSubstreamId("0"), kind: "main",
-      createdByUserId: AUTHOR_ID, authorityGeneration: 1,
-      directory: { title: "Use knowledge", description: "", scope: "personal", systemKind: null, emailAddress: null, titleStatus: "settled", createdAt: NOW },
-    });
-    const root = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, workstreamId)));
-    const auth = { sessionId: SESSION_ID, userId: AUTHOR_ID, workspaceId: WORKSPACE_ID, region: "global", role: "member" };
-    loadSkillOnNextTurn = true;
-    const opened = await root.fetch("https://object.test/internal/product", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operation: "initialize", auth, input: {
-        workspaceId: WORKSPACE_ID, workstreamId, generation: 1, title: "Use knowledge", objective: "",
-        descriptionSource: "derived", titleStatus: "settled", emailAddress: null, creatorUserId: AUTHOR_ID,
-        openingMessage: "Load the writing Sidekick.", clientMessageId: "sidekick-load", participantUserIds: [], attachmentIds: [],
-        modelOverride: "double/primary", executionPrincipal: { type: "user", userId: AUTHOR_ID }, reason: "user_message",
-      } }),
-    });
-    expect(opened.status, await opened.clone().text()).toBe(200);
-    const snapshots = () => runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{ snapshot_json: string }>(
-      `SELECT snapshot_json FROM sidekick_execution_skills ORDER BY rowid`,
-    ).toArray().map((row) => JSON.parse(row.snapshot_json)));
-    await expect.poll(() => root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId }), { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([AUTOMATION_ID]);
-    await expect.poll(() => runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{ status: string }>(`SELECT status FROM runs ORDER BY created_at DESC LIMIT 1`).one().status), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe("completed");
-    expect((await snapshots())[0].sources).toContainEqual(expect.objectContaining({ id: AUTOMATION_ID, revision: 1 }));
-    // Simulate aliases persisted before reusable instructions used skill terms.
-    // A later run projects them without rewriting identities or attachments.
-    await runInDurableObject(root, (_instance, state) => state.storage.sql.exec(
-      `UPDATE sidekick_skill_names SET name = replace(name, 'skill-', 'sidekick-')`,
-    ));
-    await workspaceStub().sidekickRemove({ workspaceId: WORKSPACE_ID, automationId: earlierId, actor: actor() });
-    await evictDurableObject(root);
-    await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...draft, name: "Updated helper", instructions: "Second accepted Sidekick instructions." }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
-    const sent = await root.fetch("https://object.test/internal/product", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operation: "create_message", auth, input: { text: "Use the attached knowledge.", clientMessageId: "sidekick-again", mentions: [], confirmedParticipantUserIds: [], attachmentIds: [] } }),
-    });
-    expect(sent.status).toBe(200);
-    await expect.poll(async () => (await snapshots()).length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(2);
-    const admitted = await snapshots();
-    expect(admitted[0].sources).toContainEqual(expect.objectContaining({ id: AUTOMATION_ID, instructions: draft.instructions }));
-    expect(admitted[1].sources).toContainEqual(expect.objectContaining({ id: AUTOMATION_ID, revision: 2 }));
-    expect(admitted[1].activeRefs).toContain(`platform:sidekick-${AUTOMATION_ID}`);
-    expect(await runInDurableObject(root, (_instance, state) => state.storage.sql.exec<{ name: string }>(
-      `SELECT name FROM sidekick_skill_names WHERE sidekick_id = ?`, AUTOMATION_ID,
-    ).one().name)).toBe("sidekick-manual-helper-2");
-    await expect.poll(() => provider.calls.some((call) => call.messages.some((message) =>
-      message.role === "system" && promptText(message.content).includes("Second accepted Sidekick instructions.")
-      && promptText(message.content).includes('name="skill-manual-helper-2"'))),
-    { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(true);
-    expect(await root.sidekickAttachments({ workspaceId: WORKSPACE_ID, workstreamId, removeId: AUTOMATION_ID })).toEqual([]);
   });
 
   it("keeps the connector tables out of regional D1, which is what makes the binding tests evidence", async () => {
@@ -1774,39 +1652,6 @@ describe("a hosted Sidekick", () => {
       const resent = (await alarms()).find((alarm) => alarm.kind === SIDEKICK_REVIEW_ALARM_KIND);
       expect(resent!.due_at).toBeGreaterThan(resumedAt);
       expect((await reviewState()).reviews.find((review) => review.review_id === owed)?.delivered_at).toBeNull();
-    } finally {
-      send.mockRestore();
-    }
-  });
-
-  it("announces a review's change in its own shared conversation, and lists its wizard no Channel", async () => {
-    await activeAutomation();
-    const generalId = asSpaceId("00000000-0000-7000-8000-00000000ad0e");
-    const personalId = asSpaceId("00000000-0000-7000-8000-00000000ad0f");
-    // The Organization's Spaces, opened as a new Organization's are: General
-    // and the creator's Personal Channel in the one object call.
-    const opened = await workspaceStub().initializeWorkspace(WORKSPACE_ID, "wnam", {
-      creatorUserId: AUTHOR_ID, spaceId: generalId, personalSpaceId: personalId, authorityGeneration: 1,
-    });
-    if (!opened.spacesReady) throw new Error("the Organization's Spaces did not open");
-    const scope = { kind: "sidekick" as const, automationId: AUTOMATION_ID, authoring: true };
-    expect((await workspaceStub().conversationToolScope({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID, scope }))
-      .conversations.filter((conversation) => conversation.kind === "space")).toEqual([]);
-    await runInDurableObject(workspaceStub(), async (_instance, state) => {
-      state.storage.sql.exec(`UPDATE automation_directory SET runs_since_review = ? WHERE automation_id = ?`,
-        SIDEKICK_REVIEW_RUN_FLOOR, AUTOMATION_ID);
-      state.storage.sql.exec(
-        `INSERT INTO _internal_durable_alarms (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json, created_at, updated_at)
-         VALUES (?, ?, ?, NULL, 0, 0, NULL, ?, ?)`,
-        SIDEKICK_REVIEW_ALARM_KIND, `${AUTOMATION_ID}:review`, Date.now() - 1, Date.now(), Date.now(),
-      );
-      await state.storage.setAlarm(Date.now());
-    });
-    const send = interceptReviewSends(async () => {});
-    try {
-      await expect.poll(async () => (await reviewState()).reviews.length, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(1);
-      // The Sidekick's own conversation is named by the Sidekick's id.
-      expect((JSON.parse((await reviewState()).reviews[0]!.notice_json) as { announceTo: string | null }).announceTo).toBe(AUTOMATION_ID);
     } finally {
       send.mockRestore();
     }

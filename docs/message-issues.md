@@ -77,7 +77,7 @@ Closing the modal discards an unsent draft.
 
 ## Testing
 
-Run the API workerd file `test-workers/message-issues.test.ts`, the cookie-adapter
+Run the API workerd file `test-workers/message-issues.test.ts` (deleted in plan step C-2), the cookie-adapter
 regression in `test/browser-sessions.test.ts`, the renderer
 `message-issue-dialog.test.tsx`, and the existing message-action, Channel, and
 composer-dictation suites. Workerd applies the checked-in issue migration to a

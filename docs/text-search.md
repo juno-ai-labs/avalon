@@ -32,7 +32,7 @@ before a search needs it.
 - `apps/api/src/services/workspace-search-service.ts` and `routes/search.ts`: member
   source selection, current authorization, canonical excerpts, and the protected API.
 - `apps/api/src/durable-objects/search-projection-outbox.ts`,
-  `resource-search-projection.ts`, `channel-message-search-projection.ts` and
+  `resource-search-projection.ts` and
   `conversation-link-search.ts`: transactional indexing intent, Queue dispatch,
   and asynchronous Browser Run capture.
 - `apps/desktop/src/renderer/components/search-modal.tsx`: the member UI: five content tabs, plus Channels and Spaces tabs it answers itself.
@@ -566,7 +566,7 @@ migration-51 and migration-53 re-projections against a cleared watermark and a
 drained outbox row; `test/search-document.test.ts` covers the contract accepting
 a document from a build ahead of it and naming the keys it dropped;
 `test-workers/search-audience-person.test.ts` proves the person side against the
-design's rule table; `test-workers/conversation-parent-contract.test.ts` proves
+design's rule table; `test-workers/conversation-parent-contract.test.ts` (deleted in plan step C-2) proves
 the index returns only what a reader's groups admit, including after revocation;
 `test/search-route.test.ts` proves the HTTP boundary fails closed;
 `test/scoped-memory.test.ts` proves the typed tables check each run canonically,

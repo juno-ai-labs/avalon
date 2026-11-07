@@ -5,7 +5,7 @@ import { ConnectorError } from "@rally/connectors";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
-import { linkUnfurlBlocks, slackChannelIsExternallyShared, slackUnfurlLinkTargets, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
+import { linkUnfurlBlocks, slackChannelIsExternallyShared, slackUnfurlLinkTargets } from "../src/services/slack-workstream-card";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -635,119 +635,25 @@ function environment(database: IngressDatabase, send: (body: unknown) => Promise
   });
 }
 
-describe("work-stream link unfurl card", () => {
-  const url = "https://with-avalon.com/app/workstreams/019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
+describe("Rally link unfurl card", () => {
+  const url = "https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/canvas/1111117Hxt1fAWDjN7TX";
+  const cardText = (blocks: Record<string, unknown>[]) => String((blocks[0] as { text: { text: string } }).text.text);
 
-  function cardText(blocks: Record<string, unknown>[]): string {
-    const section = blocks[0] as { text?: { text?: string } };
-    return String(section.text?.text ?? "");
-  }
-
-  it("shows title, status, and last activity", () => {
-    const blocks = workstreamUnfurlBlocks({
-      title: "Daily product brief",
-      harnessStatus: "needs_input",
-      lastActivityAt: "2026-08-10T12:00:00.000Z",
-    }, url);
-
-    const text = cardText(blocks);
-    // The emoji leads the title so the state reads before the text does; the
-    // word follows in the detail line so the emoji is never the only carrier.
-    expect(text).toContain(`:warning: *<${url}|Daily product brief>*`);
-    expect(text.split("\n")[1]).toMatch(/^Needs input · /u);
-    // Rendered in each reader's own timezone, and it cannot rot into a lie the
-    // way a baked "24m ago" would on a card that is never re-rendered.
-    expect(text).toContain(`<!date^${Math.floor(Date.parse("2026-08-10T12:00:00.000Z") / 1000)}^`);
-    expect(text).not.toContain("ago");
+  it("links the title and escapes what would otherwise inject mrkdwn", () => {
+    expect(cardText(linkUnfurlBlocks("Launch <plan> & notes", url))).toBe(`*<${url}|Launch &lt;plan&gt; &amp; notes>*`);
   });
 
-  it("omits the origin for an ad-hoc work stream", () => {
-    const text = cardText(workstreamUnfurlBlocks({
-      title: "Pricing restructure",
-      harnessStatus: "running",
-      lastActivityAt: "2026-08-10T12:00:00.000Z",
-    }, url));
-
-    expect(text).toContain(":large_green_circle: *<");
-    expect(text.split("\n")[1]).toMatch(/^Running · /u);
-    expect(text).not.toContain("via ");
-  });
-
-  it("badges a failed work stream, which is as actionable as one needing input", () => {
-    const text = cardText(workstreamUnfurlBlocks({
-      title: "Board decision",
-      harnessStatus: "failed",
-      lastActivityAt: "2026-08-10T12:00:00.000Z",
-    }, url));
-
-    expect(text).toContain(":red_circle: *<");
-    expect(text.split("\n")[1]).toMatch(/^Failed · /u);
-  });
-
-  it("shows no status badge for a settled work stream", () => {
-    // "Completed" is not something a reader can act on, and a card is only
-    // rewritten when its badge changes — so a settled work stream would carry
-    // that label indefinitely. Only the actionable states say anything.
-    for (const harnessStatus of ["completed", "scheduled", "idle"]) {
-      const text = cardText(workstreamUnfurlBlocks({
-        title: "Daily product brief",
-        harnessStatus,
-        lastActivityAt: "2026-08-10T12:00:00.000Z",
-      }, url));
-
-      expect(text.startsWith("*<"), harnessStatus).toBe(true);
-      expect(text, harnessStatus).not.toMatch(/Completed|Scheduled|Idle/u);
-      expect(text.split("\n")[1], harnessStatus).toMatch(/^Updated /u);
-    }
-  });
-
-  it("escapes a title that would otherwise inject mrkdwn", () => {
-    const text = cardText(workstreamUnfurlBlocks({
-      title: "<https://evil.example|Click me> & co",
-      harnessStatus: "completed",
-      lastActivityAt: null,
-    }, url));
-
-    expect(text).toContain("&lt;https://evil.example|Click me&gt; &amp; co");
-    expect(text).not.toContain("<https://evil.example");
-  });
-
-  it("survives a work stream with no title, unknown status, and no activity stamp", () => {
-    const text = cardText(workstreamUnfurlBlocks({
-      title: "   ",
-      harnessStatus: "some_future_status",
-      lastActivityAt: "not-a-date",
-    }, url));
-
-    expect(text).toBe(`*<${url}|Untitled work stream>*`);
-  });
-
-  it("falls back to an anonymous card when no summary is available", () => {
-    const blocks = workstreamUnfurlBlocks(null, url);
-    const text = cardText(blocks);
-
-    expect(text).toContain("*Rally*");
-    expect(text).not.toContain("Needs input");
+  it("falls back to an anonymous card when there is no title", () => {
+    const blocks = linkUnfurlBlocks(null, url);
+    expect(cardText(blocks)).toContain("*Rally*");
     expect(JSON.stringify(blocks)).toContain(url);
   });
 
-  it("always offers the same open action, summary or not", () => {
-    for (const blocks of [
-      workstreamUnfurlBlocks(null, url),
-      workstreamUnfurlBlocks({
-        title: "Daily product brief",
-        harnessStatus: "failed",
-        lastActivityAt: null,
-      }, url),
-    ]) {
+  it("always offers the same open action, titled or not", () => {
+    for (const blocks of [linkUnfurlBlocks(null, url), linkUnfurlBlocks("Daily product brief", url)]) {
       expect(blocks.at(-1)).toEqual({
         type: "actions",
-        elements: [{
-          type: "button",
-          text: { type: "plain_text", text: "Open in Rally" },
-          url,
-          action_id: "rally_open_unfurl",
-        }],
+        elements: [{ type: "button", text: { type: "plain_text", text: "Open in Rally" }, url, action_id: "rally_open_unfurl" }],
       });
     }
   });

@@ -25,8 +25,6 @@ conversation, not parent work-stream metadata. Members retain `renameWorkstream`
 | `packages/contracts/src/workstream-appearance.ts` | The icon keys, one description per key, and the default. Shared with the picker; see [`workstream-appearance.md`](workstream-appearance.md). |
 | `packages/contracts/src/index.ts` | `WORKSTREAM_NAMING_GRACE_MS`, `WorkstreamNameResultSchema`, and `titleStatus` on every work-stream shape. |
 | `apps/api/src/durable-objects/workstream-identity-storage.ts` | `rename` — the one write that advances the status, sets the title, and offers the icon. |
-| `apps/api/src/services/workstream-object-creation-service.ts` | The first pass's caller on the desktop create path, and the routed environment it is given. |
-| `apps/api/src/services/slack-workspace-workstream-service.ts` | The first pass's caller for a work stream summoned from Slack. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The second pass's caller, at the end of a run (`settleAgentRun`), addressed at the conversation that ran. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workstream-object-product.ts` | Where the grace is applied to a read: `directoryWorkstream` for a sidebar row, `summary` for the work stream itself. |
 | `apps/desktop/src/renderer/lib/naming-skeleton.ts` | `useNamingSkeleton` — the same rule applied to what the client already holds. Every renderer surface that shows a skeleton reads it from here. |

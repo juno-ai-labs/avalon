@@ -395,9 +395,6 @@ describe("a parent's effects on the regional delivery plane", () => {
         notificationIntentId: null,
       });
       expect(workspace.database.prepare(
-        "SELECT COUNT(*) AS count FROM workspace_activity_events WHERE event_id = ?",
-      ).get(EVENT_ID)).toEqual({ count: 1 });
-      expect(workspace.database.prepare(
         "SELECT payload_hash FROM workspace_workstream_effect_receipts WHERE message_id = ?",
       ).get(envelope.messageId)).toEqual({ payload_hash: envelope.payloadHash });
     } finally {
@@ -489,16 +486,11 @@ describe("a parent's effects on the regional delivery plane", () => {
       expect(database.prepare(
         `SELECT COUNT(*) AS count FROM activity_events WHERE id = ?`,
       ).get(EVENT_ID)).toEqual({ count: 0 });
+      // The Activity log is retired (plan step C-2): the event is receipted
+      // below and stored nowhere.
       expect(workspace.database.prepare(
-        `SELECT actor_user_id, audience_workstream_id FROM workspace_activity_events
-          WHERE event_id = ?`,
-      ).get(EVENT_ID)).toEqual({
-        actor_user_id: AUTHOR_ID,
-        audience_workstream_id: WORKSTREAM_ID,
-      });
-      expect(workspace.database.prepare(
-        `SELECT relation FROM workspace_activity_event_targets WHERE event_id = ? AND user_id = ?`,
-      ).get(EVENT_ID, USER_ID)).toEqual({ relation: "mentioned" });
+        `SELECT COUNT(*) AS count FROM workspace_activity_events WHERE event_id = ?`,
+      ).get(EVENT_ID)).toEqual({ count: 0 });
       expect(workspace.database.prepare(
         `SELECT COUNT(*) AS count FROM workspace_workstream_effect_receipts`,
       ).get()).toEqual({ count: 1 });

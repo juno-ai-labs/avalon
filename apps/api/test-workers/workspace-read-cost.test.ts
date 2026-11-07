@@ -1,4 +1,4 @@
-import { asWorkspaceId, asUserId, asWorkstreamId, conversationEffectHash } from "@rally/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import { resolveWorkspaceEventResources } from "../src/durable-objects/workspace-event-resources";
 import { env } from 'cloudflare:workers';
 import { reset, runInDurableObject } from 'cloudflare:test';
@@ -173,7 +173,6 @@ it('removes a watch alarm when a resource write cascades to its source row', asy
   });
 });
 
-
 it('reconciles the union of source kinds in one runtime SQL batch', async () => {
   const stub = env.WORKSPACE_DOS.getByName(workspaceDOName('global', workspaceId));
   await runInDurableObject(stub, async (instance, state) => {
@@ -195,83 +194,4 @@ it('reconciles the union of source kinds in one runtime SQL batch', async () => 
         .toEqual([{ alarm_key: 'resource_slugs' }]);
     }, { timeout: 10_000 });
   });
-});
-
-it('repairs a terminal deadline from its recorded follow-up when the post-commit run fails', async () => {
-  const stub = env.WORKSPACE_DOS.getByName(workspaceDOName('global', workspaceId));
-  const workstreamId = asWorkstreamId('00000000-0000-7000-8000-000000009d08');
-  const dueAt = '2096-09-08T00:00:00.000Z';
-  const before = Date.now();
-  await runInDurableObject(stub, async (instance, state) => {
-    const sql = state.storage.sql;
-    seed(sql);
-    const resourceId = '00000000-0000-7000-8000-000000009d07';
-    sql.exec(`INSERT INTO resources(id, workspace_id, resource_type, provider, title, slug,
-      attachment_status, created_at, updated_at)
-      VALUES (?, ?, 'document', 'avalon_upload', 'Replay fixture', 'replay-fixture', 'attached', ?, ?)`,
-      resourceId, workspaceId, dueAt, dueAt);
-    const effect = {
-      kind: 'directory_common' as const, title: 'Replay fixture', description: '', preview: '',
-      scope: 'personal' as const, state: 'running', systemKind: null,
-      lastActivityAt: dueAt, completedAt: null, archivedAt: null,
-      createdByUserId: asUserId('00000000-0000-7000-8000-000000009d09'),
-      latestAttentionOrdinal: 1, unreadTrackingStartOrdinal: 0, createdAt: dueAt, updatedAt: dueAt,
-      nextTerminalActionAt: dueAt,
-      resourceLinks: [{ resourceId, watchEnabled: false, relationshipType: 'message_attachment' as const }],
-    };
-    const request = { workspaceId, envelopes: [{
-      kind: 'parent_effect' as const, contractVersion: 1 as const, region: 'global' as const,
-      workspaceId, parentKind: 'workstream' as const, parentId: workstreamId, generation: 1,
-      messageId: '00000000-0000-7000-8000-000000009d10', partitionKey: 'common', sourceVersion: 1,
-      requiredProjectionVersion: null, payloadHash: conversationEffectHash(effect), effect,
-    }] };
-    // Fault injection at the post-commit boundary: the directory row commits,
-    // the reconciliation after it throws.
-    const exec = sql.exec.bind(sql);
-    const failure = vi.spyOn(sql, 'exec').mockImplementation(
-      <T extends Record<string, SqlStorageValue>>(query: string, ...bindings: SqlStorageValue[]) => {
-        if (query.startsWith('SELECT link.resource_id, link.watch_enabled')) {
-          throw new Error('injected_post_commit_failure');
-        }
-        return exec<T>(query, ...bindings);
-      },
-    );
-    let result: unknown;
-    try {
-      result = await instance.applyWorkstreamDirectoryEffects(request);
-    } finally { failure.mockRestore(); }
-    // The caller is not failed for work its commit no longer depends on.
-    expect(result).toMatchObject({ accepted: [{ messageId: request.envelopes[0]!.messageId }] });
-    expect(sql.exec('SELECT next_terminal_action_at FROM channels WHERE workstream_id = ?', workstreamId).one())
-      .toEqual({ next_terminal_action_at: Date.parse(dueAt) });
-    expect(sql.exec("SELECT alarm_key FROM _internal_durable_alarms WHERE kind = 'terminal'").toArray()).toEqual([]);
-    // What it still owes is kept, put off on the retry schedule, and armed.
-    const kept = sql.exec<{ followup_json: string; attempts: number; not_before: number }>(
-      'SELECT followup_json, attempts, not_before FROM workspace_directory_followups',
-    ).toArray();
-    expect(kept).toHaveLength(1);
-    expect(kept[0]!.attempts).toBe(1);
-    expect(kept[0]!.not_before).toBeGreaterThan(before);
-    expect(JSON.parse(kept[0]!.followup_json)).toMatchObject({ refreshTerminal: true, refreshWatchKinds: true });
-    const alarm = await state.storage.getAlarm();
-    expect(alarm).not.toBeNull();
-    expect(alarm!).toBeLessThanOrEqual(kept[0]!.not_before);
-    // Make it due now rather than wait out the retry delay.
-    sql.exec('UPDATE workspace_directory_followups SET not_before = 0');
-    await state.storage.setAlarm(Date.now());
-  });
-  // The alarm's own phase runs it, with nothing replayed. The real alarm
-  // fires on its own, so this waits for its result rather than racing it.
-  await vi.waitFor(() => runInDurableObject(stub, (_instance, state) => {
-    const sql = state.storage.sql;
-    expect(sql.exec('SELECT id FROM workspace_directory_followups').toArray()).toEqual([]);
-    expect(sql.exec("SELECT alarm_key, due_at FROM _internal_durable_alarms WHERE kind = 'terminal'").toArray())
-      .toEqual([{ alarm_key: workstreamId, due_at: Date.parse(dueAt) }]);
-  }), { timeout: 10_000, interval: 50 });
-  // Mutation publication can wake the shared alarm before the repaired deadline.
-  await vi.waitFor(() => runInDurableObject(stub, async (_instance, state) => {
-    const alarm = await state.storage.getAlarm();
-    expect(alarm).not.toBeNull();
-    expect(alarm!).toBeLessThanOrEqual(Date.parse(dueAt));
-  }), { timeout: 10_000, interval: 50 });
 });

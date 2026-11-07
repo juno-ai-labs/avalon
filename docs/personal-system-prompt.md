@@ -99,7 +99,7 @@ durable user-role history. Desktop transcript tests cover display
 filtering; harness prompt tests cover XML formatting, escaping and compatibility
 with the shared display filter.
 `citations.test.ts`, `mention-email.test.ts`, `slack-notification-service.test.ts`,
-`push-delivery.test.ts` and `activity-push.test.ts` cover notification reduction.
+`push-delivery.test.ts` and `activity-push.test.ts` (deleted in plan step C-2) cover notification reduction.
 The admission/history pipeline test uses instructions longer than the outbound
 excerpt budget and checks that Activity receives the ordinary message.
 

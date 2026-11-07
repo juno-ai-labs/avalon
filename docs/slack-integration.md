@@ -264,6 +264,18 @@ with the workspace principal, and the opening message keeps its external Slack a
 
 ### Agent sessions and delivery
 
+> **Slack no longer starts a conversation.** Plan step C-2 deleted the Thread
+> paths below: a root DM, a root mention, an addressed message in a room linked
+> to a Space, and `/rally` with a prompt no longer create or resume a work
+> stream. Each is answered once in its thread with the copy for
+> `conversation_ingress_retired` ("Rally no longer starts work from Slack.
+> Start a Canvas in Rally, or set up a Sidekick to work from Slack for you."),
+> and the bot joining a channel binds no room (logged `room_bindings_retired`).
+> A thread bound to a Sidekick run still delivers to that run, and Sidekick
+> results are still posted as described here. The paragraphs that follow
+> describe the Thread path as it ran, for the code that still shares its
+> session and delivery rows.
+
 Every Slack message is routed by its **binding** before a work stream is looked up or created: a thread bound to a work stream delivers there, a thread bound to a Sidekick run delivers to that run, an addressed thread in a room linked to a Space opens a work stream in that Space, and anything else takes the Agent path below. [`external-conversation-bindings.md`](external-conversation-bindings.md) owns resolution and the lifecycle events (`member_joined_channel`, `member_left_channel`, `channel_left`, `group_left`, `channel_archive`, `group_archive`, `channel_id_changed`) that link, suspend and move bindings.
 
 A Slack root DM or root mention on the Agent path creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp, and writes the thread's binding in the same transaction. It maps to exactly one durable Rally workstream. The session row is delivery state (status, reaction, who started it); the binding is routing. Human replies in that Slack thread add messages to the same workstream without requiring another `@Rally` mention, whoever sends them. Rally ignores messages outside its bound threads and does not replay or import the rest of the Slack conversation.
@@ -383,7 +395,8 @@ Slack and email are delivered independently, so a failure in one is retried with
 
 ### App Home
 
-App Home is a personalized control surface published per user. Rally publishes only for `app_home_opened` events whose tab is `home` and supplies Slack's current view hash to protect against stale updates.
+App Home lists the person's Sidekicks only; the Thread rows are gone with
+Threads. App Home is a personalized control surface published per user. Rally publishes only for `app_home_opened` events whose tab is `home` and supplies Slack's current view hash to protect against stale updates.
 
 #### Unlinked
 
@@ -739,13 +752,9 @@ not own:
 | `packages/connectors/src/slack-reactions.test.ts` | Override resolution, partial inheritance, the malformed-override fallback, and the rotation's wrap. |
 | `packages/connectors/src/slack-markdown.test.ts` | Block rendering, the notification fallback, and every split rule including the reopened fence. |
 | `apps/api/test/slack-account-link.test.ts` | Both routes to a link, mint-on-click, retirement ordering and its mint-time bound, and each refusal reason. |
-| `apps/api/test/slack-workstream-creator-attribution.test.ts` | Creator resolution and the one case where an existing creator is rewritten. |
-| `apps/api/test/slack-thread-audience.test.ts` | The conversation's visibility and room, bounded roster enrichment, participant events, per-message delivery routing, shared feedback controls, a second linked member continuing a thread, and an unmapped Slack member's reply. |
 | `apps/api/test/slack-connection-health.test.ts` | That a stored status diagnoses rather than gates. |
 | `apps/api/test/slack-notification-service.test.ts` | The lookup-based DM path and the cases it skips. |
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
-| `apps/api/test/slack-unfurl-refresh.test.ts` | The unfurl card and its refresh sweep — owned by [`links.md`](links.md). |
-| `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant, the ingress re-drive, the link-challenge reap and the `slack_ingress` due time it clears, the operator notice an exhausted job posts, and the connector principal: a linked member's create and reply present exactly the marked auth to the object, and the object's refusal stays retryable without flipping the installation. |
 | `apps/api/test-workers/workspace-slack-ingress.test.ts` | The ingress spine on real workerd: admission and its dedupe, the claim lease and both settlement fences, the one-notice exhaustion episode, the maintenance sweep, thread claims, pending prompts, and the workspace identity fence. |
 
 Run one with
@@ -830,6 +839,32 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-11-07 — Slack starts no conversation, binds no room and refreshes no card
+
+**What changed:** The Thread-creating path is deleted: `startFromPrompt` and
+the event dispatcher answer a mention, a DM or a prompt with
+`conversation_ingress_retired`'s copy and create nothing.
+`slack-workspace-workstream-service.ts` (a non-Rally member's Thread) and the
+room bindings a bot join wrote are deleted; `member_joined_channel` logs
+`room_bindings_retired`. App Home lists Sidekicks only. The unfurl refresh
+sweep (`slack-unfurl-refresh.ts`) and its scheduled task are deleted, and
+`slack-workstream-card.ts` keeps only the one-time unfurl: a title link and an
+**Open in Rally** button.
+
+**Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
+A conversation is a Canvas's chat or a Sidekick's run, and neither is started
+from a Slack thread; a Sidekick with a Slack trigger is how work starts there
+now.
+
+**Considered and rejected:** Starting a Canvas from a Slack mention. Nothing in
+the PRD asks for it, and a Canvas made on someone's behalf from a Slack thread
+would need its own audience decision. Answering silently was rejected too: a
+person who mentions Rally and hears nothing will assume it is broken.
+
+**Open:** The retired-ingress copy is the agent's wording and needs product
+confirmation.
+
 
 ### 2026-11-07 — Unfurls and posted links name Canvases and Sidekicks
 

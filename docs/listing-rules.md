@@ -14,9 +14,7 @@ and every Space write still requires an active member.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/listing-rules.ts` | The one source of every rule: `admitsOrganizationWide` (the leaf, shared with read authority and search), `organizationWideSql`, `mainOpenableSql`, `breakoutListedSql`, `channelReachedThroughBreakoutSql`, `channelListedSql`, `spaceReachedThroughChannelSql`, `spaceListedSql`, their TypeScript forms for rows already read, and the `Viewer` type with its `member()` constructor. |
-| `apps/api/src/durable-objects/workspace-space-storage.ts` | Space directories, the dashboard page, attention counts and Channel placement, each rendering the rules for a `Viewer`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The Channel directory, the socket's Channel rows, Space snapshots and nudges, and the Space reads (`spaceSummary`, `listSpaceChannels`, `channelSpaces`), each taking the viewer from the socket attachment or the caller's relationship. |
-| `apps/api/src/durable-objects/channel-rails.ts` | The Channels a `channel_rails` or `space_channels` answer may name. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | `associativeWorkstreamsForSidebar`: the socket's rows, tagged with the conversation a Breakout-only Channel opens on. |
 | `apps/desktop/src/renderer/lib/conversation-directory.ts` | `mainReachable`: whether a Channel's Main is this person's, from the row's `mainWithheld` or the conversation directory. The Channel screen, the socket pool and the feed hook all ask it. |
 
@@ -58,9 +56,6 @@ built from the one below it:
 In product words a Space is a **Channel** and a stored Channel is a **thread**
 ([the navigation PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)).
 The rules keep the storage words.
-
-A Channel's feed (`feedPage` in `workspace-space-storage.ts`) lists only the
-threads its viewer may open, by `mainOpenableSql`.
 
 A call site passes a `Viewer` (`userId` and `accessClass`) and never branches
 on the access class itself. Because a guest's thread leaf binds the user id, a
@@ -113,10 +108,10 @@ for what the person may already reach.
 - **A guest is told nothing Organization-wide** beyond the threads of the
   Channels they take part in. If `organizationWideSql` admitted guests, every
   guest would learn every public Channel's and Space's name. Guard for the
-  exception: `channels-threads-navigation.test.ts` "a Channel lends its
-  Organization-wide threads to its guests". Guard: `channel-rails.test.ts` "lists a guest the Channel they take
+  exception: `channels-threads-navigation.test.ts` (deleted in plan step C-2) "a Channel lends its
+  Organization-wide threads to its guests". Guard: `channel-rails.test.ts` (deleted in plan step C-2) "lists a guest the Channel they take
   part in, and nothing of an Organization-wide one they are not in", and the
-  guest cases in `space-authority.test.ts`.
+  guest cases in `space-authority.test.ts` (deleted in plan step C-2).
 - **One text per rule.** A second hand-written test drifts from the first, and
   the two then disagree about whether a row exists; the dashboard page, the
   attention counts, the socket rows and the Space directory must all agree.
@@ -124,23 +119,23 @@ for what the person may already reach.
 - **Listing a Channel is not Main's authority.** A row, rail or wake that
   used `channelListedSql` where it meant Main would hand somebody invited to
   one Breakout the Channel's roster, resources, email address and wake-up.
-  Guard: `space-conversation-page.test.ts` "given a Channel this viewer
+  Guard: `space-conversation-page.test.ts` (deleted in plan step C-2) "given a Channel this viewer
   reaches only through a Breakout, when their socket lists it, then it carries
   its name and none of Main".
 - **Reach never flows down.** Seeing a Space or a Channel is never a reason to
   list what is in it. Breaking this lists private Breakouts to everyone in
-  their Channel. Guard: `space-conversation-page.test.ts`. The Channel feed
+  their Channel. Guard: `space-conversation-page.test.ts` (deleted in plan step C-2). The Channel feed
   follows it too: it lists only threads its reader may open.
 - **A private Space reaches nobody through a thread.** If the Space rule
   admitted a private Space through a thread in it, every reader of one thread
   would learn a private Channel's name. Guard:
-  `channels-threads-navigation.test.ts` "given a Channel made private, when a
+  `channels-threads-navigation.test.ts` (deleted in plan step C-2) "given a Channel made private, when a
   member who is not in it reads it, then it does not exist for them even
   through a thread in it".
 - **The feed names no thread its reader may not open.** Two layers hold it:
   `feedPage`'s filter, and `conversationRows`, which drops a thread the viewer
   may not open, so breaking one alone does not show it. Guard:
-  `channels-threads-navigation.test.ts` "given a private thread in a Channel,
+  `channels-threads-navigation.test.ts` (deleted in plan step C-2) "given a private thread in a Channel,
   when a member who cannot open it reads the feed, then it is not listed".
   A merge from such a thread is shown, as the merger chose, with its words and
   embeds but without the thread's name or summary
@@ -152,7 +147,7 @@ for what the person may already reach.
 - **A Personal Channel reaches nobody but its owner.** A participant row is not
   enough, because a row written by mistake would otherwise hand someone
   another member's channel; the owner is `created_by_user_id`. Guard:
-  `personal-channel.test.ts` "is listed to nobody but its owner, even one given
+  `personal-channel.test.ts` (deleted in plan step C-2) "is listed to nobody but its owner, even one given
   a participant row" and "is not listed to its owner while they are a guest".
 
 ## Boundary
@@ -180,8 +175,7 @@ Workerd, from `apps/api`:
 
 ```bash
 pnpm exec vitest run --config vitest.workers.config.ts \
-  test-workers/channel-rails.test.ts test-workers/space-authority.test.ts \
-  test-workers/space-conversation-page.test.ts
+  test-workers/workspace-memory-facts.test.ts
 ```
 
 Each rule has a test that fails when it is broken: Breakout reach

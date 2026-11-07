@@ -151,7 +151,7 @@ WorkspaceDO migration 85 adds `external_conversation_bindings`, keyed by provide
 | `apps/api/src/mappers/connection.ts` | D1 row schemas parsed at the read — the pattern the remaining hand-coercing control-plane readers are converging on. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical transcript fact ownership, participant and exact Bind projections, range snapshots, activities, and compaction checkpoints. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `hosted-parent.ts`, `hosted-parent-schema.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, Channel and Space parent state and child aggregation, and Channel control sockets. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `hosted-parent-schema.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, Channel and Space parent state and child aggregation, and Channel control sockets. |
 | `apps/api/src/services/workspace-runtime-database.ts` | D1-compatible routing port that sends an allowlisted workspace-product statement to typed WorkspaceDO RPC while leaving global/regional control SQL in D1; mixed-authority batches fail closed, and so does any single statement — read or write — naming both a WorkspaceDO table and a regional-only one. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated query and effect contracts joining conversation-parent facts to WorkspaceDO serving state. |
 | `packages/contracts` | The camel-cased shapes the columns are mapped into. |
@@ -1458,6 +1458,47 @@ Breakout, Activity, digest and suggested-work rows. Retired so far:
   `create_channel`, `create_thread`, `read_channel`, `list_channels`,
   `list_threads` and `list_breakouts` go with the services they called
   ([`engineering-mcp.md`](engineering-mcp.md)).
+- **Spaces and Channels.** `space-service.ts`, `space-bootstrap-service.ts`,
+  `workspace-space-storage.ts`, `workspace-space-default-publication.ts`,
+  `workspace-space-protocol.ts`, `system-channels.ts`, `channel-rails.ts`,
+  `workspace-channel-read-storage.ts`, `unread-state.ts`,
+  `channel-message-search-projection.ts`, `channel-access-service.ts` and
+  `shared-directory-service.ts`, with their WorkspaceDO RPCs and socket
+  commands. Onboarding seats a new member nowhere. The Sidekick list SQL that
+  lived in `channel-rails.ts` moved to `sidekick-directory-sql.ts`. Queue
+  messages of the `space_default`, `space_bootstrap` and `space_intent_resume`
+  types are acknowledged by the tombstone. `docs/spaces.md` is kept as a
+  retired record for its changelog.
+- **The Thread and Breakout host.** `hosted-parent.ts` (the Channel and Space
+  parent; [`hosted-conversation-parents.md`](hosted-conversation-parents.md)),
+  `workspace-breakout-storage.ts`, `conversation-access-request-storage.ts`,
+  `workspace-people-ranking.ts`, `workstream-object-creation-service.ts`,
+  `workstream-directory-service.ts`, `workstream-batch-update.ts`,
+  `workstream-origin-resource.ts`, `connector-workstream-audience.ts` and
+  `slack-workspace-workstream-service.ts`. `workstream-service.ts` keeps only
+  the harness launch, wake-up and external-message admission a Sidekick or
+  Canvas conversation still uses. Slack starts no conversation any more: a
+  mention or an App Home prompt is answered with
+  `conversation_ingress_retired`'s copy, and a bot joining a channel binds no
+  room (`room_bindings_retired`). The unfurl refresh sweep
+  (`slack-unfurl-refresh.ts`) is deleted; a shared link still unfurls once.
+  Session import's desktop action and reservation reclaim
+  (`session-import-plugin.ts`, `session-import-reclaim.ts`,
+  `import-reservation-reclaim.ts`), its share-URL and file helpers
+  (`session-import.ts`, `session-import-files.ts`) and the `session_import`
+  agent profile went with the Thread host; `docs/session-import.md` is kept as
+  a retired record.
+  `docs/workstream-creation.md` is kept as a retired record.
+- **Activity.** `activity-event-service.ts`, `activity-email-service.ts`,
+  `workspace-activity-feed.ts`, `workspace-activity-push.ts`,
+  `workspace-activity-event-protocol.ts`, `activity-clear-rules.ts`,
+  `activity-audience.ts` and `breakout-activity.ts`. A regional
+  `activity_event` effect is receipted and stored nowhere; a push Queue
+  message for an Activity item is logged `activity_item_retired` and
+  acknowledged; `GET /artifact-pins` answers an empty list.
+- **Moved, not changed.** Every migration statement those modules exported is
+  in `retired-workspace-schema.ts`, byte for byte: the WorkspaceDO migration
+  ledger's statement hashes are identical before and after.
 
 **Why:** After the client cutover nothing shows a suggestion, a Thread or a
 Channel; the PRD's decision log removes them from the product. Code that only
