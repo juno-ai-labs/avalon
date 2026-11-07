@@ -12,20 +12,15 @@ import {
   ACCEPTED_WORKSTREAM_EMAIL_DOMAINS,
   WORKSTREAM_EMAIL_DOMAIN,
 } from "../lib/workstream-email-address";
-import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
-import { createIdentityObjectPort } from "../runtime/identity-port";
-import { createMessageObjectPort } from "../runtime/message-port";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { workspaceDOName } from "../durable-objects/names";
-import type { WorkspaceDO } from "../durable-objects/workspace-do";
 import { hostedParentStub } from "./conversation-parent-client";
 
 const RESEND_RECEIVED_EMAIL_URL = "https://api.resend.com/emails/receiving";
 const DEFAULT_WORKSTREAM_EMAIL_DOMAIN = WORKSTREAM_EMAIL_DOMAIN;
 const DEFAULT_MAX_WEBHOOK_BYTES = 2_000_000;
 const DEFAULT_MAX_RECEIVED_EMAIL_BYTES = 2_000_000;
-const DEFAULT_PROCESSING_LEASE_SECONDS = 300;
 const MAX_ROUTED_RECIPIENTS = 16;
 const MAX_MESSAGE_TEXT_CHARACTERS = 100_000;
 const MAX_SUBJECT_CHARACTERS = 300;
@@ -121,12 +116,6 @@ interface WebhookReceiptRow {
   error_json: string | null;
 }
 
-interface LocalWorkstreamRow {
-  id: string;
-  workspace_id: string;
-  email_address: string;
-}
-
 export interface ResendRegionalEmailInput {
   resendEmailId: string;
   svixId: string;
@@ -139,12 +128,6 @@ export interface ResendRegionalEmailInput {
   localPart: string;
   emailAddress: string;
 }
-
-type WorkstreamRegionalEmailInput = ResendRegionalEmailInput & {
-  targetType: "workstream";
-  workstreamId: string;
-  automationSubscriptionId?: never;
-};
 
 type AutomationRegionalEmailInput = ResendRegionalEmailInput & {
   targetType: "automation";
@@ -325,9 +308,8 @@ export class ResendInboundEmailRoutingService {
     })));
 
     const dispatches = await Promise.allSettled(routes.map((route) => {
-      const target = route.automation_subscription_id
-        ? { targetType: "automation" as const, automationSubscriptionId: route.automation_subscription_id }
-        : { targetType: "workstream" as const, workstreamId: requiredRouteWorkstreamId(route) };
+      if (!route.automation_subscription_id) return Promise.reject(threadEmailRetired());
+      const target = { targetType: "automation" as const, automationSubscriptionId: route.automation_subscription_id };
       return this.dispatchInRegion(route.region, {
         resendEmailId: data.email_id,
         svixId,
@@ -511,150 +493,10 @@ export class ResendRegionalEmailService {
         automationSubscriptionId: parsed.automationSubscriptionId!,
       });
     }
-    const input: WorkstreamRegionalEmailInput = {
-      ...baseInput,
-      targetType,
-      workstreamId: parsed.workstreamId!,
-    };
-    // `COLLATE NOCASE` was the statement's; the comparison is a caller's now,
-    // and it is the same comparison — an address a person typed reaches this
-    // in whatever case they typed it.
-    const identity = await createIdentityObjectPort(this.env, input.workspaceId, input.workstreamId)
-      .identity();
-    const workstream: LocalWorkstreamRow | null = identity
-      && identity.archived_at === null
-      && identity.email_address?.toLowerCase() === input.emailAddress.toLowerCase()
-      ? {
-        id: identity.workstream_key,
-        workspace_id: identity.parent_workspace_key,
-        email_address: identity.email_address,
-      }
-      : null;
-    if (!workstream) {
-      throw new ApiError(404, "email_workstream_not_found", "The email address is not attached to an active thread");
-    }
-
-    // The receipt is WorkspaceDO product state, and every lease operation
-    // below serializes in that object. The insert, the duplicate read and the
-    // expired-lease takeover used to be three facade round trips; the typed
-    // claim is one critical section, and it mints the lease token every later
-    // transition presents.
-    const workspace = await this.workspaceObject(input.workspaceId);
-    const claim = await workspace.claimInboundEmailReceipt({
-      workspaceId: input.workspaceId,
-      resendEmailId: input.resendEmailId,
-      workstreamId: input.workstreamId,
-      svixId: input.svixId,
-      receivedAt: input.receivedAt,
-      leaseExpiresAt: this.leaseExpiration(),
-    });
-    if (claim.outcome === "already_processed") {
-      return { accepted: true, duplicate: true, messageId: null, resourceId: null };
-    }
-    if (claim.outcome === "in_progress" || claim.leaseToken === null) {
-      throw new ApiError(503, "email_processing_in_progress", "The inbound email is already being processed");
-    }
-    const leaseToken = claim.leaseToken;
-
-    try {
-      const email = await this.retrieveReceivedEmail(input.resendEmailId);
-      const safeEmail = normalizeReceivedEmail(email);
-      const payloadRef = `workspaces/${input.workspaceId}/inbound-email/${input.resendEmailId}.json`;
-      await this.env.PAYLOADS.put(payloadRef, JSON.stringify({
-        version: 1,
-        provider: "resend",
-        untrusted: true,
-        emailId: input.resendEmailId,
-        ...safeEmail,
-      }), {
-        httpMetadata: { contentType: "application/json; charset=utf-8" },
-        customMetadata: {
-          workspaceId: input.workspaceId,
-          workstreamId: input.workstreamId,
-          classification: "untrusted-inbound-email",
-        },
-      });
-
-      const resourceId = await this.upsertEmailResource(input, safeEmail, payloadRef);
-      await this.renewRegionalLease(workspace, input, leaseToken);
-      const clientMessageId = await emailClientMessageId(input.resendEmailId);
-      const messages = createMessageObjectPort(this.env, input.workspaceId, input.workstreamId);
-      const replayed = await messages.messageByClientId({ clientMessageId });
-      if (replayed) {
-        await this.markRegionalProcessed(workspace, input, payloadRef, leaseToken);
-        return { accepted: true, duplicate: true, messageId: replayed.id, resourceId };
-      }
-
-      const createdAt = new Date(this.now()).toISOString();
-      const messageId = newId();
-      const textContent = inboundMessageText(safeEmail);
-      const structuredContent = {
-        kind: "inbound_email",
-        provider: "resend",
-        untrusted: true,
-        emailId: input.resendEmailId,
-        resourceId,
-        from: safeEmail.from,
-        to: safeEmail.to,
-        cc: safeEmail.cc,
-        replyTo: safeEmail.replyTo,
-        subject: safeEmail.subject,
-        messageId: safeEmail.messageId,
-        attachmentCount: safeEmail.attachments.length,
-        truncated: safeEmail.truncated,
-      };
-      await attachWorkstreamRuntimeResource(this.env, {
-        workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
-        resourceId,
-        attachedByUserId: null,
-        relationshipType: "inbound_email",
-      });
-      // Three statements become one append, and the reason they were three was
-      // that none of them could see the others. The sequence number was taken
-      // by an `UPDATE … RETURNING` of its own so the insert could bind it, with
-      // the address re-checked inside that statement because it was the only
-      // place left to put a fence; the update after the insert then raised the
-      // attention marker to the number the insert had used, and the caller read
-      // `changes` off the batch to find out whether its own insert had been
-      // ignored. The transcript authority takes the number, writes the part and
-      // moves both counters in one transaction, and says which of the two
-      // things happened.
-      //
-      // The address is read rather than fenced into the write. It was checked
-      // when this delivery was admitted, and what the fence protected against
-      // — a work stream re-addressed while the lease was held — is a read of
-      // the same authority one call earlier.
-      const stillAddressed = await createIdentityObjectPort(
-        this.env,
-        input.workspaceId,
-        input.workstreamId,
-      ).identity();
-      if (stillAddressed?.email_address?.toLowerCase() !== input.emailAddress.toLowerCase()) {
-        throw new ApiError(409, "email_workstream_changed", "The thread no longer accepts this email address");
-      }
-      const appended = await messages.appendMessage({
-        messageId,
-        clientMessageId,
-        authorType: "system",
-        authorUserId: null,
-        externalActorJson: null,
-        messageType: "system",
-        text: textContent,
-        structuredContentJson: JSON.stringify(structuredContent),
-        producedByRunId: null,
-        now: Date.parse(createdAt),
-      });
-      await this.markRegionalProcessed(workspace, input, payloadRef, leaseToken);
-      if (appended.outcome === "replayed") {
-        return { accepted: true, duplicate: true, messageId: appended.messageId, resourceId };
-      }
-
-      return { accepted: true, duplicate: false, messageId, resourceId };
-    } catch (error) {
-      await this.recordRegionalFailure(workspace, input, leaseToken, stableErrorCode(error));
-      throw error;
-    }
+    // A Thread's address routes nowhere since Threads were retired. The
+    // schema still parses the shape so a dispatch in flight across the deploy
+    // is refused by name rather than as an invalid route.
+    throw threadEmailRetired();
   }
 
   private async ingestAutomation(input: AutomationRegionalEmailInput): Promise<ResendRegionalIngestionResult> {
@@ -768,42 +610,6 @@ export class ResendRegionalEmailService {
     return resource.resourceId;
   }
 
-  private async markRegionalProcessed(
-    workspace: DurableObjectStub<WorkspaceDO>,
-    input: WorkstreamRegionalEmailInput,
-    payloadRef: string,
-    leaseToken: string,
-  ): Promise<void> {
-    const settled = await workspace.settleInboundEmailProcessed({
-      workspaceId: input.workspaceId,
-      resendEmailId: input.resendEmailId,
-      workstreamId: input.workstreamId,
-      leaseToken,
-      payloadRef,
-      processedAt: new Date(this.now()).toISOString(),
-    });
-    if (settled.outcome === "lease_lost") {
-      throw new ApiError(503, "email_processing_lease_lost", "The inbound email processing lease expired");
-    }
-  }
-
-  private async renewRegionalLease(
-    workspace: DurableObjectStub<WorkspaceDO>,
-    input: WorkstreamRegionalEmailInput,
-    leaseToken: string,
-  ): Promise<void> {
-    const renewed = await workspace.renewInboundEmailLease({
-      workspaceId: input.workspaceId,
-      resendEmailId: input.resendEmailId,
-      workstreamId: input.workstreamId,
-      leaseToken,
-      leaseExpiresAt: this.leaseExpiration(),
-    });
-    if (renewed.outcome === "lease_lost") {
-      throw new ApiError(503, "email_processing_lease_lost", "The inbound email processing lease expired");
-    }
-  }
-
   private async activeWorkspaceMemberForEmail(
     workspaceId: string,
     senderMailbox: string,
@@ -820,33 +626,6 @@ export class ResendRegionalEmailService {
       senderMailbox,
     ).first<{ id: string }>();
     return member?.id ?? null;
-  }
-
-  private leaseExpiration(): string {
-    const seconds = Math.min(
-      Math.max(numericEnv(this.env, "INBOUND_EMAIL_PROCESSING_LEASE_SECONDS", DEFAULT_PROCESSING_LEASE_SECONDS), 30),
-      900,
-    );
-    return new Date(this.now() + seconds * 1_000).toISOString();
-  }
-
-  private async recordRegionalFailure(
-    workspace: DurableObjectStub<WorkspaceDO>,
-    input: WorkstreamRegionalEmailInput,
-    leaseToken: string,
-    code: string,
-  ): Promise<void> {
-    try {
-      await workspace.recordInboundEmailFailure({
-        workspaceId: input.workspaceId,
-        resendEmailId: input.resendEmailId,
-        workstreamId: input.workstreamId,
-        leaseToken,
-        errorCode: code,
-      });
-    } catch {
-      // Keep the original provider or persistence failure authoritative.
-    }
   }
 
   /** The WorkspaceDO that owns this workspace's email receipts and resources. */
@@ -1105,11 +884,9 @@ function dedupeRoutes(rows: Array<EmailRouteRow | null>): EmailRouteRow[] {
   return routes;
 }
 
-function requiredRouteWorkstreamId(route: EmailRouteRow): string {
-  if (!route.workstream_id || route.automation_subscription_id) {
-    throw new ApiError(500, "email_route_invalid", "The inbound-email route is invalid");
-  }
-  return route.workstream_id;
+/** A route row that names a Thread, which no longer takes mail. Terminal, so Resend stops retrying. */
+function threadEmailRetired(): ApiError {
+  return new ApiError(404, "email_thread_retired", "The email address belonged to a retired thread");
 }
 
 function requiredConfiguration(value: string | undefined, name: string): string {
@@ -1163,16 +940,6 @@ function changes(result: D1Result): number {
 function copyBytes(value: Uint8Array | ArrayBuffer): Uint8Array {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
   return Uint8Array.from(bytes);
-}
-
-async function emailClientMessageId(emailId: string): Promise<string> {
-  if (emailId.length <= 100) return `resend-email:${emailId}`;
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(emailId)));
-  const encoded = btoa(String.fromCharCode(...digest))
-    .replace(/\+/gu, "-")
-    .replace(/\//gu, "_")
-    .replace(/=+$/u, "");
-  return `resend-email:${encoded}`;
 }
 
 async function readBoundedResponseText(response: Response, maxBytes: number): Promise<string> {

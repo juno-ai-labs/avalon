@@ -43,8 +43,11 @@ export const METERED_ACTIVITIES = [
   "work_opportunity",
   "addressing_classifier",
   "semantic_trigger_gate",
+  // No producer since the conversation suggestions were deleted (2026-11);
+  // kept so a usage event queued before that deploy still parses and bills.
   "turn_disposition_classifier",
   "completion_verification",
+  // Retired with the conversation suggestions, kept for the same reason.
   "suggestion_draft",
   "memory_sweep",
   "memory_embedding",

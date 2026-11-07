@@ -43,16 +43,15 @@ import { createMessageObjectPort } from "../runtime/message-port";
  * docs/PRDs/2026-09-23_external-conversation-bindings/design.md.
  *
  * The plugin is one set of tools and a **scope**, a function of the loop
- * input. A Thread or Breakout loop reaches its own conversation and the ones
- * it sits inside (a Breakout's Thread, the Thread's Channels), plus the other
- * Threads and Breakouts in those Channels; a Sidekick's
- * configuration conversation and its runs reach the Sidekick's own
- * conversation, its home and attachments. A new kind of agent is a new scope, not new tools. The model
+ * input. A Sidekick's configuration conversation and its runs reach the
+ * Sidekick's own conversation, the Canvases it writes, and the Canvases
+ * attached to it. A new kind of agent is a new scope, not new tools. The model
  * never supplies or widens a scope.
  *
  * To the model every one of them is a conversation: a list entry has an id
- * and a title, a read returns messages. Whether it is a Channel, a Thread or a
- * Breakout is how the host reads it, not something the model chooses on.
+ * and a title, a read returns messages. Whether it is a Canvas's chat or the
+ * Sidekick's own conversation is how the host reads it, not something the
+ * model chooses on.
  */
 
 export const CONVERSATIONS_PLUGIN_ID = "rally:conversations";
@@ -129,7 +128,9 @@ export interface ConversationWorkspacePort {
 
 /**
  * A message the search index found in a conversation: a Canvas's Chat or a
- * Sidekick's own conversation, each its parent's substream "0".
+ * Sidekick's own conversation. The scope lists each as its parent's substream
+ * "0", so a hit on any other substream — a Sidekick run's messages, indexed
+ * under the run's id — matches nothing in scope and is discarded.
  */
 export interface ConversationIndexHit {
   parentId: string;
@@ -224,12 +225,12 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
 
 /**
  * The search audience groups of conversations a scope admitted: exactly the
- * group each one's rows carry (`search-audience.ts`), a Channel's `space:` and
- * a Thread's or Breakout's `conversation:`. Not the person's own groups,
- * because a scope admits some conversations through another: a Breakout
- * member who cannot open its Thread still reads the Thread's Main, so they
- * must find what was said there too. Searching up reaches what reading up
- * reaches, and nothing more, since every group names a conversation in scope.
+ * group each one's rows carry (`search-audience.ts`), a Sidekick's `sidekick:`
+ * and a Canvas's `conversation:`. Not the person's own groups, because a scope
+ * admits conversations through the Sidekick rather than through the person:
+ * a run reads the Canvases its Sidekick writes whoever started it. Searching
+ * reaches what reading reaches, and nothing more, since every group names a
+ * conversation in scope.
  */
 export function conversationSearchGroups(
   conversations: ReadonlyArray<Pick<ConversationToolEntry, "kind" | "parentId" | "substreamId">>,
@@ -246,9 +247,9 @@ export function conversationSearchGroups(
  * docs/adding-security-defensive-and-other-limits.md.
  *
  * Bounds: candidate pages one `conversation_search` reads from the index.
- * Without it: a word that matches every message across a Thread's Channels
- *   and their peer conversations, or a Sidekick's attachments, reads every
- *   match, one index round trip per page, before the tool answers.
+ * Without it: a word that matches every message across a Sidekick's
+ *   Canvases and attachments reads every match, one index round trip per
+ *   page, before the tool answers.
  * Direction: upper bound; the open value is +Infinity.
  * Trips: the search answers from the pages read so far, newest first among them.
  * Derive from: the latency a search may add, divided by one index round trip.
@@ -281,9 +282,8 @@ export async function newestSearchHits(
 
 /**
  * One index row as a hit, or null for a row with nothing to render: an
- * archived one, or one written before the display attributes. A thread's row
- * names its turn after the substream in `source_id`; a Channel's row is the
- * message itself.
+ * archived one, or one written before the display attributes. A row names
+ * its turn after the substream in `source_id`.
  */
 export function conversationIndexHit(candidate: TextSearchCandidate): ConversationIndexHit | null {
   if (candidate.archived !== false || typeof candidate.text !== "string" || typeof candidate.occurred_at !== "number") {
@@ -317,7 +317,7 @@ export function conversationRefusalError(
   value: string | null,
   echoLimit = MAXIMUM_ECHO_CHARACTERS,
 ): ConversationToolError {
-  const shown = value === null ? "this Sidekick's home" : echo(value, echoLimit);
+  const shown = value === null ? "this Sidekick's own conversation" : echo(value, echoLimit);
   const resource = refusal.resourceId ? { resourceId: refusal.resourceId } : {};
   switch (refusal.code) {
     case "conversation_not_in_scope":
@@ -372,8 +372,8 @@ const POST_DEFAULT_SENTENCE = "Leave conversation out to post in this Sidekick's
 
 /**
  * `conversation` may always be left out: a post that names no conversation
- * lands in the Sidekick's own conversation, which every Sidekick has. A home,
- * where one exists, is named like any other conversation.
+ * lands in the Sidekick's own conversation, which every Sidekick has. A
+ * Canvas is named like any other conversation.
  */
 export const ConversationPostArgumentsSchema = z.strictObject({
   conversation: ConversationReferenceSchema.optional().describe(`${POST_TARGET_DESCRIPTION} ${POST_DEFAULT_SENTENCE}`),
@@ -805,7 +805,7 @@ function attachReference(reference: string, input: WorkstreamWorkflowInput, orig
 /**
  * Who a continued run's forward speaks for: the person outside Rally whose
  * message woke it. Host-derived from that message, never from the model, so a
- * reader of the home can tell forwarded external words from the Sidekick's.
+ * reader of the conversation can tell forwarded external words from the Sidekick's.
  */
 async function forwardedExternalSource(
   input: WorkstreamWorkflowInput,

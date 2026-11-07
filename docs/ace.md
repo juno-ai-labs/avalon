@@ -392,6 +392,21 @@ Shared DB runtime sources and package exports are deployment inputs alongside
 contracts. Grant-only fixes therefore rebuild Ace; DB migration/test-only changes
 do not publish a new Ace bundle.
 
+### 2026-11-07 — Two Thread-era model roles leave the catalog
+
+**What changed:** The managed model catalog loses the work-stream
+description and suggestion-draft rows, and the deploy retires
+`agent-model-workstream-description` and `agent-model-suggestion-draft`.
+The `workstream_naming` row is relabelled "Pasted-text naming": it now titles
+pasted text (`pasted-text-service.ts`) and keeps its key.
+
+**Why:** Plan step C-2 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+deleted both roles' callers. The 2026-10-16 entry's rule applies: a row
+removed from the catalog moves to a `retireFlag` call in the same change.
+Renaming the naming role's key was rejected as a flag migration with no change
+in behaviour.
+
 ### 2026-10-16 — Ace stops managing `digests-enabled`
 
 **What changed:** `digests-enabled` left `MANAGED_FLAGS`, and the deploy

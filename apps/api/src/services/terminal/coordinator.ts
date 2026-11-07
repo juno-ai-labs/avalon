@@ -248,12 +248,12 @@ export class TerminalSandboxCoordinator {
       observation: TerminalAcquisitionObservation,
     ) => Promise<void>,
     /**
-     * The main conversation, holding its own sandbox, unless the plugin says
-     * otherwise: the default is what every run was before a conversation's
-     * sandbox could be used by the agents it starts.
+     * The run's own scope. The plugin always passes it, with the run's parent
+     * kind; the default, a Canvas's main conversation holding its own
+     * sandbox, is for callers that construct a coordinator directly (tests).
      */
     private readonly scope: TerminalSandboxScope = {
-      parentKind: "workstream",
+      parentKind: "canvas",
       backgroundAgent: false,
       runSubstreamId: "0",
       authoritySubstreamId: "0",

@@ -280,9 +280,7 @@ describe("boundary contracts", () => {
       "workstream_naming",
       "work_opportunity_admission",
       "work_opportunity_ranking",
-      "workstream_description",
       "session_import",
-      "suggestion_draft",
       "memory_sweep",
       "sidekick_authoring",
     ]);
@@ -292,9 +290,7 @@ describe("boundary contracts", () => {
       "agent-model-workstream-naming",
       "agent-model-work-opportunity-admission",
       "agent-model-work-opportunity-ranking",
-      "agent-model-workstream-description",
       "agent-model-session-import",
-      "agent-model-suggestion-draft",
       "agent-model-memory-sweep",
       "agent-model-sidekick-authoring",
     ]);

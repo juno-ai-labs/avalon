@@ -147,6 +147,8 @@ await Promise.all([
   retireFlag('agent-model-hypersight'),
   retireFlag('digests-enabled'),
   retireFlag('live-artifacts-enabled'),
+  retireFlag('agent-model-workstream-description'),
+  retireFlag('agent-model-suggestion-draft'),
 ]);
 await Promise.all([
   ensureFlag('suggested-work-enabled', 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.'),

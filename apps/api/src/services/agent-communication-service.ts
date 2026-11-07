@@ -371,8 +371,7 @@ export class AgentCommunicationService {
         await this.authorizeSidekick(agentId);
       } catch (error) {
         if (error instanceof AgentCommunicationError
-          && (error.code === "sidekick_contact_forbidden" || error.code === "sidekick_contact_user_unavailable"
-            || error.code === "sidekick_owned_by_another_thread")) return null;
+          && (error.code === "sidekick_contact_forbidden" || error.code === "sidekick_contact_user_unavailable")) return null;
         throw error;
       }
       // `status` says whether a teammate is still running, which a message
@@ -424,7 +423,6 @@ class AgentCommunicationError extends Error {
       agent_destination_unavailable: "List teammates again and choose an available agentId. This recipient is unavailable.",
       agent_destination_mismatch: "Copy the exact agentId from creation or discovery. The supplied ID does not match the recipient.",
       sidekick_contact_forbidden: "Choose a Sidekick you can access. This Sidekick is unavailable to this execution.",
-      sidekick_owned_by_another_thread: "This Sidekick belongs to another thread, so only that thread can change it.",
       sidekick_contact_user_unavailable: "Ask your coordinator to contact the Sidekick. This execution has no user identity for Sidekick access.",
       sidekick_change_outside_run: "Use sidekicks_list and message the Sidekick's authoring agentId. Only a Sidekick run can request a change to its own Sidekick this way.",
       sidekick_author_unavailable: "Ask your coordinator to create the Sidekick. This execution has no user identity for creation.",
@@ -438,7 +436,7 @@ class AgentCommunicationError extends Error {
       workstream_authority_generation_stale: "Report that the recipient’s workstream state is stale. Changing the message cannot repair it.",
     }[code] ?? `Report this agent communication error: ${code}.`);
     this.name = "AgentCommunicationError";
-    if (code === "sidekick_contact_forbidden" || code === "sidekick_owned_by_another_thread") {
+    if (code === "sidekick_contact_forbidden") {
       this.details = {
         reason: "This action was not performed. For setup here, refresh sidekicks_list. For an explicitly named target, use find_sidekick or report its refusal without replacing it. This refusal does not establish a connector or scheduling blocker.",
         retryable: false,

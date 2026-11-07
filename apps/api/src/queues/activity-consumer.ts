@@ -3,7 +3,6 @@ import { ConnectorDeliveryReferenceSchema, readConnectorDeliveryReference, sendC
 import { SidekickReviewQueueMessageSchema, SidekickRunProvisionQueueMessageSchema } from "../durable-objects/automation-do-protocol";
 import { provisionSidekickRun } from "../services/sidekick-run-provisioning";
 import { deliverSidekickReview } from "../services/sidekick-review";
-import { publishAccessRevocation } from "../services/access-revocation";
 import type { Region } from "@rally/contracts/regions";
 import { ConnectorMaintenanceQueueSchema, runConnectorMaintenance } from "../services/connector-maintenance-service";
 import { ConnectorInstallationQueueSchema, runConnectorInstallation } from "../services/connector-installation-service";
@@ -998,19 +997,9 @@ async function consumeEffect(
     if (envelope.effect.kind === "scope_grant_directory") {
       const workspace = await workspaceDirectory(env, envelope.workspaceId);
       await workspace.applyScopeGrantDirectory(envelope);
-      const { grant } = envelope.effect;
-      if (!grant.active && grant.target.kind === "workstream") {
-        // Owned Sidekick conversations are siblings, outside the workstream's
-        // participant projection. Keep this durable effect retryable until the
-        // existing revocation queue accepts their fan-out.
-        const published = await publishAccessRevocation(env, {
-          reason: "workstream_participant_removed", workspaceId: envelope.workspaceId,
-          userId: grant.userId, sessionId: null,
-          ...(grant.membershipIncarnation ? { membershipIncarnation: grant.membershipIncarnation } : {}),
-          target: { scope: "workstream_automations", workstreamId: grant.target.parentId },
-        });
-        if (!published) throw new Error("scope_grant_sidekick_revocation_publish_failed");
-      }
+      // A Thread's owned Sidekicks once needed a revocation hop here; a Canvas
+      // grant (target kind `workstream`) owns none, so the directory step is
+      // the whole effect.
       message.ack();
       return;
     }

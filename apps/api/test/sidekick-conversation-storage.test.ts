@@ -59,13 +59,16 @@ function seedSidekick(database: DatabaseSync, id = SIDEKICK, lifecycle = "active
   ).run(id, WORKSPACE_ID, AUTHOR, lifecycle, CHANNEL);
 }
 
-function seedCanvas(database: DatabaseSync, id: string, title: string, createdAt: number, writer: string | null = null): void {
+function seedCanvas(
+  database: DatabaseSync, id: string, title: string, createdAt: number, writer: string | null = null,
+  updatedAt = createdAt,
+): void {
   database.prepare(
     `INSERT INTO canvas_directory
        (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, writer_sidekick_id,
         visibility, authority_generation)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'creator', 1)`,
-  ).run(id, WORKSPACE_ID, title, AUTHOR, createdAt, createdAt, writer);
+  ).run(id, WORKSPACE_ID, title, AUTHOR, createdAt, updatedAt, writer);
 }
 
 /** Every WorkspaceDO migration, the way a current object holds them. */
@@ -112,8 +115,9 @@ describe("a Sidekick's scope", () => {
     const sql = createTestSqlStorage(database);
     seedSidekick(database);
     seedSidekick(database, OTHER_SIDEKICK);
-    seedCanvas(database, WRITTEN, "Monday brief", 10, SIDEKICK);
-    seedCanvas(database, NEWER_WRITTEN, "Tuesday brief", 20, SIDEKICK);
+    // Written later than it was made, so only creation order puts it second.
+    seedCanvas(database, WRITTEN, "Monday brief", 10, SIDEKICK, 40);
+    seedCanvas(database, NEWER_WRITTEN, "Tuesday brief", 20, SIDEKICK, 20);
     seedCanvas(database, ATTACHED, "Launch", 5);
     // Another Sidekick's Canvas is not this one's.
     seedCanvas(database, "00000000-0000-7000-8000-0000000000f4", "Elsewhere", 30, OTHER_SIDEKICK);
