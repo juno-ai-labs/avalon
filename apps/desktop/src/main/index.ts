@@ -11,7 +11,7 @@ import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagn
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
 import { ArtifactPinListSchema } from '@rally/contracts';
-import { sidekickDeepLink, spaceDeepLink, workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
+import { sidekickDeepLink, workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import { z, type ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
@@ -36,7 +36,6 @@ import {
   type WorkspaceAttention,
   type WorkspaceDeparture,
   AccountOnboardingSchema,
-  ActivityPageSchema,
   OrganizationNameSuggestionSchema,
   UpdateAccountOnboardingSchema,
 } from '@rally/contracts';
@@ -192,13 +191,12 @@ import {
   allowsTrustedAudioCapture,
 } from './media-permission';
 import { MenuBarController, type MenuBarTray } from './menu-bar';
-import { ActivityFeedWatch } from './activity-feed-watch';
 import { menuBarContent } from './menu-bar-content';
 import {
   MENU_BAR_SECTION_LIMIT,
   supportsSectionHeaders,
 } from './menu-bar-menu';
-import { ChannelDirectoryWatch } from './channel-directory-watch';
+import { SidebarListsWatch } from './sidebar-lists-watch';
 import { MenuBarOpenObserver } from './menu-bar-open-observer';
 import {
   isMessageExportUrl,
@@ -1311,11 +1309,11 @@ function logMenuBarSocketDiagnostic(diagnostic: ReachWatchDiagnostic): void {
 }
 
 /**
- * The Channel rows behind the menu bar, held over a workspace socket of the
- * main process's own so the count beside the status item is the sidebar's
- * count whether or not a window exists. See `docs/menu-bar.md`.
+ * The Canvases and Sidekicks lists behind the menu bar, held over a workspace
+ * socket of the main process's own so the count beside the status item is the
+ * rail's count whether or not a window exists. See `docs/menu-bar.md`.
  */
-const channelDirectoryWatch = new ChannelDirectoryWatch({
+const sidebarListsWatch = new SidebarListsWatch({
   socket: (handlers) => watchWorkspaceSocket({
     ticket: async (signal) => SocketTicketSchema.parse(await rallyApiRequest('/workspace/socket', undefined, signal)),
     open: (url, ticket) => reachSocketFromRealtimeClient(menuBarSocketFactory(url, socketTicketProtocols(ticket))),
@@ -1330,32 +1328,17 @@ const channelDirectoryWatch = new ChannelDirectoryWatch({
     },
   }),
   onChange: () => menuBarController.refresh(),
-  // Activity is not a list the socket carries; the socket only says when it
-  // may have moved, which is when the sidebar's Activity tab reads it again.
-  // After a failed read, any sync is reason enough to try again.
-  onSync: (topics) => {
-    if (topics.includes('activity') || activityFeedWatch.missedLastRead()) activityFeedWatch.refresh();
-  },
-  requestId: uuidV7,
   logWarning: (message, error) => logWarn('rally', message, error),
 });
 
-/** The first page of Activity behind the menu bar's Needs attention. See `docs/menu-bar.md`. */
-const activityFeedWatch = new ActivityFeedWatch({
-  fetchPage: async () => ActivityPageSchema.parse(await rallyApiRequest('/navigation/activity')),
-  onChange: () => menuBarController.refresh(),
-  logWarning: (message, error) => logWarn('rally', message, error),
-});
-
-/** Closes the menu bar's socket and forgets everything both lists held. */
+/** Closes the menu bar's socket and forgets both lists. */
 function stopMenuBarDirectory(): void {
-  channelDirectoryWatch.stop();
-  activityFeedWatch.stop();
+  sidebarListsWatch.stop();
 }
 
 /** Which account and Organization the socket serves; a token renewal keeps it. */
 let menuBarDirectoryIdentity: string | null = null;
-/** A guest is signed in but refused the Channel list: nothing will load, so the menu must not say it is loading. */
+/** A guest gets no menu bar socket: nothing will load, so the menu must not say it is loading. */
 let menuBarDirectoryUnavailable = false;
 let menuBarDirectorySync: Promise<void> = Promise.resolve();
 
@@ -1366,8 +1349,8 @@ let menuBarDirectorySync: Promise<void> = Promise.resolve();
  * preference moves, and at launch. Read from storage rather than
  * `inMemorySession`, which a login launch has not set when the status item
  * first needs content. Serialized, so two quick changes cannot open two
- * sockets. A guest is refused the Channel list, so it gets no socket; a
- * preference that is off, or a platform with no menu bar, gets none either.
+ * sockets. A guest gets no socket; a preference that is off, or a platform
+ * with no menu bar, gets none either.
  */
 function syncMenuBarDirectory(): void {
   menuBarDirectorySync = menuBarDirectorySync.then(async () => {
@@ -1382,11 +1365,11 @@ function syncMenuBarDirectory(): void {
     const identity = live
       ? `${active.binding.userId}:${active.binding.region}:${active.binding.workspaceId}`
       : null;
-    const runningAsIdentified = (identity !== null) === channelDirectoryWatch.running();
+    const runningAsIdentified = (identity !== null) === sidebarListsWatch.running();
     if (identity === menuBarDirectoryIdentity && runningAsIdentified) return;
     menuBarDirectoryIdentity = identity;
     stopMenuBarDirectory();
-    if (identity !== null) channelDirectoryWatch.start();
+    if (identity !== null) sidebarListsWatch.start();
   }).catch((error: unknown) => {
     logWarn('rally', 'could not open the menu bar workspace socket', error);
   });
@@ -1444,11 +1427,10 @@ const menuBarController = new MenuBarController({
   createTray: createMenuBarTray,
   content: () => {
     // A guest has no socket, so nothing will load: say "nothing" rather than "loading".
-    const directory = channelDirectoryWatch.snapshot();
-    const activity = activityFeedWatch.snapshot();
-    return menuBarDirectoryUnavailable
-      ? menuBarContent({ ...directory, complete: true }, { ...activity, complete: true })
-      : menuBarContent(directory, activity);
+    const lists = sidebarListsWatch.snapshot();
+    return menuBarContent(menuBarDirectoryUnavailable
+      ? { canvases: lists.canvases ?? [], sidekicks: lists.sidekicks ?? [] }
+      : lists);
   },
   // The in-memory credential rather than a live session: this is read while the
   // menu is being built, and it only decides which empty state to show.
@@ -1456,25 +1438,20 @@ const menuBarController = new MenuBarController({
   sectionHeaders: supportsSectionHeaders(process.getSystemVersion()),
   actions: {
     selected: (action) => { void telemetryReporter?.menuBarActionSelected(action); },
-    openConversation: (workstreamId, substreamId) => {
+    open: (row) => {
       activateFromMenuBar();
-      emitDeepLink(
-        `${customProtocol}://workstreams/${workstreamId}${substreamId === null ? '' : `/substreams/${substreamId}`}`,
-        'menu_bar',
-      );
-    },
-    openChannel: (channelId) => {
-      activateFromMenuBar();
-      // A Channel link names its Organization: the one the menu is showing.
+      // A Canvas opens through the conversation link form, which the renderer
+      // routes to `/canvases/:id`; a Sidekick's link names its Organization,
+      // the one the menu is showing.
+      if (row.kind === 'canvas') {
+        emitDeepLink(`${customProtocol}://workstreams/${row.id}`, 'menu_bar');
+        return;
+      }
       void loadStoredAuthSet().then((authSet) => {
         const active = authSet ? activeStoredCredential(authSet) : null;
         if (!active?.binding.workspaceId) return;
-        emitDeepLink(spaceDeepLink({ region: active.binding.region, workspaceId: active.binding.workspaceId, spaceId: channelId }), 'menu_bar');
+        emitDeepLink(sidekickDeepLink({ region: active.binding.region, workspaceId: active.binding.workspaceId, sidekickId: row.id }), 'menu_bar');
       });
-    },
-    openAccessRequest: (requestId) => {
-      activateFromMenuBar();
-      emitDeepLink(`${customProtocol}://access-requests/${requestId}`, 'menu_bar');
     },
     openRally: openMainWindowFromMenuBar,
     quit: () => app.quit(),
@@ -4656,11 +4633,11 @@ function createMenuBarTray(): MenuBarTray {
   const tray = new Tray(icon);
   tray.setToolTip(app.name);
   tray.setIgnoreDoubleClickEvents(true);
-  // The drop-down opens from what the main process already holds (the socket's
-  // Channel rows and the last Activity page), so a click costs no request:
-  // freshness arrives as socket pushes and the reads they trigger.
+  // The drop-down opens from what the main process already holds (the
+  // socket's Canvases and Sidekicks lists), so a click costs no request:
+  // freshness arrives as socket pushes.
   const openObserver = new MenuBarOpenObserver(() => {
-    const content = menuBarContent(channelDirectoryWatch.snapshot(), activityFeedWatch.snapshot());
+    const content = menuBarContent(sidebarListsWatch.snapshot());
     void telemetryReporter?.menuBarOpened({
       signedIn: Boolean(inMemoryAuthSet),
       recentCount: Math.min(content.recents.length, MENU_BAR_SECTION_LIMIT),
