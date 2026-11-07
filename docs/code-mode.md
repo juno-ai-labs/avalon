@@ -201,8 +201,12 @@ clock to work out which dates or items the work covers, never to decide whether
 to do it: a time-of-day gate stays in the trigger and the instructions. In a self-review, the plan says of each deterministic step the
 runs repeated, skipped or got wrong whether it moves into the tool or why it
 stays in the instructions, with "the instructions already say so" ruled out as a
-reason; tools the runs always call one after another become one, and a tool
-the review changes is tested against scratch tables as above
+reason; tools the runs always call one after another become one; a tool call
+that finished fewer items than its measured settings, returned exceptions code
+could have settled, or timed its share against a fixed number is the case for
+re-tuning the tool and timing it again, while a tuned tool that still needs
+several calls stays as it is; and a tool the review
+changes is tested against scratch tables as above
 ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)).
 The schema refuses, by
 field, a tool on an instruction-only Sidekick, a `plugin_*` entry missing from
@@ -460,12 +464,13 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   the sentences that name those shapes took the Code Mode suite from 23 of 26
   to 26 of 26 and the wizard suite to 12 of 12. The final twenty passed, 38 of
   38 wizard and run checks in substance; one run landed on a Gemini Flash
-  fallback and still passed. A fourth suite, `prod`, holds twelve scenarios
+  fallback and still passed. A fourth suite, `prod`, holds thirteen scenarios
   shaped after Sidekicks running in production (daily activity and signup
   reports with checkpoints, a careers-page monitor with a baseline ledger, a
   note delta behind a cursor, weekly call prep, an hourly dashboard, a polling
-  window, research dedup, a connector firehose the run cannot serve) rewritten
-  over local plugins; it passed 22 of 22, with ten of its runs routed to the
+  window, research dedup, a connector firehose the run cannot serve, and a large
+  repeated scan graded on finishing in at most two calls) rewritten over local
+  plugins; the first twelve passed 22 of 22, with ten of its runs routed to the
   scheduled-run model, Gemini Flash, each calling its saved tool. The code suite
   with the final prompts passed 28 of 28 on Sol and Terra. Three `choice`
   scenarios in it check that "run this Python" and "publish a CSV" load

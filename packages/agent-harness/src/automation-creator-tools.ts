@@ -853,7 +853,8 @@ sidekick_runs_read_next until none remains; send nothing while reading; then sen
 report covering every run: when it ran, what started it, what it did, what went wrong, any
 feedback a person left in it, and each deterministic step the run repeated, skipped or got
 wrong (a dedupe after the reads it was meant to spare, a page not followed, a date bound, a
-union or a count worked by hand). Pass no run ids: the
+union or a count worked by hand), and what its routine work cost: model turns, calls to
+each saved tool, and the items, requests and seconds each call reported. Pass no run ids: the
 agent's reader already has them. Then say one line here that the agent is reading the runs
 and you will report when it replies, and end the turn; its report wakes you. Acknowledge a
 progress message from the agent with one short line here. Answer a question from it with
@@ -867,8 +868,9 @@ yourself. Post nothing elsewhere before these reads.
 what started it; whether anything justifies a change; and if so, exactly what you will
 change in the definition and nothing else. Only a procedure problem seen in the runs
 justifies one: wrong format or time, posted when it should have stayed silent, silent when
-it should have posted, an instruction the run could not follow, or a deterministic step the
-runs repeated, skipped or got wrong. An instruction a run did not follow is not covered by
+it should have posted, an instruction the run could not follow, a deterministic step the
+runs repeated, skipped or got wrong, or routine work that cost more turns or tool calls
+than the work needs. An instruction a run did not follow is not covered by
 being written, and one run that repeated, skipped or got wrong a deterministic step is
 evidence enough: the step either ran as written or it did not. A platform failure (the
 model provider returned nothing, the run failed before its first step) never does. A run
@@ -960,9 +962,12 @@ wrapper, and current_time, for one, returns text lines, not an object.
 The tool returns what the run reports and decides with, compactly: totals and the facts
 to report, not the raw rows it read. It does not stop for one item that fails or does
 not fit the rule: it finishes the rest and lists each such item under exceptions, with
-its identifier, what was wrong and what is known, for the run to handle. It throws only
-when it cannot do the job at all. A program has a time limit; when the work can outgrow
-it, the tool does a bounded share, records where it stopped in the Sidekick's own
+its identifier, what was wrong and what is known, for the run to handle. An item is an
+exception only when code cannot decide it: each read returns every fact the next step
+needs (who sent, not just how many), and a reference set such as an organization's
+members is read once per call, so the tool classifies every item against it itself.
+It throws only when it cannot do the job at all. A program has a time limit; when the
+work can outgrow it, the tool does a bounded share, records where it stopped in the Sidekick's own
 table, and returns what remains, and the instructions call it again until nothing
 remains. Size the share by time, never a fixed count: msLeft() in the program returns
 the milliseconds left before its deadline, and the tool keeps taking groups while
@@ -979,11 +984,13 @@ into the code. Independent calls may run side by side in Promise.all, writes inc
 read a group together, then write it.
 Tune by measurement, not by guess. The one measure is finished items per call: the
 more each call finishes, the fewer calls and turns a run needs. Four things raise it,
-in this order. Fewer requests per item: one read that covers a group of items where the
-source allows it, rather than one per item, and no read the program already has the
-answer to. More results per request: where a read takes a page size, limit or batch
-size, use the largest the source accepts that does not slow the call or fail. More
-requests at once. And the whole time budget used, never a fixed count or a single page.
+in this order. Fewer requests per item: look first for a source that answers for many
+items in one request (an index, a log or a table that spans them) before reading each
+item where it lives; otherwise one read that covers a group of items where the source
+allows it, rather than one per item; and no read the program already has the answer
+to. More results per request: where a read takes a page size, limit or batch size, use
+the largest the source accepts that does not slow the call or fail. More requests at
+once. And the whole time budget used, never a fixed count or a single page.
 Have the tool return how many items it finished, the requests it made (its tool calls,
 reads and writes), the seconds it took and the errors it met, and take the page size,
 concurrency and group size as inputs while you tune. Run sidekick_tool_test on a
@@ -1023,9 +1030,13 @@ In a self-review, tools change with the procedure, using only plugins already
 recommended. The plan takes each deterministic step the report says a run repeated,
 skipped or got wrong (a dedupe after the reads, a page not followed, date bounds, a
 union, a count) and says whether it moves into the tool or why it stays in the
-instructions; a plan that leaves that unanswered is incomplete. A run that spent many
-turns on routine steps is the case for moving them into the tool, and tools the runs
-always call one after another become one. "The instructions already say so" is not a
+instructions; a plan that leaves that unanswered is incomplete. It also uses the
+report's cost figures. A run that spent many turns on routine steps is the case for
+moving them into the tool; one whose tool call finished fewer items than the measured
+settings in its instructions, returned exceptions code could have settled, or timed its
+share against a fixed number instead of msLeft() is the case for re-tuning the tool as
+above and timing it again. A tuned tool that still needs several calls for a large job
+stays as it is. Tools the runs always call one after another become one. "The instructions already say so" is not a
 reason a step stays: an instruction the run did not follow is the case for code the
 run calls, unless the run shows the step failed on something outside it (a timed-out
 read) rather than being done by hand or skipped. A tool the runs misused or no longer
