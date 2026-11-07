@@ -2361,6 +2361,11 @@ describe("a hosted Sidekick", () => {
       { resend_email_id: "resend-email-0002", outcome_code: "email_sender_not_authorized" },
       { resend_email_id: "resend-email-0003", outcome_code: "sidekick_email_route_mismatch" },
     ]);
+    // Someone this personal Sidekick is shared with may email it, as they may read it.
+    await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec(
+      `INSERT INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, ?)`, AUTOMATION_ID, OUTSIDER_ID, Date.parse(NOW)));
+    expect(await workspaceStub().sidekickAdmitInboundEmail({ ...email, resendEmailId: "resend-email-0004", senderUserId: OUTSIDER_ID }))
+      .toMatchObject({ admitted: true, outcomeCode: "admitted" });
   });
 
   it("answers a run conversation's terminal deadline from its own projection, not a Channel's", async () => {

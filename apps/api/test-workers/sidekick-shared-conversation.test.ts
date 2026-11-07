@@ -557,6 +557,12 @@ describe("a Sidekick's shared conversation", () => {
     expect({ audience: opened.audience, sharedWithUserIds: opened.sharedWithUserIds })
       .toEqual({ audience: "workspace", sharedWithUserIds: [] });
     expect(await opens(ADMIN_ID)).toBe(true);
+    // Someone outside the Organization cannot be named, and a list naming
+    // only the author is not a `people` audience; each is refused by its code.
+    await expect(setAudience({ audience: "people", userIds: [asUserId("00000000-0000-7000-8000-00000000c8ff")] }))
+      .rejects.toMatchObject({ code: "sidekick_audience_not_member" });
+    await expect(setAudience({ audience: "people", userIds: [AUTHOR_ID] }))
+      .rejects.toMatchObject({ code: "sidekick_audience_people_empty" });
     // Someone it is shared with does not manage it.
     await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickSetAudience({
       ...addressed(), actor: actor(MEMBER_ID), update: { audience: "personal", userIds: [] },
@@ -579,6 +585,9 @@ describe("a Sidekick's shared conversation", () => {
       await deliverChildEffects(TEST_ENV, conversationStub());
     };
     await say(MEMBER_ID, "Morning, everyone.", "unread-0001");
+    // Never opened: unread, as an unopened Channel is unseen.
+    await deliverChildEffects(TEST_ENV, conversationStub());
+    expect(await unread(ADMIN_ID)).toBe(true);
     await read(MEMBER_ID);
     expect(await unread(MEMBER_ID)).toBe(false);
     await say(AUTHOR_ID, "Morning! The release went out.", "unread-0002");
@@ -586,5 +595,54 @@ describe("a Sidekick's shared conversation", () => {
     expect(await unread(MEMBER_ID)).toBe(true);
     await read(MEMBER_ID);
     expect(await unread(MEMBER_ID)).toBe(false);
+  });
+
+  it("sends a reader's own read of the shared conversation only to that reader's sockets", async () => {
+    await activeSidekick();
+    async function open(userId: string, sessionId: string) {
+      const response = await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
+        .fetch("https://workspace.test/socket", { headers: {
+          Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-placement-affinity": "wnam",
+          "x-rally-user-id": userId, "x-rally-session-id": sessionId,
+          "x-rally-socket-ticket-id": crypto.randomUUID(),
+          "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
+        } });
+      expect(response.status).toBe(101);
+      const socket = response.webSocket!;
+      socket.accept();
+      const frames: Array<Record<string, unknown>> = [];
+      socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
+      return { socket, frames };
+    }
+    await say(AUTHOR_ID, "Morning! The release went out.", "fanout-0001");
+    // Seated by their own message, as a reader is before they read.
+    await say(MEMBER_ID, "Thanks!", "fanout-0002");
+    await deliverChildEffects(TEST_ENV, conversationStub());
+    const author = await open(AUTHOR_ID, SESSION_ID);
+    const member = await open(MEMBER_ID, MEMBER_SESSION_ID);
+    try {
+      author.frames.length = 0;
+      member.frames.length = 0;
+      const latest = await runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{ latest: number }>(
+        `SELECT next_attention_ordinal - 1 AS latest FROM workstream WHERE id = 1`).one().latest);
+      const response = await conversationStub().fetch("https://object.test/internal/product", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "acknowledge_read", parentKind: "automation", auth: auth(MEMBER_ID),
+          input: { readThroughSequenceNumber: latest, observedManualUnreadGeneration: 0 } }),
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      await deliverChildEffects(TEST_ENV, conversationStub());
+      const lists = (frames: Array<Record<string, unknown>>) => frames.filter((frame) =>
+        frame.type === "workspace_sidebar_list" && frame.list === "automations");
+      await expect.poll(() => lists(member.frames).length, { timeout: 5_000 }).toBe(1);
+      expect(lists(member.frames)[0]).toMatchObject({ items: [expect.objectContaining({ id: AUTOMATION_ID, unread: false })] });
+      // The author's row did not move, and their socket was told nothing.
+      expect(lists(author.frames)).toEqual([]);
+    } finally {
+      author.socket.close();
+      member.socket.close();
+    }
   });
 });

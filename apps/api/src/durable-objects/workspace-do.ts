@@ -1232,7 +1232,6 @@ import {
   skillSource,
   skillSummary,
   type HostedSidekickRow,
-  sidekickReaderAllows,
   type HostedSidekickHost,
 } from "./hosted-sidekick";
 import {
@@ -6603,6 +6602,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /** Set by a hosted Sidekick write that moved a directory row; the sidebar list is published after it. */
   private sidekickDirectoryMoved = false;
+  /** Readers whose read of a Sidekick's shared conversation moved; see `publishSidekickList`. */
+  private readonly sidekickReadersMoved = new Set<string>();
 
   private queueSidekickSourcesForUsers(userIds: readonly string[]): boolean {
     if (userIds.length === 0) return false;
@@ -6649,6 +6650,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (deleted) this.externalBindings().suspendDeletedSidekick(automationId, new Date(now).toISOString());
         this.sidekickDirectoryMoved = true;
         this.noteSidekickActivityChanged(this.workspaceId()!);
+      },
+      noteViewerReadChanged: (userId) => {
+        // The waterline is the list's, so it moves; only this reader is sent it.
+        this.state.storage.sql.exec(
+          `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`,
+        );
+        this.sidekickReadersMoved.add(userId);
       },
       noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
       channelColor: (workstreamId) => this.spaceStorage().channelColor(workstreamId),
@@ -6773,10 +6781,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     try {
       return await run(sidekick);
     } finally {
-      if (this.sidekickDirectoryMoved) {
-        this.sidekickDirectoryMoved = false;
-        this.publishSidebarList("automations");
-      }
+      this.publishSidekickList();
       await this.afterParentWrite();
     }
   }
@@ -8444,10 +8449,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           try {
             return await sidekick.runAlarm(alarm, sidekickTarget.key);
           } finally {
-            if (this.sidekickDirectoryMoved) {
-              this.sidekickDirectoryMoved = false;
-              this.publishSidebarList("automations");
-            }
+            this.publishSidekickList();
           }
         }
         if (await this.runHostedParentAlarm(alarm)) return;
@@ -9647,12 +9649,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & {
       author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string; last_run_at: number | null;
-      shared_count: number;
+      shared_count: number; shared: number;
     }>(
       `SELECT directory.*, ${AUTOMATION_AUDIENCE_SQL},
+              EXISTS (SELECT 1 FROM sidekick_audience audience
+                       WHERE audience.sidekick_id = directory.automation_id AND audience.user_id = ?2) AS shared,
               (SELECT MAX(created_at) FROM sidekick_runs WHERE sidekick_id = directory.automation_id) AS last_run_at
-         FROM automation_directory directory WHERE workspace_id = ? AND lifecycle <> 'deleted'
-        ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId,
+         FROM automation_directory directory WHERE workspace_id = ?1 AND lifecycle <> 'deleted'
+        ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId, request.userId,
     ).toArray();
     // The management read rule (`sidekickReaderAllows`), the same one the
     // detail screen applies: a guest is not listed Organization-scope
@@ -9670,8 +9674,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         const relationship = await this.readRelationship(request.workspaceId, request.userId);
         actorRole = relationship?.accessClass === "guest" ? null : relationship?.role ?? null;
       }
-      const actor = { userId: request.userId, actorRole: actorRole ?? null };
-      if (sidekickReaderAllows({ ...row, run_as_user_id: row.run_as_user_id ?? null }, actor, this.state.storage.sql)) {
+      // `sidekickReaderAllows`' rule, with the list membership read above.
+      if (sidekickAdmits({ scope: row.scope, author: row.author_user_id === request.userId,
+        executor: row.run_as_user_id === request.userId, shared: row.shared === 1 }, (actorRole ?? null) !== null)) {
         admitted.push(row);
       }
     }
@@ -14174,10 +14179,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.publishChannelRows(this.collectRailChanges(rows));
     // A Thread archive archives the Sidekicks it owns during the pass; their
     // list goes out with nothing awaited after the Channel's row.
-    if (this.sidekickDirectoryMoved) {
-      this.sidekickDirectoryMoved = false;
-      this.publishSidebarList("automations");
-    }
+    this.publishSidekickList();
     if (topicsWorkspaceId !== null) {
       try {
         await this.publishSync([...topics], topicsWorkspaceId,
@@ -18825,7 +18827,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * connect payload sends these lists too, and two producers cannot be ordered
    * by one of their transports.
    */
-  private publishSidebarList(list: SidebarList): void {
+  /**
+   * Send the Sidekick list what moved since it was last sent: every socket for
+   * a change to a Sidekick's row, or only the sockets of the people whose read
+   * of a shared conversation moved, as a Channel's `viewerChanges` does.
+   */
+  private publishSidekickList(): void {
+    if (this.sidekickDirectoryMoved) {
+      this.sidekickDirectoryMoved = false;
+      this.sidekickReadersMoved.clear();
+      this.publishSidebarList("automations");
+    } else if (this.sidekickReadersMoved.size > 0) {
+      const readers = new Set(this.sidekickReadersMoved);
+      this.sidekickReadersMoved.clear();
+      this.publishSidebarList("automations", readers);
+    }
+  }
+
+  private publishSidebarList(list: SidebarList, onlyUserIds?: ReadonlySet<string>): void {
     const occurredAt = new Date().toISOString();
     const waterline = this.sidebarListWaterline(list);
     // No authorization re-check on the way out. An open socket is closed by the
@@ -18834,7 +18853,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // replaced and asks for it not to come back.
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
-      if (!attachment?.subscribed) continue;
+      if (!attachment?.subscribed || (onlyUserIds && !onlyUserIds.has(attachment.userId))) continue;
       const page = { items: this.sidekickLibrary(attachment) };
       try {
         socket.send(JSON.stringify(WorkspaceSidebarListEventSchema.parse({

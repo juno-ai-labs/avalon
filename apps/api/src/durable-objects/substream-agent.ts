@@ -2446,13 +2446,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!stored) return null;
     const payload = JSON.parse(stored.payload_json) as Record<string, unknown>;
     if (payload.content === text) return null;
+    const originKind = stored.origin_kind;
+    if (originKind !== "canonical" && originKind !== "protocol" && originKind !== "derived" && originKind !== "system_projection") {
+      throw new Error("sidekick_run_row_origin_invalid");
+    }
     const prepared = await prepareCanonicalTranscriptFact({
       factId: stored.fact_id, factKind: stored.fact_kind, audience: stored.audience,
       payload: { ...payload, content: text },
       origin: {
-        originKind: stored.origin_kind, sourceKind: stored.source_kind,
+        originKind, sourceKind: stored.source_kind,
         sourceId: stored.source_id, sourceRevision: stored.source_revision,
-      } as Parameters<typeof prepareCanonicalTranscriptFact>[0]["origin"],
+      },
       runId: stored.run_id, turnId, toolCallId: stored.tool_call_id,
     });
     return { turnId, prepared };

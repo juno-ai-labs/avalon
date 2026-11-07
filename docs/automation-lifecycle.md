@@ -1127,8 +1127,14 @@ the person it runs as and anyone named read its conversations whatever their
 access class; Organization scope admits members and never a guest. One function
 decides it (`sidekickAdmits` in `services/authorization-policy.ts`) for the
 conversation parent's `authorizeViewer`, the management and library reads
-(`sidekickReaderAllows`), resource authorization, search audience and memory
-facts. A home Channel or Breakout admits nobody.
+(`sidekickReaderAllows`), resource authorization, search audience, memory
+facts and who may email a personal Sidekick. A home Channel or Breakout admits
+nobody. One reader of `scope` still under-admits `people`, deliberately: the
+skill rule (`sidekickAudienceAllows`) lends a personal Sidekick's instructions
+only where everyone present is its author or the person it runs as, because a
+skill is the Sidekick's procedure loaded into someone else's conversation, not a
+read of its own; it is retired with Thread-attached skills in phase C of the
+Canvases and Sidekicks plan.
 
 - **Storage.** `people` is stored as scope `personal` with its list in
   `sidekick_audience` (WorkspaceDO migration 136), so the released scope CHECK
@@ -1139,15 +1145,23 @@ facts. A home Channel or Breakout admits nobody.
 - **Changing it.** A manager's `POST /automations/:id/audience` with
   `{audience, userIds}` (`HostedSidekick.setAudience`); `userIds` is required
   exactly for `people`, and everyone named must be an active member or guest
-  (`sidekick_audience_not_member` otherwise). The other two audiences clear the
+  (`sidekick_audience_not_member` otherwise). A `people` list that names nobody
+  but the author is refused (`sidekick_audience_people_empty`): it would store
+  as `personal` and read back as that. The other two audiences clear the
   list, and so does a draft's suggested scope that moves the audience.
 - **Unread.** The shared conversation's own read state (`member_attention`,
   `acknowledgeRead`, `markUnread`) stays the authority. `"0"`'s `directory_user`
   effect for each reader is kept in `sidekick_viewer_reads`, and the sidebar row
   is `unread` when that reader marked it unread or `"0"`'s latest attention
   ordinal (its `directory_common` projection) is past what they saw. Someone who
-  never opened the conversation has no read state there and nothing unread. A
-  change to either republishes the Sidekick list.
+  never opened the conversation has no read state there and reads as unread, as
+  a Channel they have not opened is `unseen`; the author, who wrote the Sidekick
+  in that conversation, does not. Each report always moves the stored version,
+  so a later, older report is dropped, and only a change to what the row shows
+  republishes. A reader's own read republishes the Sidekick list to that
+  reader's sockets alone (`noteViewerReadChanged`), as a Channel's
+  `viewerChanges` does; a move of `"0"`'s latest message or of its waiting on
+  input changes every reader's row and republishes to every socket.
 - **Needs input.** `needsInput` on the sidebar row is the delegation attention
   or `"0"` waiting on input.
 
@@ -1915,7 +1929,12 @@ defaults to `"0"` because that is now where the people who asked are reading;
 the home Thread is being retired, and so the audience is the Sidekick's own
 rather than its Thread's. `people` sits beside `scope` on the wire, not in it,
 because released clients parse `scope` as a closed enum. Unread is a projection
-of `"0"`'s own read state, so nothing new decides it.
+of `"0"`'s own read state, so nothing new decides it. A Sidekick shared with
+someone who has never opened it reads as unread to them, the product owner's
+call, so being shared with is noticed the way joining a Channel is. A reader's
+own read is sent only to that reader: republishing the whole library to every
+socket on every acknowledgement cost a send per socket per read and told
+everyone else nothing.
 
 **Consequences:** Any new kind of human input in `"0"` must say whether it is
 the wizard's; the claim routes it as a run otherwise. Authoring tools in `"0"`
