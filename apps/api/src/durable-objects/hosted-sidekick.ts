@@ -1740,7 +1740,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
               SELECT lifecycle FROM automation_directory WHERE automation_id = ?5
             ) = 'active'))
         RETURNING completed_at, definition_revision`,
-      effect.preview || null, now, next, live ? 1 : 0, this.sidekickId, substreamId, effect.state !== "idle" ? 1 : 0,
+      (effect.reply ?? effect.preview) || null, now, next, live ? 1 : 0, this.sidekickId, substreamId, effect.state !== "idle" ? 1 : 0,
       JSON.stringify([...TERMINAL_RUN_STATES]), effect.stepCount ?? null,
     ));
     if (!live && moved?.completed_at === now) this.noteRunFinished(moved.definition_revision, now);

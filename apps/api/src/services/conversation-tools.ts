@@ -364,7 +364,7 @@ export function conversationRefusalError(
         { available: refusal.available.slice(0, MAXIMUM_FAILURE_AVAILABLE_VALUES) });
     case "conversation_not_found":
       return new ConversationToolError(refusal.code,
-        `No Thread or Breakout matches "${shown}". Ask the person for its link.`, { field: "conversation" });
+        `No Canvas Chat or Sidekick conversation matches "${shown}". Ask the person for its link.`, { field: "conversation" });
     case "conversation_archived":
       return new ConversationToolError(refusal.code,
         "That conversation is archived, so it cannot be read or posted to. Tell the person.", resource);
@@ -419,7 +419,7 @@ export const ConversationPostArgumentsSchema = z.strictObject({
 });
 
 export const ConversationAttachArgumentsSchema = z.strictObject({
-  conversation: ConversationReferenceSchema.describe("The Rally link or id the person gave for a Thread or Breakout, or its exact title. A Channel, which holds threads, cannot be attached."),
+  conversation: ConversationReferenceSchema.describe("The Rally link or id the person gave for a Canvas's Chat or a Sidekick's conversation they can read, or its exact title."),
 });
 
 const ListCursorSchema = z.strictObject({ offset: z.number().int().nonnegative(), limit: LimitSchema });
@@ -865,7 +865,7 @@ export function createConversationsPlugin(
   const attach: HarnessTool = {
     definition: {
       name: "attach",
-      description: "Let this Sidekick read and post in a Thread or Breakout. Pass the link or id the person gave you. A Channel, which holds threads, cannot be attached to. Runs of the Sidekick can then use it.",
+      description: "Let this Sidekick read and post in a Canvas's Chat or a Sidekick's conversation the person can read. Pass the link or id the person gave you. Runs of the Sidekick can then use it.",
       capability: "rally.conversation.attach",
       mode: "write",
       idempotency: "provider_key",
@@ -933,8 +933,8 @@ export const RUN_POST_INSTRUCTION = "Your final message is this run's reply on i
  */
 export const PARENT_CONVERSATION_INSTRUCTION = "conversation_list marks the conversations this one sits inside with isParent. When a person refers to something said or decided outside this conversation, such as a result above it, or you need more than the summary you started with, conversation_read them before answering.";
 
-/** Discover peers through the list rather than assuming a Channel has any. */
-export const PEER_CONVERSATION_INSTRUCTION = "Use conversation_list to discover any other conversations you can read and search in the same Channels.";
+/** Discover peers through the list rather than assuming there are any. */
+export const PEER_CONVERSATION_INSTRUCTION = "Use conversation_list to discover any other conversations you can read and search.";
 
 /** A Breakout also sees its Thread's resources; a Thread's Main is the one that holds them. */
 export const BREAKOUT_RESOURCES_INSTRUCTION = "Resources attached to the conversation this one branched from are in list_resources too.";

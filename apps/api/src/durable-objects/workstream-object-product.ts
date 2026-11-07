@@ -4030,6 +4030,8 @@ export class WorkstreamObjectProductService {
       title: truncateUtf16Safe(root.title, 500),
       description: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
       preview: truncateUtf16Safe(preview, 1_000),
+      // The run's row shows the reply whole; the 1,000 cut is the directory's.
+      ...(sidekickRun ? { reply: truncateUtf16Safe(preview, MESSAGE_MAX_CHARACTERS) } : {}),
       scope: root.scope,
       state: root.exact_state,
       systemKind: root.system_kind,

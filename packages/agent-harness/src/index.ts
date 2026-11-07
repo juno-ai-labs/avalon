@@ -4728,7 +4728,7 @@ const MEMBER_SAFE_HARNESS_FAILURE_MESSAGES: Readonly<Record<HarnessFailureCode, 
   // smaller conversation is a real next action and starting one is the member's
   // to take — while the window Rally had wrong is an operator's, which is why
   // the sentence still asks for the request ID.
-  context_length_exceeded: "This conversation is longer than the selected model will accept. Start a new thread to continue, and copy the request ID for support",
+  context_length_exceeded: "This conversation is longer than the selected model will accept. Start a new Canvas to continue, and copy the request ID for support",
   // Separable by remedy: the member can remove the attachment or pick another
   // model, which no other code tells them.
   model_input_unsupported: "The selected model cannot read part of this message, such as an attached image or file. Remove it or use a different model, and copy the request ID for support",
