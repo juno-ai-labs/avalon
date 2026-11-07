@@ -62,7 +62,7 @@ endpoint and a secret.
   appears should be a `no-restricted-imports` entry
   ([`testing.md`](testing.md#what-to-test-and-what-not-to)). What
   may: a menu item, whose row is its label and whose menu closes on the click,
-  and `copy-workstream-link.ts`, the helper those items share. The
+  and `copy-link.ts`, the helper those items share. The
   message-action row's **Copy** is the one labelled pill that stays: it is one
   of a family of labelled pills under a turn, owned by
   [`conversation-surfaces.md`](conversation-surfaces.md). The message-text

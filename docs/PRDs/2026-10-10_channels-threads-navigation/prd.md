@@ -12,7 +12,7 @@
 > [Spaces](../../spaces.md), [attention menu](../../attention-menu.md),
 > [menu bar](../../menu-bar.md), [pinning](../../workstream-pinning.md),
 > [access requests](../../channel-access-requests.md), and
-> [links](../../workstream-links.md). Standing contract:
+> [links](../../links.md). Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
 ## Summary
@@ -303,7 +303,7 @@ button opens today.
 `/s/<space>/c/<channel>/b/<breakout>` already reads as channel, thread, and
 breakout, because the Space id is now the channel id and the old Channel id is
 now the thread id. Old links keep resolving to the same item. New links use the
-same shape. See [`workstream-links.md`](../../workstream-links.md).
+same shape. See [`links.md`](../../links.md).
 
 ## Impact on the product contract
 
