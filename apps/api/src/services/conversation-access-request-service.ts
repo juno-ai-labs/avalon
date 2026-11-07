@@ -10,7 +10,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { ConversationService } from "./conversation-service";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";
-import { canonicalWorkstreamUrl } from "./workstream-link-service";
+import { conversationCanonicalUrl } from "./conversation-link-service";
 import { SubstreamCreationService } from "./substream-creation-service";
 import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 import { WorkstreamService } from "./workstream-service";
@@ -395,9 +395,8 @@ async function tellRequester(env: Env, id: string, request: StoredAccessRequest)
     const noun = subject.kind === "breakout" ? "breakout" : "channel";
     const title = singleLine(subject.title);
     const approverName = singleLine(approver?.name || approver?.email || "The creator");
-    const openUrl = approved ? await canonicalWorkstreamUrl(env, {
-      region: env.AVALON_REGION, workspaceId, workstreamId: request.parentId,
-      ...(request.substreamId !== "0" ? { substreamId: request.substreamId } : {}),
+    const openUrl = approved ? await conversationCanonicalUrl(env, {
+      region: env.AVALON_REGION, workspaceId, parentId: request.parentId,
     }) : null;
     const heading = approved ? "Access approved" : "Access declined";
     const line = approved

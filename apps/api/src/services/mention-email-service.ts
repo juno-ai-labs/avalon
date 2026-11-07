@@ -3,7 +3,7 @@ import type { Region } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";
-import { canonicalWorkstreamUrl } from "./workstream-link-service";
+import { conversationCanonicalUrl } from "./conversation-link-service";
 
 const MAX_MESSAGE_EXCERPT_LENGTH = 320;
 
@@ -43,12 +43,12 @@ export async function sendWorkstreamMentionEmail(
   // A mail client will not linkify `rallywithai://`, and a recipient reading on a
   // phone has no desktop app to hand it to. The canonical HTTPS link is a real
   // link in every client and still ends at the same work stream.
-  const workstreamUrl = await canonicalWorkstreamUrl(env, {
-    region: input.region,
-    workspaceId: input.workspaceId,
-    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
-    workstreamId: input.workstreamId,
+  const workstreamUrl = await conversationCanonicalUrl(env, {
+    region: input.region, workspaceId: input.workspaceId, parentId: input.workstreamId,
   });
+  // A Thread or Breakout has no link now that no surface opens one; an email
+  // that could only point at nothing is not sent.
+  if (!workstreamUrl) return "skipped";
   const replyTo = input.workstreamEmailAddress?.trim() || null;
   const subject = `${authorName} mentioned you in ${workstreamTitle}`;
   const text = [

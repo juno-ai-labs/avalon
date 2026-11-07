@@ -3,14 +3,14 @@ import type { HarnessPlugin, HarnessTool, HarnessToolContext } from "@rally/agen
 import {
   AutomationActivationV1Schema,
   ExternalActorSchema,
-  LEGACY_WORKSTREAM_LINK_ORIGINS,
+  LEGACY_LINK_ORIGINS,
   MAXIMUM_FAILURE_AVAILABLE_VALUES,
   MESSAGE_MAX_CHARACTERS,
   asAutomationId,
   asSubstreamId,
   asWorkspaceId,
   asUserId,
-  parseWorkstreamLinkTarget,
+  parseLinkTarget,
   ConversationMergeErrorCodeSchema,
   type AutomationActivationV1,
   type ConversationMergeChannel,
@@ -263,7 +263,7 @@ export function conversationToolPorts(env: Env, input: WorkstreamWorkflowInput):
       return newestSearchHits((cursor) => index.queryPage<ConversationIndexHit>(sources,
         { query: request.query, mode: "substring", limit: CONVERSATION_MAXIMUM_PAGE_SIZE, audience }, cursor), request.limit);
     },
-    linkOrigins: [env.PUBLIC_WEB_BASE_URL, ...LEGACY_WORKSTREAM_LINK_ORIGINS],
+    linkOrigins: [env.PUBLIC_WEB_BASE_URL, ...LEGACY_LINK_ORIGINS],
     merge: async (request) => new ConversationMergeService(env, await actingAuth(env, input)).merge(request.threadId, {
       body: request.body,
       clientMessageId: request.clientMessageId,
@@ -1114,16 +1114,17 @@ export function conversationsSystemMessage(options: {
 
 /**
  * The conversation a link names, as a conversationId, or the reference
- * unchanged when it is not a link. A link to another Organization, or one
- * that does not parse, names nothing this attach can use.
+ * unchanged when it is not a link: a Canvas link names its Chat, a Sidekick
+ * link its own conversation, each the parent's `"0"`. A link to another
+ * Organization, a retired Thread link, or one that does not parse, names
+ * nothing this attach can use.
  */
 function attachReference(reference: string, input: WorkstreamWorkflowInput, origins: readonly string[]): string | null {
   const trimmed = reference.trim();
   if (!/^[a-z][a-z0-9+.-]*:\/\//iu.test(trimmed)) return trimmed;
-  const target = parseWorkstreamLinkTarget(trimmed, { webBaseUrl: origins });
-  if (!target) return null;
-  if (target.workspaceId !== null && target.workspaceId !== input.workspaceId) return null;
-  return conversationIdOf({ parentId: target.workstreamId, substreamId: target.substreamId ?? "0" });
+  const target = parseLinkTarget(trimmed, { webBaseUrl: origins });
+  if (!target || target.workspaceId !== input.workspaceId) return null;
+  return conversationIdOf({ parentId: target.kind === "canvas" ? target.canvasId : target.sidekickId, substreamId: "0" });
 }
 
 /**

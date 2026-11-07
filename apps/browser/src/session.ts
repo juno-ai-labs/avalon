@@ -1,7 +1,7 @@
 import type { BrowserSession } from "@rally/contracts/browser-session";
 import type { CookieClientSession } from "@rally/contracts/client-session";
 import { ConfiguredRegionSchema } from "@rally/contracts/regions";
-import { parseSidekickLinkPathTarget, parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
+import { parseLinkPathTarget } from "@rally/contracts/links";
 
 /** Adapt server metadata to the shared collaboration view without fake tokens. */
 export function cookieClientSession(region: string, session: BrowserSession): CookieClientSession {
@@ -23,23 +23,20 @@ export function cookieClientSession(region: string, session: BrowserSession): Co
 
 /**
  * Where the shell lands for a path the browser was opened on. The desktop
- * shell routes by hash, so a canonical Channel, Space or Sidekick link, or an invitation's
- * addressed Channel path, becomes the workspace path plus the hash the
- * desktop's own deep links set. Returns null when the path needs no rewrite.
+ * shell routes by hash, so a canonical Canvas or Sidekick link becomes the
+ * Organization's path plus the hash the desktop's own deep links navigate to:
+ * `#/canvases/:id` (with `?artifact=` when the link opens one of its
+ * artifacts) or `#/sidekicks/:id`. Returns null when the path needs no
+ * rewrite; a retired Space, Channel, Breakout or Thread path is one of those,
+ * and the entry screen says what it named is gone.
  */
 export function shellLocation(pathname: string, hash: string): string | null {
-  const workstream = parseWorkstreamLinkPathTarget(pathname);
-  if (workstream?.region && workstream.workspaceId) {
-    const query = new URLSearchParams();
-    if (workstream.substreamId) query.set("substream", workstream.substreamId);
-    if ("spaceId" in workstream && workstream.spaceId) query.set("space", workstream.spaceId);
-    if ("artifactId" in workstream && workstream.artifactId) query.set("artifact", workstream.artifactId);
-    return `/app/workspaces/${workstream.region}/${workstream.workspaceId}#/workstreams/${workstream.workstreamId}${query.size ? `?${query}` : ""}`;
+  const target = parseLinkPathTarget(pathname);
+  if (target) {
+    const workspace = `/app/workspaces/${target.region}/${target.workspaceId}`;
+    if (target.kind === "sidekick") return `${workspace}#/sidekicks/${target.sidekickId}`;
+    return `${workspace}#/canvases/${target.canvasId}${target.artifactId ? `?${new URLSearchParams({ artifact: target.artifactId })}` : ""}`;
   }
-  const space = parseSpaceLinkPathTarget(pathname);
-  if (space) return `/app/workspaces/${space.region}/${space.workspaceId}#/spaces/${space.spaceId}`;
-  const sidekick = parseSidekickLinkPathTarget(pathname);
-  if (sidekick) return `/app/workspaces/${sidekick.region}/${sidekick.workspaceId}#/automations/${sidekick.sidekickId}`;
   const workspace = /^\/app\/workspaces\/[^/]+\/[^/]+\/?$/u.test(pathname);
   return workspace && !hash ? `${pathname.replace(/\/$/u, "")}#/` : null;
 }

@@ -15,6 +15,7 @@ import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, Supp
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 import {
+  parseWorkspaceAddressedDeepLink,
   workspaceTargetsEqual,
   type WorkspaceTarget,
 } from '@rally/contracts/workspace-target';
@@ -252,6 +253,14 @@ function sessionsShareDraftScope(
  */
 function leaveSupportRoute(): void {
   if (!new URLSearchParams(window.location.search).has('surface')) navigateAppRoute('/');
+}
+
+
+/** Whether a deep link names a Space, Channel, Breakout or Thread, which no longer exist. */
+function retiredDeepLink(url: URL | null): boolean {
+  if (!url) return false;
+  const destination = parseWorkspaceAddressedDeepLink(url)?.destination ?? url;
+  return destination.hostname === 'spaces' || (destination.hostname === 'workstreams' && destination.pathname !== '/new');
 }
 
 export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.Element {
@@ -1014,6 +1023,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         reportDeepLinkFailure(
           deepLink?.hostname === 'notes'
             ? 'Rally could not open that note link.'
+            // A Space, Channel, Breakout or Thread link, from before Canvases
+            // replaced them, addressed or not.
+            : retiredDeepLink(deepLink)
+            ? 'This link is to something that no longer exists.'
             : deepLink?.hostname === 'auth'
             && deepLink.pathname === '/complete'
             && (deepLink.searchParams.has('connection')
@@ -1045,30 +1058,13 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         navigateAppRoute('/');
         return;
       }
-      if (intent.kind === 'space') {
-        const openSpace = (): void => {
+      if (intent.kind === 'canvas') {
+        await runInDeepLinkWorkspace(intent.target, () => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          // Channels are gone (2026-11); a Channel's link opens the Canvases home.
-          navigateAppRoute('/canvases');
-        };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, openSpace);
-        else if (requireActiveWorkspace('Sign in before opening this link.')) openSpace();
-        return;
-      }
-      if (intent.kind === 'workstream') {
-        // A conversation link names a Canvas now: a Canvas is identified by
-        // its conversation, and its links use the conversation forms until it
-        // has its own (plan step B-5). A Thread's id opens the Canvas screen's
-        // unavailable state.
-        const openWorkstream = (): void => {
-          setDeepLinkError(null);
-          markSurfaceEntrypoint(navigation.entrypoint);
-          navigateAppRoute(canvasRoute(intent.workstreamId),
-            intent.artifactId ? openResourceState(intent.workstreamId, intent.artifactId) : undefined);
-        };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);
-        else if (requireActiveWorkspace('Sign in before opening this link.')) openWorkstream();
+          navigateAppRoute(canvasRoute(intent.canvasId),
+            intent.artifactId ? openResourceState(intent.canvasId, intent.artifactId) : undefined);
+        });
         return;
       }
       if (intent.kind === 'sidekick') {

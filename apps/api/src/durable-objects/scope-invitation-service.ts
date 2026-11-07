@@ -3,7 +3,7 @@ import { asUserId } from "@rally/contracts";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import { ListScopeInvitationsSchema, ScopeInvitationsListSchema, CreateScopeInvitationsSchema, ClaimScopeInvitationsSchema, RevokeScopeInvitationSchema,
   WorkspaceRelationshipSchema, type ScopeGrant, type ScopeAccessRequest, type ScopeAccessResult, type ScopeInvitationResult, type ScopeInvitationSummary } from "@rally/contracts/scope-grants";
-import { workstreamAddressedUrl } from "@rally/contracts/workstream-links";
+import { canvasCanonicalUrl } from "@rally/contracts/links";
 import type { Env } from "../env";
 import { encryptString, decryptString } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -129,12 +129,16 @@ export class ScopeInvitationService {
     return { status: "created", invitations: this.invitations.operation(request) ?? result.invitations };
   }
 
-  /** Main for a Channel share, the conversation itself for a single conversation. */
+  /**
+   * Where the email links: the Canvas, on the web app, which hands it to the
+   * desktop app from there. A Thread has no link form now that no surface
+   * opens one (`docs/links.md`), so a share of one still being sent links to
+   * its Organization's shell.
+   */
   private destination(origin: URL, targets: z.infer<typeof CreateScopeInvitationsSchema>["targets"]): string {
-    const target = targets[0]!;
-    return workstreamAddressedUrl(origin.origin, { region: this.env.AVALON_REGION, workspaceId: target.workspaceId,
-      workstreamId: target.parentId,
-      ...(target.kind === "conversation" && target.substreamId !== "0" ? { substreamId: target.substreamId } : {}) });
+    const workspaceId = targets[0]!.workspaceId;
+    if (this.parent) return canvasCanonicalUrl(origin.origin, { region: this.env.AVALON_REGION, workspaceId, canvasId: this.parentId });
+    return new URL(`/app/workspaces/${this.env.AVALON_REGION}/${workspaceId}`, origin.origin).toString();
   }
 
   private async noteRecipients(workspaceId: string, emails: string[]): Promise<void> {

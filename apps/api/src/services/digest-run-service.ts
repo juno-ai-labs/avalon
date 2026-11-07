@@ -2,7 +2,6 @@ import {
   ExecutionPrincipalSchema,
   asUserId,
   asWorkspaceId,
-  spaceCanonicalUrl,
   type ActivityItem,
   type ActivityItemKind,
 } from "@rally/contracts";
@@ -24,7 +23,7 @@ import { emitProductUsageTelemetry, resourceTelemetryEventId, telemetryCountBuck
 import { deliverDigest } from "./digest-delivery-service";
 import { singleLine } from "./resend";
 import { withWorkspaceRuntimeDatabase, workspaceRegionalDatabase } from "./workspace-runtime-database";
-import { canonicalWorkstreamUrl } from "./workstream-link-service";
+import { conversationCanonicalUrl } from "./conversation-link-service";
 
 /**
  * A digest is what is still unread in a person's Activity, sent at the start
@@ -245,21 +244,16 @@ export async function renderUnreadDigest(
     const rows = items.filter((item) => item.kind === kind);
     if (!rows.length) continue;
     const lines = await Promise.all(rows.map(async (item) => {
-      // A merge links where it landed: a thread's into its Channel, a
-      // breakout's into its thread.
-      const url = item.kind === "merged" && item.mergedInto
-        ? spaceCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { region: env.AVALON_REGION, workspaceId, spaceId: item.mergedInto.channelId })
-        : await canonicalWorkstreamUrl(env, {
-          region: env.AVALON_REGION,
-          workspaceId,
-          workstreamId: item.threadId,
-          ...(item.breakout && item.kind !== "merged" ? { substreamId: item.breakout.substreamId } : {}),
-        });
+      // A row about a Canvas's Chat or a Sidekick links to it. A Thread,
+      // Breakout or Channel has no link now that no surface opens one, so its
+      // row names it unlinked.
+      const url = await conversationCanonicalUrl(env, { region: env.AVALON_REGION, workspaceId, parentId: item.threadId });
+      const linked = (label: string): string => url ? `[${label}](${url})` : label;
       const actor = escapeMarkdown(item.actorUserId === null ? item.actorLabel : names.get(item.actorUserId) ?? "Someone");
       // A merge from a thread this reader cannot open names no thread.
-      const thread = item.mergedInto?.threadPrivate ? `[a private thread](${url})`
-        : `[${escapeMarkdown(item.threadTitle.trim() || UNNAMED_THREAD)}](${url})`;
-      const breakout = item.breakout ? `[${escapeMarkdown(item.breakout.title.trim() || UNNAMED_BREAKOUT)}](${url})` : null;
+      const thread = item.mergedInto?.threadPrivate ? linked("a private thread")
+        : linked(escapeMarkdown(item.threadTitle.trim() || UNNAMED_THREAD));
+      const breakout = item.breakout ? linked(escapeMarkdown(item.breakout.title.trim() || UNNAMED_BREAKOUT)) : null;
       switch (item.kind) {
         case "new_message": return `- ${actor} replied in ${breakout ?? thread}`;
         case "mentioned": return `- ${actor} mentioned you in ${breakout ?? thread}`;

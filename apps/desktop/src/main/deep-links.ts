@@ -1,4 +1,4 @@
-import { parseSidekickLinkPathTarget, parseSpaceLinkPathTarget, parseWorkstreamLinkTarget, sidekickDeepLink, spaceDeepLink, workstreamDeepLinkFromParsedTarget } from "@rally/contracts/workstream-links";
+import { linkDeepLink, parseLinkTarget } from "@rally/contracts/links";
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 
 /** The exact native URL shapes the main process will deliver to a renderer. */
@@ -26,17 +26,14 @@ export function shouldDeliverConnectorResultToSettings(rawUrl: string): boolean 
   return intent?.kind === 'connector-result' && intent.target === null;
 }
 
-/** Only the two associated Rally hosts and the Space, Channel, and Sidekick path families enter here. */
-export function workstreamHttpsDeepLink(rawUrl: string): string | null {
-  try {
-    const url = new URL(rawUrl);
-    if (!['https://rallywith.ai', 'https://www.rallywith.ai'].includes(url.origin)
-      || url.username || url.password || !url.pathname.startsWith('/app/')) return null;
-    const space = !url.search && !url.hash ? parseSpaceLinkPathTarget(url.pathname) : null;
-    if (space) return spaceDeepLink(space);
-    const sidekick = !url.search && !url.hash ? parseSidekickLinkPathTarget(url.pathname) : null;
-    if (sidekick) return sidekickDeepLink(sidekick);
-    const target = parseWorkstreamLinkTarget(rawUrl, { webBaseUrl: ['https://rallywith.ai', 'https://www.rallywith.ai'] });
-    return target ? workstreamDeepLinkFromParsedTarget(target) : null;
-  } catch { return null; }
+/**
+ * Only the two associated Rally hosts and the Canvas and Sidekick path
+ * families enter here. Anything else, a retired Space, Channel, Breakout or
+ * Thread link included, stays in the browser, where the site's handoff page
+ * says what it named is gone.
+ */
+export function httpsLinkDeepLink(rawUrl: string): string | null {
+  if (!rawUrl.startsWith('https://')) return null;
+  const target = parseLinkTarget(rawUrl, { webBaseUrl: ['https://rallywith.ai', 'https://www.rallywith.ai'] });
+  return target ? linkDeepLink(target) : null;
 }

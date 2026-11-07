@@ -10,8 +10,8 @@ const ATTEMPT_ID = 'a'.repeat(43);
 describe('desktop deep-link intent grammar', () => {
   it.each([
     {
-      raw: `rallywithai://workspace/enterprise/${WORKSPACE_ID}/workstreams/${RESOURCE_ID}`,
-      kind: 'workstream',
+      raw: `rallywithai://workspace/enterprise/${WORKSPACE_ID}/canvases/1111117Hxt1fAWDjN7Tm`,
+      kind: 'canvas',
     },
     {
       raw: `rallywithai://workspace/enterprise/${WORKSPACE_ID}/settings/connections`,

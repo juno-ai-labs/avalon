@@ -8,11 +8,19 @@ type ArtifactActionRequest = {
   path: string; method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'; body?: unknown; binary?: boolean;
 };
 
-export function artifactWindowActionRequest(preview: DesktopArtifactWindowRequest, raw: unknown): ArtifactActionRequest & { action: ArtifactWindowAction } {
+/**
+ * What a window action asks of the API, or, for Copy link, the Canvas the
+ * link names: a link is minted in main from the Canvas link form and needs no
+ * request (`docs/links.md`).
+ */
+export function artifactWindowActionRequest(
+  preview: DesktopArtifactWindowRequest,
+  raw: unknown,
+): (ArtifactActionRequest | { canvasId: string }) & { action: ArtifactWindowAction } {
   const parsed = ArtifactWindowActionSchema.safeParse(raw);
   if (!parsed.success) throw new Error(zodDiagnosticCode(parsed.error, 'artifact_window_action')!);
   const action = parsed.data;
-  const target = (): ArtifactActionRequest => {
+  const target = (): ArtifactActionRequest | { canvasId: string } => {
     const root = `/resources/${encodeURIComponent(preview.resourceId)}`;
     if (action.type === 'read') return { path: root, method: 'GET' };
     if (action.type === 'pin-state') return { path: '/navigation/artifact-pins', method: 'GET' };
@@ -30,13 +38,18 @@ export function artifactWindowActionRequest(preview: DesktopArtifactWindowReques
     const [first, second] = preview.annotationScope?.split(':') ?? [];
     const canvas = first === 'canvas';
     const parent = IdSchema.safeParse(canvas ? second : first);
-    if (preview.editable !== true || !parent.success || (!canvas && second !== '0')) throw new Error('This artifact has no editable thread context');
-    if (canvas && (action.type === 'link' || action.type === 'pin')) {
-      // A Canvas artifact's pin and link belong to the Canvas, not a thread;
-      // neither has a route from a detached window yet (plan step B-5).
-      throw new Error(`A Canvas artifact cannot be ${action.type === 'pin' ? 'pinned' : 'linked'} from its own window; use the Canvas`);
+    // A link opens the Canvas onto this artifact, which reading it is enough
+    // to share. Only a Canvas has a link form: a Thread's went with Threads.
+    if (action.type === 'link') {
+      if (!canvas || !parent.success) throw new Error('This artifact has no Canvas to link to');
+      return { canvasId: parent.data };
     }
-    if (action.type === 'link') return { path: `/workstreams/${parent.data}/link-spaces`, method: 'GET' };
+    if (preview.editable !== true || !parent.success || (!canvas && second !== '0')) throw new Error('This artifact has no editable thread context');
+    if (canvas && action.type === 'pin') {
+      // A Canvas artifact's pin belongs to the Canvas, not a thread, and has
+      // no route from a detached window.
+      throw new Error('A Canvas artifact cannot be pinned from its own window; use the Canvas');
+    }
     if (action.type === 'pin') return {
       path: `/navigation/artifact-pins/${encodeURIComponent(preview.resourceId)}`,
       method: action.pinned ? 'PUT' : 'DELETE', ...(action.pinned ? { body: { threadId: parent.data } } : {}),

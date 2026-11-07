@@ -26,7 +26,8 @@ import {
   asUserId,
   asWorkstreamId,
   readStructuredFailure,
-  workstreamCanonicalUrl,
+  canvasCanonicalUrl,
+  sidekickCanonicalUrl,
   type ChannelFeedPage,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
@@ -625,15 +626,17 @@ describe("conversation_read", () => {
 });
 
 describe("conversation_attach", () => {
-  it("turns a pasted Rally link into a conversation id and refuses another Organization's", () => {
+  it("turns a pasted Canvas or Sidekick link into its conversation id and refuses another Organization's", () => {
     const input = configLoop();
     const origins = ["https://rally.test"];
-    const link = (workspaceId: string) => workstreamCanonicalUrl("https://rally.test", {
-      region: "global", workspaceId, spaceId: SPACE_ID, workstreamId: CHANNEL_ID, substreamId: BREAKOUT_ID,
-    });
-    expect(__conversationToolTesting.attachReference(link(WORKSPACE_ID), input, origins))
-      .toBe(`${CHANNEL_ID}/${BREAKOUT_ID}`);
+    const link = (workspaceId: string) => canvasCanonicalUrl("https://rally.test", { region: "global", workspaceId, canvasId: CHANNEL_ID });
+    expect(__conversationToolTesting.attachReference(link(WORKSPACE_ID), input, origins)).toBe(CHANNEL_ID);
+    expect(__conversationToolTesting.attachReference(
+      sidekickCanonicalUrl("https://rally.test", { region: "global", workspaceId: WORKSPACE_ID, sidekickId: SIDEKICK_ID }), input, origins,
+    )).toBe(SIDEKICK_ID);
     expect(__conversationToolTesting.attachReference(link(OTHER_WORKSPACE_ID), input, origins)).toBeNull();
+    // A Thread's link went with Threads.
+    expect(__conversationToolTesting.attachReference(`https://rally.test/app/workspaces/global/${WORKSPACE_ID}/workstreams/${CHANNEL_ID}`, input, origins)).toBeNull();
     expect(__conversationToolTesting.attachReference("Weekly call", input, origins)).toBe("Weekly call");
     expect(__conversationToolTesting.attachReference("https://elsewhere.test/app/x", input, origins)).toBeNull();
   });

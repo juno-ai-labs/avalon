@@ -12,7 +12,7 @@ import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceAtten
 import { browserRequest, BrowserApiError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 
-import { parseSidekickLinkPathTarget, parseSpaceLinkPathTarget, parseWorkstreamLinkPathTarget } from "@rally/contracts/workstream-links";
+import { isRetiredLinkPath, parseLinkPathTarget } from "@rally/contracts/links";
 
 import { UuidV7Schema } from "@rally/contracts/telemetry";
 import { OrganizationNameSuggestionSchema, WorkspaceIdSchema, parseArtifactSiteOpenPath } from "@rally/contracts";
@@ -67,6 +67,10 @@ type Proof = { region: string; challengeId: string; credential: string; redempti
  * draws the same mark in the same place, so the hand-off between them is
  * invisible.
  */
+
+/** What the entry screen says for a link to something deleted with Channels and Threads. */
+const RETIRED_LINK_COPY = "This link is to something that no longer exists. Rally replaced Channels, Threads and Breakouts with Canvases.";
+
 export function BrowserBoot(): React.JSX.Element {
   return <main className="onboarding-shell entry"><div className="boot-mark" role="status" aria-label="Opening Rally"><RallyMark /></div></main>;
 }
@@ -105,6 +109,9 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     }
   }, []);
   const [destination, setDestination] = useState<{ region: string; workspaceId: string } | null>(null);
+  // A Space, Channel, Breakout or Thread link, opened here directly rather
+  // than through the site's handoff page: nothing it named is left to open.
+  const [retiredLink] = useState(() => isRetiredLinkPath(location.pathname));
   // A protected site sent the person here to sign in and come back to it.
   const [siteTarget] = useState(() => {
     const target = parseArtifactSiteOpenPath(location.pathname);
@@ -177,10 +184,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
     const workspacePath = /^\/app\/workspaces\/([^/]+)\/([^/]+)\/?$/u.exec(location.pathname);
     const workspaceTarget = workspacePath ? z.object({ region: ConfiguredRegionSchema, workspaceId: WorkspaceIdSchema })
       .safeParse({ region: workspacePath[1], workspaceId: workspacePath[2] }) : null;
-    const parsedTarget = parseWorkstreamLinkPathTarget(location.pathname) ?? parseSpaceLinkPathTarget(location.pathname)
-      ?? parseSidekickLinkPathTarget(location.pathname);
-    const target = parsedTarget?.region && parsedTarget.workspaceId ? parsedTarget
-      : workspaceTarget?.success ? workspaceTarget.data : null;
+    const target = parseLinkPathTarget(location.pathname) ?? (workspaceTarget?.success ? workspaceTarget.data : null);
     if (target?.region && ConfiguredRegionSchema.safeParse(target.region).success) setDestination(target);
     const fragment = new URLSearchParams(location.hash.slice(1));
     const googleError = fragment.get("google_error");
@@ -478,20 +482,21 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       {session && !proof ? <>
         <h1>Your organizations</h1>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
-        {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the conversation…" : "Loading your organizations…"}</p>
+        {retiredLink && <p className="entry-lead" role="status">{RETIRED_LINK_COPY}</p>}
+        {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the link…" : "Loading your organizations…"}</p>
           : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) => {
             const count = activity?.userId === session.user.id ? activity.counts.get(`${workspace.region}:${workspace.id}`) ?? 0 : 0;
             return <a aria-label={count > 0 ? `${workspace.name}, ${activityCountLabel(count)}` : undefined} className="signin-choice" key={workspace.id} href={`/app/workspaces/${workspace.region}/${workspace.id}`}><span aria-hidden="true" className="workspace-mark">{workspace.name.slice(0, 1).toLocaleUpperCase()}</span><span className="signin-choice-name">{workspace.name}</span><ActivityCountBadge count={count} /><ChevronRight aria-hidden="true" size={16} /></a>;
           })}</nav>
           : <>
             <p className="entry-lead">{session.user.email} is not part of an organization, and nothing has been shared with it yet.</p>
-            <p className="entry-lead">Ask a teammate to share a thread or Breakout with you, or create a new organization.</p>
+            <p className="entry-lead">Ask a teammate to share a Canvas or a Sidekick with you, or create a new organization.</p>
             <Button className="button-primary signin-button" type="button" disabled={busy} onClick={() => { setError(null); setCreating(true); }}><Building2 aria-hidden="true" size={16} />Create an organization</Button>
           </>}
         <button className="text-button onboarding-signout" disabled={busy} onClick={() => { void signOut(); }} type="button">Sign out</button>
       </> : <>
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
-        <p>{proof ? "Continue to your shared conversations." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : destination ? "Sign in with the email address the link was sent to." : siteTarget ? "Sign in to open this site." : "Your team, your work, and Rally. All in one place."}</p>
+        <p>{proof ? "Continue to what was shared with you." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : destination ? "Sign in with the email address the link was sent to." : siteTarget ? "Sign in to open this site." : retiredLink ? RETIRED_LINK_COPY : "Your team, your work, and Rally. All in one place."}</p>
         {!proof && !challenge && !emailChosen ? <>
           <Button className="button-primary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>
           <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => setEmailChosen(true)}><Mail aria-hidden="true" size={16} />Continue with email</Button>

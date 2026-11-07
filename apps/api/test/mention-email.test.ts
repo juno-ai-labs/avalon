@@ -7,10 +7,13 @@ import {
 } from "../src/services/mention-email-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
-vi.mock("../src/services/workstream-link-service", async () => {
-  const { workstreamCanonicalUrl } = await import("@rally/contracts");
-  return { canonicalWorkstreamUrl: async (env: Env, target: { region: "global"; workspaceId: string; workstreamId: string; substreamId?: string }) =>
-    workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { ...target, spaceId: "00000000-0000-7000-8000-000000000002" }) };
+// The Organization object is what tells a Canvas from a Thread; here every
+// conversation is a Canvas's Chat but the one named THREAD_PARENT.
+vi.mock("../src/services/conversation-link-service", async () => {
+  const { canvasCanonicalUrl } = await import("@rally/contracts");
+  return { conversationCanonicalUrl: async (env: Env, target: { region: "global"; workspaceId: string; parentId: string }) =>
+    target.parentId === "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7900" ? null
+      : canvasCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { region: target.region, workspaceId: target.workspaceId, canvasId: target.parentId }) };
 });
 
 const input: WorkstreamMentionEmail = {
@@ -48,6 +51,13 @@ function successfulResend() {
 }
 
 describe("channel mention email", () => {
+  it("sends nothing about a Thread, which has no link to open", async () => {
+    const resend = successfulResend();
+    await expect(sendWorkstreamMentionEmail(environment(), { ...input, workstreamId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b7900" }, resend))
+      .resolves.toBe("skipped");
+    expect(resend).not.toHaveBeenCalled();
+  });
+
   it("sends a branded, escaped email with a stable recipient idempotency key", async () => {
     const resend = successfulResend();
 
@@ -75,9 +85,10 @@ describe("channel mention email", () => {
       ],
     });
     // A mail client linkifies the canonical HTTPS link and ignores `avalon://`.
-    expect(String(body.text)).toContain("https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/");
+    // A mention in a Canvas's Chat links to the Canvas.
+    expect(String(body.text)).toContain("Open in Rally: https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/cv/CAqt59UDdQsjzSKQ3SXAh/");
     expect(String(body.text)).not.toContain("avalon://");
-    expect(String(body.html)).toContain("https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/");
+    expect(String(body.html)).toContain('href="https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/cv/CAqt59UDdQsjzSKQ3SXAh/"');
     expect(String(body.text)).toContain("Reply to this email to continue the thread.");
     expect(String(body.html)).toContain("Sam &amp; Team");
     expect(String(body.html)).toContain("Adam &lt;Admin&gt; Injected");

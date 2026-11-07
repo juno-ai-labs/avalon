@@ -13,8 +13,10 @@ export function classifyDesktopHandoffTarget(value: string | null): {
     const url = new URL(value);
     const destination = parseWorkspaceAddressedDeepLink(url)?.destination ?? url;
     const intent = parseDesktopDeepLinkIntent(value);
-    const handoffType: DesktopHandoffType = destination.hostname === 'workstreams'
-      ? 'workstream'
+    const handoffType: DesktopHandoffType = destination.hostname === 'canvases'
+      ? 'canvas'
+      : destination.hostname === 'sidekicks'
+        ? 'sidekick'
       : destination.hostname === 'settings'
         ? 'settings'
         : destination.hostname === 'automations' ? 'automation'

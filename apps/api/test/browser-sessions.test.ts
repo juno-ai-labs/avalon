@@ -143,7 +143,7 @@ it("forwards a cookie-authenticated message issue POST with its addressed worksp
   expect(await response.json()).toMatchObject({ auth:{ userId:entry.session.user.id,workspaceId },input });
 });
 
-it("forwards the member shell's route families and still refuses token minting and ingress",async () => {
+it("forwards the Canvases and Sidekicks shell's route families, and refuses the Thread families, token minting and ingress",async () => {
   const entry = await login();
   const workspaceId = workspace(entry.session.user.id,"member");
   await request("workspace/select",entry.cookie,{ workspaceId });
@@ -153,12 +153,12 @@ it("forwards the member shell's route families and still refuses token minting a
   const browser = new Hono<HonoAppEnv>();
   browser.route("/browser",createBrowserRoutes((forwarded,c) => api.fetch(forwarded,c.env)));
   browser.onError(errorHandler);
-  for (const family of ["spaces","navigation","projects","onboarding/account","onboarding/organization-suggestion","work-opportunities","digest","push-devices","workspaces"]) {
+  for (const family of ["canvases","conversations","sidekicks","automations","sharing","resources","search","onboarding/account","onboarding/organization-suggestion","digest","push-devices","connections","workspaces"]) {
     const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/${family}/probe`,{ headers:{ cookie:entry.cookie } },bindings());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ path:`/${family}/probe`,workspaceId });
   }
-  for (const family of ["auth","internal","ingest","access","slack","dev"]) {
+  for (const family of ["workstreams","spaces","projects","navigation","work-opportunities","auth","internal","ingest","access","slack","dev"]) {
     const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/${family}/probe`,{ headers:{ cookie:entry.cookie } },bindings());
     expect(response.status).toBe(404);
   }
