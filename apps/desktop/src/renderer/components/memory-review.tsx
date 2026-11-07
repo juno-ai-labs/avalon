@@ -15,11 +15,11 @@ export interface MemoryFacts extends MemoryFactsState {
 
 /**
  * Reads one scope's remembered facts and removes one: the person's own or the
- * Organization's. Every review
- * surface goes through this, so a removal behaves the same everywhere: the row
- * leaves the cache on success, a 404 is treated as already removed (by another
- * window, or by the agent), and any other refusal stays on its row. Each fact
- * keeps its own removal state, so removing two at once reports each.
+ * Organization's. Every review surface goes through this, so a removal behaves
+ * the same everywhere: the row leaves the cache on success, a 404 is treated as
+ * already removed (by another window, or by the agent), and any other refusal
+ * stays on its row. Each fact keeps its own removal state, so removing two at
+ * once reports each.
  *
  * Every open reads afresh, so what a person sees is what the store holds when
  * they look; the cached list shows meanwhile. `lazy` holds the first read

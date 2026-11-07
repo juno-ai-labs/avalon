@@ -70,7 +70,7 @@ docs/<lower-kebab-name>.md
 ```
 
 Named for the subsystem the way the team says it aloud — `composer-drafts.md`,
-`workstream-descriptions.md` — so a person searching for it guesses the filename.
+`agent-memory.md` — so a person searching for it guesses the filename.
 Every document in the folder now follows it; the `SCREAMING_SNAKE_CASE` names
 that predated the convention were renamed in one pass, with every inbound
 reference in `docs/`, the repository root, the workflows, and the source updated
