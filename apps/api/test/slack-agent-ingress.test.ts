@@ -94,32 +94,16 @@ class IngressDatabase {
     ).run(id, INGRESS_WORKSPACE, INGRESS_CONNECTION, bodyHash);
   }
 
-  seedSessionThread(channelId: string, threadTs: string): void {
-    this.objectDatabase.prepare(
-      `INSERT INTO slack_agent_sessions
-         (id, workspace_id, connection_id, linked_user_id, execution_scope,
-          slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
-          opening_client_message_id, workstream_id, invocation_kind, channel_type,
-          context_json, created_at, updated_at)
-       VALUES (?, ?, ?, NULL, 'workspace', 'T1', 'U1', ?, ?, 'seed', ?, 'app_mention',
-               'public', '{}', '2026-01-01', '2026-01-01')`,
-    ).run(
-      `session-${channelId}-${threadTs}`,
-      INGRESS_WORKSPACE,
-      INGRESS_CONNECTION,
-      channelId,
-      threadTs,
-      `workstream-${channelId}-${threadTs}`,
-    );
-    // The thread's route, as migration 85 carries every session's thread key
-    // into a binding and as creating a session writes one beside it.
+  /** A thread bound to a Sidekick run, as the run's own send binds it. */
+  seedBoundThread(channelId: string, threadTs: string): void {
     this.objectDatabase.prepare(
       `INSERT INTO external_conversation_bindings
          (installation_id, path_json, target_kind, space_id, parent_kind, parent_id, substream_id,
           state, suspended_reason, claim_key, created_at, updated_at)
-       VALUES ('slack:T1', json_array(?, ?), 'conversation', NULL, 'workstream', ?, '0',
+       VALUES ('slack:T1', json_array(?, ?), 'conversation', NULL, 'automation',
+               '00000000-0000-7000-8000-0000000c1e40', '00000000-0000-7000-8000-0000000c1e41',
                'active', NULL, NULL, '2026-01-01', '2026-01-01')`,
-    ).run(channelId, threadTs, `workstream-${channelId}-${threadTs}`);
+    ).run(channelId, threadTs);
   }
 
   seedPendingPrompt(channelId: string, threadTs: string, slackUserId: string): void {
@@ -441,10 +425,10 @@ describe("Slack Agent durable ingress", () => {
     expect(send).not.toHaveBeenCalled();
     expect(database.jobCount()).toBe(0);
 
-    database.seedSessionThread("C1", "1.0");
-    await expect(service.processEvent(channelMessagePayload("EvSession", "continue", "1.0"), "session-hash"))
+    database.seedBoundThread("C1", "1.0");
+    await expect(service.processEvent(channelMessagePayload("EvBound", "continue", "1.0"), "bound-hash"))
       .resolves.toEqual({ ok: true });
-    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ jobId: "event:EvSession" }));
+    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ jobId: "event:EvBound" }));
 
     await expect(service.processEvent(
       channelMessagePayload("EvBroadcast", "continue publicly", "1.0", "thread_broadcast"),

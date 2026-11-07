@@ -292,7 +292,9 @@ answers `{ accepted, notificationIntentIds }`; the activity consumer delivers
 each intent it names. The `parent_effect` apply path the Thread host fed
 (`applyWorkstreamRegionalEffect` in the consumer, the service and `WorkspaceDO`,
 and `workspace-regional-effect-storage.ts`) is deleted: nothing has sent a
-`parent_effect` since the Thread retirement, and a late one is acknowledged as
+`parent_effect` since the Thread retirement. A late one from a retired Thread
+or Space parent is refused as `conversation_parent_kind_retired:<kind>` and
+dead-letters; one under a current parent kind is acknowledged as
 `parent_effect_producer_retired`. `notificationDirectoryState` reads the
 recipient through `readRelationship`, so a member the Organization object had
 not yet heard of is no longer read as nobody.

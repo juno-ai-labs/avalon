@@ -127,7 +127,6 @@ export const SLACK_WORKSPACE_OBJECT_METHODS = [
   // The App Home context and feedback, converted alongside the ingress spine.
   "slackAppContext",
   "storeSlackAppContext",
-  "recordSlackFeedback",
   // External conversation bindings: the routing authority Slack ingress asks
   // before it routes a reply.
   "resolveExternalConversation",

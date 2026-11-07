@@ -1105,7 +1105,9 @@ AgentLoopDO SQLite product transaction
             workstream_notification_intents row; nothing is forwarded
          -> consumer: processWorkstreamNotificationIntent for each intent the
             parent names (push, Slack, email as the person chose)
-       parent_effect -> acknowledged as parent_effect_producer_retired
+       parent_effect -> retired Thread or Space parent: refused as
+            conversation_parent_kind_retired:<kind>, dead-letters;
+            current kind: acknowledged as parent_effect_producer_retired
             (a scope_grant_directory row aside). No producer sends one now.
 ```
 

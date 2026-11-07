@@ -22,7 +22,7 @@ import {
 } from "./queues/product-feature-flag-consumer";
 import { isAccessRevocationQueue, reapExpiredSessions } from "./services/access-revocation";
 import { dispatchWorkspaceRelationshipChanges } from "./services/workspace-relationship-delivery";
-import { consumeActivityQueue, recoverPendingActivityQueue } from "./queues/activity-consumer";
+import { consumeActivityQueue } from "./queues/activity-consumer";
 import { consumeInteractiveQueue } from "./queues/interactive-consumer";
 import { isInteractiveQueue } from "./services/interactive-queue";
 import {
@@ -201,7 +201,6 @@ export default {
   scheduled: withEnvContract((_controller, env, context) => {
     context.waitUntil((async () => {
       await Promise.all([
-        recoverPendingActivityQueue(env),
         reapExpiredSessions(env),
         dispatchWorkspaceRelationshipChanges(env),
         recoverEmailLoginDeliveries(env),
