@@ -659,7 +659,7 @@ facet that holds a stateful artifact's data. It does not own:
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-social-preview-runtime.test.ts` | `HTMLRewriter` on real workerd: active HTML receives metadata without buffering, while protected errors and JSON remain exact. |
 | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/artifact-asset-uploads.test.ts` | Real-R2 asset upload overlap, the assets-before-manifest barrier, generated tail assets, and failure draining. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/artifact-facet.test.ts`) | The facet on **real workerd**: a model class running with its own SQLite, viewer attribution and deduplication, rows surviving a republish, isolation between two artifacts and from the supervisor's own tables, egress throwing, and the rollback. Also scoped reads: a private table paged as one viewer's rows, search indexes however fed reading as empty, and free SQL refused on a site with a private table and allowed on one without. |
-| `pnpm --filter @rally/api test:workers` (`test-workers/conversation-tools.test.ts`) | Which scope the data tools resolve for the author, another member and an unattended run, and `/browser/sites/resolve`'s 200, 403 (outside the Organization, or outside the Channel) and 404. |
+| `pnpm --filter @rally/api test:workers` (`test-workers/conversation-tools.test.ts`) | Which scope the data tools resolve for the author, another member and an unattended run, and `/browser/sites/resolve`'s 200, 403 (outside the Organization, or a member outside the audience of the site's Canvas) and 404. |
 
 Two traps:
 
