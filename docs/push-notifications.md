@@ -220,6 +220,9 @@ client's read debounce while the app is focused and visible, through messages
 in the viewport. A thread scrolled away from new replies therefore remains unread.
 
 
+The rest of this section is the retired Activity-row path, kept as its record;
+`run_finished` is now the Sidekick run notice above, not a row.
+
 Everything the Activity tab lists can be a push, an email or a Slack message.
 `added` and `mentioned` go through their notification intents above, whose
 processor sends each channel the person chose. `thread_started`,
@@ -480,14 +483,15 @@ APNs credential fault that leaves Web Push sending. The contract test covers the
 host allowlist and key shapes, and `web-push.test.ts` covers registration,
 re-subscribing on a key change, and the permission prompt coming first.
 `activity-push.test.ts` (deleted in plan step C-2) drives Activity rows through `receiveChildEffects` on
-real workerd, and the consumer's read-back. `test/conversation-effect-service.test.ts` covers
-a mention whose conversation has no link, and that an owner or administrator
-mentioned in a Canvas only its creator otherwise opens is told. The same
-suite pushes both Sidekick run notices with their titles and the Sidekick's
-link, and sends neither once **Sidekick runs** is off; `hosted-sidekick.test.ts`
-covers who each notice is recorded for (requester and managers for Needs
-input, the requester alone for a finish, managers alone for a scheduled run's
-Needs input and nobody for its finish). `test/conversation-effect-service.test.ts` covers
+real workerd, and the consumer's read-back. The workerd `push-delivery.test.ts`
+also covers that an owner or administrator mentioned in a Canvas only its
+creator otherwise opens is told, and pushes both Sidekick run notices with
+their titles and the Sidekick's link, sending neither once **Sidekick runs** is
+off; `hosted-sidekick.test.ts` covers who each notice is recorded for
+(requester and managers for Needs input, the requester alone for a finish,
+managers alone for a scheduled run's Needs input and nobody for its finish),
+and `test/workspace-notification-intent-run-kinds-migration.test.ts` migration
+145 over populated rows. `test/conversation-effect-service.test.ts` covers
 a mention whose conversation has no link: Slack and email log
 `conversation_not_linkable` with `parent_kind`, and the intent settles. The provider itself and macOS alert
 presentation require a signed installed build.

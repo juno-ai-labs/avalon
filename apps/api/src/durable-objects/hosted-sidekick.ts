@@ -1814,6 +1814,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const recipients: string[] = [];
     for (const userId of candidates) {
       if (await this.requesterActive(row.workspace_id, userId)) recipients.push(userId);
+      else logInfo(this.env, "sidekick_run_notice_skipped", { ...this.logFields(), run_id: runId, kind, user_id: userId,
+        reason: "recipient_inactive" });
     }
     return recipients.sort();
   }
@@ -1828,7 +1830,11 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     }
     const notice = parsed.data;
     const row = this.row();
-    if (!row || row.lifecycle === "deleted") return { progressed: true };
+    if (!row || row.lifecycle === "deleted") {
+      logInfo(this.env, "sidekick_run_notice_skipped", { ...this.logFields(), run_id: notice.runId, kind: notice.kind,
+        reason: "sidekick_deleted" });
+      return { progressed: true };
+    }
     const recipientUserIds = await this.runNoticeRecipients(row, notice.runId, notice.kind);
     const payloadJson = JSON.stringify(notice);
     const intents = recordSidekickRunNotices(this.host.storage, {
