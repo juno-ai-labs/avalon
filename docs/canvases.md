@@ -262,17 +262,13 @@ Sidekick is shared with, most recently active first, at most 250, the bound
 the Sidekick list already has; an owner's or administrator's list does not add
 every private Canvas they could open.
 
-A Canvas or a Sidekick is pinned in its list's Pinned group with
-`setSidebarPin` (`POST /canvases/:id/pin`, `POST /sidekicks/:id/pin`) and
-ordered with `reorderSidebarPins` (`PUT /workspace/pinned-order`, one list's
-kind and its ids first to last; ids it does not pin are ignored and pins left
-out keep their order after the named ones), in `workspace_pins` (WorkspaceDO
-migration 141 admits the `canvas` and `sidekick` kinds). Neither kind is sent
-in the `pins` list, whose `PinKind` released clients parse as a closed enum;
-each rides its own rows as `pinnedPosition`. A pin must be of something the
-viewer may open. Pinning admits a guest (it is on the identity mount), while
-the reorder is on the member-only mount and answers a guest 403; who may
-reorder must be decided before drag-to-reorder lands in the client.
+The Pinned group mechanism, shared with Sidekicks, is
+[`pinning.md`](pinning.md)'s. What is particular to a Canvas: it is pinned with
+`POST /canvases/:id/pin` and its row carries `pinnedPosition`; a pin must be of
+a Canvas the viewer may open (its audience), so a Canvas that narrows out a
+viewer drops off their Pinned group; and a guest may pin a Canvas shared with
+them but not reorder the group, since the order route is on the member-only
+mount, which has to be decided before drag-to-reorder lands in the client.
 
 ### Presence
 

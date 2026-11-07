@@ -10,7 +10,7 @@
 > [the Spaces PRD](../2026-09-18_spaces-and-product-hierarchy/prd.md). Related
 > subsystem references: [desktop shell](../../desktop-shell.md),
 > [Spaces](../../spaces.md), [attention menu](../../attention-menu.md),
-> [menu bar](../../menu-bar.md), [pinning](../../workstream-pinning.md),
+> [menu bar](../../menu-bar.md), [pinning](../../pinning.md),
 > [access requests](../../channel-access-requests.md), and
 > [links](../../links.md). Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).

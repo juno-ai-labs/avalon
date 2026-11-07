@@ -55,8 +55,8 @@ retention starts. It does not create empty entries, fetch, change values, or
 change their garbage-collection duration. On release, the ordinary cache
 collection rules resume. Multiple producers can hold the same entry.
 
-The workspace socket holds its directories (the Canvases and Sidekicks lists),
-feature flags, access-recovery nudge and ordering ledgers. Each conversation socket holds its
+The workspace socket retains exactly three entries: the `canvases` and
+`automations` sidebar lists and the client feature flags. Each conversation socket holds its
 detail, transcript, inherited context, streaming overlays, feed source and
 snapshot generation. These leases follow the socket-owning effects, including
 background retention and reconnects, rather than the visible route.

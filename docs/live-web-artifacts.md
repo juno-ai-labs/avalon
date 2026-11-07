@@ -1,6 +1,6 @@
 # Live web artifacts
 
-A **live artifact** is a directory a work-stream run published that Rally also
+A **live artifact** is a directory a Canvas's Chat or a Sidekick run published that Rally also
 *serves publicly*, at a stable per-artifact HTTPS origin. A landing page, a
 dashboard, a calculator, a poll: the model
 writes ordinary files in the Terminal sandbox exactly as it writes a document,
