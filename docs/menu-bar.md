@@ -29,7 +29,7 @@ The shared workspace watcher recovery policy and phase diagnostics are owned by
 | `apps/desktop/src/main/menu-bar-content.ts` | `menuBarContent`: Needs attention from the Activity page, Most recent from the Channel directory with the sidebar's Recent sort. |
 | `apps/desktop/src/main/channel-directory-watch.ts` | `ChannelDirectoryWatch`: the Organization's Channel rows and Breakout lists, held over the main process's workspace socket, and the sync topics that socket names (`onSync`). |
 | `apps/desktop/src/main/activity-feed-watch.ts` | `ActivityFeedWatch`: the first page of `GET /navigation/activity`, read again when the socket says Activity moved. |
-| `packages/contracts/src/workspace-reach-watch.ts` | `watchWorkspaceSocket`, the listen-only workspace socket transport (ticket, subscribe, heartbeat, reconnect) this rides on; Sideline's `watchWorkspaceReach` is the same transport. |
+| `packages/contracts/src/workspace-reach-watch.ts` | `watchWorkspaceSocket`, the listen-only workspace socket transport (ticket, subscribe, heartbeat, reconnect) this rides on. |
 | `apps/desktop/src/common/recency-groups.ts` | `compareRecentChannels`, the sidebar's Recent sort, shared for the same reason. |
 | `apps/desktop/src/main/menu-bar.ts` | The status item's lifecycle: whether it exists, and rebuilding its menu and title when its content moves. |
 | `apps/desktop/src/main/launch-at-login.ts` | Whether Rally is registered to open at login, and `launchedAtLogin`, which decides whether this launch opens a window. |

@@ -5824,8 +5824,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ...request,
       now: new Date().toISOString(),
     });
-    // Who an operator may act as is their reach too: their Sideline catalog
-    // lists these people. Each operator is told about themselves.
+    // Who an operator may act as is their reach too: a surface that lists the
+    // people they may act as rereads on it. Each operator is told about themselves.
     this.publishReachChanged(new Set(request.relationships.map((relationship) => relationship.impersonatorUserId)));
     return result;
   }
@@ -18856,8 +18856,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * moved: they joined or left a Channel or Breakout, or the people they may
    * act as changed.
    *
-   * Addressed to the person and to whoever can act as them — the authority the
-   * Sideline catalog reads the person's destinations under. It names people and
+   * Addressed to the person and to whoever can act as them through the
+   * **can impersonate** relationship. It names people and
    * no conversation, so it discloses no membership the receiver could not
    * already list; the receiver rereads its own view. Not on the waterline and
    * never replayed: a client that was away rereads when it subscribes.

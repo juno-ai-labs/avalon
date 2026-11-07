@@ -10,7 +10,6 @@ import test from 'node:test';
 import {
   downloadReleaseObject,
   purgeAndVerifyImmutableReleaseUrls,
-  purgeCloudflarePrefix,
   purgeCloudflareUrls,
   verifyPublicReleaseArtifactHash,
 } from './release-cache.mjs';
@@ -275,28 +274,6 @@ test('fails closed and redacts Cloudflare purge failure details', async () => {
     }),
     /could not be confirmed/u,
   );
-});
-
-test('purges only the Sideline channel prefix and confirms Cloudflare accepted it', async () => {
-  const requests = [];
-  await purgeCloudflarePrefix({
-    apiToken: 'test-token',
-    zoneId: 'test-zone',
-    prefixUrl: 'https://downloads.rallywith.ai/sideline/stable/darwin/arm64/',
-    fetchImplementation: async (url, init) => {
-      requests.push({ url, body: JSON.parse(init.body) });
-      return Response.json({ success: true, result: { id: 'purge-id' } });
-    },
-  });
-  assert.deepEqual(requests, [{
-    url: 'https://api.cloudflare.com/client/v4/zones/test-zone/purge_cache',
-    body: { prefixes: ['downloads.rallywith.ai/sideline/stable/darwin/arm64/'] },
-  }]);
-  await assert.rejects(purgeCloudflarePrefix({
-    apiToken: 'test-token',
-    zoneId: 'test-zone',
-    prefixUrl: 'https://downloads.rallywith.ai/',
-  }), /non-root HTTPS directory URL/u);
 });
 
 test('does not verify immutable public artifacts until their purge is confirmed', async () => {

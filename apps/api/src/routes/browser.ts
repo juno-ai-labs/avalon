@@ -62,7 +62,7 @@ function writeCookie(c: Context<HonoAppEnv>, value: string, expiresAt: string) {
  * The business route families a browser cookie may reach. The member shell
  * needs the Space directory, account onboarding, Suggested Work, digests, push
  * devices and workspace membership as well as what guests use; `auth`,
- * `internal`, `ingest`, `access`, `slack`, `sideline` and `dev` stay outside.
+ * `internal`, `ingest`, `access`, `slack` and `dev` stay outside.
  * Of onboarding, only `onboarding/account` and the read-only
  * `onboarding/organization-suggestion` cross: the other onboarding steps answer
  * with a bearer session, which browser JavaScript must never hold.

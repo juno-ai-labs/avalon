@@ -45,7 +45,6 @@ import { deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRout
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { workspaceOperatorRoutes } from './routes/workspace-operations';
 import { workstreamCreateRoutes, workstreamRoutes } from "./routes/workstreams";
-import { sidelineRoutes } from "./routes/sideline";
 import {
   isAllowedGitHubIngressRoute,
   isSharedGitHubIngress,
@@ -200,7 +199,6 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/workspace", workspaceRoutes);
   protectedApi.route("/workspaces", workspaceMembershipRoutes);
   protectedApi.route("/workstreams", workstreamRoutes);
-  protectedApi.route("/sideline", sidelineRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);
   protectedApi.route("/projects", projectRoutes);
   protectedApi.route("/spaces", spaceRoutes);

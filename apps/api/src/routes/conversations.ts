@@ -124,8 +124,7 @@ conversationRoutes.post("/:parentId/merge",
 /**
  * Ordinary message admission for an authenticated client that does not hold a
  * conversation socket. Rally's conversation screen keeps using its admitted
- * socket; narrow command clients such as Sideline use this route rather than
- * manufacturing an impersonation relationship for the signed-in user.
+ * socket; a narrow command client sends through this route instead.
  */
 conversationRoutes.post("/:parentId/substreams/:substreamId/messages",
   requireSendableMessageLength("text"),

@@ -93,47 +93,6 @@ select {
   font: inherit;
 }
 
-/* Shared compact operator surface. The host supplies authority and state. */
-.sideline-app { height: 100%; }
-/* The collapsed rail has room for the avatar and the toggle, not the chevron. */
-.sideline-sidebar.is-compact .account-trigger > svg { display: none; }
-/* The rail is the Spaces sidebar, fixed at the left edge; the composer takes the rest. */
-.sideline-main { height: 100%; margin-left: var(--spaces-sidebar-width); transition: margin-left var(--sidebar-collapse-motion); }
-.sideline-shell { height: 100%; overflow: auto; padding: 42px clamp(24px, 5vw, 72px) 64px; background: var(--av-sys-backdrop-color); }
-.sideline-header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; max-width: 920px; margin: 0 auto 28px; }
-.sideline-header h1 { margin: 3px 0 5px; font-size: 28px; line-height: 1.15; }
-.sideline-header p { margin: 0; color: var(--av-sys-color-text-muted); }
-.sideline-kicker { color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; }
-.sideline-header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-.sideline-marker { border: 1px solid var(--av-sys-color-border-default); border-radius: 999px; padding: 5px 9px; font-size: 12px; font-weight: 650; }
-.sideline-audit-copy { color: var(--av-sys-color-text-muted); font-size: 12px; }
-.sideline-notice { max-width: 920px; margin: 0 auto 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 15px; border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; background: var(--av-sys-color-surface-raised); }
-.sideline-cards { display: grid; gap: 16px; max-width: 920px; margin: 0 auto; }
-.sideline-card { border: 1px solid var(--av-sys-color-border-default); border-radius: 16px; padding: 18px; background: var(--av-sys-color-surface-raised); box-shadow: var(--av-sys-elevation-shadow-md); }
-.sideline-card-heading, .sideline-card-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.sideline-card-heading h2 { margin: 0 0 16px; font-size: 15px; }
-.sideline-icon-button { border: 0; background: transparent; color: var(--av-sys-color-text-muted); border-radius: 8px; padding: 7px; cursor: pointer; }
-.sideline-icon-button:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
-.sideline-fields { display: grid; grid-template-columns: 1fr 1.4fr; gap: 14px; }
-.sideline-fields label { display: grid; gap: 7px; color: var(--av-sys-color-text-muted); font-size: 12px; font-weight: 600; }
-.sideline-fields select, .sideline-fields textarea, .sideline-search-field { width: 100%; border: 1px solid var(--av-sys-color-border-default); border-radius: 10px; background: var(--av-sys-color-surface-default); color: var(--av-sys-color-text-default); padding: 10px 11px; outline: none; }
-.sideline-fields select:focus, .sideline-fields textarea:focus, .sideline-search-field:focus-within { border-color: var(--av-sys-color-border-strong); }
-.sideline-search-field { align-items: center; display: grid; gap: 7px; grid-template-columns: 14px minmax(0, 1fr); padding-block: 0; }
-.sideline-search-field input { background: transparent; border: 0; min-height: 38px; outline: 0; width: 100%; }
-.sideline-message-field { grid-column: 1 / -1; }
-.sideline-message-field textarea { resize: vertical; min-height: 108px; }
-.sideline-field-message { grid-column: 1 / -1; margin: -4px 0 0; font-size: 12px; }
-.sideline-field-message-warning { color: var(--av-sys-color-text-muted); }
-.sideline-field-message-error { color: var(--av-sys-color-danger-base); }
-.sideline-summary { margin-top: 13px; color: var(--av-sys-color-text-muted); font-size: 13px; }
-.sideline-card-footer { margin-top: 15px; min-height: 34px; }
-.sideline-card-actions { display: flex; gap: 8px; }
-.sideline-result { font-size: 13px; color: var(--av-sys-color-text-muted); }
-.sideline-result-failed, .sideline-result-unknown { color: var(--av-sys-color-danger-base); }
-.sideline-result-sent { color: var(--av-sys-color-success-base); }
-.sideline-add { display: flex; margin: 16px auto 0; }
-@media (max-width: 720px) { .sideline-header { flex-direction: column; } .sideline-header-actions { justify-content: flex-start; } .sideline-fields { grid-template-columns: 1fr; } .sideline-message-field { grid-column: auto; } }
-
 button {
   border: 0;
 }
