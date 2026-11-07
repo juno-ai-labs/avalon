@@ -26,44 +26,48 @@ it("refuses an unconfigured deployment or an organization routed through another
   expect(() => cookieClientSession("global", { ...metadata, workspace: { ...metadata.workspace!, region: "another" } })).toThrow("deployment does not match");
 });
 
-it("rewrites canonical links into the shell's Canvas and Sidekick routes", () => {
+it("rewrites Canvas and Sidekick links into the shell's hash routes", () => {
   const workspaceId = metadata.workspace!.id;
-  const spaceId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-  const workstreamId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-  const substreamId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
-  const base = `/app/global/${uuidToBase58(workspaceId)}/s/${uuidToBase58(spaceId)}`;
-  expect(shellLocation(`${base}/c/${uuidToBase58(workstreamId)}`, ""))
-    .toBe(`/app/workspaces/global/${workspaceId}#/canvases/${workstreamId}`);
-  expect(shellLocation(`${base}/c/${uuidToBase58(workstreamId)}/b/${uuidToBase58(substreamId)}`, ""))
-    .toBe(`/app/workspaces/global/${workspaceId}#/canvases/${workstreamId}`);
-  expect(shellLocation(`${base}/c/${uuidToBase58(workstreamId)}/a/${uuidToBase58(substreamId)}`, ""))
-    .toBe(`/app/workspaces/global/${workspaceId}#/canvases/${workstreamId}`);
-  expect(shellLocation(base, "")).toBe(`/app/workspaces/global/${workspaceId}#/canvases`);
-  expect(shellLocation(`/app/global/${uuidToBase58(workspaceId)}/sk/${uuidToBase58(workstreamId)}/`, ""))
-    .toBe(`/app/workspaces/global/${workspaceId}#/sidekicks/${workstreamId}`);
+  const canvasId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const artifactId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const organization = `/app/global/${uuidToBase58(workspaceId)}`;
+  expect(shellLocation(`${organization}/cv/${uuidToBase58(canvasId)}/`, ""))
+    .toBe(`/app/workspaces/global/${workspaceId}#/canvases/${canvasId}`);
+  expect(shellLocation(`${organization}/cv/${uuidToBase58(canvasId)}`, ""))
+    .toBe(`/app/workspaces/global/${workspaceId}#/canvases/${canvasId}`);
+  expect(shellLocation(`${organization}/cv/${uuidToBase58(canvasId)}/a/${uuidToBase58(artifactId)}/`, ""))
+    .toBe(`/app/workspaces/global/${workspaceId}#/canvases/${canvasId}?artifact=${artifactId}`);
+  expect(shellLocation(`${organization}/sk/${uuidToBase58(canvasId)}/`, ""))
+    .toBe(`/app/workspaces/global/${workspaceId}#/sidekicks/${canvasId}`);
   expect(shellLocation(`/app/workspaces/global/${workspaceId}`, "")).toBe(`/app/workspaces/global/${workspaceId}#/`);
   expect(shellLocation(`/app/workspaces/global/${workspaceId}`, "#/settings")).toBeNull();
   expect(shellLocation("/login/email", "")).toBeNull();
 });
 
-it("routes an invitation's addressed conversation paths to the Canvas", () => {
+it("routes no Space, Channel, Breakout or Thread link into the shell", () => {
   const workspaceId = metadata.workspace!.id;
-  const workstreamId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-  const substreamId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
-  const channel = `/app/workspaces/global/${workspaceId}/workstreams/${workstreamId}`;
-  expect(shellLocation(channel, "")).toBe(`/app/workspaces/global/${workspaceId}#/canvases/${workstreamId}`);
-  expect(shellLocation(`${channel}/substreams/${substreamId}`, ""))
-    .toBe(`/app/workspaces/global/${workspaceId}#/canvases/${workstreamId}`);
+  const spaceId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const threadId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const space = `/app/global/${uuidToBase58(workspaceId)}/s/${uuidToBase58(spaceId)}`;
+  for (const retired of [
+    space,
+    `${space}/c/${uuidToBase58(threadId)}`,
+    `${space}/c/${uuidToBase58(threadId)}/b/${uuidToBase58(spaceId)}`,
+    `/app/workspaces/global/${workspaceId}/workstreams/${threadId}`,
+    `/app/workstreams/${threadId}`,
+  ]) {
+    expect(shellLocation(retired, "")).toBeNull();
+    expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, `https://app.rallywith.ai${retired}`)).toBeNull();
+  }
 });
 
 it("routes a notification link in place only in the tab's own Organization", () => {
   const workspaceId = metadata.workspace!.id;
   const other = "ffffffff-ffff-4fff-8fff-ffffffffffff";
-  const spaceId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-  const workstreamId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-  const link = `https://app.rallywith.ai/app/global/${uuidToBase58(workspaceId)}/s/${uuidToBase58(spaceId)}/c/${uuidToBase58(workstreamId)}`;
-  expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, link)).toBe(`#/canvases/${workstreamId}`);
-  expect(inPlaceHash(`/app/workspaces/global/${workspaceId}/`, link)).toBe(`#/canvases/${workstreamId}`);
+  const canvasId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const link = `https://app.rallywith.ai/app/global/${uuidToBase58(workspaceId)}/cv/${uuidToBase58(canvasId)}/`;
+  expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, link)).toBe(`#/canvases/${canvasId}`);
+  expect(inPlaceHash(`/app/workspaces/global/${workspaceId}/`, link)).toBe(`#/canvases/${canvasId}`);
   expect(inPlaceHash(`/app/workspaces/global/${other}`, link)).toBeNull();
   expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, "https://app.rallywith.ai/")).toBeNull();
 });

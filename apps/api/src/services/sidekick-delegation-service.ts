@@ -1,7 +1,7 @@
 import {
-  IdSchema, SIDEKICK_DELEGATION_ERRORS, LEGACY_WORKSTREAM_LINK_ORIGINS,
+  IdSchema, SIDEKICK_DELEGATION_ERRORS, LEGACY_LINK_ORIGINS,
   SidekickDelegatesResultSchema, SidekickMyDelegationsResultSchema, SidekickDelegationReceiptResultSchema,
-  asWorkspaceId, parseSidekickLinkPathTarget,
+  asWorkspaceId, parseLinkTarget,
   type UserId, type WorkspaceId,
 } from "@rally/contracts";
 import type { Env } from "../env";
@@ -33,9 +33,8 @@ export class SidekickDelegationService {
       let url: URL | null = null;
       try { url = new URL(reference); } catch { /* Exact visible name, not a URL. */ }
       if (url) {
-        const origins = [this.env.PUBLIC_WEB_BASE_URL, ...LEGACY_WORKSTREAM_LINK_ORIGINS].map((origin) => new URL(origin).origin);
-        const target = origins.includes(url.origin) && !url.search && !url.hash ? parseSidekickLinkPathTarget(url.pathname) : null;
-        if (!target || target.workspaceId !== this.workspaceId || target.region !== this.env.AVALON_REGION) throw this.unavailable();
+        const target = parseLinkTarget(reference, { webBaseUrl: [this.env.PUBLIC_WEB_BASE_URL, ...LEGACY_LINK_ORIGINS] });
+        if (target?.kind !== "sidekick" || target.workspaceId !== this.workspaceId || target.region !== this.env.AVALON_REGION) throw this.unavailable();
         id = target.sidekickId;
       } else {
         const directory = await (await this.workspace()).listSidekickDirectoryForAuthorizedMember({ workspaceId: this.workspaceId, userId: this.userId });

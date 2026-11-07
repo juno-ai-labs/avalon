@@ -9,30 +9,27 @@ import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 
 const WORKSPACE = "00000000-0000-7000-8000-0000000000a1";
-const SPACE = "00000000-0000-7000-8000-0000000000a2";
-const CHANNEL = "00000000-0000-7000-8000-0000000000a3";
-const BREAKOUT = "00000000-0000-7000-8000-0000000000a4";
+const CANVAS = "00000000-0000-7000-8000-0000000000a3";
+const ARTIFACT = "00000000-0000-7000-8000-0000000000a4";
 const base = `/app/global/${uuidToBase58(WORKSPACE)}`;
 
 describe("linkTitleTarget", () => {
-  it("reads which resource each canonical link path names", () => {
-    expect(linkTitleTarget(`${base}/s/${uuidToBase58(SPACE)}/c/${uuidToBase58(CHANNEL)}`)).toEqual({
-      region: "global", request: { workspaceId: WORKSPACE, target: { kind: "channel", workstreamId: CHANNEL } },
+  it("reads which Canvas or Sidekick each canonical link path names", () => {
+    expect(linkTitleTarget(`${base}/cv/${uuidToBase58(CANVAS)}/`)).toEqual({
+      region: "global", request: { workspaceId: WORKSPACE, target: { kind: "canvas", canvasId: CANVAS } },
     });
-    expect(linkTitleTarget(`${base}/s/${uuidToBase58(SPACE)}/c/${uuidToBase58(CHANNEL)}/b/${uuidToBase58(BREAKOUT)}`)).toEqual({
-      region: "global",
-      request: { workspaceId: WORKSPACE, target: { kind: "breakout", workstreamId: CHANNEL, substreamId: BREAKOUT } },
+    // Opened onto an artifact, the link still names its Canvas.
+    expect(linkTitleTarget(`${base}/cv/${uuidToBase58(CANVAS)}/a/${uuidToBase58(ARTIFACT)}/`)).toEqual({
+      region: "global", request: { workspaceId: WORKSPACE, target: { kind: "canvas", canvasId: CANVAS } },
     });
-    expect(linkTitleTarget(`${base}/s/${uuidToBase58(SPACE)}/`)).toEqual({
-      region: "global", request: { workspaceId: WORKSPACE, target: { kind: "space", spaceId: SPACE } },
-    });
-    expect(linkTitleTarget(`${base}/sk/${uuidToBase58(CHANNEL)}/`)).toEqual({
-      region: "global", request: { workspaceId: WORKSPACE, target: { kind: "sidekick", sidekickId: CHANNEL } },
+    expect(linkTitleTarget(`${base}/sk/${uuidToBase58(CANVAS)}/`)).toEqual({
+      region: "global", request: { workspaceId: WORKSPACE, target: { kind: "sidekick", sidekickId: CANVAS } },
     });
   });
 
-  it("names nothing for a link without an Organization or a path that is not a link", () => {
-    expect(linkTitleTarget(`/app/workstreams/${CHANNEL}`)).toBeNull();
+  it("names nothing for a retired Space, Channel or Thread link, or a path that is not a link", () => {
+    expect(linkTitleTarget(`${base}/s/${uuidToBase58(CANVAS)}/c/${uuidToBase58(ARTIFACT)}`)).toBeNull();
+    expect(linkTitleTarget(`/app/workstreams/${CANVAS}`)).toBeNull();
     expect(linkTitleTarget("/help/")).toBeNull();
   });
 });
@@ -57,14 +54,14 @@ describe("GET /links/title refusals", () => {
     const response = await createApp().request(`/links/title?${new URLSearchParams({ path })}`, {}, env());
     return { status: response.status, code: ((await response.json()) as { error?: { code?: string } }).error?.code };
   };
-  const channel = `/s/${uuidToBase58(SPACE)}/c/${uuidToBase58(CHANNEL)}`;
+  const canvas = `/cv/${uuidToBase58(CANVAS)}/`;
 
   it("answers an Organization this deployment does not hold as not found, before opening any object", async () => {
-    await expect(title(`${base}${channel}`)).resolves.toEqual({ status: 404, code: "link_not_found" });
+    await expect(title(`${base}${canvas}`)).resolves.toEqual({ status: 404, code: "link_not_found" });
   });
 
   it("leaves a link minted in another region to that region", async () => {
-    await expect(title(`/app/elsewhere/${uuidToBase58(WORKSPACE)}${channel}`)).resolves.toEqual({ status: 404, code: "link_not_found" });
+    await expect(title(`/app/elsewhere/${uuidToBase58(WORKSPACE)}${canvas}`)).resolves.toEqual({ status: 404, code: "link_not_found" });
   });
 
   it("refuses a path that is not a Rally link", async () => {

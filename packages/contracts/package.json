@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./desktop-deep-link": "./src/desktop-deep-link.ts",
+    "./links": "./src/links.ts",
     "./desktop-deep-link-intent": "./src/desktop-deep-link-intent.ts",
     "./deferred-zod-schema": "./src/deferred-zod-schema.ts",
     "./connector-oauth-providers": "./src/connector-oauth-providers.ts",
@@ -24,7 +25,6 @@
     "./workspace-reach-watch": "./src/workspace-reach-watch.ts",
     "./telemetry": "./src/telemetry.ts",
     "./workspace-target": "./src/workspace-target.ts",
-    "./workstream-links": "./src/workstream-links.ts",
     "./uuid-base58": "./src/uuid-base58.ts",
     "./url-schemas": "./src/url-schemas.ts",
     "./text": "./src/text.ts",

@@ -10,7 +10,7 @@ import { logInfo, logWarn } from "../observability/logger";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
-import { canonicalWorkstreamUrl } from "./workstream-link-service";
+import { conversationCanonicalUrl } from "./conversation-link-service";
 
 const SlackMentionConnectionSchema = z.strictObject({
   id: z.string().uuid(),
@@ -77,7 +77,7 @@ interface WorkstreamSlackDelivery {
   /** Seeds the per-chunk `client_msg_id`, so a retry posts the same message. */
   sourceId: string;
   kind: "mention" | "participant_added" | "activity";
-  /** The link, when the caller has one; otherwise the thread's canonical URL. */
+  /** The link, when the caller has one; otherwise the conversation's canonical URL. */
   url?: string;
   chunks: (target: string, maximum: number) => string[];
 }
@@ -142,7 +142,7 @@ export interface WorkstreamSlackActivity {
   workspaceName: string;
   workstreamId: string;
   substreamId?: string;
-  /** Where the message links, when not the thread: a Channel merge opens its Channel. */
+  /** Where the message links: the Canvas or Sidekick the row is about. */
   url?: string;
   title: string;
   body: string;
@@ -192,6 +192,18 @@ async function deliverWorkstreamSlack(
   let linkedConnectionCount = 0;
   let lookupMatchCount = 0;
   let resolutionMode: "confirmed_link" | "email_lookup" | null = null;
+  // A Canvas's or a Sidekick's link. A Thread, Breakout or Channel has none
+  // now that no surface opens one, so nothing is sent to open nothing.
+  const target = input.url ?? await conversationCanonicalUrl(env, {
+    region: env.AVALON_REGION, workspaceId: input.workspaceId, parentId: workstreamId,
+  });
+  if (!target) {
+    logInfo(env, "slack_notification_terminal", {
+      workspace_id: input.workspaceId, workstream_id: workstreamId, kind: input.kind, source_id: input.sourceId,
+      recipient_user_id: input.recipientUserId, outcome: "skipped", reason: "conversation_not_linkable",
+    });
+    return "skipped";
+  }
   try {
     const rawConnections = await env.DB.prepare(
       `SELECT cc.id, cc.workspace_id, cc.provider_account_id,
@@ -351,12 +363,6 @@ async function deliverWorkstreamSlack(
       slack_user_id: resolvedSlackUserId,
       channel_id: channelId,
       outcome: "opened",
-    });
-    const target = input.url ?? await canonicalWorkstreamUrl(env, {
-      region: env.AVALON_REGION,
-      workspaceId: input.workspaceId,
-    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
-      workstreamId,
     });
     const chunks = input.chunks(target, 40_000);
     for (const [index, chunk] of chunks.entries()) {

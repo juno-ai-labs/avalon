@@ -17,7 +17,7 @@ import type {
   RuntimeConfig,
 } from '../../common/desktop';
 import { accountReconnectRequiredFailure, workspaceActivationFailure } from '../../common/workspace-activation-error';
-import { sidekickDeepLink } from '@rally/contracts/workstream-links';
+import { canvasDeepLink, sidekickDeepLink } from '@rally/contracts/links';
 import {
   AccountSignInFailedError,
   AccountSignInSupersededError,
@@ -594,7 +594,7 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
-    await dispatchDeepLink(`rallywithai://workspace/global/${workspaceGlobal}/workstreams/00000000-0000-7000-8000-000000000031`);
+    await dispatchDeepLink(canvasDeepLink({ region: 'global', workspaceId: workspaceGlobal, canvasId: '00000000-0000-7000-8000-000000000031' }));
     await waitFor(() => expect(bridge.openExternal).toHaveBeenCalledOnce());
     expect(bridge.showDeepLinkError).not.toHaveBeenCalled();
     expect(window.location.hash).toBe('');
@@ -1377,8 +1377,12 @@ describe('single-platform desktop identity routing', () => {
 
   it.each([
     {
-      name: 'work-stream',
-      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/workstreams/00000000-0000-7000-8000-000000000031',
+      name: 'Canvas',
+      url: canvasDeepLink({
+        region: 'enterprise',
+        workspaceId: '00000000-0000-7000-8000-000000000030',
+        canvasId: '00000000-0000-7000-8000-000000000031',
+      }),
       assertDestination: async () => expect(window.location.hash)
         .toBe('#/canvases/00000000-0000-7000-8000-000000000031'),
     },
@@ -1474,10 +1478,10 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${workspaceId}/workstreams/${firstWorkstreamId}`,
+      canvasDeepLink({ region: 'global', workspaceId: workspaceId, canvasId: firstWorkstreamId }),
     );
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${workspaceId}/workstreams/${secondWorkstreamId}`,
+      canvasDeepLink({ region: 'global', workspaceId: workspaceId, canvasId: secondWorkstreamId }),
     );
 
     // The second link waits behind the first's activation rather than running
@@ -1495,7 +1499,7 @@ describe('single-platform desktop identity routing', () => {
     expect(bridge.reselectActiveWorkspace).toHaveBeenCalledTimes(2);
   });
 
-  it('opens a child link\'s Canvas after serialized organization activation', async () => {
+  it('opens an artifact link\'s Canvas after serialized organization activation', async () => {
     const workspaceId = '00000000-0000-7000-8000-000000000033';
     const firstWorkstreamId = '00000000-0000-7000-8000-000000000034';
     const secondWorkstreamId = '00000000-0000-7000-8000-000000000035';
@@ -1518,10 +1522,10 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${workspaceId}/workstreams/${firstWorkstreamId}`,
+      canvasDeepLink({ region: 'global', workspaceId: workspaceId, canvasId: firstWorkstreamId }),
     );
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${workspaceId}/workstreams/${secondWorkstreamId}/substreams/${childId}`,
+      canvasDeepLink({ region: 'global', workspaceId: workspaceId, canvasId: secondWorkstreamId, artifactId: childId }),
     );
 
     // The second link waits behind the first's activation rather than running
@@ -1540,16 +1544,15 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('continues serialized deep-link delivery after one action rejects', async () => {
-    const workstreamId = '00000000-0000-7000-8000-000000000036';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.openSettings.mockRejectedValueOnce(new Error('Settings could not be opened'));
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink('rallywithai://settings/connections');
-    await dispatchDeepLink(`rallywithai://workstreams/${workstreamId}`);
+    await dispatchDeepLink('rallywithai://activity');
 
-    await waitFor(() => expect(window.location.hash).toBe(`#/canvases/${workstreamId}`));
+    await waitFor(() => expect(window.location.hash).toBe('#/canvases'));
   });
 
   it('does not apply a connector result when its organization cannot be activated', async () => {
@@ -1570,7 +1573,7 @@ describe('single-platform desktop identity routing', () => {
     invalidate.mockRestore();
   });
 
-  it('does not navigate when an organization-addressed channel link cannot be activated', async () => {
+  it('does not navigate when an organization-addressed Canvas link cannot be activated', async () => {
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000020';
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockRejectedValueOnce(workspaceActivationFailure('workspace_access_denied'));
@@ -1579,7 +1582,7 @@ describe('single-platform desktop identity routing', () => {
     const before = window.location.hash;
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000021`,
+      canvasDeepLink({ region: 'global', workspaceId: targetWorkspaceId, canvasId: '00000000-0000-7000-8000-000000000021' }),
     );
 
     await waitFor(() => expect(bridge.activateWorkspace).toHaveBeenCalledWith({
@@ -1912,7 +1915,7 @@ describe('single-platform desktop identity routing', () => {
     const before = window.location.hash;
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000039`,
+      canvasDeepLink({ region: 'global', workspaceId: targetWorkspaceId, canvasId: '00000000-0000-7000-8000-000000000039' }),
     );
 
     await waitFor(() => expect(lastDeepLinkFailure()).toContain('Check your connection'));
@@ -1939,7 +1942,7 @@ describe('single-platform desktop identity routing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Visit another thread' }));
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${activeWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000042`,
+      canvasDeepLink({ region: 'global', workspaceId: activeWorkspaceId, canvasId: '00000000-0000-7000-8000-000000000042' }),
     );
 
     await waitFor(() => expect(window.location.hash).toBe('#/canvases/00000000-0000-7000-8000-000000000042'));
@@ -1960,7 +1963,7 @@ describe('single-platform desktop identity routing', () => {
     // A new deep link from an earlier visit discards the old forward branch.
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/workstreams/ordinary-visit'));
-    await dispatchDeepLink(`rallywithai://workspace/global/${activeWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000043`);
+    await dispatchDeepLink(canvasDeepLink({ region: 'global', workspaceId: activeWorkspaceId, canvasId: '00000000-0000-7000-8000-000000000043' }));
     await waitFor(() => expect(screen.getByTestId('history-route')).toHaveTextContent('/canvases/00000000-0000-7000-8000-000000000043'));
     expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled();
   });
@@ -1977,7 +1980,7 @@ describe('single-platform desktop identity routing', () => {
     client.setQueryData(['members'], ['from-enterprise']);
 
     await dispatchDeepLink(
-      `rallywithai://workspace/global/${targetWorkspaceId}/workstreams/00000000-0000-7000-8000-000000000046`,
+      canvasDeepLink({ region: 'global', workspaceId: targetWorkspaceId, canvasId: '00000000-0000-7000-8000-000000000046' }),
     );
 
     await waitFor(() => expect(window.location.hash).toBe('#/canvases/00000000-0000-7000-8000-000000000046'));

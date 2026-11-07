@@ -662,14 +662,13 @@ it("names the field when an invitation is asked to expire past the end of time",
   expect(await routes(NEWCOMER)).toEqual([]);
 });
 
-it("emails the conversation's own address, carrying no secret", async () => {
+it("emails a Thread share its Organization's address, since a Thread has no link, carrying no secret", async () => {
   const share = await create([child], [NEWCOMER]);
-  const link = await deliveredLink(share.id);
-  // A child share opens the child; nothing in the link is a credential, so a
-  // forwarded copy opens nothing for anyone who cannot sign in as the address.
-  expect(link.toString()).toBe(`https://app.test/app/workspaces/global/${workspaceId}/workstreams/${parentId}/substreams/${childId}`);
+  // Nothing in the link is a credential, so a forwarded copy opens nothing for
+  // anyone who cannot sign in as the address.
+  expect((await deliveredLink(share.id)).toString()).toBe(`https://app.test/app/workspaces/global/${workspaceId}`);
   const whole = await create([main], ["main@example.test"]);
-  expect((await deliveredLink(whole.id)).toString()).toBe(`https://app.test/app/workspaces/global/${workspaceId}/workstreams/${parentId}`);
+  expect((await deliveredLink(whole.id)).toString()).toBe(`https://app.test/app/workspaces/global/${workspaceId}`);
 });
 
 
