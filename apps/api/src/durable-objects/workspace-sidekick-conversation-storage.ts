@@ -33,16 +33,20 @@ import type { ConversationToolScope } from "./workspace-conversation-tool-protoc
  * A Rally conversation: a Channel's Main (`"0"`) or one of its Breakouts
  * (parent kind `workstream`), or a Sidekick's own shared conversation (parent
  * kind `automation`, substream `"0"`, whose conversation id is the
- * Sidekick's). A later parent kind, a Canvas's, joins this union the same way.
+ * Sidekick's), or a Canvas's Chat (parent kind `canvas`, substream `"0"`),
+ * which a Sidekick may be attached to.
  */
 export interface ConversationAddress {
-  parentKind: "workstream" | "automation";
+  parentKind: "workstream" | "automation" | "canvas";
   parentId: string;
   substreamId: string;
 }
 
-/** A Thread or Breakout address, the only kind the directories describe and a Sidekick attaches. */
+/** A Thread or Breakout address, the only kind the directories describe. */
 export type WorkstreamAddress = ConversationAddress & { parentKind: "workstream" };
+
+/** What a Sidekick's conversation attachment names: a Thread or Breakout, or a Canvas's Chat (migration 140). */
+export type AttachableAddress = ConversationAddress & { parentKind: "workstream" | "canvas" };
 
 export interface ScopedConversation extends ConversationAddress {
   conversationId: string;
@@ -222,13 +226,13 @@ export function scopeConversations(
       isHome: false, isOwn: scope.authoring === true, isParent: scope.authoring !== true });
     const home = sidekickHome(sql, scope.automationId);
     if (home) addresses.push({ ...home, isHome: true, isOwn: false, isParent: false });
-    for (const row of sql.exec<{ parent_id: string; substream_id: string }>(
-      `SELECT parent_id, substream_id FROM sidekick_conversation_attachments
+    for (const row of sql.exec<{ parent_kind: AttachableAddress["parentKind"]; parent_id: string; substream_id: string }>(
+      `SELECT parent_kind, parent_id, substream_id FROM sidekick_conversation_attachments
         WHERE automation_id = ? ORDER BY attached_at, parent_id, substream_id`,
       scope.automationId,
     ).toArray()) {
       if (home && home.parentId === row.parent_id && home.substreamId === row.substream_id) continue;
-      addresses.push({ parentKind: "workstream", parentId: row.parent_id, substreamId: row.substream_id,
+      addresses.push({ parentKind: row.parent_kind, parentId: row.parent_id, substreamId: row.substream_id,
         isHome: false, isOwn: false, isParent: false });
     }
   }
@@ -340,7 +344,7 @@ export function conversationsTitled(sql: SqlStorage, title: string, userId: stri
  */
 export function attachSidekickConversation(sql: SqlStorage, input: {
   automationId: string;
-  address: ConversationAddress;
+  address: AttachableAddress;
   userId: string;
   now: number;
 }): { alreadyAttached: boolean } {
@@ -351,10 +355,10 @@ export function attachSidekickConversation(sql: SqlStorage, input: {
   const inserted = sql.exec<{ automation_id: string }>(
     `INSERT INTO sidekick_conversation_attachments
        (automation_id, parent_kind, parent_id, substream_id, attached_by_user_id, attached_at)
-     VALUES (?, 'workstream', ?, ?, ?, ?)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT DO NOTHING
      RETURNING automation_id`,
-    input.automationId, input.address.parentId, input.address.substreamId, input.userId, input.now,
+    input.automationId, input.address.parentKind, input.address.parentId, input.address.substreamId, input.userId, input.now,
   ).toArray();
   return { alreadyAttached: inserted.length === 0 };
 }

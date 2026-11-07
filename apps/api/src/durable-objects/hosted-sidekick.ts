@@ -514,6 +514,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     super(host, sidekickId, "automation");
   }
 
+  protected readonly codeNoun = "sidekick";
+
   get sidekickId(): string {
     return this.parentId;
   }

@@ -69,7 +69,7 @@ adds a Sidekick's definition, triggers and runs; `HostedCanvas` adds the
 Canvas's row and audience. A new message in the Chat moves the Canvas's
 `updated_at`, so it rises in the recency list.
 
-The Chat is a `SubstreamAgent` like every other conversation; its root row says
+The Chat is an `AgentLoopDO` like every other conversation; its root row says
 `parent_kind = 'canvas'` (conversation migration 83 widened the CHECK). Opening
 it is the conversation route's ordinary admission: `resolveHostedParent`
 answers `canvas` and the Canvas's viewer decision in one call, the admitted
@@ -101,7 +101,9 @@ A new Canvas is `creator`: its creator alone, and its writer Sidekick's
 audience when a run made it.
 
 The conversation viewer check reads the person's role from their Organization
-relationship (a guest asks with `requireGrantAuthority`). Resource
+relationship (a guest asks with `requireGrantAuthority`); only an active
+member has a role, so somebody suspended or with no relationship is never
+admitted by Organization visibility. Resource
 authorization, and so `ArtifactOpenService`, decides a Canvas's artifact from
 the same facts: an artifact generated in the Chat is attached to it, so a
 person who may open the Canvas may open the artifact and nobody else may
