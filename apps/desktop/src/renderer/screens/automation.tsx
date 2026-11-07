@@ -1,14 +1,16 @@
 import { ErrorNotice } from '../components/primitives';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ChevronLeft, Pencil } from 'lucide-react';
+import { CanvasMark } from '../components/canvas-mark';
+import { canvasRoute } from '../lib/canvases';
 import type { WorkstreamAppearancePatch } from '@rally/contracts';
 import type { AutomationDetail } from '../lib/types';
 import { SidekickDetailLayout } from '../components/sidekick-detail-layout';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
 import { Button, EmptyState, OpeningState } from '../components/primitives';
-import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
-import { useCloseWindowSurface } from '../lib/window-surface';
+import { useCollaborationSession } from '../lib/collaboration-session';
 import { copySidekickLink } from '../lib/copy-workstream-link';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { ConversationSurface } from './conversation-surface';
@@ -28,18 +30,11 @@ export function AutomationScreen(): React.JSX.Element {
   return <AutomationDetailScreen id={id} />;
 }
 
-/**
- * A failed Sidekick screen's way on. In a browser tab the screen fills the tab
- * with the sidebar hidden (`lib/window-surface.ts`), so it also offers the way
- * out the Mac app's window chrome gives there.
- */
+/** A failed Sidekick screen's way on; the sidebar beside it is the way out. */
 function ErrorActions({ onRetry }: { onRetry: () => void }): React.JSX.Element {
-  const { host } = useShellCapabilities();
-  const close = useCloseWindowSurface();
   return (
     <div className="empty-state-actions">
       <Button onClick={onRetry}>Try again</Button>
-      {host === 'browser' && <Button onClick={close}>Close</Button>}
     </div>
   );
 }
@@ -220,16 +215,62 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       runs={runs.data}
       runsError={runs.error?.message}
     />}>
-      <ConversationSurface
-        // This screen is the Sidekick's editor until its shared conversation
-        // gets its own composer (plan step A-13): a manager's message here is
-        // an edit, marked so, and anyone else's asks the Sidekick for a run.
-        messageIntent={viewerManagesSidekick(detail, session) ? 'edit_sidekick' : undefined}
-        parentId={id}
-        parentKind="automation"
-        renderHeader={() => <header className="sidekick-conversation-heading"><h2>Conversation</h2></header>}
-        substreamId="0"
-      />
+      <SidekickConversation detail={detail} manages={viewerManagesSidekick(detail, session)} />
     </SidekickDetailLayout>
   );
+}
+
+/**
+ * The Sidekick's shared conversation (substream `"0"`), or one run's own
+ * conversation while `?run=` names it. Everyone the Sidekick is shared with
+ * talks here; a message addressed to the Sidekick starts a run, whose row the
+ * server writes into this feed. A manager edits the Sidekick from the same
+ * composer by switching on Edit Sidekick, which marks each message
+ * `intent: "edit_sidekick"` for the wizard; nobody else is offered it, and
+ * the server refuses the mark from anyone else. A draft has nothing to run
+ * yet, so a manager opens one already editing.
+ */
+function SidekickConversation({ detail, manages }: { detail: AutomationDetail; manages: boolean }): React.JSX.Element {
+  const [search, setSearch] = useSearchParams();
+  const runId = search.get('run');
+  const [editing, setEditing] = useState(detail.lifecycle === 'draft');
+  const name = detail.currentDefinition?.name ?? detail.name;
+  if (runId) {
+    return <ConversationSurface
+      key={`run:${runId}`}
+      parentId={detail.id}
+      parentKind="automation"
+      renderHeader={() => <header className="sidekick-conversation-heading">
+        <button className="sidekick-run-back" onClick={() => setSearch({}, { replace: false })} type="button"><ChevronLeft aria-hidden="true" size={16} />Conversation</button>
+        <h2>Run</h2>
+      </header>}
+      substreamId={runId}
+    />;
+  }
+  const edit = manages && editing;
+  const canvases = detail.canvases ?? [];
+  return <ConversationSurface
+    {...(manages ? { composerMenuActions: [{
+      checked: editing,
+      icon: <Pencil aria-hidden="true" />,
+      label: 'Edit Sidekick',
+      onSelect: () => setEditing((current) => !current),
+    }] } : {})}
+    composerPlaceholder={edit ? 'Describe a change to this Sidekick…' : `Message ${name} and the team…`}
+    key="shared"
+    messageIntent={edit ? 'edit_sidekick' : undefined}
+    parentId={detail.id}
+    parentKind="automation"
+    renderHeader={() => <header className="sidekick-conversation-heading">
+      <h2>Conversation</h2>
+      {edit && <span className="sidekick-editing-badge" role="status">Editing this Sidekick</span>}
+      {canvases.length > 0 && <ul aria-label="Canvases it made" className="sidekick-canvas-cards">
+        {canvases.map((canvas) => <li key={canvas.id}><Link className="sidekick-canvas-card" to={canvasRoute(canvas.id)}>
+          <CanvasMark kind={null} size={28} />
+          <span><strong>{canvas.title}</strong><small>Canvas</small></span>
+        </Link></li>)}
+      </ul>}
+    </header>}
+    substreamId="0"
+  />;
 }

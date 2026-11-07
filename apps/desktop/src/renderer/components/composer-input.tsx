@@ -110,6 +110,11 @@ export interface ComposerMenuAction {
   icon: ReactNode;
   label: string;
   onSelect: () => void;
+  /**
+   * A mode the composer is in rather than a one-off command: the entry is a
+   * checkbox, ticked while the mode is on, and selecting it flips the mode.
+   */
+  checked?: boolean;
 }
 
 interface ComposerInputProps {
@@ -778,7 +783,25 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
                       // Disabled by hand rather than with Radix's `disabled`, which
                       // drops the item from arrow-key focus and so leaves a keyboard
                       // never reaching the tooltip that says why.
-                      const item = (
+                      const item = action.checked !== undefined ? (
+                        <DropdownMenu.CheckboxItem
+                          aria-disabled={disabled || undefined}
+                          checked={action.checked}
+                          className="menu-item composer-action-menu-item"
+                          data-disabled={disabled ? '' : undefined}
+                          key={action.label}
+                          onSelect={(event) => {
+                            if (disabled) event.preventDefault();
+                            else action.onSelect();
+                          }}
+                        >
+                          {action.icon}
+                          <span>{action.label}</span>
+                          <DropdownMenu.ItemIndicator className="composer-action-menu-check">
+                            <Check aria-hidden="true" size={15} />
+                          </DropdownMenu.ItemIndicator>
+                        </DropdownMenu.CheckboxItem>
+                      ) : (
                         <DropdownMenu.Item
                           aria-disabled={disabled || undefined}
                           className="menu-item composer-action-menu-item"
