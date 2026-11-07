@@ -24,7 +24,6 @@ const api = vi.hoisted(() => ({
   getAutomationRuns: vi.fn(async () => []),
   getSidekickDelegates: vi.fn(),
   getWorkspaceMembers: vi.fn(async () => []),
-  getPeopleRanking: vi.fn(async () => ({ channel: [], organization: [] })),
   getConnections: vi.fn(async () => []),
   recordActivityEvents: vi.fn(async () => undefined),
   clientFeatureFlags: vi.fn(),
