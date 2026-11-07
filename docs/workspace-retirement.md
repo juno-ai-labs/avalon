@@ -93,8 +93,9 @@ Retirement runs in this order, and the order is the design:
    (`401 session_revoked` on its next request) and the workspace leaves every
    member's discovery.
 2. **Enumerate, then close, in one call.** `beginWorkspaceRetirement` reads the
-   work-stream and automation directories and the Space ids while they still
-   answer, writes each parent into `workspace_retirement_graph` under its kind,
+   Canvas, Sidekick, work-stream and Space directories while they still
+   answer, writes each parent into `workspace_retirement_graph` under its kind
+   (`canvas` from migration 146; a Canvas's Chat is its child `0`),
    and writes the tombstone. Doing this in one call is what leaves no window in
    which a caller writes into a half-closed workspace. Archived Spaces are
    enumerated too: what is being closed is an object, not a product surface, and
@@ -522,6 +523,27 @@ telemetry roles.
   workspaces it was built for.
 
 ## Changelog
+
+### 2026-11-07 — Retiring an Organization closes its Canvases' Chats
+
+**What changed:** WorkspaceDO migration 146 copies
+`workspace_retirement_graph` so its CHECK admits `canvas`, and
+`beginWorkspaceRetirement` records every `canvas_directory` row. The walk asks
+the Canvas for its children through the hosted-parent path it already uses for
+a Sidekick, so each Canvas's Chat object is tombstoned with the Organization.
+Ace's abandon confirmation says again that every Canvas and Sidekick in the
+workspace closes.
+
+**Why:** Plan step C-7. The graph's CHECK predated Canvases, so the recorder
+never named one, and retiring an Organization left every Canvas Chat object
+open and answering. `workspace-retirement-graph.test.ts` failed with the
+recorder unchanged.
+
+**Consequences:** `thread-retirement-service.ts` and the
+`dump_thread_transcripts` and `retire_threads` operations stay until the
+operator has run them in every Organization; only then can the Thread,
+Channel and Space tables and this recorder's `channels` and `spaces` reads be
+dropped.
 
 ### 2026-11-07 — Retire an Organization's Threads, Breakouts and Channels, after dumping their transcripts
 

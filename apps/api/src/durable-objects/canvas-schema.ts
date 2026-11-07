@@ -130,3 +130,25 @@ export const CANVAS_ARTIFACTS_STATEMENTS: readonly string[] = [
   ) STRICT`,
   `CREATE INDEX canvas_artifacts_resource_idx ON canvas_artifacts(resource_id)`,
 ];
+
+/**
+ * WorkspaceDO migration 146: the retirement graph admits a Canvas.
+ *
+ * Retiring an Organization walks `workspace_retirement_graph`, whose CHECK
+ * admitted only `workstream`, `automation` and `space`, so a Canvas's Chat was
+ * never closed with it. A CHECK cannot widen in place and nothing references
+ * the table, so it is copied: every recorded node and its receipt survive.
+ */
+export const RETIREMENT_GRAPH_CANVAS_MIGRATION: readonly string[] = [
+  `CREATE TABLE workspace_retirement_graph_v146 (
+    parent_kind TEXT NOT NULL CHECK (parent_kind IN ('workstream', 'automation', 'space', 'canvas')),
+    parent_id TEXT NOT NULL,
+    recorded_at INTEGER NOT NULL,
+    retired_at INTEGER,
+    PRIMARY KEY (parent_kind, parent_id)
+  ) STRICT`,
+  `INSERT INTO workspace_retirement_graph_v146 (parent_kind, parent_id, recorded_at, retired_at)
+     SELECT parent_kind, parent_id, recorded_at, retired_at FROM workspace_retirement_graph`,
+  `DROP TABLE workspace_retirement_graph`,
+  `ALTER TABLE workspace_retirement_graph_v146 RENAME TO workspace_retirement_graph`,
+];
