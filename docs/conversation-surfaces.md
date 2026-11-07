@@ -147,10 +147,7 @@ arrive after reconnect.
   parent that is. `screens/canvas.tsx` renders it for a Canvas's Chat;
   `screens/automation.tsx` renders `components/automation-header.tsx` in a sibling profile pane
   through `SidekickDetailLayout`, with a short conversation heading over the feed with `parentKind: "automation"` and `substreamId:
-  "0"`. `AddParticipantDialog` stays open after an add or a remove of someone
-  else so more than one membership can be changed in one sitting; it closes on
-  click-outside, Escape, the header close control, or when the current person
-  removes themselves. Tool rows are not rendered one per call: they collapse into one row per plugin, which
+  "0"`. Tool rows are not rendered one per call: they collapse into one row per plugin, which
   [`plugin-activity-rows.md`](plugin-activity-rows.md) owns entirely. The
   retired automation-draft adapter kept a row per call, which is the divergence
   that made the collapse a decision worth recording rather than an obvious one.

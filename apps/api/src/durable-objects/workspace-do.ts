@@ -3861,7 +3861,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 87,
   description: "let a person order the Pinned section under All",
   // A table of its own, not a new kind in `workspace_container_order`, so an
-  // older Worker never reads a row it cannot parse; see docs/workstream-pinning.md.
+  // older Worker never reads a row it cannot parse; see docs/pinning.md.
   statements: WORKSPACE_PINNED_ORDER_MIGRATION,
 }, {
   version: 88,
@@ -4015,12 +4015,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 }, {
   version: 110,
   description: "a pin can be an artifact, carrying the thread it was generated in",
-  // See WORKSPACE_ARTIFACT_PINS_MIGRATION and docs/workstream-pinning.md.
+  // See WORKSPACE_ARTIFACT_PINS_MIGRATION and docs/pinning.md.
   statements: WORKSPACE_ARTIFACT_PINS_MIGRATION,
 }, {
   version: 111,
   description: "a ledger of new versions of pinned artifacts, for their Activity rows and pushes",
-  // See WORKSPACE_ARTIFACT_UPDATES_MIGRATION and docs/workstream-pinning.md#artifact-pins.
+  // See WORKSPACE_ARTIFACT_UPDATES_MIGRATION and docs/pinning.md#artifact-pins.
   statements: WORKSPACE_ARTIFACT_UPDATES_MIGRATION,
 }, {
   version: 112,

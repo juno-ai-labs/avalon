@@ -24,7 +24,7 @@ list row's `pinnedPosition`, so nothing else answers the question.
 | `apps/api/src/durable-objects/workspace-pin-storage.ts` | `workspace_pins` and `WorkspacePinStorage`: one person's pins of one kind and their order. Visibility of the item is the caller's question. |
 | `apps/api/src/durable-objects/canvas-schema.ts` | WorkspaceDO migration 141, which admits `canvas` and `sidekick` in `workspace_pins.item_kind`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `setSidebarPin` and `reorderSidebarPins`, the visibility check on a pin, and the republish of the pinner's list. |
-| `apps/api/src/routes/canvases.ts`, `apps/api/src/routes/automations.ts` | `POST /canvases/:id/pin` and `POST /automations/:id/pin` (`{pinned}`). |
+| `apps/api/src/routes/canvases.ts`, `apps/api/src/routes/automations.ts` | `POST /canvases/:id/pin` and `POST /sidekicks/:id/pin` (`{pinned}`; `/automations/:id/pin` is the same route under the storage name). Both are mounted on `identityApi`, so a guest pins as a member does. |
 | `apps/api/src/routes/workspace.ts` | `PUT /workspace/pinned-order` (`{kind, itemIds}`): one person's order for one list's Pinned group. |
 | `apps/api/src/routes/navigation.ts` | `GET /navigation/artifact-pins`, kept for the detached artifact window and always empty (see [Artifact pins](#artifact-pins)). |
 | `packages/contracts/src/canvases.ts` | `SidebarPinRequestSchema`, `SidebarPinOrderRequestSchema`. |
@@ -41,13 +41,15 @@ keyed `(user_id, item_kind, item_id)`. A Canvas or a Sidekick names no parent.
 The table still admits the retired kinds (`thread`, `channel`, `breakout`,
 `artifact`), whose rows no reader lists.
 
-- **Pin and unpin.** `POST /canvases/:id/pin` and `POST /automations/:id/pin`
-  take `{pinned}`. A pin is refused as `canvas_not_found` or
+- **Pin and unpin.** `POST /canvases/:id/pin` and `POST /sidekicks/:id/pin`
+  (the client's paths; `/automations/:id/pin` is the same route) take
+  `{pinned}`, for members and guests alike. A pin is refused as `canvas_not_found` or
   `sidekick_not_found` for an item the person may not open (a Canvas outside
   its audience, a Sidekick outside its share list); an unpin is never refused.
   A pin appends at the end of the person's group.
 - **Order.** `PUT /workspace/pinned-order` takes one kind and its ids, first
-  to last. An id that is not pinned is dropped; a pin the request leaves out
+  to last. It sits under the member-only `/workspace` routes, so a guest cannot
+  reorder; no client calls it yet. An id that is not pinned is dropped; a pin the request leaves out
   keeps its relative order behind the ones it names, so a second window that
   pinned something a moment ago loses its *position*, never its pin.
 - **Delivery.** A pin write moves that list's waterline and republishes the
@@ -113,11 +115,13 @@ This module owns `workspace_pins`, the pin and order routes, and the Pinned
 group of both sidebar sections. It owns no part of what a Canvas or a Sidekick
 *is* or who may read it, and it does not decide membership: D1 remains
 current membership authority, and WorkspaceDO's audience and share-list checks
-decide whether a member may pin an item.
+decide whether a member or a guest may pin an item. [`canvases.md`](canvases.md)
+holds what is Canvas-specific about a Canvas row; the Pinned group mechanism
+is this document's, for both kinds.
 
 ## Failure modes and limits
 
-- **No count limit.** The retired per-person cap
+- **No count limit.** The per-person cap
   (`MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER`, 1,000 placements) counted Thread,
   Channel and Breakout pins and does not apply to these kinds; a Canvas or
   Sidekick pin is bounded by the items a person can open.
@@ -157,7 +161,7 @@ drops them (plan step C-7); nothing reads or writes them.
 **What changed:** WorkspaceDO migration 141 admits `canvas` and `sidekick` in
 `workspace_pins.item_kind`. `setSidebarPin` and `reorderSidebarPins` pin and
 order them in their lists' Pinned groups (`POST /canvases/:id/pin`,
-`POST /automations/:id/pin`, `PUT /workspace/pinned-order`), and each list's
+`POST /sidekicks/:id/pin`, `PUT /workspace/pinned-order`), and each list's
 rows carry `pinnedPosition`. The client pins from a row's context menu, a
 Canvas's title menu, or by dragging the row into its section's Pinned group
 (`useRowPinDrop`, the list-agnostic sibling of the deleted `usePinDrop`), at
@@ -168,7 +172,10 @@ the pin hooks (`lib/pins.ts`), the artifact pin actions, the landing that
 opened the first pinned Channel, the shared `pins` list and its
 `/navigation/pins` routes, and the older per-Space routes are deleted;
 `GET /navigation/artifact-pins` stays for the detached artifact window and
-answers empty.
+answers empty. `WorkspacePinStorage` loses `list`, `artifactPinners`,
+`listArtifacts` and `count`, which read the retired kinds, and `pin` no longer
+takes a parent (`StoredPinKind` is `canvas | sidekick`). This document was
+`workstream-pinning.md` and is renamed `pinning.md`.
 
 **Why:** Plan steps A-8, A-14, B-3 and C-1 of the
 [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
@@ -180,7 +187,11 @@ listed now.
 
 **Considered and rejected:** Widening `PinKind` and carrying the new kinds in
 `pins`: a released client parsed `PinKind` as a closed enum, so every released
-desktop would have dropped its whole sidebar payload.
+desktop would have dropped its whole sidebar payload. Folding this document
+into `canvases.md`, as plan step D-3 proposed: the Pinned group is one
+mechanism shared by Canvases and Sidekicks, so a Canvas document would have
+owned half of a Sidekick behaviour, and server documents and code comments
+link this document's anchors.
 
 **Consequences:** A new pinnable kind rides its own list's rows, not a shared
 list. The retired kinds' rows stay in `workspace_pins`, and the per-Space
