@@ -12,6 +12,8 @@ const EMAIL_ERRORS = {
 };
 
 export interface WorkstreamParticipantAddedEmail {
+  /** The Canvas or Sidekick link, when the caller already resolved it. */
+  url?: string;
   sourceId: string;
   recipientUserId: string;
   recipientEmail: string;
@@ -53,7 +55,7 @@ export async function sendWorkstreamParticipantAddedEmail(
   // The `rallywithai://` deep link is not linkified by mail clients, and a
   // recipient reading on a phone has no desktop app to hand it to. The
   // canonical HTTPS link is a real link everywhere and ends in the same place.
-  const workstreamUrl = await conversationCanonicalUrl(env, {
+  const workstreamUrl = input.url ?? await conversationCanonicalUrl(env, {
     region: input.region, workspaceId: input.workspaceId, parentId: input.workstreamId,
   });
   // A Thread or Breakout has no link now that no surface opens one; an email

@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 // runtime suite and must not be coupled to fake session deadlines.
 vi.mock('./draft-cache', () => ({ clearAllDrafts: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('./local-cache', () => ({ clearAllLocalCache: vi.fn().mockResolvedValue(undefined) }));
+import { uuidToBase58 } from '@rally/contracts/uuid-base58';
 import { BrowserEntry } from '../../../../browser/src/entry';
 import { clearAllLocalCache } from './local-cache';
 
@@ -347,10 +348,10 @@ it('does not publish an old account organization list after focus restores anoth
   expect(screen.getByRole('link', { name: /Other account organization/ })).toBeInTheDocument();
 });
 
-it('opens a shared conversation straight from sign-in, with nothing to accept', async () => {
-  // The emailed link is the conversation's own address. Signing in as the
-  // invited mailbox is the whole of joining: the server claims the share then.
-  const path = `/app/workspaces/global/${workspace.id}/workstreams/dddddddd-dddd-4ddd-8ddd-dddddddddddd`;
+it('opens a shared Canvas straight from sign-in, with nothing to accept', async () => {
+  // The emailed link is the Canvas's own link. Signing in as the invited
+  // mailbox is the whole of joining: the server claims the share then.
+  const path = `/app/global/${uuidToBase58(workspace.id)}/cv/${uuidToBase58('dddddddd-dddd-4ddd-8ddd-dddddddddddd')}/`;
   history.replaceState(null, '', path);
   const requests: string[] = [];
   let startBody: unknown = null;
@@ -381,7 +382,7 @@ it('opens a shared conversation straight from sign-in, with nothing to accept', 
 });
 
 it('signs in from an emailed link that landed on a shared path and opens what it names', async () => {
-  const path = `/app/workspaces/global/${workspace.id}/workstreams/dddddddd-dddd-4ddd-8ddd-dddddddddddd`;
+  const path = `/app/global/${uuidToBase58(workspace.id)}/cv/${uuidToBase58('dddddddd-dddd-4ddd-8ddd-dddddddddddd')}/`;
   history.replaceState(null, '', `${path}#region=global&challenge=cccccccc-cccc-4ccc-8ccc-cccccccccccc&token=proof-token`);
   let signedIn = false;
   const redeemed: unknown[] = [];
@@ -436,7 +437,7 @@ it('waits for the organization list before saying nothing has been shared', asyn
   expect(screen.queryByText(/is not part of an organization/u)).toBeNull();
   await act(async () => { finish!(Response.json({ workspaces: [] })); });
   expect(await screen.findByText('guest@example.test is not part of an organization, and nothing has been shared with it yet.')).toBeInTheDocument();
-  expect(screen.getByText('Ask a teammate to share a thread or Breakout with you, or create a new organization.')).toBeInTheDocument();
+  expect(screen.getByText('Ask a teammate to share a Canvas or a Sidekick with you, or create a new organization.')).toBeInTheDocument();
 });
 
 it('starts Google sign-in for the page it was opened on and explains a declined one on return', async () => {
@@ -805,4 +806,30 @@ it('drops the organization form when another account signs in elsewhere', async 
     await screen.findByText('other@example.test is not part of an organization, and nothing has been shared with it yet.');
     expect(screen.queryByRole('textbox', { name: 'Organization name' })).not.toBeInTheDocument();
   } finally { view.unmount(); channel.close(); }
+});
+
+it('says a retired Thread link names something gone, and says nothing of the kind on the Organization shell path', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const path = input.split('/browser')[1];
+    if (path === '/session') return Response.json({ user, workspace: null, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    if (path === '/workspaces') return Response.json({ workspaces: [workspace] });
+    if (path === '/workspaces/attention') return Response.json({ attention: [] });
+    if (path === '/workspace/select') return Response.json({ user, workspace, expiresAt: new Date(Date.now() + 100_000).toISOString() });
+    throw new Error(`Unexpected request ${input}`);
+  }));
+  const retired = 'This link is to something that no longer exists. Rally replaced Channels, Threads and Breakouts with Canvases.';
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}/workstreams/dddddddd-dddd-4ddd-8ddd-dddddddddddd`);
+  let view = render(<BrowserEntry />);
+  try {
+    await screen.findByRole('heading', { name: 'Your organizations' });
+    expect(screen.getByText(retired)).toBeVisible();
+  } finally { view.unmount(); }
+  // Signed in on the web app's own Organization shell path, which is no
+  // retired link: the organization list says nothing of one.
+  history.replaceState(null, '', `/app/workspaces/global/${workspace.id}`);
+  view = render(<BrowserEntry />);
+  try {
+    await screen.findByRole('heading', { name: 'Your organizations' });
+    expect(screen.queryByText(retired)).not.toBeInTheDocument();
+  } finally { view.unmount(); }
 });

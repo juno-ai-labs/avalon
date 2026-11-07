@@ -7,6 +7,7 @@ import {
   isConnectorOAuthResult,
   shouldDeliverConnectorResultToSettings,
   httpsLinkDeepLink,
+  isRetiredDeepLink,
 } from './deep-links';
 
 const WORKSPACE_ID = '00000000-0000-7000-8000-000000000019';
@@ -68,5 +69,34 @@ describe('an HTTPS link onto an artifact', () => {
     const deepLink = httpsLinkDeepLink(`https://rallywith.ai/app/global/${workspace}/cv/${canvas}/a/${artifact}/`);
     expect(deepLink).toBe(`rallywithai://workspace/global/${workspace}/canvases/${canvas}/artifacts/${artifact}`);
     expect(acceptedDeepLink(deepLink!)).toBe(deepLink);
+  });
+});
+
+describe('a link to something retired with Threads', () => {
+  it('is recognized by shape, so main can say it no longer exists', () => {
+    for (const retired of [
+      'rallywithai://workstreams/new',
+      'rallywithai://workstreams/00000000-0000-7000-8000-000000000021',
+      'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/workstreams/00000000-0000-7000-8000-000000000021',
+      'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/spaces/1111117Hxt1fAWDjN7TX/channels/1111117Hxt1fAWDjN7TY',
+      'avalon://workstreams/00000000-0000-7000-8000-000000000021',
+      'https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY',
+      'https://www.rallywith.ai/app/workspaces/global/00000000-0000-7000-8000-000000000019/workstreams/00000000-0000-7000-8000-000000000021',
+    ]) {
+      expect(isRetiredDeepLink(retired), retired).toBe(true);
+      expect(acceptedDeepLink(retired), retired).toBeNull();
+    }
+  });
+
+  it('leaves current, unrelated and malformed links alone', () => {
+    for (const other of [
+      'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/1111117Hxt1fAWDjN7TX',
+      'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/sidekicks/1111117Hxt1fAWDjN7TX',
+      'rallywithai://settings/connections',
+      'rallywithai://notes/abc',
+      'https://rallywith.ai/app/workspaces/global/00000000-0000-7000-8000-000000000019',
+      'https://evil.example/app/workstreams/00000000-0000-7000-8000-000000000021',
+      'not a url',
+    ]) expect(isRetiredDeepLink(other), other).toBe(false);
   });
 });
