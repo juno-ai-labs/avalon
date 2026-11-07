@@ -4,7 +4,9 @@ import { IdSchema, UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import {
   CanvasAudienceUpdateSchema,
   CanvasDetailSchema,
+  CanvasSidebarRowSchema,
   CanvasSummarySchema,
+  type CanvasSidebarRow,
   type CanvasArtifact,
   type CanvasDetail,
   type CanvasSummary,
@@ -420,4 +422,65 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     const row = this.row();
     if (row) await this.invitations().indexPending(row.workspace_id);
   }
+}
+
+/**
+ * One viewer's Canvas list, most recently active first: every Canvas they
+ * may open as its creator, a participant, a member of an Organization-wide
+ * one, or someone its writer Sidekick is shared with. An owner or
+ * administrator may open any Canvas, but their list holds only those they are
+ * in, so a private Canvas they never joined does not crowd their sidebar.
+ *
+ * Unread is the Chat's own read state, as `sidekick_viewer_reads` projects it
+ * against the Chat's latest attention ordinal: a manual unread mark or a
+ * message past what they saw; a Canvas they have never opened is unread
+ * unless they made it. Presence is passed in, from the sockets in the Canvas
+ * now.
+ */
+export function canvasSidebarRows(
+  sql: SqlStorage,
+  viewer: { userId: string; member: boolean },
+  present: ReadonlyMap<string, readonly string[]>,
+  limit: number,
+): CanvasSidebarRow[] {
+  const rows = sql.exec<CanvasRow & { participant: number; unread: number; pinned_position: number | null }>(
+    `SELECT canvas.*, (participant.user_id IS NOT NULL) AS participant,
+            CASE
+              WHEN reads.user_id IS NULL THEN CASE WHEN canvas.created_by_user_id = ?1 THEN 0 ELSE 1 END
+              WHEN reads.manual_unread_from_ordinal IS NOT NULL THEN 1
+              WHEN COALESCE(json_extract(chat.effect_json, '$.latestAttentionOrdinal'), 0) > reads.seen_attention_ordinal THEN 1
+              ELSE 0 END AS unread,
+            pin.position AS pinned_position
+       FROM canvas_directory canvas
+       LEFT JOIN canvas_participants participant ON participant.canvas_id = canvas.canvas_id AND participant.user_id = ?1
+       LEFT JOIN sidekick_viewer_reads reads ON reads.sidekick_id = canvas.canvas_id AND reads.user_id = ?1
+       LEFT JOIN sidekick_child_projections chat ON chat.sidekick_id = canvas.canvas_id AND chat.substream_id = '0'
+       LEFT JOIN workspace_pins pin ON pin.user_id = ?1 AND pin.item_kind = 'canvas' AND pin.item_id = canvas.canvas_id
+      WHERE canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
+         OR (?2 = 1 AND canvas.visibility = 'workspace') OR canvas.writer_sidekick_id IS NOT NULL
+      ORDER BY canvas.updated_at DESC, canvas.canvas_id`,
+    viewer.userId, viewer.member ? 1 : 0,
+  ).toArray();
+  const listed: CanvasSidebarRow[] = [];
+  for (const row of rows) {
+    if (listed.length >= limit) break;
+    // A writer Sidekick's audience is the one rule not expressed above; the
+    // row is admitted by the whole rule, without the administrator's reach.
+    if (!canvasAdmits({
+      visibility: row.visibility,
+      creator: row.created_by_user_id === viewer.userId,
+      participant: row.participant === 1,
+      writerAudience: row.writer_sidekick_id !== null
+        && writerSidekickAdmits(sql, row.writer_sidekick_id, { userId: viewer.userId, actorRole: viewer.member ? "member" : null }),
+    }, viewer.member)) continue;
+    listed.push(CanvasSidebarRowSchema.parse({
+      ...canvasSummary(row),
+      artifactKind: null,
+      unread: row.unread === 1,
+      presentUserIds: [...(present.get(row.canvas_id) ?? [])].filter((userId) => userId !== viewer.userId),
+      pinnedPosition: row.pinned_position,
+      sharedWithMe: row.created_by_user_id !== viewer.userId && row.participant === 1,
+    }));
+  }
+  return listed;
 }

@@ -1022,8 +1022,15 @@ Sidekick's conversation.
 **Why:** A Canvas's Chat is an ordinary conversation object (the Canvases and
 Sidekicks decision log), so it opens on the same feed socket.
 
+The workspace socket carries each viewer's Canvas list: `canvases` on the
+subscribe payload's sidebar and a `workspace_canvas_list` push, its own event
+type so released clients ignore it; `set_presence` admits a Canvas the viewer
+may open as its foreground conversation.
+
 **Consequences:** The conversation object refuses a ticket whose kind
-disagrees with its root row, so a Canvas id cannot be opened as a Thread.
+disagrees with its root row, so a Canvas id cannot be opened as a Thread. A
+new sidebar list goes on its own event type, never as a new discriminator
+value of an existing one.
 
 ### 2026-11-06 — The iOS client is deleted
 

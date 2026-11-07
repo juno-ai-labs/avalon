@@ -1,4 +1,4 @@
-import type { ArtifactPinList, ChannelStats, ContainerOrder, PersonalOrder, PinList, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
+import type { ArtifactPinList, CanvasSidebarRow, ChannelStats, ContainerOrder, PersonalOrder, PinList, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
 import { useQuery, type InfiniteData, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import { sameContainer } from './personal-order';
@@ -20,12 +20,14 @@ import type { AutomationSummary, SpaceConversationSummary } from './types';
  * route, and only the second of those two pushes carries a higher number.
  */
 
-export type SidebarList = 'automations';
+export type SidebarList = 'automations' | 'canvases';
 type SidebarWaterline = SidebarList | 'spaces';
 
 /** The cache entries the shell reads these lists under. */
 export const SIDEBAR_LIST_QUERY_KEYS = {
   automations: ['automations'],
+  /** This viewer's Canvases (`workspace_canvas_list`); see docs/canvases.md. */
+  canvases: ['canvases'],
 } as const satisfies Record<SidebarList, readonly unknown[]>;
 
 export const SPACES_QUERY_KEY = ['spaces'] as const;
@@ -133,6 +135,7 @@ function pinWaterlineLedger(queryClient: QueryClient): void {
 
 interface SidebarListItems {
   automations: AutomationSummary[];
+  canvases: CanvasSidebarRow[];
 }
 
 /**

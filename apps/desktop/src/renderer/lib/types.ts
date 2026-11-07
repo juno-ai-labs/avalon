@@ -110,6 +110,10 @@ export interface AutomationSummary {
   lastRunAt?: string;
   /** Last time the automation itself changed — a draft's only activity. */
   updatedAt: string;
+  /** Sidebar rows only: unread in its shared conversation, waiting on input, and its place in the Pinned group. */
+  unread?: boolean;
+  needsInput?: boolean;
+  pinnedPosition?: number | null;
 }
 
 export interface WorkstreamSummary {
