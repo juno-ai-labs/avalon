@@ -84,6 +84,9 @@ to future occurrences rather than replaying blocked historical work. A continued
 run retains its coordinator while eligible and selects another eligible delegate
 when that person becomes unavailable. The new coordinator is persisted on the
 existing run. Only an empty eligible list refuses with `run_no_eligible_delegate`.
+A run a non-delegate asked for is the exception: it keeps its requester as its
+principal for good and never moves to a delegate (see
+[who a run acts as](#who-a-run-acts-as)).
 Eligibility refreshes at activation and inventory loading. An ongoing background
 attempt reuses that snapshot; model/tool boundaries read the root lifecycle and
 stop generation without rescanning delegates or comparing coordinators. Pause,
@@ -1044,7 +1047,8 @@ asks `sidekickContinueRun`:
 | For the wizard | Manages the Sidekick (`managerAllows`) | `wizard` | The wizard's turn, marked `sidekickWizard` on its execution context, with `rally:sidekicks`. |
 | For the wizard | Anyone else | `refused` | `sidekick_edit_requires_manager`. |
 | Anything else | Anyone, managers included, who is an eligible delegate | `run` | A run under the Sidekick's definition, admitted the way `runNow` admits one (`manual` trigger, `requestedByUserId` the sender, occurrence key `message:<turnId>`), with the message as its opening (`conversationMessageOpening`). The message lands in `"0"` as said to the room. |
-| Anything else | Anyone else | `refused` | `sidekick_not_active`, `sidekick_not_runnable` (instructions only, the same refusal `runNow` gives) or `run_no_eligible_delegate`. |
+| Anything else | An active member who is not an eligible delegate | `run` | The same run, acting as the sender under their own access ([who a run acts as](#who-a-run-acts-as)). |
+| Anything else | Anyone else (a guest who is not a delegate) | `refused` | `sidekick_not_active`, `sidekick_not_runnable` (instructions only, the same refusal `runNow` gives) or `run_no_eligible_delegate`. |
 
 Input is for the wizard when its sender marked it, or when it answers
 something the wizard asked: an elicitation answer (`reason:
@@ -1178,9 +1182,31 @@ Canvases and Sidekicks plan.
 - **Needs input.** `needsInput` on the sidebar row is the delegation attention
   or `"0"` waiting on input.
 
-A run a non-delegate's message asks for is still refused
-(`run_no_eligible_delegate`); running it under the requester's own access is
-not built yet.
+### Who a run acts as
+
+A run its triggers start, or that a delegate asks for, acts as a delegate: its
+coordinator, re-picked from the eligible delegates when that person becomes
+unavailable, and its connector operations may use any delegate's personal
+account and the Organization's connections. A run a member who is not a
+delegate asks for in the shared conversation acts as that member alone, the
+PRD's "a shared Sidekick uses delegate access only for its own runs":
+
+- `sidekick_runs.requester_user_id` (WorkspaceDO migration 138) records them,
+  and `coordinator_user_id` is them too. Start, provisioning and every
+  continuation keep them (`runPrincipal`) for as long as they are an active
+  member; no delegate is ever substituted.
+- The run's account view, `readExecutionDelegation` with its `runId`, names
+  only the requester (`delegates: [requester]`, `requesterUserId`), so the
+  inventory, the personal-connection owner check and
+  `executeSidekickAccountOperation` see only their own personal accounts and the
+  Organization's connections, as a member's own work does.
+- An operation that would need a delegate's account is refused with
+  `sidekick_requester_account_unavailable` (a `ConnectorError` whose `details.code`
+  and message name it), so the run's reply can say why rather than reporting a
+  generic failure.
+- A guest who is not a delegate is still refused (`run_no_eligible_delegate`):
+  they hold no Organization access to run under.
+
 
 ### Scheduled self-review
 
@@ -1916,8 +1942,8 @@ the wizard's; the claim routes it as a run otherwise. Authoring tools in `"0"`
 follow `sidekickWizard`, not the conversation, so a producer that activates a
 turn there outside the claim gets none. The desktop's Sidekick screen marks a
 manager's every message as an edit until A-13 gives the conversation its own
-composer. A message-started run runs only as an eligible delegate who sent it,
-until runs can act under the requester's own access. A message in `"0"` can no
+composer. A message-started run acts as its sender: as a delegate when they are one,
+otherwise under their own access only. A message in `"0"` can no
 longer steer a running turn. The row is a projection: anything that needs a
 run's truth reads `sidekick_runs`, and a row that drifted is rebuilt by a
 replay, and a replay is the only delivery that overrides a newer version. A
@@ -1929,6 +1955,21 @@ rather than its name: `AutomationActivationV1Schema` is a `strictObject`, and
 that client's `safeParse` of content with the new optional `run` key fails and
 falls back to `{}`. Accepted, since the row still renders and the next desktop
 release reads it.
+
+**Who a run acts as (the A-4 decision log item).** A member who is not a
+delegate no longer gets `run_no_eligible_delegate` for a message in `"0"`:
+the run records them as its requester (migration 138), keeps them through
+start, provisioning and every continuation, sees only their own accounts and
+the Organization's connections, and refuses an operation that needs a
+delegate's account with `sidekick_requester_account_unavailable`. Why: the
+decision log's "a shared Sidekick uses delegate access only for its own
+runs": a person must not read through the Sidekick what they cannot read
+themselves, and refusing them outright left everyone it was shared with but
+not delegated by unable to use it. Rejected: borrowing a delegate's access
+for the request, which is exactly what the decision forbids, and re-picking a
+delegate on continuation, which would widen the run halfway through. A guest
+who is not a delegate is still refused, since a guest holds no Organization
+access to run under.
 
 **The `workstream` scope (plan step A-5).** A Thread no longer owns a
 Sidekick. WorkspaceDO migration 137 converted every Thread-owned Sidekick to

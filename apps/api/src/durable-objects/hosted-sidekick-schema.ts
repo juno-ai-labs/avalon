@@ -171,6 +171,16 @@ export const SIDEKICK_REVIEW_SCHEMA_STATEMENTS: readonly string[] = [
   ) STRICT`,
 ];
 
+/**
+ * Who started a run under their own access: set when a person who is not a
+ * delegate asked for the run in the shared conversation, so the run, its
+ * continuations and its connector operations act as them alone. Null for a
+ * run a trigger or a delegate started. `docs/automation-lifecycle.md` owns it.
+ */
+export const SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS: readonly string[] = [
+  `ALTER TABLE sidekick_runs ADD COLUMN requester_user_id TEXT`,
+];
+
 /** The alarm kind that writes one run's row into its Sidekick's shared conversation. */
 export const SIDEKICK_RUN_ROW_ALARM_KIND = "sidekick_run_row";
 
