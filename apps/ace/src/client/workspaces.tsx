@@ -5,6 +5,11 @@ import { WorkspaceSearchResultSchema, type DirectoryRegion, type DirectoryWorksp
 import { Button, EmptyState, Field } from './components/ui';
 import { responseBody } from './response';
 
+/** A retirement node's kind as the product names it. */
+const RETIREMENT_PARENT_LABELS: Record<WorkspaceRetirementResult['failed'][number]['parentKind'], string> = {
+  canvas: 'Canvas', automation: 'Sidekick', space: 'Channel', workstream: 'Thread',
+};
+
 /**
  * The workspaces tab: find a workspace, and retire it.
  *
@@ -173,7 +178,7 @@ export function WorkspacesView({ retired, onRetired }: {
               <div>
                 <p className="retire-receipt-title"><strong>{selectedRetired.workspace.name}</strong> <code className="ace-id">{selectedRetired.receipt.workspaceId}</code></p>
               </div>
-              <p>All {plural(selectedRetired.receipt.parents, 'work stream and automation', 'work streams and automations')} in the {regionLabel(selected.region)} workspace are closed; this pass closed {selectedRetired.receipt.retiredParents} of them, with {plural(selectedRetired.receipt.retiredChildren, 'conversation')} under them. {selectedRetired.receipt.retainedOutbox === 0 ? 'Nothing was left queued.' : `${plural(selectedRetired.receipt.retainedOutbox, 'queued effect')} will never publish.`} Messages, files and members were not deleted; nothing in this workspace answers any more, and nobody can sign in to it.</p>
+              <p>All {plural(selectedRetired.receipt.parents, 'Canvas, Sidekick, Channel or Thread', 'Canvases, Sidekicks, Channels and Threads')} in the {regionLabel(selected.region)} workspace are closed; this pass closed {selectedRetired.receipt.retiredParents} of them, with {plural(selectedRetired.receipt.retiredChildren, 'conversation')} under them. {selectedRetired.receipt.retainedOutbox === 0 ? 'Nothing was left queued.' : `${plural(selectedRetired.receipt.retainedOutbox, 'queued effect')} will never publish.`} Messages, files and members were not deleted; nothing in this workspace answers any more, and nobody can sign in to it.</p>
             </section>
             : <>
               <div className="section-title"><div><h3>Plan</h3><p>Sets the weekly usage quota everyone in this workspace shares. A change applies to the current week at once.</p></div></div>
@@ -184,14 +189,14 @@ export function WorkspacesView({ retired, onRetired }: {
                 {selectedPlanError && <p className="queue-error" role="alert">{selectedPlanError}</p>}
                 <div className="ace-form-actions"><Button disabled={planSaving || chosenPlan === currentPlan} onClick={() => void savePlan()} type="button">{planSaving ? 'Saving…' : 'Save plan'}</Button></div>
               </div>
-              <div className="section-title"><div><h3>Retire this workspace</h3><p>Every work stream, automation and socket in it closes and nothing reopens. Members can no longer sign in to it. Messages, files and members are kept but unreachable.</p></div></div>
+              <div className="section-title"><div><h3>Retire this workspace</h3><p>Every Canvas, Sidekick and socket in it closes and nothing reopens. Members can no longer sign in to it. Messages, files and members are kept but unreachable.</p></div></div>
               <div className="ace-form retire-form">
                 <p className="retire-consequence">This cannot be undone. Type or paste the workspace id shown above to confirm that <strong>{selected.name}</strong> is the workspace to close.</p>
                 <Field label="Workspace id"><input aria-describedby="retire-hint" autoComplete="off" placeholder="Paste the workspace id" spellCheck={false} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></Field>
                 <p className="ace-form-note" id="retire-hint">The button enables only when the id matches exactly.</p>
                 {selectedIncomplete && <div className="retire-incomplete" role="status">
-                  <strong>{selectedIncomplete.remaining} of {plural(selectedIncomplete.parents, 'work stream and automation', 'work streams and automations')} {selectedIncomplete.remaining === 1 ? 'is' : 'are'} still open</strong> after this pass, which closed {selectedIncomplete.retiredParents} of them and {plural(selectedIncomplete.retiredChildren, 'conversation')} under them. Retire again to return to what remains.
-                  {selectedIncomplete.failed.length > 0 && <ul>{selectedIncomplete.failed.map((node) => <li key={`${node.parentKind}:${node.parentId}`}>{node.parentKind === 'automation' ? 'Automation' : 'Work stream'} <code className="ace-id">{node.parentId}</code>: {node.error.replaceAll('_', ' ')}</li>)}</ul>}
+                  <strong>{selectedIncomplete.remaining} of {plural(selectedIncomplete.parents, 'Canvas, Sidekick, Channel or Thread', 'Canvases, Sidekicks, Channels and Threads')} {selectedIncomplete.remaining === 1 ? 'is' : 'are'} still open</strong> after this pass, which closed {selectedIncomplete.retiredParents} of them and {plural(selectedIncomplete.retiredChildren, 'conversation')} under them. Retire again to return to what remains.
+                  {selectedIncomplete.failed.length > 0 && <ul>{selectedIncomplete.failed.map((node) => <li key={`${node.parentKind}:${node.parentId}`}>{RETIREMENT_PARENT_LABELS[node.parentKind]} <code className="ace-id">{node.parentId}</code>: {node.error.replaceAll('_', ' ')}</li>)}</ul>}
                 </div>}
                 {selectedError && <p className="queue-error" role="alert">{selectedError}</p>}
                 <div className="ace-form-actions"><Button disabled={!confirmed || retiring} onClick={() => void retire()} type="button" variant="danger">{retiring ? 'Retiring…' : selectedIncomplete ? 'Retire again' : 'Retire workspace'}</Button></div>
