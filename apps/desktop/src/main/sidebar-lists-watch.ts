@@ -132,17 +132,36 @@ export class SidebarListsWatch {
     this.changed();
   }
 
+  /**
+   * The frame's own `type` (and, for a sidebar list, `list`) picks the schema
+   * that should read it; any other frame is someone else's and stays silent.
+   * One that a schema should have read and then rejected is a contract skew,
+   * and is logged naming the field rather than dropped without a word.
+   */
   private message(message: unknown): void {
-    const canvasList = safeParseSocketEvent(WorkspaceCanvasListEventSchema, message);
-    if (canvasList.success) {
+    if (typeof message !== 'object' || message === null) return;
+    const frame = message as { type?: unknown; list?: unknown };
+    if (frame.type === 'workspace_canvas_list') {
+      const canvasList = safeParseSocketEvent(WorkspaceCanvasListEventSchema, message);
+      if (!canvasList.success) {
+        this.dependencies.logWarning('could not read a Canvases list push for the menu bar', new Error(describeZodIssues(canvasList.error)));
+        return;
+      }
       if (canvasList.data.waterline <= this.canvasWaterline) return;
       this.canvasWaterline = canvasList.data.waterline;
       this.canvases = canvasList.data.items.map(canvasRow);
       this.changed();
       return;
     }
-    const sidebarList = safeParseSocketEvent(WorkspaceSidebarListEventSchema, message);
-    if (sidebarList.success && sidebarList.data.list === 'automations') {
+    if (frame.type === 'workspace_sidebar_list' && frame.list === 'automations') {
+      const sidebarList = safeParseSocketEvent(WorkspaceSidebarListEventSchema, message);
+      if (!sidebarList.success || sidebarList.data.list !== 'automations') {
+        this.dependencies.logWarning(
+          'could not read a Sidekicks list push for the menu bar',
+          sidebarList.success ? new Error('sidebar_list_not_automations') : new Error(describeZodIssues(sidebarList.error)),
+        );
+        return;
+      }
       if (sidebarList.data.waterline <= this.sidekickWaterline) return;
       this.sidekickWaterline = sidebarList.data.waterline;
       this.sidekicks = sidebarList.data.items.map(sidekickRow);

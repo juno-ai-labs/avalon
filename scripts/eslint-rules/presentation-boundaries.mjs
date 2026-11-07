@@ -9,8 +9,6 @@ export const presentationBoundaryFiles = [
   "apps/desktop/src/renderer/components/workstream-blocks.tsx",
   "apps/desktop/src/renderer/screens/conversation-surface.tsx",
   "packages/ui/src/components/**/*{sidebar,rail}*.tsx",
-  "packages/ui/src/components/sidekick-picker.tsx",
-  "packages/ui/src/components/sidekick-section.tsx",
 ];
 
 export const presentationBoundaryIgnores = ["**/*.test.tsx"];

@@ -427,18 +427,18 @@ row carries has its own waterline and its own receiver,
 `channel-viewer-state.ts`, for the same reason. The one class of direct write is a pushed or acknowledged
 fact with no version of its own: a rename or scope event, a REST response the
 caller just received, the appearance receipt. Those go through
-`patchCachedWorkstream` in `workstreams-cache.ts`, which writes Main's list row and
-detail together. A child address updates only that child's detail, so its name or
-scope cannot overwrite Main in the sidebar. Each
+`patchCachedWorkstream` in `workstreams-cache.ts`, which writes the conversation's
+cached detail. A child address updates only that child's detail, so its name or
+scope cannot overwrite Main's. Each
 write carries only the fields that are the fact's own news, so the next newer
 versioned payload replaces them whole and the receiver still has the last word.
 
-**Appearance is the exception, and both of its writers are row-only.** The
+**Appearance is the exception: no unversioned write carries it.** The
 cached detail is what the appearance picker reads to decide its own optimistic
 preview is finished, so an unversioned write there retires a person's in-flight
-choice against a value they did not pick. `patchCachedWorkstreamAppearance` (the
-receipt) and `patchCachedGeneratedIcon` (a naming pass) therefore write the
-sidebar row and leave the header to the versioned projection.
+choice against a value they did not pick. The receipt and a naming pass's icon
+therefore write nothing, and both the header and the sidebar's lists wait for
+the versioned projection.
 [`workstream-appearance.md`](workstream-appearance.md) owns the rule and the two
 bugs that produced it.
 A REST response is a whole summary; spreading it would write versioned common

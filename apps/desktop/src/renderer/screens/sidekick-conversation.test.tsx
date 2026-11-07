@@ -24,7 +24,6 @@ const api = vi.hoisted(() => ({
   getAutomationRuns: vi.fn(async () => []),
   getSidekickDelegates: vi.fn(),
   getWorkspaceMembers: vi.fn(async () => []),
-  getPeopleRanking: vi.fn(async () => ({ channel: [], organization: [] })),
   getConnections: vi.fn(async () => []),
   recordActivityEvents: vi.fn(async () => undefined),
   clientFeatureFlags: vi.fn(),
@@ -41,7 +40,7 @@ vi.mock('../lib/use-client-feature-flags', () => ({ useClientFeatureFlags: () =>
 vi.mock('../lib/use-workstream-socket', async (importOriginal) => ({
   ...await importOriginal<typeof UseWorkstreamSocketModule>(),
   useWorkstreamSocket: () => ({
-    suggestions: [], activeCompaction: null, activeInferenceDelays: [], createMessage,
+    activeCompaction: null, activeInferenceDelays: [], createMessage,
     setAppearance: vi.fn(), requestSnapshot: vi.fn(), retryOpening: vi.fn(),
     sendReady: true, state: 'connected', workspaceSocketState: 'connected',
   }),
@@ -160,7 +159,9 @@ describe("a Sidekick's shared conversation", () => {
     renderSidekick(AUTHOR, '?run=run-1');
     await screen.findByText('Ready to begin');
     const file = new File(['notes'], 'notes.txt', { type: 'text/plain' });
-    const transfer = { files: [file], items: [{ kind: 'file', type: 'text/plain', getAsFile: () => file }], types: ['Files'] };
+    const transfer = {
+      files: [file], items: [{ kind: 'file', type: 'text/plain', getAsFile: () => file }], types: ['Files'], getData: () => '',
+    };
     fireEvent.drop(screen.getByRole('log', { name: 'Transcript' }), { dataTransfer: transfer });
     fireEvent.paste(window, { clipboardData: transfer });
     expect(addFiles).not.toHaveBeenCalled();

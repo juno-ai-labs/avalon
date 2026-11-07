@@ -197,7 +197,7 @@ export function seedWorkspaceConversation(
       latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
       manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
       firstUnreadSequenceNumber: null, participantUserIds: [], participantExtraCount: 0,
-      nextPendingWakeup: null, pinPosition: null, spaceIds: [],
+      nextPendingWakeup: null, pinPosition: null,
       participants: [], viewers: [], resources: [], connections: [], backgroundTasks: [],
     }),
     ...header, harnessStatus: normalizeHarnessStatus(header.harnessStatus),

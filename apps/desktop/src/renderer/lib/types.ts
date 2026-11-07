@@ -183,24 +183,6 @@ export interface WorkstreamSummary {
    * same work stream is pinned for one member and not for another.
    */
   pinPosition: number | null;
-  /** Pin positions scoped to the Space placements that own them. */
-  spacePins?: Array<{ spaceId: string; position: number }>;
-  /**
-   * Every Space this Channel currently sits in.
-   *
-   * A Channel belongs to at least one Space and may belong to several. Each id
-   * is a *placement* of this same row rather than a copy of it, so the sidebar
-   * draws one entry per id under the Space it names and all of them open the
-   * same Channel. The row itself — its unread, its running state, its title —
-   * is one record whatever it is listed under.
-   */
-  spaceIds: string[];
-  /** First conversation this viewer may open when Main itself is not shared. */
-  associativeSubstreamId?: string;
-  /** Breakouts under this Channel that currently need this viewer. */
-  breakoutAttentionCount?: number;
-  /** This viewer reaches the Channel only through a Breakout; Main is not theirs. */
-  mainWithheld?: true;
   /**
    * Client only, never sent by the server: this window has asked for this
    * Channel under its final id and the create has not answered yet. The row
@@ -225,7 +207,6 @@ export interface WorkstreamSummary {
    */
   pendingListed?: true;
 }
-
 
 export interface Participant extends WorkspaceMember {
   accent?: string;
@@ -764,8 +745,6 @@ export interface WorkstreamBoot extends WorkstreamDetail {
   transcript: WorkstreamTranscriptSnapshot;
 }
 
-
-
 /** Every run always lands in Rally; these are the extra frozen destinations. */
 export type AutomationDeliveryTargetType = 'slack_agent_dm' | 'email';
 /**
@@ -817,28 +796,4 @@ export interface SocketTicket {
   subscriptionBootstrap?: boolean;
 }
 
-/** One person's scheduled digest: which days, what times, and where it goes. */
-export interface DigestSchedule {
-  id: string;
-  enabled: boolean;
-  /** Sunday is 0, matching `Date#getDay`. */
-  days: number[];
-  /** Local wall-clock minutes past midnight in `timezone`. */
-  times: number[];
-  timezone: string;
-  deliveryTargets: DigestDeliveryTarget[];
-  nextRunAt: string | null;
-  lastDeliveredAt: string | null;
-}
-
-/** Where a digest goes: the person's own Personal Channel, or any automation destination. */
-export type DigestDeliveryTargetType = 'personal_channel' | AutomationDeliveryTargetType;
-
-export interface DigestDeliveryTarget {
-  type: DigestDeliveryTargetType;
-  connectionId: string | null;
-  displayName: string;
-  status: 'active' | 'needs_input' | 'disabled';
-  lastDeliveredAt: string | null;
-}
 
