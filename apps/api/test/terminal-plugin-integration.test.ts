@@ -109,7 +109,7 @@ function fixture(
     TERMINAL_EMERGENCY_DISABLED: emergencyDisabled ? "true" : "false",
   });
   const input: WorkstreamWorkflowInput = {
-    region: "global", workspaceId: W, parentKind: "workstream", parentId: S,
+    region: "global", workspaceId: W, parentKind: "canvas", parentId: S,
     loopId: `workstream:${S}:substream:0:loop`, harnessRunId: R,
     triggerMessageId: null, activityId: null,
     executionPrincipal: { type: "user", userId: U }, reason: "user_message",
@@ -346,8 +346,8 @@ describe("Terminal Bind integration", () => {
     // resolver refuses. The refusal takes Terminal away, named, and nothing else.
     const { env, input } = fixture("supported", false, {
       agentOwner: async ({ agentId }) => ({
-        agentId: agentId === agentIdForAddress({ parentKind: "workstream", parentId: S, substreamId: asSubstreamId(worker) })
-          ? agentIdForAddress({ parentKind: "workstream", parentId: otherWorkstream, substreamId: asSubstreamId("0") })
+        agentId: agentId === agentIdForAddress({ parentKind: "canvas", parentId: S, substreamId: asSubstreamId(worker) })
+          ? agentIdForAddress({ parentKind: "canvas", parentId: otherWorkstream, substreamId: asSubstreamId("0") })
           : null,
       }),
     });
@@ -373,8 +373,8 @@ describe("Terminal Bind integration", () => {
     const { objectStore, objectStores, env, input } = fixture("supported", false, {
       agentOwner: async ({ agentId }) => ({
         // The worker is owned by the main conversation; the main conversation by nobody.
-        agentId: agentId === agentIdForAddress({ parentKind: "workstream", parentId: S, substreamId: asSubstreamId(worker) })
-          ? agentIdForAddress({ parentKind: "workstream", parentId: S, substreamId: asSubstreamId("0") })
+        agentId: agentId === agentIdForAddress({ parentKind: "canvas", parentId: S, substreamId: asSubstreamId(worker) })
+          ? agentIdForAddress({ parentKind: "canvas", parentId: S, substreamId: asSubstreamId("0") })
           : null,
       }),
     });

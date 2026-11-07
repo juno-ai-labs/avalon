@@ -1019,7 +1019,7 @@ describe("Terminal sandbox coordinator", () => {
 
   it("hands a Sidekick's sandbox to Daytona for deletion, and a work stream's to the sweep", async () => {
     const run = "00000000-0000-4000-8000-000000000088";
-    const created = async (parentKind: "automation" | "workstream", substreamId: string) => {
+    const created = async (parentKind: "automation" | "canvas", substreamId: string) => {
       // Each conversation's object is its own store; one fixture is one conversation.
       const { objectStore, env, provider, clock } = fixture();
       const coordinator = new TerminalSandboxCoordinator(
@@ -1040,7 +1040,7 @@ describe("Terminal sandbox coordinator", () => {
       substreamId: "0",
       autoDeleteAfterStoppedMinutes: AUTOMATION_SANDBOX_DELETE_AFTER_STOPPED_MINUTES,
     });
-    expect(await created("workstream", "0")).not.toHaveProperty("autoDeleteAfterStoppedMinutes");
+    expect(await created("canvas", "0")).not.toHaveProperty("autoDeleteAfterStoppedMinutes");
   });
 
   it("retries a failed lease release once and logs one that fails again, with its reason", async () => {

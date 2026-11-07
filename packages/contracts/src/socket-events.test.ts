@@ -1,17 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { isUnknownSocketEvent, safeParseSocketEvent } from "./socket-events";
-import { WorkstreamPrivateChildSchema, ClientSocketEventSchema, ClientSocketEventTypeSchema, WorkspaceSocketClientEventSchema, WorkspaceSocketClientEventTypeSchema } from "./index";
+import { ClientSocketEventSchema, ClientSocketEventTypeSchema, WorkspaceSocketClientEventSchema, WorkspaceSocketClientEventTypeSchema } from "./index";
 
 describe("socket event compatibility", () => {
   const schema = z.strictObject({ type: z.literal("known"), rows: z.array(z.strictObject({ count: z.number() })) });
-  it("accepts resolved private children with an older strict schema by stripping the new flag", () => {
-    const child = { substreamId: "00000000-0000-4000-8000-000000000001", title: "Done",
-      createdByUserId: "00000000-0000-4000-8000-000000000002",
-      createdAt: "2026-10-20T00:00:00.000Z", updatedAt: "2026-10-20T00:00:00.000Z" };
-    const legacy = z.strictObject({ privateChildren: z.array(WorkstreamPrivateChildSchema.omit({ resolved: true })) });
-    expect(safeParseSocketEvent(legacy, { privateChildren: [{ ...child, resolved: true }] }))
-      .toEqual({ success: true, data: { privateChildren: [child] } });
+  it("accepts a nested row with an older strict schema by stripping the new flag", () => {
+    const child = { id: "00000000-0000-4000-8000-000000000001", title: "Done" };
+    const legacy = z.strictObject({ children: z.array(z.strictObject({ id: z.string().uuid(), title: z.string() })) });
+    expect(safeParseSocketEvent(legacy, { children: [{ ...child, resolved: true }] }))
+      .toEqual({ success: true, data: { children: [child] } });
   });
 
   it("discards additive fields at every object depth without mutating the frame", () => {

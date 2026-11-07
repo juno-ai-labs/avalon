@@ -183,13 +183,6 @@ export class ConversationService {
       this.authorizeViewer(parentId, substreamId),
       requireWorkstreamIngress(this.env),
     ]);
-    // A work stream's own object refuses every read of an archived room, boot
-    // included, so a ticket for one would open a socket that never gets a
-    // frame. Refuse it the way the boot does. An automation's conversation
-    // stays readable after its archive; only its writes are refused.
-    if (parent.kind === "workstream" && parent.archived) {
-      throw new ApiError(404, "conversation_not_found", "Conversation not found");
-    }
     // Minted here rather than inside the issuer so the route can log the id the
     // room will report consuming; see `docs/performance-tracing.md`.
     const ticketId = newId();

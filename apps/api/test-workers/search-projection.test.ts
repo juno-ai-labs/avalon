@@ -56,7 +56,7 @@ describe('conversation page capture', () => {
       await transcript.appendParticipantMessage({ turnId: 'pages', actor: 'system', authorUserId: null,
         authorSnapshot: null, text: 'https://example.com/ready https://example.com/failed',
         createdAtUtc: '2026-09-05T00:00:00Z', attentionOrdinal: 1 });
-      const identity = { workspaceId, parentId: resourceId, substreamId: '0', parentKind: 'workstream' as const };
+      const identity = { workspaceId, parentId: resourceId, substreamId: '0', parentKind: 'canvas' as const };
       const read = () => transcript.participantTurn('pages');
       const initial = await prepareConversationLinks(state.storage.sql, captureEnv, identity, 'pages', read, false);
       const ready = initial.documents.find((document) => document.text?.includes('/ready'))!;
@@ -99,7 +99,7 @@ describe('conversation page capture', () => {
       await transcript.appendParticipantMessage({ turnId: 'captured-link', actor: 'system', authorUserId: null,
         authorSnapshot: null, text: '[Reference](https://example.com/)',
         createdAtUtc: '2026-09-05T00:00:00Z', attentionOrdinal: 1 });
-      const identity = { workspaceId, parentId: resourceId, substreamId: '0', parentKind: 'workstream' as const };
+      const identity = { workspaceId, parentId: resourceId, substreamId: '0', parentKind: 'canvas' as const };
       const read = () => transcript.participantTurn('captured-link');
       const uncaptured = await prepareConversationLinks(state.storage.sql, captureEnv, identity, 'captured-link', read, false);
       expect(capture).not.toHaveBeenCalled();

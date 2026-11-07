@@ -234,7 +234,7 @@ function workflowInput(): WorkstreamWorkflowInput {
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    parentKind: "workstream",
+    parentKind: "canvas",
     parentId: WORKSTREAM_ID,
     loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
     harnessRunId: HARNESS_RUN_ID,
@@ -827,7 +827,7 @@ describe("wake-up tools", () => {
  * left untouched.
  */
 /** The work stream's main conversation, which is not a delegated worker. */
-const MAIN: WakeupConversation = { parentKind: "workstream", substreamId: "0", backgroundAgent: false };
+const MAIN: WakeupConversation = { parentKind: "canvas", substreamId: "0", backgroundAgent: false };
 
 function childConversation(
   fixtureEnv: Env,
@@ -909,13 +909,13 @@ describe("firing a due wake-up", () => {
       breakout.env,
       breakout.row,
       schedulingPort(breakout.store),
-      { parentKind: "workstream", substreamId: breakoutId, backgroundAgent: false },
+      { parentKind: "canvas", substreamId: breakoutId, backgroundAgent: false },
     );
 
     expect(outcome.fired).toBe(true);
     expect(dispatches).toHaveLength(1);
     expect(dispatches[0]).toMatchObject({
-      parentKind: "workstream",
+      parentKind: "canvas",
       substreamId: breakoutId,
       loopId: substreamLoopId(WORKSTREAM_ID, breakoutId),
     });
@@ -945,7 +945,7 @@ describe("firing a due wake-up", () => {
         worker.env,
         worker.row,
         schedulingPort(worker.store),
-        { parentKind: "workstream", substreamId: workerId, backgroundAgent: true },
+        { parentKind: "canvas", substreamId: workerId, backgroundAgent: true },
       );
 
       expect(outcome.fired).toBe(true);
@@ -960,7 +960,7 @@ describe("firing a due wake-up", () => {
         worker.env,
         worker.row,
         schedulingPort(worker.store),
-        { parentKind: "workstream", substreamId: workerId, backgroundAgent: "stopped" },
+        { parentKind: "canvas", substreamId: workerId, backgroundAgent: "stopped" },
       );
 
       expect(outcome.fired).toBe(false);
