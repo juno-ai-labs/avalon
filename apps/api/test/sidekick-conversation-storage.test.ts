@@ -139,7 +139,7 @@ describe("the WorkspaceDO home-conversation migration", () => {
 });
 
 describe("a conversation scope", () => {
-  it("puts a Sidekick's Breakout home first, and flags what a person cannot open or what is archived", () => {
+  it("puts a Sidekick's own conversation first, then its Breakout home, and flags what a person cannot open or what is archived", () => {
     const database = migratedWorkspace();
     const sql = createTestSqlStorage(database);
     seedSidekick(database);
@@ -159,6 +159,8 @@ describe("a conversation scope", () => {
       id: conversation.conversationId, kind: conversation.kind, home: conversation.isHome,
       readable: conversation.readable, archived: conversation.archived,
     }))).toEqual([
+      // Its own conversation's id is the Sidekick's; the Sidekick admits it, so the directories mark it readable.
+      { id: SIDEKICK, kind: "sidekick", home: false, readable: true, archived: false },
       { id: `${CHANNEL}/${BREAKOUT}`, kind: "breakout", home: true, readable: true, archived: false },
       { id: OTHER_CHANNEL, kind: "channel", home: false, readable: true, archived: true },
       { id: CHANNEL, kind: "channel", home: false, readable: true, archived: false },
@@ -166,7 +168,7 @@ describe("a conversation scope", () => {
     // Someone in neither the private Channel nor the Breakout reaches only
     // the workspace-scoped Channel, and that one is archived.
     expect(scopeConversations(sql, scope, STRANGER).map((conversation) => [conversation.conversationId, conversation.readable]))
-      .toEqual([[`${CHANNEL}/${BREAKOUT}`, false], [OTHER_CHANNEL, true], [CHANNEL, false]]);
+      .toEqual([[SIDEKICK, true], [`${CHANNEL}/${BREAKOUT}`, false], [OTHER_CHANNEL, true], [CHANNEL, false]]);
   });
 
   it("archives a Breakout with its Channel, and reaches nothing for a deleted Sidekick", () => {
@@ -178,7 +180,8 @@ describe("a conversation scope", () => {
     seedBreakout(database, "Weekly call");
     seedBreakoutMember(database, AUTHOR);
 
-    expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }, AUTHOR)[0]?.archived).toBe(true);
+    expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }, AUTHOR)
+      .find((conversation) => conversation.isHome)?.archived).toBe(true);
     database.prepare(`UPDATE automation_directory SET lifecycle = 'deleted'`).run();
     expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }, AUTHOR)).toEqual([]);
   });

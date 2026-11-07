@@ -24,9 +24,9 @@ attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | `apps/api/src/services/conversation-tools.ts` | The plugin: `conversationToolAccess` (the one place a scope and tool set are derived from a loop), the tools, the refusal table (`conversationRefusalError`), a Channel's feed rendered as messages (`channelItemText`), the system message, the page-size and character-budget placeholders, and `conversationToolPorts`, the calls the tools make, `searchMessages` among them. |
 | `apps/api/src/services/integrations.ts` | `loadHarnessTools` builds the plugin next to the Sidekick plugin and passes the pagination wrapper under the `conversation` prefix. |
 | `apps/api/src/durable-objects/workspace-conversation-tool-protocol.ts` | The scope, the WorkspaceDO request schemas and discriminated outcomes with the refusal codes, and the post request `appendConversationPost` takes. |
-| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | Conversation ids, the scope read over `channels`, `breakouts`, their viewer rows and active Channel placements, title lookup, and the attachment write. |
+| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | Conversation ids, the scope read over `channels`, `breakouts`, their viewer rows and active Channel placements plus a Sidekick's own conversation, title lookup, and the attachment write. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `conversationToolScope`, `resolveConversationToolTarget`, `attachSidekickConversation`: scope from the directories, then admission through the hosted parent's `authorizeViewer`. `conversationToolChannels`: the Channels a Thread or Breakout loop's thread is in, from Space storage. `listChannelFeed`, the Channel screen's own read, is what a Channel's read calls. |
-| `apps/api/src/durable-objects/substream-agent.ts` | `appendConversationPost`: a post appended to any Channel or Breakout conversation, keyed on its client message id, without waking that conversation's agent. |
+| `apps/api/src/durable-objects/substream-agent.ts` | `appendConversationPost`: a post appended to any Channel or Breakout conversation, or to a Sidekick's own conversation, keyed on its client message id, without waking that conversation's agent. |
 | `apps/api/src/durable-objects/workstream-message-storage.ts` | `readableMessagesBefore`: a conversation's messages newest first, without tool cards or suggestions. |
 | `packages/agent-harness/src/tool-activity.ts` | The transcript wording for each `conversation_*` tool. |
 
@@ -38,8 +38,8 @@ attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | --- | --- | --- | --- |
 | Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation, its Thread's Main, the Channels the Thread is in, and all Threads and Breakouts in those Channels | list, read, search, merge | The person it works for, admitted to Main by the Breakout |
 | Thread Main (`parentKind: workstream`, substream `"0"`) | Its own thread, the Channels it is in, and all Threads and Breakouts in those Channels | list, read, search, merge | The person it works for |
-| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's home and attachments | list, read, search, post, attach | The person talking to it |
-| Sidekick run (`automationRun` present) | The Sidekick's home and attachments | list, read, search, post | The run-as user |
+| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's own conversation (`isOwn`), its home and attachments | list, read, search, post, attach | The person talking to it |
+| Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`), its home and attachments | list, read, search, post | The run-as user |
 
 A Thread's Channels are the ones `channelSpaceIds` lists for the acting person
 today, unarchived, Organization-wide first: the person's own reach, never the
@@ -49,8 +49,15 @@ that Thread's Main and all its Breakouts as candidates. Shared placements count
 once, and a sibling's other Channels do not extend the scope: it is one hop
 from the current Thread's Channels, never the whole Organization. Canonical
 admission still decides each candidate independently; being in a Channel grants
-no access to a private Thread or Breakout. Sidekick scopes stay at their home
-and explicit attachments.
+no access to a private Thread or Breakout. Sidekick scopes stay at the
+Sidekick's own conversation, its home and explicit attachments.
+
+A Sidekick's own conversation is its shared conversation, substream `"0"`
+under the Sidekick (`kind: "sidekick"` to the host). Its `conversationId` is
+the Sidekick's id, it is always first in a Sidekick scope, and it is admitted by
+the Sidekick (`HostedSidekick.authorizeViewer`), never by a Channel's
+`readableSubstreams`. It is read, searched and posted to like any other
+conversation. A run's conversation is never in scope.
 
 Scope discovery and list admission stay within WorkspaceDO, without
 per-conversation cross-object calls.
@@ -138,12 +145,13 @@ it.
   tool has no continuation: a narrower query, or a read of the conversation,
   finds more than `limit`.
 - **post** takes `text` and `conversation`, and returns
-  `{ conversationId, messageId, replayed }`. `conversation` may be left out to
-  post to the Sidekick's home when there is one: a run knows from its
-  definition, and for a homeless Sidekick's run the argument is required and
-  its description says nothing of a home; the configuration conversation does
-  not read the definition, so there the description says a home is used when
-  `conversation_list` marks one. The host derives the key
+  `{ conversationId, messageId, replayed }`. `conversation` may always be left
+  out: the post lands in the Sidekick's own conversation, where everyone the
+  Sidekick is shared with reads it. A home, where there is one, is named like
+  any other conversation. The post request carries the target's `parentKind`
+  (`workstream`, the default, or `automation`), and
+  `appendConversationPost` refuses one that does not match the object, or an
+  `automation` target that is not substream `"0"`. The host derives the key
   `conversation-post:<harnessRunId>:<receiptId>`, and the target's
   `appendConversationPost` writes once per key, answering a replay with the
   message it already wrote. It writes an `automation_activation` message whose
@@ -336,6 +344,32 @@ is published to the target's audience; the person who attached that
 conversation chose that audience.
 
 ## Changelog
+
+### 2026-11-06 — A post that names no conversation lands in the Sidekick's own conversation
+
+**What changed:** A Sidekick scope now lists the Sidekick's own shared
+conversation (`"0"`, `kind: "sidekick"`, id the Sidekick's) first, admitted by
+the Sidekick; `conversation_post` with no `conversation` posts there instead of
+to the home, so `conversation` is never required; and `appendConversationPost`
+accepts `parentKind: "automation"` substream `"0"` beside a Thread's
+conversations. The home and attachments stay reachable by id or title.
+
+**Why:** The Canvases and Sidekicks pivot gives every Sidekick one shared
+conversation that everyone it is shared with reads, and the plan makes it the
+place a Sidekick's report goes by default. Most Sidekicks have no home, so a
+run had nowhere in Rally to post without naming somewhere; the home is a Thread,
+and Threads are being retired. The own conversation is derived from the
+Sidekick, like the home, so it needs no `sidekick_conversation_attachments`
+row and the table's `parent_kind = 'workstream'` CHECK is unchanged. The
+`parentKind` field defaults to `workstream` so a post request written before it
+existed still means what it meant; a Canvas's conversation joins its enum.
+
+**Consequences:** A homed Sidekick's run that left `conversation` out used to
+post in its Thread and now posts in its own conversation; instructions that
+want the Thread must name it. The `home` option of `createConversationsPlugin`
+and `conversationsSystemMessage` is gone, and so is the "conversation cannot be
+left out" refusal path for a post (`conversation_home_missing` remains for the
+Terminal publication home, which still resolves `reference: null` to the home).
 
 ### 2026-10-29 — A Sidekick's scope lists the Channel its review announces in, and `post` reaches it
 
