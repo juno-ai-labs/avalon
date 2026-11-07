@@ -7,16 +7,10 @@ export type WorkspaceScheduledAlarmPhase =
   | "recovery_rearm"
   | "authority_check"
   | "stored_target"
-  | "activity_reap"
   | "connector_event_reap"
-  | "space_default_publish"
-  | "space_intent_resume"
-  | "space_bootstrap"
-  | "import_reservation_reclaim"
   | "memory_digest_sync"
   | "schedule_reconcile"
   | "parent_outbox"
-  | "parent_breakouts"
   | "directory_followup"
   | "final_rearm";
 

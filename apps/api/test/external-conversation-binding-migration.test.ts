@@ -149,7 +149,7 @@ describe("WorkspaceDO migration 85", () => {
       addressed: true,
       claimKey: "event:new",
       pendingStaleBefore: "2026-09-01T00:00:00.000Z",
-    })).toEqual({ outcome: "none", roomBound: false });
+    })).toEqual({ outcome: "none" });
   });
 
   it("refuses a binding shape the storage never writes", () => {
@@ -188,11 +188,8 @@ describe("WorkspaceDO migration 90", () => {
 
     apply(database, 90, 89);
 
-    expect(storageOver(database).resolve({
-      installationId: "slack:T1", path: ["C1", "1.0"], addressed: true, claimKey: null, pendingStaleBefore: "2000-01-01T00:00:00.000Z",
-    })).toEqual({
-      outcome: "spawn", spaceId: "00000000-0000-7000-8000-0000000b1d30", roomPath: ["C1"], spaceMatched: false,
-    });
+    expect(database.prepare("SELECT space_matched FROM external_conversation_bindings WHERE path_json = '[\"C1\"]'").all())
+      .toEqual([{ space_matched: 0 }]);
     expect(() => database.exec(
       "UPDATE external_conversation_bindings SET space_matched = 2 WHERE path_json = '[\"C1\"]'",
     )).toThrow(/CHECK/u);

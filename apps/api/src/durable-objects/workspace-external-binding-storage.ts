@@ -231,15 +231,9 @@ export class ExternalConversationBindingStorage {
     const reclaimable = exact?.state === "pending"
       && (exact.claim_key === input.claimKey || exact.updated_at < input.pendingStaleBefore);
     if (exact?.state === "pending" && !reclaimable) return { outcome: "hold" };
-    const ancestors = chain.slice(0, -1);
-    const nearest = [...ancestors].reverse().find((row) => row?.state === "active");
-    if (input.addressed && nearest?.target_kind === "space"
-      && (exact === undefined || reclaimable)) {
-      return {
-        outcome: "spawn", spaceId: nearest.space_id!, roomPath: pathOf(nearest), spaceMatched: nearest.space_matched === 1,
-      };
-    }
-    return { outcome: "none", roomBound: ancestors.some((row) => row !== undefined) };
+    // A room bound to a Space opened Channels for its addressed threads; Spaces
+    // and Channels are retired (plan step C-4), so such a room routes nowhere.
+    return { outcome: "none" };
   }
 
   /**
@@ -316,52 +310,6 @@ export class ExternalConversationBindingStorage {
       target.parentId,
       target.substreamId,
     ).toArray().length > 0;
-  }
-
-  /**
-   * The room half of a link, inside the transaction that reserves its Space.
-   *
-   * Returns the Space an existing binding names instead of letting the caller
-   * create a second one; a suspended room binding is brought back, keeping its
-   * Space. `create` is called only when the room has no binding at all.
-   */
-  linkRoom(
-    installationId: string,
-    path: ExternalPath,
-    at: string,
-    create: () => { spaceId: string; matched: boolean } | null,
-  ): { outcome: "linked" | "existing" | "reactivated"; spaceId: string } | null {
-    return this.storage.transactionSync(() => {
-      const existing = this.row(installationId, path);
-      if (existing) {
-        if (existing.target_kind !== "space") return null;
-        if (existing.state === "suspended") {
-          this.sql.exec(
-            `UPDATE external_conversation_bindings
-                SET state = 'active', suspended_reason = NULL, updated_at = ?
-              WHERE installation_id = ? AND path_json = ?`,
-            at,
-            installationId,
-            existing.path_json,
-          );
-          return { outcome: "reactivated" as const, spaceId: existing.space_id! };
-        }
-        return { outcome: "existing" as const, spaceId: existing.space_id! };
-      }
-      const created = create();
-      if (created === null) return null;
-      this.sql.exec(
-        `INSERT INTO external_conversation_bindings (${COLUMNS}, space_matched)
-         VALUES (?, ?, 'space', ?, NULL, NULL, NULL, 'active', NULL, NULL, ?, ?, ?)`,
-        installationId,
-        externalPathKey(path),
-        created.spaceId,
-        at,
-        at,
-        created.matched ? 1 : 0,
-      );
-      return { outcome: "linked" as const, spaceId: created.spaceId };
-    });
   }
 
   /**
