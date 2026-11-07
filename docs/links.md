@@ -55,7 +55,7 @@ handoff page, the Slack unfurl card or the sweep that keeps old cards current.
 | **Canvas onto an artifact** | Canvas link plus `a/<artifact-base58>/` | A detached artifact window's **Copy link**; a pinned artifact's push |
 | **Sidekick** | `/app/<region>/<organization-base58>/sk/<sidekick-base58>/` | The Sidekick header's **Copy link**, a notification about a Sidekick's conversation or one of its runs |
 | **Deep link** | `rallywithai://workspace/<region>/<organization-base58>/canvases/<canvas-base58>` (plus `/artifacts/<artifact-base58>`), or `.../sidekicks/<sidekick-base58>` | The handoff page's last hop, the desktop's own navigation |
-| **Retired** | `/app/<region>/<organization>/s/...` (Space, Channel, Breakout, artifact), `/app/<region>/<organization>/i/...` (import), `/app/workspaces/...` (addressed Channel), `/app/workstreams/<id>` (ID-only) | Nothing; `isRetiredLinkPath` recognizes the shape |
+| **Retired** | `/app/<region>/<organization>/s/...` (Space, Channel, Breakout, artifact), `/app/<region>/<organization>/i/...` (import), `/app/workspaces/<region>/<organization>/workstreams/...` (addressed Channel), `/app/workstreams/<id>` (ID-only) | Nothing; `isRetiredLinkPath` recognizes the shape. The web app's own Organization shell, `/app/workspaces/<region>/<organization>`, is not retired |
 
 `canvasCanonicalUrl`, `sidekickCanonicalUrl` and `linkCanonicalUrl` mint the
 HTTPS form; `canvasDeepLink`, `sidekickDeepLink` and `linkDeepLink` the deep
@@ -81,9 +81,13 @@ Channel, or an id the Organization holds nothing for — has no link and gets
 Activity kinds, Needs input and finished runs among them), the mention and
 participant emails, Slack DMs, the digest, the access-request answer and the
 Slack task controls. A delivery about a conversation with no link is skipped
-with the named reason `conversation_not_linkable` (an email returns
-`skipped`), or, in the digest and Slack task controls, sent without the link:
-Thread surfaces are gone, so a link to one would open nothing.
+with the named reason `conversation_not_linkable` and the parent's kind
+(`parent_kind`, `missing` for a deleted Canvas or nothing at all, so it reads
+apart from a Thread), or, in the digest and Slack task controls, sent without
+the link: Thread surfaces are gone, so a link to one would open nothing. A
+mention or an add resolves the link once (`conversationLink`) and hands it to
+both its Slack and email transports; a push resolves it after the person's
+notification choice has allowed the delivery.
 
 A Canvas share's invitation email links to the Canvas on the web app
 (`BROWSER_APP_ORIGIN`), which hands it to the desktop from there. A share of a
@@ -127,6 +131,19 @@ The heading's name rule is looser than the Slack unfurl's audience table on
 purpose: the product call (2026-10-07) is that whoever holds a link may see the
 name of what it points at. The unfurl differs because Rally itself posts the
 card into a Slack channel, where people who never opened the link read it.
+
+### The desktop app
+
+The main process accepts only the deep links `parseDesktopDeepLinkIntent`
+reads, so a Space, Channel, Breakout or Thread deep link (`rallywithai://…/spaces/…`,
+`…/workstreams/…`, addressed or not, `workstreams/new` included) is refused
+there. `emitDeepLink` does not drop it silently: `isRetiredDeepLink` in
+`apps/desktop/src/main/deep-links.ts` recognizes the retired shapes, the same
+ones `isRetiredLinkPath` recognizes for an HTTPS link on a Rally host, and main
+opens its deep-link error window with **This link is to something that no
+longer exists.** A retired HTTPS link handed over as a universal link is not
+claimed (`httpsLinkDeepLink` takes only Canvas and Sidekick links), so the
+browser opens it and the handoff page says the same.
 
 ### The web app
 
@@ -280,7 +297,9 @@ and the path is classified (`/app/:region/:organization/cv/:canvas`,
 | `apps/api/test/slack-agent-ingress.test.ts` | Which shared links get a card, and the Canvas card's blocks. |
 | `apps/api/test/mention-email.test.ts`, `participant-email.test.ts`, `slack-notification-service.test.ts` | The Canvas link in each message, and a Thread mention sending nothing. |
 | `apps/api/test/slack-unfurl-refresh.test.ts` | The Thread-card sweep. |
-| `apps/desktop/src/main/push-links.test.ts`, `deep-links.test.ts` | Universal links and the main process's deep-link boundary. |
+| `apps/desktop/src/main/push-links.test.ts`, `deep-links.test.ts` | Universal links, the main process's deep-link boundary, and `isRetiredDeepLink`. |
+| `apps/site/test/link-handoff.test.ts` | The handoff page's visible copy for a retired and a Canvas link. |
+| `apps/desktop/src/renderer/lib/browser-entry.test.tsx` | The web app's entry screen shows the retired copy on a Thread path and not on its own Organization shell path. |
 
 ## Data model
 
@@ -333,7 +352,12 @@ Organization, as a Sidekick does. Recording Canvas cards for the refresh
 sweep: a name-only card has no status to keep current, and the sweep reads the
 Thread directory.
 
-**Consequences:** A desktop build older than this refuses a Canvas deep link;
+**Consequences:** The desktop's main process says "This link is to something
+that no longer exists" in its deep-link error window for a retired deep link,
+as the site and the web app do, rather than refusing it without a word. The
+web app's Organization shell path, `/app/workspaces/<region>/<organization>`,
+shares a prefix with the retired addressed form and must stay outside
+`isRetiredLinkPath`. A desktop build older than this refuses a Canvas deep link;
 the web app opens it. A Thread mention, add or Activity delivery sends nothing
 from here until phase C deletes the Thread services. The Thread-card sweep keeps
 running over the rows already recorded until then. A Thread share's invitation,

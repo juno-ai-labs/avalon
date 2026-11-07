@@ -149,6 +149,9 @@ describe("reading a shared link", () => {
     expect(isRetiredLinkPath(canvasPath)).toBe(false);
     expect(isRetiredLinkPath(`/app/enterprise/${ENCODED_WORKSPACE_ID}/sk/${ENCODED_SIDEKICK_ID}/`)).toBe(false);
     expect(isRetiredLinkPath("/app/")).toBe(false);
+    // The web app's own Organization shell, which an invitation to a Thread links to.
+    expect(isRetiredLinkPath(`/app/workspaces/enterprise/${WORKSPACE_ID}`)).toBe(false);
+    expect(isRetiredLinkPath(`/app/workspaces/enterprise/${WORKSPACE_ID}/`)).toBe(false);
     expect(isRetiredLinkPath("/help/")).toBe(false);
   });
 });

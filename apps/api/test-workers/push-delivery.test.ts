@@ -79,6 +79,11 @@ beforeEach(async () => {
       (workstream_id, user_id, authority_generation, waterline, source_event_id, payload_hash, is_participant,
        unread_count, you_are_mentioned, listable, seen_attention_ordinal, manual_unread_generation, latest_mention_attention_ordinal, projected_at)
       VALUES (?, ?, 1, 1, 'viewer', 'hash', 1, 0, 0, 1, 0, 0, 0, 0)`, workstreamId, userId);
+    // The conversation is a Canvas's Chat, which is what a push links to
+    // (`docs/links.md`); a Thread's has no link and sends nothing.
+    state.storage.sql.exec(`INSERT INTO canvas_directory
+      (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, visibility, authority_generation)
+      VALUES (?, ?, 'Planning', ?, 0, 0, 'workspace', 1)`, workstreamId, workspaceId, userId);
   });
   await addIntent('mention:one');
   for (const token of ['aa', 'bb']) await registerPushDevice(env, memberAuth, token, {
@@ -267,6 +272,8 @@ it('sends each device the payload of the transport it registered with', async ()
   ]);
   const apple = requests.find(({ url }) => url.startsWith('https://api.push.apple.com/'))!;
   expect(JSON.parse(apple.init.body as string).aps.alert.title).toBe('Author mentioned you in Planning');
+  // A mention in a Canvas's Chat opens the Canvas.
+  expect(JSON.parse(apple.init.body as string).rally.url).toBe('https://app.test/app/global/1111117Hxt1fAWDjNRoE/cv/1111117Hxt1fAWDjNRoF/');
   const web = requests.find(({ url }) => url === webEndpoint)!;
   expect((web.init.headers as Record<string, string>)['content-encoding']).toBe('aes128gcm');
   expect(web.init.redirect).toBe('manual');

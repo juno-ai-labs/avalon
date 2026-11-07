@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { uuidToBase58 } from '@rally/contracts/uuid-base58';
+import { act, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { BrowserEntry } from '../../../../browser/src/entry';
 import { cookieClientSession } from '../../../../browser/src/session';
@@ -63,6 +64,7 @@ const MEMBER_ONLY = /\/browser\/api\/[^/]+\/(workspace\/(?!socket$|members$|me\/
 it('opens a guest in the shared shell without asking for anything a guest is refused', async () => {
   let selections = 0;
   const requested: string[] = [];
+  const unexpected: string[] = [];
   fetchHandler = async (input: string) => {
     const path = new URL(String(input), 'http://localhost').pathname;
     requested.push(path);
@@ -84,19 +86,26 @@ it('opens a guest in the shared shell without asking for anything a guest is ref
     if (path.endsWith('/sidekicks') || path.endsWith('/recommended-sidekicks')) return Response.json({ items: [] });
     if (path.endsWith('/navigation/threads')) return Response.json({ items: [], pinned: [], nextCursor: null });
     if (path.endsWith('/feature-flags')) return Response.json({});
+    if (path.endsWith(`/canvases/${parent}`)) return Response.json({
+      id: parent, title: 'Shared Canvas', createdByUserId: '00000000-0000-7000-8000-0000000000a1', createdAt: '2026-11-07T09:00:00.000Z',
+      updatedAt: '2026-11-07T09:00:00.000Z', lastEditor: null, writerSidekickId: null, visibility: 'participants',
+      participantUserIds: [user.id], canManage: false, artifacts: [],
+    });
+    unexpected.push(path);
     return Response.json({ error: { message: 'Unexpected request: ' + path } }, { status: 404 });
   };
-  history.replaceState(null, '', '/app/workspaces/global/' + workspace.id + '/workstreams/' + parent + '/substreams/' + child);
+  // A Canvas shared with the guest, opened from its link.
+  history.replaceState(null, '', `/app/global/${uuidToBase58(workspace.id)}/cv/${uuidToBase58(parent)}/`);
   const view = render(<BrowserEntry renderCollaboration={(region, session, onSignOut, onRevalidate) =>
     <BrowserShell region="global" session={cookieClientSession(region, session)} onSignOut={onSignOut} onRevalidate={onRevalidate} />} />);
   try {
-    // The directory lists only the Breakout, so Main is not this guest's: by
-    // the time it has arrived, the Breakout's is the one feed held open.
+    // The Canvas's Chat is the one feed held open.
     const live = () => feedSockets().filter((socket) => socket.readyState !== BrowserSocket.CLOSED);
-    await waitFor(() => expect(live().map((socket) => new URL(socket.url).pathname.split('/').slice(-2))).toEqual([[parent, child]]));
-    const socket = live()[0]!;
+    await waitFor(() => expect(live().map((socket) => new URL(socket.url).pathname.split('/').slice(-2))).toEqual([[parent, '0']]));
+    const opened = live()[0];
+    expect(opened, `unexpected requests: ${unexpected.join(', ')}`).toBeDefined();
+    const socket = opened!;
     await act(async () => { socket.open(); });
-    await screen.findByRole('button', { name: /Breakout menu: Shared child conversation/u });
     const previousSelections = selections;
     fireEvent.focus(window);
     await waitFor(() => expect(selections).toBeGreaterThan(previousSelections));
