@@ -12,8 +12,6 @@ export type WorkspaceScheduledAlarmPhase =
   | "space_default_publish"
   | "space_intent_resume"
   | "space_bootstrap"
-  | "channel_color_sync"
-  | "thread_backfill"
   | "import_reservation_reclaim"
   | "memory_digest_sync"
   | "schedule_reconcile"

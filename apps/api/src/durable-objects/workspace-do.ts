@@ -513,6 +513,7 @@ import {
   reviewMemoryFacts,
 } from "./workspace-memory-facts-storage";
 import {
+  MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION,
   MEMORY_DIGEST_SYNC_MIGRATION,
   MemoryDigestSyncMessageSchema,
   MemoryDigestSyncWorkSchema,
@@ -4797,6 +4798,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record the artifacts each Canvas's conversation generated",
   // See CANVAS_ARTIFACTS_STATEMENTS and docs/canvases.md#artifacts-and-versions.
   statements: CANVAS_ARTIFACTS_STATEMENTS,
+}, {
+  version: 143,
+  description: "admit a Canvas's Chat among the conversations that hold a memory digest copy",
+  // See MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION.
+  statements: MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
