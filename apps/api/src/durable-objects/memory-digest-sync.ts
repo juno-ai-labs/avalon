@@ -1,6 +1,8 @@
 import { WorkspaceIdSchema } from "@rally/contracts";
+import { codeShaped } from "@rally/contracts/zod-diagnostics";
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from "zod";
+import { ApiError } from "../lib/api-error";
 
 import {
   MemoryConversationSchema,
@@ -225,12 +227,21 @@ export function recordMemoryDigestHolder(
   input: { conversation: MemoryConversation; principal: string; factIds: readonly string[]; now: number },
 ): void {
   const key = memoryConversationKeyOf(input.conversation);
-  sql.exec(
-    `INSERT INTO memory_digest_holders(conversation, parent_kind, parent_id, substream_id, refreshed_at)
-       VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(conversation) DO UPDATE SET refreshed_at = excluded.refreshed_at`,
-    key, input.conversation.parentKind, input.conversation.parentId, input.conversation.substreamId, input.now,
-  );
+  try {
+    sql.exec(
+      `INSERT INTO memory_digest_holders(conversation, parent_kind, parent_id, substream_id, refreshed_at)
+         VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(conversation) DO UPDATE SET refreshed_at = excluded.refreshed_at`,
+      key, input.conversation.parentKind, input.conversation.parentId, input.conversation.substreamId, input.now,
+    );
+  } catch (error) {
+    // The table's CHECK names the conversation kinds that may hold a copy. A
+    // kind it does not admit (a Canvas, before migration 143) failed every
+    // refresh under one generic reason; say which kind it was.
+    if (!(error instanceof Error) || !/CHECK constraint failed/u.test(error.message)) throw error;
+    throw new ApiError(500, "memory_digest_holder_kind_unadmitted", "This conversation kind cannot hold a memory digest copy",
+      undefined, codeShaped(`memory_digest_holder_kind_unadmitted:${input.conversation.parentKind}`));
+  }
   sql.exec("DELETE FROM memory_digest_holder_facts WHERE conversation = ? AND principal = ?", key, input.principal);
   sql.exec(
     `INSERT INTO memory_digest_holder_facts(conversation, principal, fact_id)
