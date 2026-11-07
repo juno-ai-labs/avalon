@@ -25,9 +25,8 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 | `apps/api/src/services/slack-agent-service.ts` | Agent sessions, App Home, interactions, unfurls, delivery. |
 | `apps/api/src/durable-objects/workspace-slack-protocol.ts` | The typed request/result contracts for the ingress spine: jobs, thread claims, pending prompts, the maintenance sweep. |
 | `apps/api/src/durable-objects/workspace-slack-storage.ts` | The SQL behind those methods, inside WorkspaceDO's own storage. |
-| `apps/api/src/services/slack-notification-service.ts` | Workspace-bot delivery of the two things Rally tells one person about a work stream: a mention, and being added to it. |
+| `apps/api/src/services/slack-notification-service.ts` | Workspace-bot delivery of the two things Rally tells one person about a conversation: a mention, and being added to it. |
 | `apps/api/src/routes/slack.ts` | The three signed ingress routes. |
-| `apps/api/src/durable-objects/substream-agent.ts` | The run-settlement output sink that reaches Slack. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Installation administration. |
 | `config/provider-apps/slack.json` | The manifest. |
 | `apps/api/src/durable-objects/workspace-external-binding-storage.ts` | Room and thread bindings, which decide where every Slack message routes. Owned by [`external-conversation-bindings.md`](external-conversation-bindings.md). |
@@ -203,153 +202,71 @@ the challenge is single-use, fifteen minutes old, and minted by a click Slack si
 
 Suspended members and revoked links cannot start or continue tasks. A user may link separately in every connected Slack team.
 
-#### Who a Slack work stream belongs to
+#### Who a reply runs as
 
-A work stream started from Slack takes the audience of the conversation it was summoned from,
-by the connector-wide rule in
-[the connector document](connectors.md#a-work-streams-audience-is-the-conversation-it-started-in).
-A mention in a public channel opens a **public** work stream. A private channel, a DM, a group
-message, or a conversation the installation could not classify opens a **private** one, seated
-with the members `conversations.members` returns — up to 200, resolved through one shared actor
-mapping read. Only unresolved members need `users.info`, six at a time under one shared ten-second
-deadline. Resolution remains best effort: a roster Slack refuses or cannot finish costs a smaller
-starting room rather than the prompt. These are the existing work-stream scope states underneath:
-public stores `workspace`, and private stores participant-only `personal`.
+A reply in a thread bound to a Sidekick run continues that run, which keeps
+its coordinator whoever sent the reply
+([`automation-lifecycle.md`](automation-lifecycle.md#continuing-a-run)). The
+reply is framed as evidence, not a member request
+([`connectors.md`](connectors.md#invariants)). A Slack member Rally cannot map
+to an account still has their message recorded, under their Slack actor.
 
-**Every member of that Slack conversation can continue the work stream.** A reply from somebody
-the work stream has not seen seats them first and is then recorded, so a private work stream
-answers the channel it belongs to rather than 404ing at it. A Slack member Rally cannot map to
-an account at all still has their message recorded, under their Slack actor.
-
-**Each message runs under the authority of whoever sent it**: a member with a confirmed account
-link runs as themselves, and everybody else runs under the workspace principal. A reply in a
-thread bound to a Sidekick run is the one exception, owned by
-[`connectors.md`](connectors.md#invariants). Nothing weaker
-than a link authorizes a run — a `users.lookupByEmail`-grade match seats and credits somebody
-and cannot spend their credentials — so two replies in one thread can run under different
-principals, exactly as they do when two members type into the same work stream in Rally.
-
-How "runs as themselves" reaches the work-stream object is the **connector principal**: the
-ingress verifies the active `slack_user_links` row and active membership on the very message
-being delivered (`linkedAccount`), then marks the auth `principal: "connector"` and carries a
-`slack:{team}:{user}` correlation id in place of a session id. The object re-checks current
-membership itself and refuses a stale principal as `connector_member_revoked`; it does not look
-the correlation id up in `sessions`, because a Slack message is not a login and no session row
-exists for it. A login session, by contrast, is always re-verified against its `sessions` row (outside local development's dev-auth bypass).
-
-The triggering Slack member travels with the workflow input through delivery. If a run needs
-input that requires a connected account, Rally sends the connect prompt to that member rather
-than to whoever opened the work stream. Result controls are shared Slack content, so the feedback
-button is shown to everyone; the feedback submission still revalidates that the submitting member
-has an active Rally link on the installation that owns this work stream. A link left on a retired
-installation cannot suppress the current installation's connect prompt.
-
-#### Work stream attribution
-
-A work stream started from Slack records the Rally member the Slack author resolves to as its
-creator, and adds them as a participant. Slack does not decide that mapping on its own: it
-uses the shared connector actor identity described in
-[the connector document](connectors.md#actor-identity-and-work-stream-attribution), which
-every agent connector uses. Slack contributes the `users.info` profile — including the email
-that feeds the `verified_email` step — and records the resolved mapping for later work.
-
-When a mapping only arrives
-later — the member links their account, or joins Rally after the task ran — the earlier
-ownerless work streams of their Slack sessions are credited to them then. Account linking may
-additionally correct a creator that the same session's earlier `users.lookupByEmail` match
-produced, which is the only case where an existing creator is rewritten.
-
-As everywhere else, attribution is not authorization: an unlinked author's task still runs
-with the workspace principal, and the opening message keeps its external Slack actor.
+How a linked member's identity reaches the conversation object is the
+**connector principal**: the ingress verifies the active `slack_user_links`
+row and active membership on the very message being delivered
+(`linkedAccount`), then marks the auth `principal: "connector"` and carries a
+`slack:{team}:{user}` correlation id in place of a session id. The object
+re-checks current membership itself and refuses a stale principal as
+`connector_member_revoked`; it does not look the correlation id up in
+`sessions`, because a Slack message is not a login and no session row exists
+for it. Nothing weaker than a link authorizes a run: a
+`users.lookupByEmail`-grade match credits somebody and cannot spend their
+credentials. The shared actor identity behind that mapping is
+[the connector document's](connectors.md#actor-identity-and-work-stream-attribution).
 
 ### Agent sessions and delivery
 
-> **Slack no longer starts a conversation.** Plan step C-2 deleted the Thread
-> paths below: a root DM, a root mention, an addressed message in a room linked
-> to a Space, and `/rally` with a prompt no longer create or resume a work
-> stream. Each is answered once in its thread with the copy for
-> `conversation_ingress_retired` ("Rally no longer starts work from Slack.
-> Start a Canvas in Rally, or set up a Sidekick to work from Slack for you."),
-> and the bot joining a channel binds no room (logged `room_bindings_retired`).
-> A thread bound to a Sidekick run still delivers to that run, and Sidekick
-> results are still posted as described here. The paragraphs that follow
-> describe the Thread path as it ran, for the code that still shares its
-> session and delivery rows.
+**Slack starts no conversation.** A root DM, a root mention, an addressed
+message in a channel the bot is in, `/rally` with a prompt, and the **Start a
+Rally task** modal each create nothing and are answered once in their thread
+with the copy for `conversation_ingress_retired` ("Rally no longer starts work
+from Slack. Start a Canvas in Rally, or set up a Sidekick to work from Slack
+for you."), logged `slack_prompt_not_started`. The bot joining a channel binds
+no room (logged `room_bindings_retired`). Slack stays a Sidekick trigger and a
+delivery target ([`automation-lifecycle.md`](automation-lifecycle.md)).
 
-Every Slack message is routed by its **binding** before a work stream is looked up or created: a thread bound to a work stream delivers there, a thread bound to a Sidekick run delivers to that run, an addressed thread in a room linked to a Space opens a work stream in that Space, and anything else takes the Agent path below. [`external-conversation-bindings.md`](external-conversation-bindings.md) owns resolution and the lifecycle events (`member_joined_channel`, `member_left_channel`, `channel_left`, `group_left`, `channel_archive`, `group_archive`, `channel_id_changed`) that link, suspend and move bindings.
+Every Slack message is routed by its **binding** first: a thread bound to a
+Sidekick run delivers to that run, and anything else is answered as above.
+[`external-conversation-bindings.md`](external-conversation-bindings.md) owns
+resolution and the lifecycle events that suspend and move bindings. A Sidekick
+run's Slack send writes the binding for the thread its message starts, so
+replies there reach the run.
 
-A Slack root DM or root mention on the Agent path creates a stable `slack_agent_sessions` row keyed by installation, channel, and root timestamp, and writes the thread's binding in the same transaction. It maps to exactly one durable Rally workstream. The session row is delivery state (status, reaction, who started it); the binding is routing. Human replies in that Slack thread add messages to the same workstream without requiring another `@Rally` mention, whoever sends them. Rally ignores messages outside its bound threads and does not replay or import the rest of the Slack conversation.
+A message in a DM with the bot that has no binding of its own, while the DM's
+most recent Sidekick request is still being worked on, is answered once asking
+the person to reply in the request's thread, with a link to it. It creates no
+work.
 
-A message in a DM with the bot that has no binding of its own, while the DM's most recent Sidekick request is still being worked on, is answered once asking the person to reply in the request's thread, with a link to it. It creates no work. Once that request's run has finished, or in a DM with no request, the DM keeps the one-to-one Agent behavior.
+In a conversation Slack marks as not threadable, Rally never posts into a
+thread: results are posted at the top level.
 
-In a conversation Slack marks as not threadable, Rally never posts into a thread: the Agent status and title are skipped and results are posted at the top level.
-
-The session row records who started the thread and where; it does not decide who may use it. The only reply Rally refuses is one answering a question addressed to a specific member — the same rule the Rally app applies to a targeted elicitation, per question rather than per thread.
-
-The workstream also carries the thread it was summoned from as an attached `slack_thread` resource, so a member reading it in Rally can get back to the conversation. That attachment holds identifiers, the channel name, and Slack's own permalink — origin metadata, not message content, consistent with the retention boundary above. See [work-stream origin attachments](workstream-origin-attachments.md).
-
-On a prompt Rally:
-
-1. adds the acknowledgement reaction when the invocation has a source message;
-2. sets the Slack Agent thread status;
-3. creates or resumes the durable workstream;
-4. executes the ordinary authorized Rally harness.
-
-Steps 5 to 8 of that path — reloading the final turn, posting it in
-12,000-character chunks, swapping the reaction for the outcome, and linking to
-the workstream with feedback controls (`deliverWorkstreamOutcome`,
-`applyOutcomeReaction`, `settleOutcomeReaction`, `responseActionBlocks`,
-`connectPromptBlocks`, `slackUserIsLinked`) — were deleted on 2026-11-07 with
-the last Thread delivery. A Sidekick run's results reach Slack through its
-own delivery ([`automation-lifecycle.md`](automation-lifecycle.md)).
-
-The persisted Rally run is canonical. A Slack delivery failure never rewrites a completed run as failed.
-Rally never streams model output to Slack. A fixed status or reaction may change
-while work is running, but if terminalization has no saved turn there is no
-Slack result message.
+The `slack_agent_sessions` rows the Thread path wrote are delivery state
+(status, reaction, who started the thread); routing is the binding's. The
+persisted Rally run is canonical: a Slack delivery failure never rewrites a
+completed run as failed, and Rally never streams model output to Slack.
 
 #### The status reaction
 
-The one reaction writer left is the acknowledgement on a reply admitted into a
-bound Sidekick run's thread (`slack-agent-service.ts`): it places
-the acknowledgement emoji (`eyes` by default), or the stopped emoji
-(`octagonal_sign`) when the Sidekick is paused, and never removes anything.
-The outcome reactions (`white_check_mark`, `question`, `warning`,
-`octagonal_sign` on `completed`, `needs_input`, `failed`, `stopped`) and their
-conditional swap through `slack_agent_sessions.reaction_current` were written
-by the deleted Thread delivery path; the paragraphs below record how that path
-ran.
-The reaction sits on the *triggering* message rather than the thread root, and
-each new prompt in a thread moves it.
-
-A session holds one reaction slot, but a follow-up prompt is admitted while an
-earlier run in the thread is still live, and moves the slot to its own message,
-usually with the same emoji. So each run carries its own anchor (channel and
-message) on `slackOrigin.reactionAnchor` from admission to delivery. The outcome
-always lands on that message. When the slot still points there, the outcome is
-written back conditionally on both the anchor and the emoji; when it has moved
-on, the run swaps the configured acknowledgement for its outcome and records
-nothing, leaving the slot to the newer anchor. A run admitted before the anchor
-was carried falls back to whatever the slot holds.
-
-A follow-up from a member Rally cannot map to an account is admitted as a
-steer, and when it reaches a step boundary of the live run it merges into that
-run instead of starting its own. Only a Thread's run settled the Slack
-messages it absorbed, through `run_absorbed_slack_origins`; with Threads gone
-nothing writes or reads that table (plan step C-3). A linked
-member's answer to an open question carries `slackOrigin` into the run the
-answer starts, as an ordinary message does.
-
-The anchor holds only what the Slack event fixes. `slackOrigin` is part of the
-message's admission identity, so the emoji Slack accepted, which a retried
-ingress job can see differently (a timeout, then `already_reacted`), would make
-the retry an idempotency conflict.
-
-Reaction sets resolve most-specific-wins: the built-in defaults, then a workspace
-override on the installation's `config_json`, then a per-run override. An
-override may name any subset and inherits the rest. Slack exposes no way to check
-that an emoji name exists before using it, so a name it rejects with
-`invalid_name` falls back to Rally's own default for that state, once.
+The one reaction writer is the acknowledgement on a reply admitted into a
+bound Sidekick run's thread (`slack-agent-service.ts`): it places the
+acknowledgement emoji (`eyes` by default), or the stopped emoji
+(`octagonal_sign`) when the Sidekick is paused, and never removes anything. The
+outcome reactions and their swap through `slack_agent_sessions.reaction_current`
+went with the Thread delivery path. Reaction sets resolve most-specific-wins:
+the built-in defaults, then a workspace override on the installation's
+`config_json`. Slack exposes no way to check that an emoji name exists before
+using it, so a name it rejects with `invalid_name` falls back to Rally's own
+default, once.
 
 #### Rendering agent output
 
@@ -418,24 +335,21 @@ Threads. App Home is a personalized control surface published per user. Rally pu
 App Home adds a workspace-administration card for Rally owners and admins with installation health and a secure desktop handoff to Connections. The desktop Connections page is the full administration surface: installation health, team labels, granted surfaces, token health, reconnect, and disconnect.
 
 Home is updated on `app_home_opened`, after account linking, and after settings changes. Blocks contain user-specific data only after the Slack user has been linked and active membership is revalidated.
-Recent/pinned work-stream summaries come from the authoritative
-WorkspaceDO directory after cutover, and an unfurl's name from `linkTitle`; installation, account-link, connection, and
-Slack delivery coordinates remain in regional D1. A WorkspaceDO failure withholds
-or delays that product summary rather than reading a frozen D1 work-stream row.
+The Sidekick summaries come from WorkspaceDO's directory, and an unfurl's name
+from `linkTitle`; installation, account-link, connection, and Slack delivery
+coordinates remain in regional D1. A WorkspaceDO failure withholds or delays
+that product summary rather than reading a frozen D1 row.
 
 ### Interactions
 
-- Agent DM: start a durable task or continue its thread.
-- `@Rally` in a channel: create/continue a task in the mention thread; later human replies in that Rally-owned thread do not need another mention, and responses always stay threaded.
-- Global shortcut **Start a Rally task**: open a task modal.
-- Message shortcut **Work on this with Rally**: prefill the task modal with the selected message.
-- `/rally [request]`: start the request; an empty command opens the modal.
+- Agent DM, `@Rally` in a channel, the **Start a Rally task** and **Work on
+  this with Rally** shortcuts, and `/rally [request]`: answered once with the
+  retired-ingress copy above; none starts work. A reply in a thread bound to a
+  Sidekick run continues the run.
 - **Connect Rally**: mint a link challenge and open it in a modal whose single
   button is the desktop handoff. Not refused on a stored status; a grant that is
   really gone fails on Slack's answer.
-- Result buttons: open the canonical task or provide feedback. The shared message shows feedback
-  to everyone; submission is accepted from any linked member of the installation, not only whoever
-  started the thread.
+
 - Rally person mention: notify the matched member in the Rally Agent DM, falling back to email.
 - Rally links: a Canvas or Sidekick link unfurls to a card naming it, with an
   **Open in Rally** button; its contents need the viewer's normal Rally
@@ -451,7 +365,7 @@ notification about a Thread, which has no link now, is not sent, and the task
 controls Thread replies carried went with the Thread delivery path.
 
 Every other web button uses an allowlisted HTTPS-to-desktop handoff carrying the
-installation's region/workspace target. Workstream IDs may cross that boundary;
+installation's region/workspace target. Canvas and Sidekick IDs may cross that boundary;
 connector tokens and Slack link challenges stay in fragments and are removed
 from browser history. The single button carrying a link challenge is the one
 inside the connect modal, which exists only for as long as that modal is open.
@@ -460,7 +374,9 @@ Modal submissions are validated server-side. Modals never request Rally or provi
 
 #### Delegate from Slack
 
-As a linked member, I can DM Rally, mention it, invoke a shortcut on a message, or run `/rally`, and receive progress and the durable result in the same Agent thread.
+As a linked member, I set up a Sidekick in Rally whose trigger is Slack
+activity or whose result is delivered to Slack, and reply in the thread its
+result starts to continue the run. Slack itself starts no work.
 
 #### Bring Slack context into Rally
 
@@ -476,10 +392,10 @@ As a Rally admin, I can install the same Rally app into several Slack workspaces
 
 #### Notify a mentioned teammate
 
-As a Rally member, when I mention an active teammate in a work stream, Rally sends that
+As a Rally member, when I mention an active teammate in a Canvas's Chat, Rally sends that
 teammate a bot-authored Slack DM when the workspace installation can resolve them. A confirmed
 Slack link is preferred; otherwise Rally uses an exact verified-email lookup without silently
-linking the accounts. The message identifies the author, workspace, work stream, complete
+linking the accounts. The message identifies the author, workspace, Canvas, complete
 mention text, and a secure **Open in Rally** handoff. If Slack cannot resolve or deliver it,
 Rally sends the existing mention email instead.
 
@@ -507,7 +423,7 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
   member's personal authority, and personal tools never process Agent events or
   deliver workspace-bot messages.
 - **Global holds only `team_id → region/workspace/connection`.** Signed payload
-  processing, encrypted tokens, user links, Agent sessions, work streams, and
+  processing, encrypted tokens, user links, Agent sessions, conversations, and
   results stay in the owning region, and provider payloads are never written to
   Global object storage during routing.
 - **Ingress verifies `v0:{timestamp}:{exact raw body}` before anything parses**,
@@ -548,20 +464,16 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
   the workspace principal, and the opening message keeps its external Slack actor.
 - **Only connector ingress sets `principal: "connector"`, and only after
   verifying the link and membership on the message being delivered.** The
-  work-stream object re-checks membership alone, so the ingress's
+  conversation object re-checks membership alone, so the ingress's
   `linkedAccount` check is the link's one gate; a path that hands out the
   marker without it has nothing behind it. Sockets never carry a connector
   principal — every ticket issuer refuses one at the mint.
-- **A thread belongs to its Slack conversation, not to one member.** Its work
-  stream is public for a public channel and private for anything else, a private
-  one's room is the conversation's members, and anybody in the conversation may
-  continue it. Each message runs as whoever sent it, and only a confirmed account
-  link authorizes running as a member, except a reply bound to a Sidekick run
-  ([`connectors.md`](connectors.md#invariants)).
+- **Slack starts no conversation.** Every start surface answers with
+  `conversation_ingress_retired` and creates nothing; a path that started work
+  from Slack would bring back a conversation with no Canvas or Sidekick parent.
 - **Routing is the binding, not the session row.** A path that decides where a
   message goes from `slack_agent_sessions` instead of
-  `resolveExternalConversation` will miss every room link and every Sidekick
-  run's thread, and send their replies to a new Agent work stream.
+  `resolveExternalConversation` will miss every Sidekick run's thread.
 - **The bot is only where it was invited or where a Sidekick source needs it.**
   A join Rally makes on its own reads, to everyone in the room, as an
   invitation it never received.
@@ -581,7 +493,7 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
   [`provider-apps.md`](provider-apps.md#the-zero-copy-connector-boundary).
 - **No installation becomes the implicit default when more than one is
   available**, and Rally never silently switches accounts or Slack workspaces.
-- **Every work-stream link Rally posts is the canonical HTTPS form.** Slack
+- **Every link Rally posts is the canonical HTTPS form.** Slack
   delivers `link_shared` only for the registered unfurl domain, so an `rallywithai://`
   link pasted by a member produces no event and can never be previewed.
 - **Modal submissions are validated server-side**, and modals never request Rally
@@ -836,7 +748,7 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ## Changelog
 
-### 2026-11-07 — Slack starts no conversation, binds no room and refreshes no card
+### 2026-11-07 — Slack starts no conversation, binds no room and refreshes no card; its links name Canvases and Sidekicks
 
 **What changed:** The Thread-creating path is deleted: `startFromPrompt` and
 the event dispatcher answer a mention, a DM or a prompt with
@@ -846,17 +758,24 @@ room bindings a bot join wrote are deleted; `member_joined_channel` logs
 `room_bindings_retired`. App Home lists Sidekicks only. The unfurl refresh
 sweep (`slack-unfurl-refresh.ts`) and its scheduled task are deleted, and
 `slack-workstream-card.ts` keeps only the one-time unfurl: a title link and an
-**Open in Rally** button.
+**Open in Rally** button. The unfurl reads Canvas and Sidekick links and shows
+the name only; it no longer reads Thread links. Every link Rally posts in
+Slack — DMs about a mention or an add, App Home rows — comes from
+`conversationCanonicalUrl`, so it names the Canvas or the Sidekick, and a
+message about a Thread is skipped (`conversation_not_linkable`) or sent
+without its button.
 
-**Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
+**Why:** Plan steps B-5 and C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
 A conversation is a Canvas's chat or a Sidekick's run, and neither is started
 from a Slack thread; a Sidekick with a Slack trigger is how work starts there
-now.
+now. Thread surfaces are gone, so a Thread link opens nothing.
 
 **Considered and rejected:** Starting a Canvas from a Slack mention. Nothing in
 the PRD asks for it, and a Canvas made on someone's behalf from a Slack thread
 would need its own audience decision. Answering silently was rejected too: a
-person who mentions Rally and hears nothing will assume it is broken.
+person who mentions Rally and hears nothing will assume it is broken. A status
+badge on a Canvas card: a Canvas has no harness status of its own; its Chat's
+would describe the conversation, not the Canvas.
 
 **Consequences:** The Thread delivery path's last half went with it (11e82d0):
 `deliverWorkstreamOutcome`, the outcome reactions (`applyOutcomeReaction`,
@@ -865,30 +784,13 @@ connect prompt (`connectPromptBlocks`) and `slackUserIsLinked`. The only
 reaction Rally still writes is the acknowledgement, or the stopped emoji for a
 paused Sidekick, on a reply admitted into a bound Sidekick run's thread; a
 future outcome reaction for Sidekick runs would be new work, not those helpers
-restored.
+restored. A posted card keeps the name it was posted with.
+[`links.md`](links.md) owns the card.
 
 **Open:** The retired-ingress copy is the agent's wording and needs product
 confirmation.
 
-
-### 2026-11-07 — Unfurls and posted links name Canvases and Sidekicks
-
-**What changed:** The unfurl reads Canvas and Sidekick links and shows the
-name only; it no longer reads Thread links. Every link Rally posts in Slack —
-DMs about a mention, an add or Activity, task controls, App Home rows — comes
-from `conversationCanonicalUrl`, so it names the Canvas or the Sidekick, and a
-message about a Thread is skipped (`conversation_not_linkable`) or sent without
-its button.
-
-**Why:** Plan step B-5 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-Thread surfaces are gone, so a Thread link opens nothing.
-
-**Considered and rejected:** A status badge on a Canvas card. A Canvas has no
-harness status of its own; its Chat's would describe the conversation, not the
-Canvas.
-
-**Consequences:** A Canvas card is not recorded for the refresh sweep, so it
-keeps the name it was posted with. [`links.md`](links.md) owns the card.
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-02 — The connector's send tool posts through the `markdown` block
 
