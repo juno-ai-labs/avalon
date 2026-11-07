@@ -59,10 +59,10 @@ interface InspectorRailProps {
   /**
    * Everything the live-artifact detail needs, or absent.
    *
-   * Absent is how the feature is off: a surface with no API session cannot mint
-   * access, and the `live-artifacts-enabled` flag decides whether the caller
-   * passes this at all. A site then falls back to the ordinary resource card,
-   * which is a working outcome rather than a hidden one.
+   * Absent only when the surface cannot host one: with no API session there is
+   * no access to mint, and with no desktop or browser bridge there is nowhere
+   * to present it. A site then falls back to the ordinary resource card, which
+   * is a working outcome rather than a hidden one.
    */
   siteArtifacts?: {
     openArtifact: SiteResourceDetailProps['openArtifact'];

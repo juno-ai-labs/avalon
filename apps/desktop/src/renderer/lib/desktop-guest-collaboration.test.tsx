@@ -81,7 +81,7 @@ beforeEach(() => {
     if (path === '/workspace') return Response.json({ ...served, id: workspace.id });
     if (path === '/workspace/socket') return Response.json({ url: `wss://api.rallywith.ai/socket/workspaces/${workspace.id}`, ticket: 'ticket' });
     if (path === '/navigation/threads') return Response.json({ items: [], pinned: [], nextCursor: null });
-    if (path === '/feature-flags') return Response.json({ multipleWorkspacesEnabled: true, liveArtifactsEnabled: false });
+    if (path === '/feature-flags') return Response.json({ multipleWorkspacesEnabled: true });
     if (path === '/sharing/navigation') return Response.json({ spaces: [], workstreams: [] });
     return Response.json({ error: { message: `Unexpected request: ${path}` } }, { status: 404 });
   }));

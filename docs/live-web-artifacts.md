@@ -745,6 +745,22 @@ shows its saved quote and image. The script and trust boundaries are owned by
 
 ## Changelog
 
+### 2026-11-06 — The site surfaces are no longer flagged
+
+**What changed:** `useSiteArtifacts` no longer reads `liveArtifactsEnabled`,
+and that flag is removed (see [`feature-flags.md`](feature-flags.md)). The
+rail's site detail, the preview pane, the Data view and the artifact window
+appear for every signed-in Electron or browser window; a site falls back to
+the ordinary resource card only where no API session or bridge exists.
+
+**Why:** The Canvases and Sidekicks PRD turns a live artifact into a Canvas,
+and a Canvas is opened through these surfaces, so they cannot be off for
+anyone. The flag was always presentation-only — authorization is structural —
+so removing it changes what is drawn and nothing about who may read a site.
+
+**Consequences:** A future change that wants to hide a site surface needs a
+reason specific to that surface, not a product-wide toggle.
+
 ### 2026-11-03 — Per-viewer rows, sign-in from a site's link, public submissions
 
 **What changed:** A table with a `private_to_viewer` column is private: the

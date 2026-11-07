@@ -236,7 +236,6 @@ describe("client feature flags", () => {
         suggestedWorkEnabled: false,
         multipleWorkspacesEnabled: false,
         pushNotificationsEnabled: false,
-        liveArtifactsEnabled: false,
       });
   });
 
@@ -298,7 +297,6 @@ describe("client feature flags", () => {
     expect((flags.getBooleanDetails as ReturnType<typeof vi.fn>).mock.calls.map(([key]) => key).sort())
       .toEqual([
         "developer-settings",
-        "live-artifacts-enabled",
         "multiple-workspaces-enabled",
         "push-notifications-enabled",
         "suggested-work-enabled",
@@ -342,7 +340,6 @@ describe("GET /feature-flags", () => {
       suggestedWorkEnabled: true,
       multipleWorkspacesEnabled: true,
       pushNotificationsEnabled: true,
-      liveArtifactsEnabled: true,
     });
   });
 
@@ -365,7 +362,6 @@ describe("GET /feature-flags", () => {
       suggestedWorkEnabled: false,
       multipleWorkspacesEnabled: false,
       pushNotificationsEnabled: false,
-      liveArtifactsEnabled: false,
     });
   });
 });
