@@ -91,6 +91,11 @@ scanned, checked 2026-10-03). Readers there deduplicate by `event_id`.
 
 ### Reading
 
+`usage_events_sidekick_occurred` (`sidekick_id, occurred_at`, partial on
+Sidekick rows) serves a Sidekick's cost over a window and one run's (the same
+read narrowed by `substream_id`), for operator reads through the engineering
+MCP's `run_d1_sql`.
+
 `readOrganizationUsage` reads the workspace row and the rollups from seven days
 before the current period's start (a week that straddles the boundary) to now,
 and `deriveOrganizationUsage` computes:
@@ -302,6 +307,29 @@ workspace.
 - `usage_unpriced` and `usage_emit_failed` name what was not metered.
 
 ## Changelog
+
+### 2026-11-07 — Index the ledger by Sidekick
+
+**What changed:** Migration `0002_usage_events_sidekick.sql` adds a partial
+index on `usage_events(sidekick_id, occurred_at)` for Sidekick rows.
+
+**Why:** A Sidekick's cost, or one run's, has no index of its own. Grouping one
+Sidekick's runs over three days by `sidekick_id` scanned the whole ledger
+(266,973 rows on 2026-11-07); scoped by Organization through
+`usage_events_workspace_occurred` it still reads every event that Organization
+logged in the window (17,474 for Juno Labs over those three days) to find about
+1,300. Those reads come back whenever a Sidekick's cost is in question.
+
+**Considered and rejected:** An index on `substream_id` alone: it serves one run
+but not a Sidekick over time, and a run's rows sit inside its Sidekick's.
+A full index: most events are not a Sidekick's, so the partial one is smaller
+for the same reads.
+
+**Consequences:** Every insert of a Sidekick event also writes the index. A
+query must say `sidekick_id = ?` to use it; one by `substream_id` alone still
+scans.
+
+Shipped in juno-ai-labs/avalon#1487.
 
 ### 2026-10-08 — A plan change pushes the new meter to every member
 

@@ -1752,6 +1752,8 @@ sequence, and chat after a Sidekick run is rare.
 attempt that settles between fragments of that page is refused as changed
 evidence, even when its turns did not move.
 
+Shipped in juno-ai-labs/avalon#1486.
+
 ### 2026-11-07 — A self-review counts cost, not only failure
 
 **What changed:** The self-review's reader reports what each run's routine work
@@ -1781,6 +1783,8 @@ to set it from, where the run's own report already says whether work was routine
 **Consequences:** A review can now revise a Sidekick whose runs all succeeded.
 Prod eval scenario P13 (`scripts/code-mode-evals.mjs`) checks that setup alone
 produces a tool that finishes a large scan in at most two calls.
+
+Shipped in juno-ai-labs/avalon#1485.
 
 ### 2026-11-06 — No saved instruction can turn a data report into a blocker
 
