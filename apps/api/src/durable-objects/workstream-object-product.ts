@@ -107,7 +107,7 @@ import {
 } from "./scheduled-alarms";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
 import { enqueueSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
-import { admitsOrganizationWide, spaceListedSql } from "./listing-rules";
+import { admitsOrganizationWide } from "../services/authorization-policy";
 import { substreamLoopId, workspaceDOName } from "./names";
 import { ParticipantAuthorityTransferStorage } from "./participant-authority-transfer";
 import { workstreamImportHash } from "./workstream-import-hash";
@@ -2153,24 +2153,6 @@ export class WorkstreamObjectProductService {
       ?? (latest > attention.seen_attention_ordinal
         ? Math.min(latest, attention.seen_attention_ordinal + 1)
         : null);
-    const workspaceDatabase = this.workspaceDatabase(root.parent_workspace_key);
-    const pins = await workspaceDatabase.prepare(
-      `SELECT pin.space_id, pin.position
-         FROM workspace_workstream_pins pin
-         JOIN space_channel_memberships membership
-           ON membership.space_id = pin.space_id
-          AND membership.workstream_id = pin.workstream_id
-          AND membership.state = 'active'
-         JOIN spaces space ON space.space_id = pin.space_id
-         LEFT JOIN space_viewers viewer
-           ON viewer.space_id = space.space_id
-          AND viewer.user_id = ? AND viewer.is_participant = 1
-        WHERE pin.workstream_id = ? AND pin.user_id = ? AND space.archived_at IS NULL
-          -- A pin is a member's, placed in a Space they listed when pinning;
-          -- this remote read cannot ask for the Breakout projection.
-          AND ${spaceListedSql("space", "viewer", "member", { breakouts: false })}
-        ORDER BY pin.space_id`,
-    ).bind(userId, root.workstream_key, userId, userId).all<{ space_id: string; position: number }>();
     const wakeup = first(this.storage.sql.exec<{ due_at: number; prompt: string }>(
       `SELECT due_at, prompt FROM workstream_wakeups
         WHERE status = 'pending' ORDER BY due_at, wakeup_id LIMIT 1`,
@@ -2215,7 +2197,8 @@ export class WorkstreamObjectProductService {
       // Pin identity belongs to a Channel's placement in a Space. A detail
       // read has no selected Space, so the legacy scalar must stay empty.
       pinPosition: null,
-      spacePins: pins.results.map((pin) => ({ spaceId: pin.space_id, position: pin.position })),
+      // A Thread's Space pins went with the Spaces (plan step C-2).
+      spacePins: [],
       ...(root.scope === "personal"
         ? workstreamParticipantPreview(this.recentParticipantUserIds())
         : { participantUserIds: [], participantExtraCount: 0 }),

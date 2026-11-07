@@ -77,9 +77,11 @@ function memoryReviewFact(
   const first = fact.sourceConversations[0]!;
   const title = titles.get(first) ?? null;
   const parsed = parseMemorySource(first);
+  // A Canvas's Chat is listed as the contract's `thread` source, which the
+  // client opens as that Canvas: the review contract predates Canvases.
   const source = parsed.kind === "space"
     ? { kind: "channel", spaceId: parsed.spaceId, title }
-    : { ...parsed, title };
+    : parsed.kind === "canvas" ? { kind: "thread", workstreamId: parsed.canvasId, title } : { ...parsed, title };
   const titled = fact.subjectKind === "channel" || fact.subjectKind === "thread" || fact.subjectKind === "breakout";
   return {
     factId: fact.factId,

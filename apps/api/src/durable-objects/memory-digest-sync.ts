@@ -184,6 +184,40 @@ export const MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION: readonly string[] = [
   ...MEMORY_DIGEST_TRIGGER_STATEMENTS,
 ];
 
+/**
+ * WorkspaceDO migration 144: the copy-sync triggers for the parents that
+ * remain, which `MEMORY_DIGEST_SYNC_TRIGGERS` (written for Threads and
+ * Channels, and hashed into migrations 117 and 143) never covered. A Canvas
+ * changing who may open it (`canvasReaderAllows` reads its visibility, its
+ * creator and the Sidekick that writes it) or being deleted marks every
+ * holder; a participant joining marks that Canvas's holders, and one leaving
+ * also marks every copy holding a fact learned there. A Sidekick's people
+ * list is what `sidekickAdmits` reads, so a change marks every holder.
+ */
+const CANVAS_HOLDERS = (row: "NEW" | "OLD") => `parent_kind = 'canvas' AND parent_id = ${row}.canvas_id`;
+export const MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION: readonly string[] = [
+  `CREATE TRIGGER memory_digest_canvas_visibility AFTER UPDATE OF visibility, created_by_user_id, writer_sidekick_id ON canvas_directory
+   WHEN OLD.visibility IS NOT NEW.visibility OR OLD.created_by_user_id IS NOT NEW.created_by_user_id
+     OR OLD.writer_sidekick_id IS NOT NEW.writer_sidekick_id BEGIN
+     ${MARK_ALL}
+   END`,
+  `CREATE TRIGGER memory_digest_canvas_delete AFTER DELETE ON canvas_directory BEGIN
+     ${MARK_ALL}
+   END`,
+  `CREATE TRIGGER memory_digest_canvas_participant_insert AFTER INSERT ON canvas_participants BEGIN
+     ${markWhere(CANVAS_HOLDERS("NEW"))}
+   END`,
+  `CREATE TRIGGER memory_digest_canvas_participant_delete AFTER DELETE ON canvas_participants BEGIN
+     ${markWhere(`(${CANVAS_HOLDERS("OLD")}) OR ${holdersOfFactsFrom("source.value = 'canvas:' || OLD.canvas_id")}`)}
+   END`,
+  `CREATE TRIGGER memory_digest_sidekick_audience_insert AFTER INSERT ON sidekick_audience BEGIN
+     ${MARK_ALL}
+   END`,
+  `CREATE TRIGGER memory_digest_sidekick_audience_delete AFTER DELETE ON sidekick_audience BEGIN
+     ${MARK_ALL}
+   END`,
+];
+
 /** Advance `memory_revision` inside the caller's transaction and answer the new value. */
 export function nextMemoryRevision(sql: SqlStorage): number {
   return sql.exec<{ revision: number }>(
