@@ -91,6 +91,14 @@ You add and remove yourself. See
 name, instructions and triggers while its managers describe what they want.
 See [Make a Sidekick](../03-sidekicks/02-make-a-sidekick.md).
 
+## E
+
+**Edit Sidekick.** The mark a manager puts on a message in a Sidekick's
+conversation to change the Sidekick instead of asking it for work. A marked
+message goes to the drafting assistant; any other message addressed to the
+Sidekick starts a run. See
+[Talking to a Sidekick](../03-sidekicks/03-the-shared-conversation.md#managers-change-the-sidekick-here-too).
+
 ## G
 
 **Guest.** Someone outside your Organization who has been invited into a

@@ -54,19 +54,22 @@ come back any time and ask for changes: a new time, a shorter summary, a
 different name, a different icon. The details column suggests some under
 **Make it work for you**: "Keep it short" or "Use a more casual tone."
 
+Once the Sidekick is saved, a message you send in its conversation asks it
+to do its job and starts a run. To change the Sidekick instead, choose
+**Edit Sidekick** in the message box before you send, and the message goes to
+the drafting assistant. Rally does not guess which you meant; the mark decides.
 Once the Sidekick is shared, other people in the conversation see these
-changes being made. A message from a manager about the Sidekick itself goes to
-the drafting assistant; a message asking the Sidekick to do its job starts a
-run instead. [Talking to a Sidekick](03-the-shared-conversation.md) explains
-how Rally tells the two apart.
+changes being made. [Talking to a Sidekick](03-the-shared-conversation.md#managers-change-the-sidekick-here-too)
+has the details.
 
 Every change is saved as a new version. A run that has already started
 finishes with the version it started with, so editing a Sidekick halfway
 through a run will not confuse it mid-sentence.
 
-New Sidekicks start private to you. To share one, say who with in this
-conversation ("share it with the support team", "make it an Organization
-Sidekick"), or use **Share** in the details column.
+New Sidekicks start private to you. To share one, tell the drafting
+assistant who with ("share it with the support team", "make it an
+Organization Sidekick"), as an **Edit Sidekick** message once the Sidekick is
+saved, or use **Share** in the details column.
 
 ## Change the icon and colour yourself
 

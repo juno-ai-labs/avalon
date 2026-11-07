@@ -110,7 +110,8 @@ Write like a person who likes the reader and has used the product a lot.
   The joke has to be about the thing on the page.
 - **Name things exactly as the app does.** Bold UI labels: **Settings →
   Connections**. Use today's names: Organization, Canvas, Sidekick, run,
-  Comments, Pinned, Needs input. Channels, Threads, Breakouts, Spaces and
+  comment, the **Pinned** group, **Needs input**. Capitalise Organization,
+  Canvas and Sidekick; "run" and "comment" are ordinary words. Channels, Threads, Breakouts, Spaces and
   Activity were removed; mention them only in the past tense, to tell a reader
   where something went.
 - **Say what happens, then why it matters.** Every feature gets: what it is,

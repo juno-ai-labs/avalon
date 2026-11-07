@@ -176,8 +176,9 @@ If you end up staring at a browser page and no Rally:
   or administrator of that Organization. Only they can send a new invitation or
   change who belongs. [Roles: owners, administrators, members and guests](../10-running-an-organization/01-roles.md)
   explains who can do what.
-- A Canvas you cannot open: whoever shared it, or anyone in it who can add
-  you.
+- A Canvas you cannot open: its creator, or an owner or administrator of
+  the Organization. For a Canvas a Sidekick made, one of the Sidekick's
+  managers can add you too.
 - An Organization connection that will not connect: an owner or
   administrator, since only they can manage those.
 - Anything that keeps failing after you have tried the fix above: the

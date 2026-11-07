@@ -30,9 +30,15 @@ triggers start, with your message as the opening request.
 
 Not every message is for the Sidekick. "Theo, is the fix going out today?" is
 for Theo, and the Sidekick leaves it alone. Rally reads each new message and
-decides whether it is for the Sidekick, for the people, or (from a manager) a
-change to the Sidekick itself. To be sure, mention the Sidekick by name, or
-mention **@Rally**.
+decides whether it is for the Sidekick or for the people. To be sure, mention
+the Sidekick by name, or mention **@Rally**.
+
+Every message addressed to the Sidekick starts a run, whoever sends it. That
+includes its managers: a manager asking "can you rerun this week's numbers?"
+gets a run, the same as anyone else. Changing the Sidekick itself is a
+separate, marked kind of message, described
+[below](#managers-change-the-sidekick-here-too). Rally never guesses that a
+message was meant as a change.
 
 A run started from a message uses the access of the person who sent it, unless
 that person is on the Sidekick's **Delegation allowed** list. So asking a
@@ -82,17 +88,20 @@ report, an incident timeline or a cleaned-up spreadsheet, it makes a Canvas, and
 a card for it appears in the conversation. Click the card to open the Canvas.
 It is also in your Canvases list, under **From Sidekicks**.
 
-From there, it is a Canvas like any other: talk to Rally about it, comment on
-it, share it further. The next time the Sidekick runs, it can update the same
+From there, you talk to Rally about it and comment on it like any other
+Canvas, and the Sidekick's managers decide who else can open it. The next time the Sidekick runs, it can update the same
 Canvas with a new version rather than making another one, if its instructions
 say so. The Canvases a Sidekick writes to are listed in its details column.
 
 ## Managers change the Sidekick here too
 
-The people who manage a Sidekick change it in this same conversation, by
-talking to its drafting assistant: "run it at 8 instead of 9", "leave out
-weekends". Everyone in the conversation can see the change being made, and the
-assistant says when it has saved a new version. A run already going finishes
+The people who manage a Sidekick change it in this same conversation. To
+do it, choose **Edit Sidekick** in the message box, then write the change:
+"run it at 8 instead of 9", "leave out weekends". A message marked
+**Edit Sidekick** goes to the Sidekick's drafting assistant instead of starting
+a run. Without the mark, a manager's message is a request like anyone else's.
+Only managers see **Edit Sidekick**. Everyone in the conversation can see the
+change being made, and the assistant says when it has saved a new version. A run already going finishes
 with the version it started with.
 
 People who are not managers can still suggest a change in the conversation,
