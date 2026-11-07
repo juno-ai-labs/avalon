@@ -325,7 +325,7 @@ import {
 } from "./conversation-tools";
 import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
-import { CODE_PROGRAM_TOOL_TIMEOUT_MS, createCodePlugin, createCustomToolsPlugin, type CodePlugin } from "./code-mode";
+import { CODE_PROGRAM_TOOL_TIMEOUT_MS, createCodePlugin, createCustomToolsPlugin, programTestWarnings, type CodePlugin } from "./code-mode";
 import { TerminalToolError } from "./terminal/tools";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 
@@ -2242,11 +2242,15 @@ function createAvalonAutomationsPlugin(
       // without it there is no program runtime in this deployment.
       ...(codeMode && env.CODE_LOADER ? {
         testTool: async (tool, toolInput, context) => {
+          const started = Date.now();
           const result = await codeMode.runProgramForTool({ tool, input: toolInput, context }, {
             loader: env.CODE_LOADER!,
             input,
           });
-          return { output: result.output };
+          // The run-time costs the guide asks the author to avoid, measured on this test.
+          const calls = (result.output as { calls?: Array<{ tool: string }> } | undefined)?.calls ?? [];
+          const warnings = programTestWarnings({ code: tool.code, calls, elapsedMs: Date.now() - started });
+          return { output: warnings.length ? { ...(result.output as Record<string, unknown>), warnings } : result.output };
         },
       } : {}),
     },
