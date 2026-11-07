@@ -949,6 +949,13 @@ function effectRejection(
 }
 
 /**
+ * How long an effect whose notification intent another delivery is holding
+ * waits before the Queue brings it back. Carried over unchanged from the
+ * deleted `parent_effect` branch; why 30 was chosen was not recorded.
+ */
+const NOTIFICATION_HELD_RETRY_SECONDS = 30;
+
+/**
  * One effect message, at-least-once and unordered.
  *
  * A child's effect goes to its parent, a parent's to the workspace. Both
@@ -999,9 +1006,9 @@ async function consumeEffect(
             substream_id: envelope.substreamId,
             notification_intent_id: intentId,
             reason: "notification_busy",
-            retry_delay_seconds: 30,
+            retry_delay_seconds: NOTIFICATION_HELD_RETRY_SECONDS,
           });
-          message.retry({ delaySeconds: 30 });
+          message.retry({ delaySeconds: NOTIFICATION_HELD_RETRY_SECONDS });
           return;
         }
         notificationOutcome = outcome;
