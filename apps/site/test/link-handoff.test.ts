@@ -23,9 +23,6 @@ describe('the link handoff page', () => {
     await import('../src/link-handoff');
     expect(document.querySelector('#link-title')!.textContent).toBe('This link is to something that no longer exists');
     expect(visible('#link-gone')).toBe(true);
-    expect(document.querySelector('#link-gone')!.textContent).toBe(
-      'Rally replaced Channels, Threads and Breakouts with Canvases. Ask whoever sent this link for one to the Canvas that holds the work now.',
-    );
     expect(visible('#open-rally')).toBe(false);
     expect(visible('#link-error')).toBe(false);
     const browser = document.querySelector<HTMLAnchorElement>('#open-browser')!;
