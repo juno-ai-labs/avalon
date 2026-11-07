@@ -205,6 +205,11 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "sidekick_reviews",
   "sidekick_audience",
   "sidekick_viewer_reads",
+  // A hosted Canvas's tables (migration 139), behind the `canvas*` facade and
+  // in `WORKSPACE_TYPED_RPC_ONLY_TABLES` for the reason a Sidekick's are.
+  "canvas_directory",
+  "canvas_participants",
+  "canvas_artifacts",
   // The Space authority's ten tables. Every one of them is reached through
   // the typed Space RPCs in `workspace-space-protocol.ts` and nothing else — a
   // Space is a relationship the Organization owns, not product state a runtime

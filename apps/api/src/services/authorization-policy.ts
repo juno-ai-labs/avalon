@@ -68,6 +68,33 @@ export function sidekickAdmits(
   return member && sidekick.scope === 'workspace';
 }
 
+/**
+ * Who opens a Canvas, its Chat and the artifacts it generated: its creator,
+ * anyone on its participant list, anyone its writer Sidekick is shared with,
+ * and for an Organization-wide Canvas every member. A guest is admitted only
+ * from the list or the Sidekick's own list, never by Organization visibility.
+ * The one copy of this rule; `docs/canvases.md#who-can-open-a-canvas`.
+ */
+export function canvasAdmits(
+  canvas: { visibility: string; creator: boolean; participant: boolean; writerAudience: boolean },
+  member: boolean,
+): boolean {
+  if (canvas.creator || canvas.participant || canvas.writerAudience) return true;
+  return member && canvas.visibility === 'workspace';
+}
+
+/**
+ * Who changes who can open a Canvas: its creator, the Organization's owners
+ * and administrators, and for a Canvas a Sidekick writes that Sidekick's
+ * managers. Everyone else it admits reads and takes part.
+ */
+export function canvasManages(
+  canvas: { creator: boolean; writerManager: boolean },
+  actorRole: 'owner' | 'admin' | 'member' | null,
+): boolean {
+  return canvas.creator || canvas.writerManager || actorRole === 'owner' || actorRole === 'admin';
+}
+
 /** Who reads a connection's resources: its owner, or anyone for a workspace connection, while it is enabled. */
 export function connectionAdmits(connection: { status: string; scope: string; ownerUserId: string | null }, userId: string): boolean {
   return connection.status !== 'disabled' && (connection.scope === 'workspace' || connection.ownerUserId === userId);
