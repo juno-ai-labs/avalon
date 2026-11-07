@@ -469,7 +469,7 @@ different principals, exactly as they do when two members type into the same wor
 Rally. How "runs as themselves" reaches the work-stream object is the connector
 principal — `principal: "connector"` on the shared auth context, set only after verifying the
 link on the delivered message; the mechanics and the invariant behind it live in
-[`slack-integration.md`](slack-integration.md#who-a-slack-work-stream-belongs-to) and the product-auth bullet of
+[`slack-integration.md`](slack-integration.md#who-a-reply-runs-as) and the product-auth bullet of
 [`workstream-durable-object.md`](workstream-durable-object.md#invariants), and the next adapter
 that runs a member as themselves goes through the same marker.
 
