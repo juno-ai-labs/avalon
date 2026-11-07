@@ -173,10 +173,11 @@ describe("Sidekick wizard run inspection", () => {
       outputTokens: 150, cachedInputTokens: 2400, costUsd: 0.075, firstCallInputTokens: 1000, lastCallInputTokens: 2500,
       largestCallInputTokens: 2500, ms: 1200 }, note: expect.stringContaining("sends the whole conversation"), tools: [
       { toolName: "run_sql", fromProgram: true, calls: 2, failed: 0, ambiguous: 0, ms: 70, maxMs: 50 },
-      { toolName: "slack_send_message", fromProgram: false, calls: 1, failed: 1, ambiguous: 0, ms: 60, maxMs: 60 },
-      { toolName: "post_update", fromProgram: false, calls: 1, failed: 0, ambiguous: 1, ms: 5, maxMs: 5 },
+      // Failed and ambiguous calls count, but carry no time: a sweep or retry stamps their settlement.
+      { toolName: "post_update", fromProgram: false, calls: 1, failed: 0, ambiguous: 1, ms: null, maxMs: null },
+      { toolName: "slack_send_message", fromProgram: false, calls: 1, failed: 1, ambiguous: 0, ms: null, maxMs: null },
     ] });
-    expect(toolsIn(result.output)).toEqual([expect.objectContaining({ toolCallId: "delivery-call", ms: 60 })]);
+    expect(toolsIn(result.output)).toEqual([expect.not.objectContaining({ ms: expect.anything() })]);
   });
 
   it("continues transcript pages under their original fence and marks missing detailed results", async () => {

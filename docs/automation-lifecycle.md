@@ -234,7 +234,9 @@ per accepted response, compactions included), failed attempts, input, output
 and cached tokens, cost, time, and the first, last and largest call's input.
 Its `tools` part gives each tool's calls, definite failures, ambiguous writes
 and milliseconds, with a program's own requests (`<id>:call:<n>`) counted apart;
-the program's own call's time already includes theirs. Both cover the run's
+the program's own call's time already includes theirs. Time, there and in each
+call's `ms`, counts completed calls only: a sweep or a retry settles a call
+when it runs, not when the call stopped. Both cover the run's
 whole conversation, so tool calls from later chat in it are counted too. A
 fixed `note` beside it says every model call sends the whole conversation: a
 transcript shows each turn's new message, and a reader that weighs only those

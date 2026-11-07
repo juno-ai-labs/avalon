@@ -124,7 +124,9 @@ export function createSidekickRunTools(env: Env, input: WorkstreamWorkflowInput,
       const full = output !== null && !placeholder;
       return [call.toolCallId, { type: "tool", toolCallId: call.toolCallId, toolName: receipt.toolName,
         activationId: receipt.runId, status: receipt.status,
-        ...(receipt.startedAt !== null && receipt.settledAt !== null ? { ms: receipt.settledAt - receipt.startedAt } : {}),
+        // A sweep or a retry settles a call when it runs, so only a completed call's span is its duration.
+        ...(receipt.status === "completed" && receipt.startedAt !== null && receipt.settledAt !== null
+          ? { ms: receipt.settledAt - receipt.startedAt } : {}),
         input: JSON.parse(receipt.inputJson) as unknown,
         ...(full ? { output } : { summary: receipt.outputSummary ?? call.participantSafeResult }),
         ...(receipt.errorJson ? { error: JSON.parse(receipt.errorJson) as unknown } : {}),
