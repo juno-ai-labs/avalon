@@ -107,6 +107,7 @@ import {
   WorkspaceSpaceSnapshotEventSchema,
   WorkspaceNavigationStateEventSchema,
   WorkspaceSidebarListEventSchema,
+  WorkspaceCanvasListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceSidebarSchema,
   WorkspaceWorkstreamPageEventSchema,
@@ -1217,8 +1218,8 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { CANVAS_SCHEMA_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS } from "./canvas-schema";
-import { HostedCanvas, type HostedCanvasHost } from "./hosted-canvas";
+import { CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS } from "./canvas-schema";
+import { canvasReaderAllows, canvasSidebarRows, HostedCanvas, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
@@ -4911,6 +4912,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "admit a Canvas's Chat among the conversations a Sidekick is attached to",
   // See SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS and docs/canvases.md#data-model.
   statements: SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS,
+}, {
+  version: 141,
+  description: "pin a Canvas or a Sidekick in its list's Pinned group",
+  // See CANVAS_SIDEKICK_PINS_STATEMENTS and docs/canvases.md#the-canvas-list.
+  statements: CANVAS_SIDEKICK_PINS_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -6773,10 +6779,110 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.canvasWrite(() => canvas.setAudience(input));
   }
 
-  /** Publish the Canvas list after a write that moved it; filled in by the sidebar's Canvas rows. */
+  /**
+   * Send the Canvas list what moved since it was last sent: every socket for
+   * a change to a Canvas's row or who is in one, or only the sockets of the
+   * people whose read of a Chat moved. Read per socket, because the list is
+   * scoped to what its viewer may open.
+   */
   private publishCanvasList(): void {
+    const everyone = this.canvasDirectoryMoved;
+    const readers = new Set(this.canvasReadersMoved);
     this.canvasDirectoryMoved = false;
     this.canvasReadersMoved.clear();
+    if (!everyone && readers.size === 0) return;
+    const occurredAt = new Date().toISOString();
+    const waterline = this.canvasListWaterline();
+    const present = this.presentByCanvas();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed || (!everyone && !readers.has(attachment.userId))) continue;
+      try {
+        socket.send(JSON.stringify(WorkspaceCanvasListEventSchema.parse({
+          type: "workspace_canvas_list", occurredAt, waterline, items: this.canvasList(attachment, present),
+        })));
+      } catch {
+        // A reconnect receives the whole list in the subscribe payload.
+      }
+    }
+  }
+
+  private canvasListWaterline(): number {
+    return this.state.storage.sql.exec<{ waterline: number }>(
+      `SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'canvases'`,
+    ).toArray()[0]?.waterline ?? 0;
+  }
+
+  /** One socket's Canvas list; see `canvasSidebarRows`. */
+  private canvasList(attachment: WorkspaceSocketAttachment, present = this.presentByCanvas()) {
+    return canvasSidebarRows(this.state.storage.sql,
+      { userId: attachment.userId, member: viewerOf(attachment).accessClass === "member" }, present, SIDEBAR_LIST_LIMIT);
+  }
+
+  /** Who is in each Canvas now: the people whose foreground socket has it open. */
+  private presentByCanvas(): Map<string, string[]> {
+    const present = new Map<string, Set<string>>();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!contributesPresence(attachment) || !this.isCanvasParent(attachment.foregroundWorkstreamId)) continue;
+      const users = present.get(attachment.foregroundWorkstreamId) ?? new Set<string>();
+      users.add(attachment.userId);
+      present.set(attachment.foregroundWorkstreamId, users);
+    }
+    return new Map([...present].map(([canvasId, users]) => [canvasId, [...users].sort()]));
+  }
+
+  /** The Canvas presence last published, so a presence change that moves no Canvas sends no list. */
+  private lastCanvasPresence = "";
+
+  /** A Canvas the viewer may open is visible to presence, as a listed Channel is; `null` for an id that is no Canvas. */
+  private canvasVisible(viewer: Viewer, canvasId: string): boolean | null {
+    const row = this.state.storage.sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, canvasId).toArray()[0];
+    if (!row) return null;
+    return canvasReaderAllows(row, { userId: viewer.userId, actorRole: viewer.accessClass === "member" ? "member" : null },
+      this.state.storage.sql);
+  }
+
+  /**
+   * Pin or unpin a Canvas or a Sidekick in the viewer's Pinned group of that
+   * list, or put that group in an order. The item must be one the viewer may
+   * open; the change goes out as that list's rows, to that viewer.
+   */
+  async setSidebarPin(input: {
+    workspaceId: string; userId: string; accessClass: "member" | "guest";
+    kind: "canvas" | "sidekick"; itemId: string; pinned: boolean;
+  }): Promise<{ ok: boolean }> {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    const viewer: Viewer = { userId: input.userId, accessClass: input.accessClass };
+    const visible = input.kind === "canvas"
+      ? this.canvasVisible(viewer, input.itemId) === true
+      : this.listSidebarAutomations(input.workspaceId, input.userId).some((row) => row.id === input.itemId);
+    if (input.pinned && !visible) return { ok: false };
+    const pins = new WorkspacePinStorage(this.state.storage);
+    const now = Date.now();
+    const changed = input.pinned ? pins.pin(input.userId, input.kind, input.itemId, null, now) : pins.unpin(input.userId, input.kind, input.itemId);
+    if (changed) this.publishPinnedList(input.kind, input.userId);
+    return { ok: true };
+  }
+
+  async reorderSidebarPins(input: { workspaceId: string; userId: string; kind: "canvas" | "sidekick"; itemIds: string[] }): Promise<void> {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    new WorkspacePinStorage(this.state.storage).reorder(input.userId, input.kind, input.itemIds, Date.now());
+    this.publishPinnedList(input.kind, input.userId);
+  }
+
+  /** A pin is one viewer's: only their list moves, at a new waterline. */
+  private publishPinnedList(kind: "canvas" | "sidekick", userId: string): void {
+    this.state.storage.sql.exec(`UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = ?`,
+      kind === "canvas" ? "canvases" : "automations");
+    if (kind === "canvas") {
+      this.canvasReadersMoved.add(userId);
+      this.publishCanvasList();
+    } else {
+      this.publishSidebarList("automations", new Set([userId]));
+    }
   }
 
   /**
@@ -8021,6 +8127,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Main and record when they opened it.
    */
   private recordChannelOpened(attachment: WorkspaceSocketAttachment, workstreamId: string): void {
+    // A Canvas foregrounded wakes its Chat, as a Channel's Main is woken; it
+    // has no Thread recency row to record or send.
+    if (this.isCanvasParent(workstreamId)) {
+      this.wakeMainConversation(workstreamId);
+      return;
+    }
     const now = Date.now();
     // Opening a Channel is the moment its Main is about to be read. The
     // Channel control socket used to start this wake; a desktop that no
@@ -8146,6 +8258,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     for (const { attachment, workstreamId } of opened) this.recordChannelOpened(attachment, workstreamId);
+    // Who is in each Canvas rides the Canvas list's rows; send it when that moved.
+    const canvasPresence = JSON.stringify([...this.presentByCanvas()]);
+    if (canvasPresence !== this.lastCanvasPresence) {
+      this.lastCanvasPresence = canvasPresence;
+      this.canvasDirectoryMoved = true;
+      this.publishCanvasList();
+    }
   }
 
   /**
@@ -18294,12 +18413,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
     // The viewer's own Sidekicks, the Organization's, and those shared with
     // them, each with what they have not read in its shared conversation.
-    return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_count: number; unread: number; needs_input: number }>(
+    return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_count: number; unread: number; needs_input: number; pinned_position: number | null }>(
       `SELECT directory.automation_id, directory.loadable, directory.appearance_json, directory.lifecycle,
               directory.scope, directory.title, directory.description,
-              directory.next_run_at, directory.projected_at, ${AUTOMATION_AUDIENCE_SQL}, ${AUTOMATION_VIEWER_SQL}
+              directory.next_run_at, directory.projected_at, ${AUTOMATION_AUDIENCE_SQL}, ${AUTOMATION_VIEWER_SQL},
+              pin.position AS pinned_position
          FROM automation_directory directory
          ${AUTOMATION_VIEWER_JOINS}
+         LEFT JOIN workspace_pins pin ON pin.user_id = ?1 AND pin.item_kind = 'sidekick' AND pin.item_id = directory.automation_id
         WHERE directory.workspace_id = ?2 AND directory.lifecycle <> 'deleted'
           AND (directory.scope = 'workspace' OR directory.author_user_id = ?1 OR directory.run_as_user_id = ?1
             OR EXISTS (SELECT 1 FROM sidekick_audience audience
@@ -18309,7 +18430,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       userId,
       workspaceId,
       limit,
-    ).toArray().map((row) => automationSummary(row, this.invalidAppearanceReporter(workspaceId)));
+    ).toArray().map((row) => ({ ...automationSummary(row, this.invalidAppearanceReporter(workspaceId)),
+      pinnedPosition: row.pinned_position }));
   }
 
   private pinnedDirectoryRows(viewer: Viewer, includeSystem: boolean, spaceId?: string): WorkspaceDirectoryRow[] {
@@ -18369,6 +18491,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private directoryVisible(viewer: Viewer, workstreamId: string): boolean {
+    // A Canvas a viewer may open is foregrounded the way a listed Channel is.
+    const canvas = this.canvasVisible(viewer, workstreamId);
+    if (canvas !== null) return canvas;
     return this.state.storage.sql.exec<{ one: number }>(
       `SELECT 1 AS one FROM channels directory
        LEFT JOIN channel_viewers viewer
@@ -18387,6 +18512,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Main's audience, so presence asks this rather than whether it is listed.
    */
   private mainOpenable(viewer: Viewer, workstreamId: string): boolean {
+    // A Canvas's face pile is everyone who may open it.
+    const canvas = this.canvasVisible(viewer, workstreamId);
+    if (canvas !== null) return canvas;
     return this.state.storage.sql.exec<{ one: number }>(
       `SELECT 1 AS one FROM channels directory
        LEFT JOIN channel_viewers viewer
@@ -18689,6 +18817,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           items: this.sidekickLibrary(attachment),
         },
         notes: { waterline: 0, items: [], nextCursor: null },
+        canvases: { waterline: this.canvasListWaterline(), items: this.canvasList(attachment) },
         ...spaces,
         channelsBySpace: true,
       });
@@ -18708,6 +18837,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       notes: {
         waterline: 0, items: [], nextCursor: null,
       },
+      canvases: { waterline: this.canvasListWaterline(), items: this.canvasList(attachment) },
       ...spaces,
     });
   }

@@ -409,6 +409,24 @@ placements, so the migration intentionally clears all existing pins.
 
 ## Changelog
 
+### 2026-11-07 — A Canvas and a Sidekick can be pinned
+
+**What changed:** WorkspaceDO migration 141 admits `canvas` and `sidekick` in
+`workspace_pins.item_kind`. `setSidebarPin` and `reorderSidebarPins` pin and
+order them in their lists' Pinned groups; each list's rows carry
+`pinnedPosition`. The `pins` list still returns only threads, Channels and
+breakouts.
+
+**Why:** The Canvases and Sidekicks PRD gives each list a Pinned group. A
+released client parses `PinKind` as a closed enum, so a new kind in `pins`
+would fail its whole sidebar.
+
+**Considered and rejected:** Widening `PinKind`: every released desktop would
+drop its sidebar payload.
+
+**Consequences:** A new pinnable kind rides its own list's rows, not `pins`.
+See [`canvases.md`](canvases.md#the-canvas-list).
+
 ### 2026-10-17 — Generated artifacts can be pinned
 
 **What changed:** An artifact Rally generated in a thread's Main can be pinned
