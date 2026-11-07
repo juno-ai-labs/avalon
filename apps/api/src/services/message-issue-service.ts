@@ -18,7 +18,7 @@ export class MessageIssueService {
     const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS,
       this.auth.workspaceId, workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
     const target = input.target;
-    let parentKind: 'workstream' | 'automation' | 'space';
+    let parentKind: 'workstream' | 'automation' | 'space' | 'canvas';
     let parentId: string;
     let threadId: string | null = null;
     let channelId: string | null = null;

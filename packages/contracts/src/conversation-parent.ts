@@ -27,7 +27,7 @@ import {
  * no Sidekick skills. A branch that means "an ordinary Channel conversation"
  * therefore tests `=== "workstream"`, never `!== "automation"`.
  */
-export const ConversationParentKindSchema = z.enum(["workstream", "automation", "space"]);
+export const ConversationParentKindSchema = z.enum(["workstream", "automation", "space", "canvas"]);
 export type ConversationParentKind = z.infer<typeof ConversationParentKindSchema>;
 
 export const ConversationParentRefSchema = z.strictObject({

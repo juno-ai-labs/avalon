@@ -325,7 +325,6 @@ describe("shared Sidekick delegation admission", () => {
       // is waited for rather than read once.
       if (wake === null) await expect.poll(async () => (await registrations()).length).toBe(2);
       else expect(wake).toBeLessThan(parkedAlarm);
-      await runDurableObjectAlarm(stub());
     }
     await expect.poll(async () => (await registrations()).length).toBe(2);
     const expanded = await registrations();
