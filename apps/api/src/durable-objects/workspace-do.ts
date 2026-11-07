@@ -196,6 +196,7 @@ import {
   automationSummary,
   AUTOMATION_AUDIENCE_SQL,
   AUTOMATION_VIEWER_JOINS,
+  SIDEBAR_SIDEKICK_LISTED_SQL,
   AUTOMATION_VIEWER_SQL,
   bumpChannelRail,
   CHANNEL_RAIL_MIGRATION,
@@ -4888,7 +4889,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
 }, {
   version: 139,
-  description: "record each Canvas: its directory row, who besides its creator may open it, and the artifacts it generated",
+  description: "record each Canvas: its directory row and who besides its creator may open it",
   // See CANVAS_SCHEMA_STATEMENTS and docs/canvases.md#data-model.
   statements: CANVAS_SCHEMA_STATEMENTS,
 }, {
@@ -6696,13 +6697,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         );
         this.canvasReadersMoved.add(userId);
       },
-      noteCanvasDirectoryChanged: () => {
-        this.state.storage.sql.exec(
-          `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'canvases'`,
-        );
-        this.canvasDirectoryMoved = true;
-      },
+      noteCanvasDirectoryChanged: () => this.noteCanvasDirectoryMoved(),
     };
+  }
+
+  /**
+   * Every viewer's Canvas list moved: a row, its participants, or who is in
+   * one. The waterline advances, since a client applies only a newer one.
+   */
+  private noteCanvasDirectoryMoved(): void {
+    this.state.storage.sql.exec(
+      `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'canvases'`,
+    );
+    this.canvasDirectoryMoved = true;
   }
 
   /** The hosted parent for a Canvas id; `null` for an id that names no Canvas. */
@@ -6850,7 +6857,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /** The Canvas presence last published, so a presence change that moves no Canvas sends no list. */
-  private lastCanvasPresence = "";
+  private lastCanvasPresence = "[]";
 
   /** A Canvas the viewer may open is visible to presence, as a listed Channel is; `null` for an id that is no Canvas. */
   private canvasVisible(viewer: Viewer, canvasId: string): boolean | null {
@@ -6874,7 +6881,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const viewer: Viewer = { userId: input.userId, accessClass: input.accessClass };
     const visible = input.kind === "canvas"
       ? this.canvasVisible(viewer, input.itemId) === true
-      : this.listSidebarAutomations(input.workspaceId, input.userId).some((row) => row.id === input.itemId);
+      : this.sidekickListed(input.workspaceId, input.userId, input.itemId);
     if (input.pinned && !visible) return { ok: false };
     const pins = new WorkspacePinStorage(this.state.storage);
     const now = Date.now();
@@ -8282,7 +8289,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const canvasPresence = JSON.stringify([...this.presentByCanvas()]);
     if (canvasPresence !== this.lastCanvasPresence) {
       this.lastCanvasPresence = canvasPresence;
-      this.canvasDirectoryMoved = true;
+      this.noteCanvasDirectoryMoved();
       this.publishCanvasList();
     }
   }
@@ -18430,6 +18437,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       : [];
   }
 
+  /** Whether {@link listSidebarAutomations} lists this Sidekick to this viewer, asked of its one row. */
+  private sidekickListed(workspaceId: string, userId: string, automationId: string): boolean {
+    return this.state.storage.sql.exec(
+      `SELECT 1 FROM automation_directory directory
+        WHERE directory.automation_id = ?3 AND ${SIDEBAR_SIDEKICK_LISTED_SQL} LIMIT 1`,
+      userId, workspaceId, automationId,
+    ).toArray().length > 0;
+  }
+
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
     // The viewer's own Sidekicks, the Organization's, and those shared with
     // them, each with what they have not read in its shared conversation.
@@ -18441,10 +18457,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          FROM automation_directory directory
          ${AUTOMATION_VIEWER_JOINS}
          LEFT JOIN workspace_pins pin ON pin.user_id = ?1 AND pin.item_kind = 'sidekick' AND pin.item_id = directory.automation_id
-        WHERE directory.workspace_id = ?2 AND directory.lifecycle <> 'deleted'
-          AND (directory.scope = 'workspace' OR directory.author_user_id = ?1 OR directory.run_as_user_id = ?1
-            OR EXISTS (SELECT 1 FROM sidekick_audience audience
-                        WHERE audience.sidekick_id = directory.automation_id AND audience.user_id = ?1))
+        WHERE ${SIDEBAR_SIDEKICK_LISTED_SQL}
         ORDER BY directory.title COLLATE NOCASE, directory.automation_id
         LIMIT ?3`,
       userId,

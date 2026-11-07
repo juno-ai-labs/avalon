@@ -26,8 +26,8 @@ import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000a1d00");
 const PARENT_ID = "00000000-0000-7000-8000-0000000a1d01";
 
-describe("AgentLoopDO over a conversation stored before the rename", () => {
-  it("constructs over a v82 root, keeping its identity and columns, and admits a Canvas parent", async () => {
+describe("the conversation store AgentLoopDO opens, over a conversation stored before the rename", () => {
+  it("opens a v82 root, keeping its identity and columns, and admits a Canvas parent at v83", async () => {
     const stub = env.MIGRATION_PROBE_DO!.getByName("agent-loop-do-continuity-v82");
     await stub.ping();
     // The history and the root are committed in their own event, as a deployed
@@ -63,7 +63,11 @@ describe("AgentLoopDO over a conversation stored before the rename", () => {
       expect(state.storage.sql.exec(
         `SELECT authority_generation, next_sequence_number, archive_generation FROM workstream WHERE id = 1`,
       ).one()).toEqual({ authority_generation: 3, next_sequence_number: 9, archive_generation: 1 });
+      // Migration 83 widened the root's CHECK: a Canvas parent is now storable.
       state.storage.sql.exec(`UPDATE workstream SET parent_kind = 'canvas' WHERE id = 1`);
+      expect(state.storage.sql.exec<{ parent_kind: string }>(
+        `SELECT parent_kind FROM workstream WHERE id = 1`,
+      ).one().parent_kind).toBe("canvas");
     });
   });
 });

@@ -118,11 +118,20 @@ export const WORKSPACE_ARTIFACT_PINS_MIGRATION: readonly string[] = [
  * test for a version already drained, where the push starts.
  */
 export function artifactUpdateSql(version: string, pin: string): string {
+  return artifactNewsSql(version, `${pin}.user_id`, `${pin}.created_at`);
+}
+
+/**
+ * {@link artifactUpdateSql} for any reader and any moment: `userId` and
+ * `since` (epoch milliseconds) are SQL expressions in scope. A Canvas's row
+ * asks it of its viewer and their last read of the Chat.
+ */
+export function artifactNewsSql(version: string, userId: string, since: string): string {
   return `${version}.version > 1
     AND ${version}.cause IN ('published', 'replaced')
-    AND (${version}.author_user_id IS NULL OR ${version}.author_user_id <> ${pin}.user_id)
-    AND (${version}.on_behalf_of_user_id IS NULL OR ${version}.on_behalf_of_user_id <> ${pin}.user_id)
-    AND CAST(unixepoch(${version}.captured_at, 'subsec') * 1000 AS INTEGER) > ${pin}.created_at`;
+    AND (${version}.author_user_id IS NULL OR ${version}.author_user_id <> ${userId})
+    AND (${version}.on_behalf_of_user_id IS NULL OR ${version}.on_behalf_of_user_id <> ${userId})
+    AND CAST(unixepoch(${version}.captured_at, 'subsec') * 1000 AS INTEGER) > ${since}`;
 }
 
 /** Whether a drained version's cause can be news to a pinner, as {@link artifactUpdateSql} decides. */

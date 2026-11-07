@@ -12,14 +12,15 @@ import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asSubstreamId, asUserId, asWorkspaceId } from "@rally/contracts";
+import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
+import { canvasSidebarRows } from "../src/durable-objects/hosted-canvas";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
 import { createAccessContext } from "../src/services/authorization-service";
 import { projectAuthorization } from "../src/services/authorization-projection-service";
-import { createCanvas } from "../src/services/canvas-service";
+import { CanvasService, createCanvas } from "../src/services/canvas-service";
 import { createAutomation } from "../src/services/automation-service";
 import { canvasArtifactNoter, resolveTerminalPublicationHome } from "../src/services/terminal/authority";
 import { createTerminalPortFactory } from "../src/services/terminal/object-port";
@@ -107,6 +108,44 @@ describe("a Canvas's Chat", () => {
       update: { visibility: "participants", userIds: [MEMBER, GUEST] } });
     expect(await opens(MEMBER, canvasId)).toBe(true);
     expect(await opens(GUEST, canvasId)).toBe(true);
+  });
+
+  it("refuses an Organization-wide Chat to a suspended member and to somebody with no membership", async () => {
+    const SUSPENDED = asUserId("00000000-0000-7000-8000-0000000cb005");
+    const STRANGER = asUserId("00000000-0000-7000-8000-0000000cb006");
+    await env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, access_class, last_seen_at)
+      VALUES (?, ?, 'suspended', 'member', 'member', ?)`).bind(WORKSPACE_ID, SUSPENDED, NOW).run();
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "workspace", userIds: [] } });
+    expect(await opens(MEMBER, canvasId)).toBe(true);
+    // Each still holds a session that names them a member; only the
+    // relationship the Organization object reads says they are not one.
+    for (const userId of [SUSPENDED, STRANGER]) {
+      await expect(new ConversationService(TEST_ENV, auth(userId)).authorizeViewer(canvasId))
+        .rejects.toMatchObject({ code: "conversation_not_found" });
+    }
+  });
+
+  it("makes one Canvas and sends its prompt once for a create retried with the same id", async () => {
+    const canvasId = asWorkstreamId(crypto.randomUUID());
+    const request = { canvasId, title: "Launch plan", prompt: { text: "Draft the launch plan.", clientMessageId: "canvas-create-1" } };
+    const first = await new CanvasService(TEST_ENV, auth(CREATOR)).create(request);
+    const retried = await new CanvasService(TEST_ENV, auth(CREATOR)).create(request);
+    expect(retried).toEqual(first);
+    expect(first.canvasId).toBe(canvasId);
+    expect(await runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM canvas_directory WHERE created_by_user_id = ?`, CREATOR).one().n)).toBe(1);
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    expect(await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM canonical_conversation_turn_details WHERE client_message_id = ?`, "canvas-create-1").one().n)).toBe(1);
+    // Somebody else naming the id, or an id another conversation holds, is refused.
+    await expect(new CanvasService(TEST_ENV, auth(MEMBER)).create({ canvasId }))
+      .rejects.toMatchObject({ code: "canvas_id_unavailable" });
+    const threadId = asWorkstreamId(crypto.randomUUID());
+    await env.DB.prepare(`INSERT INTO workstreams (id, workspace_id) VALUES (?, ?)`).bind(threadId, WORKSPACE_ID).run();
+    await expect(new CanvasService(TEST_ENV, auth(CREATOR)).create({ canvasId: threadId }))
+      .rejects.toMatchObject({ code: "canvas_id_unavailable" });
   });
 
   it("issues a socket ticket naming the canvas kind", async () => {
@@ -197,6 +236,23 @@ function canvasRows(frames: Array<Record<string, unknown>>): Row[] {
   return sync.sidebar?.canvases?.items ?? [];
 }
 
+/**
+ * The Canvas rows a client holds: the subscribe payload, then each push whose
+ * waterline is newer than the last one applied, as the desktop's sidebar list
+ * store applies them.
+ */
+function clientCanvasRows(frames: Array<Record<string, unknown>>): Row[] {
+  const sync = frames.find((frame) => frame.type === "workspace_sync") as
+    { sidebar?: { canvases?: { waterline: number; items: Row[] } } };
+  let applied = { waterline: sync.sidebar?.canvases?.waterline ?? -1, items: sync.sidebar?.canvases?.items ?? [] };
+  for (const frame of frames) {
+    if (frame.type !== "workspace_canvas_list") continue;
+    const push = frame as { waterline: number; items: Row[] };
+    if (push.waterline > applied.waterline) applied = push;
+  }
+  return applied.items;
+}
+
 describe("the Canvas list", () => {
   it("lists a Canvas to whoever may open it, unread to a participant who has not opened it", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
@@ -218,7 +274,9 @@ describe("the Canvas list", () => {
     const creator = await connect(CREATOR);
     const member = await connect(MEMBER);
     member.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: canvasId }));
-    await expect.poll(() => canvasRows(creator.frames)[0]?.presentUserIds).toEqual([MEMBER]);
+    // Applied by waterline, as the client applies it: a push that does not
+    // advance it never reaches the row.
+    await expect.poll(() => clientCanvasRows(creator.frames)[0]?.presentUserIds).toEqual([MEMBER]);
     // The face pile in the Canvas itself, on the same presence path a Channel's uses.
     creator.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: canvasId }));
     await expect.poll(() => creator.frames.filter((frame) => frame.type === "workspace_presence").at(-1))
@@ -246,16 +304,52 @@ describe("the Canvas list", () => {
   });
 });
 
+describe("a Sidekick's pin", () => {
+  it("pins a Sidekick the viewer is listed and refuses one they are not", async () => {
+    const sidekickId = crypto.randomUUID();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    const pin = (userId: string) => workspace().setSidebarPin({ workspaceId: WORKSPACE_ID, userId, accessClass: "member",
+      kind: "sidekick", itemId: sidekickId, pinned: true });
+    expect(await pin(MEMBER)).toEqual({ ok: false });
+    expect(await pin(CREATOR)).toEqual({ ok: true });
+    await workspace().sidekickSetAudience({ workspaceId: WORKSPACE_ID, automationId: sidekickId,
+      actor: { userId: CREATOR, actorRole: "member", participantOfOwningWorkstream: false },
+      update: { audience: "people", userIds: [MEMBER] } });
+    expect(await pin(MEMBER)).toEqual({ ok: true });
+  });
+});
+
 describe("a Canvas's artifacts", () => {
+  /** The Terminal's resource bridge in a Canvas's Chat; `noting: false` is an attempt that dies before its note. */
+  function canvasBridge(canvasId: string, noting = true) {
+    return createTerminalResourceBridge(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID),
+      createTerminalPortFactory(TEST_ENV, undefined, "0"), undefined, null, null, null, "0",
+      noting ? canvasArtifactNoter(TEST_ENV, { workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: canvasId, substreamId: asSubstreamId("0") }) : null);
+  }
+
+  function toolContext(canvasId: string, harnessRunId = crypto.randomUUID()) {
+    return { workspaceId: WORKSPACE_ID, workstreamId: canvasId, harnessRunId,
+      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(), executionPrincipal: { type: "user" as const, userId: CREATOR },
+      signal: new AbortController().signal };
+  }
+
   /** Publish a file from the Canvas's Chat through the Terminal's resource bridge, as Rally's publish_resource does. */
   async function publish(canvasId: string, filePath: string, text: string) {
-    const bridge = createTerminalResourceBridge(withWorkspaceRuntimeDatabase(TEST_ENV, WORKSPACE_ID),
-      createTerminalPortFactory(TEST_ENV, undefined, "0"), undefined, null, null, null, "0",
-      canvasArtifactNoter(TEST_ENV, { workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: canvasId, substreamId: asSubstreamId("0") }));
-    return bridge.publishResource({ workspaceId: WORKSPACE_ID, workstreamId: canvasId, harnessRunId: crypto.randomUUID(),
-      toolCallId: crypto.randomUUID(), effectIntentId: crypto.randomUUID(), executionPrincipal: { type: "user", userId: CREATOR },
-      signal: new AbortController().signal }, { filePath }, new TextEncoder().encode(text));
+    return canvasBridge(canvasId).publishResource(toolContext(canvasId), { filePath }, new TextEncoder().encode(text));
   }
+
+  it("notes a publish recovered after its attempt died before the note", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const attemptStartedAt = Date.now() - 1_000;
+    const context = toolContext(canvasId);
+    const published = await canvasBridge(canvasId, false)
+      .publishResource(context, { filePath: "plan.md" }, new TextEncoder().encode("# Launch plan"));
+    const detail = () => workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" } });
+    expect((await detail()).artifacts).toEqual([]);
+    const recovered = await canvasBridge(canvasId).reconcilePublishedResource({ ...context, attemptStartedAt }, { filePath: "plan.md" });
+    expect(recovered.outcome).toBe("landed");
+    expect((await detail()).artifacts).toMatchObject([{ resourceId: published.resourceId, version: 1 }]);
+  });
 
   it("makes the first publish version 1 by Rally, a republish of the path a new version, and another path another artifact", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
@@ -269,6 +363,47 @@ describe("a Canvas's artifacts", () => {
     const other = await publish(canvasId, "budget.csv", "line,amount");
     expect((await detail()).artifacts.map((artifact) => artifact.resourceId).sort())
       .toEqual([first.resourceId, other.resourceId].sort());
+  });
+
+  it("marks a Canvas unread to a viewer when somebody else makes a new version of its artifact, not to its publisher", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "participants", userIds: [MEMBER] } });
+    // Both have read the Chat, before either version was made.
+    const readAt = Date.now() - 60_000;
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (const userId of [CREATOR, MEMBER]) {
+        state.storage.sql.exec(`INSERT INTO sidekick_viewer_reads
+          (sidekick_id, user_id, source_version, seen_attention_ordinal, manual_unread_from_ordinal, updated_at)
+          VALUES (?, ?, 1, 0, NULL, ?)`, canvasId, userId, readAt);
+      }
+    });
+    await publish(canvasId, "plan.md", "# Launch plan");
+    const { resourceId } = await publish(canvasId, "plan.md", "# Launch plan, revised");
+    // The revision is the creator's: Rally made it on their behalf, as a run
+    // they started does.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE resource_versions SET on_behalf_of_user_id = ? WHERE resource_id = ? AND version = 2`,
+        CREATOR, resourceId);
+    });
+    const unread = (userId: string) => runInDurableObject(workspace(), (_instance, state) =>
+      canvasSidebarRows(state.storage.sql, { userId, member: true }, new Map(), 50).find((row) => row.id === canvasId)?.unread);
+    expect(await unread(MEMBER)).toBe(true);
+    expect(await unread(CREATOR)).toBe(false);
+  });
+
+  it("refuses a canvas argument anywhere but a Sidekick run", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const { canvasId: elsewhere } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    // From a Canvas's Chat, naming another Canvas.
+    await expect(canvasBridge(canvasId).publishResource(toolContext(canvasId), { filePath: "plan.md", canvas: elsewhere },
+      new TextEncoder().encode("# Launch plan"))).rejects.toMatchObject({ code: "canvas_argument_unsupported" });
+    // From a Sidekick's own conversation, which is not a run.
+    const sidekickId = crypto.randomUUID();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    await expect(resolveTerminalPublicationHome(TEST_ENV, { workspaceId: WORKSPACE_ID, parentKind: "automation", parentId: sidekickId,
+      substreamId: asSubstreamId("0"), executionPrincipal: { type: "user", userId: CREATOR } }, { canvas: canvasId }))
+      .rejects.toMatchObject({ code: "canvas_argument_unsupported" });
   });
 
   it("publishes a Sidekick run into a Canvas it makes, open to whoever the Sidekick is shared with", async () => {
