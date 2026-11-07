@@ -261,9 +261,6 @@ export const AGENT_MODEL_ROLES = [
   "workstream",
   "inline_child",
   "workstream_naming",
-  "work_opportunity_admission",
-  "work_opportunity_ranking",
-  "session_import",
   "memory_sweep",
   "sidekick_authoring",
 ] as const;
@@ -274,9 +271,6 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   workstream: "agent-model-workstream",
   inline_child: "agent-model-inline-child",
   workstream_naming: "agent-model-workstream-naming",
-  work_opportunity_admission: "agent-model-work-opportunity-admission",
-  work_opportunity_ranking: "agent-model-work-opportunity-ranking",
-  session_import: "agent-model-session-import",
   memory_sweep: "agent-model-memory-sweep",
   sidekick_authoring: "agent-model-sidekick-authoring",
 };
