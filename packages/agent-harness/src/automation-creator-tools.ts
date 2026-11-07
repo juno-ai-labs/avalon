@@ -853,8 +853,9 @@ sidekick_runs_read_next until none remains; send nothing while reading; then sen
 report covering every run: when it ran, what started it, what it did, what went wrong, any
 feedback a person left in it, and each deterministic step the run repeated, skipped or got
 wrong (a dedupe after the reads it was meant to spare, a page not followed, a date bound, a
-union or a count worked by hand), and what its routine work cost: model turns, calls to
-each saved tool, and the items, requests and seconds each call reported. Pass no run ids: the
+union or a count worked by hand), and what its routine work cost: the model calls and each
+tool's calls and time from the run's usage summary, and the items, requests and seconds each
+saved tool call reported. Pass no run ids: the
 agent's reader already has them. Then say one line here that the agent is reading the runs
 and you will report when it replies, and end the turn; its report wakes you. Acknowledge a
 progress message from the agent with one short line here. Answer a question from it with

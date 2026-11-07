@@ -193,6 +193,16 @@ export interface ToolReceiptRecord {
   checkpointIndex: number;
 }
 
+/** One tool's calls in a conversation; `ms` sums the calls that both started and settled. */
+export interface ToolUsage {
+  toolName: string;
+  fromProgram: boolean;
+  calls: number;
+  failed: number;
+  ms: number | null;
+  maxMs: number | null;
+}
+
 /** One resource version a replayable attachment read depended on. */
 export interface AttachmentDependency {
   resourceId: string;
@@ -825,6 +835,23 @@ export class WorkstreamToolReceiptStorage {
       ...input.capabilities,
       Math.max(1, Math.min(input.limit, 500)),
     ).toArray().map(receiptRecord).reverse();
+  }
+
+  /**
+   * Every tool this conversation called, with how many calls, how many did not
+   * complete, and their time. A call a program made (`<id>:call:<n>`) is
+   * counted apart from a call the model made, so a saved tool's own requests
+   * read as its cost rather than as model turns.
+   */
+  toolUsage(): ToolUsage[] {
+    return this.sql.exec<{ tool_name: string; nested: number; calls: number; failed: number;
+      ms: number | null; max_ms: number | null } & Record<string, SqlStorageValue>>(
+      `SELECT tool_name, tool_call_id LIKE '%:call:%' AS nested, count(*) AS calls,
+              sum(status <> 'completed') AS failed,
+              sum(settled_at - started_at) AS ms, max(settled_at - started_at) AS max_ms
+         FROM tool_effects GROUP BY tool_name, nested ORDER BY ms DESC, tool_name`,
+    ).toArray().map((row) => ({ toolName: row.tool_name, fromProgram: row.nested === 1, calls: row.calls,
+      failed: row.failed, ms: row.ms, maxMs: row.max_ms }));
   }
 
   receiptsForRun(input: { runId: string; capabilities: readonly string[] }): ToolReceiptRecord[] {

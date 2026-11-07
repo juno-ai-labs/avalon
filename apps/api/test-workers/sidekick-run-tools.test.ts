@@ -139,6 +139,29 @@ describe("Sidekick wizard run inspection", () => {
     expect(JSON.stringify(result.output)).not.toContain("sidekick-history/");
   });
 
+  it("opens a run with what it spent: model calls, each tool's calls and time, and each call's duration", async () => {
+    await seedRuns(SIDEKICK, 1);
+    await seedHistory();
+    await runInDurableObject(child(runId(1)), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE tool_effects SET started_at = 40 WHERE tool_call_id = 'delivery-call'`);
+      // Two requests a saved tool's program made: counted apart from the model's own calls.
+      for (const [index, startedAt, settledAt] of [[0, 10, 30], [1, 30, 80]] as const) {
+        state.storage.sql.exec(`INSERT INTO tool_effects
+          (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name, mode, request_hash,
+           authority_revision, status, tool_call_id, input_json, started_at, settled_at)
+          VALUES (?, ?, 0, ?, ?, 'run_sql', 'read', 'hash', '1', 'completed', ?, '{}', ?, ?)`,
+        `nested-${index}`, ACTIVATION, index + 1, `nested-${index}`, `scan-call:call:${index}`, startedAt, settledAt);
+      }
+    });
+    const result = await tool("runs_read").execute({ runId: runId(1) }, context);
+    // The fixture's two assistant turns: the report text and the delivery call's response.
+    expect(evidence(result.output).usage).toEqual({ modelCalls: 2, tools: [
+      { toolName: "run_sql", fromProgram: true, calls: 2, failed: 0, ms: 70, maxMs: 50 },
+      { toolName: "slack_send_message", fromProgram: false, calls: 1, failed: 1, ms: 60, maxMs: 60 },
+    ] });
+    expect(toolsIn(result.output)).toEqual([expect.objectContaining({ toolCallId: "delivery-call", ms: 60 })]);
+  });
+
   it("continues transcript pages under their original fence and marks missing detailed results", async () => {
     await seedRuns(SIDEKICK, 1);
     await seedHistory();
