@@ -63,8 +63,10 @@ A request-local bearer is minted internally; ordinary API middleware authenticat
 that target once using the same checks as desktop. It is never returned to JavaScript. The
 adapter strips cookies and development identity headers from the forwarded
 request and overwrites caller-supplied Authorization. Only named product route
-families are forwarded; authentication/token issuance, internal operations and
-onboarding routes are excluded. Existing product authorization still decides
+families are forwarded, the ones the Canvases and Sidekicks shell calls
+(`BROWSER_ROUTE_FAMILIES`, listed in [`browser-client.md`](browser-client.md));
+authentication/token issuance, internal operations, onboarding routes and the
+retired Thread, Channel and Space families are excluded. Existing product authorization still decides
 which scopes the caller may read or mutate. Message-issue submissions use this
 same adapter; [message issues](message-issues.md) owns their access and storage.
 
@@ -124,6 +126,18 @@ against real D1 in workerd. Its minimal schema declares the runtime dependencies
 the Node suite separately applies the checked-in migrations.
 
 ## Changelog
+
+### 2026-11-07 — Only the Canvases and Sidekicks shell's route families cross
+
+**What changed:** The adapter forwards `canvases` and stops forwarding
+`workstreams`, `spaces`, `projects`, `navigation` and `work-opportunities`.
+
+**Why:** The pivot to Canvases and Sidekicks ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md), plan step
+B-5) deleted every browser surface that called the Thread families, and the
+Canvas routes had never been added, so a browser could not open a Canvas.
+
+**Consequences:** What a cookie reaches is exactly what the shell calls; a new
+family is added with the surface that calls it.
 
 ### 2026-10-07 — Create an organization over the cookie
 

@@ -7,7 +7,7 @@ import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, substreamLoopId, workspaceDOName } from "../src/durable-objects/names";
 import { WorkstreamObjectClient } from "../src/services/workstream-object-client";
 import { WorkstreamObjectCreationService } from "../src/services/workstream-object-creation-service";
-import { SubstreamCreationService } from "../src/services/substream-creation-service";
+
 import { admitFixturePendingInput, seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
@@ -27,9 +27,7 @@ const originalKey = mutableEnv.TYPESAFE_API_KEY;
 useSelectedModel();
 const provider = useOpenRouterDouble((call) => ({ say: call.stream
   ? "Here is the launch plan."
-  : JSON.stringify(call.body.response_format ?? {}).includes("substream_context_summary")
-    ? JSON.stringify({ summary: "Launch context." })
-    : JSON.stringify({ title: "Launch planning", icon: "megaphone" }) }));
+  : JSON.stringify({ title: "Launch planning", icon: "megaphone" }) }));
 
 function workspace() {
   return env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
@@ -149,30 +147,6 @@ it.each([["prompt_to_process", 0.99], ["human_to_human", 0.5], ["invalid", 0.99]
     await reply(new WorkstreamObjectClient(creationEnv(), auth, created.workstream.id), created.workstream.id);
   },
 );
-
-it.each(["human_to_human", "conversation_description", "prompt_to_process"])("classifies a Breakout's first local message and executes follow-ups: %s", async (choice) => {
-  classification = choice;
-  const parent = await new WorkstreamObjectCreationService(creationEnv(), auth).createPrepared({
-    title: "Parent", clientMessageId: "parent", participantUserIds: [],
-  }, { messages: [{ role: "user", text: "Source context" }] });
-  const service = new SubstreamCreationService(creationEnv(), auth);
-  const prepared = await service.prepare(parent.workstream.id, { operationId: crypto.randomUUID(),
-    title: "Launch planning", throughTurnId: parent.turnId });
-  const child = await service.confirm(parent.workstream.id, prepared.operationId);
-  const client = new WorkstreamObjectClient(creationEnv(), auth, parent.workstream.id, child.substreamId);
-  const message = { text: "Launch planning", clientMessageId: "child-opening", mentions: [],
-    confirmedParticipantUserIds: [], attachmentIds: [] };
-  await client.createMessage(message);
-  expect(calls).toBe(1);
-  if (choice !== "prompt_to_process") {
-    await silent(client, parent.workstream.id, child.substreamId);
-    await client.createMessage(message);
-    expect(calls).toBe(1);
-    await client.createMessage({ ...message, text: "Draft the launch plan", clientMessageId: "child-followup" });
-  }
-  await reply(client, parent.workstream.id, child.substreamId);
-  expect(calls).toBe(1);
-});
 
 it.each(["slack", "opportunity"])("keeps explicit %s invocations out of opening classification", async (kind) => {
   const options = kind === "slack" ? { slackOrigin: {

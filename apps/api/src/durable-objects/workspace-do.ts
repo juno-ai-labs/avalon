@@ -16441,24 +16441,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (this.workspaceId() === null) return { title: null };
     this.assertWorkspace(workspaceId);
     const sql = this.state.storage.sql;
-    const row = target.kind === "channel"
-      ? sql.exec<{ title: string }>(`SELECT title FROM channels WHERE workstream_id = ?`, target.workstreamId).toArray()[0]
-      : target.kind === "breakout"
-        ? sql.exec<{ title: string }>(
-          `SELECT title FROM breakouts WHERE workstream_id = ? AND substream_id = ?`,
-          target.workstreamId, target.substreamId,
-        ).toArray()[0]
-        : target.kind === "space"
-          // A Personal Channel is its owner's alone, so a link to it names
-          // nothing: its owner may have renamed it.
-          ? sql.exec<{ title: string }>(
-            `SELECT title FROM spaces WHERE space_id = ? AND scope <> 'individual'`,
-            target.spaceId,
-          ).toArray()[0]
-          : sql.exec<{ title: string }>(
-            `SELECT title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
-            target.sidekickId,
-          ).toArray()[0];
+    const row = target.kind === "canvas"
+      ? sql.exec<{ title: string }>(`SELECT title FROM canvas_directory WHERE canvas_id = ?`, target.canvasId).toArray()[0]
+      : sql.exec<{ title: string }>(
+        `SELECT title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
+        target.sidekickId,
+      ).toArray()[0];
     return { title: row?.title.trim() || null };
   }
 

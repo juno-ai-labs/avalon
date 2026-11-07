@@ -1036,39 +1036,13 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         }
         return activeSession;
       };
-      if (intent.kind === 'new-workstream') {
-        if (!requireActiveWorkspace('Sign in before starting a Canvas.')) return;
-        setDeepLinkError(null);
-        markSurfaceEntrypoint(navigation.entrypoint);
-        // The link names no Canvas, so it opens the Canvases home; the
-        // sidebar's plus is what starts one.
-        navigateAppRoute('/');
-        return;
-      }
-      if (intent.kind === 'space') {
-        const openSpace = (): void => {
+      if (intent.kind === 'canvas') {
+        await runInDeepLinkWorkspace(intent.target, () => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          // Channels are gone (2026-11); a Channel's link opens the Canvases home.
-          navigateAppRoute('/canvases');
-        };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, openSpace);
-        else if (requireActiveWorkspace('Sign in before opening this link.')) openSpace();
-        return;
-      }
-      if (intent.kind === 'workstream') {
-        // A conversation link names a Canvas now: a Canvas is identified by
-        // its conversation, and its links use the conversation forms until it
-        // has its own (plan step B-5). A Thread's id opens the Canvas screen's
-        // unavailable state.
-        const openWorkstream = (): void => {
-          setDeepLinkError(null);
-          markSurfaceEntrypoint(navigation.entrypoint);
-          navigateAppRoute(canvasRoute(intent.workstreamId),
-            intent.artifactId ? openResourceState(intent.workstreamId, intent.artifactId) : undefined);
-        };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, openWorkstream);
-        else if (requireActiveWorkspace('Sign in before opening this link.')) openWorkstream();
+          navigateAppRoute(canvasRoute(intent.canvasId),
+            intent.artifactId ? openResourceState(intent.canvasId, intent.artifactId) : undefined);
+        });
         return;
       }
       if (intent.kind === 'sidekick') {

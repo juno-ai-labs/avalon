@@ -120,8 +120,8 @@ cleanup without delaying local credential removal. Optional push settings I/O
 cannot abort application startup.
 APNs groups notifications by the main workstream ID, including notifications
 from its substreams. Clicks still target the originating substream.
-Clicks pass the HTTPS link through the existing work-stream parser and scheme
-navigation, including pending navigation before sign-in or window readiness.
+Clicks pass the HTTPS link through the Canvas and Sidekick link reader
+(`httpsLinkDeepLink`) and scheme navigation, including pending navigation before sign-in or window readiness.
 Main-window creation waits for renderer protocol and IPC installation, including
 when a native notification response arrives during asynchronous app startup.
 
@@ -180,9 +180,19 @@ rather than from an event (`digests.md` (retired)), and
 alone: its trigger is a new version reaching the pinned-artifact ledger
 (migration 111), drained after the write that filled it, and the person's
 **Pinned artifact updates** setting (`artifactUpdates`) chooses its channels.
-It reads "Rally updated launch-checklist.md" and opens the artifact, expanded
-over its thread, through the link's artifact segment
-([`workstream-links.md`](workstream-links.md#the-two-forms)).
+It reads "Rally updated launch-checklist.md" and opens the artifact in its
+Canvas's rail, through the Canvas link's artifact segment
+([`links.md`](links.md#the-forms)).
+
+**Where a push links.** Every push and every Activity email or Slack DM links
+through `conversationCanonicalUrl`: a mention or Needs input in a Canvas's
+Chat opens the Canvas, and a Sidekick's conversation or a finished run opens
+the Sidekick. A conversation with neither — a Thread or Breakout, whose
+surfaces are gone — has no link, and its delivery is skipped with the reason
+`conversation_not_linkable` rather than sent to open nothing. A push
+resolves that link once per intent, through `conversationLink`, and only after
+`notificationAllows` has let the intent through; a skip logs
+`conversation_not_linkable` with the conversation's `parent_kind`.
 
 **The trigger is the directory write.** `applyDirectoryBatch` reads each
 conversation's row either side of its common effect and names what moved in
@@ -431,6 +441,25 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-07 — A push opens the Canvas or the Sidekick
+
+**What changed:** A push's link, and an Activity email's or Slack DM's, comes
+from the conversation's parent: the Canvas for its Chat, the Sidekick for its
+conversation and runs. A delivery about a Thread or Breakout is skipped,
+`conversation_not_linkable`. The Channel link for a private thread's merge is
+gone with the Channel link form.
+
+**Why:** Plan step B-5 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+the Thread link forms were deleted with Thread surfaces, so a Thread push
+would open nothing, and a Canvas mention was minting a Thread-shaped link.
+
+**Considered and rejected:** Sending Thread pushes with no link. A notification
+whose tap opens nothing reads as broken; until phase C deletes the Thread
+services, a skipped delivery with a named reason is the honest outcome.
+
+**Consequences:** Each delivery costs one `resolveHostedParent` call on the
+Organization's object, as the Space placement lookup it replaces did.
 
 ### 2026-11-06 — The iOS client is deleted
 

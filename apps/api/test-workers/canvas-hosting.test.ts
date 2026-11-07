@@ -14,9 +14,12 @@ import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { uuidToBase58 } from "@rally/contracts/uuid-base58";
 
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { workspaceDOName } from "../src/durable-objects/names";
+import { ScopeInvitationStorage } from "../src/durable-objects/scope-invitation-storage";
+import { decryptString } from "../src/lib/crypto";
 import { claimScopeInvitations } from "../src/services/scope-invitation-claims";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 
@@ -119,6 +122,23 @@ describe("who can open a Canvas", () => {
     expect(await opens(guest(OUTSIDER))).toBe(false);
     const detail = await workspace().canvasDetail({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR) });
     expect(detail).toMatchObject({ visibility: "participants", participantUserIds: [GUEST] });
+  });
+
+  it("emails the invited guest the Canvas's own link, on the web app", async () => {
+    const result = await workspace().createScopeInvitations({
+      operationId: crypto.randomUUID(), workspaceId: WORKSPACE_ID, parentId: CANVAS_ID, actorUserId: CREATOR,
+      emails: ["newcomer@example.test"], targets: [{ kind: "workstream", workspaceId: WORKSPACE_ID, parentId: CANVAS_ID }],
+      expiresAt: null,
+    });
+    if (result.status !== "created") throw new Error(JSON.stringify(result));
+    const id = result.invitations[0]!.id;
+    const encrypted = await runInDurableObject(workspace(), (_instance, state) =>
+      new ScopeInvitationStorage(state.storage, CANVAS_ID).read(id)!.deliveryEncrypted);
+    const sealed = JSON.parse(encrypted) as { ciphertext: string; iv: string };
+    const { text } = JSON.parse(await decryptString(sealed.ciphertext, sealed.iv, env.OAUTH_STATE_ENCRYPTION_KEY,
+      `scope-invitation:${id}`)) as { text: string };
+    expect(text.split("\n").filter((line) => line.startsWith("https://")))
+      .toEqual([`https://app.test/app/global/${uuidToBase58(WORKSPACE_ID)}/cv/${uuidToBase58(CANVAS_ID)}/`]);
   });
 
   it("waits for a recipient without an account, and opens to them once they sign in", async () => {

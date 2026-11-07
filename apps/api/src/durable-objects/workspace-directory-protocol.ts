@@ -242,9 +242,7 @@ export const WorkspaceDirectoryLookupResultSchema = deferredZodSchema(() => z.st
 export const WorkspaceLinkTitleRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   target: z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("channel"), workstreamId: IdSchema }),
-    z.strictObject({ kind: z.literal("breakout"), workstreamId: IdSchema, substreamId: IdSchema }),
-    z.strictObject({ kind: z.literal("space"), spaceId: IdSchema }),
+    z.strictObject({ kind: z.literal("canvas"), canvasId: IdSchema }),
     z.strictObject({ kind: z.literal("sidekick"), sidekickId: IdSchema }),
   ]),
 }));

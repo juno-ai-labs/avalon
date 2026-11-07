@@ -2,7 +2,7 @@ import type { Region } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { escapeHtml, sendResendEmail, singleLine } from "./resend";
-import { canonicalWorkstreamUrl } from "./workstream-link-service";
+import { conversationCanonicalUrl } from "./conversation-link-service";
 
 const MAX_OBJECTIVE_EXCERPT_LENGTH = 320;
 
@@ -12,6 +12,8 @@ const EMAIL_ERRORS = {
 };
 
 export interface WorkstreamParticipantAddedEmail {
+  /** The Canvas or Sidekick link, when the caller already resolved it. */
+  url?: string;
   sourceId: string;
   recipientUserId: string;
   recipientEmail: string;
@@ -53,12 +55,12 @@ export async function sendWorkstreamParticipantAddedEmail(
   // The `rallywithai://` deep link is not linkified by mail clients, and a
   // recipient reading on a phone has no desktop app to hand it to. The
   // canonical HTTPS link is a real link everywhere and ends in the same place.
-  const workstreamUrl = await canonicalWorkstreamUrl(env, {
-    region: input.region,
-    workspaceId: input.workspaceId,
-    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
-    workstreamId: input.workstreamId,
+  const workstreamUrl = input.url ?? await conversationCanonicalUrl(env, {
+    region: input.region, workspaceId: input.workspaceId, parentId: input.workstreamId,
   });
+  // A Thread or Breakout has no link now that no surface opens one; an email
+  // that could only point at nothing is not sent.
+  if (!workstreamUrl) return "skipped";
   const replyTo = input.workstreamEmailAddress?.trim() || null;
   // A work stream created from the composer has no name yet — its title is the
   // opening message's first line, cut at 180 characters, and the naming pass

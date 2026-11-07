@@ -18,11 +18,12 @@ available to Rally users by virtue of product membership.
   tool registry, deployment provisioner, and its tests.
 - `apps/api/src/engineering-inspection-bridge.ts` is the private named
   `WorkerEntrypoint` exported by each regional API Worker.
-- `apps/api/src/services/engineering-creation.ts` adapts operator creation to
-  regional onboarding, Channel audience changes and ordinary Thread creation.
-- `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer,
-  Channel feed and transcript range reader; `conversation-text.ts`
-  formats participant prose with shared display and plaintext helpers.
+- `apps/api/src/services/engineering-creation.ts` adapts operator Organization
+  creation to regional onboarding, and resolves the selected user's
+  authority (`engineeringUserAuth`).
+- `apps/api/src/services/engineering-messages.ts` adapts the ordinary composer
+  and transcript range reader; `conversation-text.ts` formats participant
+  prose with shared display and plaintext helpers.
 - `apps/api/src/services/engineering-audit.ts` records content-free attempt and
   result events in the existing independent audit database before/after writes.
 - `apps/api/src/durable-objects/internally-inspectable-durable-object.ts` owns
@@ -73,15 +74,10 @@ The regional bridge uses D1 only for identity and routing:
 | Tool | Route lookup | Authoritative read or write |
 | --- | --- | --- |
 | `create_org` | Caller names the region | Regional onboarding commits the owner and initial members together, then performs ordinary member seating |
-| `create_channel` | Resolve the Organization in exactly one region | SpaceService creation and audience update in WorkspaceDO |
-| `create_thread` | Resolve the Organization in exactly one region | WorkstreamObjectCreationService, placement, opening turn and normal agent run |
 | `send_message` | Resolve the Organization in exactly one region | ConversationService.writableClient and ordinary create_message admission |
 | `pause_sidekick`, `resume_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause or resume, which call HostedSidekick in WorkspaceDO |
 | `dump_thread_transcripts` | Resolve the Organization in exactly one region | `thread-retirement-service.ts`: WorkspaceDO's Thread inventory, each conversation's AgentLoopDO, and R2 `PAYLOADS` |
 | `retire_threads` | Resolve the Organization in exactly one region | `thread-retirement-service.ts`: the dump receipts in R2, `retireObject` on each conversation's AgentLoopDO, and WorkspaceDO's row deletion |
-| `read_channel` | Resolve the Organization in exactly one region | SpaceService summary and authorized Channel feed |
-| `list_channels` | Resolve the Organization in exactly one region | SpaceService.list and the workspace socket's active Channel directory |
-| `list_threads`, `list_breakouts` | Resolve the Organization in exactly one region | SpaceService.listChannels with kind and all-visible filters in the ordinary paginated reader |
 | `read_thread`, `read_breakout` | Resolve the Organization in exactly one region | ConversationService.client and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
 | `list_orgs`, `search_orgs` | None | D1 `workspaces` and `workspace_members` in every region, filtered there and ordered here |
@@ -177,21 +173,6 @@ owner in the shared onboarding batch. Ordinary member seating gives each member
 General and their Personal Channel, including when a retry resumes seating.
 The MCP adapter writes no membership rows of its own.
 
-`create_channel` takes `orgId`, `name`, and `participantUserIds`, always including
-the creator. SpaceService creation applies those initial participants through
-the same audience update as
-`POST /spaces` and the audience route. It starts Organization-wide with the
-normal automatic icon choice and a blue mark. Icon selection starts after the
-initial audience update, using its revision so creation does not invalidate the
-generated icon write. The ordinary audience gate decides who can
-be seated; merely being an active guest does not bypass it.
-
-`create_thread` takes `orgId`, `channelId`, and `prompt`. It uses the same
-WorkstreamObjectCreationService initialization, placement and prompt admission
-as `POST /workstreams`, including private-Channel narrowing and notifications.
-It can start a real agent run with connected tools; returned IDs are admission,
-not proof that execution completed.
-
 The private `engineering` principal lets the regional bridge enter existing
 product services without a user login session. Authorities recheck the person's
 current relationship and permissions. It carries no extra product capability;
@@ -228,11 +209,8 @@ its readers. Reuse the message operation ID and
 original arguments after an uncertain result; the ordinary receipt reports
 `pending` or `canonical`, not completion of the agent run.
 
-`read_channel`, `read_thread`, and `read_breakout` return plain MCP text, without
-a JSON envelope. Channel reads use SpaceService's normal summary and feed, so
-Thread cards and visible Channel messages have the same access filtering and
-ordering as the app. They do not recursively open Threads. The ordinary feed
-page size applies; a text footer supplies the cursor for older history.
+`read_thread` and `read_breakout` return plain MCP text, without a JSON
+envelope.
 
 Conversation reads authorize the exact Thread or Breakout through
 ConversationService.client. A generic `read_transcript` product operation exposes
@@ -288,29 +266,6 @@ caller — a scheduled agent, a bot, or any MCP client acting without an operato
 reading each call — must not be given this server with these tools enabled; the
 decision was the reviewing engineer's on 2026-11-07, and a role split is the
 change to make if that ever has to differ.
-
-### User-visible lists
-
-`list_channels` takes `orgId` and `userId` and returns the active Channel
-directory the workspace socket shows that person, including their personal
-order and the directory waterline. Each item's `id` is a `channelId`.
-Archived Channels and other people's Personal Channels are absent. The new
-SpaceService.list facade calls the existing WorkspaceSpaceStorage.list reader;
-it does not inspect raw product tables or reconstruct visibility.
-
-`list_threads` and `list_breakouts` also take `channelId`, plus an optional
-`cursor`. They adapt the same SpaceService.listChannels reader as the app's
-Channel dashboard, with `kind` selected on the server and `needsViewerOnly:
-false`. Settled, read conversations remain listable here. The dashboard keeps
-its attention-only default. The authoritative query filters kind before taking
-the page, retaining its ordinary visibility checks, activity order, page size
-and continuation cursor. Follow `nextCursor` with the same arguments until null.
-
-Results use the app's conversation cards. A Thread item's `id` is its
-`threadId`; a Breakout item's `id` is its `breakoutId`, and
-`breakoutOf.workstreamId` is its parent `threadId` for reads and sends. A guest
-sees only their granted hierarchy; a private Breakout is not listed merely
-because the person may open its parent Thread.
 
 ### D1
 
@@ -519,11 +474,15 @@ Access identity is never silently mapped to a product user.
 ## Testing
 
 `apps/api/test-workers/engineering-creation.test.ts` drives the regional bridge
-against real D1 and Durable Objects: initial membership and seating, stable-ID
-retries, Channel participants, private-Channel narrowing, opening-prompt
-persistence, member and guest sends with normal execution, author snapshots,
-ordinary guest creation refusals, exact Breakout access, default and fenced history paging and
-user-scoped lists after delivering the ordinary directory effects.
+against real D1 and Durable Objects: Organization creation with its initial
+membership and seating and stable-ID retries, unknown users and a mismatched
+region refused, and the rejected field kept across the RPC boundary; then, in a
+Canvas's Chat, member and guest sends with normal execution, retry dedupe and
+author snapshots, a send and a read refused to somebody the Canvas does not
+admit, a record-only message that starts no run, and default and fenced history
+paging. `send_message`, `read_thread` and `read_breakout` still take a
+`threadId`; a Canvas id is one, and their retargeting at named Canvas and
+Sidekick conversation tools is plan step B-8.
 Audit coverage reads operator and receipt attribution from the real audit
 database and refuses product writes when the attempt cannot be persisted.
 Only the external model provider is doubled. The text formatter's unit tests
@@ -531,8 +490,6 @@ cover bylines, display text, attachments, elicitation, annotations and hidden
 internal content; the desktop transcript suite covers the extracted display helper.
 The MCP transport suite checks annotations, regional routing, ambiguous-target
 refusal, plain-text results, trusted operator forwarding and content-free logging.
-`space-conversation-page.test.ts` covers the unchanged dashboard default,
-all-visible mode, per-kind pagination and independent child visibility.
 
 `apps/api/test-workers/engineering-inspection.test.ts` calls the inherited RPC
 on real WorkspaceDO and SubstreamAgent instances under workerd.
@@ -655,6 +612,20 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-11-07 — The Channel and Thread creation, list and feed tools go
+
+**What changed:** `create_channel`, `create_thread`, `read_channel`,
+`list_channels`, `list_threads` and `list_breakouts` are removed with their
+regional bridge methods (`createChannel`, `createThread`, `readChannel`,
+`listUserChannels`, `listUserConversations`) and contract shapes.
+`send_message`, `read_thread` and `read_breakout` stay until the Canvas and
+Sidekick conversation tools replace them.
+
+**Why:** Channels and Threads are retired by the Canvases and Sidekicks pivot
+(`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`); the services these
+tools called (`SpaceService`, `WorkstreamObjectCreationService`) are deleted in
+plan step C-2, so the tools could only fail.
 
 ### 2026-11-07 — Dump an Organization's Thread transcripts, then retire its Threads
 

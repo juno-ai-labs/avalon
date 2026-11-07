@@ -32,7 +32,7 @@ export function siteOpenFailure(cause: unknown, region: string): SiteOpenFailure
     if (cause.status === 403) {
       return {
         title: "No access to this site",
-        message: "Your account can't open this site. Ask the person who sent it to share its thread with you, or sign in with a different account.",
+        message: "Your account can't open this site. Ask the person who sent it to share its Canvas with you, or sign in with a different account.",
         retry: false,
       };
     }

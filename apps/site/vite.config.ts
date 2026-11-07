@@ -149,7 +149,7 @@ export default defineConfig({
         invite: `${projectRoot}invite/index.html`,
         slackLink: `${projectRoot}slack/link/index.html`,
         desktopOpen: `${projectRoot}open/index.html`,
-        workstreamLink: `${projectRoot}app/workstreams/index.html`,
+        linkHandoff: `${projectRoot}app/open/index.html`,
         slack: `${projectRoot}slack/index.html`,
         ...Object.fromEntries([...comparisonEntries].map(([path, { slug }]) => [`compare-${slug}`, path])),
         blog: `${projectRoot}blog/index.html`,

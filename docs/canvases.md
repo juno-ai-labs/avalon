@@ -327,11 +327,14 @@ does not list the section yet (plan step B-1), so `/canvases` and
 - **Pinning** is `POST /canvases/:id/pin`, from the pill's menu, a row's
   context menu, or dragging a row into the section's Pinned group
   (`useRowPinDrop`). A pin lands at the end of the group: the order is
-  `reorderSidebarPins` in `WorkspaceDO`, which no route exposes yet.
+  `reorderSidebarPins` in `WorkspaceDO`, which `PUT /workspace/pinned-order`
+  exposes.
 
-Not built yet, because nothing on the server answers them: renaming a Canvas
-(no route writes `canvas_directory.title`) and copying its link (the Canvas
-link form is plan step B-5).
+Copying a Canvas's link is the pill menu's **Copy link**, the Canvas form
+`/app/<region>/<organization>/cv/<canvas>/` ([`links.md`](links.md)); a
+detached artifact window's **Copy link** adds the artifact's segment, and a
+link with one opens the Canvas with that artifact in the rail. Renaming a
+Canvas is `PATCH /canvases/:id`.
 
 ## Invariants
 
@@ -451,6 +454,21 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 142: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because `workspace_workstream_resource_links`' foreign key names a Thread's directory row, which a Canvas has none of. Indexed by resource. |
 
 ## Changelog
+
+### 2026-11-07 — A Canvas has its own link
+
+**What changed:** A Canvas is linked as `/app/<region>/<organization>/cv/<canvas>/`
+(deep link `.../canvases/<canvas>`), copied from the pill menu or a detached
+artifact window (with `a/<artifact>/`). A notification, email or Slack message
+about a Canvas's Chat links to the Canvas, and the handoff page names it from
+`canvas_directory`.
+
+**Why:** Until plan step B-5 of the [pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md) a Canvas borrowed
+the Thread link forms, which went with Threads.
+
+**Consequences:** [`links.md`](links.md) owns the form; a Canvas's id being its
+conversation's parent id is what lets a server mint the link from a
+conversation alone.
 
 ### 2026-11-07 — A Canvas can be retitled, and a Pinned group reordered
 

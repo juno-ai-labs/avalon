@@ -1,5 +1,5 @@
 import { notifyOps } from "../observability/ops-slack-notifier";
-import { asUserId, asWorkspaceId, spaceCanonicalUrl, WorkspaceAttentionSchema } from "@rally/contracts";
+import { asUserId, asWorkspaceId, WorkspaceAttentionSchema } from "@rally/contracts";
 import { rewriteMessageAsPlainText } from "@rally/contracts/citations";
 import { PushDeliveryMessageSchema, type PushDeliveryMessage, type PushNotificationData } from "@rally/contracts/push-notifications";
 import type { Env } from "../env";
@@ -18,7 +18,7 @@ import type { PushDevice } from "../services/push-device-service";
 import { renderPushPayload, renderWebPushPayload, pushCollapseId, type PushPayloads } from "../services/push/push-payload";
 import { sendWebPush, WEB_PUSH_PAYLOAD_BYTES, type WebPushOutcome } from "../services/push/web-push-transport";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
-import { canonicalWorkstreamUrl } from "../services/workstream-link-service";
+import { conversationLink, type ConversationLink } from "../services/conversation-link-service";
 import { sendActivityEmail } from "../services/activity-email-service";
 import { sendWorkstreamActivitySlack } from "../services/slack-notification-service";
 
@@ -49,10 +49,8 @@ type PushContent =
     body: string;
     workstreamId: string;
     substreamId: string | null;
-    /** The artifact the notification opens its thread onto, expanded. */
+    /** The artifact the notification opens its Canvas onto, expanded. */
     artifactId?: string;
-    /** A merge from a thread the person cannot open opens its Channel instead. */
-    channelId?: string;
   };
 
 type WorkspaceStub = DurableObjectStub<WorkspaceDO>;
@@ -112,21 +110,19 @@ async function activityContent(env: Env, workspace: WorkspaceStub, message: Extr
     workstreamId: item.threadId,
     // A merge opens where it landed: a breakout's merge is in its thread.
     substreamId: item.kind === "merged" ? null : item.breakout?.substreamId ?? null,
-    // A pinned artifact's update opens the artifact, not just its thread.
+    // A pinned artifact's update opens the artifact, not just its Canvas.
     ...(item.kind === "artifact_updated" && item.artifact ? { artifactId: item.artifact.resourceId } : {}),
-    // The thread when the person can open it, which every client can follow
-    // (the iOS build parses no Channel link); otherwise the Channel it landed in.
-    ...(item.kind === "merged" && item.mergedInto?.threadPrivate ? { channelId: item.mergedInto.channelId } : {}),
   };
 }
 
-/** Where a delivery links: the Channel a private thread's merge landed in, else the thread. */
-async function contentUrl(env: Env, workspaceId: string, content: Extract<PushContent, { outcome: "ready" }>): Promise<string> {
-  if (content.channelId) {
-    return spaceCanonicalUrl(env.PUBLIC_WEB_BASE_URL, { region: env.AVALON_REGION, workspaceId, spaceId: content.channelId });
-  }
-  return await canonicalWorkstreamUrl(env, { region: env.AVALON_REGION, workspaceId,
-    workstreamId: content.workstreamId, ...(content.substreamId ? { substreamId: content.substreamId } : {}),
+/**
+ * Where a delivery links: the Canvas whose Chat it is about, or the Sidekick
+ * whose conversation or run it is about. Null for a Thread, Breakout or
+ * Channel, which no surface opens any more: such a delivery is skipped, named
+ * `conversation_not_linkable`, rather than sent to open nothing.
+ */
+async function contentUrl(env: Env, workspaceId: string, content: Extract<PushContent, { outcome: "ready" }>): Promise<ConversationLink> {
+  return await conversationLink(env, { region: env.AVALON_REGION, workspaceId, parentId: content.workstreamId,
     ...(content.artifactId ? { artifactId: content.artifactId } : {}) });
 }
 
@@ -163,6 +159,13 @@ async function deliverActivityElsewhere(
     logInfo(env, "activity_delivery_skipped", { activity_item_id: message.activityItemId, channel: message.channel, reason: "channel_not_chosen" });
     return true;
   }
+  const linked = await contentUrl(env, message.workspaceId, ready);
+  if (!linked.url) {
+    logInfo(env, "activity_delivery_skipped", { activity_item_id: message.activityItemId, channel: message.channel,
+      reason: "conversation_not_linkable", parent_kind: linked.kind ?? "missing" });
+    return true;
+  }
+  const url: string = linked.url;
   const identity = await workspaceRegionalDatabase(env).prepare(
     `SELECT u.email AS email, w.name AS workspace_name
        FROM workspace_members m JOIN users u ON u.id = m.user_id JOIN workspaces w ON w.id = m.workspace_id
@@ -204,7 +207,7 @@ async function deliverActivityElsewhere(
         workspaceName: identity!.workspace_name,
         title: ready.title,
         body: ready.body,
-        url: await contentUrl(env, message.workspaceId, ready),
+        url,
         region: env.AVALON_REGION,
       });
       case "slack_agent_dm": return senders.slack(env, {
@@ -215,7 +218,7 @@ async function deliverActivityElsewhere(
         workspaceName: identity!.workspace_name,
         workstreamId: ready.workstreamId,
         ...(ready.substreamId ? { substreamId: ready.substreamId } : {}),
-        ...(ready.channelId ? { url: await contentUrl(env, message.workspaceId, ready) } : {}),
+        url,
         title: ready.title,
         body: ready.body,
       });
@@ -266,13 +269,18 @@ export async function deliverPush(
     logInfo(env, "push_delivery_skipped", { intent_id: pointer, reason: "push_preference_off" });
     return true;
   }
+  const linked = await contentUrl(env, message.workspaceId, content);
+  if (!linked.url) {
+    logInfo(env, "push_delivery_skipped", { intent_id: pointer, reason: "conversation_not_linkable", parent_kind: linked.kind ?? "missing" });
+    return true;
+  }
+  const url = linked.url;
   // The badge counts what this person's sidebar lists, and a guest's lists less.
   const member = await workspaceRegionalDatabase(env).prepare(`SELECT access_class FROM workspace_members WHERE workspace_id = ? AND user_id = ?`)
     .bind(message.workspaceId, message.recipientUserId).first<{ access_class: "member" | "guest" }>();
   const attention = WorkspaceAttentionSchema.parse(await workspace.attention({
     workspaceId: id, userId: message.recipientUserId, accessClass: member?.access_class ?? "member",
   }));
-  const url = await contentUrl(env, message.workspaceId, content);
   const data = { v: 1 as const, kind: content.kind, region: env.AVALON_REGION, workspaceId: message.workspaceId, url };
   const collapseId = await pushCollapseId(message.workspaceId, content.kind === "new_message" ? `conversation:${content.workstreamId}:${content.substreamId ?? "0"}` : content.deliveryKey);
   const { title, body } = content;

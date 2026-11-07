@@ -10,7 +10,7 @@ import { logInfo, logWarn } from "../observability/logger";
 import { ensureFreshConnectorCredentials } from "./connector-credential-refresh";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
-import { canonicalWorkstreamUrl } from "./workstream-link-service";
+import { conversationLink } from "./conversation-link-service";
 
 const SlackMentionConnectionSchema = z.strictObject({
   id: z.string().uuid(),
@@ -31,6 +31,8 @@ type SlackMentionDestination = {
 };
 
 export interface WorkstreamSlackMention {
+  /** The Canvas or Sidekick link, when the caller already resolved it. */
+  url?: string;
   messageId: string;
   recipientUserId: string;
   recipientEmail: string;
@@ -44,6 +46,8 @@ export interface WorkstreamSlackMention {
 }
 
 export interface WorkstreamSlackParticipantAdded {
+  /** The Canvas or Sidekick link, when the caller already resolved it. */
+  url?: string;
   sourceId: string;
   recipientUserId: string;
   recipientEmail: string;
@@ -77,7 +81,7 @@ interface WorkstreamSlackDelivery {
   /** Seeds the per-chunk `client_msg_id`, so a retry posts the same message. */
   sourceId: string;
   kind: "mention" | "participant_added" | "activity";
-  /** The link, when the caller has one; otherwise the thread's canonical URL. */
+  /** The link, when the caller has one; otherwise the conversation's canonical URL. */
   url?: string;
   chunks: (target: string, maximum: number) => string[];
 }
@@ -98,6 +102,7 @@ export async function sendWorkstreamMentionSlack(
     ...(input.substreamId ? { substreamId: input.substreamId } : {}),
     recipientUserId: input.recipientUserId,
     recipientEmail: input.recipientEmail,
+    ...(input.url ? { url: input.url } : {}),
     sourceId: input.messageId,
     kind: "mention",
     chunks: (target, maximum) => slackMentionChunks(input, target, maximum),
@@ -122,6 +127,7 @@ export async function sendWorkstreamParticipantAddedSlack(
     ...(input.substreamId ? { substreamId: input.substreamId } : {}),
     recipientUserId: input.recipientUserId,
     recipientEmail: input.recipientEmail,
+    ...(input.url ? { url: input.url } : {}),
     sourceId: input.sourceId,
     kind: "participant_added",
     chunks: (target, maximum) => slackParticipantAddedChunks(input, target, maximum),
@@ -142,7 +148,7 @@ export interface WorkstreamSlackActivity {
   workspaceName: string;
   workstreamId: string;
   substreamId?: string;
-  /** Where the message links, when not the thread: a Channel merge opens its Channel. */
+  /** Where the message links: the Canvas or Sidekick the row is about. */
   url?: string;
   title: string;
   body: string;
@@ -192,6 +198,20 @@ async function deliverWorkstreamSlack(
   let linkedConnectionCount = 0;
   let lookupMatchCount = 0;
   let resolutionMode: "confirmed_link" | "email_lookup" | null = null;
+  // A Canvas's or a Sidekick's link. A Thread, Breakout or Channel has none
+  // now that no surface opens one, so nothing is sent to open nothing.
+  const link = input.url ? { kind: null, url: input.url } : await conversationLink(env, {
+    region: env.AVALON_REGION, workspaceId: input.workspaceId, parentId: workstreamId,
+  });
+  const target = link.url;
+  if (!target) {
+    logInfo(env, "slack_notification_terminal", {
+      workspace_id: input.workspaceId, workstream_id: workstreamId, kind: input.kind, source_id: input.sourceId,
+      recipient_user_id: input.recipientUserId, outcome: "skipped", reason: "conversation_not_linkable",
+      parent_kind: link.kind ?? "missing",
+    });
+    return "skipped";
+  }
   try {
     const rawConnections = await env.DB.prepare(
       `SELECT cc.id, cc.workspace_id, cc.provider_account_id,
@@ -351,12 +371,6 @@ async function deliverWorkstreamSlack(
       slack_user_id: resolvedSlackUserId,
       channel_id: channelId,
       outcome: "opened",
-    });
-    const target = input.url ?? await canonicalWorkstreamUrl(env, {
-      region: env.AVALON_REGION,
-      workspaceId: input.workspaceId,
-    ...(input.substreamId ? { substreamId: input.substreamId } : {}),
-      workstreamId,
     });
     const chunks = input.chunks(target, 40_000);
     for (const [index, chunk] of chunks.entries()) {

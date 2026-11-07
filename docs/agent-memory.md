@@ -259,10 +259,11 @@ forgot it. (4) `provisionSidekickRun` reads the Sidekick's copy into each new
 run conversation before its first activation, since a run is a conversation
 nobody has settled in yet. (5) The **copy-sync lane** reaches every other
 conversation. A holder is keyed by `memoryConversationKeyOf` (a Thread's id, a
-Breakout's `<thread>/<breakout>`, `sidekick:<id>/<substream>`, `space:<id>`),
-not by the fact source, because every conversation of one Sidekick shares the
-source `sidekick:<id>` but holds its own copies; `memory_digest_holder_facts`
-records which facts each principal's copy there was read with. `WorkspaceDO`
+Breakout's `<thread>/<breakout>`, `sidekick:<id>/<substream>`, `space:<id>`,
+`canvas:<id>`), not by the fact source, because every conversation of one
+Sidekick shares the source `sidekick:<id>` but holds its own copies;
+`memory_digest_holder_facts` records which facts each principal's copy there
+was read with. `WorkspaceDO`
 marks holders in `memory_digest_sync` with a revision:
 
 - a retraction (`memory_forget`, or a sweep's `retract`) marks only the holders
@@ -549,7 +550,9 @@ vector-index facts (Turbopuffer, when wanted:
 - **A digest copy refresh fails:** `memory_digest_refresh_failed` with the
   reason; the old copy stands and the next refresh tries again. In the
   copy-sync consumer a failed copy releases the row (`memory_digest_sync_failed`
-  when the work itself threw), so the alarm sends it again at its gate.
+  when the work itself threw), so the alarm sends it again at its gate. A
+  conversation kind the holder table's CHECK does not admit is refused as
+  `memory_digest_holder_kind_unadmitted:<kind>`, not as a generic reason.
 - **An unreadable copy:** `memory_digest_copy_unreadable` names the field
   (`zodDiagnosticCode`) and the run renders no digest rather than failing.
 
@@ -584,6 +587,7 @@ defensive numbers.
 | `apps/api/test-workers/memory-facts.test.ts` | Migration 116 on a populated object at 115 (subjects, sources, FTS, the drop, the retired alarm row); `applyMemorySweep`'s fence, receipt replay and `cursor_ahead`, one fence per Sidekick conversation; an update's source order and `mixed`; placement refusals; candidate and recall audience fencing; `memoryDigest`, the revision it answers and the holder and holder facts it records, one holder per conversation of a Sidekick; the copy-sync lane: a retraction marks only the holders of its fact and an update none, a participant joining marks that Thread's holders only, a participant leaving marks the copies elsewhere holding a fact learned there, a member becoming a guest and an archive mark every holder, one batch publishes, work, complete and release settle the row. Run with `pnpm --filter @rally/api test:workers`. |
 | `apps/api/test/memory-facts-tools.test.ts` | The three tools over a real `WorkspaceDO` (node:sqlite) and real conversation objects: person facts follow their person and nobody else, a Sidekick run reads as the Sidekick, conversation facts stay with their subject, forget authority, dedupe, receipt replay, horizon errors. The fixture uses `migratedSqliteDatabase()` because the object reads a person's relationship from current `workspace_members`. |
 | `apps/api/test/memory-sweep-service.test.ts` | The attempt's gates and claim, the Queue message, rest and `retry_at` (resting, keyless, the follow-up a settle keeps); the window's character budget, and a full page or an over-budget run of agent text passed without a model call; the run's window, names, candidates, prompt, per-operation parsing, trust class from evidence, apply, settle, the empty receipt, release on model failure, replay and rewind, quiet rests. The model is a stubbed `fetch`; `WorkspaceDO` is a stub recording its calls. |
+| `apps/api/test/workspace-memory-digest-holder-migration.test.ts` | Migration 143 on a populated object at 142: a Thread's holder and its facts survive the copy, the trigger list is identical, a Canvas is admitted and `project` still refused; at 142 a Canvas holder is refused as `memory_digest_holder_kind_unadmitted:canvas`. |
 | `apps/api/test-workers/memory-sweep-state.test.ts` | `memory_sweep_state` through the real scheduling port, as the consumer reaches it: a settle's arguments cross the binding, and a release re-arms the object's alarm at the rest. |
 | `packages/agent-harness/src/prompts.test.ts` | The sweep prompt's golden hash, injection isolation, bounding, and load-bearing lines; the digest's golden hash, group order, horizons, full fact ids, the `external` exclusion, the budget cut and its trailer, and the personal note only beside a person fact. |
 | `apps/api/test/memory-digest-service.test.ts` | The digest over a real `WorkspaceDO` and real conversation objects: who reads as whom (`digestReaderFor`), a copy holds what its reader may see and nobody else's facts, an older revision never replaces a newer copy, a forget drops the fact from every copy and refuses a read from before it, `external` facts never take a copy's place, and the section composes digest then personal prompt. |
@@ -642,7 +646,9 @@ text.
 holder's CHECK (migration 117) predates Canvases, so the write failed inside
 `refreshMemoryDigestCopy`, which logged and moved on: no Canvas Chat ever got
 a digest copy. The shipped migration cannot be edited, so the CHECK widens in
-a new one.
+a new one. That failure logged only a generic reason, so a kind the CHECK
+refuses is now reported by name (`memory_digest_holder_kind_unadmitted:<kind>`):
+the next unadmitted kind is diagnosed from one log line.
 
 ### 2026-11-07 — A Canvas's Chat has its own memory source
 

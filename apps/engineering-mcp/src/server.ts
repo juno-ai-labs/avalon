@@ -6,10 +6,6 @@ import {
   EngineeringD1SqlResultSchema,
   CreateEngineeringOrgInputSchema,
   CreateEngineeringOrgResultSchema,
-  CreateEngineeringChannelInputSchema,
-  CreateEngineeringChannelResultSchema,
-  CreateEngineeringThreadInputSchema,
-  CreateEngineeringThreadResultSchema,
   SendEngineeringMessageInputSchema,
   SendEngineeringMessageResultSchema,
   SetEngineeringSidekickPausedInputSchema,
@@ -17,11 +13,8 @@ import {
   ThreadRetirementOperationInputSchema,
   DumpThreadTranscriptsResultSchema,
   RetireThreadsResultSchema,
-  ReadEngineeringChannelInputSchema,
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
-  ListEngineeringUserChannelsInputSchema,
-  ListEngineeringUserConversationsInputSchema,
   EngineeringSidekickListLookupSchema,
   EngineeringSpaceListLookupSchema,
   EngineeringSqlLookupSchema,
@@ -36,8 +29,6 @@ import {
 } from "@rally/contracts/engineering-inspection";
 import {
   ArtifactIdSchema,
-  SpaceDirectorySchema,
-  SpaceChannelPageSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
@@ -196,13 +187,13 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   const server = new McpServer({
     name: "Rally engineering",
     version: "1.0.0",
-    description: "Inspect and administer Rally organizations, Channels, Threads, Breakouts, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and conversations and send messages as a selected Rally user.",
+    description: "Inspect and administer Rally organizations, Channels, Threads, Breakouts, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and send messages as a selected Rally user.",
   }, {
     instructions: [
       "Use these tools for Rally engineering investigations and requested administration.",
       "Product names differ from storage: an Organization is a workspace, a Channel is a Space, a Thread is a workstream, and a Breakout is a substream. Main is substream 0.",
       "Resolve the exact organization, user and conversation before investigating. Start with the list/search tools and inspect database schemas before querying rows; bind SQL values with placeholders.",
-      "For participant-visible content use read_channel, read_thread or read_breakout as the selected user and follow pagination. Those reads omit internal tools and thinking; use the exact conversation's inspection SQL and observability tools when diagnosing execution failures.",
+      "For participant-visible content use read_thread or read_breakout as the selected user and follow pagination. Those reads omit internal tools and thinking; use the exact conversation's inspection SQL and observability tools when diagnosing execution failures.",
       "SQL tools can mutate production data. Use read-only queries for investigations; make changes only within the user's request. For creation and message sends, reuse the same operationId and arguments after an uncertain outcome rather than creating a second operation.",
       "Filter logs and analytical queries to the relevant time window and identifiers. Never expose credentials, OAuth codes, socket tickets or unrelated private content found in diagnostic data.",
       "Separate verified durable state, observed tool results and inference from hypotheses, and distinguish a local change from a merged or deployed fix.",
@@ -225,22 +216,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveWorkspace({ workspaceId: WorkspaceIdSchema.parse(orgId) })));
     return oneRegionalTarget(env, results.map((result) => EngineeringWorkspaceTargetLookupSchema.parse(result)), `Organization ${orgId}`).binding;
   }
-
-  server.registerTool("create_channel", {
-    description: "Create an Organization-wide Rally Channel in orgId and seat participantUserIds plus its creator. The selected user and participants must satisfy the app's ordinary creation and audience permissions. A Channel is stored as a Space, not a workstream. Reuse operationId and the same arguments after an uncertain outcome; channelId is operationId.",
-    inputSchema: CreateEngineeringChannelInputSchema.unwrap().shape,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "create_channel", {
-    workspace_id: request.orgId, space_id: request.operationId, creator_user_id: request.creatorUserId,
-  }, async () => CreateEngineeringChannelResultSchema.parse(await (await organizationBinding(request.orgId)).createChannel(request, principal))));
-
-  server.registerTool("create_thread", {
-    description: "Start a Rally Thread in channelId (a stored Space) in orgId, as creatorUserId, with prompt as its opening message. Starts the normal agent run, which may use connected tools. The creator must satisfy the app's ordinary Thread creation and Channel participation permissions. Private Channels keep the Thread private. Reuse operationId and the same arguments after an uncertain outcome; threadId is operationId.",
-    inputSchema: CreateEngineeringThreadInputSchema.unwrap().shape,
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  }, (request) => tool(principal, "create_thread", {
-    workspace_id: request.orgId, space_id: request.channelId, workstream_id: request.operationId, creator_user_id: request.creatorUserId,
-  }, async () => CreateEngineeringThreadResultSchema.parse(await (await organizationBinding(request.orgId)).createThread(request, principal))));
 
   server.registerTool("send_message", {
     description: "Send a message as userId to a Thread's Main or the named Breakout, through the same composer admission as the app. The message is attributed to userId, as though that user sent it. Enforces that user's access, uses normal addressing, queue/steer behavior, notifications and agent execution; recordOnly posts it for readers without starting a run. Reuse operationId and the same arguments to retry an uncertain send.",
@@ -291,14 +266,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     return RetireThreadsResultSchema.parse(await (await organizationBinding(orgId)).retireThreads(request, principal));
   }));
 
-  server.registerTool("read_channel", {
-    description: "Read the Channel feed visible to userId as plain text, with messages and Thread cards in app order. The app's ordinary feed pagination applies; follow the returned cursor for older history. Does not read the contents of every Thread.",
-    inputSchema: ReadEngineeringChannelInputSchema.unwrap().shape,
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "read_channel", {
-    workspace_id: request.orgId, space_id: request.channelId, user_id: request.userId,
-  }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(request.orgId)).readChannel(request)).text));
-
   const conversationReadSchema = ReadEngineeringConversationInputSchema.unwrap().omit({ breakoutId: true });
   server.registerTool("read_thread", {
     description: "Read the Thread's participant-visible message text as userId through ordinary conversation authorization. Omits tools, thinking and internal agent messages. Returns 20 committed turns by default, or the requested limit; follow the returned sequence fence to continue a page.",
@@ -315,27 +282,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, (request) => tool(principal, "read_breakout", {
     workspace_id: request.orgId, workstream_id: request.threadId, substream_id: request.breakoutId, user_id: request.userId,
   }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(request.orgId)).readConversation(request)).text));
-
-  server.registerTool("list_channels", {
-    description: "List the active Rally Channels visible to userId in orgId, in that user's app sidebar order. Uses the ordinary member/guest directory rules. Each item's id is a channelId for Channel reads and Thread creation; Personal Channels belong only to their owner.",
-    inputSchema: ListEngineeringUserChannelsInputSchema.unwrap().shape,
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "list_channels", {
-    workspace_id: request.orgId, user_id: request.userId,
-  }, async () => SpaceDirectorySchema.parse(await (await organizationBinding(request.orgId)).listUserChannels(request))));
-
-  const conversationListSchema = ListEngineeringUserConversationsInputSchema.unwrap().omit({ kind: true });
-  for (const [name, kind] of [["list_threads", "channel"], ["list_breakouts", "breakout"]] as const) {
-    server.registerTool(name, {
-      description: kind === "channel"
-        ? "List all unarchived Threads userId may open in channelId (a stored Space), newest activity first, including settled/read Threads. Each item's id is a threadId. Returns the app's ordinary conversation cards and nextCursor; repeat with cursor until nextCursor is null."
-        : "List all unarchived Breakouts visible to userId in channelId (a stored Space), across its Threads, including settled/read Breakouts. Each item's id is a breakoutId; breakoutOf.workstreamId is the threadId needed to read or send. Uses ordinary child visibility rules. Repeat with cursor until nextCursor is null.",
-      inputSchema: conversationListSchema.shape,
-      annotations: { readOnlyHint: true, openWorldHint: false },
-    }, (request) => tool(principal, name, {
-      workspace_id: request.orgId, space_id: request.channelId, user_id: request.userId,
-    }, async () => SpaceChannelPageSchema.parse(await (await organizationBinding(request.orgId)).listUserConversations({ ...request, kind }))));
-  }
 
   server.registerTool("list_workspaces", {
     description: "List Rally workspaces from configured regional identity stores.",
@@ -415,7 +361,7 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }));
 
   server.registerTool("list_spaces", {
-    description: "List every Rally Channel (stored as a Space) in the authoritative WorkspaceDO for an Organization's workspace ID, including archived Channels. Each spaceId can be passed as channelId to create_thread.",
+    description: "List every Rally Channel (stored as a Space) in the authoritative WorkspaceDO for an Organization's workspace ID, including archived Channels.",
     inputSchema: { workspaceId: WorkspaceIdSchema },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ workspaceId }) => tool(principal, "list_spaces", { workspace_id: workspaceId }, async () => {

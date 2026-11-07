@@ -11,7 +11,7 @@ import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagn
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
 import { ArtifactPinListSchema } from '@rally/contracts';
-import { sidekickDeepLink, workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
+import { canvasCanonicalUrl, canvasDeepLink, sidekickDeepLink } from '@rally/contracts/links';
 import { z, type ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
@@ -39,10 +39,7 @@ import {
   OrganizationNameSuggestionSchema,
   UpdateAccountOnboardingSchema,
 } from '@rally/contracts';
-import {
-  DESKTOP_DEEP_LINK_PROTOCOL,
-  DESKTOP_DEEP_LINK_PROTOCOLS,
-} from '@rally/contracts/desktop-deep-link';
+import { DESKTOP_DEEP_LINK_PROTOCOLS } from '@rally/contracts/desktop-deep-link';
 import { CLIENT_CONTRACT_VERSION, RALLY_HEADERS } from '@rally/contracts/http-headers';
 import { APNS_TOPICS } from '@rally/contracts/push-notifications';
 import type { Region } from "@rally/contracts/regions";
@@ -173,7 +170,9 @@ import { DebugSettingsController } from './debug-settings';
 import {
   acceptedDeepLink,
   shouldDeliverConnectorResultToSettings,
-  workstreamHttpsDeepLink,
+  httpsLinkDeepLink,
+  isRetiredDeepLink,
+  RETIRED_LINK_MESSAGE,
 } from "./deep-links";
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { DeveloperSettingsFlagController } from './developer-settings-flag';
@@ -329,7 +328,6 @@ const allowedExternalProtocols = new Set(['https:', 'http:']);
  * trimmed rather than restated — a second literal here is exactly the copy
  * that would be missed when the legacy scheme is finally dropped.
  */
-const customProtocol = DESKTOP_DEEP_LINK_PROTOCOL.replace(/:$/u, '');
 const deepLinkProtocols: readonly string[] = DESKTOP_DEEP_LINK_PROTOCOLS
   .map((scheme) => scheme.replace(/:$/u, ''));
 const rendererProtocol = 'app';
@@ -1440,17 +1438,15 @@ const menuBarController = new MenuBarController({
     selected: (action) => { void telemetryReporter?.menuBarActionSelected(action); },
     open: (row) => {
       activateFromMenuBar();
-      // A Canvas opens through the conversation link form, which the renderer
-      // routes to `/canvases/:id`; a Sidekick's link names its Organization,
-      // the one the menu is showing.
-      if (row.kind === 'canvas') {
-        emitDeepLink(`${customProtocol}://workstreams/${row.id}`, 'menu_bar');
-        return;
-      }
+      // A Canvas or a Sidekick link names its Organization: the one the menu
+      // is showing.
       void loadStoredAuthSet().then((authSet) => {
         const active = authSet ? activeStoredCredential(authSet) : null;
         if (!active?.binding.workspaceId) return;
-        emitDeepLink(sidekickDeepLink({ region: active.binding.region, workspaceId: active.binding.workspaceId, sidekickId: row.id }), 'menu_bar');
+        const organization = { region: active.binding.region, workspaceId: active.binding.workspaceId };
+        emitDeepLink(row.kind === 'canvas'
+          ? canvasDeepLink({ ...organization, canvasId: row.id })
+          : sidekickDeepLink({ ...organization, sidekickId: row.id }), 'menu_bar');
       });
     },
     openRally: openMainWindowFromMenuBar,
@@ -1484,7 +1480,7 @@ const desktopPush = new DesktopPushNotifications({
   clicked: (url) => {
     if (applicationLaunchObserved) applicationOpenObserver.opened('push_notification');
     else prelaunchPushObserved = true;
-    const link = url ? workstreamHttpsDeepLink(url) : null;
+    const link = url ? httpsLinkDeepLink(url) : null;
     if (link) sendDeepLink(link, 'notification');
     else if (app.isReady()) void createMainWindow();
   },
@@ -3264,7 +3260,17 @@ function sendDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint): vo
 
 function emitDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint = 'deep_link'): boolean {
   const deepLink = acceptedDeepLink(rawUrl);
-  if (!deepLink) return false;
+  if (!deepLink) {
+    // A Space, Channel, Breakout or Thread link opens nothing now; say so, as
+    // the site's handoff page and the web app do, rather than drop it. It can
+    // arrive before `ready` on a cold launch, and a window cannot open before.
+    if (isRetiredDeepLink(rawUrl)) {
+      void app.whenReady()
+        .then(() => createDeepLinkErrorWindow(RETIRED_LINK_MESSAGE))
+        .catch((error: unknown) => logWarn('rally', 'could not show the retired-link notice', error));
+    }
+    return false;
+  }
   sendDeepLink(deepLink, entrypoint);
   return true;
 }
@@ -4248,6 +4254,13 @@ function registerIpc(): void {
       const record = poppedOutArtifacts.get(window)!;
       const command = artifactWindowActionRequest(record.request, raw);
       const session = inMemorySession;
+      if ('canvasId' in command) {
+        const workspace = session?.workspace;
+        if (!workspace) throw new Error('Sign in before copying a link');
+        return canvasCanonicalUrl(runtimeConfig().webBaseUrl, {
+          region: workspace.region, workspaceId: workspace.id, canvasId: command.canvasId, artifactId: record.resourceId,
+        });
+      }
       const assertSession = (): void => {
         assertArtifactRenderer(event);
         if (!session || !artifactWindowSessionMatches(record, { userId: inMemorySession?.user.id ?? null, workspaceId: inMemorySession?.workspace?.id ?? null, region: inMemorySession?.workspace?.region ?? null })) throw new Error('The Rally session changed');
@@ -4288,15 +4301,6 @@ function registerIpc(): void {
         saveArtifactWindowStates();
       }
       if (action.type === 'pin-state') return ArtifactPinListSchema.parse(result).some((pin) => pin.id === record.resourceId);
-      if (action.type === 'link') {
-        const { spaceIds } = z.object({ spaceIds: z.array(IdSchema) }).parse(result);
-        const workspace = session?.workspace;
-        if (!workspace || !spaceIds[0]) throw new Error('This artifact has no link to share');
-        return workstreamCanonicalUrl(runtimeConfig().webBaseUrl, {
-          region: workspace.region, workspaceId: workspace.id, spaceId: spaceIds[0],
-          workstreamId: record.request.annotationScope!.split(':')[0]!, artifactId: record.resourceId,
-        });
-      }
       return result;
     } catch (error) {
       const diagnostic = zodDiagnosticCode(error, 'artifact_window_response');
@@ -5316,7 +5320,7 @@ if (!singleInstanceLock) {
 
   app.on('continue-activity', (event, type, _userInfo, details) => {
     if (type !== 'NSUserActivityTypeBrowsingWeb' || !details.webpageURL) return;
-    const link = workstreamHttpsDeepLink(details.webpageURL);
+    const link = httpsLinkDeepLink(details.webpageURL);
     if (!link) return;
     event.preventDefault();
     observeAcceptedDeepLinkOpen();

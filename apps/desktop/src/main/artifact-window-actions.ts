@@ -8,11 +8,19 @@ type ArtifactActionRequest = {
   path: string; method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'; body?: unknown; binary?: boolean;
 };
 
-export function artifactWindowActionRequest(preview: DesktopArtifactWindowRequest, raw: unknown): ArtifactActionRequest & { action: ArtifactWindowAction } {
+/**
+ * What a window action asks of the API, or, for Copy link, the Canvas the
+ * link names: a link is minted in main from the Canvas link form and needs no
+ * request (`docs/links.md`).
+ */
+export function artifactWindowActionRequest(
+  preview: DesktopArtifactWindowRequest,
+  raw: unknown,
+): (ArtifactActionRequest | { canvasId: string }) & { action: ArtifactWindowAction } {
   const parsed = ArtifactWindowActionSchema.safeParse(raw);
   if (!parsed.success) throw new Error(zodDiagnosticCode(parsed.error, 'artifact_window_action')!);
   const action = parsed.data;
-  const target = (): ArtifactActionRequest => {
+  const target = (): ArtifactActionRequest | { canvasId: string } => {
     const root = `/resources/${encodeURIComponent(preview.resourceId)}`;
     if (action.type === 'read') return { path: root, method: 'GET' };
     if (action.type === 'pin-state') return { path: '/navigation/artifact-pins', method: 'GET' };
@@ -25,23 +33,22 @@ export function artifactWindowActionRequest(preview: DesktopArtifactWindowReques
       path: `${root}${action.version ? `/versions/${action.version}` : ''}/${action.original ? 'content' : 'preview'}`,
       method: 'GET', binary: true,
     };
-    // A Canvas's Chat registers `canvas:<canvasId>` (`conversationAnnotationScope`);
-    // everything else `<parentId>:<substreamId>`.
+    // A Canvas's Chat registers `canvas:<canvasId>` (`conversationAnnotationScope`).
+    // A Thread's scope (`<parentId>:<substreamId>`) names a conversation whose
+    // routes are gone, so nothing below is built for it.
     const [first, second] = preview.annotationScope?.split(':') ?? [];
-    const canvas = first === 'canvas';
-    const parent = IdSchema.safeParse(canvas ? second : first);
-    if (preview.editable !== true || !parent.success || (!canvas && second !== '0')) throw new Error('This artifact cannot be edited here');
-    if (canvas && (action.type === 'link' || action.type === 'pin')) {
-      // A Canvas artifact's pin and link belong to the Canvas, not a thread;
-      // neither has a route from a detached window yet (plan step B-5).
-      throw new Error(`A Canvas artifact cannot be ${action.type === 'pin' ? 'pinned' : 'linked'} from its own window; use the Canvas`);
+    const canvas = first === 'canvas' ? IdSchema.safeParse(second) : null;
+    // A link opens the Canvas onto this artifact, which reading it is enough
+    // to share.
+    if (action.type === 'link') {
+      if (!canvas?.success) throw new Error('This artifact has no Canvas to link to');
+      return { canvasId: canvas.data };
     }
-    if (action.type === 'link') return { path: `/workstreams/${parent.data}/link-spaces`, method: 'GET' };
-    if (action.type === 'pin') return {
-      path: `/navigation/artifact-pins/${encodeURIComponent(preview.resourceId)}`,
-      method: action.pinned ? 'PUT' : 'DELETE', ...(action.pinned ? { body: { threadId: parent.data } } : {}),
-    };
-    const path = `/conversations/${parent.data}/resources/${encodeURIComponent(preview.resourceId)}`;
+    if (preview.editable !== true || !canvas?.success) throw new Error('This artifact cannot be edited here');
+    // A Canvas artifact's pin belongs to the Canvas, and has no route from a
+    // detached window.
+    if (action.type === 'pin') throw new Error('A Canvas artifact cannot be pinned from its own window; use the Canvas');
+    const path = `/conversations/${canvas.data}/resources/${encodeURIComponent(preview.resourceId)}`;
     return action.type === 'rename' ? { path, method: 'PATCH', body: { title: action.title } } : { path, method: 'DELETE' };
   };
   return { ...target(), action };
