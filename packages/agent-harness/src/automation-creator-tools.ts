@@ -1030,7 +1030,7 @@ its input, or accept the test's row. Name each scratch table after its real tabl
 " (test)" appended, never the real name, which reopens the live table; reuse it on
 later tests, and invalidate the rows a test wrote once you have read its result. Every connector plugin a tool calls goes in recommendedPlugins.
 A changed tool is tested again before it is saved. A test that returns warnings is not
-done: fix what each names and test again.
+done: fix what each names and test again, or say why it does not apply.
 In a self-review, tools change with the procedure, using only plugins already
 recommended. The plan takes each deterministic step the report says a run repeated,
 skipped or got wrong (a dedupe after the reads, a page not followed, date bounds, a
