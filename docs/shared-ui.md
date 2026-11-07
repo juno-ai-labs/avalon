@@ -210,7 +210,7 @@ invitees follow registered Members, with their Invited label. Search exposes
 all matching names and email addresses in that order, without the suggestion cap.
 
 `GET /navigation/people-ranking?channelId=…` returns ordered person ids from
-`workspace-people-ranking.ts`; [the activity log](digests.md#people-interaction-ranking)
+`workspace-people-ranking.ts`; the activity log (retired)
 owns the scoring and indexed read. Thread ranking uses the route's Channel
 pane context; standalone Threads use Organization ranking alone.
 

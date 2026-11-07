@@ -401,7 +401,7 @@ way its catalog row says, with no digest exception.
 **Why:** It was the kill switch for the agent-run digest the 2026-10-15
 rewrite replaced, and its live default had drifted to `off`, hiding the Daily
 digest settings and stopping delivery for everyone. See
-[`digests.md`](digests.md) for the full entry.
+`digests.md` (retired) for the full entry.
 
 **Consequences:** A flag removed from the catalog must also move to a
 `retireFlag` call in the same change, or the key stays in Flagship where a

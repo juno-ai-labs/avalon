@@ -26,7 +26,7 @@ New version-2 Sidekick definitions receive email only when inbound_email is conf
 | `apps/api/src/durable-objects/automation-do.ts` | An automation's half of all of that: the `automation` row holds the issued address, `apply` reserves it, and `admitInboundEmail` decides lifecycle, address, and sender in one call and writes the receipt. |
 | `apps/api/src/inbound-email-regional-bridge.ts` | The one verified Resend event handed to the owning region. |
 | `apps/api/src/routes/resend.ts` | The Global receiving webhook. |
-| `apps/api/src/services/email-markdown.ts` | The Markdown renderer both Rally emails share; owned by [`digests.md`](digests.md). |
+| `apps/api/src/services/email-markdown.ts` | The Markdown renderer both Rally emails share; owned by [`markdown-rendering.md`](markdown-rendering.md). |
 | `apps/api/src/services/user-delivery.ts` | The connector-declared personal delivery surfaces beside it. |
 
 ### The v1 format

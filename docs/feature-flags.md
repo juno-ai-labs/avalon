@@ -691,7 +691,7 @@ what they do with the model they are handed:
 
 | For | Read |
 | --- | --- |
-| Why digests need a kill switch, and exactly where it is checked | [`digests.md`](digests.md#an-occurrence) |
+| Why digests need a kill switch, and exactly where it is checked | `digests.md` (retired) |
 | The run loop, the route plan's failure policy, the inference ledger | [`agent-harness.md`](agent-harness.md) |
 | The `model_override` column and where it is copied | [`data-model.md`](data-model.md) |
 | The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
@@ -1121,7 +1121,7 @@ closed with no exception.
 
 **Why:** The flag guarded the agent-run digest that the 2026-10-15 rewrite
 replaced, and its live default had drifted to `off`, silently hiding the Daily
-digest settings and stopping delivery. See [`digests.md`](digests.md).
+digest settings and stopping delivery. See `digests.md` (retired).
 
 **Consequences:** A future flag that must fail open belongs in a module of its
 own, as this one did; do not revive `digests-enabled` for a new purpose.
@@ -1593,7 +1593,7 @@ while silently doing nothing is worse than the scope of reading one more
 field.
 
 **Considered and rejected:** Nothing new here beyond what
-[`digests.md`](digests.md)'s matching entry already weighs — a "paused"
+`digests.md` (retired)'s matching entry already weighs — a "paused"
 notice instead of hiding the section outright, and a client-side check
 combined from workspace and user facts rather than one evaluation reused.
 

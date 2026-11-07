@@ -32,7 +32,6 @@ import {
 import { dispatchWorkspaceRelationshipChanges } from "./workspace-relationship-delivery";
 import { publishWorkspaceSync, seatSpaceInvitee } from "./workspace-realtime-service";
 import { SlackAgentService } from "./slack-agent-service";
-import { rebuildDigestSchedulesForTimezone } from "./digest-service";
 import { workspaceDOName } from "../durable-objects/names";
 import { PersonalSystemPromptRecordSchema } from "../durable-objects/personal-system-prompt";
 import { forgetReviewedMemory, readMemoryReview } from "./memory-review-service";
@@ -504,7 +503,6 @@ export class WorkspaceService {
     )
       .bind(timezone, followDevice ? "client" : "user", nowIso(), this.auth.userId)
       .run();
-    await rederiveDigestsForTimezone(this.env, this.auth.userId, timezone);
     const row = await this.env.DB.prepare(
       "SELECT id, email, name, avatar_url, timezone, created_at FROM users WHERE id = ?",
     ).bind(this.auth.userId).first<Record<string, unknown>>();
@@ -1283,25 +1281,6 @@ export async function previewInvitation(env: Env, token: string): Promise<Worksp
   };
 }
 
-/**
- * A digest's times are wall-clock times in its owner's day, so moving timezone
- * moves every occurrence — in every workspace they belong to, since this is one
- * column for the whole account. The configuration is unchanged; the instants it
- * resolves to are not, and those live in derived `schedules` rows the workspace
- * alarm reads.
- */
-async function rederiveDigestsForTimezone(env: Env, userId: string, timezone: string): Promise<void> {
-  await rebuildDigestSchedulesForTimezone(env, { userId, timezone }).catch((error: unknown) => {
-    // The timezone itself is saved, and the cron reconciler rebuilds any
-    // derived row whose timezone disagrees with the account. Failing the
-    // request here would lose the timezone to fix a thing that self-heals.
-    logWarn(env, "digest_schedule_rederive_failed", {
-      user_id: userId,
-      reason: error instanceof Error ? error.message : "unknown",
-    });
-  });
-}
-
 /** The account's timezone, and whether it follows the device. */
 export async function readUserTimezone(env: Env, userId: string): Promise<UserTimezone> {
   const row = await env.DB.prepare("SELECT timezone, timezone_source FROM users WHERE id = ?")
@@ -1316,11 +1295,10 @@ export async function readUserTimezone(env: Env, userId: string): Promise<UserTi
  * is never overwritten and a report that changes nothing writes nothing.
  */
 export async function reportDeviceTimezone(env: Env, userId: string, timezone: string): Promise<UserTimezone> {
-  const moved = await env.DB.prepare(
+  await env.DB.prepare(
     `UPDATE users SET timezone = ?, updated_at = ?
       WHERE id = ? AND timezone_source = 'client' AND timezone <> ?
       RETURNING id`,
   ).bind(timezone, nowIso(), userId, timezone).first<{ id: string }>();
-  if (moved) await rederiveDigestsForTimezone(env, userId, timezone);
   return readUserTimezone(env, userId);
 }
