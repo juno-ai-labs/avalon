@@ -67,23 +67,17 @@ function modelId(value: string | undefined): string {
 export function defaultAgentModelRouting(env: Env, role: AgentModelRole): AgentModelRouting {
   const fallbackModels = splitModelIds(env.OPENROUTER_FALLBACK_MODELS);
   switch (role) {
-    // The import reads screenshots, so its default must accept images; the
-    // primary conversation model does.
     // The memory sweep's judgments (what a colleague would need later, a
     // fact's horizon, which fact a sentence supersedes) are the ones small
     // models get wrong, so it runs on the primary model (agent-memory PRD,
     // design decision 10).
     case "workstream":
     case "inline_child":
-    case "session_import":
     case "memory_sweep":
     case "sidekick_authoring":
       return { model: modelId(env.OPENROUTER_PRIMARY_MODEL), fallbackModels };
     case "workstream_naming":
       return { model: modelId(env.OPENROUTER_CLASSIFIER_MODEL), fallbackModels };
-    case "work_opportunity_admission":
-    case "work_opportunity_ranking":
-      return { model: modelId(env.OPENROUTER_STRUCTURED_MODEL), fallbackModels };
     default: {
       const exhaustive: never = role;
       throw new Error(`Unhandled agent model role: ${String(exhaustive)}`);

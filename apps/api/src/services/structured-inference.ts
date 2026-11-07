@@ -36,8 +36,6 @@ export function isMemoryEmbeddingModel(model: string): boolean {
 type StructuredInferenceRole = Extract<
   AgentModelRole,
   | "workstream"
-  | "work_opportunity_admission"
-  | "work_opportunity_ranking"
   | "workstream_naming"
   | "memory_sweep"
 >;

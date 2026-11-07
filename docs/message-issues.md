@@ -18,6 +18,12 @@ adding feedback state to conversations.
 
 ## How it works
 
+The action's visible label is **Oopsie**; its accessible name and tip are
+**Oopsie: report a problem with this message**, so a screen reader hears what
+the control does and a voice command that says the visible word still finds
+it. The hover row keeps the button in the DOM while hidden, so the word is in
+the page's text under every reportable message.
+
 The action opens **Something go wrong?** with **Let us know what you expected
 so we can improve Rally.** The multiline input is `ComposerInput`, including
 the same message-capsule layout as Threads and Breakouts, with only the

@@ -22,7 +22,7 @@ function workflowInput(reason: string): WorkstreamWorkflowInput {
   return {
     region: "global",
     workspaceId: WORKSPACE,
-    parentKind: "workstream",
+    parentKind: "canvas",
     parentId: WORKSTREAM,
     substreamId: asSubstreamId("0"),
     loopId: `workstream:${WORKSTREAM}:substream:0:loop`,

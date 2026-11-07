@@ -1,7 +1,5 @@
 import { z } from "zod";
-import { WorkstreamAppearanceSchema } from "./workstream-appearance";
 import { IdSchema, SubstreamIdSchema, UserIdSchema, WorkspaceIdSchema } from "./identifiers";
-import { SpaceColorKeySchema, SpaceIconKeySchema, SpaceIdSchema, SpaceSystemRoleSchema } from "./spaces";
 
 /** Guest is a workspace relationship, never a different kind of user identity. */
 export const WorkspaceAccessClassSchema = z.enum(["member", "guest"]);
@@ -142,74 +140,6 @@ export const ScopeInvitationResultSchema = z.discriminatedUnion("status", [
   ]) }),
 ]);
 export type ScopeInvitationResult = z.infer<typeof ScopeInvitationResultSchema>;
-
-
-/** Navigation metadata is released by the grant owner, never by the candidate index. */
-export const SharedWorkstreamRequestSchema = z.strictObject({
-  workspaceId: WorkspaceIdSchema, parentId: IdSchema, userId: UserIdSchema,
-  membershipIncarnation: z.string().min(1),
-  /** New navigation readers opt in; older strict response parsers keep their shape. */
-  includeAttention: z.boolean().optional(),
-  includeResolution: z.boolean().optional(),
-});
-export const SharedWorkstreamSchema = z.strictObject({
-  parentId: IdSchema,
-  // The Channel is the navigation parent even when only one Breakout is shared.
-  title: z.string().nullable(),
-  appearance: WorkstreamAppearanceSchema.optional(),
-  archived: z.boolean().optional(),
-  conversations: z.array(z.strictObject({
-    substreamId: SubstreamIdSchema,
-    title: z.string(),
-    archived: z.boolean(),
-  })),
-});
-export const SharedDirectorySchema = z.strictObject({ workstreams: z.array(SharedWorkstreamSchema) });
-
-/** Associative presentation added only on the separately versioned navigation read. */
-export const SharedNavigationWorkstreamSchema = SharedWorkstreamSchema.omit({ conversations: true }).extend({
-  scope: z.enum(["personal", "workspace"]),
-  conversations: z.array(z.strictObject({
-    substreamId: SubstreamIdSchema,
-    title: z.string(),
-    appearance: WorkstreamAppearanceSchema.optional(),
-    scope: z.enum(["personal", "workspace"]),
-    archived: z.boolean(),
-    needsAttention: z.boolean().optional(),
-    resolved: z.boolean().optional(),
-    /** A breakout's Main transcript turn it was branched through; null when not branched from one. */
-    originTurnId: z.string().min(1).nullable().optional(),
-  })),
-});
-export type SharedNavigationWorkstream = z.infer<typeof SharedNavigationWorkstreamSchema>;
-
-/** The smallest Space projection needed to place shared Channels in browser navigation. */
-export const SharedNavigationSpaceSchema = z.strictObject({
-  id: SpaceIdSchema,
-  name: z.string().trim().min(1),
-  iconKey: SpaceIconKeySchema,
-  colorKey: SpaceColorKeySchema,
-  scope: z.enum(["personal", "workspace"]),
-  /** `general` marks the Organization's General Space. */
-  systemRole: SpaceSystemRoleSchema.nullable().optional(),
-  workstreamIds: z.array(IdSchema),
-});
-export type SharedNavigationSpace = z.infer<typeof SharedNavigationSpaceSchema>;
-
-/** Versioned separately from SharedDirectorySchema so strict older clients keep parsing. */
-export const SharedNavigationDirectorySchema = z.strictObject({
-  spaces: z.array(SharedNavigationSpaceSchema),
-  workstreams: z.array(SharedNavigationWorkstreamSchema),
-});
-export type SharedNavigationDirectory = z.infer<typeof SharedNavigationDirectorySchema>;
-
-export const SharedNavigationSpacesRequestSchema = z.strictObject({
-  workspaceId: WorkspaceIdSchema,
-  userId: UserIdSchema,
-  membershipIncarnation: z.string().min(1),
-  accessClass: z.enum(["member", "guest"]),
-  workstreamIds: z.array(IdSchema),
-});
 
 
 export const ListScopeInvitationsSchema = z.strictObject({

@@ -13,13 +13,13 @@ const userId = asUserId("00000000-0000-4000-8000-000000000083");
 const childId = "00000000-0000-4000-8000-000000000084";
 const workspace = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", workspaceId));
 const candidates = (membershipIncarnation = "first") => workspace().listScopeGrantCandidates({ workspaceId, userId, membershipIncarnation, accessClass: "guest" });
-function envelope(version: number, active = true, incarnation = "first", generation = 1) {
+function envelope(version: number, active = true, incarnation = "first", generation = 1, parentKind: "canvas" | "workstream" = "canvas") {
   const grant = ScopeGrantSchema.parse({ id: "00000000-0000-4000-8000-000000000085", userId,
     target: { kind: "conversation", workspaceId, parentId, substreamId: childId },
     active, revision: version, membershipIncarnation: incarnation });
   const effect = { kind: "scope_grant_directory" as const, grant };
   return ParentEffectEnvelopeSchema.parse({ kind: "parent_effect", contractVersion: 1, region: "global", workspaceId,
-    parentKind: "workstream", parentId, generation, messageId: crypto.randomUUID(), partitionKey: `grant:${userId}:conversation:${childId}`,
+    parentKind, parentId, generation, messageId: crypto.randomUUID(), partitionKey: `grant:${userId}:conversation:${childId}`,
     sourceVersion: version, requiredProjectionVersion: null, payloadHash: conversationEffectHash(effect), effect });
 }
 
@@ -63,5 +63,15 @@ it("retains legacy grants without a current relationship without making them dis
   expect(await consumeEffectBodies(env, [pending])).toEqual({ acked: 1, retried: 0 });
   expect(await candidates()).toEqual([]);
   await workspace().applyScopeGrantDirectory(envelope(2));
+  expect(await candidates()).toEqual([parentId]);
+});
+
+it("refuses a directory grant from any parent but a Canvas by name, and applies nothing", async () => {
+  // A Thread's grant still parses at the Queue boundary, so its refusal is
+  // named here; only a Canvas grants a `workstream`-kind target now.
+  await expect(runInDurableObject(workspace(), (instance) =>
+    instance.applyScopeGrantDirectory(envelope(1, true, "first", 1, "workstream")))).rejects.toThrow("scope_grant_directory_effect_invalid");
+  expect(await candidates()).toEqual([]);
+  await workspace().applyScopeGrantDirectory(envelope(1));
   expect(await candidates()).toEqual([parentId]);
 });

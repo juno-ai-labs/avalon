@@ -74,21 +74,16 @@ describe('Ace Models client', () => {
     // and these renders sit behind debounced fetches on a possibly loaded
     // machine (docs/testing.md, "Timeouts and waiting").
     await vi.waitFor(() => expect(container.textContent).toContain('Flagship connected'), { timeout: 5_000 });
-    expect(container.textContent).toContain('Runs the main participant-visible work stream and the structured attachment-summary pass');
+    expect(container.textContent).toContain('Runs a Canvas\'s Chat or a Sidekick\'s conversation and the structured attachment-summary pass');
     expect(container.textContent).toContain('Targeted rules may still serve a different variation');
     const modelButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.models > button'));
-    expect(modelButtons).toHaveLength(10);
+    expect(modelButtons).toHaveLength(5);
     expect(modelButtons.map((button) => button.querySelector('strong')?.textContent)).toEqual([
-      '1Work-stream agent',
+      '1Conversation agent',
       '2Inline subagent',
-      '3Work-stream description',
-      '4Work-stream naming',
-      '5Suggested-work admission',
-      '6Suggested-work ranking',
-      '7Conversation import',
-      '8Suggestion draft',
-      '9Memory sweep',
-      '10Sidekick wizard',
+      '3Pasted-text naming',
+      '4Memory sweep',
+      '5Sidekick wizard',
     ]);
 
     const save = Array.from(container.querySelectorAll('button'))
@@ -190,7 +185,7 @@ describe('Ace Models client', () => {
     expect(choices()).toContain('openai/gpt-5.6-sol');
 
     const workstream = Array.from(container.querySelectorAll<HTMLButtonElement>('.models > button'))
-      .find((button) => button.textContent?.includes('Work-stream agent'))!;
+      .find((button) => button.textContent?.includes('Conversation agent'))!;
     await act(async () => workstream.click());
     const primary = container.querySelector<HTMLInputElement>('.model-route-card input')!;
     const validationCallsBefore = fetch.mock.calls.filter(([input]) => String(input) === '/api/models/validate').length;

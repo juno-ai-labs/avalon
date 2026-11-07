@@ -38,7 +38,7 @@ import {
  */
 const workflowInput = (): WorkstreamWorkflowInput => ({
   workspaceId: "00000000-0000-4000-8000-000000000001",
-  parentKind: "workstream",
+  parentKind: "canvas",
   parentId: "00000000-0000-4000-8000-000000000002",
   loopId: "workstream:00000000-0000-4000-8000-000000000002:substream:0:loop",
   harnessRunId: "00000000-0000-4000-8000-000000000003",

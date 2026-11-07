@@ -5,9 +5,9 @@ through the `FLAGS` binding on configured regional Workers. The binding owns two
 things: which OpenRouter model each agent runs on, and which client-visible
 features the desktop is allowed to offer. Read this document before adding a
 flag, changing an agent's models, or changing what happens when a flag cannot be
-evaluated. One thing overrides a flag rather than being one — a conversation,
-a work stream or a substream alike, pinned to a single model — and it has [its
-own section](#a-conversations-own-model) below.
+evaluated. One thing overrides a flag rather than being one — a conversation
+pinned to a single model, which today means a Sidekick's pin copied onto each
+of its runs — and it has [its own section](#a-conversations-own-model) below.
 
 ## Where the code lives
 
@@ -65,16 +65,12 @@ inherit the source conversation's model override:
 | --- | --- | --- | --- |
 | Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Pasted-text naming (role `workstream_naming`) | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Conversation import | `agent-model-session-import` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Memory sweep | `agent-model-memory-sweep` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Sidekick wizard | `agent-model-sidekick-authoring` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
 The checked-in primary model is `openai/gpt-6.1-sol`, with low reasoning
 from the harness model-default registry. Flagship variations still override
-the primary model. The conversation import agent reads screenshots, so any
-model its flag names must accept image input.
+the primary model.
 
 Message addressing is deliberately absent from this table and from Ace. Its
 evaluated cascade fixes JEV as primary and
@@ -90,8 +86,8 @@ substream `0`) and the background agents it starts use `sidekick_authoring`,
 independently defaulting to Sol even when the work-stream flag serves Terra. An explicit conversation model pin still
 wins. The rest
 are the standalone structured-output agents: message addressing uses the
-agent-harness JEV/fallback cascade; work-stream naming, the two halves of suggested work, and the
-work-stream description loop use the bounded structured-inference gateway.
+agent-harness JEV/fallback cascade; the pasted-text title (the
+`workstream_naming` role) uses the bounded structured-inference gateway.
 The memory sweep ([`agent-memory.md`](agent-memory.md)) is a role on the
 primary model. Text search's document embeddings use the same gateway's native
 OpenRouter embeddings path but deliberately have no Flagship role: their fixed
@@ -102,10 +98,6 @@ model is platform policy recorded in the durable context recipe before
 inference starts. The structured-inference gateway accepts that explicit route
 with an empty fallback list, so a retry cannot pick up a later flag evaluation
 or Worker fallback change and produce a different seed under the same receipt.
-Admission and ranking get separate flags because admission turns connector
-activity into prompts while ranking orders them per user, and pinning one should
-not move the other.
-
 The `workstream_description` and `suggestion_draft` roles are retired: their
 callers (the description loop, the conversation suggestions) were deleted in
 plan step C-2, and the Ace deploy retires `agent-model-workstream-description`
@@ -174,21 +166,16 @@ the conversation is created, and not something to stage a rollout for. Precedenc
 follows from that: a rollout reaching the workspace must not quietly take the
 pinned conversation with it.
 
-**The row a run reads is its own, not its parent's.** A work stream's main
-conversation and each of its substreams is a separate object with a separate
-`model_override`, and routing resolves the one the run is executing in. So a
-substream is pinned by being created pinned, and a substream that names nothing
-follows the flag even inside a pinned work stream. Nothing copies a pin
-downward: making a child inherit its parent's would move every substream of
-every pinned work stream onto that model, none of which was chosen, and would
-make the selector's **Default** entry — which says it follows the flag — untrue
-in exactly the case somebody is looking at it.
+**The row a run reads is its own, not its parent's.** Each conversation is a
+separate object with a separate `model_override`, and routing resolves the one
+the run is executing in. Nothing copies a pin from a parent to a child
+implicitly: that would move conversations onto a model nobody chose, and make
+the selector's **Default** entry — which says it follows the flag — untrue in
+exactly the case somebody is looking at it.
 
-A pin comes from one place — the model selector in the composers that start work,
-which appears only while Application → Developer → **Debug enabled** is on. A new
-work stream carries the choice directly, and so does a new substream, through
-`POST …/substreams/confirm`; `substream-creation.md` (retired)
-owns that half. An automation's pin is the
+A Canvas is created unpinned (`createCanvas` writes `modelOverride: null`); the
+Thread and Breakout composers that used to carry a pin from the developer model
+selector are retired with them. An automation's pin is the
 `model_override` column on its `automation_directory` row; there is exactly one path
 that creates a run, `provisionSidekickRun`, which serves manual,
 scheduled, connector-event, and inbound-email triggers alike, and it copies
@@ -497,7 +484,7 @@ behave:
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
-| `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
+| `suggested-work-enabled` | boolean | `false` | Still served; it gated the Suggested Work surfaces, which are deleted, so no client reads it |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
@@ -517,9 +504,7 @@ The managed product Booleans are presentation-only. Only
 Electron consumes them to show or hide product surfaces; the API routes and
 underlying product capabilities do not evaluate them. They are rollout
 controls for discovery and visibility, not authorization, entitlements, or
-server-side kill switches. A hidden Suggested Work surface may skip its own
-fetch and impressions because nothing was drawn, but the Suggested Work API
-remains available. The same rule applies to workspace-template,
+server-side kill switches. The same rule applies to workspace-template
 and multiple-workspace operations. Turning the
 multiple-workspaces flag off hides the account-menu affordances; it does not
 collapse memberships or discard stored workspace credentials.
@@ -692,7 +677,7 @@ what they do with the model they are handed:
 
 | For | Read |
 | --- | --- |
-| Why digests need a kill switch, and exactly where it is checked | `digests.md` (retired) |
+
 | The run loop, the route plan's failure policy, the inference ledger | [`agent-harness.md`](agent-harness.md) |
 | The `model_override` column and where it is copied | [`data-model.md`](data-model.md) |
 | The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
@@ -782,10 +767,9 @@ correctly provisioned flag.
 | `apps/api/test/flag-targeting-attributes.test.ts` | The attribute vocabulary, the omitted-not-empty rule, the cache and its negative cases, and — scoped to the fields the rule covers — that no local part or authored text leaves the Worker. |
 | `apps/desktop/src/main/developer-settings-flag.test.ts` | The poll, the last-answer-standing behavior, and that a stored `debugEnabled` grants nothing while the flag is off. |
 | `apps/desktop/src/renderer/screens/workspace-settings.test.tsx`, `apps/desktop/src/renderer/lib/use-debug-enabled.test.tsx` | Live application-setting broadcasts win over older reads, read failures, and mutation replies, so a poll can reveal or withdraw Developer without a relaunch. |
-| `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | The selector's **Debug enabled** gate, that an untouched control sends no override, and that an explicit pin to the flag's own default is still sent. |
+
 | `apps/desktop/src/renderer/components/workstream-composer.test.tsx` | The locked pill inside a conversation: the same gate, the exact id and the claim each of `pinned`'s two states may make, and that it opens no menu. |
-| `apps/desktop/src/renderer/components/substream-launch.test.tsx` | The substream launcher's selector: the same gate, the chosen pin reaching creation, and that it stays on **Default** under a pinned parent rather than inheriting. |
-| `apps/api/test/workstream-row-contracts.test.ts` | That the stored pin is re-validated on read, and that a retired model reads as unpinned rather than failing the response. |
+
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/agent-model-flags.test.ts` — the
@@ -1070,17 +1054,39 @@ hiding the Notifications section.
 
 ## Changelog
 
-### 2026-11-07 — The description and suggestion-draft model roles are retired
+### 2026-11-07 — The session-import and suggested-work model roles are retired
+
+**What changed:** `session_import`, `work_opportunity_admission` and
+`work_opportunity_ranking` left `AGENT_MODEL_ROLES`, the structured-inference
+roles, the route defaults and Ace's catalog, and the Ace deploy retires
+`agent-model-session-import`, `agent-model-work-opportunity-admission` and
+`agent-model-work-opportunity-ranking` instead of ensuring them.
+
+**Why:** session import made Channels and suggested work made Threads, both
+retired by the Canvases and Sidekicks pivot (plan step B-8); nothing calls the
+roles. `session_import` stays in the usage ledger's `METERED_ACTIVITIES` and
+`ORGANIZATION_PAYS`, so a usage event already queued still parses. With the
+two suggested-work roles gone `OPENROUTER_STRUCTURED_MODEL` has no reader;
+removing the Worker variable is a later, deploy-affecting change.
+
+### 2026-11-07 — Thread-era model roles and `live-artifacts-enabled` are retired
 
 **What changed:** `workstream_description` and `suggestion_draft` left
 `AGENT_MODEL_ROLES`, the structured-inference roles, the route defaults and
 Ace's catalog; the Ace deploy retires their Flagship keys.
-`workstream_naming` stays, relabelled in Ace as pasted-text naming.
+`workstream_naming` stays, relabelled in Ace as pasted-text naming. The
+`liveArtifactsEnabled` client field, the `live-artifacts-enabled` managed key,
+its Ace editor entry and its `ensureFlag` provisioning are gone: Ace's deploy
+`retireFlag`s the key, and `useSiteArtifacts` builds the rail's site detail,
+preview pane, Data view and artifact window for every signed-in surface that
+has a bridge to present through.
 
 **Why:** Plan step C-2 of the
 [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-deleted both roles' only callers. A key left in Flagship can still be served
-and edited in Ace for nothing.
+deleted both roles' only callers, and a key left in Flagship can still be
+served and edited in Ace for nothing. The PRD makes a live artifact the Canvas
+itself, and a Canvas is opened through exactly the site surfaces, so a flag
+that can hide them would hide the product's primary object.
 
 **Considered and rejected:** Renaming `workstream_naming` to a pasted-text
 role. It is a Flagship key, so the rename is a flag migration with no change
@@ -1089,26 +1095,15 @@ activities stay in the usage contract: a usage event queued before the deploy
 must still parse, or the consumer drops it as invalid and the call goes
 unbilled.
 
-### 2026-11-06 — `live-artifacts-enabled` is retired; site surfaces are always on
-
-**What changed:** The `liveArtifactsEnabled` client field, the
-`live-artifacts-enabled` managed key, its Ace editor entry and its
-`ensureFlag` provisioning are gone. Ace's deploy now `retireFlag`s the key, so
-the first merge-to-main deployment after this deletes it from Flagship.
-`useSiteArtifacts` builds the rail's site detail, preview pane, Data view and
-artifact window for every signed-in surface that has a bridge to present
-through.
-
-**Why:** The Canvases and Sidekicks PRD makes a live artifact the Canvas
-itself, and a Canvas is opened through exactly these surfaces. A flag that
-can hide them would hide the product's primary object, so there is no state
-in which it may be off.
-
 **Consequences:** Do not revive `live-artifacts-enabled` for a new purpose; a
 site-surface rollout control would now be a kill switch for Canvases, which
 is a different decision from a presentation flag. An older desktop build
 still defaults the missing field to `false`, so it hides the site surfaces
 until the updater delivers this build; that is expected, not a bug.
+`suggested-work-enabled` is still served with no reader; retiring it is the
+same `retireFlag` step.
+
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — Route the Sidekick wizard independently on Sol
 

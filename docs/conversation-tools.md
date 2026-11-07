@@ -272,23 +272,37 @@ conversation chose that audience.
 
 ## Changelog
 
-### 2026-11-07 — A Sidekick reaches its Canvases; Thread scopes are gone
+### 2026-11-07 — A Sidekick's scope is its own conversation and its Canvases; Thread scopes and the merge tool are gone
 
-**What changed:** The scope is a Sidekick's alone: its own conversation, the
-Canvases it writes (`canvas_directory.writer_sidekick_id`) and the Canvases
-attached to it, read from `automation_directory`, `canvas_directory` and
+**What changed:** A Sidekick scope lists the Sidekick's own shared
+conversation (`"0"`, `kind: "sidekick"`, id the Sidekick's) first, admitted by
+the Sidekick, and `conversation_post` with no `conversation` posts there, so
+`conversation` is never required. The rest of the scope is the Canvases it
+writes (`canvas_directory.writer_sidekick_id`) and the Canvases attached to
+it, read from `automation_directory`, `canvas_directory` and
 `sidekick_conversation_attachments` instead of `channels` and `breakouts`.
 `conversation_attach` resolves a Canvas by link, id or title and files it as
 `canvas`; `conversation_post` into a Canvas's Chat sends `parentKind: canvas`.
 The Thread and Breakout scope, the Sidekick's home (`isHome`,
-`conversation_home_missing`), the Channel feed read and the Breakout-to-Main
-admission are deleted, and a conversation id is one UUID.
+`conversation_home_missing` for posts), the wizard's General or Personal
+Channel announcement target with `postSidekickChannelMessage`, the Channel
+feed read and the Breakout-to-Main admission are deleted, and a conversation
+id is one UUID. `conversation_merge` is no longer given to any loop, and its
+backend (`ConversationMergeService`, the ports, the argument schema and the
+refusal sentences) is deleted.
 
-**Why:** The Canvases and Sidekicks PRD's decision log retires Threads,
-Channels and Breakouts; nothing writes the directories the old scope read, so
-a Canvas a Sidekick should report into was unreachable (the gap the previous
-entry recorded). Each Canvas is admitted by `canvasAdmits` through its hosted
-parent, the rule its own transport applies, rather than a second rule here.
+**Why:** The Canvases and Sidekicks pivot gives every Sidekick one shared
+conversation that everyone it is shared with reads, and the plan makes it the
+place a Sidekick's report goes by default; most Sidekicks had no home, so a
+run had nowhere in Rally to post without naming somewhere. The decision log
+retires Threads, Channels and Breakouts; nothing writes the directories the
+old scope read, so a Canvas a Sidekick should report into was unreachable.
+Each Canvas is admitted by `canvasAdmits` through its hosted parent, the rule
+its own transport applies, rather than a second rule here. The own
+conversation is derived from the Sidekick, so it needs no attachment row. No
+Thread or Breakout remains to merge from, and the merge route went with the
+Thread routes; the prompt vocabulary that named merging was deleted with it,
+and no golden hash covered it because no loop could turn it on.
 
 **Considered and rejected:** Conversation tools for a Canvas's Chat: its own
 transcript and the Canvas's content are its context (the PRD's "Agent
@@ -297,57 +311,17 @@ a Sidekick's conversation. A Sidekick's conversation as an attachment of
 another Sidekick: nothing in the PRD has one Sidekick report into another, so
 only a Canvas's Chat is attachable.
 
-**Respect:** A title names only Canvases the acting person can open: an attach
-by title admits every match before it reports one, so a private Canvas's id is
-never disclosed by a guess.
-
-### 2026-11-07 — The merge tool is retired
-
-**What changed:** `conversation_merge` is no longer given to any loop, and its
-backend (`ConversationMergeService`, the ports, the argument schema and the
-refusal sentences) is deleted. A Thread or Breakout loop keeps list, read and
-search until those loops go with Threads.
-
-**Why:** No Thread or Breakout remains to merge from after the Canvases and
-Sidekicks cutover, and the merge route went with the Thread routes. The prompt
-vocabulary that named merging (`conversationsSystemMessage`'s `merges`
-line, always off since then, and `mergeInstruction`) was deleted in plan step
-C-2; no golden hash covered it, because no loop could turn it on.
-
-### 2026-11-06 — A post that names no conversation lands in the Sidekick's own conversation
-
-**What changed:** A Sidekick scope now lists the Sidekick's own shared
-conversation (`"0"`, `kind: "sidekick"`, id the Sidekick's) first, admitted by
-the Sidekick; `conversation_post` with no `conversation` posts there instead of
-to the home, so `conversation` is never required; and `appendConversationPost`
-accepts `parentKind: "automation"` substream `"0"` beside a Thread's
-conversations. Attachments stay reachable by id or title. Then, with the
-`workstream` scope retired (plan step A-5), a Sidekick has no home at all, and
-its wizard's scope no longer lists the General or Personal Channel a review
-announced in: a review announces in the Sidekick's own conversation, and
-`post` to a Channel's feed is refused, so `postSidekickChannelMessage` is gone.
-
-**Why:** The Canvases and Sidekicks pivot gives every Sidekick one shared
-conversation that everyone it is shared with reads, and the plan makes it the
-place a Sidekick's report goes by default. Most Sidekicks have no home, so a
-run had nowhere in Rally to post without naming somewhere; the home is a Thread,
-and Threads are being retired. The own conversation is derived from the
-Sidekick, like the home, so it needs no `sidekick_conversation_attachments`
-row and the table's `parent_kind = 'workstream'` CHECK is unchanged. The
-`parentKind` field defaults to `workstream` so a post request written before it
-existed still means what it meant; a Canvas's conversation joins its enum. The
-review's Channel announcement went for the same reason: General and a Personal
-Channel are retired surfaces, and the people a Sidekick works for read its own
-conversation.
-
 **Consequences:** A homed Sidekick's run that left `conversation` out used to
-post in its Thread and now posts in its own conversation; instructions that
-want the Thread must name it. The `home` option of `createConversationsPlugin`
-and `conversationsSystemMessage` is gone, and so is the "conversation cannot be
-left out" refusal path for a post (`conversation_home_missing` remains for the
-Terminal publication home, which still resolves `reference: null` to the home).
+post in its Thread and now posts in its own conversation. The `home` option of
+`createConversationsPlugin` and `conversationsSystemMessage` is gone
+(`conversation_home_missing` remains for the Terminal publication home).
 `conversation_search` over the own conversation asks for the Sidekick's search
-group, not a conversation's, because that is the group its turns carry.
+group, not a conversation's, because that is the group its turns carry. A
+title names only Canvases the acting person can open: an attach by title
+admits every match before it reports one, so a private Canvas's id is never
+disclosed by a guess.
+
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-29 — A Sidekick's scope lists the Channel its review announces in, and `post` reaches it
 

@@ -26,7 +26,7 @@ New version-2 Sidekick definitions receive email only when inbound_email is conf
 | `apps/api/src/services/workstream-email-routing-service.ts` | The Global `workstream_email_routes` ledger: which addresses are taken, and by whom. |
 | `apps/api/src/workstream-email-routing-bridge.ts` | The named RPC binding every non-Global region reserves through. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | Inbound delivery: the Global route lookup, the sender resolution, and the one `admitInboundEmail` call. A Thread's route is refused by name. |
-| `apps/api/src/durable-objects/automation-do.ts` | An automation's half of all of that: the `automation` row holds the issued address, `apply` reserves it, and `admitInboundEmail` decides lifecycle, address, and sender in one call and writes the receipt. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | A Sidekick's half of all of that: its `automation_directory` row holds the issued address, `apply` reserves it, and `admitInboundEmail` decides lifecycle, address, and sender in one call and writes the receipt (`sidekick_email_receipts`). |
 | `apps/api/src/inbound-email-regional-bridge.ts` | The one verified Resend event handed to the owning region. |
 | `apps/api/src/routes/resend.ts` | The Global receiving webhook. |
 | `apps/api/src/services/email-markdown.ts` | The Markdown renderer both Rally emails share; owned by [`markdown-rendering.md`](markdown-rendering.md). |
@@ -192,17 +192,16 @@ them through `PATCH /automations/:id`, and have a loop after each run mail the
 result through Resend with a per-run per-target receipt. All of that is gone:
 the request field, the frozen targets, the `PATCH` route, the desktop editor,
 the result email and its template and preview script, and the child's delivery
-loop. The one destination that was never chosen, the room that owns a
-`workstream`-scoped automation, is reached by the run itself through its
-`conversation_post` tool, which defaults to that Sidekick's home
-conversation; there are no delivery receipts and no classifier.
+loop. A run's final message is its row's reply in the Sidekick's shared
+conversation, and `conversation_post`, which defaults to that conversation,
+reaches a Canvas the Sidekick can reach; there are no delivery receipts and no
+classifier.
 
 What replaced it is the run itself. An automation's instructions say where a
 result should reach, the run holds the connector tools it was bound, and sending
 is part of doing the work, inside the loop. The system prompt's result-delivery
-section says so in both directions: it names the owning room when there is one,
-so the run does not post there twice, and says outright that nothing sends for
-it when there is not, so a run that merely describes an email has not sent one.
+section says outright that nothing sends for it, so a run that merely
+describes an email has not sent one.
 [`automation-lifecycle.md`](automation-lifecycle.md) owns the reasoning; the
 short form is that the judgement about where a result goes belongs with the
 judgement about what it says, and the old shape could not express either
@@ -229,7 +228,7 @@ over that resource's own coordinates, under a key domain-separated from this
 one — one vocabulary, one set of collision odds, one place to change either. So
 the array below is frozen for aliases too, and a reorder would rewrite the
 mapping for both. The two *value spaces* are deliberately not disjoint: an
-alias may equal some work stream's local part, which is harmless only because
+alias may equal some Sidekick's local part, which is harmless only because
 nothing routes mail on an alias and nothing resolves a resource by one.
 
 #### Frozen v1 adjectives (128)
@@ -335,7 +334,7 @@ sunbird, terrapin, waxbill
   authoritative; re-deriving one is how a vocabulary change would rewrite history.
 - **An issued address is never recycled.** Allocator- and owner-sourced ledger
   rows are permanent tombstones, because a stale sender must never reach a
-  different work stream or automation. A migration inference becomes a tombstone
+  different owner. A migration inference becomes a tombstone
   only after the regional owner verifies or corrects it.
 - **The Global ledger stores a claim, not a lifecycle.** Whether mail is accepted
   is re-derived regionally from the owner's own row at delivery. A second copy of
@@ -346,17 +345,17 @@ sunbird, terrapin, waxbill
   second answer to a unique address.
 - **The registry's full-address key is case-insensitive**, so claims and tombstones
   are shared regardless of casing, without collapsing two domains into one namespace.
-- **Work-stream mail never starts an agent run.** It attaches as an untrusted
-  resource and transcript entry, and nothing more.
+- **Mail to a retired Thread's address reaches nothing.** It is acknowledged as
+  terminal with `email_thread_retired`; the address stays a tombstone, so it
+  can never be issued to another owner.
 - **An inbound address is a routing identifier, never an authenticator.** The From
   match against active membership is the control; an inbound-email run holds the
   same tools as any other automation run, so ingress screening carries the weight.
-- **A run posts its own results, and Rally posts nothing after it.** The home
-  conversation of a `workstream`-scoped automation travels in the task context
-  as `sidekick.homeConversationId`, and the run's `conversation_post` tool is
-  the one way a result reaches it or any other conversation the Sidekick can
-  reach, once per call; a continued run may post again. There is no result
-  email, no receipt, and no second path.
+- **A run posts its own results, and Rally posts nothing after it.** A run's
+  final message is the reply on its row in the Sidekick's shared conversation,
+  and the run's `conversation_post` tool is the one way a result reaches a
+  Canvas the Sidekick can reach, once per call; a continued run may post again.
+  There is no result email, no receipt, and no second path.
 - **Every run lands in its own conversation under its Sidekick**, and that
   cannot be turned off; nothing reaches another conversation unless the run
   posts it. Anything the run sends
@@ -370,8 +369,8 @@ registry, and what happens to mail addressed to one. It does not own:
 
 | For | Read |
 | --- | --- |
-| The create path that awaits activation | [`workstream-creation.md`](workstream-creation.md) |
-| Which connectors can carry a digest to a person | [`connectors.md`](connectors.md#delivering-a-digest-to-a-person) |
+| When a Sidekick is accepted and its address reserved | [`automation-lifecycle.md`](automation-lifecycle.md) |
+| Which connectors can carry a message to a person | [`connectors.md`](connectors.md#delivering-a-digest-to-a-person) |
 | The configured deployment bridge this registry is reached through | [`regionalization.md`](regionalization.md) |
 | Untrusted-input handling and the spoofing threat model | [`security.md`](security.md) |
 | The Sidekick tables the address and the receipts live in | [`automation-lifecycle.md`](automation-lifecycle.md), [`data-model.md`](data-model.md) |
@@ -418,7 +417,7 @@ registry, and what happens to mail addressed to one. It does not own:
 | `apps/api/test/workstream-email-routing.test.ts` | Reservation, owner claims, tombstones (a retired Thread's included), and the regional fail-closed path. |
 | `apps/api/test/resend-inbound-email.test.ts` | Idempotency by Resend email ID, the sender resolution, the single admission call, and the refusal of a Thread's route. |
 | `apps/api/test/email-markdown.test.ts` | The shared renderer: the structure these emails use, escaping, refused link targets, and the plain-text preview line. |
-| `apps/api/test-workers/automation-do.test.ts` | On real workerd: that applying a revision reserves and stores the address, and that `admitInboundEmail` admits once, answers a retry from its receipt, and refuses a stranger. |
+| `apps/api/test-workers/hosted-sidekick.test.ts` | On real workerd: that applying a revision reserves and stores the address, and that `admitInboundEmail` admits once, answers a retry from its receipt, and refuses a stranger. |
 | `apps/api/test/health-env-contract.test.ts` | That the probe says when notification mail is falling back to the transactional sender. |
 
 Run one with
@@ -445,6 +444,8 @@ more. The headings here are `####`, nested under **The frozen v1 vocabulary**, a
 `"#### Frozen v1 adjectives ("` contains `"## Frozen v1 adjectives ("` at index 2.
 Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
+
+## Changelog
 
 ### 2026-11-07 — A Thread's address is a tombstone
 

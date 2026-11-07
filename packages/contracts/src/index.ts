@@ -33,7 +33,6 @@ import {
 } from "./identifiers";
 import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 import { PersonalPresentationSchema } from './onboarding';
-import { ChannelMessageSchema, SpaceIdSchema } from "./spaces";
 import {
   ResourceDirectionSchema,
   WireResourceRelationshipTypeSchema,
@@ -64,7 +63,6 @@ export * from './onboarding';
 export * from "./workspace-retirement";
 export * from "./appearance-icons";
 export * from "./workstream-appearance";
-export * from "./access-requests";
 export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
@@ -77,10 +75,6 @@ export * from "./attachment-contracts";
 export * from "./palette";
 export * from "./projects";
 export * from "./resource-relationships";
-export * from "./spaces";
-export * from "./conversation-merge";
-export * from "./conversation-suggestions";
-import { ConversationSuggestionSchema } from "./conversation-suggestions";
 export { MentionSchema } from "./mention-schema";
 import { MentionSchema } from "./mention-schema";
 export * from "./navigation";
@@ -267,9 +261,6 @@ export const AGENT_MODEL_ROLES = [
   "workstream",
   "inline_child",
   "workstream_naming",
-  "work_opportunity_admission",
-  "work_opportunity_ranking",
-  "session_import",
   "memory_sweep",
   "sidekick_authoring",
 ] as const;
@@ -280,9 +271,6 @@ export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
   workstream: "agent-model-workstream",
   inline_child: "agent-model-inline-child",
   workstream_naming: "agent-model-workstream-naming",
-  work_opportunity_admission: "agent-model-work-opportunity-admission",
-  work_opportunity_ranking: "agent-model-work-opportunity-ranking",
-  session_import: "agent-model-session-import",
   memory_sweep: "agent-model-memory-sweep",
   sidekick_authoring: "agent-model-sidekick-authoring",
 };
@@ -533,35 +521,6 @@ export { MESSAGE_MAX_CHARACTERS,MESSAGE_TOO_LONG_MESSAGE } from "./message-limit
  */
 export const WORKSTREAM_DESCRIPTION_MAX_CHARACTERS = 4_000;
 
-/**
- * One breakout its viewer may open, as the Channel's rail draws it. Only ready,
- * unarchived breakouts with that viewer on their roster are listed.
- */
-export const WorkstreamPrivateChildSchema = z.strictObject({
-  /** Done, independently of whether it is archived or an agent run is active. */
-  resolved: z.boolean().optional(),
-  substreamId: SubstreamIdSchema.refine((value) => value !== "0", "A private child must be nonzero"),
-  title: z.string().min(1).max(500),
-  appearance: WorkstreamAppearanceSchema.optional(),
-  harnessStatus: HarnessStatusSchema.optional(),
-  unreadCount: z.number().int().nonnegative().optional(),
-  youAreMentioned: z.boolean().optional(),
-  unseen: z.boolean().optional(),
-  createdByUserId: UserIdSchema,
-  createdAt: TimestampSchema,
-  updatedAt: TimestampSchema,
-  /** The Main transcript turn the breakout was branched through; null when it was not branched from a turn. */
-  originTurnId: z.string().min(1).nullable().optional(),
-  /** When the breakout last had activity; absent until its directory state has arrived. */
-  lastActivityAt: TimestampSchema.optional(),
-});
-
-/**
- * Running background agents by the conversation they work for, keyed by
- * substream id. A conversation with none is absent.
- */
-export const WorkstreamBackgroundAgentCountsSchema = z.record(SubstreamIdSchema, z.number().int().positive());
-
 export const WorkstreamSchema = z.object({
   /** Done, independently of archiving and the current agent run. */
   resolved: z.boolean().optional(),
@@ -658,26 +617,6 @@ export const WorkstreamSchema = z.object({
   }).nullable().default(null),
   /** Retired workspace-wide pin position. New servers always return `null`. */
   pinPosition: z.number().int().nonnegative().nullable().default(null),
-  /**
-   * This viewer's pin positions for this Channel, one per Space placement.
-   * A Channel in several Spaces can be pinned independently in any subset of
-   * them; each position is meaningful only among pins carrying the same
-   * `spaceId`.
-   */
-  spacePins: z.array(z.strictObject({
-    spaceId: SpaceIdSchema,
-    position: z.number().int().nonnegative(),
-  })).superRefine((pins, context) => {
-    const seen = new Set<string>();
-    pins.forEach((pin, index) => {
-      if (seen.has(pin.spaceId)) context.addIssue({
-        code: "custom",
-        path: [index, "spaceId"],
-        message: "Space pin ids must be unique",
-      });
-      seen.add(pin.spaceId);
-    });
-  }).default([]),
   /** Workspace-owned visit time; omitted by older servers and child-owned responses. */
   lastAccessedAt: TimestampSchema.nullable().optional(),
   /**
@@ -692,55 +631,6 @@ export const WorkstreamSchema = z.object({
    */
   participantUserIds: z.array(IdSchema).max(WORKSTREAM_SIDEBAR_FACEPILE_LIMIT).default([]),
   participantExtraCount: z.number().int().nonnegative().default(0),
-  /**
-   * Every Space this Channel currently sits in.
-   *
-   * A Channel belongs to at least one Space and may belong to several; each is
-   * a *placement* of this same row rather than a copy of it, so a sidebar
-   * renders one entry per id and all of them open the same Channel.
-   *
-   * Uncapped, deliberately. The ids are the Channel's own memberships rather
-   * than a fan-out over the Organization — a Channel is in as many Spaces as
-   * somebody put it in — and truncating the list would make a placement
-   * disappear from one of the Spaces that actually holds it.
-   *
-   * Defaulted because a payload written before Spaces existed describes a
-   * Channel from the flat directory they replace.
-   */
-  spaceIds: z.array(SpaceIdSchema)
-    .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
-    .default([]),
-  /** Breakouts under this Channel that currently need this viewer. */
-  breakoutAttentionCount: z.number().int().nonnegative().optional(),
-  /**
-   * Set when this viewer is listed the Channel only through a Breakout, so
-   * Main is not theirs to open and the row's Main fields are emptied
-   * (`docs/listing-rules.md`). Absent means Main is this viewer's.
-   */
-  mainWithheld: z.literal(true).optional(),
-  /**
-   * The breakouts this viewer may open, on workspace-socket rows only.
-   *
-   * This and the two fields below are what the Channel control socket added to
-   * the directory row. They ride the row so one socket carries a Channel's
-   * whole state. Absent means this row does not say (a REST answer, an older
-   * server, or a Channel whose parent has not been imported yet), never that
-   * the list is empty.
-   */
-  privateChildren: z.array(WorkstreamPrivateChildSchema).optional(),
-  /**
-   * Orders `privateChildren` for this viewer. Independent of the row's state
-   * version: the list moves with breakout rosters, which do not advance it.
-   */
-  privateChildrenWaterline: z.number().int().nonnegative().optional(),
-  /** See {@link WorkstreamBackgroundAgentCountsSchema}; workspace-socket rows only. */
-  backgroundAgentCounts: WorkstreamBackgroundAgentCountsSchema.optional(),
-  /**
-   * Advances whenever this Channel's rail data (participants, Sidekicks,
-   * Channel resources) changes; a client holding an older rail asks again
-   * with `channel_rails`. Workspace-socket rows only; absent means not said.
-   */
-  railWaterline: z.number().int().nonnegative().optional(),
 });
 
 export const ExternalActorSchema = z.object({
@@ -1160,148 +1050,6 @@ export const ElicitationSchema = z.object({
   createdAt: TimestampSchema,
   answeredAt: TimestampSchema.nullable()
 });
-
-/**
- * One conversation on a Space's dashboard: a Channel, or one of a Channel's
- * breakouts.
- *
- * Both kinds are `WorkstreamSchema` plus two fields, rather than a union,
- * because the dashboard draws them as one row type: the same status dot, the
- * same title, the same activity time, in one list ordered by activity. A union
- * would have made every one of those a branch, and the difference between the
- * kinds is two facts and a destination.
- *
- * `id` is the *conversation's* id, which is the Channel id for a Channel and
- * the substream id for a breakout. That is what makes the list keyable and the
- * cursor total; `breakoutOf` carries the addressing a breakout needs on top —
- * its parent Channel, its substream id again (checked equal to `id`, so the
- * two can never drift) and the parent's title, which the row prints so a
- * breakout is not a name with no context.
- */
-export const SpaceConversationSchema = WorkstreamSchema.extend({
-  kind: z.enum(["channel", "breakout"]),
-  /** Non-null on exactly the breakouts. */
-  breakoutOf: z.strictObject({
-    workstreamId: IdSchema,
-    substreamId: IdSchema,
-    title: z.string().min(1).max(180),
-    appearance: WorkstreamAppearanceSchema.optional(),
-  }).nullable().default(null),
-}).superRefine((conversation, context) => {
-  if ((conversation.kind === "breakout") !== (conversation.breakoutOf !== null)) {
-    context.addIssue({
-      code: "custom",
-      path: ["breakoutOf"],
-      message: "A breakout carries its parent Channel and a Channel carries none",
-    });
-  }
-  if (conversation.breakoutOf && conversation.breakoutOf.substreamId !== conversation.id) {
-    context.addIssue({
-      code: "custom",
-      path: ["breakoutOf", "substreamId"],
-      message: "A breakout's id is its substream id",
-    });
-  }
-});
-export type SpaceConversation = z.infer<typeof SpaceConversationSchema>;
-
-/**
- * One page of the conversations a Space currently needs this viewer for.
- *
- * The route is still `GET /spaces/:id/channels` and this is still the answer
- * to it, but what it answers is *conversations*: the Space's member Channels
- * and those Channels' breakouts in one list, newest activity first, with
- * everything that is stale for this viewer left out entirely by default
- * (`conversationNeedsViewer`). Internal callers may request all visible rows
- * of one kind through the same reader. The name is kept because the route is, and
- * renaming a shipped path to describe its payload buys a reader nothing.
- *
- * The same rows the Channel directory serves, shaped for the viewer: General
- * holds every Channel in the Organization, so this is the one Space read that
- * cannot ride the workspace socket. It answered bare ids first, which made the
- * Space dashboard able to name only the Channels that happened to be in the
- * device's loaded directory page and say nothing about the rest — and a second
- * read per id would have been a round trip per row.
- *
- * It lives here rather than in `spaces.ts` because a page of conversations is
- * made of `WorkstreamSchema`, which is declared in this file; `spaces.ts` is
- * imported by it and cannot import back.
- *
- * Opaque cursor: the ordering is the authority's, and a client that could
- * construct a cursor could ask for a page the ordering no longer has. A page
- * may be shorter than the cursor suggests, because a membership the viewer may
- * not read is dropped after the page is taken.
- */
-export const SpaceChannelPageSchema = z.strictObject({
-  items: z.array(SpaceConversationSchema),
-  nextCursor: z.string().min(1).nullable(),
-});
-export type SpaceChannelPage = z.infer<typeof SpaceChannelPageSchema>;
-
-/**
- * One row of a Channel's feed: a thread placed in it that the viewer may open,
- * newest placement first. A private thread the viewer is not in is not a row.
- * `kind` stays because desktops shipped since 1.563 parse this row by it; it
- * can go once those builds no longer reach the API.
- */
-export const ChannelFeedItemSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("thread"),
-    placedAt: TimestampSchema,
-    /** The placement's position in the Channel's unread order (`ChannelStats`). */
-    attentionSequenceNumber: z.number().int().nonnegative(),
-    thread: WorkstreamSchema,
-  }),
-  /**
-   * A message in the Channel itself, outside any thread. Served only to a
-   * build at `CHANNEL_MESSAGES_CLIENT_CONTRACT` or later: a build before it
-   * parses a feed row as a thread. See docs/spaces.md#channel-messages.
-   */
-  z.strictObject({
-    kind: z.literal("message"),
-    placedAt: TimestampSchema,
-    /**
-     * The message's position in the Channel's unread order, zero for one that
-     * is not news (a Channel's opening messages). Absent for a build before
-     * `CHANNEL_MERGES_CLIENT_CONTRACT`.
-     */
-    attentionSequenceNumber: z.number().int().nonnegative().optional(),
-    message: ChannelMessageSchema,
-  }),
-]);
-export type ChannelFeedItem = z.infer<typeof ChannelFeedItemSchema>;
-
-/** One page of a Channel's feed. Opaque cursor, as on every Space read. */
-export const ChannelFeedPageSchema = z.strictObject({
-  items: z.array(ChannelFeedItemSchema),
-  nextCursor: z.string().min(1).nullable(),
-  /**
-   * The Channel's latest attention sequence number as the first page was read
-   * (`ChannelStats.latestAttentionSequenceNumber`); null on a later page.
-   * A reader reaching the newest end may acknowledge through it, including
-   * placements no longer listed. Loading this page alone does not mean its
-   * rows have been seen: a visit can open at an older read waterline.
-   */
-  latestAttentionSequenceNumber: z.number().int().nonnegative().nullable(),
-});
-export type ChannelFeedPage = z.infer<typeof ChannelFeedPageSchema>;
-
-/**
- * One page of the threads and breakouts this person takes part in, newest
- * activity first: the Threads tab. Rows are the dashboard's conversation rows,
- * so a breakout carries its thread for the chip it prints.
- */
-export const MyThreadsPageSchema = z.strictObject({
-  items: z.array(SpaceConversationSchema),
-  nextCursor: z.string().min(1).nullable(),
-  /**
-   * On the first page, every thread and breakout this person pinned and may
-   * still list, whatever page its activity would put it on; empty on a later
-   * page. The Pinned section is drawn from this.
-   */
-  pinned: z.array(SpaceConversationSchema),
-});
-export type MyThreadsPage = z.infer<typeof MyThreadsPageSchema>;
 
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
   /** Durable safe-boundary stop request for the one substream-owned loop. */
@@ -2118,145 +1866,6 @@ export const UpdateWorkspaceRequestSchema = z.object({
   message: "Name or timezone is required.",
 });
 
-// --- Digest ---------------------------------------------------------------
-
-/** Sunday through Saturday, matching `Date#getDay` so no table maps between. */
-export const DigestWeekdaySchema = z.number().int().min(0).max(6);
-/** Local wall-clock minute in the schedule's own timezone. */
-export const DigestMinuteOfDaySchema = z.number().int().min(0).max(1439);
-
-/**
- * A destination a digest can be sent to: the person's own Personal Channel,
- * where it arrives as a new thread; `email`, which needs no connector; or a
- * connector's declared `userDelivery` surface. A connector declaring a new
- * surface becomes a digest destination with no change here.
- */
-export const DigestDeliveryTargetTypeSchema = z.union([z.literal("personal_channel"), AutomationDeliveryTargetTypeSchema]);
-
-export const DigestDeliveryTargetSchema = z.object({
-  type: DigestDeliveryTargetTypeSchema,
-  connectionId: IdSchema.nullable().default(null),
-  /** What the destination is called in the UI, frozen when it was chosen. */
-  displayName: z.string().min(1).max(320),
-  status: z.enum(["active", "needs_input", "disabled"]),
-  lastDeliveredAt: TimestampSchema.nullable().default(null),
-});
-
-export const DigestScheduleSchema = z.object({
-  id: IdSchema,
-  enabled: z.boolean(),
-  /** Deduplicated and ascending, so the UI never has to sort or dedupe. */
-  days: z.array(DigestWeekdaySchema).max(7),
-  times: z.array(DigestMinuteOfDaySchema).max(12),
-  /**
-   * Read-only. A digest runs in its owner's own day, so this mirrors their
-   * account timezone rather than storing a second one that could disagree.
-   */
-  timezone: IanaTimezoneSchema,
-  deliveryTargets: z.array(DigestDeliveryTargetSchema).max(8),
-  nextRunAt: TimestampSchema.nullable(),
-  lastDeliveredAt: TimestampSchema.nullable(),
-});
-
-/**
- * The one write. A digest is a small, wholly-owned configuration, so it is
- * replaced rather than patched — that keeps "no days selected" and "no times
- * selected" expressible, which a partial update cannot do.
- */
-export const UpdateDigestScheduleRequestSchema = z.object({
-  enabled: z.boolean(),
-  days: z.array(DigestWeekdaySchema).max(7),
-  times: z.array(DigestMinuteOfDaySchema).max(12),
-  deliveryTargets: z.array(z.object({
-    type: DigestDeliveryTargetTypeSchema,
-    connectionId: IdSchema.nullable().default(null),
-  })).max(8),
-}).refine(
-  // An enabled digest that names no day, no time, or nowhere to go would sit in
-  // the scheduler forever without ever producing anything a person receives.
-  (value) => !value.enabled
-    || (value.days.length > 0 && value.times.length > 0 && value.deliveryTargets.length > 0),
-  "An enabled digest needs at least one day, one time, and one destination",
-);
-
-export const WorkstreamCreationFieldsSchema = z.object({
-  /**
-   * The id the caller already listed this Channel under, so it can show it
-   * before the create returns. Refused `workstream_id_unavailable` if any
-   * conversation has it. Optional: a caller with nobody waiting on screen
-   * leaves the id to the server.
-   */
-  workstreamId: WorkstreamIdSchema.optional(),
-  /**
-   * The Spaces this Channel is born in; the API reauthorizes every one of them.
-   *
-   * A list rather than one id because a Channel belongs to as many Spaces as it
-   * was put in. Empty — which is what every connector, import, recovery and
-   * scheduled path sends — means General: every Channel has a home, and no
-   * caller without a person at a keyboard has one to choose. A Space named here
-   * is established with the Channel or the creation fails without publishing
-   * one, so there is no window in which a Channel exists outside the hierarchy.
-   */
-  spaceIds: z.array(SpaceIdSchema)
-    .refine((ids) => new Set(ids).size === ids.length, "Space ids must be unique")
-    .default([]),
-  title: z.string().min(1).max(180).optional(),
-  objective: z.string().trim().min(1).max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS).optional(),
-  /**
-   * Everyone the caller means to be in the room, uncapped.
-   *
-   * There used to be a `.max(25)` here, sized for a person naming the people
-   * they are starting work with. A connector conversation is the other kind of
-   * caller and is routinely larger — a Slack channel's resolved audience can be
-   * hundreds — and a cap it exceeded did not degrade, it failed the whole
-   * create on a Zod error. Truncating instead would have been Avalon deciding
-   * that some of the people the conversation contains are not in the room,
-   * which is the provider's fact to state, not ours. Every id here is still
-   * checked against active workspace membership before a participant row is
-   * written, so the list is bounded by the workspace in the only sense that
-   * matters for access.
-   */
-  participantUserIds: z.array(IdSchema).default([]),
-  openingMessage: z.string().max(MESSAGE_MAX_CHARACTERS),
-  mentions: z.array(MentionSchema).default([]),
-  clientMessageId: z.string().min(1).max(120),
-  attachmentIds: z.array(IdSchema).max(10).default([]),
-  annotations: AnnotationsSchema.optional(),
-  /**
-   * Pins every run of this work stream to one OpenRouter model, ahead of the
-   * `agent-model-workstream` flag. Sent only by the composer's developer-mode
-   * selector; omitted means the flag decides, which is what every other create
-   * path does.
-   */
-  modelOverride: AgentModelOverrideSchema.optional(),
-});
-
-/** Interactive creation starts a run; prepared history uses the same creation fields. */
-export const CreateWorkstreamRequestSchema = WorkstreamCreationFieldsSchema.superRefine(validateAnnotationAttachments).refine((value) => value.openingMessage.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((annotation) => annotation.comment.trim().length > 0), {
-  message: "An opening message must include text, an attachment or a commented annotation",
-});
-
-export const WorkOpportunitySchema = z.object({
-  id: IdSchema,
-  version: z.number().int().positive(),
-  displayPrompt: z.string().min(1).max(180),
-  icon: AutomationPluginIconSchema,
-  sourceLabel: z.string().min(1).max(180),
-});
-export const WorkOpportunityPageSchema = z.object({
-  items: z.array(WorkOpportunitySchema).max(4),
-});
-export const RecordWorkOpportunityImpressionsRequestSchema = z.object({
-  opportunityIds: z.array(IdSchema).max(4),
-  surface: z.enum(["menu_bar", "workspace_home"]),
-});
-export const StartWorkOpportunityRequestSchema = z.object({
-  version: z.number().int().positive(),
-  idempotencyKey: z.string().trim().min(1).max(120),
-  surface: z.enum(["menu_bar", "workspace_home"]).optional(),
-  position: z.number().int().min(1).max(4).optional(),
-});
-
 export const UpdateWorkstreamRequestSchema = z.object({
   title: z.string().min(1).max(180).optional(),
   objective: z.string().max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS).optional(),
@@ -2270,92 +1879,6 @@ export const UpdateWorkstreamRequestSchema = z.object({
   scope: ScopeSchema.optional()
 });
 
-/**
- * A reusable cross-work-stream selection, expressed in product fields rather
- * than in the name of the surface that happened to build it.
- *
- * Both timestamps follow the ordinary half-open range convention. `pinned`
- * is viewer- and Space-specific; omitting it includes both pinned and unpinned
- * rows, and naming it requires the Space whose placement is being selected.
- *
- * The same range selects notes for `archive`, because a sidebar recency group
- * holds both and a person archiving one is archiving what they can see under
- * that heading. A note has no pin and no system kind, so `pinned: true`
- * selects none and `includeSystem` does not reach them.
- */
-export const WorkstreamBatchFilterSchema = z.strictObject({
-  /** Which timestamp the range selects; access falls back to creation for unvisited work streams. */
-  recency: z.enum(["activity", "access"]).optional(),
-  lastActivityAt: z.strictObject({
-    atOrAfter: TimestampSchema.optional(),
-    before: TimestampSchema.optional(),
-  }).optional(),
-  pinned: z.boolean().optional(),
-  spaceId: SpaceIdSchema.optional(),
-  includeSystem: z.boolean().default(false),
-}).superRefine((filter, context) => {
-  const atOrAfter = filter.lastActivityAt?.atOrAfter;
-  const before = filter.lastActivityAt?.before;
-  if (
-    atOrAfter !== undefined
-    && before !== undefined
-    && Date.parse(atOrAfter) >= Date.parse(before)
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["lastActivityAt", "before"],
-      message: "must be later than atOrAfter",
-    });
-  }
-  if (filter.pinned !== undefined && filter.spaceId === undefined) context.addIssue({
-    code: "custom",
-    path: ["spaceId"],
-    message: "Space is required when filtering by pin state",
-  });
-});
-
-/** The mutations the generic batch surface can currently enqueue. */
-export const WorkstreamBatchUpdateSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("mark_read") }),
-  z.strictObject({ kind: z.literal("archive") }),
-]);
-
-export const PreviewWorkstreamBatchRequestSchema = z.strictObject({
-  filter: WorkstreamBatchFilterSchema,
-});
-
-/**
- * What one apply of this filter would touch, counted per authority.
- *
- * `matchedCount` is work streams and `matchedNoteCount` is notes, because the
- * two are separate authorities that a single count would have to add together
- * and then be unable to explain: only `archive` reaches notes, and only the
- * notes this viewer owns and is not recording can be archived at all. The
- * caller shows the note half for `archive` and ignores it for `mark_read`.
- */
-export const WorkstreamBatchPreviewSchema = z.strictObject({
-  matchedCount: z.number().int().nonnegative(),
-  matchedNoteCount: z.number().int().nonnegative(),
-});
-
-export const ApplyWorkstreamBatchRequestSchema = z.strictObject({
-  operationId: IdSchema,
-  filter: WorkstreamBatchFilterSchema,
-  update: WorkstreamBatchUpdateSchema,
-});
-
-/**
- * Work streams are *enqueued* and notes are *archived*, and the names say so:
- * each work stream leaves as one Queue event for the object that owns it, while
- * the notes live in the workspace object this request already reached and are
- * done by the time it answers.
- */
-export const WorkstreamBatchAcceptedSchema = z.strictObject({
-  operationId: IdSchema,
-  enqueuedCount: z.number().int().nonnegative(),
-  archivedNoteCount: z.number().int().nonnegative(),
-});
-
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({
   readThroughSequenceNumber: z.number().int().nonnegative(),
   observedManualUnreadGeneration: z.number().int().nonnegative(),
@@ -2364,27 +1887,6 @@ export const AcknowledgeWorkstreamReadRequestSchema = z.object({
     'home_waiting', 'home_suggested', 'menu_bar', 'command_shortcut', 'deep_link', 'notification',
     'automation_run_list', 'in_app_link', 'settings', 'unknown',
   ]).optional(),
-});
-
-/**
- * The whole pinned list in its new order, not a move of one row.
- *
- * A drag produces a complete arrangement, and sending that arrangement is what
- * lets the server write a dense run without inferring one from an index whose
- * meaning depends on a list state the client may no longer share. Ids the
- * caller has since unpinned elsewhere are ignored rather than rejected, and
- * pins the caller does not name keep their relative order behind the ones it
- * did — a second window that pinned something a moment ago loses its position,
- * never its pin.
- *
- * The same bound as pin creation. A reorder is an all-or-nothing complete
- * arrangement, so this must admit every state the server can create while
- * refusing a payload the object can never legitimately hold.
- */
-export const MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER = 1_000;
-export const ReorderWorkstreamPinsRequestSchema = z.object({
-  spaceId: SpaceIdSchema,
-  workstreamIds: z.array(IdSchema).max(MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER),
 });
 
 /** The authoritative visible pending-input queue after a reorder command. */
@@ -3106,14 +2608,6 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
     activeInferenceDelays: z.array(InferenceDelayStateSchema).default([]),
-    /**
-     * The open suggestions on the newest turns, for a build that draws them.
-     * Optional, and stripped by `safeParseSocketEvent` on a build that does
-     * not know the key. Builds that already know the key still reject unknown
-     * kind enum values: the server filters resolution suggestions below
-     * RESOLUTION_SUGGESTIONS_CLIENT_CONTRACT.
-     */
-    suggestions: z.array(ConversationSuggestionSchema).optional(),
   }).strict(),
   ServerEventBaseSchema.extend({
     type: z.literal("pending_inputs_snapshot_chunk"),
@@ -3171,16 +2665,6 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("workstream_scope_changed"),
     scope: ScopeSchema
-  }),
-  /**
-   * A conversation suggestion was opened, filled with its draft, or resolved.
-   * The row's full state travels each time, so a client replaces what it
-   * holds for that suggestion id. A build that does not know the type ignores
-   * the frame, which is why the event needs no contract gate.
-   */
-  ServerEventBaseSchema.extend({
-    type: z.literal("conversation_suggestion_changed"),
-    suggestion: ConversationSuggestionSchema,
   }),
   StreamEventBaseSchema.extend({
     type: z.literal("stream_started"),
@@ -4052,8 +3536,6 @@ export type ConnectorUserDelivery = z.infer<typeof ConnectorUserDeliverySchema>;
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
 export type BackgroundTask = z.infer<typeof BackgroundTaskSchema>;
 export type Elicitation = z.infer<typeof ElicitationSchema>;
-export type WorkOpportunity = z.infer<typeof WorkOpportunitySchema>;
-export type WorkOpportunityPage = z.infer<typeof WorkOpportunityPageSchema>;
 export type AutomationDraft = z.infer<typeof AutomationDraftSchema>;
 export type AutomationMemoryTable = z.infer<typeof AutomationMemoryTableSchema>;
 export type AutomationMemoryTableColumn = z.infer<typeof AutomationMemoryTableColumnSchema>;
@@ -4063,14 +3545,6 @@ export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;
 export type AutomationRunStatus = z.infer<typeof AutomationRunStatusSchema>;
 export type ActivitySourcePluginIds = z.infer<typeof ActivitySourcePluginIdsSchema>;
-export type DigestSchedule = z.infer<typeof DigestScheduleSchema>;
-export type DigestDeliveryTarget = z.infer<typeof DigestDeliveryTargetSchema>;
-export type DigestDeliveryTargetType = z.infer<typeof DigestDeliveryTargetTypeSchema>;
-export type UpdateDigestScheduleRequest = z.infer<typeof UpdateDigestScheduleRequestSchema>;
-export type WorkstreamBatchFilter = z.infer<typeof WorkstreamBatchFilterSchema>;
-export type WorkstreamBatchUpdate = z.infer<typeof WorkstreamBatchUpdateSchema>;
-export type PreviewWorkstreamBatchRequest = z.infer<typeof PreviewWorkstreamBatchRequestSchema>;
-export type ApplyWorkstreamBatchRequest = z.infer<typeof ApplyWorkstreamBatchRequestSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type ConnectorOAuthProvider = z.infer<typeof ConnectorOAuthProviderSchema>;
 export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptStatusSchema>;
@@ -4248,7 +3722,7 @@ export type ConnectorResourceAuthorizationHint = z.infer<typeof ConnectorResourc
 
 export const ConnectorResourceAuthorizationRequestSchema = ConnectorResourceAuthorizationHintSchema.extend({
   connectionId: IdSchema,
-  parentKind: ConversationParentKindSchema.default("workstream"),
+  parentKind: ConversationParentKindSchema,
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
   failedToolInvocationId: z.string().min(1),
@@ -4277,7 +3751,7 @@ export function connectorResourceAuthorizationRequestFromToolEvent(
 }
 
 export const ConnectorResourceAuthorizationTargetSchema = z.strictObject({
-  parentKind: ConversationParentKindSchema.default("workstream"),
+  parentKind: ConversationParentKindSchema,
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
   failedToolInvocationId: z.string().min(1),

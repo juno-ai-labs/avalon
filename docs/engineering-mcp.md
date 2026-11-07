@@ -1,15 +1,15 @@
 # Engineering MCP
 
 The engineering MCP is Rally's authenticated operator path to the authoritative
-SQLite database inside a workspace, work stream, substream, Sidekick, or live
-web artifact Durable Object, and to each region's D1 databases.
+SQLite database inside a workspace, a Canvas's or Sidekick's conversation, or
+a live web artifact Durable Object, and to each region's D1 databases.
 It recreates the useful part of Cloudflare's dashboard database console through
 standard MCP tools at `https://mcp.internal.rallywith.ai/mcp`, including deliberate
 repair writes. It also reads and changes the feature flags and agent model
 routes that Ace manages, through Ace, and runs read-only queries against the
-Global analytical lakehouses and the account's Workers Logs and Traces. Product tools create Organizations, Channels and Threads, send messages,
-read participant-visible text, and list the selected user's Channels, Threads
-and Breakouts through the same services as the app. It is not a product API and it is never
+Global analytical lakehouses and the account's Workers Logs and Traces. Product tools create Organizations, send messages
+to a Canvas's Chat or a Sidekick's shared conversation, and read their
+participant-visible text as a selected user, through the same services as the app. It is not a product API and it is never
 available to Rally users by virtue of product membership.
 
 ## Where the code lives
@@ -29,7 +29,7 @@ available to Rally users by virtue of product membership.
 - `apps/api/src/durable-objects/internally-inspectable-durable-object.ts` owns
   the shared raw-SQL Durable Object RPC.
 - `apps/api/src/durable-objects/scheduled-alarms.ts` makes every scheduled
-  authority inherit that RPC. WorkspaceDO and SubstreamAgent have the
+  authority inherit that RPC. WorkspaceDO and AgentLoopDO have the
   capability that way.
 - `apps/api/src/durable-objects/artifact-host-do.ts` inherits the same base
   directly. It is not a scheduled authority, so it names the inspectable base in
@@ -78,17 +78,15 @@ The regional bridge uses D1 only for identity and routing:
 | `pause_sidekick`, `resume_sidekick` | Resolve the Organization in exactly one region | AutomationService.pause or resume, which call HostedSidekick in WorkspaceDO |
 | `dump_thread_transcripts` | Resolve the Organization in exactly one region | `thread-retirement-service.ts`: WorkspaceDO's Thread inventory, each conversation's AgentLoopDO, and R2 `PAYLOADS` |
 | `retire_threads` | Resolve the Organization in exactly one region | `thread-retirement-service.ts`: the dump receipts in R2, `retireObject` on each conversation's AgentLoopDO, and WorkspaceDO's row deletion |
-| `read_thread`, `read_breakout` | Resolve the Organization in exactly one region | ConversationService.client and the conversation's authorized transcript range reader |
+| `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
 | `list_orgs`, `search_orgs` | None | D1 `workspaces` and `workspace_members` in every region, filtered there and ordered here |
 | `list_users`, `search_users` | None | D1 `users`, `workspace_members` and `workspaces` in every region, filtered there and ordered here |
-| `list_workstreams` | Regional workspace identity at the open authority generation | `channels` in WorkspaceDO |
-| `list_substreams` | Active work-stream route at the open regional authority generation | `parent_child_projections` and `parent_children` in WorkspaceDO for the parent, plus main substream `0` |
+| `list_canvases` | Regional workspace identity at the open authority generation | `canvas_directory` in WorkspaceDO |
 | `list_sidekicks` | Regional workspace identity at the open authority generation | `automation_directory` in WorkspaceDO, every lifecycle |
-| `list_spaces` | Regional workspace identity at the open authority generation | `spaces` in WorkspaceDO, archived Spaces included |
 | `list_artifacts` | Regional workspace identity at the open authority generation | `artifact_registry` in WorkspaceDO |
 | `run_workspace_sql` | Resolve, select one region, then revalidate the open workspace authority generation | WorkspaceDO SQLite |
-| `run_substream_sql` | Resolve the active work-stream route and child membership (the Organization's hosted parent, or a Sidekick's own registry), select one region, then revalidate | SubstreamAgent SQLite |
+| `run_canvas_sql` | Resolve the parent's active route and, for a child, its registration (the Organization's parent tables, or a Sidekick's own registry), select one region, then revalidate | AgentLoopDO SQLite |
 | `run_artifact_sql` | Resolve the regional workspace identity and `artifact_registry` membership, select one region, then revalidate | ArtifactHostDO SQLite, the supervisor's own |
 | `run_d1_sql` | None: the caller names the region and the binding | The named D1 database in that region |
 
@@ -114,14 +112,14 @@ the latest `last_seen_at` of the active ones. Users are regional rows, so a
 person with an account in two regions appears once per region. Both tool pairs
 share `src/paging.ts`, which orders the merged set and pages it.
 
-`run_substream_sql` takes workspace, work-stream, and substream IDs. The parent
-IDs are not redundant: all three are part of the Durable Object's stable name.
-`list_substreams` returns the complete tuple so an MCP client can pass it to the
-SQL tool without reconstructing identity. A Sidekick's conversations are
-reached the same way, with the Sidekick's ID as the work-stream ID: its Main
-through its route, and a run conversation through the Sidekick's
-`sidekick_children` in the Organization object. `list_sidekicks` returns the
-workspace and Sidekick IDs together.
+`run_canvas_sql` takes the workspace ID and a Canvas or Sidekick ID
+(`conversationId`): the conversation object is named by that id, which is a
+`workstream` id in storage, and its main conversation, substream `0`. An
+optional `substreamId` reaches a registered child instead: a Sidekick run's
+conversation through the Sidekick's `sidekick_children`, or a background
+agent's through the parent tables, both in the Organization object. An
+unregistered child is not found rather than materialized. `list_canvases` and
+`list_sidekicks` return the workspace and parent IDs together.
 
 A Sidekick's ID is an `AutomationId`: the product renamed the concept, not the
 identifier. A Sidekick and a work stream share one parent-ID namespace in
@@ -146,31 +144,25 @@ stateful artifact runs. See [`live-web-artifacts.md`](live-web-artifacts.md).
 
 ### Product creation
 
-The tools use today's product names: `orgId` is a stored workspace ID,
-`channelId` is a stored Space ID, and `threadId` is a stored workstream ID.
+The tools use today's product names: `orgId` is a stored workspace ID, a
+Canvas ID or Sidekick ID names its conversation (a stored workstream ID), and
 `creatorUserId` (creation) or `userId` (send/read) selects an existing regional
 Rally user. The Access identity remains the audited operator. No tool issues a
 login credential, promotes a guest, or bypasses the selected user's ordinary
-product permissions. Guests can be selected; actions the app refuses for them,
-including Channel and Thread creation, are refused here too.
+product permissions. Guests can be selected; actions the app refuses for them
+are refused here too.
 
 Creation takes a fresh UUID `operationId`, reused with the original arguments
-after an uncertain outcome. The entity's ID is that operation ID. Organization
-creation uses the onboarding journal, Channel creation uses the stable Space
-reservation, and Thread creation uses the ordinary creation receipt and message
-key. A transient failure can leave member seating or a Channel audience update
-unfinished; replay the original call to resume it. A refused audience leaves
-the Organization-wide Channel with its creator as its only participant. An
-unchanged retry cannot fix an invalid participant or permission refusal: repair
-the membership or audience, or archive the Channel. Reusing an ID with changed arguments is
-not a new creation; audience updates apply the requested participant set.
+after an uncertain outcome. The Organization's ID is that operation ID, and
+its creation uses the onboarding journal. A transient failure can leave member
+seating unfinished; replay the original call to resume it. Reusing an ID with
+changed arguments is not a new creation.
 
 `create_org` takes `region`, `name`, and `userIds`. The creator becomes its owner;
 the existing regional users become initial members, without invitations.
 `RegionalOnboardingService.createWorkspaceForMember` accepts the initial member
 list, validates it before creation, and commits those memberships alongside the
-owner in the shared onboarding batch. Ordinary member seating gives each member
-General and their Personal Channel, including when a retry resumes seating.
+owner in the shared onboarding batch. A new Organization holds no Canvas.
 The MCP adapter writes no membership rows of its own.
 
 The private `engineering` principal lets the regional bridge enter existing
@@ -195,25 +187,30 @@ correlates recovery using the original operation ID.
 
 ### Messages and text reads
 
-`send_message` takes `orgId`, `userId`, `threadId`, `text`, and a UUID
-`operationId`; optional `breakoutId` targets a child instead of Main. The other
+`send_message` takes `orgId`, `userId`, `conversationId` (a Canvas ID for its
+Chat, or a Sidekick ID for its shared conversation), `text`, and a UUID
+`operationId`. The other
 composer fields reuse CreateMessageRequestSchema: mentions, confirmed participant
 additions, attachments, annotations and queue/steer mode. After resolving the
 Organization, the adapter uses ConversationService.writableClient and
-WorkstreamObjectClient.createMessage, the same boundary as the app's send route.
-There are no transcript inserts, forced run starts, or scripted replies. Normal
+WorkstreamObjectClient.createMessage, the same boundary as the app's send route;
+the parent resolves which kind the id names. There are no transcript inserts,
+forced run starts, or scripted replies. Normal
 addressing decides whether Rally responds, unless the caller passes
 `recordOnly: true`: the message is then admitted the same way but starts no run,
-the rule a Breakout merge already uses, so the Thread holds it as a record for
-its readers. Reuse the message operation ID and
-original arguments after an uncertain result; the ordinary receipt reports
-`pending` or `canonical`, not completion of the agent run.
+so the conversation holds it as a record for its readers. Reuse the message
+operation ID and original arguments after an uncertain result; the ordinary
+receipt reports `pending` or `canonical`, not completion of the agent run.
 
-`read_thread` and `read_breakout` return plain MCP text, without a JSON
-envelope.
+`read_canvas_chat` (by `canvasId`) and `read_sidekick_conversation` (by
+`sidekickId`) return plain MCP text, without a JSON envelope, headed
+`Canvas:` or `Sidekick:` and the title. Each names the kind it expects, and
+the region refuses an id whose parent is the other kind
+(`conversation_kind_mismatch`), so an operator never reads a Sidekick's
+conversation believing it is a Canvas's.
 
-Conversation reads authorize the exact Thread or Breakout through
-ConversationService.client. A generic `read_transcript` product operation exposes
+Conversation reads authorize the selected user through
+ConversationService.authorizeViewer, as the app's open does. A generic `read_transcript` product operation exposes
 the existing transcript range reader used by socket hydration. It does not boot
 the feed or acknowledge read state. The owning Durable Object formats committed participant
 prose with frozen author bylines and attachment names, including elicitation
@@ -226,8 +223,7 @@ Omit `limit` for a 20-turn page, set by the team on 2026-10-21 to match the
 desktop hydration size. A caller may choose another `limit`. The footer
 supplies `afterSequence` and `throughSequence` to continue under the same append
 fence. A later call without the fence includes
-newer turns. Read and send both enforce the selected user's exact Breakout
-membership independently of their parent Thread access.
+newer turns.
 
 ### Pausing a Sidekick
 
@@ -428,20 +424,24 @@ to use typed domain RPCs and must never depend on this surface.
 A Sidekick has two inspectable halves and they are reached by different tools.
 Its definition revisions, schedules and run history are the Organization's
 `sidekick_*` tables, read with `run_workspace_sql` filtered by `sidekick_id`.
-Its *conversations* are `SubstreamAgent`s, reached with the substream tools
-under the Sidekick's ID as the parent, exactly as a work stream's are.
+Its *conversations* are AgentLoopDO objects, reached with `run_canvas_sql`
+under the Sidekick's ID: its shared conversation with no `substreamId`
+(substream `0`), or a run's conversation with that run's registered
+`substreamId`.
 
-Channel and Space parent state lives in WorkspaceDO, in the `parent_*` tables
-keyed by `parent_id`
+A Canvas's parent state lives in WorkspaceDO, in `canvas_directory` and the
+`parent_*` tables keyed by `parent_id`
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), so
-`run_workspace_sql` is the tool for it.
+`run_workspace_sql` is the tool for it; its Chat is reached with
+`run_canvas_sql` under the Canvas's ID.
 
-**A Space's participants and resources are read with `run_workspace_sql`**,
-from `spaces`, `space_viewers` and `space_defaults`. A Space created before
-2026-09-26 also has an idle hidden conversation, still reachable with the
-substream tools under the Space id and substream `0` through the
-`workstream_authority_routes` row every Space's creation writes; nothing reads
-or writes it.
+`list_canvases` lists every Canvas in the Organization, private ones
+included: listing is operator inspection, like `run_workspace_sql`. Reading a
+Chat is still the selected user's, through ordinary admission.
+
+`run_canvas_sql` checks the parent's route, not its kind: until
+`retire_threads` has run for an Organization, a Thread's id still resolves
+there, and nothing else in this MCP names one.
 
 A stateful artifact's facet database is outside this MCP for the reason above:
 its contents are reachable only through the product's admitted read path.
@@ -480,9 +480,10 @@ region refused, and the rejected field kept across the RPC boundary; then, in a
 Canvas's Chat, member and guest sends with normal execution, retry dedupe and
 author snapshots, a send and a read refused to somebody the Canvas does not
 admit, a record-only message that starts no run, and default and fenced history
-paging. `send_message`, `read_thread` and `read_breakout` still take a
-`threadId`; a Canvas id is one, and their retargeting at named Canvas and
-Sidekick conversation tools is plan step B-8.
+paging, and a Canvas read as a Sidekick's conversation refused by name.
+`engineering-sidekick-inspection.test.ts` posts a record-only message to a
+Sidekick's shared conversation and reads it back, refuses it read as a Canvas,
+and reaches a run conversation through `run_canvas_sql`'s registry check.
 Audit coverage reads operator and receipt attribution from the real audit
 database and refuses product writes when the attempt cannot be persisted.
 Only the external model provider is doubled. The text formatter's unit tests
@@ -612,6 +613,30 @@ each selected model's configured default; an explicit value applies to the
 primary and fallbacks. Ace owns validation and the atomic write.
 
 ## Changelog
+
+### 2026-11-07 — Canvas and Sidekick conversation tools replace the Thread ones
+
+**What changed:** `list_spaces`, `read_thread`, `read_breakout`,
+`list_workstreams`, `list_substreams` and `run_substream_sql` are removed with
+their bridge methods (`listSpaces`, `listWorkstreams`, `listSubstreams`,
+`resolveSubstream`, `runSubstreamSql`) and contract shapes. `list_canvases`
+reads `canvas_directory`; `read_canvas_chat` and `read_sidekick_conversation`
+read a conversation as a user and refuse the other kind by name;
+`run_canvas_sql` runs inspection SQL on the conversation object named by a
+Canvas or Sidekick ID, or a registered child of it. `send_message` takes a
+`conversationId` instead of `threadId` and `breakoutId`. The server
+instructions' naming map says Organization = workspace, Canvas = its
+conversation (a `workstream` id in storage), Sidekick = automation.
+
+**Why:** the Canvases and Sidekicks pivot
+(`docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`) retired Spaces, Threads
+and Breakouts; the tools that named them could only fail or mislead. The read
+names its kind rather than taking any conversation id because the two parents
+answer different questions, and an operator's diagnosis rests on which one
+they read. `run_canvas_sql` keeps the child reach `run_substream_sql` had
+(2026-09-28), since a Sidekick run's conversation is where its failures are.
+A future tool must not take a Thread or Space id: the product refuses those
+parents by name (`conversation_parent_kind_retired:<kind>`).
 
 ### 2026-11-07 — The Channel and Thread creation, list and feed tools go
 

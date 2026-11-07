@@ -15,9 +15,10 @@ WorkspaceDO alarm lane), the share-URL and file helpers (`session-import.ts`,
 
 `AgentLoopDO` migration 84 (plan step C-3) dropped the `imported_session_*`
 tables. What survives: `prepared_conversation_receipts`, kept as a dead table
-because `pending_attachment_reservation_recovery`'s foreign key names it, the
-prepared-content contracts in `packages/contracts/src/substream-content.ts`
-(step B-8), and WorkspaceDO migration 119's statements, which moved byte for
+because `pending_attachment_reservation_recovery`'s foreign key names it, 
+`PreparedConversationSchema` and `ImportedMessageProvenanceSchema` in
+`packages/contracts/src/substream-content.ts` (harness evaluations and stored
+transcripts read them; the import requests went in step B-8), and WorkspaceDO migration 119's statements, which moved byte for
 byte to `retired-workspace-schema.ts`. This document is kept for its
 changelog. Do not build on anything it describes.
 

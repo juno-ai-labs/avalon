@@ -129,13 +129,13 @@ while the migration is unreleased; a shipped schema change appends a migration.
 
 Local state drifts in two halves nothing reconciles. Re-running `db:migrate` and
 `db:seed` brings D1 up to date, but every Durable Object keeps what an older
-checkout's code wrote into it. A stack left for weeks then serves Channels whose
-parent conversation no longer exists: the API logs
-`conversation_parent_missing` and `conversation_not_found`, the sidebar stays on
-**Rally is opening this organization**, and a Channel shows **Channel could not
-be opened**. The desktop client drifts with it: its stored session names an
-account in the old database (`account_reconnect_required`) and its caches still
-list the old Channels. A stack seeded before the seed made Canvases has the same
+checkout's code wrote into it. A stack left for weeks then serves
+conversations whose parent no longer exists: the API logs
+`conversation_parent_missing` and `conversation_not_found`, and the sidebar
+stays on **Rally is opening this organization**. The desktop client drifts
+with it: its stored session names an account in the old database
+(`account_reconnect_required`) and its caches still list what the old database
+held. A stack seeded before the seed made Canvases has the same
 drift under a new symptom: the seeded **Q4 revenue review** Canvas stays on
 **Connecting**, and the API answers `409 conversation_parent_kind_retired:workstream`,
 because id `…0020` was a seeded work stream then and its conversation object
@@ -290,7 +290,7 @@ serves port 8794. Set the API's `BROWSER_APP_ORIGIN` to the exact local browser
 origin (for example `http://localhost:8794`) and use that same hostname in Chrome.
 Add the same origin to `ALLOWED_ORIGINS` in `.env.local` and re-run
 `pnpm env:sync`: every conversation socket checks it, so without it a signed-in
-tab opens each conversation to **Channel could not be opened** and the Worker
+tab opens each conversation to an error and the Worker
 logs `socket_origin_forbidden`.
 The host uses the local Global service binding; the regional API must be running.
 
@@ -410,6 +410,29 @@ Development sign-in works end to end in this setup: **Use local development
 account** authenticates against the local Global Worker and opens the seeded
 workspace with its Canvases, its Sidekick, and onboarding checklist.
 
+**Settings is a second page that has to be opened before it can be captured.**
+Once a session has an Organization, the main process builds the
+`?surface=settings` window ahead of time and keeps it hidden (`show: false`), so
+it is listed among the CDP pages from the start but never paints: a
+`Page.captureScreenshot` against it, or a Playwright `screenshot()`, waits for a
+frame that does not come and times out. Open it the way a person does, from the
+main page: click the account tile at the bottom of the rail (its accessible name
+starts `Settings, ` and goes on with the person and the Organization), then the
+**Settings** item in the menu it opens. The window is then shown, and the page
+whose URL contains `surface=settings` answers screenshots:
+
+```javascript
+await page.getByRole('button', { name: /^Settings, / }).click();
+await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
+const settings = browser.contexts()[0].pages().find((p) => p.url().includes('surface=settings'));
+await settings.screenshot({ path: '/tmp/settings.png' });
+```
+
+The action row under a Chat message (**Oopsie**, Copy, Speak, Image, PDF) is
+in the DOM, and so in `innerText`, under every message, but drawn at opacity 0
+with `pointer-events: none` until its message is hovered or focused. Hover the
+message before capturing or clicking the row.
+
 ## What cannot be verified in a sandbox
 
 - **Workers AI PDF OCR** (`env.AI`) and **Flagship**
@@ -453,7 +476,7 @@ workspace with its Canvases, its Sidekick, and onboarding checklist.
   other launch — proving the window *does not* open needs a Mac. What the sandbox
   can check is everything around it: the two Settings toggles in a real window,
   that a `--hidden` launch still loads the menu's content in the main process,
-  and that a deep link delivered to that instance opens the work stream. See
+  and that a deep link delivered to that instance opens the Canvas. See
   [`menu-bar.md`](menu-bar.md).
 - **macOS packaging, signing, notarization, and Gatekeeper checks.**
   `package:desktop`, `start:desktop:packaged`, and the release publisher are

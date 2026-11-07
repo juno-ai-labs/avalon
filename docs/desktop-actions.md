@@ -146,9 +146,7 @@ with an answer — the import's finish and fail actions are handled by
 creator has that conversation's socket open in a desktop can be answered. The
 import window is the one non-conversation window the desktop's main process lets
 open a realtime socket, and it closes that socket when the window navigates,
-crashes or closes. A
-Channel's main loop reaching the person's main window is a later consumer of the
-same frames. Per Rally's policy, no action asks the person to confirm it.
+crashes or closes. Per Rally's policy, no action asks the person to confirm it.
 
 ## Failure modes and limits
 
@@ -164,8 +162,7 @@ same frames. Per Rally's policy, no action asks the person to confirm it.
   receipt under the run lifecycle (`HarnessTool.deadline: "run"`), so a generic
   tool timer cannot turn a committed import into an ambiguous failure. For other
   tools, `TOOL_DEFAULT_TIMEOUT_MS` ends a wait. The person's Cancel stops the run.
-  Import runs also accept a run-wide wall-clock policy; it remains open pending
-  a team-set value (`MAX_SESSION_IMPORT_RUN_MS`). A desktop that quits without
+  A desktop that quits without
   cancelling can therefore still leave its finish pending. Reconnect reoffers
   the recorded action; this is not currently guaranteed to end within a finite time.
 - A dropped socket reconnects after a second and is offered every pending action

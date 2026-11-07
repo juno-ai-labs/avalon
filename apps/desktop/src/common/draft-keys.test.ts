@@ -11,11 +11,12 @@ describe('conversation draft keys', () => {
       .toBe(`workspace:global:${workspaceId}:canvas:${canvasId}`);
   });
 
-  it('keeps every other conversation in the work-stream family', () => {
-    expect(conversationDraftKey('global', workspaceId, 'workstream', canvasId, '3'))
-      .toBe(`workspace:global:${workspaceId}:workstream:${canvasId}:substream:3`);
-    expect(conversationDraftKey('global', workspaceId, 'automation', canvasId))
-      .toBe(`workspace:global:${workspaceId}:workstream:${canvasId}`);
+  it("keeps a Sidekick's conversation in the work-stream family", () => {
+    const sidekickId = canvasId;
+    expect(conversationDraftKey('global', workspaceId, 'automation', sidekickId, '3'))
+      .toBe(`workspace:global:${workspaceId}:workstream:${sidekickId}:substream:3`);
+    expect(conversationDraftKey('global', workspaceId, 'automation', sidekickId))
+      .toBe(`workspace:global:${workspaceId}:workstream:${sidekickId}`);
   });
 
   it("gives a detached artifact window the Canvas Chat's own key back from its scope", () => {
@@ -23,7 +24,7 @@ describe('conversation draft keys', () => {
     expect(scope).toBe(`canvas:${canvasId}`);
     expect(annotationDraftKeyForScope('global', workspaceId, scope))
       .toBe(`workspace:global:${workspaceId}:canvas:${canvasId}`);
-    expect(annotationDraftKeyForScope('global', workspaceId, conversationAnnotationScope('workstream', canvasId, '2')))
+    expect(annotationDraftKeyForScope('global', workspaceId, conversationAnnotationScope('automation', canvasId, '2')))
       .toBe(`workspace:global:${workspaceId}:workstream:${canvasId}:substream:2`);
   });
 });

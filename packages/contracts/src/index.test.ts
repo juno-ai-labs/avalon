@@ -10,11 +10,11 @@ import {
   SidekickCustomToolSchema,
   AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_OVERRIDES,
+  AgentModelOverrideSchema,
   AGENT_MODEL_ROLES,
   AgentModelRoutingSchema,
   ClientSocketEventSchema,
   automationAcceptanceSelections,
-  CreateWorkstreamRequestSchema,
   CreateWorkspaceInvitationRequestSchema,
   BackgroundTaskSchema,
   ConnectorManifestSchema,
@@ -29,17 +29,11 @@ import {
   ResourceSchema,
   resourceDirectionForRelationship,
   ServerSocketEventSchema,
-  StartWorkOpportunityRequestSchema,
   UpdateWorkspaceRequestSchema,
   WorkspaceSchema,
   WorkspaceSocketClientEventSchema,
   WorkstreamContextSchema,
-  SpaceChannelPageSchema,
-  SpaceConversationSchema,
   WorkstreamSchema,
-  WorkstreamBatchFilterSchema,
-  ReorderWorkstreamPinsRequestSchema,
-  MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER,
   WorkstreamResourceSchema,
   TimestampSchema,
   WorkstreamSocketCommandResultSchema,
@@ -84,19 +78,6 @@ describe("boundary contracts", () => {
     });
     expect(legacy.relationshipType).toBe("suggested_activity");
     expect(ResourceRelationshipTypeSchema.safeParse(legacy.relationshipType).success).toBe(false);
-  });
-
-  it("adds a bounded optional suggested-work surface without breaking older clients", () => {
-    const legacy = { version: 3, idempotencyKey: "legacy-attempt" };
-    expect(StartWorkOpportunityRequestSchema.safeParse(legacy).success).toBe(true);
-    expect(StartWorkOpportunityRequestSchema.parse({
-      ...legacy,
-      surface: "menu_bar",
-    })).toMatchObject({ surface: "menu_bar" });
-    expect(StartWorkOpportunityRequestSchema.safeParse({
-      ...legacy,
-      surface: "private-screen-name",
-    }).success).toBe(false);
   });
 
   it("represents provider members as external actors without manufacturing Avalon users", () => {
@@ -150,68 +131,6 @@ describe("boundary contracts", () => {
     });
 
     expect(message.id).toBe(turnId);
-  });
-
-  it("allows a new work stream to start with text, attachments, or both", () => {
-    const base = {
-      clientMessageId: id,
-      participantUserIds: [],
-    };
-    expect(CreateWorkstreamRequestSchema.parse({
-      ...base,
-      openingMessage: "",
-      attachmentIds: [id],
-    }).attachmentIds).toEqual([id]);
-    expect(CreateWorkstreamRequestSchema.safeParse({
-      ...base,
-      openingMessage: "",
-      attachmentIds: [],
-    }).success).toBe(false);
-    expect(CreateWorkstreamRequestSchema.safeParse({
-      ...base,
-      openingMessage: "Start",
-      spaceIds: [id, id],
-    }).success).toBe(false);
-    const attachmentOnly = CreateWorkstreamRequestSchema.parse({
-      ...base,
-      openingMessage: "",
-      attachmentIds: [id],
-    });
-    expect(attachmentOnly.objective).toBeUndefined();
-    expect(attachmentOnly.mentions).toEqual([]);
-    expect(CreateWorkstreamRequestSchema.parse({
-      ...base,
-      openingMessage: "Ask @Adam",
-      mentions: [{
-        type: "person",
-        userId: id,
-        connectorType: null,
-        startOffset: 4,
-        endOffset: 9,
-      }],
-    }).mentions).toEqual([{
-      type: "person",
-      userId: id,
-      connectorType: null,
-      startOffset: 4,
-      endOffset: 9,
-    }]);
-  });
-
-  it("accepts a model override only from the closed list of selectable models", () => {
-    const base = {
-      clientMessageId: id,
-      participantUserIds: [],
-      openingMessage: "Prepare the launch brief",
-    };
-    // Unpinned is the normal shape: absent rather than null, so the flag decides.
-    expect(CreateWorkstreamRequestSchema.parse(base).modelOverride).toBeUndefined();
-    expect(CreateWorkstreamRequestSchema.parse({ ...base, modelOverride: "deepseek/deepseek-v4-pro" }).modelOverride)
-      .toBe("deepseek/deepseek-v4-pro");
-    // An override bypasses the rollout, so the reachable set is reviewed here
-    // rather than being whatever string a client sends.
-    expect(CreateWorkstreamRequestSchema.safeParse({ ...base, modelOverride: "x-ai/grok-9" }).success).toBe(false);
-    expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
   });
 
   it("orders each vendor's models newest first", () => {
@@ -273,14 +192,19 @@ describe("boundary contracts", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("accepts a model override only from the closed list of selectable models", () => {
+    expect(AgentModelOverrideSchema.parse("deepseek/deepseek-v4-pro")).toBe("deepseek/deepseek-v4-pro");
+    // An override bypasses the rollout, so the reachable set is reviewed here
+    // rather than being whatever string a client sends.
+    expect(AgentModelOverrideSchema.safeParse("x-ai/grok-9").success).toBe(false);
+    expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
+  });
+
   it("owns the complete model-role, Flagship-key, and route-value contract", () => {
     expect(AGENT_MODEL_ROLES).toEqual([
       "workstream",
       "inline_child",
       "workstream_naming",
-      "work_opportunity_admission",
-      "work_opportunity_ranking",
-      "session_import",
       "memory_sweep",
       "sidekick_authoring",
     ]);
@@ -288,9 +212,6 @@ describe("boundary contracts", () => {
       "agent-model-workstream",
       "agent-model-inline-child",
       "agent-model-workstream-naming",
-      "agent-model-work-opportunity-admission",
-      "agent-model-work-opportunity-ranking",
-      "agent-model-session-import",
       "agent-model-memory-sweep",
       "agent-model-sidekick-authoring",
     ]);
@@ -940,7 +861,7 @@ describe("boundary contracts", () => {
     const result = WorkstreamWorkflowInputSchema.safeParse({
       region: "global",
       workspaceId: id,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: id,
       loopId: `workstream:${id}:substream:0:loop`,
       harnessRunId: id,
@@ -955,7 +876,7 @@ describe("boundary contracts", () => {
     const parsed = WorkstreamWorkflowInputSchema.parse({
       region: "global",
       workspaceId: id,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: id,
       loopId: `workstream:${id}:substream:0:loop`,
       harnessRunId: id,
@@ -988,7 +909,7 @@ describe("boundary contracts", () => {
     const parsed = WorkstreamWorkflowInputSchema.parse({
       region: "global",
       workspaceId: id,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: id,
       loopId: `workstream:${id}:substream:0:loop`,
       harnessRunId: id,
@@ -1046,7 +967,7 @@ describe("boundary contracts", () => {
     const base = {
       region: "global",
       workspaceId: id,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: id,
       loopId,
       triggerMessageId: id,
@@ -1071,7 +992,7 @@ describe("boundary contracts", () => {
     const base = {
       region: "global",
       workspaceId: id,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: id,
       loopId,
       harnessRunId: id,
@@ -1556,102 +1477,6 @@ describe("resource version provenance", () => {
     expect(WorkstreamSchema.safeParse({
       ...workstream,
       participantUserIds: ids,
-    }).success).toBe(false);
-
-    // A Space's dashboard page is those same rows plus their kind, and stays
-    // closed: an empty cursor is not a cursor, and a missing one is not "there
-    // is no next page".
-    const channel = { ...workstream, kind: "channel" as const, breakoutOf: null };
-    expect(SpaceChannelPageSchema.safeParse({ items: [channel], nextCursor: null }).success).toBe(true);
-    expect(SpaceChannelPageSchema.safeParse({ items: [channel], nextCursor: "" }).success).toBe(false);
-    expect(SpaceChannelPageSchema.safeParse({ items: [channel] }).success).toBe(false);
-    expect(SpaceChannelPageSchema.safeParse({
-      items: [workstream.id], nextCursor: null,
-    }).success).toBe(false);
-
-    // The two kinds cannot be described wrongly. A breakout names its parent
-    // Channel and repeats its own substream id as the conversation id it is
-    // listed under; a Channel names neither. Both halves are asserted because
-    // a row that claimed to be a breakout with no parent would draw a link to
-    // `undefined`, and one that claimed to be a Channel while carrying a
-    // parent would offer **Remove** for a conversation the Space authority has
-    // no membership row for.
-    const breakoutId = "00000000-0000-7000-8000-0000000000bb";
-    const breakout = {
-      ...workstream,
-      id: breakoutId,
-      kind: "breakout" as const,
-      appearance: { icon: "sparkles", color: "rose" },
-      breakoutOf: {
-        workstreamId: workstream.id,
-        substreamId: breakoutId,
-        title: "Launch",
-        appearance: { icon: "rocket", color: "blue" },
-      },
-    };
-    expect(SpaceConversationSchema.safeParse(breakout).success).toBe(true);
-    expect(SpaceConversationSchema.safeParse({ ...breakout, breakoutOf: null }).success).toBe(false);
-    expect(SpaceConversationSchema.safeParse({ ...breakout, kind: "channel" }).success).toBe(false);
-    expect(SpaceConversationSchema.safeParse({
-      ...breakout,
-      breakoutOf: { ...breakout.breakoutOf, substreamId: workstream.id },
-    }).success).toBe(false);
-    // A payload from a server that predates the kinds is not a legal row: the
-    // screen branches on `kind` for the destination, and a defaulted "channel"
-    // would send every breakout to its parent Channel's main conversation.
-    expect(SpaceConversationSchema.safeParse(workstream).success).toBe(false);
-  });
-});
-
-describe("Space-scoped Channel pins", () => {
-  const spaceId = "00000000-0000-7000-8000-0000000000f1";
-
-  it("requires one Space for pin reorders and pin-state batch filters", () => {
-    expect(ReorderWorkstreamPinsRequestSchema.safeParse({
-      spaceId,
-      workstreamIds: ["00000000-0000-7000-8000-0000000000f2"],
-    }).success).toBe(true);
-    expect(ReorderWorkstreamPinsRequestSchema.safeParse({ workstreamIds: [] }).success).toBe(false);
-    expect(WorkstreamBatchFilterSchema.safeParse({ pinned: false }).success).toBe(false);
-    expect(WorkstreamBatchFilterSchema.safeParse({ pinned: false, spaceId }).success).toBe(true);
-  });
-
-  it("admits every placement the server can create and rejects a larger complete order", () => {
-    const workstreamId = "00000000-0000-7000-8000-0000000000f2";
-    expect(ReorderWorkstreamPinsRequestSchema.safeParse({
-      spaceId,
-      workstreamIds: Array.from({ length: MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER }, () => workstreamId),
-    }).success).toBe(true);
-    expect(ReorderWorkstreamPinsRequestSchema.safeParse({
-      spaceId,
-      workstreamIds: Array.from({ length: MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER + 1 }, () => workstreamId),
-    }).success).toBe(false);
-  });
-
-  it("rejects two positions for the same Space on one Channel", () => {
-    const base = WorkstreamSchema.parse({
-      id: "00000000-0000-7000-8000-0000000000f3",
-      workspaceId: "00000000-0000-7000-8000-0000000000f4",
-      title: "Shared Channel",
-      objective: "",
-      emailAddress: null,
-      createdByUserId: null,
-      harnessStatus: "idle",
-      latestAttentionSequenceNumber: 0,
-      readThroughSequenceNumber: 0,
-      manualUnreadFromSequenceNumber: null,
-      manualUnreadGeneration: 0,
-      hasUnread: false,
-      firstUnreadSequenceNumber: null,
-      lastActivityAt: "2026-09-21T00:00:00.000Z",
-      createdAt: "2026-09-21T00:00:00.000Z",
-      updatedAt: "2026-09-21T00:00:00.000Z",
-      archivedAt: null,
-      scope: "workspace",
-    });
-    expect(WorkstreamSchema.safeParse({
-      ...base,
-      spacePins: [{ spaceId, position: 0 }, { spaceId, position: 1 }],
     }).success).toBe(false);
   });
 });

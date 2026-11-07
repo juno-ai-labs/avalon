@@ -47,7 +47,6 @@ import type {
   ConversationParentAuthorityResult,
   ConversationParentAuthorizeViewerRequest,
   ConversationParentAuthorizeViewerResult,
-  ConversationParentKind,
   ConversationParentListChildrenRequest,
   ConversationParentListChildrenResult,
   ConversationParentReserveChildRequest,
@@ -63,7 +62,7 @@ import type {
  * four kinds from migration 146.
  */
 interface RetirementGraphNode {
-  parentKind: ConversationParentKind;
+  parentKind: RetirementParentKind;
   parentId: string;
 }
 import {
@@ -100,7 +99,7 @@ import {
 } from './connector-installation-protocol';
 import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
 import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
-import { AgentIdSchema, type AgentId } from "@rally/contracts";
+import { AgentIdSchema, type AgentId, type RetirementParentKind } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
 import {
@@ -5086,9 +5085,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * retired: its directory row and viewer rows (and a Thread's Breakout
    * directory), and its parent state in every table
    * `HOSTED_PARENT_STATE_TABLES` names that the schema still holds, so a table
-   * phase C drops first is skipped. Nothing cascades from `channels` or
-   * `spaces` any more: migration 147 dropped the pin, resource-link and access
-   * tables that referenced them. Idempotent: a second call finds nothing to
+   * phase C drops first is skipped. Only `channel_viewers` still cascades;
+   * the pin, resource-link and access tables 147 dropped no longer reference
+   * them. Idempotent: a second call finds nothing to
    * delete.
    */
   async deleteRetiredThreadParent(input: { parentKind: "workstream" | "space"; parentId: string }): Promise<void> {
@@ -5147,9 +5146,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       const canvas = await this.hostedCanvas(envelope.parentId, envelope.workspaceId);
       return this.canvasWrite(() => canvas.receiveChildEffects(request));
     }
-    // A Thread's or Channel's conversation was retired with it (plan step
-    // B-7); nothing here hosts its parent any more.
-    throw new ApiError(409, "conversation_parent_kind_retired", "This conversation's parent kind is retired",
+    // A Thread's or Space's effect: the envelope admits the retired kinds so
+    // the refusal is named here and the message dead-letters loudly, rather
+    // than being dropped at the Queue boundary. Nothing hosts those parents.
+    // The message is the code with the kind: an RPC hop keeps only the message.
+    throw new ApiError(409, "conversation_parent_kind_retired", `conversation_parent_kind_retired:${envelope.parentKind}`,
       undefined, `conversation_parent_kind_retired:${envelope.parentKind}`);
   }
 
@@ -11852,7 +11853,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const progress = this.retirementProgress();
     const nodes = this.state.storage.sql.exec<{
-      parent_kind: ConversationParentKind;
+      parent_kind: RetirementParentKind;
       parent_id: string;
       retired_at: number | null;
     }>(
@@ -11871,7 +11872,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private retirementGraphNodes(): RetirementGraphNode[] {
     return this.state.storage.sql.exec<{
-      parent_kind: ConversationParentKind;
+      parent_kind: RetirementParentKind;
       parent_id: string;
     }>(
       `SELECT parent_kind, parent_id FROM workspace_retirement_graph
