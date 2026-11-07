@@ -46,6 +46,7 @@ import {
   type SpaceSummary,
   type ConversationMergeResult,
   type ConversationSuggestion,
+  type SidekickMessageIntent,
   mergeResourceIds,
   suggestionTurnIsVisible,
 } from '@rally/contracts';
@@ -1373,6 +1374,12 @@ export interface ConversationSurfaceProps {
    * surface writing a Breakout from it — so each owns its own right panel.
    */
   paneKey?: string;
+  /**
+   * What every message sent from this surface is for, when the host says:
+   * `edit_sidekick` marks it for a Sidekick's wizard. The server routes an
+   * unmarked message in a Sidekick's conversation to a run.
+   */
+  messageIntent?: SidekickMessageIntent;
   renderSidebar?: (context: ConversationHeaderContext & {
     /** This room's Sidekicks; `undefined` until both lists behind it answer. */
     sidekicks: SidekickRow[] | undefined;
@@ -1423,6 +1430,7 @@ function ConversationSurfaceContent({
   paneKey,
   breakoutOrigin,
   parentCrumbs,
+  messageIntent,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
@@ -3011,6 +3019,7 @@ function ConversationSurfaceContent({
         confirmedParticipantUserIds: parentKind === 'workstream' && substreamId !== '0' ? [] : confirmedParticipantUserIds,
         attachmentIds: [...readyAttachments.flatMap((attachment) => attachment.resource ? [attachment.resource.id] : []), ...sentPins.flatMap((p) => p.annotation.content.imageAttachmentId ? [p.annotation.content.imageAttachmentId] : [])],
         ...(deliveryMode ? { runMode: deliveryMode } : {}),
+        ...(messageIntent ? { intent: messageIntent } : {}),
       });
       annotationDraft?.clearAccepted(sentPins);
       queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) => {

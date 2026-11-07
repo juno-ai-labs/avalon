@@ -6,6 +6,7 @@ import {
   DemoSeedSchema,
   IdSchema,
   PickedAppearanceSchema,
+  SidekickMessageIntentSchema,
   SubstreamIdSchema,
   UserIdSchema,
   WorkspaceExternalEventSchema,
@@ -287,31 +288,38 @@ export const SidekickRunContinuationSchema = z.discriminatedUnion("outcome", [
 export type SidekickRunContinuation = z.infer<typeof SidekickRunContinuationSchema>;
 
 /**
- * A person's message in the Sidekick's shared conversation (substream `"0"`)
- * that the addressing classifier sent to an agent, asked about once before the
- * conversation's loop takes it. `messageId` is the turn the message lands as,
- * so a retried claim admits the same run.
+ * A person's input in the Sidekick's shared conversation (substream `"0"`)
+ * that reaches an agent, asked about once before the conversation's loop
+ * takes it. `messageId` is the turn the input lands as, so a retried claim
+ * admits the same run. `intent` is `edit_sidekick` when the input is for the
+ * wizard: a message its sender marked as an edit, or an answer to something
+ * the wizard asked. `authorName` is the sender's display name as the
+ * conversation snapshotted it, unbounded like `UserSchema.name`.
  */
 export const SidekickConversationMessageRequestSchema = z.strictObject({
   ...Addressed,
   actor: AutomationActorSchema,
   messageId: IdSchema,
-  authorName: z.string().min(1).max(200),
+  intent: SidekickMessageIntentSchema.nullable(),
+  authorName: z.string().nullable(),
   text: z.string().min(1),
 });
-export type SidekickConversationMessageRequest = z.infer<typeof SidekickConversationMessageRequestSchema>;
+/** The caller's side, so a default (`participantOfOwningWorkstream`) need not be spelled. */
+export type SidekickConversationMessageRequest = z.input<typeof SidekickConversationMessageRequestSchema>;
 
 /** Why a message addressed to the Sidekick started no run. */
 export const SidekickConversationMessageRefusalCodeSchema = z.enum([
   "sidekick_not_active",
   "sidekick_not_runnable",
   "run_no_eligible_delegate",
+  /** The input was for the wizard (`intent: "edit_sidekick"`) and its sender does not manage the Sidekick. */
+  "sidekick_edit_requires_manager",
 ]);
 export type SidekickConversationMessageRefusalCode = z.infer<typeof SidekickConversationMessageRefusalCodeSchema>;
 
 /**
- * Who answers the message: the wizard (its sender manages the Sidekick, which
- * is today's authoring turn), a run the message started, or nobody, with why.
+ * Who answers the message: the wizard (an edit from a manager, which is the
+ * authoring turn), a run the message started, or nobody, with why.
  */
 export const SidekickConversationMessageRouteSchema = z.discriminatedUnion("route", [
   z.strictObject({ route: z.literal("wizard") }),

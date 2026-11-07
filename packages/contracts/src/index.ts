@@ -2414,6 +2414,16 @@ export const ReorderPendingLoopInputsResultSchema = z.object({
   pendingInputs: z.array(PendingTranscriptInputSchema),
 });
 
+/**
+ * What a message in a Sidekick's shared conversation is for, when its sender
+ * says. `edit_sidekick` marks it for the wizard, which edits the Sidekick, and
+ * the server accepts it only from someone who manages the Sidekick; a message
+ * without it that is addressed to the Sidekick starts a run, whoever sent it.
+ * Elsewhere it means nothing.
+ */
+export const SidekickMessageIntentSchema = z.enum(["edit_sidekick"]);
+export type SidekickMessageIntent = z.infer<typeof SidekickMessageIntentSchema>;
+
 export const CreateMessageRequestSchema = z.object({
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
   clientMessageId: z.string().min(1).max(120),
@@ -2423,6 +2433,7 @@ export const CreateMessageRequestSchema = z.object({
   /** Steer yields the in-flight loop at a turn boundary; queue never interrupts it. */
   annotations: AnnotationsSchema.optional(),
   runMode: z.enum(["steer", "queue"]).optional(),
+  intent: SidekickMessageIntentSchema.optional(),
 }).superRefine(validateAnnotationAttachments).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((a) => a.comment.trim()), {
   message: "A message must include text or an attachment",
 });
@@ -3967,6 +3978,13 @@ export const WorkstreamWorkflowInputSchema = z.object({
   }).optional(),
   /** The received agent exchange supplies discovery scope and the ordinary reply reference. */
   agentExchange: AgentExchangeSchema.optional(),
+  /**
+   * Set on a turn in a Sidekick's shared conversation (substream `"0"`), which
+   * the Sidekick has already routed to its wizard: every other input there
+   * starts a run or is refused before a turn exists. The only turn that loads
+   * the authoring tools; `docs/automation-lifecycle.md` owns the routing.
+   */
+  sidekickWizard: z.literal(true).optional(),
   /** Host-derived conversation kind; not a model-selectable execution option. */
   backgroundAgent: z.boolean().optional(),
   activityId: IdSchema.nullable(),
