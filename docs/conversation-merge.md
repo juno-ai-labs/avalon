@@ -261,7 +261,7 @@ build.
 ### Activity and push
 
 Every merge somebody else made is a `merged` row in the Activity tab
-([`digests.md`](digests.md#the-activity-tab)) and is pushed, emailed or sent to
+(`digests.md` (retired)) and is pushed, emailed or sent to
 Slack per the **Merges** choice ([`push-notifications.md`](push-notifications.md#activity-rows)).
 A breakout's merge is read from its message's activity event, which carries
 `metadata.mergedFrom` on both write paths (written at once, and queued behind

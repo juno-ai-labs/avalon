@@ -1218,7 +1218,7 @@ viewer state does not enter shared surfaces, and child activity enters in one
 shape only: a breakout message that mentions somebody is forwarded emptied (no
 body, not digestible, targets the mentions alone) with `metadata.substreamId`
 stamped, and WorkspaceDO stores it with the author as its only audience
-([`digests.md`](digests.md#the-activity-tab)). A child common
+(`digests.md` (retired)). A child common
 projection still updates only the private-child title registry — it is never
 merged into Main's. Before forwarding a person notification, it ensures an
 unchanged Main viewer projection (or a neutral nonparticipant projection)

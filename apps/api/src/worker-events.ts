@@ -29,7 +29,6 @@ import {
   isAnalyticsLakehouseQueue,
   recoverUndeliveredAnalyticsLakehouseEvents,
 } from "./services/analytics-lakehouse";
-import { reconcileDigestDefaults } from "./services/digest-service";
 import { processTelemetryOutbox } from "./telemetry/delivery";
 import { processPendingCrashReports } from "./telemetry/crash-processing";
 import {
@@ -203,7 +202,6 @@ export default {
     context.waitUntil((async () => {
       await Promise.all([
         recoverPendingActivityQueue(env),
-        reconcileDigestDefaults(env),
         reapExpiredSessions(env),
         dispatchWorkspaceRelationshipChanges(env),
         recoverEmailLoginDeliveries(env),
