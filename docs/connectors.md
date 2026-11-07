@@ -1146,9 +1146,8 @@ as their event; reads and claims reconstruct the full ordered list. Restoring a
 late repeat copies its people too. This avoids the old 262,144-character cell
 constraint and Cloudflare's 2 MB row limit without widening historical DDL.
 
-Suggested Work retains that complete list in sources and provenance. Its single
-bounded model view reports shown and total counts without changing the canonical
-source; see [`suggested-work.md`](suggested-work.md).
+Suggested Work, which kept that list in its provenance, was deleted on
+2026-11-07 ([`data-model.md`](data-model.md#changelog)).
 
 ### Activity ingestion
 
@@ -1495,7 +1494,6 @@ It does not own:
 | For | Read |
 | --- | --- |
 | The retired Suggested context feature | [`contextual-routing.md`](contextual-routing.md) |
-| Which unclaimed activity becomes a home-screen suggestion | [`suggested-work.md`](suggested-work.md) |
 | One row per declared activity type, with the reason | [`connector-digestibility.md`](connector-digestibility.md) |
 | What `digestible` is kept for, now that nothing reads it | [`digests.md`](digests.md#digestible-what-a-person-should-be-told) |
 | The registrations, secrets, and the zero-copy definition | [`provider-apps.md`](provider-apps.md) |
@@ -1800,7 +1798,7 @@ reprocessing. Oversized ingress commits directly through canonical admission;
 large matched deliveries reload canonical context. The meeting-notes skill owns
 lookup guidance. [`agent-attachments.md`](agent-attachments.md) owns Gmail PDF
 authorization, [`workstream-durable-object.md`](workstream-durable-object.md)
-owns roster storage, and [`suggested-work.md`](suggested-work.md) owns admission.
+owns roster storage.
 
 **Why:** Real recipient lists exceeded the old schema and the displayed error
 lost the cause. Calendar polling omitted attached transcript Docs that event

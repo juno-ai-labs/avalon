@@ -64,7 +64,6 @@ import { admitExternalEventWithSemanticGate } from "../services/semantic-trigger
 import type { AuthContext } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { consumeGitHubDeliveryMessage, isGitHubDeliveryQueueMessage } from "../services/github-routing-service";
-import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { isRetirementRefusal } from "../durable-objects/object-retirement";
@@ -1453,9 +1452,7 @@ export async function processConnectorEvent(
   const activity = activityRowFromWorkspaceEvent(event);
   env = withWorkspaceRuntimeDatabase(env, activity.workspace_id);
   // Match first and ask WorkspaceDO for its durable claim witness. The list of
-  // deliveries is only the work still pending; a retry after those deliveries
-  // settle must still know the activity was claimed and keep it out of
-  // Suggested Work.
+  // deliveries is only the work still pending.
   const workspace = await workspaceDirectory(env, asWorkspaceId(activity.workspace_id));
   // Parsed on this side: the delivery carries the event's metadata, whose
   // open shape the RPC type system cannot name, so the stub's answer is
@@ -1464,9 +1461,6 @@ export async function processConnectorEvent(
     workspaceId: activity.workspace_id,
     eventId: activity.id,
   }));
-  const opportunity = matched.matched
-    ? "claimed"
-    : await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
   await projectActivityEvent(env, activity);
   await Promise.all(matched.deliveries.map((delivery) => sendConnectorEventDelivery(env, delivery)));
   logInfo(env, "connector_event_processing_completed", {
@@ -1477,10 +1471,6 @@ export async function processConnectorEvent(
     connector_event_id: activity.id,
     deterministic_route_claimed: matched.matched,
     deterministic_delivery_count: matched.deliveries.length,
-    // What Suggested Work did with it, not merely whether it was offered: an
-    // event whose type is excluded from candidacy is offered and declined.
-    opportunity_enqueued: opportunity === "enqueued",
-    opportunity_outcome: opportunity,
     outcome: "processed",
   });
 }

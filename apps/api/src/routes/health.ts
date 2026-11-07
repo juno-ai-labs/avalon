@@ -126,11 +126,9 @@ healthRoutes.get("/", async (c) => {
       };
   checks.workflows = {
     ok: typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function"
-      && typeof c.env.CONNECTOR_EVENT_WORKFLOW?.create === "function"
-      && typeof c.env.WORK_OPPORTUNITY_WORKFLOW?.create === "function",
+      && typeof c.env.CONNECTOR_EVENT_WORKFLOW?.create === "function",
     message: typeof c.env.CONNECTOR_POLL_WORKFLOW?.create === "function"
       && typeof c.env.CONNECTOR_EVENT_WORKFLOW?.create === "function"
-      && typeof c.env.WORK_OPPORTUNITY_WORKFLOW?.create === "function"
       ? "bindings available"
       : "binding unavailable",
   };
