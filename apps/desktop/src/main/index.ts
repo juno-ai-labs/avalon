@@ -3270,7 +3270,11 @@ function emitDeepLink(rawUrl: string, entrypoint: DesktopDeepLinkEntrypoint = 'd
     // A Space, Channel, Breakout or Thread link opens nothing now; say so, as
     // the site's handoff page and the web app do, rather than drop it. It can
     // arrive before `ready` on a cold launch, and a window cannot open before.
-    if (isRetiredDeepLink(rawUrl)) void app.whenReady().then(() => createDeepLinkErrorWindow(RETIRED_LINK_MESSAGE));
+    if (isRetiredDeepLink(rawUrl)) {
+      void app.whenReady()
+        .then(() => createDeepLinkErrorWindow(RETIRED_LINK_MESSAGE))
+        .catch((error: unknown) => logWarn('rally', 'could not show the retired-link notice', error));
+    }
     return false;
   }
   sendDeepLink(deepLink, entrypoint);

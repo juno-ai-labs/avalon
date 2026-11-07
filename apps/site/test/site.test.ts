@@ -91,6 +91,8 @@ describe('public Rally site', () => {
       '/app/workspaces/enterprise/00000000-0000-7000-8000-000000000009/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30',
     )).toBe('/app/:retired');
     expect(normalizedTelemetryPathname('/app/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30')).toBe('/app/:retired');
+    expect(normalizedTelemetryPathname('/app/workspaces/global/00000000-0000-7000-8000-000000000009'))
+      .toBe('/app/:unrecognized');
     expect(normalizedTelemetryPathname('/app/global/private-org/cv')).toBe('/app/:unrecognized');
     expect(normalizedTelemetryPathname('/trust/privacy/')).toBe('/trust/privacy/');
     expect(sitePageForPath('/trust')).toBe('legal');
