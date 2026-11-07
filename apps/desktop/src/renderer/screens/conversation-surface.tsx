@@ -926,7 +926,7 @@ export function WorkstreamErrorState({
   description: string;
   onRetry: () => void;
   /** What could not be opened, for the title: a work stream or an automation. */
-  parentNoun?: 'channel' | 'automation';
+  parentNoun?: 'channel' | 'automation' | 'Canvas';
   workstreamId: string;
 }): React.JSX.Element {
   const copyWorkstreamId = (): void => {
@@ -951,11 +951,11 @@ export function WorkstreamErrorState({
       </div>
       <EmptyState
         action={<div className="empty-state-actions">
-          <ErrorNotice detailsLabel="Connection details" title={`${parentNoun === 'automation' ? 'Sidekick' : 'Thread'} could not be opened`}>{description}</ErrorNotice>
+          <ErrorNotice detailsLabel="Connection details" title={`${parentNoun === 'automation' ? 'Sidekick' : parentNoun === 'Canvas' ? 'Canvas' : 'Thread'} could not be opened`}>{description}</ErrorNotice>
           <Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>
         </div>}
         description="Try opening it again."
-        title={parentNoun === 'automation' ? 'Sidekick' : 'Thread'}
+        title={parentNoun === 'automation' ? 'Sidekick' : parentNoun === 'Canvas' ? 'Canvas' : 'Thread'}
       />
     </div>
   );
@@ -1427,7 +1427,7 @@ function ConversationSurfaceContent({
   const parentDetailQueryKey = useMemo(() => workstreamDetailQueryKey(id, '0'), [id]);
   const transcriptQueryKey = useMemo(() => orderedTranscriptQueryKey(id, substreamId), [id, substreamId]);
   const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
-  const parentNoun = parentKind === 'automation' ? 'automation' : 'channel';
+  const parentNoun = parentKind === 'automation' ? 'automation' : parentKind === 'canvas' ? 'Canvas' : 'channel';
   const navigate = useNavigate();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -3706,7 +3706,9 @@ function ConversationSurfaceContent({
               title="Ready to begin"
               description={parentKind === 'automation'
                 ? 'Tell your Sidekick what you’d like help with. You can ask for changes as you go.'
-                : 'Send a message to start work in this thread.'}
+                : parentKind === 'canvas'
+                  ? 'Ask Rally for what you want to make. Everyone in this Canvas sees the conversation.'
+                  : 'Send a message to start work in this thread.'}
             />
           ) : (
             <MessageFeed
@@ -3783,6 +3785,8 @@ function ConversationSurfaceContent({
             api={api ?? undefined}
             placeholder={parentKind === 'automation'
               ? 'Ask your Sidekick…'
+              : parentKind === 'canvas'
+                ? 'Ask Rally or the people here…'
               // A name still being chosen is not one to address yet.
               : displayedDetail.titleStatus === 'naming' || !displayedDetail.title
                 ? 'Message the thread…'
