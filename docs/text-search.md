@@ -366,7 +366,7 @@ reloaded from a canonical source.
 ## Invariants
 
 - Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
-- The searcher's audience groups decide which rows member search returns: a row is a candidate only when its `audience` shares one of them. This reverses the earlier rule that an index attribute never grants access, deliberately and only for search (see the 2026-09-28 changelog entry). The groups are computed live on every search by `readSearchAudience`, the only code that computes them. It decides each conversation through its parent's own `readableSubstreams`, and each Sidekick and connection through the predicates canonical authorization shares (`sidekickAdmits`, `connectionAdmits`): a Sidekick's group goes to its author, the person it runs as, the people it is shared with, and for an Organization Sidekick every member, its viewer admission's rule. A Canvas's Chat group, `conversation:<canvasId>/0`, goes to whoever `canvasReaderAllows` lets open the Canvas. Search adds one narrowing of its own (a guest never holds a workspace connection). The attribute still grants nothing beyond the excerpt: opening a row keeps its own canonical check. Scope prefilters remain an optimization, and `connection_id` grants nothing.
+- The searcher's audience groups decide which rows member search returns: a row is a candidate only when its `audience` shares one of them. This reverses the earlier rule that an index attribute never grants access, deliberately and only for search (see the 2026-09-28 changelog entry). The groups are computed live on every search by `readSearchAudience`, the only code that computes them. It decides a Canvas's Chat through `canvasReaderAllows`, and each Sidekick and connection through the predicates canonical authorization shares (`sidekickAdmits`, `connectionAdmits`): a Sidekick's group goes to its author, the person it runs as, the people it is shared with, and for an Organization Sidekick every member, its viewer admission's rule. A Canvas's Chat group, `conversation:<canvasId>/0`, goes to whoever `canvasReaderAllows` lets open the Canvas. Search adds one narrowing of its own (a guest never holds a workspace connection). The attribute still grants nothing beyond the excerpt: opening a row keeps its own canonical check. Scope prefilters remain an optimization, and `connection_id` grants nothing.
 - The response never reports what it omitted. A failed group read fails the search (the route's 503); it never returns an unfiltered page.
 - A row without its display attributes, or with `archived` set, is never returned. Member retrieval filters on `archived Eq false`, which a null attribute does not match, so neither kind consumes a candidate page; the read path checks the same value again on every row it renders. Omission is the safe failure; nothing falls back to a canonical reload.
 - Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one; the pipeline's post-write fence retries an upsert whose display changed underneath it, and the patch job re-reads the display after patching and retries when it changed, so two overlapping deliveries for one conversation converge on the newest state rather than the last to run.
@@ -720,12 +720,24 @@ but no person held that group, so no Canvas message reached member search. The
 person side is read on every search, so granting it needs no row rewritten.
 
 **Considered and rejected:** Bumping `rally-search-v3` to a new namespace, as a
-"Version skew" change would. No row's shape changes here, and there is no
-reindex operation: a new namespace would empty search until each source next
-mutated. Channel, Thread and Breakout rows stay in the namespace, unreadable,
-since no person holds their groups any longer; they are removed when their
-sources' retirement deletes them, or by a namespace bump the day one is needed
-for another reason, followed by a canonical-source re-projection.
+"Version skew" change would. A bump composes with the existing re-projection
+passes (WorkspaceDO migration 47 re-publishes resources by setting
+`resource_search_versions.pending`; conversation-outbox migrations 52, 53 and
+70 re-queue every committed turn), but it would re-embed every row of every
+Organization, with search empty until those passes land, for a change that
+alters no row's shape.
+
+**Consequences:** Channel, Thread and Breakout rows stay in the namespace,
+unreadable because no person holds their groups any longer. Nothing deletes
+them: a retired conversation's Turbopuffer rows have no deleter, and Channel
+message rows never had one. A stale `conversation:<threadId>/0` row stays
+unreachable only because D1 `workstreams` still anchors every Thread id and
+`CanvasService.create` refuses an anchored id, so no Canvas can take a Thread's
+id and inherit its rows; a cleanup that drops Thread rows from `workstreams`
+must bump the namespace first. The authorization projection has no trigger on
+a Canvas's or Sidekick's audience and no read-path consumer, so its snapshots
+do not follow audience changes; member search computes the audience live, which
+is what makes that safe.
 
 ### 2026-11-07 — A Sidekick's search group follows its own audience
 

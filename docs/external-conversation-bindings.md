@@ -18,14 +18,14 @@ this document is what exists.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/workspace-external-binding-protocol.ts` | Every typed request and result: paths, targets, suspension reasons, the resolution outcomes, claims, room links, outbound records, moves. |
+| `apps/api/src/durable-objects/workspace-external-binding-protocol.ts` | Every typed request and result: paths, targets, suspension reasons, the resolution outcomes, claims, outbound records, moves. |
 | `apps/api/src/durable-objects/workspace-external-binding-storage.ts` | `ExternalConversationBindingStorage`, the only code that reads or writes `external_conversation_bindings`, and migration 85 (`EXTERNAL_CONVERSATION_BINDINGS_MIGRATION`). `externalPathKey` builds every stored key. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The binding RPCs (`resolveExternalConversation`, `linkExternalRoom`, `recordOutboundExternalConversationBinding`, `suspend…`, `reactivate…`, `move…`, `latestOutboundExternalConversation`), the thread claim inside `reserveChannelInSpaces`, Sidekick deletion suspending its bindings, and bound events claimed in `matchExternalEventDestinations`. |
+| `apps/api/src/durable-objects/workspace-do.ts` | The binding RPCs (`resolveExternalConversation`, `recordOutboundExternalConversationBinding`, `suspend…`, `reactivate…`, `move…`, `latestOutboundExternalConversation`), the thread claim inside `reserveChannelInSpaces`, Sidekick deletion suspending its bindings, and bound events claimed in `matchExternalEventDestinations`. |
 | `apps/api/src/durable-objects/workspace-slack-storage.ts` | `enqueueSlackSourceJoins`: the join jobs a saved Sidekick's Slack sources need, which WorkspaceDO dispatches from `applyExternalEventRegistrations`. |
 | `apps/api/src/durable-objects/external-binding-outbox.ts` | The SubstreamAgent `durable_outbox` channel `external_conversation_binding_v1` that carries a run's outbound binding from its tool receipt to WorkspaceDO. |
 | `apps/api/src/durable-objects/workstream-tool-receipt-storage.ts` | `complete` enqueues the outbound binding in the receipt's own transaction. |
 | `apps/api/src/services/external-binding-claims.ts` | The one settlement of a Channel's thread claim: the `binding_refused` mapping, release on failure, activation after. |
-| `apps/api/src/services/slack-agent-service.ts` | Slack ingress: `resolveBinding`, the lifecycle events, `linkRoom`, delivery to a run child, the one-to-one DM thread prompt, and the Sidekick-source join. |
+| `apps/api/src/services/slack-agent-service.ts` | Slack ingress: `resolveBinding`, the lifecycle events, delivery to a run child, the one-to-one DM thread prompt, and the Sidekick-source join. |
 | `packages/connectors/src/slack.ts` | `slackInstallationId`, `slackMessagePath`, `slackExternalRoom`, `send_message` returning `externalConversation`, and the binding key written into activity metadata. |
 | `config/provider-apps/slack.json` | The lifecycle and `message.mpim` event subscriptions. |
 
