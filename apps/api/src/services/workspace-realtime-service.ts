@@ -150,9 +150,8 @@ export function workspaceSyncPublicationsForMutation(
     pathname.startsWith("/automations")
     || pathname.startsWith("/automation-subscriptions")
     || pathname.startsWith("/automation-templates")
-  ) return organization("automations", "workstream_directory");
-  if (pathname.startsWith("/notes")) return organization("notes", "resources");
-  if (pathname.startsWith("/resources")) return organization("resources", "workstream_directory");
+  ) return organization("automations");
+  if (pathname.startsWith("/resources")) return organization("resources");
   // A person's own analytics choice.
   if (pathname.startsWith("/telemetry/preference")) return [{ topics: ["viewer_preferences"], audience: ACTOR }];
   return [];

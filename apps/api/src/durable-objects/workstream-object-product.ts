@@ -543,7 +543,7 @@ export class WorkstreamObjectProductService {
     sql: SqlStorage,
     auth: AuthContext,
     operationId: string,
-    command: "reorder_pending_inputs" | "stop_harness" | "set_workstream_appearance",
+    command: "reorder_pending_inputs" | "stop_harness",
     requestHash: string,
     resultHash: string,
     now: number,

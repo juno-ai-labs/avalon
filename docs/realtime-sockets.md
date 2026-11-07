@@ -341,15 +341,15 @@ connections in several workspaces, so it passes `audienceUserIds` itself, per
 workspace: `connector_connections` and `resources` go to everyone when any
 matched connection there is the Organization's, and otherwise only to the
 owners of the personal ones. A matched connection with no owner counts as
-the Organization's. `activity` goes to the whole Organization.
+the Organization's.
 
 **Retired: Thread and Channel listing.** `list_workstreams`
 (`workspace_workstream_page`), `space_channels` (`workspace_space_channels`),
 `channel_rails` (`workspace_channel_rails`) and the foreground-visit
 `workspace_workstream_recency` frame listed Threads and Channels, which the
-Canvases and Sidekicks pivot removed. WorkspaceDO ignores the three commands
-(no client sends them; a reply would only name what no longer exists), and the
-sidebar's `workstreams` page is always empty until the contract drops it.
+Canvases and Sidekicks pivot removed. The contract no longer has them, and the
+sidebar is the Sidekick and Canvas lists alone (see
+[`websocket-architecture.md`](websocket-architecture.md#changelog), 2026-11-07).
 
 A guest's socket is shaped by the same rules as a member's, with
 Organization-wide scope admitting only members. The Canvas list and
@@ -404,31 +404,9 @@ They are deliberately not a `workspace_sync` topic broadcast: two people in the
 same object may match different Flagship rules, so WorkspaceDO evaluates once
 per connected user and sends only to that user's sockets.
 
-A person joining or leaving a Channel or Breakout is sent as
-`workspace_reach_changed`, naming only the people and never the conversation.
-WorkspaceDO raises it where a directory projection flips a viewer's
-`is_participant`: the Channel viewer write and the Breakout viewer write, which
-every membership path reaches (direct add and remove, mention seating, Space
-sources, scope grants, Breakout participant changes), and where an operator's
-impersonation relationships are granted or revoked. It is addressed rather
-than broadcast: a socket hears a user id only when its own user is that person
-or holds an active impersonation relationship to them. It is not a
-`workspace_sync` topic, because the topic enum is closed and a new value would
-fail every older desktop's subscribe answer; an unknown event `type` is ignored
-instead. It is not on the waterline or replayed, so a listener rereads on every
-subscribe answer. Two clients listen. The desktop's own workspace socket rereads the
-conversation directory (`shared-navigation`) on it: Channel rows and Space
-pages already move on the same flip, but the directory says which conversation
-a Breakout-only Channel opens on, and without the reread a new grant's row
-opened on Main. `watchWorkspaceReach` in
-`@rally/contracts/workspace-reach-watch` is the listen-only socket for a host
-with no workspace socket of its own: it subscribes, discards the sidebar, and
-reports only this event and subscribe answers, with a diagnostic hook the host
-logs when it cannot connect. No shipped host holds one since Sideline was
-removed; the browser client uses the full workspace socket. It is a filter
-over `watchWorkspaceSocket` in the same module, the transport alone, which the
-desktop's main process uses to hold the Channel directory behind the menu bar
-([`menu-bar.md`](menu-bar.md)).
+`workspace_reach_changed`, which told a socket that a person joined or left a
+Channel or Breakout, is retired with them, and with it `watchWorkspaceReach`,
+its listen-only host.
 
 After a plan change, WorkspaceDO sends `workspace_usage`, the new usage meter,
 to every member socket, outside the waterline and never replayed.

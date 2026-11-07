@@ -32,17 +32,7 @@ import {
   sendWorkstreamMentionSlack,
   sendWorkstreamParticipantAddedSlack,
 } from "./slack-notification-service";
-import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { workspaceRegionalDatabase } from "./workspace-runtime-database";
-
-function workspaceTopicsForEffect(
-  effect: ParentEffectEnvelope["effect"],
-) {
-  if (effect.kind === "activity_event") {
-    return ["activity"] as const;
-  }
-  return ["activity", "workstream_directory"] as const;
-}
 
 interface NotificationRecipientIdentity {
   recipient_email: string;
@@ -168,7 +158,6 @@ export async function applyWorkstreamRegionalEffect(
     });
   }
 
-  await publishWorkspaceSync(env, message.workspaceId, workspaceTopicsForEffect(message.effect));
   return {
     replayed: applied.replayed,
     notificationIntentId: applied.notificationIntentId,

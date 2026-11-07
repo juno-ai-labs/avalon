@@ -6309,10 +6309,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         });
         return;
       }
-      if (command.type === "set_workstream_appearance") {
-        // A Thread's icon and colour; a Canvas's and a Sidekick's conversation has none.
-        throw new ApiError(403, "main_conversation_required", "This conversation has no appearance to change");
-      }
       if (command.type === "reorder_pending_inputs") {
         const result = await this.product.reorderPendingInputsForAdmittedSocket(
           auth,
@@ -8299,8 +8295,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       workstream,
       transcript,
       pendingInputChunkCount: pendingInputChunks.length,
-      // A Breakout's inherited context was the only producer of these chunks.
-      initialContextChunkCount: 0,
       activeStreams,
       activeCompaction,
       activeInferenceDelays: workstream.harnessStatus === "running"

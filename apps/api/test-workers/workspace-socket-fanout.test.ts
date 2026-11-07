@@ -156,19 +156,19 @@ describe("a workspace sync topic's audience", () => {
     const ownerSocket = await connect(owner);
     const memberSocket = await connect(member);
     const waterline = ownerSocket.answer.waterline;
-    const told = ownerSocket.stream.next(syncWith("digest_schedule"), "digest invalidation");
+    const told = ownerSocket.stream.next(syncWith("viewer_preferences"), "preference invalidation");
 
-    await organization().publishSync(["digest_schedule"], workspaceId, "wnam", { audienceUserIds: [owner] });
+    await organization().publishSync(["viewer_preferences"], workspaceId, "wnam", { audienceUserIds: [owner] });
 
-    expect((await told).topics).toEqual(["digest_schedule"]);
+    expect((await told).topics).toEqual(["viewer_preferences"]);
     await drained(memberSocket);
-    expect(memberSocket.stream.received.filter(syncWith("digest_schedule"))).toEqual([]);
+    expect(memberSocket.stream.received.filter(syncWith("viewer_preferences"))).toEqual([]);
     close(ownerSocket, memberSocket);
 
     // Both were away for it; only its owner is told on the way back.
     const ownerAgain = await connect(owner, waterline);
     const memberAgain = await connect(member, waterline);
-    expect(ownerAgain.answer).toMatchObject({ reason: "change", topics: ["digest_schedule"] });
+    expect(ownerAgain.answer).toMatchObject({ reason: "change", topics: ["viewer_preferences"] });
     expect(memberAgain.answer).toMatchObject({ reason: "resume", topics: [] });
     close(ownerAgain, memberAgain);
   });
@@ -179,13 +179,29 @@ describe("a workspace sync topic's audience", () => {
     const waterline = away.answer.waterline;
     close(away);
 
-    await organization().publishSync(["notes"], workspaceId, "wnam");
-    const latest = await organization().publishSync(["digest_schedule"], workspaceId, "wnam", { audienceUserIds: [owner] });
+    await organization().publishSync(["resources"], workspaceId, "wnam");
+    const latest = await organization().publishSync(["viewer_preferences"], workspaceId, "wnam", { audienceUserIds: [owner] });
 
     const back = await connect(member, waterline);
     // Left at the member's own newest event, the cursor would trail every
     // later event for somebody else and fall out of the pruning window.
-    expect(back.answer).toMatchObject({ reason: "change", topics: ["notes"], waterline: latest });
+    expect(back.answer).toMatchObject({ reason: "change", topics: ["resources"], waterline: latest });
+    close(back);
+  });
+
+  it("drops a retired topic from a stored event on replay, and still answers the resume", async () => {
+    await organization().publishSync(["terminal_policy"], workspaceId, "wnam");
+    const away = await connect(member);
+    const waterline = away.answer.waterline;
+    close(away);
+    // An event written before Activity and the Thread directory were retired.
+    await runInDurableObject(organization(), (_instance, state) => {
+      state.storage.sql.exec(`INSERT INTO workspace_sync_events(event_id, topics_json, audience_json, occurred_at)
+        VALUES (?, ?, NULL, ?)`, crypto.randomUUID(), JSON.stringify(["activity", "workstream_directory", "resources"]), Date.now());
+    });
+
+    const back = await connect(member, waterline);
+    expect(back.answer).toMatchObject({ reason: "change", topics: ["resources"] });
     close(back);
   });
 

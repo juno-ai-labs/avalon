@@ -1,4 +1,3 @@
-import { WorkspaceSidekickActivityEventSchema, type SidekickActivityTarget } from "@rally/contracts";
 import { WorkspaceConversationViewEventSchema, type WorkspaceConversationViewEvent } from '@rally/contracts/conversation-view';
 import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
@@ -138,7 +137,6 @@ export interface SidebarConnect {
 }
 
 interface WorkspaceSocketContextValue {
-  watchSidekickActivity(target: SidekickActivityTarget): () => void;
   requestConversationView(parentId: string, substreamId: string,
     receive: (event: WorkspaceConversationViewEvent) => void): () => void;
   state: WorkspaceSocketState;
@@ -169,22 +167,12 @@ function invalidateTopic(
     ],
     connector_oauth_attempts: [],
     terminal_policy: [['terminal-workspace-settings']],
-    digest_schedule: [['digest-schedule']],
     // The lists themselves are pushed whole by WorkspaceDO, so the topic no
     // longer names them — it carries REST details and the broader Sidekick library.
     automations: [
       ['automation'], ['automation-draft'], ['automation-runs'], ['sidekicks-library'],
     ],
-    sidekick_activity: [],
-    notes: [['note']],
-    // Projects, Activity, suggested work and the Thread directory are gone.
-    // These topics survive in the contract's closed enum and can still arrive
-    // from a server mid-deployment, but they name nothing a client reads.
-    projects: [],
     resources: [['resources'], ['workstream-context']],
-    activity: [],
-    work_opportunities: [],
-    workstream_directory: [],
     viewer_preferences: [['telemetry-preference'], ['member-preferences']],
     feature_flags: [['feature-flags']],
   };
@@ -254,24 +242,6 @@ export function WorkspaceSocketProvider({
       if (conversationViewRequests.current.delete(requestId)) cancelRelayedConversationViewRef.current(requestId);
     };
   }, []);
-  const sidekickActivityTargets = useRef(new Map<string, { target: SidekickActivityTarget; observers: number }>());
-  const sidekickActivityRevision = useRef(0);
-  const sendSidekickActivityRef = useRef<() => void>(() => undefined);
-  const watchSidekickActivity = useCallback((target: SidekickActivityTarget): (() => void) => {
-    const key = JSON.stringify(target);
-    const existing = sidekickActivityTargets.current.get(key);
-    if (existing) existing.observers += 1;
-    else {
-      sidekickActivityTargets.current.set(key, { target, observers: 1 });
-      sendSidekickActivityRef.current();
-    }
-    return () => {
-      const entry = sidekickActivityTargets.current.get(key);
-      if (!entry || --entry.observers > 0) return;
-      sidekickActivityTargets.current.delete(key);
-      sendSidekickActivityRef.current();
-    };
-  }, []);
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
 
@@ -326,16 +296,6 @@ export function WorkspaceSocketProvider({
     let applicationForegrounded = false;
     let applicationFocusObservation = 0;
     let windowForegrounded = document.visibilityState === 'visible' && document.hasFocus();
-
-    let activitySentOn: WebSocket | null = null;
-    sendSidekickActivityRef.current = () => {
-      if (!subscribed || socket?.readyState !== WebSocket.OPEN) return;
-      if (sidekickActivityTargets.current.size === 0 && activitySentOn !== socket) return;
-      activitySentOn = socket;
-      sidekickActivityRevision.current += 1;
-      socket.send(JSON.stringify({ type: 'sidekick_activity', revision: sidekickActivityRevision.current,
-        targets: [...sidekickActivityTargets.current.values()].map(({ target }) => target) }));
-    };
 
     sendConversationViewRequestsRef.current = () => {
       if (!subscribed || !conversationViewsAvailable || socket?.readyState !== WebSocket.OPEN) return;
@@ -445,12 +405,6 @@ export function WorkspaceSocketProvider({
       }
       setSidebarConnect((current) => ({ generation: (current?.generation ?? 0) + 1 }));
     };
-    const clearAgentActivity = (): void => {
-      // Running is a live claim: retain no count across a lost producer.
-      // Reset preserves observers; reconnect supplies each target's current count.
-      void queryClient.resetQueries({ queryKey: ['workstream-background-agents'] });
-      void queryClient.resetQueries({ queryKey: ['sidekick-activity'] });
-    };
     /** What every end of a socket's life resets, whoever ended it. */
     const releaseSocket = (): void => {
       clearSocketTimers();
@@ -458,7 +412,6 @@ export function WorkspaceSocketProvider({
       conversationViewsAvailable = false;
       socket = null;
       setPresenceUserIdsByWorkstream({});
-      clearAgentActivity();
     };
     const cancelTicketAttempt = (): void => {
       connectGeneration += 1;
@@ -577,17 +530,6 @@ export function WorkspaceSocketProvider({
           } catch {
             return;
           }
-          const sidekickActivity = safeParseSocketEvent(WorkspaceSidekickActivityEventSchema, decoded);
-          if (sidekickActivity.success) {
-            const event = sidekickActivity.data;
-            if (event.revision === sidekickActivityRevision.current
-              && sidekickActivityTargets.current.has(JSON.stringify(event.target))) {
-              const key = ['sidekick-activity', event.target.parentKind, event.target.parentId, event.target.substreamId];
-              queryClient.setQueryData<{ count: number; waterline: number }>(key, (current) =>
-                current && current.waterline > event.waterline ? current : { count: event.count, waterline: event.waterline });
-            }
-            return;
-          }
           const conversationView = safeParseSocketEvent(WorkspaceConversationViewEventSchema, decoded);
           if (conversationView.success) {
             const event = conversationView.data;
@@ -609,7 +551,6 @@ export function WorkspaceSocketProvider({
               subscribed = true;
               sendPresence();
               sendConversationViewRequestsRef.current();
-              sendSidekickActivityRef.current();
             }
             if (sync.data.viewerPreferences) {
               // Cancelled first: a REST read started before this answer holds
@@ -746,7 +687,6 @@ export function WorkspaceSocketProvider({
               ['workspace_sync', 'sync', sync],
               ['workspace_presence', 'presence', presence],
               ['workspace_feature_flags', 'feature flags', featureFlags],
-              ['workspace_sidekick_activity', 'sidekick activity', sidekickActivity],
               ['workspace_canvas_list', 'canvas list', canvasList],
               ['workspace_sidebar_list', 'sidebar list', sidebarList],
               ['workspace_resource_versions', 'resource versions', resourceVersions],
@@ -874,7 +814,6 @@ export function WorkspaceSocketProvider({
       canvasCacheMirror?.stop();
       releaseData();
       sendConversationViewRequestsRef.current = () => undefined;
-      sendSidekickActivityRef.current = () => undefined;
       window.removeEventListener('online', online);
       window.removeEventListener('offline', offline);
       stopPowerState();
@@ -1046,11 +985,9 @@ export function WorkspaceSocketProvider({
       setForegroundWorkstreamId,
       sidebarConnect,
       requestConversationView,
-      watchSidekickActivity,
     }),
     [
       requestConversationView,
-      watchSidekickActivity,
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,
       sidebarConnect,

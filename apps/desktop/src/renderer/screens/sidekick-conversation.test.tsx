@@ -41,7 +41,7 @@ vi.mock('../lib/use-workstream-socket', async (importOriginal) => ({
   ...await importOriginal<typeof UseWorkstreamSocketModule>(),
   useWorkstreamSocket: () => ({
     activeCompaction: null, activeInferenceDelays: [], createMessage,
-    setAppearance: vi.fn(), requestSnapshot: vi.fn(), retryOpening: vi.fn(),
+    requestSnapshot: vi.fn(), retryOpening: vi.fn(),
     sendReady: true, state: 'connected', workspaceSocketState: 'connected',
   }),
 }));
