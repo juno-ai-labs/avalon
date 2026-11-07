@@ -21,13 +21,6 @@ import {
   createTestWorkspaceDO,
   workspaceObjectRpcs,
 } from "./helpers/workspace-object-rpcs";
-import {
-  seedWorkstreamObjectRoot,
-  testSubstreamAgentsBinding,
-  testWorkstreamObjectStore,
-  workstreamObjectAll,
-  workstreamObjectRootRow,
-} from "./helpers/durable-authority";
 
 const NOW = Date.parse("2026-08-02T18:00:00.000Z");
 const SECRET_BYTES = new TextEncoder().encode("avalon-resend-webhook-test-secret-v1");
@@ -76,14 +69,6 @@ interface RouteReceipt {
   errorJson: string | null;
 }
 
-interface RegionalReceipt {
-  processedAt: string | null;
-  errorJson: string | null;
-  payloadRef: string | null;
-  leaseToken: string | null;
-  leaseExpiresAt: string | null;
-}
-
 class FakeDatabase {
   prepareCalls = 0;
   fullAddressRegistry = true;
@@ -97,14 +82,6 @@ class FakeDatabase {
   }>();
   readonly routeReceipts = new Map<string, RouteReceipt>();
   readonly activeMembers = new Map<string, string>();
-  /**
-   * The work stream's own object.
-   *
-   * The transcript and the identity gate are its authorities' now, so what
-   * this ingestion wrote is read back from the real storage rather than from
-   * another arm of the matcher below.
-   */
-  readonly objectStore: DatabaseSync = objectStoreFor();
   /**
    * The workspace's own object.
    *
@@ -125,46 +102,6 @@ class FakeDatabase {
     ).all() as Array<Record<string, unknown>>;
   }
 
-  emailReceipt(resendEmailId: string, workstreamId: string): RegionalReceipt | undefined {
-    const row = this.workspaceObject.objectDatabase.prepare(
-      `SELECT processed_at, error_json, payload_ref, lease_token, lease_expires_at
-         FROM workstream_email_receipts WHERE resend_email_id = ? AND workstream_id = ?`,
-    ).get(resendEmailId, workstreamId) as Record<string, string | null> | undefined;
-    if (!row) return undefined;
-    return {
-      processedAt: row.processed_at ?? null,
-      errorJson: row.error_json ?? null,
-      payloadRef: row.payload_ref ?? null,
-      leaseToken: row.lease_token ?? null,
-      leaseExpiresAt: row.lease_expires_at ?? null,
-    };
-  }
-
-  seedEmailReceipt(resendEmailId: string, workstreamId: string, receipt: RegionalReceipt): void {
-    this.workspaceObject.objectDatabase.prepare(
-      `INSERT INTO workstream_email_receipts
-         (resend_email_id, workstream_id, workspace_id, svix_id, payload_ref,
-          received_at, processed_at, error_json, lease_token, lease_expires_at)
-       VALUES (?, ?, ?, 'seeded-svix', ?, '2026-08-02T17:59:00.000Z', ?, ?, ?, ?)`,
-    ).run(
-      resendEmailId,
-      workstreamId,
-      WORKSPACE_ID,
-      receipt.payloadRef,
-      receipt.processedAt,
-      receipt.errorJson,
-      receipt.leaseToken,
-      receipt.leaseExpiresAt,
-    );
-  }
-  readonly attachments: Array<{ workstreamId: string; resourceId: string }> = [];
-
-  recordAttachment(workstreamId: string, resourceId: string): void {
-    if (this.attachments.some((value) => (
-      value.workstreamId === workstreamId && value.resourceId === resourceId
-    ))) return;
-    this.attachments.push({ workstreamId, resourceId });
-  }
   prepare(sql: string): FakeStatement {
     this.prepareCalls += 1;
     return new FakeStatement(this, sql);
@@ -207,13 +144,6 @@ class FakeDatabase {
       expect(values[0]).toBe(WORKSPACE_ID);
       const userId = this.activeMembers.get(String(values[1]).toLowerCase());
       return userId ? { id: userId } : null;
-    }
-    if (sql.includes("FROM workstreams") && sql.includes("email_address")) {
-      return values[0] === WORKSTREAM_ID
-        && values[1] === WORKSPACE_ID
-        && String(values[2]).toLowerCase() === EMAIL_ADDRESS
-        ? { id: WORKSTREAM_ID, workspace_id: WORKSPACE_ID, email_address: EMAIL_ADDRESS }
-        : null;
     }
     throw new Error(`Unexpected first query: ${sql}`);
   }
@@ -303,14 +233,14 @@ describe("Resend inbound-email routing", () => {
     expect(database.prepareCalls).toBe(0);
   });
 
-  it("routes only the exact receiving domain to its regional work stream and deduplicates retries", async () => {
+  it("routes only the exact receiving domain to its regional Sidekick and deduplicates retries", async () => {
     const database = new FakeDatabase();
     database.routes.set(EMAIL_ADDRESS, {
       email_address: EMAIL_ADDRESS,
       region: "enterprise",
       workspace_id: WORKSPACE_ID,
-      workstream_id: WORKSTREAM_ID,
-      automation_subscription_id: null,
+      workstream_id: null,
+      automation_subscription_id: AUTOMATION_ID,
     });
     const dispatched: ResendRegionalEmailInput[] = [];
     const service = new ResendInboundEmailRoutingService(environment(database, "global"), {
@@ -335,7 +265,7 @@ describe("Resend inbound-email routing", () => {
     expect(dispatched).toEqual([expect.objectContaining({
       region: "enterprise",
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      automationSubscriptionId: AUTOMATION_ID,
       emailAddress: EMAIL_ADDRESS,
     })]);
 
@@ -355,15 +285,15 @@ describe("Resend inbound-email routing", () => {
       email_address: EMAIL_ADDRESS,
       region: "global",
       workspace_id: WORKSPACE_ID,
-      workstream_id: WORKSTREAM_ID,
-      automation_subscription_id: null,
+      workstream_id: null,
+      automation_subscription_id: AUTOMATION_ID,
     });
     database.routes.set(legacyAddress, {
       email_address: legacyAddress,
       region: "enterprise",
       workspace_id: "00000000-0000-7000-8000-000000000011",
-      workstream_id: "00000000-0000-7000-8000-000000000012",
-      automation_subscription_id: null,
+      workstream_id: null,
+      automation_subscription_id: "00000000-0000-7000-8000-000000000012",
     });
     const dispatch = vi.fn(async (region: Region, input: ResendRegionalEmailInput) => {
       void region;
@@ -396,8 +326,8 @@ describe("Resend inbound-email routing", () => {
       address_source: "migration",
       region: "enterprise",
       workspace_id: WORKSPACE_ID,
-      workstream_id: WORKSTREAM_ID,
-      automation_subscription_id: null,
+      workstream_id: null,
+      automation_subscription_id: AUTOMATION_ID,
     });
     const dispatched: ResendRegionalEmailInput[] = [];
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -420,11 +350,11 @@ describe("Resend inbound-email routing", () => {
       emailAddress: receivedAddress,
       localPart: LOCAL_PART,
       workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
+      automationSubscriptionId: AUTOMATION_ID,
     })]);
     expect(warning).toHaveBeenCalledWith(expect.objectContaining({
       event: "email_route_migration_domain_fallback",
-      target_type: "workstream",
+      target_type: "automation",
     }));
     warning.mockRestore();
   });
@@ -437,8 +367,8 @@ describe("Resend inbound-email routing", () => {
       email_address: legacyAddress,
       region: "enterprise",
       workspace_id: WORKSPACE_ID,
-      workstream_id: WORKSTREAM_ID,
-      automation_subscription_id: null,
+      workstream_id: null,
+      automation_subscription_id: AUTOMATION_ID,
     });
     const dispatch = vi.fn(async (region: Region, input: ResendRegionalEmailInput) => {
       void region;
@@ -477,7 +407,6 @@ describe("Resend inbound-email routing", () => {
       duplicate: false,
       messageId: null,
       resourceId: "resource",
-      workstreamId: "email-created-workstream",
       automationRunId: "email-created-run",
       input,
     }));
@@ -527,6 +456,30 @@ describe("Resend inbound-email routing", () => {
     expect(database.routeReceipts.get(SVIX_ID)).toMatchObject({
       routedAt: "2026-08-02T18:00:00.000Z",
       errorJson: JSON.stringify({ terminal: true, codes: ["email_automation_not_found"] }),
+    });
+  });
+
+  it("terminally acknowledges a retired Thread's route without dispatching it", async () => {
+    const database = new FakeDatabase();
+    database.routes.set(EMAIL_ADDRESS, {
+      email_address: EMAIL_ADDRESS,
+      region: "enterprise",
+      workspace_id: WORKSPACE_ID,
+      workstream_id: WORKSTREAM_ID,
+      automation_subscription_id: null,
+    });
+    const dispatch = vi.fn();
+    const service = new ResendInboundEmailRoutingService(environment(database, "global"), {
+      now: () => NOW,
+      dispatchInRegion: dispatch,
+    });
+    const raw = eventBody([EMAIL_ADDRESS]);
+
+    await expect(service.ingest(new TextEncoder().encode(raw), await signedHeaders(raw)))
+      .resolves.toEqual({ accepted: true, duplicate: false, ignored: true, routedCount: 0 });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(database.routeReceipts.get(SVIX_ID)).toMatchObject({
+      errorJson: JSON.stringify({ terminal: true, codes: ["email_thread_retired"] }),
     });
   });
 
@@ -654,8 +607,6 @@ describe("regional Resend email ingestion", () => {
     });
     // An automation's mail is the automation's: nothing lands in a work
     // stream's transcript and no work stream gets the resource attached.
-    expect(storedMessages(database)).toHaveLength(0);
-    expect(database.attachments).toEqual([]);
   });
 
   it("lets the automation refuse a stranger, after the message is kept for its receipt", async () => {
@@ -700,7 +651,6 @@ describe("regional Resend email ingestion", () => {
       workspaceId: WORKSPACE_ID,
       senderUserId: null,
     }));
-    expect(storedMessages(database)).toHaveLength(0);
   });
 
   it("reports an automation's replayed admission as a duplicate delivery", async () => {
@@ -738,82 +688,20 @@ describe("regional Resend email ingestion", () => {
     expect(admitInboundEmail).toHaveBeenCalledOnce();
   });
 
-  it("stores only safe untrusted text and attaches a resource without launching an agent", async () => {
+  it("refuses a Thread dispatch in flight across the deploy by name, before retrieving content", async () => {
     const database = new FakeDatabase();
-    const bucket = new FakeBucket();
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
-      id: RESEND_EMAIL_ID,
-      created_at: "2026-08-02T17:59:58.000Z",
-      from: "External Sender <outside@example.com>",
-      to: [EMAIL_ADDRESS],
-      cc: [],
-      bcc: [],
-      reply_to: ["reply@example.com"],
-      subject: "Quarterly update\r\nInjected: header",
-      text: null,
-      html: "<style>.hidden{display:none}</style><script>evil()</script><p>Hello &amp; welcome</p>",
-      message_id: "provider-message-id",
-      attachments: [{ id: "attachment", filename: "notes.txt", content_type: "text/plain" }],
-    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const fetcher = vi.fn();
     const service = new ResendRegionalEmailService(
-      environment(database, "enterprise", bucket),
+      environment(database, "enterprise", new FakeBucket()),
       { fetch: fetcher, now: () => NOW },
     );
 
-    await expect(service.ingest(regionalInput())).resolves.toEqual({
-      accepted: true,
-      duplicate: false,
-      messageId: expect.any(String),
-      resourceId: expect.any(String),
-    });
-    expect(fetcher).toHaveBeenCalledWith(
-      `https://api.resend.com/emails/receiving/${RESEND_EMAIL_ID}`,
-      expect.objectContaining({ method: "GET" }),
-    );
-    const stored = storedMessages(database);
-    expect(stored).toHaveLength(1);
-    expect(stored[0]).toMatchObject({
-      author_type: "system",
-      message_type: "system",
-      sequence_number: 1,
-    });
-    expect(String(stored[0]!.text_content)).toContain("Hello & welcome");
-    expect(String(stored[0]!.text_content)).toContain("Untrusted external email");
-    expect(String(stored[0]!.text_content)).not.toContain("evil");
-    expect(JSON.parse(String(stored[0]!.structured_content_json))).toMatchObject({
-      kind: "inbound_email",
-      untrusted: true,
-      attachmentCount: 1,
-    });
-    expect(database.attachments).toHaveLength(1);
-    // The append moved the work stream's own clock, which the retired counter
-    // update did as a statement of its own after the insert.
-    expect(workstreamObjectRootRow(
-      database.objectStore,
-      "last_people_activity_at, next_attention_ordinal",
-    )).toEqual({
-      last_people_activity_at: Date.parse("2026-08-02T18:00:00.000Z"),
-      next_attention_ordinal: 2,
-    });
-    const payload = [...bucket.values.values()][0]!;
-    expect(payload).toContain("Hello & welcome");
-    expect(payload).not.toContain("evil");
-    expect(payload).not.toContain('"html"');
-    // The canonical append publishes its own turn upsert at the object
-    // boundary. Ingestion must not emit a second, differently identified feed
-    // event for the same durable turn.
-
-    await expect(service.ingest(regionalInput())).resolves.toEqual({
-      accepted: true,
-      duplicate: true,
-      messageId: null,
-      resourceId: null,
-    });
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(storedMessages(database)).toHaveLength(1);
+    await expect(service.ingest(threadRegionalInput()))
+      .rejects.toMatchObject({ status: 404, code: "email_thread_retired" });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("validates the regional work-stream address before retrieving content", async () => {
+  it("validates the regional address before retrieving content", async () => {
     const database = new FakeDatabase();
     const fetcher = vi.fn();
     const service = new ResendRegionalEmailService(
@@ -822,7 +710,7 @@ describe("regional Resend email ingestion", () => {
     );
 
     await expect(service.ingest({
-      ...regionalInput(),
+      ...automationRegionalInput(),
       region: "global",
       emailAddress: `other-steady-luminous-otter@${DOMAIN}`,
     }))
@@ -830,66 +718,6 @@ describe("regional Resend email ingestion", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("rejects a concurrent delivery while its processing lease is active", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(NOW));
-    const database = new FakeDatabase();
-    database.seedEmailReceipt(RESEND_EMAIL_ID, WORKSTREAM_ID, {
-      processedAt: null,
-      errorJson: null,
-      payloadRef: null,
-      leaseToken: "other-worker",
-      leaseExpiresAt: "2026-08-02T18:05:00.000Z",
-    });
-    const fetcher = vi.fn();
-    const service = new ResendRegionalEmailService(
-      environment(database, "enterprise", new FakeBucket()),
-      { fetch: fetcher, now: () => NOW },
-    );
-
-    await expect(service.ingest(regionalInput()))
-      .rejects.toMatchObject({ status: 503, code: "email_processing_in_progress" });
-    expect(fetcher).not.toHaveBeenCalled();
-    expect(database.emailReceipt(RESEND_EMAIL_ID, WORKSTREAM_ID))
-      .toMatchObject({ leaseToken: "other-worker", leaseExpiresAt: "2026-08-02T18:05:00.000Z" });
-  });
-
-  it("atomically reclaims an expired processing lease after Worker interruption", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(NOW));
-    const database = new FakeDatabase();
-    database.seedEmailReceipt(RESEND_EMAIL_ID, WORKSTREAM_ID, {
-      processedAt: null,
-      errorJson: null,
-      payloadRef: null,
-      leaseToken: "interrupted-worker",
-      leaseExpiresAt: "2026-08-02T17:59:59.000Z",
-    });
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
-      id: RESEND_EMAIL_ID,
-      from: "outside@example.com",
-      to: [EMAIL_ADDRESS],
-      subject: "Recovered delivery",
-      text: "Continue after interruption",
-      attachments: [],
-    }), { status: 200, headers: { "content-type": "application/json" } }));
-    const service = new ResendRegionalEmailService(
-      environment(database, "enterprise", new FakeBucket()),
-      { fetch: fetcher, now: () => NOW },
-    );
-
-    await expect(service.ingest(regionalInput())).resolves.toMatchObject({
-      accepted: true,
-      duplicate: false,
-    });
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(database.emailReceipt(RESEND_EMAIL_ID, WORKSTREAM_ID))
-      .toMatchObject({
-        processedAt: "2026-08-02T18:00:00.000Z",
-        leaseToken: null,
-        leaseExpiresAt: null,
-      });
-  });
 });
 
 describe("Resend text normalization", () => {
@@ -929,7 +757,7 @@ describe("Resend text normalization", () => {
   });
 });
 
-/** Object stores opened for the identity gate, closed after each test. */
+/** Workspace object databases, closed after each test. */
 const identityStores: DatabaseSync[] = [];
 
 /** A fresh in-memory database whose close is owned by the shared afterEach. */
@@ -941,37 +769,7 @@ function registeredDatabase(): DatabaseSync {
 
 afterEach(() => {
   while (identityStores.length > 0) identityStores.pop()?.close();
-  // The lease tests pin the wall clock, because the workspace object compares
-  // a lease's expiry against its own clock rather than a caller-supplied one.
-  vi.useRealTimers();
 });
-
-/**
- * The work stream's own object, holding exactly what the routed gate matched
- * on: this fixture's identity, its address, and no archive. The transcript
- * this ingestion appends lands here too, which is why one store is shared by
- * both endpoints rather than made per call.
- */
-/** The canonical conversation turns this ingestion wrote. */
-function storedMessages(database: FakeDatabase) {
-  return workstreamObjectAll(
-    database.objectStore,
-    `SELECT id, client_message_id, author_type, message_type, content AS text_content,
-            structured_content_json, sequence_number
-       FROM canonical_conversation_turn_details ORDER BY sequence_number`,
-  );
-}
-
-function objectStoreFor(): DatabaseSync {
-  const store = testWorkstreamObjectStore();
-  identityStores.push(store);
-  seedWorkstreamObjectRoot(store, {
-    workstreamId: WORKSTREAM_ID,
-    workspaceId: WORKSPACE_ID,
-    emailAddress: EMAIL_ADDRESS,
-  });
-  return store;
-}
 
 function environment(
   database: FakeDatabase,
@@ -983,10 +781,6 @@ function environment(
 ): Env {
   const workspaceRpcs = {
     ...workspaceObjectRpcs(database.workspaceObject.instance, [
-      "claimInboundEmailReceipt",
-      "renewInboundEmailLease",
-      "settleInboundEmailProcessed",
-      "recordInboundEmailFailure",
       "upsertInboundEmailResource",
     ]),
     ...(automation.admitInboundEmail ? { sidekickAdmitInboundEmail: automation.admitInboundEmail } : {}),
@@ -996,29 +790,11 @@ function environment(
     get: () => workspaceRpcs,
     jurisdiction: (): Env["WORKSPACE_DOS"] => workspaceBinding,
   });
-  const agent = testSubstreamAgentsBinding(database.objectStore, {
-    extra: {
-      attachRuntimeResource: async (input: { workstreamId: string; resourceId: string }) => {
-        database.recordAttachment(input.workstreamId, input.resourceId);
-        return { status: 200, bodyJson: "{}" };
-      },
-    },
-  });
   return createTestEnv({
     DB: database,
     PAYLOADS: bucket,
-    // Attaching the inbound email's resource is the work stream object's write
-    // now, not a statement in this service's own batch. The stub records what
-    // the port sends so the assertions below stay on the attachment rather than
-    // on which database happened to receive it.
-    // The identity gate and the transcript append are the work stream object's
-    // own operations, run against a real object store by the shared stub, so
-    // this file asserts on what the storage classes wrote. Only the resource
-    // attachment stands in — it is what these tests are about.
-    SUBSTREAM_AGENTS: agent,
-    // The email receipt lease and the email's resource are typed methods on
-    // the workspace object; the real WorkspaceDO answers them over its own
-    // schema, so replay, takeover and settlement below are the object's.
+    // The email's resource is a typed method on the workspace object, which
+    // the real WorkspaceDO answers over its own schema.
     //
     // The Sidekick, hosted in the same object, decides an automation email in
     // one call. Only that call is doubled here; what it decides is proved in
@@ -1036,7 +812,8 @@ function environment(
   });
 }
 
-function regionalInput(): ResendRegionalEmailInput {
+/** The shape a Thread route dispatched before Threads were retired. */
+function threadRegionalInput(): ResendRegionalEmailInput {
   return {
     resendEmailId: RESEND_EMAIL_ID,
     svixId: SVIX_ID,

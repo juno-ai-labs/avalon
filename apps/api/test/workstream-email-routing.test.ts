@@ -1,6 +1,5 @@
 import "../../../tests/isolated-region";
-import type { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Region } from "@rally/contracts";
 import type { Env } from "../src/env";
 import type { ApiError } from "../src/lib/api-error";
@@ -8,31 +7,11 @@ import { allocateWorkstreamEmailAddressCandidate } from "../src/lib/workstream-e
 import {
   WorkstreamEmailRoutingService,
   type GlobalWorkstreamEmailRouterRpcBinding,
-  type WorkstreamEmailRoute,
-  type WorkstreamEmailRouteInput,
+  type AutomationEmailRoute,
+  type AutomationEmailRouteInput,
   type WorkstreamEmailRouterRpcResult,
 } from "../src/services/workstream-email-routing-service";
-import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestDurableObjectInstance, createTestEnv } from "./helpers/cloudflare-test";
-import {
-  executeWorkstreamObjectSql,
-  seedWorkstreamObjectRoot,
-  testIdentityOperationStub,
-  testWorkstreamObjectStore,
-  applyWorkstreamObjectRootFields,
-} from "./helpers/durable-authority";
-
-const openStores: DatabaseSync[] = [];
-
-afterEach(() => {
-  while (openStores.length > 0) openStores.pop()?.close();
-});
-
-/** One work stream's object database, closed with the test that opened it. */
-function objectStoreForTest(): DatabaseSync {
-  const store = testWorkstreamObjectStore();
-  openStores.push(store);
-  return store;
-}
+import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 
 const ADDRESS_KEY = "avalon-workstream-routing-test-key-v1";
 const DOMAIN = "automation.with-avalon.com";
@@ -83,16 +62,6 @@ class FakeStatement {
 class FakeDatabase {
   readonly routes: RouteRow[] = [];
   fullAddressRegistry = true;
-  /**
-   * The work stream's own object.
-   *
-   * Not another arm of the matcher below: `workstreams` is the identity
-   * authority's table, this service reads and writes it through that
-   * authority's port, and the gate under test is what the real storage class
-   * answers. Empty until a test seeds an owner, which is the state the 404
-   * arm of `activateWorkstreamRoute` is about.
-   */
-  readonly objectStore: DatabaseSync = objectStoreForTest();
   readonly automations: LocalAutomationRow[] = [];
   routeInsertAttempts = 0;
   registrySchemaProbes = 0;
@@ -138,12 +107,6 @@ class FakeDatabase {
       return row && !this.fullAddressRegistry
         ? { ...row, local_part: row.email_address.slice(0, row.email_address.lastIndexOf("@")) } as unknown as RouteRow
         : row;
-    }
-    if (sql.includes("SELECT placement_affinity FROM workspaces")) {
-      // The routed owner read resolves the work stream's object, which asks
-      // where this workspace is placed first. One placement per region is
-      // enough: nothing here turns on which of a region's two it is.
-      return { placement_affinity: values[1] === "enterprise" ? "weur" : "wnam" } as unknown as RouteRow;
     }
     throw new Error(`Unexpected first query: ${sql}`);
   }
@@ -212,10 +175,10 @@ describe("WorkstreamEmailRoutingService", () => {
     const service = new WorkstreamEmailRoutingService(environment(database, {
       WORKSTREAM_EMAIL_DOMAIN: `  ${DOMAIN.toUpperCase()}  `,
     }));
-    const input = routeInput("workstream-stable");
+    const input = routeInput("sidekick-stable");
 
-    const first = await service.reserve(input);
-    const second = await service.reserve(input);
+    const first = await service.reserveAutomation(input);
+    const second = await service.reserveAutomation(input);
 
     expect(second).toEqual(first);
     expect(first.emailAddress).toBe(`${first.localPart}@${DOMAIN}`);
@@ -327,17 +290,8 @@ describe("WorkstreamEmailRoutingService", () => {
     const claimAutomation = vi.fn(async (input) => success(
       await globalService.claimAutomationInGlobalRegistry(input),
     ));
-    const reserve = vi.fn(async (input) => success(
-      await globalService.reserveInGlobalRegistry(input),
-    ));
-    const claim = vi.fn(async (input) => success(
-      await globalService.claimInGlobalRegistry(input),
-    ));
     const binding: GlobalWorkstreamEmailRouterRpcBinding = {
       ping: async () => success(await globalService.pingGlobalRegistry()),
-      reserve,
-      reserveMany: async (inputs) => success(await globalService.reserveManyInGlobalRegistry(inputs)),
-      claim,
       reserveAutomation,
       claimAutomation,
     };
@@ -359,38 +313,21 @@ describe("WorkstreamEmailRoutingService", () => {
     });
     expect(claimAutomation).toHaveBeenCalledExactlyOnceWith(input);
     expect(reserveAutomation).not.toHaveBeenCalled();
-    const workstreamClaim = {
-      region: "enterprise" as const,
-      workspaceId: input.workspaceId,
-      workstreamId: "workstream-enterprise-worker-first",
-      emailAddress: `steady-modern-starlit-kovalevsky@${DOMAIN}`,
-    };
-    await expect(enterpriseService.claim(workstreamClaim)).resolves.toMatchObject({
-      ...workstreamClaim,
-      localPart: "steady-modern-starlit-kovalevsky",
-    });
-    expect(claim).toHaveBeenCalledExactlyOnceWith(workstreamClaim);
-    expect(reserve).not.toHaveBeenCalled();
     expect(globalDatabase.routes).toEqual([
       expect.objectContaining({
         email_address: input.emailAddress,
         region: "enterprise",
         automation_subscription_id: input.automationSubscriptionId,
       }),
-      expect.objectContaining({
-        email_address: workstreamClaim.emailAddress,
-        region: "enterprise",
-        workstream_id: workstreamClaim.workstreamId,
-      }),
     ]);
   });
 
   it("allows the same local part on another domain without advancing the allocator", async () => {
     const database = new FakeDatabase();
-    const input = routeInput("workstream-domain-scoped-collision");
+    const input = routeInput("sidekick-domain-scoped-collision");
     const firstCandidate = await allocateWorkstreamEmailAddressCandidate({
       secretKey: ADDRESS_KEY,
-      workstreamId: `${input.region}:${input.workspaceId}:${input.workstreamId}`,
+      workstreamId: `${input.region}:${input.workspaceId}:automation:${input.automationSubscriptionId}`,
       attempt: 0,
     });
     database.routes.push({
@@ -401,7 +338,7 @@ describe("WorkstreamEmailRoutingService", () => {
       WORKSTREAM_EMAIL_DOMAIN: CURRENT_DOMAIN,
     }));
 
-    await expect(service.reserve(input)).resolves.toMatchObject({
+    await expect(service.reserveAutomation(input)).resolves.toMatchObject({
       localPart: firstCandidate,
       emailAddress: `${firstCandidate}@${CURRENT_DOMAIN}`,
     });
@@ -409,75 +346,10 @@ describe("WorkstreamEmailRoutingService", () => {
     expect(database.routes).toHaveLength(2);
   });
 
-  it("activates only after the owning regional work stream durably exists", async () => {
-    const database = new FakeDatabase();
-    const service = new WorkstreamEmailRoutingService(environment(database));
-    const input = routeInput("workstream-owner-gate");
-    const reservation = await service.reserve(input);
-
-    await expect(service.activateWorkstreamRoute(input)).rejects.toMatchObject({
-      status: 404,
-      code: "workstream_not_found",
-    } satisfies Partial<ApiError>);
-
-    seedWorkstreamOwner(database, input, reservation.emailAddress);
-    await expect(service.activateWorkstreamRoute(input)).resolves.toMatchObject({
-      ...input,
-      emailAddress: reservation.emailAddress,
-    });
-
-    // Archiving the owner closes the route without Global being told: the
-    // refusal is read from the work stream itself, which is the same row the
-    // inbound path consults.
-    applyWorkstreamObjectRootFields(database.objectStore, {
-      archivedAt: Date.parse("2026-08-03T00:00:00.000Z"),
-    });
-    await expect(service.activateWorkstreamRoute(input)).rejects.toMatchObject({
-      status: 409,
-      code: "workstream_email_owner_archived",
-    } satisfies Partial<ApiError>);
-    expect(database.routes).toHaveLength(1);
-  });
-
-  it("reconciles enterprise activation through Global only after the enterprise owner exists", async () => {
-    const globalDatabase = new FakeDatabase();
-    const globalService = new WorkstreamEmailRoutingService(environment(globalDatabase));
-    const binding: GlobalWorkstreamEmailRouterRpcBinding = {
-      ping: async () => success(await globalService.pingGlobalRegistry()),
-      reserve: async (input) => success(await globalService.reserveInGlobalRegistry(input)),
-      reserveMany: async (inputs) => success(await globalService.reserveManyInGlobalRegistry(inputs)),
-      claim: async (input) => success(await globalService.claimInGlobalRegistry(input)),
-      claimAutomation: async (input) => success(await globalService.claimAutomationInGlobalRegistry(input)),
-    };
-    const enterpriseDatabase = new FakeDatabase();
-    const enterpriseService = new WorkstreamEmailRoutingService(environment(enterpriseDatabase, {
-      AVALON_REGION: "enterprise",
-      APP_ENV: "production",
-      GLOBAL_EMAIL_ROUTER: binding,
-    }));
-    const input = routeInput("workstream-enterprise-owner-gate", "enterprise");
-    const reservation = await enterpriseService.reserve(input);
-
-    await expect(enterpriseService.activateWorkstreamRoute(input)).rejects.toMatchObject({
-      status: 404,
-      code: "workstream_not_found",
-    } satisfies Partial<ApiError>);
-
-    seedWorkstreamOwner(enterpriseDatabase, input, reservation.emailAddress);
-    await expect(enterpriseService.activateWorkstreamRoute(input)).resolves.toMatchObject({
-      emailAddress: reservation.emailAddress,
-    });
-
-    // One Global row, written once, and the enterprise owner gate answered without a
-    // second Global call: the claim is all that crosses the boundary.
-    expect(globalDatabase.routes).toHaveLength(1);
-    expect(globalDatabase.routes[0]?.email_address).toBe(reservation.emailAddress);
-  });
-
   it("retries the deterministic candidate sequence after a global collision", async () => {
     const database = new FakeDatabase();
-    const input = routeInput("workstream-collision");
-    const allocatorId = `${input.region}:${input.workspaceId}:${input.workstreamId}`;
+    const input = routeInput("sidekick-collision");
+    const allocatorId = `${input.region}:${input.workspaceId}:automation:${input.automationSubscriptionId}`;
     const firstCandidate = await allocateWorkstreamEmailAddressCandidate({
       secretKey: ADDRESS_KEY,
       workstreamId: allocatorId,
@@ -490,7 +362,7 @@ describe("WorkstreamEmailRoutingService", () => {
     });
     database.routes.push(existingRoute(firstCandidate, "other-workspace", "other-workstream"));
 
-    const reserved = await new WorkstreamEmailRoutingService(environment(database)).reserve(input);
+    const reserved = await new WorkstreamEmailRoutingService(environment(database)).reserveAutomation(input);
 
     expect(reserved.localPart).toBe(secondCandidate);
     expect(reserved.localPart).not.toBe(firstCandidate);
@@ -501,8 +373,8 @@ describe("WorkstreamEmailRoutingService", () => {
   it("uses the one Global namespace when an enterprise candidate collides with a Global route", async () => {
     const globalDatabase = new FakeDatabase();
     const globalService = new WorkstreamEmailRoutingService(environment(globalDatabase));
-    const enterpriseInput = routeInput("workstream-cross-region-collision", "enterprise");
-    const allocatorId = `${enterpriseInput.region}:${enterpriseInput.workspaceId}:${enterpriseInput.workstreamId}`;
+    const enterpriseInput = routeInput("sidekick-cross-region-collision", "enterprise");
+    const allocatorId = `${enterpriseInput.region}:${enterpriseInput.workspaceId}:automation:${enterpriseInput.automationSubscriptionId}`;
     const firstCandidate = await allocateWorkstreamEmailAddressCandidate({
       secretKey: ADDRESS_KEY,
       workstreamId: allocatorId,
@@ -520,9 +392,8 @@ describe("WorkstreamEmailRoutingService", () => {
     ));
     const binding: GlobalWorkstreamEmailRouterRpcBinding = {
       ping: async () => success(await globalService.pingGlobalRegistry()),
-      reserve: async (input) => success(await globalService.reserveInGlobalRegistry(input)),
-      reserveMany: async (inputs) => success(await globalService.reserveManyInGlobalRegistry(inputs)),
-      claim: async (input) => success(await globalService.claimInGlobalRegistry(input)),
+      reserveAutomation: async (input) => success(await globalService.reserveAutomationInGlobalRegistry(input)),
+      reserveAutomations: async (inputs) => success(await globalService.reserveAutomationsInGlobalRegistry(inputs)),
       claimAutomation: async (input) => success(await globalService.claimAutomationInGlobalRegistry(input)),
     };
     const enterpriseDatabase = new FakeDatabase();
@@ -532,7 +403,7 @@ describe("WorkstreamEmailRoutingService", () => {
       GLOBAL_EMAIL_ROUTER: binding,
     }));
 
-    const reserved = await enterpriseService.reserve(enterpriseInput);
+    const reserved = await enterpriseService.reserveAutomation(enterpriseInput);
 
     expect(reserved).toMatchObject({
       region: "enterprise",
@@ -546,7 +417,7 @@ describe("WorkstreamEmailRoutingService", () => {
     expect(enterpriseDatabase.routeInsertAttempts).toBe(0);
   });
 
-  it("uses the same Global full-address namespace for automations and work streams on one domain", async () => {
+  it("keeps a retired Thread's stored address out of a Sidekick's allocation on one domain", async () => {
     const database = new FakeDatabase();
     const input = {
       region: "global" as const,
@@ -584,12 +455,12 @@ describe("WorkstreamEmailRoutingService", () => {
   it("keeps a claimed address after its owner stops using it", async () => {
     const database = new FakeDatabase();
     const service = new WorkstreamEmailRoutingService(environment(database));
-    const input = routeInput("workstream-tombstone");
-    const reserved = await service.reserve(input);
+    const input = routeInput("sidekick-tombstone");
+    const reserved = await service.reserveAutomation(input);
 
     // Nothing releases a claim — there is no call that could. Asking again for
     // the same destination returns the same name rather than minting another.
-    await expect(service.reserve(input)).resolves.toMatchObject({
+    await expect(service.reserveAutomation(input)).resolves.toMatchObject({
       localPart: reserved.localPart,
       emailAddress: reserved.emailAddress,
     });
@@ -598,8 +469,8 @@ describe("WorkstreamEmailRoutingService", () => {
 
   it("never recycles a claimed full address for a different destination", async () => {
     const database = new FakeDatabase();
-    const input = routeInput("workstream-after-tombstone");
-    const allocatorId = `${input.region}:${input.workspaceId}:${input.workstreamId}`;
+    const input = routeInput("sidekick-after-tombstone");
+    const allocatorId = `${input.region}:${input.workspaceId}:automation:${input.automationSubscriptionId}`;
     const tombstonedCandidate = await allocateWorkstreamEmailAddressCandidate({
       secretKey: ADDRESS_KEY,
       workstreamId: allocatorId,
@@ -617,7 +488,7 @@ describe("WorkstreamEmailRoutingService", () => {
     ));
     const service = new WorkstreamEmailRoutingService(environment(database));
 
-    const reserved = await service.reserve(input);
+    const reserved = await service.reserveAutomation(input);
 
     expect(reserved.localPart).toBe(nextCandidate);
     expect(database.routes).toHaveLength(2);
@@ -629,7 +500,7 @@ describe("WorkstreamEmailRoutingService", () => {
   });
 
   it("delegates enterprise reservations and status changes to the Global RPC binding", async () => {
-    const input = routeInput("workstream-enterprise", "enterprise");
+    const input = routeInput("sidekick-enterprise", "enterprise");
     const route = {
       ...input,
       localPart: "bright-steady-clear-otter",
@@ -638,7 +509,7 @@ describe("WorkstreamEmailRoutingService", () => {
     const ping = vi.fn(async () => success({ region: "global" as const, domain: DOMAIN }));
     const reserve = vi.fn(async () => success(route));
     const reserveMany = vi.fn(async () => success([route]));
-    const binding: GlobalWorkstreamEmailRouterRpcBinding = { ping, reserve, reserveMany };
+    const binding: GlobalWorkstreamEmailRouterRpcBinding = { ping, reserveAutomation: reserve, reserveAutomations: reserveMany };
     const database = new FakeDatabase();
     const service = new WorkstreamEmailRoutingService(environment(database, {
       AVALON_REGION: "enterprise",
@@ -646,18 +517,18 @@ describe("WorkstreamEmailRoutingService", () => {
       GLOBAL_EMAIL_ROUTER: binding,
     }));
 
-    await expect(service.reserve(input)).resolves.toEqual(route);
+    await expect(service.reserveAutomation(input)).resolves.toEqual(route);
     expect(reserve).toHaveBeenCalledExactlyOnceWith(input);
     expect(database.routeInsertAttempts).toBe(0);
   });
 
   it("uses one Global RPC invocation for an enterprise bulk reservation", async () => {
     const inputs = [
-      routeInput("workstream-enterprise-bulk-1", "enterprise"),
-      routeInput("workstream-enterprise-bulk-2", "enterprise"),
-      routeInput("workstream-enterprise-bulk-3", "enterprise"),
+      routeInput("sidekick-enterprise-bulk-1", "enterprise"),
+      routeInput("sidekick-enterprise-bulk-2", "enterprise"),
+      routeInput("sidekick-enterprise-bulk-3", "enterprise"),
     ];
-    const routes = inputs.map((input, index): WorkstreamEmailRoute => ({
+    const routes = inputs.map((input, index): AutomationEmailRoute => ({
       ...input,
       localPart: `bright-steady-clear-animal${index}`,
       emailAddress: `bright-steady-clear-animal${index}@${DOMAIN}`,
@@ -666,8 +537,8 @@ describe("WorkstreamEmailRoutingService", () => {
     const reserveMany = vi.fn(async () => success(routes));
     const binding = {
       ping: vi.fn(async () => success({ region: "global" as const, domain: DOMAIN })),
-      reserve,
-      reserveMany,
+      reserveAutomation: reserve,
+      reserveAutomations: reserveMany,
     } satisfies GlobalWorkstreamEmailRouterRpcBinding;
     const database = new FakeDatabase();
     const service = new WorkstreamEmailRoutingService(environment(database, {
@@ -676,7 +547,7 @@ describe("WorkstreamEmailRoutingService", () => {
       GLOBAL_EMAIL_ROUTER: binding,
     }));
 
-    await expect(service.reserveMany(inputs)).resolves.toEqual(routes);
+    await expect(service.reserveAutomations(inputs)).resolves.toEqual(routes);
 
     expect(reserveMany).toHaveBeenCalledExactlyOnceWith(inputs);
     expect(reserve).not.toHaveBeenCalled();
@@ -686,13 +557,13 @@ describe("WorkstreamEmailRoutingService", () => {
   it("probes the registry schema once per Global bulk reservation", async () => {
     const database = new FakeDatabase();
     const service = new WorkstreamEmailRoutingService(environment(database));
-    const workstreams = [
-      routeInput("workstream-global-bulk-1"),
-      routeInput("workstream-global-bulk-2"),
-      routeInput("workstream-global-bulk-3"),
+    const sidekicks = [
+      routeInput("sidekick-global-bulk-1"),
+      routeInput("sidekick-global-bulk-2"),
+      routeInput("sidekick-global-bulk-3"),
     ];
 
-    await expect(service.reserveManyInGlobalRegistry(workstreams)).resolves.toHaveLength(3);
+    await expect(service.reserveAutomationsInGlobalRegistry(sidekicks)).resolves.toHaveLength(3);
     expect(database.registrySchemaProbes).toBe(1);
 
     await expect(service.reserveAutomationsInGlobalRegistry([
@@ -703,24 +574,24 @@ describe("WorkstreamEmailRoutingService", () => {
   });
 
   it("reconstructs expected Global RPC errors as ApiError instances", async () => {
-    const input = routeInput("workstream-enterprise-rpc-error", "enterprise");
+    const input = routeInput("sidekick-enterprise-rpc-error", "enterprise");
     const binding = {
       ping: vi.fn(async () => success({ region: "global" as const, domain: DOMAIN })),
-      reserve: vi.fn(async () => failure(503, "workstream_email_key_unavailable", "The registry key is unavailable")),
-      reserveMany: vi.fn(async () => failure(503, "workstream_email_key_unavailable", "The registry key is unavailable")),
+      reserveAutomation: vi.fn(async () => failure(503, "workstream_email_key_unavailable", "The registry key is unavailable")),
+      reserveAutomations: vi.fn(async () => failure(503, "workstream_email_key_unavailable", "The registry key is unavailable")),
     } satisfies GlobalWorkstreamEmailRouterRpcBinding;
     const service = new WorkstreamEmailRoutingService(environment(new FakeDatabase(), {
       AVALON_REGION: "enterprise",
       GLOBAL_EMAIL_ROUTER: binding,
     }));
 
-    await expect(service.reserve(input)).rejects.toMatchObject({
+    await expect(service.reserveAutomation(input)).rejects.toMatchObject({
       name: "ApiError",
       status: 503,
       code: "workstream_email_key_unavailable",
       message: "The registry key is unavailable",
     });
-    await expect(service.reserveMany([input])).rejects.toMatchObject({
+    await expect(service.reserveAutomations([input])).rejects.toMatchObject({
       name: "ApiError",
       status: 503,
       code: "workstream_email_key_unavailable",
@@ -731,8 +602,8 @@ describe("WorkstreamEmailRoutingService", () => {
     const ping = vi.fn(async () => success({ region: "global" as const, domain: DOMAIN }));
     const binding = {
       ping,
-      reserve: vi.fn(),
-      reserveMany: vi.fn(),
+      reserveAutomation: vi.fn(),
+      reserveAutomations: vi.fn(),
     } satisfies GlobalWorkstreamEmailRouterRpcBinding;
     const service = new WorkstreamEmailRoutingService(environment(new FakeDatabase(), {
       AVALON_REGION: "enterprise",
@@ -763,12 +634,12 @@ describe("WorkstreamEmailRoutingService", () => {
       APP_ENV: appEnv,
     }));
 
-    await expect(service.reserve(routeInput("workstream-unrouted", "enterprise"))).rejects.toMatchObject({
+    await expect(service.reserveAutomation(routeInput("sidekick-unrouted", "enterprise"))).rejects.toMatchObject({
       status: 503,
       code: "workstream_email_router_unavailable",
     } satisfies Partial<ApiError>);
-    await expect(service.reserveMany([
-      routeInput("workstream-unrouted-bulk", "enterprise"),
+    await expect(service.reserveAutomations([
+      routeInput("sidekick-unrouted-bulk", "enterprise"),
     ])).rejects.toMatchObject({
       status: 503,
       code: "workstream_email_router_unavailable",
@@ -781,37 +652,33 @@ describe("WorkstreamEmailRoutingService", () => {
       AVALON_REGION: "enterprise",
     }));
 
-    await expect(service.reserveInGlobalRegistry(
-      routeInput("workstream-regional-registry", "enterprise"),
+    await expect(service.reserveAutomationInGlobalRegistry(
+      routeInput("sidekick-regional-registry", "enterprise"),
     )).rejects.toMatchObject({
       status: 503,
       code: "workstream_email_registry_region_invalid",
     } satisfies Partial<ApiError>);
-    await expect(service.reserveManyInGlobalRegistry([
-      routeInput("workstream-regional-registry-bulk", "enterprise"),
+    await expect(service.reserveAutomationsInGlobalRegistry([
+      routeInput("sidekick-regional-registry-bulk", "enterprise"),
     ])).rejects.toMatchObject({
       status: 503,
       code: "workstream_email_registry_region_invalid",
     } satisfies Partial<ApiError>);
   });
 
-  it("rejects reservations for a work stream from another regional data plane", async () => {
+  it("rejects reservations for a Sidekick from another regional data plane", async () => {
     const service = new WorkstreamEmailRoutingService(environment(new FakeDatabase()));
 
-    await expect(service.reserve(routeInput("workstream-wrong-region", "enterprise"))).rejects.toMatchObject({
+    await expect(service.reserveAutomation(routeInput("sidekick-wrong-region", "enterprise"))).rejects.toMatchObject({
       status: 422,
-      code: "workstream_email_region_mismatch",
+      code: "sidekick_email_region_mismatch",
     } satisfies Partial<ApiError>);
   });
 });
 
 /**
- * Real UUIDs, keyed by a readable label.
- *
- * Activation routes the owner read at the work stream's own object, which parses
- * both ids — so a label like `workstream-owner-gate` fails as a malformed UUID
- * before the 404 this asserts. The label is kept because the assertions read by
- * it; only its wire form changed.
+ * Real UUIDs, keyed by a readable label, so the assertions read by the label
+ * while the wire form stays a valid id.
  */
 const routeIds = new Map<string, string>();
 function routeId(label: string): string {
@@ -824,26 +691,12 @@ function routeId(label: string): string {
 
 const WORKSPACE_UUID = "00000000-0000-7000-8000-0000000000ff";
 
-function routeInput(workstreamId: string, region: Region = "global"): WorkstreamEmailRouteInput {
+function routeInput(automationId: string, region: Region = "global"): AutomationEmailRouteInput {
   return {
     region,
     workspaceId: WORKSPACE_UUID,
-    workstreamId: routeId(workstreamId),
+    automationSubscriptionId: routeId(automationId),
   };
-}
-
-/** Give this work stream a durable object of its own, holding its address. */
-function seedWorkstreamOwner(
-  database: FakeDatabase,
-  input: WorkstreamEmailRouteInput,
-  emailAddress: string | null,
-): void {
-  seedWorkstreamObjectRoot(database.objectStore, {
-    workstreamId: input.workstreamId,
-    workspaceId: input.workspaceId,
-    emailAddress,
-    emailRouteStatus: "reserved",
-  }, Date.parse("2026-08-02T00:00:00.000Z"));
 }
 
 function existingRoute(
@@ -868,25 +721,6 @@ function environment(database: FakeDatabase, overrides: Partial<Env> = {}): Env 
     APP_ENV: "test",
     AVALON_REGION: "global",
     DB: createTestD1Database(database),
-    // Activation reads the owning work stream from its own object. The stub
-    // runs those statements back through the fake, so the assertions stay on
-    // what the service reads and writes rather than on which side carried it.
-    SUBSTREAM_AGENTS: createCloudflareTestBinding<Env["SUBSTREAM_AGENTS"]>({
-      idFromName: () => createTestDurableObjectId("substream"),
-      get: () => createTestDurableObjectInstance({
-        executeIdentityOperation: async (input: { operation: string; args: unknown[] }) =>
-          testIdentityOperationStub(database.objectStore)(input),
-        executeRuntimeSql: async (input: {
-          statements: Array<{ sql: string; params: Array<string | number | null> }>;
-        }) => ({
-          status: 200,
-          bodyJson: JSON.stringify({
-            results: executeWorkstreamObjectSql(database.objectStore, input.statements),
-          }),
-        }),
-      }),
-      jurisdiction() { return this as Env["SUBSTREAM_AGENTS"]; },
-    }),
     SESSION_SIGNING_KEY: "s".repeat(32),
     WORKSTREAM_EMAIL_ADDRESS_KEY: ADDRESS_KEY,
     WORKSTREAM_EMAIL_DOMAIN: DOMAIN,

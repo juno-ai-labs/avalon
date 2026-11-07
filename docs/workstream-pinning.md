@@ -5,9 +5,11 @@ sidebar sections has a **Pinned** group above its list, and the pin lives on
 the server, so the same person opening Rally on another machine finds their
 list as they left it. The client's Thread, Channel, Breakout and artifact pins,
 and the Pinned, Threads, Channels and Artifacts sections that drew them, were
-removed at the 2026-11 cutover; the server's pin list and its routes for those
-kinds stay until phase C removes them, and the sections below that describe
-them describe the server.
+removed at the 2026-11 cutover, and the server's reads of those kinds
+followed: `WorkspacePinStorage` writes and orders only `canvas` and `sidekick`
+pins now. The table's CHECK still admits the retired kinds and their rows stay
+until the WorkspaceDO data migration drops them; the sections below that
+describe the retired kinds are the history of that storage.
 
 A pin is **one person's opinion about one item**. Pinning tells nobody else
 anything, changes nothing about who may read the item, and does not appear on
@@ -367,6 +369,20 @@ group; a row's context menu pins and unpins it. The rows' order within the
 group is not changed from the client yet.
 
 ## Changelog
+
+### 2026-11-07 — The pin repository keeps only Canvas and Sidekick pins
+
+**What changed:** `WorkspacePinStorage` loses `list`, `artifactPinners`,
+`listArtifacts` and `count`, which read the Thread, Channel, Breakout and
+artifact kinds, and `pin` no longer takes a parent: `StoredPinKind` is
+`canvas | sidekick`.
+
+**Why:** Plan step C-2 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
+Nothing called those reads once the Thread routes and the sidebar's old
+sections were deleted, and a Canvas's or Sidekick's pin has no parent. The
+stored rows of the retired kinds are dropped by a migration, not by this
+change, so the table's CHECK is untouched.
 
 ### 2026-11-07 — The client's Thread, Channel and artifact pins are removed
 
