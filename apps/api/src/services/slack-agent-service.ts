@@ -76,15 +76,7 @@ import {
   WorkspaceSlackIngressRecoverableResultSchema,
   WorkspaceSlackIngressSweepResultSchema,
   WorkspaceSlackThreadRoutableResultSchema,
-  WorkspaceSlackSessionAssignResultSchema,
-  WorkspaceSlackSessionExistsResultSchema,
   WorkspaceSlackFeedbackResultSchema,
-  WorkspaceSlackSessionResultSchema,
-  // The session row itself, rather than a structural copy of it here: every
-  // read parses through `WorkspaceSlackSessionResultSchema`, so a second
-  // hand-maintained declaration could only ever drift from the one the object
-  // actually answers with.
-  type WorkspaceSlackSession,
 } from "../durable-objects/workspace-slack-protocol";
 import {
   ExternalBindingLatestOutboundResultSchema,
@@ -532,24 +524,10 @@ export class SlackAgentService {
         return { response_action: "clear" };
       }
       if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_feedback_submit") {
-        const identity = await this.linkedAccount(teamId, slackUserId);
-        const workstreamId = slackModalWorkstreamId(view.private_metadata);
-        const rating = modalSelectedValues(view.state, "rating", "value")[0];
-        if (!identity || !workstreamId || (rating !== "helpful" && rating !== "needs_improvement")) return { response_action: "errors", errors: { rating: "Choose a feedback rating." } };
-        // Any linked member of the installation may rate the task, not only
-        // the one the thread used to be pinned to. `linkedAccount` above has
-        // already established that this is an active member of the workspace
-        // the session belongs to, which is the whole of what feedback needs.
-        const session = WorkspaceSlackSessionExistsResultSchema.parse(
-          await (await this.workspaceDirectory(identity.auth.workspaceId)).slackSessionExists({
-            workspaceId: identity.auth.workspaceId,
-            workstreamId,
-            connectionId: identity.connection.id,
-          }),
-        );
-        if (!session.sessionId) return { response_action: "errors", errors: { rating: "This task is no longer available." } };
-        await this.enqueueIngressJob({ id: `interaction:${bodyHash}`, teamId, bodyHash, kind: "interaction", payload });
-        return { response_action: "clear" };
+        // Every task this modal rated was a Thread's Slack session, and both
+        // are retired: no session is written any more, so a modal opened from
+        // an old card has nothing left to rate.
+        return { response_action: "errors", errors: { rating: "This task is no longer available." } };
       }
       return {};
     }
@@ -881,8 +859,7 @@ export class SlackAgentService {
    * `slack.com` consent URL to a colleague, and have that colleague's genuine
    * click write `slack_user_links(workspace, connection, *sender*, *colleague's
    * Slack id*) `— after which the colleague's Slack messages resolve to the
-   * sender's Avalon identity, and `assignWorkspaceSessions`'s `explicit_link`
-   * mode rewrites work-stream ownership to match.
+   * sender's Avalon identity.
    *
    * The link challenge is the only artifact that carries a Slack-signed
    * statement of *who clicked*, so it stays the only thing that can mint a
@@ -945,33 +922,27 @@ export class SlackAgentService {
       || linkedRow.slack_user_id !== challenge.slack_user_id) {
       throw new ApiError(409, "slack_link_consumed", "This Slack connection link was already used or replaced by a newer one; click Connect Rally in Slack to get a new one");
     }
-    await this.assignWorkspaceSessions(
-      auth.workspaceId,
-      String(challenge.connection_id),
-      String(challenge.slack_team_id),
-      String(challenge.slack_user_id),
-      auth.userId,
-      "explicit_link",
-    );
     await this.publishHome(String(challenge.slack_team_id), String(challenge.slack_user_id));
     return { linked: true, teamId: String(challenge.slack_team_id), slackUserId: String(challenge.slack_user_id) };
   }
 
   /**
-   * Adopts ownerless workstreams created by this Slack identity after the
-   * matching person joins Avalon. Email lookup identifies the Slack member;
-   * it does not create a personal Slack connection or rewrite prior runs.
+   * Records the Slack identity a person who just joined holds, found by their
+   * verified email, in the shared connector directory. It does not create a
+   * personal Slack connection. It used to also seat the person on the Slack
+   * sessions that identity opened; those were Threads' sessions, and nothing
+   * writes one since Threads were retired.
    */
-  async assignWorkspaceWorkstreamsForMember(
+  async recordSlackIdentityForMember(
     workspaceId: string,
     userId: string,
     verifiedEmail: string,
-  ): Promise<number> {
+  ): Promise<void> {
     const membership = await workspaceRegionalDatabase(this.env).prepare(
       `SELECT 1 AS active FROM workspace_members
        WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
     ).bind(workspaceId, userId).first<{ active: number }>();
-    if (!membership) return 0;
+    if (!membership) return;
     this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     const rawConnections = await this.env.DB.prepare(
       `SELECT id, workspace_id, provider_account_id, encrypted_credentials, credential_iv, credential_key_version,
@@ -980,9 +951,7 @@ export class SlackAgentService {
        WHERE workspace_id = ? AND connector_type = 'slack' AND scope = 'workspace'
          AND status <> 'disabled' ORDER BY id`,
     ).bind(workspaceId).all<SlackConnectionRow>();
-    let assigned = 0;
     for (const connection of rawConnections.results ?? []) {
-      let matchedSlackUserId: string;
       // Only the provider conversation is guarded. What this catch knows how to
       // interpret is a Slack answer — a member who is not in the workspace, an
       // installation that needs reconnecting — and it reports whatever it
@@ -1010,7 +979,6 @@ export class SlackAgentService {
           { userId, verification: "verified_email" },
           verifiedEmail,
         );
-        matchedSlackUserId = result.user.id;
       } catch (error) {
         if (slackErrorReason(error) === "users_not_found") continue;
         if (slackReconnectRequired(error)) {
@@ -1022,69 +990,8 @@ export class SlackAgentService {
           user_id: userId,
           reason: slackErrorReason(error),
         });
-        continue;
-      }
-      // Seating has its own `catch` rather than sharing the lookup's above.
-      // A WorkspaceDO write that fails is not a Slack lookup failure, and
-      // reporting it as one hid an overloaded or refused object behind
-      // `slack_member_assignment_lookup_failed`. It cannot share this loop's
-      // exit either: letting it propagate would abandon every remaining
-      // connection over one transient object error, where only the failing
-      // connection used to be skipped.
-      try {
-        assigned += await this.assignWorkspaceSessions(
-          connection.workspace_id,
-          connection.id,
-          connection.provider_account_id,
-          matchedSlackUserId,
-          userId,
-          "verified_email",
-        );
-      } catch (error) {
-        logWarn(this.env, "slack_member_assignment_seating_failed", {
-          workspace_id: workspaceId,
-          connection_id: connection.id,
-          user_id: userId,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-        continue;
       }
     }
-    return assigned;
-  }
-
-  /**
-   * Seat a member across the sessions this Slack user owns in one workspace.
-   *
-   * The read and the write are one critical section inside the object now, and
-   * the count comes from the rows the update actually returned rather than from
-   * `meta.changes` — the physical counter `docs/durable-object-sqlite.md`
-   * forbids deciding a logical outcome from. Only the sessions the update moved
-   * are reconciled, so a row seated by somebody else between the two statements
-   * is no longer reconciled against a snapshot that had already gone stale.
-   */
-  private async assignWorkspaceSessions(
-    workspaceId: string,
-    connectionId: string,
-    teamId: string,
-    slackUserId: string,
-    userId: string,
-    method: "verified_email" | "explicit_link",
-  ): Promise<number> {
-    const assigned = WorkspaceSlackSessionAssignResultSchema.parse(
-      await (await this.workspaceDirectory(workspaceId)).assignSlackSessions({
-        workspaceId,
-        connectionId,
-        teamId,
-        slackUserId,
-        assignedUserId: userId,
-        assignmentMethod: method,
-        at: nowIso(),
-      }),
-    );
-    // A session's Thread took the newly linked person as its creator; Threads
-    // are retired (plan step C-2), so the assignment is recorded alone.
-    return assigned.sessions.length;
   }
 
   async previewLink(auth: AuthContext, token: string): Promise<{ teamId: string; slackUserId: string; workspaceName: string }> {
@@ -1655,21 +1562,6 @@ export class SlackAgentService {
     await this.postRoutingFailure(token, channelId, threadTs, "conversation_ingress_retired", eventKey);
   }
 
-  private async loadSession(
-    connection: SlackConnectionRow,
-    channelId: string,
-    threadTs: string,
-  ): Promise<WorkspaceSlackSession | null> {
-    return WorkspaceSlackSessionResultSchema.parse(
-      await (await this.workspaceDirectory(connection.workspace_id)).slackSessionByThread({
-        workspaceId: connection.workspace_id,
-        connectionId: connection.id,
-        channelId,
-        threadTs,
-      }),
-    ).session;
-  }
-
   private async shouldEnqueueSlackMessage(
     teamId: string,
     event: Record<string, unknown>,
@@ -1765,18 +1657,7 @@ export class SlackAgentService {
         : event.type === "channel_created"
           ? "public"
           : event.channel_type ?? asRecord(event.item).channel_type;
-    const rootTs = typeof event.thread_ts === "string"
-      ? event.thread_ts
-      : typeof event.ts === "string"
-        ? event.ts
-        : null;
-    const existingSession = channelId && rootTs && (event.type === "message" || event.type === "app_mention")
-      ? await this.loadSession(connection, channelId, rootTs)
-      : null;
-    const channelResolution = existingSession
-      && (existingSession.channel_type === "public" || existingSession.channel_type === "private")
-      ? { channelType: existingSession.channel_type, channelName: null, failure: null }
-      : channelId
+    const channelResolution = channelId
       ? event.type === "channel_created"
         ? {
             channelType: "public" as const,

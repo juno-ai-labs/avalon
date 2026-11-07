@@ -250,9 +250,13 @@ work.
 In a conversation Slack marks as not threadable, Rally never posts into a
 thread: results are posted at the top level.
 
-The `slack_agent_sessions` rows the Thread path wrote are delivery state
-(status, reaction, who started the thread); routing is the binding's. The
-persisted Rally run is canonical: a Slack delivery failure never rewrites a
+The `slack_agent_sessions` rows the Thread path wrote stay in storage, and
+nothing reads or writes them: routing is the binding's. A **feedback** modal
+opened from an old Thread card is refused on submit ("This task is no longer
+available."), since the task it rated was a Thread. A person who joins an
+organization still has their Slack identity found by verified email and
+recorded in the connector directory; nothing is seated on a session any more.
+The persisted Rally run is canonical: a Slack delivery failure never rewrites a
 completed run as failed, and Rally never streams model output to Slack.
 
 #### The status reaction
@@ -785,7 +789,15 @@ reaction Rally still writes is the acknowledgement, or the stopped emoji for a
 paused Sidekick, on a reply admitted into a bound Sidekick run's thread; a
 future outcome reaction for Sidekick runs would be new work, not those helpers
 restored. A posted card keeps the name it was posted with.
-[`links.md`](links.md) owns the card.
+[`links.md`](links.md) owns the card. The session RPC family that only the
+Thread path wrote went with it in plan step B-8: `createSlackSession`,
+`assignSlackSessions`, the four session readers, and the delivery-key, stream
+and reaction setters, with their storage and protocol. Its readers were left
+answering legacy rows: the feedback submit's session check (now refused
+outright), the channel-type hint an event read from a session (now always
+Slack's answer), and the seating a verified-email or explicit link did, whose
+`assigned_user_id` nothing read. `slack_agent_sessions` itself is kept: dropping
+a table is a migration, and the rows are inert.
 
 **Open:** The retired-ingress copy is the agent's wording and needs product
 confirmation.

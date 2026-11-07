@@ -14,10 +14,6 @@ import {
   WorkspaceSlackThreadRoutableResultSchema,
   WorkspaceSlackContextResultSchema,
   WorkspaceSlackFeedbackResultSchema,
-  WorkspaceSlackSessionAssignResultSchema,
-  WorkspaceSlackSessionExistsResultSchema,
-  WorkspaceSlackSessionReactionResultSchema,
-  WorkspaceSlackSessionResultSchema,
   type WorkspaceSlackIngressClaimRequest,
   type WorkspaceSlackIngressClaimResult,
   type WorkspaceSlackIngressCompleteRequest,
@@ -42,21 +38,6 @@ import {
   type WorkspaceSlackContextStoreRequest,
   type WorkspaceSlackFeedbackRequest,
   type WorkspaceSlackFeedbackResult,
-  type WorkspaceSlackSession,
-  type WorkspaceSlackSessionAssignRequest,
-  type WorkspaceSlackSessionAssignResult,
-  type WorkspaceSlackSessionByIdRequest,
-  type WorkspaceSlackSessionByThreadRequest,
-  type WorkspaceSlackSessionByWorkstreamRequest,
-  type WorkspaceSlackSessionCreateRequest,
-  type WorkspaceSlackSessionDeliveryKeyRequest,
-  type WorkspaceSlackSessionExistsRequest,
-  type WorkspaceSlackSessionExistsResult,
-  type WorkspaceSlackSessionReactionAnchorRequest,
-  type WorkspaceSlackSessionReactionRequest,
-  type WorkspaceSlackSessionReactionResult,
-  type WorkspaceSlackSessionResult,
-  type WorkspaceSlackSessionStreamRequest,
   type WorkspaceSlackThreadRoutableRequest,
   type WorkspaceSlackThreadRoutableResult,
   SLACK_INGRESS_ATTEMPT_LIMIT,
@@ -91,21 +72,20 @@ export const SLACK_THREAD_CLAIM_LEASE_MS = 5 * 60_000;
  * The joins a Sidekick's saved Slack sources need, written as Slack ingress
  * jobs. A Sidekick hears a conversation's messages only if the bot is in it,
  * so a source that names conversations keeps the bot there; the ingress runs
- * the job with the installation's token. A join is not an invitation and
- * links no Space.
+ * the job with the installation's token. A join is not an invitation.
  *
- * A job is keyed by the save's source generation, so every accepted save
- * joins again: a bot removed from a conversation since the last save, or a
- * source that moved away and back, is rejoined rather than deduplicated
- * against a completed job for the same channel set. A projection without a
- * generation gets a key of its own each time. Returns the jobs to dispatch.
+ * A job is keyed by the Sidekick revision whose registrations named it, so
+ * every accepted revision joins again: a bot removed from a conversation since
+ * the last one, or a source that moved away and back, is rejoined rather than
+ * deduplicated against a completed job for the same channel set. Returns the
+ * jobs to dispatch.
  */
 export async function enqueueSlackSourceJoins(
   storage: DurableObjectStorage,
   input: {
     workspaceId: string;
     automationId: string;
-    sourceGeneration: number | undefined;
+    revision: number;
     evaluators: readonly { source: { connectorType: string; connectionId: string }; when: unknown }[];
     appId: string | null;
   },
@@ -128,8 +108,7 @@ export async function enqueueSlackSourceJoins(
     ).toArray()[0];
     if (!connection?.provider_account_id) continue;
     const channels = [...channelIds].sort();
-    const generation = input.sourceGeneration === undefined ? uuidV7() : `g${input.sourceGeneration}`;
-    const eventId = `rally-sidekick-source-join:${input.automationId}:${generation}:${channels.join(",")}`;
+    const eventId = `rally-sidekick-source-join:${input.automationId}:g${input.revision}:${channels.join(",")}`;
     const payloadJson = JSON.stringify({
       type: "event_callback",
       team_id: connection.provider_account_id,
@@ -591,303 +570,6 @@ export function releaseWorkspaceSlackThreadClaim(
   );
 }
 
-/**
- * The columns a session reader consumes. Spelled once: a `SELECT *` here would
- * hand callers the compatibility columns (`linked_user_id`, `execution_scope`)
- * that exist only until the next migration drops them.
- */
-const SLACK_SESSION_COLUMNS = `id, workspace_id, connection_id, slack_team_id, slack_user_id,
-  slack_channel_id, slack_thread_ts, slack_stream_ts, workstream_id, last_delivery_key,
-  opening_client_message_id, invocation_kind, channel_type, assigned_user_id,
-  reaction_channel_id, reaction_message_ts, reaction_current,
-  COALESCE(json_extract(context_json, '$.source.threadable'), 1) AS threadable`;
-
-/** A session row as SQLite returns it: `threadable` is the 0/1 the schema reads as a boolean. */
-type SlackSessionRow = Omit<WorkspaceSlackSession, "threadable"> & { threadable: number };
-
-function sessionResult(row: SlackSessionRow | undefined): WorkspaceSlackSessionResult {
-  return WorkspaceSlackSessionResultSchema.parse({ session: row ?? null });
-}
-
-export function workspaceSlackSessionById(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackSessionByIdRequest,
-): WorkspaceSlackSessionResult {
-  return sessionResult(storage.sql.exec<SlackSessionRow>(
-    `SELECT ${SLACK_SESSION_COLUMNS} FROM slack_agent_sessions
-      WHERE id = ? AND workspace_id = ?`,
-    request.sessionId,
-    request.workspaceId,
-  ).toArray()[0]);
-}
-
-export function workspaceSlackSessionByThread(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackSessionByThreadRequest,
-): WorkspaceSlackSessionResult {
-  return sessionResult(storage.sql.exec<SlackSessionRow>(
-    `SELECT ${SLACK_SESSION_COLUMNS} FROM slack_agent_sessions
-      WHERE workspace_id = ? AND connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?`,
-    request.workspaceId,
-    request.connectionId,
-    request.channelId,
-    request.threadTs,
-  ).toArray()[0]);
-}
-
-export function workspaceSlackSessionByWorkstream(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackSessionByWorkstreamRequest,
-): WorkspaceSlackSessionResult {
-  return sessionResult(storage.sql.exec<SlackSessionRow>(
-    `SELECT ${SLACK_SESSION_COLUMNS} FROM slack_agent_sessions
-      WHERE workspace_id = ? AND workstream_id = ?`,
-    request.workspaceId,
-    request.workstreamId,
-  ).toArray()[0]);
-}
-
-/** The preflight: does this work stream already have a session on this connection? */
-export function workspaceSlackSessionExists(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackSessionExistsRequest,
-): WorkspaceSlackSessionExistsResult {
-  const row = storage.sql.exec<{ id: string }>(
-    `SELECT id FROM slack_agent_sessions
-      WHERE workspace_id = ? AND workstream_id = ? AND connection_id = ?`,
-    request.workspaceId,
-    request.workstreamId,
-    request.connectionId,
-  ).toArray()[0];
-  return WorkspaceSlackSessionExistsResultSchema.parse({ sessionId: row?.id ?? null });
-}
-
-/**
- * Insert the session and answer with the stored row.
- *
- * `linked_user_id` and `execution_scope` are still written because the previous
- * Worker names both in its own insert and `execution_scope` is `NOT NULL` with
- * no default — dropping them in the same change as the code would break every
- * new Slack thread for the length of a deploy. The permissive pair is written,
- * exactly as before; the work stream's own `scope` still decides who may read
- * it.
- */
-export function createWorkspaceSlackSession(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackSessionCreateRequest,
-): WorkspaceSlackSessionResult {
-  return storage.transactionSync(() => {
-    // The thread's binding is the routing authority, so a session that exists
-    // without one would be a conversation nobody's reply could reach. It gets
-    // it here, first binding wins, in the same transaction as the session row.
-    const bound = new ExternalConversationBindingStorage(storage).recordOutbound(
-      `slack:${request.teamId}`,
-      [request.channelId, request.threadTs],
-      { kind: "conversation", parentKind: "workstream", parentId: request.workstreamId, substreamId: "0" },
-      request.at,
-    );
-    if (bound === "conflict") throw new Error("slack_session_thread_bound_elsewhere");
-    // A reconnect writes a new connection row, and the binding (keyed by the
-    // installation) outlives the old one. The thread's session is then found
-    // by its Channel rather than its connection, and moves to the connection
-    // that is delivering now: a second row would break the one-session-per-
-    // Channel rule and fail the reply for good.
-    const moved = storage.sql.exec<SlackSessionRow>(
-      `UPDATE slack_agent_sessions
-          SET connection_id = ?, updated_at = ?
-        WHERE workspace_id = ? AND workstream_id = ? AND slack_team_id = ?
-          AND slack_channel_id = ? AND slack_thread_ts = ?
-        RETURNING ${SLACK_SESSION_COLUMNS}`,
-      request.connectionId,
-      request.at,
-      request.workspaceId,
-      request.workstreamId,
-      request.teamId,
-      request.channelId,
-      request.threadTs,
-    ).toArray()[0];
-    if (moved) return sessionResult(moved);
-    return insertWorkspaceSlackSession(storage, request);
-  });
-}
-
-function insertWorkspaceSlackSession(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackSessionCreateRequest,
-): WorkspaceSlackSessionResult {
-  return sessionResult(storage.sql.exec<SlackSessionRow>(
-    `INSERT INTO slack_agent_sessions
-       (id, workspace_id, connection_id, linked_user_id, execution_scope,
-        slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
-        opening_client_message_id, workstream_id, invocation_kind, channel_type,
-        assigned_user_id, assigned_at, assignment_method,
-        claimed_by_slack_user_id, claimed_at, context_json, created_at, updated_at)
-     VALUES (?, ?, ?, NULL, 'workspace', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     RETURNING ${SLACK_SESSION_COLUMNS}`,
-    request.sessionId,
-    request.workspaceId,
-    request.connectionId,
-    request.teamId,
-    request.slackUserId,
-    request.channelId,
-    request.threadTs,
-    request.openingClientMessageId,
-    request.workstreamId,
-    request.invocationKind,
-    request.channelType,
-    request.assignedUserId,
-    request.assignedAt,
-    request.assignmentMethod,
-    request.claimedBySlackUserId,
-    request.claimedAt,
-    request.contextJson,
-    request.at,
-    request.at,
-  ).toArray()[0]);
-}
-
-/**
- * Seat a member across every workspace-scoped session this Slack user owns.
- *
- * Read and write are one critical section. They were two statements over the
- * same predicate before, so a session created between them was updated without
- * being reconciled, and one reconciled against a row the update had already
- * moved. The previous assignment is read here because `RETURNING` answers with
- * the new row.
- */
-export function assignWorkspaceSlackSessions(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackSessionAssignRequest,
-): WorkspaceSlackSessionAssignResult {
-  const explicit = request.assignmentMethod === "explicit_link";
-  // A verified-email match may only seat an unseated session, or re-affirm the
-  // one it already seated; an explicit link overrides either.
-  const guard = explicit ? "" : "AND (assigned_user_id IS NULL OR assigned_user_id = ?)";
-  const guardBindings = explicit ? [] : [request.assignedUserId];
-  const metadata = explicit
-    ? "assigned_at = ?, assignment_method = 'explicit_link'"
-    : "assigned_at = COALESCE(assigned_at, ?), assignment_method = COALESCE(assignment_method, 'verified_email')";
-  return storage.transactionSync(() => {
-    const before = storage.sql.exec<{
-      id: string;
-      workspace_id: string;
-      workstream_id: string;
-      assigned_user_id: string | null;
-      assignment_method: "verified_email" | "explicit_link" | null;
-    }>(
-      `SELECT id, workspace_id, workstream_id, assigned_user_id, assignment_method
-         FROM slack_agent_sessions
-        WHERE workspace_id = ? AND connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
-          AND execution_scope = 'workspace'
-          ${guard}`,
-      request.workspaceId,
-      request.connectionId,
-      request.teamId,
-      request.slackUserId,
-      ...guardBindings,
-    ).toArray();
-    const previousById = new Map(before.map((row) => [row.id, row]));
-    const moved = storage.sql.exec<{ id: string }>(
-      `UPDATE slack_agent_sessions
-          SET assigned_user_id = ?, ${metadata}, updated_at = ?
-        WHERE workspace_id = ? AND connection_id = ? AND slack_team_id = ? AND slack_user_id = ?
-          AND execution_scope = 'workspace'
-          ${guard}
-        RETURNING id`,
-      request.assignedUserId,
-      request.at,
-      request.at,
-      request.workspaceId,
-      request.connectionId,
-      request.teamId,
-      request.slackUserId,
-      ...guardBindings,
-    ).toArray();
-    return WorkspaceSlackSessionAssignResultSchema.parse({
-      sessions: moved.flatMap((row) => {
-        const previous = previousById.get(row.id);
-        return previous
-          ? [{
-            id: previous.id,
-            workspaceId: previous.workspace_id,
-            workstreamId: previous.workstream_id,
-            previousAssignedUserId: previous.assigned_user_id,
-            previousAssignmentMethod: previous.assignment_method,
-          }]
-          : [];
-      }),
-    });
-  });
-}
-
-/**
- * Stamp the delivery key, and the streaming pointer below it, on a session the
- * caller has already read.
- *
- * Neither reports whether a row matched. Both callers reached these having just
- * loaded the session they name, so a miss would mean the session was deleted
- * mid-turn — and there is no better answer to that than the no-op these give.
- * A witness here would only be checked to be ignored.
- */
-export function setWorkspaceSlackSessionDeliveryKey(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackSessionDeliveryKeyRequest,
-): void {
-  storage.sql.exec(
-    `UPDATE slack_agent_sessions SET last_delivery_key = ?, updated_at = ?
-      WHERE id = ? AND workspace_id = ?`,
-    request.deliveryKey,
-    request.at,
-    request.sessionId,
-    request.workspaceId,
-  );
-}
-
-export function setWorkspaceSlackSessionStream(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackSessionStreamRequest,
-): void {
-  storage.sql.exec(
-    `UPDATE slack_agent_sessions SET slack_stream_ts = ?, updated_at = ?
-      WHERE id = ? AND workspace_id = ?`,
-    request.streamTs,
-    request.at,
-    request.sessionId,
-    request.workspaceId,
-  );
-}
-
-/**
- * Record the reaction this transition placed, only if the slot still points at
- * the message it acted on and the one it removed is still there.
- *
- * `IS` rather than `=` because NULL is a real state — it means Rally has
- * placed nothing — and `=` never matches it.
- */
-export function settleWorkspaceSlackSessionReaction(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackSessionReactionRequest,
-): WorkspaceSlackSessionReactionResult {
-  const settled = storage.sql.exec<{ id: string }>(
-    `UPDATE slack_agent_sessions
-        SET reaction_current = ?, updated_at = ?
-      WHERE id = ? AND workspace_id = ?
-        AND reaction_channel_id = ? AND reaction_message_ts = ?
-        AND reaction_current IS ?
-      RETURNING id`,
-    request.reaction,
-    request.at,
-    request.sessionId,
-    request.workspaceId,
-    request.channelId,
-    request.messageTs,
-    request.expected,
-  ).toArray()[0];
-  return WorkspaceSlackSessionReactionResultSchema.parse({
-    outcome: settled ? "settled" : "raced",
-  });
-}
-
 export function workspaceSlackContext(
   storage: DurableObjectStorage,
   request: WorkspaceSlackContextRequest,
@@ -941,23 +623,4 @@ export function recordWorkspaceSlackFeedback(
   return WorkspaceSlackFeedbackResultSchema.parse({
     outcome: inserted ? "recorded" : "replayed",
   });
-}
-
-/** Re-anchor the status reaction on the message that made the newest prompt. */
-export function anchorWorkspaceSlackSessionReaction(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackSessionReactionAnchorRequest,
-): void {
-  storage.sql.exec(
-    `UPDATE slack_agent_sessions
-        SET reaction_channel_id = ?, reaction_message_ts = ?, reaction_current = ?,
-            updated_at = ?
-      WHERE id = ? AND workspace_id = ?`,
-    request.channelId,
-    request.messageTs,
-    request.reaction,
-    request.at,
-    request.sessionId,
-    request.workspaceId,
-  );
 }
