@@ -322,6 +322,8 @@ interface RunRow extends Record<string, SqlStorageValue> {
   /** Who the run runs as, recorded when it is provisioned; null while pending. */
   run_as_user_id: string | null;
   coordinator_user_id: string | null;
+  /** Set when a non-delegate's message started the run: it acts as them alone. */
+  requester_user_id: string | null;
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
@@ -635,9 +637,24 @@ export class HostedSidekick {
   }
 
   /** One eventually consistent authorization view shared by admission and operation selection. */
-  async readExecutionDelegation(input: { workspaceId: string; automationId: string }): Promise<SidekickExecutionDelegation> {
-    const request = parseRpcInput(z.strictObject({ workspaceId: z.string().uuid(), automationId: z.string().uuid() }), input, "sidekick_execution_delegation");
+  async readExecutionDelegation(input: { workspaceId: string; automationId: string; runId?: string }): Promise<SidekickExecutionDelegation> {
+    const request = parseRpcInput(z.strictObject({ workspaceId: z.string().uuid(), automationId: z.string().uuid(),
+      runId: z.string().uuid().optional() }), input, "sidekick_execution_delegation");
     this.assertSidekick(request.workspaceId, request.automationId);
+    // A run a non-delegate asked for acts as them alone: their own accounts,
+    // never a delegate's (the PRD's "delegate access only for its own runs").
+    const requester = request.runId === undefined ? null : first(this.sql.exec<{ requester_user_id: string | null; created_at: number }>(
+      `SELECT requester_user_id, created_at FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, this.sidekickId, request.runId,
+    ));
+    if (requester?.requester_user_id) {
+      const row = this.assertSidekick(request.workspaceId, request.automationId);
+      return SidekickExecutionDelegationSchema.parse({
+        sidekickId: this.sidekickId, creatorUserId: row.author_user_id,
+        accountUserId: row.legacy_account_user_id ?? row.author_user_id,
+        delegates: [{ userId: requester.requester_user_id, generation: 0, grantedAt: requester.created_at }],
+        requesterUserId: requester.requester_user_id,
+      });
+    }
     await this.migrateDelegation();
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     const grants = this.delegations().forSidekick(this.sidekickId);
@@ -1196,10 +1213,13 @@ export class HostedSidekick {
    * and the run answers in its own child conversation. The conversation's
    * loop itself never acts on the Sidekick's definition.
    *
-   * The run acts only as its sender, and only when the sender is an eligible
-   * delegate: a person must not read, through the Sidekick, what they cannot
-   * read themselves, and borrowing another delegate's access here would be
-   * exactly that. Running under a non-delegate's own access is plan step A-4.
+   * The run acts only as its sender: as a delegate when the sender is an
+   * eligible one, and otherwise under the sender's own access, recorded as the
+   * run's requester (`requester_user_id`), which its continuations keep and
+   * its connector operations are limited to. A person must not read, through
+   * the Sidekick, what they cannot read themselves, and borrowing another
+   * delegate's access here would be exactly that. A guest who is not a
+   * delegate is refused (`run_no_eligible_delegate`).
    * Idempotent on the message's turn id, so a retried claim admits nothing
    * twice.
    */
@@ -1221,7 +1241,12 @@ export class HostedSidekick {
     if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
       return { route: "refused", code: "sidekick_not_runnable" };
     }
-    if (coordinator === null) return { route: "refused", code: "run_no_eligible_delegate" };
+    // Someone who is not a delegate gets a run under their own access: the
+    // run acts as them, and an operation that would need a delegate's account
+    // is refused by name. A guest has no Organization access to run under.
+    const requester = coordinator === null && await this.requesterMember(row.workspace_id, request.actor.userId)
+      ? request.actor.userId : null;
+    if (coordinator === null && requester === null) return { route: "refused", code: "run_no_eligible_delegate" };
     const admitted = this.admitOccurrence(
       row.accepted_definition_revision,
       `message:${request.messageId}`,
@@ -1232,9 +1257,30 @@ export class HostedSidekick {
         authorName: request.authorName,
         text: request.text,
       }),
-      coordinator,
+      coordinator ?? requester,
+      null,
+      requester,
     );
     return { route: "run", runId: admitted.runId, reused: admitted.reused };
+  }
+
+  /** Whether a run may act as this person under their own access: an active member, never a guest. */
+  private async requesterMember(workspaceId: string, userId: string): Promise<boolean> {
+    const relationship = await this.host.readRelationship(workspaceId, userId);
+    return relationship?.status === "active" && relationship.accessClass === "member";
+  }
+
+  /**
+   * Who a run acts as now: its requester while they are still a member, for a
+   * run a non-delegate started; otherwise an eligible delegate, preferring the
+   * one it had. Null when nobody is left to act.
+   */
+  private async runPrincipal(run: { coordinator_user_id: string | null; requester_user_id: string | null }): Promise<string | null> {
+    if (run.requester_user_id !== null) {
+      const row = this.row();
+      return row && await this.requesterMember(row.workspace_id, run.requester_user_id) ? run.requester_user_id : null;
+    }
+    return this.coordinator(run.coordinator_user_id);
   }
 
   /**
@@ -1509,8 +1555,10 @@ export class HostedSidekick {
   async continueRun(input: AutomationRunRequest): Promise<SidekickRunContinuation> {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "continue_run");
     if (!this.row()) return { outcome: "refused", code: "run_not_found" };
-    const preferred = this.runView(request.runId)?.run?.coordinator_user_id ?? null;
-    const coordinator = await this.coordinator(preferred);
+    const before = this.runView(request.runId)?.run;
+    // A requester's run keeps its requester; any other run keeps or re-picks a delegate.
+    const coordinator = await this.runPrincipal({ coordinator_user_id: before?.coordinator_user_id ?? null,
+      requester_user_id: before?.requester_user_id ?? null });
     const view = this.runView(request.runId);
     if (!view) return { outcome: "refused", code: "run_not_found" };
     const { sidekick, run } = view;
@@ -2334,6 +2382,7 @@ export class HostedSidekick {
     opening: AutomationRunDefinitionV1["opening"],
     coordinatorUserId: string | null,
     seed: DemoSeed | null = null,
+    requesterUserId: string | null = null,
   ): { runId: string; reused: boolean } {
     if (acceptedRevision === null) {
       throw new ApiError(409, "sidekick_not_active", "The Sidekick has no accepted definition");
@@ -2347,8 +2396,9 @@ export class HostedSidekick {
     const run = first(this.sql.exec<{ run_id: string; state: RunState }>(
       `INSERT INTO sidekick_runs
          (sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state,
-          summary, opening_json, seed_json, created_at, started_at, completed_at, updated_at, coordinator_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+          summary, opening_json, seed_json, created_at, started_at, completed_at, updated_at, coordinator_user_id,
+          requester_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
        ON CONFLICT(sidekick_id, occurrence_key) DO UPDATE SET occurrence_key = excluded.occurrence_key
        RETURNING run_id, state`,
       this.sidekickId,
@@ -2364,6 +2414,7 @@ export class HostedSidekick {
       now,
       now,
       coordinatorUserId,
+      requesterUserId,
     ));
     if (!run) throw new Error("sidekick_occurrence_missing");
     if (coordinatorUserId === null) this.noteDelegationAttention("no_eligible_delegate");
@@ -2399,7 +2450,7 @@ export class HostedSidekick {
       );
       return { progressed: true };
     }
-    const coordinator = await this.coordinator(run.coordinator_user_id);
+    const coordinator = await this.runPrincipal(run);
     if (coordinator === null) {
       this.sql.exec("UPDATE sidekick_runs SET state='needs_input',summary=?,updated_at=? WHERE sidekick_id=? AND run_id=? AND state='pending'",
         SIDEKICK_DELEGATION_ATTENTION_MESSAGES.no_eligible_delegate, now, this.sidekickId, runId);
@@ -2442,7 +2493,8 @@ export class HostedSidekick {
     const view = this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId);
     const { sidekick, run } = view;
     if (!run || run.state !== "pending" || sidekick.lifecycle !== "active") return null;
-    const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId });
+    const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId,
+      runId: request.runId });
     if (!run.coordinator_user_id || !authority.delegates.some((grant) => grant.userId === run.coordinator_user_id)) return null;
     return {
       region: sidekick.region,
@@ -2960,7 +3012,8 @@ export class HostedSidekick {
                 'run_id', run.run_id, 'occurrence_key', run.occurrence_key, 'trigger_json', run.trigger_json,
                 'definition_revision', run.definition_revision, 'harness_run_id', run.harness_run_id,
                 'state', run.state, 'summary', run.summary, 'opening_json', run.opening_json,
-                'seed_json', run.seed_json, 'run_as_user_id', run.run_as_user_id, 'coordinator_user_id', run.coordinator_user_id, 'created_at', run.created_at,
+                'seed_json', run.seed_json, 'run_as_user_id', run.run_as_user_id, 'coordinator_user_id', run.coordinator_user_id,
+                'requester_user_id', run.requester_user_id, 'created_at', run.created_at,
                 'started_at', run.started_at, 'completed_at', run.completed_at, 'updated_at', run.updated_at
               ) END AS run,
               CASE WHEN revision.definition_revision IS NULL THEN NULL ELSE json_object(

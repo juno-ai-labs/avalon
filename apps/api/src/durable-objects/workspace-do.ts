@@ -1217,7 +1217,7 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
+import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   hostedSidekickAlarmTarget,
@@ -4887,6 +4887,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `UPDATE automation_directory SET scope = 'workspace', owning_workstream_id = NULL, owning_substream_id = '0'
       WHERE scope = 'workstream'`,
   ],
+}, {
+  version: 138,
+  description: "record who started a Sidekick run under their own access",
+  // See SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#who-a-run-acts-as.
+  statements: SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {

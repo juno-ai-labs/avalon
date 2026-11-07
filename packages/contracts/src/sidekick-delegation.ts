@@ -68,7 +68,18 @@ export const SidekickExecutionDelegationSchema = z.strictObject({
   delegates: z.array(z.strictObject({
     userId: UserIdSchema, generation: z.number().int().nonnegative(), grantedAt: z.number().int().nonnegative(),
   })),
+  /**
+   * Set for a run a non-delegate's message started: the run acts as this
+   * person, with only their own access, and `delegates` names only them.
+   * Absent for every other run and for the Sidekick as a whole.
+   */
+  requesterUserId: UserIdSchema.optional(),
 });
+/**
+ * Why a run started by a non-delegate refuses a connector operation: it would
+ * need an account that only a delegate's access reaches.
+ */
+export const SIDEKICK_REQUESTER_ACCOUNT_UNAVAILABLE = "sidekick_requester_account_unavailable";
 export type SidekickExecutionDelegation = z.infer<typeof SidekickExecutionDelegationSchema>;
 
 export const SidekickDelegationAttentionCodeSchema = z.enum(["no_eligible_delegate", "event_no_eligible_delegate", "permission_report_unavailable"]);
