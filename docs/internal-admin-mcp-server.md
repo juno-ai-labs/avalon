@@ -166,11 +166,11 @@ provisioner. See Cloudflare's
 Begin with inventory. Do not guess a region or Durable Object name:
 
 1. Call `list_workspaces` and select the exact `workspaceId`.
-2. Call `list_workstreams` with that `workspaceId` and select the exact
-   `workstreamId`.
-3. Call `list_substreams` with that `workstreamId`. Its response includes the
-   full workspace, work-stream, and substream ID tuple required by
-   `run_substream_sql`.
+2. Call `list_canvases` (or `list_sidekicks`) with that `workspaceId` and
+   select the exact `canvasId` (or `sidekickId`).
+3. Pass the workspace ID and that ID as `conversationId` to `run_canvas_sql`,
+   which opens the conversation object; add `substreamId` only for a
+   registered child, such as a Sidekick run's conversation.
 4. Inspect the schema before querying application rows.
 
 For a live web artifact, start from `list_artifacts` with the `workspaceId`.
@@ -184,9 +184,9 @@ author only their own rows of a `private_to_viewer` table.
 For a Sidekick, start from `list_sidekicks` with the `workspaceId` instead. Its
 definition revisions, schedules and run history are in the Organization
 object: `run_workspace_sql` over the `sidekick_*` tables, filtered by
-`sidekick_id`. The same ID passed to `list_substreams` and `run_substream_sql`
-as the `workstreamId` opens its conversation, because a Sidekick is a
-conversation parent like a work stream.
+`sidekick_id`. The same ID passed to `run_canvas_sql` as the `conversationId`
+opens its shared conversation, and with a run's `substreamId` that run's
+conversation, because a Sidekick is a conversation parent like a Canvas.
 
 A safe first workspace query is:
 
@@ -221,23 +221,21 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | --- | --- | --- |
 | `list_workspaces` | None | Lists workspace identity records across configured deployments. |
 | `create_org` | `operationId`, `creatorUserId`, `region`, `name`, `userIds` | Creates an Organization with the creator as owner and the existing regional users as members, directly, without invitations. |
-| `send_message` | `operationId`, `userId`, `orgId`, `threadId`, `text`; optional `breakoutId` and composer fields | Uses normal message admission, retries, addressing and execution as that user. |
-| `read_thread` | `userId`, `orgId`, `threadId`; optional `afterSequence`, `throughSequence`, `limit` | Returns participant prose in 20-turn pages by default; follow the continuation fence. |
-| `read_breakout` | The Thread-read inputs plus `breakoutId` | Reads the exact child under its own access checks. |
+| `send_message` | `operationId`, `userId`, `orgId`, `conversationId` (a Canvas or Sidekick ID), `text`; optional composer fields and `recordOnly` | Posts to the Canvas's Chat or the Sidekick's shared conversation with normal message admission, retries, addressing and execution as that user. |
+| `read_canvas_chat` | `userId`, `orgId`, `canvasId`; optional `afterSequence`, `throughSequence`, `limit` | Returns the Chat's participant prose in 20-turn pages by default; follow the continuation fence. Refuses a Sidekick ID (`conversation_kind_mismatch`). |
+| `read_sidekick_conversation` | `userId`, `orgId`, `sidekickId`; the same paging inputs | Reads the Sidekick's shared conversation the same way. Refuses a Canvas ID. |
 | `list_orgs` | Optional `orderBy`, `direction`, `limit`, `page` | Lists every Organization across regions, newest first unless ordered otherwise, abandoned ones included, with plan, creation time, active member count, and last seen. |
 | `search_orgs` | Optional `query`, `plan`, `abandoned`, `createdAfter`, `createdBefore`, plus the ordering and paging inputs | Same rows as `list_orgs`, narrowed by every filter given; abandoned Organizations are left out unless `abandoned` is `include` or `only`. |
 | `list_users` | Optional `orderBy`, `direction`, `limit`, `page` | Lists every user across regions, newest first unless ordered otherwise, each with every Organization they belong to: role, guest or member, status, and last seen. |
 | `search_users` | Optional `query`, `createdAfter`, `createdBefore`, plus the ordering and paging inputs | Same rows as `list_users`, narrowed to names, emails or IDs containing `query` and to the creation window. |
-| `list_workstreams` | `workspaceId` | Reads the authoritative WorkspaceDO work-stream directory. |
-| `list_substreams` | `workstreamId` | Lists main substream `0` and child substreams from the Channel's hosted parent in WorkspaceDO. |
+| `list_canvases` | `workspaceId` | Lists the Organization's Canvases from `canvas_directory` in WorkspaceDO, most recently updated first. |
 | `list_sidekicks` | `workspaceId` | Reads the authoritative WorkspaceDO Sidekick directory, in every lifecycle including deleted. |
 | `pause_sidekick`, `resume_sidekick` | `orgId`, `userId`, `sidekickId` | Pauses or resumes the Sidekick as that user, through the app's own Pause and Resume path. The user must be allowed to manage it; its author always is. Returns the resulting lifecycle. |
 | `dump_thread_transcripts` | `orgId`, `confirm` (the `orgId` again) | **Destructive standing**, as `run_workspace_sql` (annotated a non-destructive write: it only adds to R2, but it opens every conversation object). Writes every Thread, Breakout and Channel conversation of the Organization to R2 as text under `retired-conversations/<orgId>/<parentId>/<substreamId>.txt`, skipping any already written; Canvases and Sidekicks are never dumped. Reports dumped, skipped and failed counts. Run it, and see nothing failed, before `retire_threads`. |
 | `retire_threads` | `orgId`, `confirm` (the `orgId` again) | **Destructive.** Irreversibly deletes every Thread, Breakout and Channel of the Organization: retires each conversation object and deletes their rows. Canvases, Sidekicks, resources and memory stay. Refused until `dump_thread_transcripts` has written every conversation. Repeat to resume; a finished Organization reports zeros. |
-| `list_spaces` | `workspaceId` | Lists the Organization's Channels (stored Spaces), archived ones included. |
 | `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Channel's or Space's parent state in the `parent_*` tables. |
-| `run_substream_sql` | `workspaceId`, `workstreamId`, `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SubstreamAgent. |
+| `run_canvas_sql` | `workspaceId`, `conversationId` (a Canvas or Sidekick ID), optional `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in the conversation object (AgentLoopDO), or in a registered child conversation. |
 | `run_artifact_sql` | `workspaceId`, `artifactId`, `sql`, optional `bindings` | Runs arbitrary SQLite in ArtifactHostDO — the artifact's supervisor, not its facet. |
 | `run_d1_sql` | `region`, `database` (`DB`, `TELEMETRY_DB`, `USAGE_DB`, `PLATFORM_DB` or `MESSAGE_ISSUES_DB`), `sql`, optional `bindings` | Runs arbitrary SQL in that region's D1 database. |
 | `list_feature_flags` | None | Lists Ace's managed product flags with their live Flagship definitions. |
@@ -250,9 +248,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 For each creation, generate a fresh UUID `operationId`; the created entity uses
 it as its ID. Reuse that UUID and the original arguments after a timeout or
 lost response to finish the same creation. Use `search_users` for existing
-regional user IDs. `create_org` makes the creator an owner of the new org;
-Channel and Thread creation preserve the named creator's current member or guest
-relationship and enforce the app's permissions, including guest refusals.
+regional user IDs. `create_org` makes the creator an owner of the new org.
 Message sends also reuse an operation ID after an uncertain result. Write attempts
 and outcomes persist the Access operator in the audit database; the selected
 user remains the product author.

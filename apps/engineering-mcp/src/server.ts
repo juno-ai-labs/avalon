@@ -16,12 +16,10 @@ import {
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
   EngineeringSidekickListLookupSchema,
-  EngineeringSpaceListLookupSchema,
   EngineeringSqlLookupSchema,
-  EngineeringSubstreamListLookupSchema,
-  EngineeringSubstreamTargetLookupSchema,
+  EngineeringCanvasListLookupSchema,
+  EngineeringConversationTargetLookupSchema,
   EngineeringWorkspaceTargetLookupSchema,
-  EngineeringWorkstreamListLookupSchema,
   InspectionSqlBindingSchema,
   ListEngineeringWorkspacesResultSchema,
   SearchEngineeringOrganizationsInputSchema,
@@ -29,9 +27,9 @@ import {
 } from "@rally/contracts/engineering-inspection";
 import {
   ArtifactIdSchema,
+  IdSchema,
   SubstreamIdSchema,
   WorkspaceIdSchema,
-  WorkstreamIdSchema,
 } from "@rally/contracts";
 import { platformErrorCode } from "@rally/contracts/platform-diagnostics";
 import { isCodeShaped, isDiagnosticCode, zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
@@ -187,13 +185,13 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   const server = new McpServer({
     name: "Rally engineering",
     version: "1.0.0",
-    description: "Inspect and administer Rally organizations, Channels, Threads, Breakouts, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and send messages as a selected Rally user.",
+    description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and send messages as a selected Rally user.",
   }, {
     instructions: [
       "Use these tools for Rally engineering investigations and requested administration.",
-      "Product names differ from storage: an Organization is a workspace, a Channel is a Space, a Thread is a workstream, and a Breakout is a substream. Main is substream 0.",
+      "Product names differ from storage: an Organization is a workspace, a Canvas's Chat is its conversation (its id is a workstream id in storage, substream 0), and a Sidekick is an automation, whose shared conversation has the Sidekick's id.",
       "Resolve the exact organization, user and conversation before investigating. Start with the list/search tools and inspect database schemas before querying rows; bind SQL values with placeholders.",
-      "For participant-visible content use read_thread or read_breakout as the selected user and follow pagination. Those reads omit internal tools and thinking; use the exact conversation's inspection SQL and observability tools when diagnosing execution failures.",
+      "For participant-visible content use read_canvas_chat or read_sidekick_conversation as the selected user and follow pagination. Those reads omit internal tools and thinking; use the exact conversation's inspection SQL and observability tools when diagnosing execution failures.",
       "SQL tools can mutate production data. Use read-only queries for investigations; make changes only within the user's request. For creation and message sends, reuse the same operationId and arguments after an uncertain outcome rather than creating a second operation.",
       "Filter logs and analytical queries to the relevant time window and identifiers. Never expose credentials, OAuth codes, socket tickets or unrelated private content found in diagnostic data.",
       "Separate verified durable state, observed tool results and inference from hypotheses, and distinguish a local change from a merged or deployed fix.",
@@ -218,11 +216,11 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }
 
   server.registerTool("send_message", {
-    description: "Send a message as userId to a Thread's Main or the named Breakout, through the same composer admission as the app. The message is attributed to userId, as though that user sent it. Enforces that user's access, uses normal addressing, queue/steer behavior, notifications and agent execution; recordOnly posts it for readers without starting a run. Reuse operationId and the same arguments to retry an uncertain send.",
+    description: "Send a message as userId to a Canvas's Chat or a Sidekick's shared conversation (conversationId is the Canvas or Sidekick ID), through the same composer admission as the app. The message is attributed to userId, as though that user sent it. Enforces that user's access, uses normal addressing, queue/steer behavior, notifications and agent execution; recordOnly posts it for readers without starting a run. Reuse operationId and the same arguments to retry an uncertain send.",
     inputSchema: SendEngineeringMessageInputSchema.unwrap().shape,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (request) => tool(principal, "send_message", {
-    workspace_id: request.orgId, workstream_id: request.threadId, substream_id: request.breakoutId,
+    workspace_id: request.orgId, workstream_id: request.conversationId,
     user_id: request.userId, operation_id: request.operationId,
   }, async () => SendEngineeringMessageResultSchema.parse(await (await organizationBinding(request.orgId)).sendMessage(request, principal))));
 
@@ -266,22 +264,25 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     return RetireThreadsResultSchema.parse(await (await organizationBinding(orgId)).retireThreads(request, principal));
   }));
 
-  const conversationReadSchema = ReadEngineeringConversationInputSchema.unwrap().omit({ breakoutId: true });
-  server.registerTool("read_thread", {
-    description: "Read the Thread's participant-visible message text as userId through ordinary conversation authorization. Omits tools, thinking and internal agent messages. Returns 20 committed turns by default, or the requested limit; follow the returned sequence fence to continue a page.",
-    inputSchema: conversationReadSchema.shape,
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "read_thread", {
-    workspace_id: request.orgId, workstream_id: request.threadId, user_id: request.userId,
-  }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(request.orgId)).readConversation(request)).text));
-
-  server.registerTool("read_breakout", {
-    description: "Read a Breakout's participant-visible message text as userId. The user's access to this exact Breakout is checked independently of the parent Thread. Returns plain text with the same history paging as read_thread.",
-    inputSchema: conversationReadSchema.extend({ breakoutId: SubstreamIdSchema.refine((id) => id !== "0", "A Breakout ID is required") }).shape,
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  }, (request) => tool(principal, "read_breakout", {
-    workspace_id: request.orgId, workstream_id: request.threadId, substream_id: request.breakoutId, user_id: request.userId,
-  }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(request.orgId)).readConversation(request)).text));
+  const conversationReadSchema = ReadEngineeringConversationInputSchema.unwrap().omit({ kind: true, conversationId: true });
+  for (const [name, kind, label] of [["read_canvas_chat", "canvas", "Canvas"], ["read_sidekick_conversation", "sidekick", "Sidekick"]] as const) {
+    const idKey = kind === "canvas" ? "canvasId" : "sidekickId";
+    server.registerTool(name, {
+      description: kind === "canvas"
+        ? "Read a Canvas's Chat as userId through ordinary conversation authorization: the participant-visible message text, omitting tools, thinking and internal agent messages. Returns 20 committed turns by default, or the requested limit; follow the returned sequence fence to continue a page."
+        : "Read a Sidekick's shared conversation as userId through ordinary conversation authorization, with the same text and paging as read_canvas_chat.",
+      inputSchema: { ...conversationReadSchema.shape, [idKey]: IdSchema.describe(`The ${label} ID.`) },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    }, (request) => {
+      const rest: Record<string, unknown> = { ...request };
+      const conversationId = String(rest[idKey]);
+      delete rest[idKey];
+      return tool(principal, name, {
+        workspace_id: request.orgId, workstream_id: conversationId, user_id: request.userId,
+      }, async () => EngineeringTextResultSchema.parse(await (await organizationBinding(request.orgId))
+        .readConversation(ReadEngineeringConversationInputSchema.parse({ ...rest, kind, conversationId }))).text);
+    });
+  }
 
   server.registerTool("list_workspaces", {
     description: "List Rally workspaces from configured regional identity stores.",
@@ -321,28 +322,15 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, ({ orderBy, direction, limit, page, ...filter }) => tool(principal, "search_users", {}, () =>
     userPage(inspectionBindings(env), filter, { orderBy, direction, limit, page })));
 
-  server.registerTool("list_workstreams", {
-    description: "List every Rally Thread (stored as a workstream) in the authoritative WorkspaceDO for an Organization's workspace ID.",
+  server.registerTool("list_canvases", {
+    description: "List every Canvas in the authoritative WorkspaceDO for an Organization's workspace ID, most recently updated first. A Canvas ID also names its Chat's conversation object (read_canvas_chat, run_canvas_sql).",
     inputSchema: { workspaceId: WorkspaceIdSchema },
     annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ workspaceId }) => tool(principal, "list_workstreams", { workspace_id: workspaceId }, async () => {
-    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listWorkstreams({ workspaceId })));
+  }, ({ workspaceId }) => tool(principal, "list_canvases", { workspace_id: workspaceId }, async () => {
+    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listCanvases({ workspaceId })));
     const found = oneRegionalResult(
-      results.map((result) => EngineeringWorkstreamListLookupSchema.parse(result)),
+      results.map((result) => EngineeringCanvasListLookupSchema.parse(result)),
       `Workspace ${workspaceId}`,
-    );
-    return found.value;
-  }));
-
-  server.registerTool("list_substreams", {
-    description: "List main substream 0 and every child substream for a work-stream ID.",
-    inputSchema: { workstreamId: WorkstreamIdSchema },
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ workstreamId }) => tool(principal, "list_substreams", { workstream_id: workstreamId }, async () => {
-    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listSubstreams({ workstreamId })));
-    const found = oneRegionalResult(
-      results.map((result) => EngineeringSubstreamListLookupSchema.parse(result)),
-      `Work stream ${workstreamId}`,
     );
     return found.value;
   }));
@@ -355,19 +343,6 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listSidekicks({ workspaceId })));
     const found = oneRegionalResult(
       results.map((result) => EngineeringSidekickListLookupSchema.parse(result)),
-      `Workspace ${workspaceId}`,
-    );
-    return found.value;
-  }));
-
-  server.registerTool("list_spaces", {
-    description: "List every Rally Channel (stored as a Space) in the authoritative WorkspaceDO for an Organization's workspace ID, including archived Channels.",
-    inputSchema: { workspaceId: WorkspaceIdSchema },
-    annotations: { readOnlyHint: true, openWorldHint: false },
-  }, ({ workspaceId }) => tool(principal, "list_spaces", { workspace_id: workspaceId }, async () => {
-    const results = await Promise.all(inspectionBindings(env).map((binding) => binding.listSpaces({ workspaceId })));
-    const found = oneRegionalResult(
-      results.map((result) => EngineeringSpaceListLookupSchema.parse(result)),
       `Workspace ${workspaceId}`,
     );
     return found.value;
@@ -409,33 +384,32 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
     },
   ));
 
-  server.registerTool("run_substream_sql", {
-    description: "Run arbitrary SQLite against an AgentLoopDO. Parent IDs are required because they are part of the Durable Object name. Statements may mutate production state.",
+  server.registerTool("run_canvas_sql", {
+    description: "Run arbitrary SQLite against the conversation object (AgentLoopDO) of a Canvas's Chat or a Sidekick's shared conversation, named by the Canvas or Sidekick ID: its transcript, runs, tool calls and outbox. substreamId reaches a registered child instead: a Sidekick run's or a background agent's conversation. Statements may mutate production state.",
     inputSchema: {
       workspaceId: WorkspaceIdSchema,
-      workstreamId: WorkstreamIdSchema,
-      substreamId: SubstreamIdSchema,
+      conversationId: IdSchema.describe("A Canvas ID or a Sidekick ID."),
+      substreamId: SubstreamIdSchema.optional().describe("A registered child conversation under it; omit for the main conversation."),
       ...sqlInputSchema,
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-  }, ({ workspaceId, workstreamId, substreamId, sql, bindings = [] }) => tool(
+  }, ({ workspaceId, conversationId, substreamId, sql, bindings = [] }) => tool(
     principal,
-    "run_substream_sql",
-    { workspace_id: workspaceId, workstream_id: workstreamId, substream_id: substreamId },
+    "run_canvas_sql",
+    { workspace_id: workspaceId, workstream_id: conversationId, substream_id: substreamId },
     async () => {
-      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveSubstream({ workspaceId, workstreamId, substreamId })));
+      const target = { workspaceId, conversationId, ...(substreamId === undefined ? {} : { substreamId }) };
+      const results = await Promise.all(inspectionBindings(env).map((binding) => binding.resolveConversation(target)));
       const resolved = oneRegionalTarget(
         env,
-        results.map((result) => EngineeringSubstreamTargetLookupSchema.parse(result)),
-        `Substream ${substreamId}`,
+        results.map((result) => EngineeringConversationTargetLookupSchema.parse(result)),
+        `Conversation ${conversationId}`,
       );
-      return executedSql(await resolved.binding.runSubstreamSql({
-        workspaceId,
-        workstreamId,
-        substreamId,
+      return executedSql(await resolved.binding.runConversationSql({
+        ...target,
         authorityGeneration: resolved.value.authorityGeneration,
         query: { sql, bindings },
-      }), `Substream ${substreamId}`);
+      }), `Conversation ${conversationId}`);
     },
   ));
 

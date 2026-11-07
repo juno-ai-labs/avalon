@@ -71,7 +71,7 @@ async function settledCanvas(bridge: EngineeringInspectionBridge) {
   await createCanvas(creationEnv(), { workspaceId: ORG, creatorUserId: CREATOR, canvasId: CANVAS, title: "Releases" });
   await workspace().canvasSetAudience({ workspaceId: ORG, canvasId: CANVAS, actor: { userId: CREATOR, actorRole: "member" },
     update: { visibility: "participants", userIds: [MEMBER] } });
-  await bridge.sendMessage({ orgId: ORG, userId: CREATOR, threadId: CANVAS, operationId: "00000000-0000-7000-8000-00000000ee07",
+  await bridge.sendMessage({ orgId: ORG, userId: CREATOR, conversationId: CANVAS, operationId: "00000000-0000-7000-8000-00000000ee07",
     text: PROMPT, runMode: "queue" }, OPERATOR);
   const client = await new ConversationService(creationEnv(), auth()).client(CANVAS);
   await runDurableObjectAlarm(canvasChat());
@@ -125,9 +125,9 @@ describe("engineering Organization creation", () => {
     await createOrg(bridge);
     expect((await env.DB.prepare("SELECT user_id, role, status FROM workspace_members WHERE workspace_id = ? ORDER BY user_id").bind(ORG).all()).results)
       .toEqual([{ user_id: CREATOR, role: "owner", status: "active" }, { user_id: MEMBER, role: "member", status: "active" }]);
-    const spaces = await bridge.listSpaces({ workspaceId: ORG });
-    // Nobody is seated anywhere: there is no General and no Personal Channel.
-    expect(spaces.found && spaces.value.items).toEqual([]);
+    const canvases = await bridge.listCanvases({ workspaceId: ORG });
+    // A new Organization starts empty: no Canvas is made for it.
+    expect(canvases.found && canvases.value.items).toEqual([]);
     expect((await env.DB.prepare("SELECT id FROM workspaces WHERE id = ?").bind(ORG).all()).results).toEqual([{ id: ORG }]);
     expect((await env.DB.prepare("SELECT id FROM sessions WHERE workspace_id = ?").bind(ORG).all()).results).toEqual([]);
     const audits = (await env.AUDIT_DB.prepare(
@@ -187,7 +187,7 @@ describe("engineering messages in a Canvas's Chat", () => {
       await changeRelationships(creationEnv(), ORG, [MEMBER], env.DB.prepare(
         "UPDATE workspace_members SET role = NULL, access_class = 'guest', revision = revision + 1 WHERE workspace_id = ? AND user_id = ?").bind(ORG, MEMBER));
     }
-    const request = { orgId: ORG, userId: MEMBER, threadId: CANVAS,
+    const request = { orgId: ORG, userId: MEMBER, conversationId: CANVAS,
       operationId: "00000000-0000-7000-8000-00000000ee08", text: "Please add the release owner.", runMode: "queue" };
     await bridge.sendMessage(request, OPERATOR);
     await bridge.sendMessage(request, OPERATOR);
@@ -203,10 +203,10 @@ describe("engineering messages in a Canvas's Chat", () => {
       "SELECT metadata_json FROM audit_events WHERE request_id = ? AND action = 'engineering.send_message.result'",
     ).bind(request.operationId).all<{ metadata_json: string }>()).results;
     expect(audits.map((row) => JSON.parse(row.metadata_json))).toEqual(Array.from({ length: 2 }, () => expect.objectContaining({
-      operator: OPERATOR, representedUserId: MEMBER, threadId: CANVAS, turnId: sent[0]!.turnId, outcome: "admitted",
+      operator: OPERATOR, representedUserId: MEMBER, conversationId: CANVAS, turnId: sent[0]!.turnId, outcome: "admitted",
     })));
     expect(JSON.stringify(audits)).not.toContain(request.text);
-    expect((await bridge.readConversation({ orgId: ORG, userId: MEMBER, threadId: CANVAS })).text).toContain("Member Two ·");
+    expect((await bridge.readConversation({ orgId: ORG, userId: MEMBER, kind: "canvas", conversationId: CANVAS })).text).toContain("Member Two ·");
     await waitOnExecutionContext(context);
   });
 
@@ -216,9 +216,19 @@ describe("engineering messages in a Canvas's Chat", () => {
     await settledCanvas(bridge);
     await workspace().canvasSetAudience({ workspaceId: ORG, canvasId: CANVAS, actor: { userId: CREATOR, actorRole: "member" },
       update: { visibility: "creator", userIds: [] } });
-    const target = { orgId: ORG, userId: MEMBER, threadId: CANVAS };
-    await expect(bridge.readConversation(target)).rejects.toThrow();
-    await expect(bridge.sendMessage({ ...target, operationId: crypto.randomUUID(), text: "Must not post" }, OPERATOR)).rejects.toThrow();
+    const target = { orgId: ORG, userId: MEMBER, conversationId: CANVAS };
+    await expect(bridge.readConversation({ ...target, kind: "canvas" })).rejects.toThrow("conversation_not_found");
+    await expect(bridge.sendMessage({ ...target, operationId: crypto.randomUUID(), text: "Must not post" }, OPERATOR)).rejects.toThrow("conversation_not_found");
+  });
+
+  it("refuses a Canvas read as a Sidekick's conversation by name, and reads the Chat as a Canvas", async () => {
+    const bridge = new EngineeringInspectionBridge(executionContext(), creationEnv());
+    await createOrg(bridge);
+    await settledCanvas(bridge);
+    await expect(bridge.readConversation({ orgId: ORG, userId: CREATOR, kind: "sidekick", conversationId: CANVAS }))
+      .rejects.toThrow("engineering_operation_failed:conversation_kind_mismatch");
+    expect((await bridge.readConversation({ orgId: ORG, userId: CREATOR, kind: "canvas", conversationId: CANVAS })).text)
+      .toMatch(/^Canvas: Releases\n\n/u);
   });
 
   it("posts a record-only message for the Chat's readers without starting a run, where the same message alone would", async () => {
@@ -228,7 +238,7 @@ describe("engineering messages in a Canvas's Chat", () => {
     const client = await settledCanvas(bridge);
     const streamedBefore = provider.calls.filter((call) => call.stream).length;
 
-    const request = { orgId: ORG, userId: CREATOR, threadId: CANVAS, recordOnly: true as const,
+    const request = { orgId: ORG, userId: CREATOR, conversationId: CANVAS, recordOnly: true as const,
       operationId: "00000000-0000-7000-8000-00000000ee0b", text: "Decision: the export drops the legacy columns." };
     const sent = await bridge.sendMessage(request, OPERATOR);
     expect(sent.receipt.deliveryState).toBe("canonical");
@@ -254,11 +264,11 @@ describe("engineering messages in a Canvas's Chat", () => {
           createdAtUtc: "2026-10-21T00:00:00.000Z", attentionOrdinal: index + 1 });
       }
     });
-    const first = await bridge.readConversation({ orgId: ORG, userId: CREATOR, threadId: CANVAS });
+    const first = await bridge.readConversation({ orgId: ORG, userId: CREATOR, kind: "canvas", conversationId: CANVAS });
     expect(first.text).toContain("Historical message 18.");
     expect(first.text).not.toContain("Historical message 19.");
     expect(first.text).toContain("afterSequence=20 and throughSequence=27");
-    const rest = await bridge.readConversation({ orgId: ORG, userId: CREATOR, threadId: CANVAS, afterSequence: 20, throughSequence: 27 });
+    const rest = await bridge.readConversation({ orgId: ORG, userId: CREATOR, kind: "canvas", conversationId: CANVAS, afterSequence: 20, throughSequence: 27 });
     expect(rest.text).toContain("Historical message 19.");
     expect(rest.text).toContain("Historical message 25.");
     expect(rest.text).not.toContain("Historical message 18.");
