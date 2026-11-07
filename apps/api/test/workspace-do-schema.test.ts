@@ -914,6 +914,9 @@ describe("the WorkspaceDO hosted-Sidekick migration", () => {
       room, "0", 5, "Archived with its room");
     insert.run("00000000-0000-7000-8000-0000000000c4", WORKSPACE_ID, author, "active", null, "personal",
       null, "0", null, "Mine");
+    // A draft that carries a room archive's marker was terminal under the old rule as well.
+    insert.run("00000000-0000-7000-8000-0000000000c5", WORKSPACE_ID, author, "draft", null, "workstream",
+      room, "0", 7, "Draft archived with its room");
 
     apply(database, SIDEKICK_SCOPE_RETIREMENT_VERSION, SIDEKICK_SCOPE_RETIREMENT_VERSION - 1);
 
@@ -924,6 +927,7 @@ describe("the WorkspaceDO hosted-Sidekick migration", () => {
       { title: "Breakout helper", lifecycle: "active", paused_by: null, scope: "workspace", owning_workstream_id: null, owning_substream_id: "0" },
       { title: "Archived with its room", lifecycle: "deleted", paused_by: null, scope: "workspace", owning_workstream_id: null, owning_substream_id: "0" },
       { title: "Mine", lifecycle: "active", paused_by: null, scope: "personal", owning_workstream_id: null, owning_substream_id: "0" },
+      { title: "Draft archived with its room", lifecycle: "deleted", paused_by: null, scope: "workspace", owning_workstream_id: null, owning_substream_id: "0" },
     ]);
     expect(database.prepare(`SELECT name FROM sqlite_master WHERE name = 'channel_rail_sidekick_owner_update'`).all()).toEqual([]);
   });

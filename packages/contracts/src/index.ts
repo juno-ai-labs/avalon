@@ -56,6 +56,7 @@ export * from "./automation-evaluators";
 export * from "./connector-connection-card";
 export * from "./conversation-effects";
 export * from "./conversation-parent";
+export * from "./canvases";
 export * from "./demo-operations";
 export * from "./demo-seed";
 export * from "./identifiers";

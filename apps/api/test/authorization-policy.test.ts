@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
-import { AccessContext, decisionHasValidEvidence, evaluateReadPolicy, sidekickAdmits,
+import { AccessContext, canvasAdmits, canvasManages, decisionHasValidEvidence, evaluateReadPolicy, sidekickAdmits,
   type ReadPolicy, type AuthorizationResource } from '../src/services/authorization-policy';
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000001');
@@ -69,5 +69,31 @@ describe('who reads a Sidekick', () => {
   it('admits its author and the person it runs as', () => {
     expect(sidekickAdmits({ ...sidekick, author: true }, false)).toBe(true);
     expect(sidekickAdmits({ ...sidekick, executor: true }, true)).toBe(true);
+  });
+});
+
+describe('who opens a Canvas', () => {
+  const canvas = { visibility: 'creator', creator: false, participant: false, writerAudience: false };
+  it('admits only its creator by default', () => {
+    expect(canvasAdmits({ ...canvas, creator: true }, false)).toBe(true);
+    expect(canvasAdmits(canvas, true)).toBe(false);
+  });
+  it('admits a participant, a guest among them, and nobody else', () => {
+    expect(canvasAdmits({ ...canvas, visibility: 'participants', participant: true }, false)).toBe(true);
+    expect(canvasAdmits({ ...canvas, visibility: 'participants' }, true)).toBe(false);
+  });
+  it('admits any member, and no guest, when it is open to the Organization', () => {
+    expect(canvasAdmits({ ...canvas, visibility: 'workspace' }, true)).toBe(true);
+    expect(canvasAdmits({ ...canvas, visibility: 'workspace' }, false)).toBe(false);
+  });
+  it('admits anyone its writer Sidekick is shared with', () => {
+    expect(canvasAdmits({ ...canvas, writerAudience: true }, false)).toBe(true);
+  });
+  it('lets the creator, an owner or administrator, or its Sidekick\'s manager change who opens it', () => {
+    expect(canvasManages({ creator: true, writerManager: false }, null)).toBe(true);
+    expect(canvasManages({ creator: false, writerManager: true }, 'member')).toBe(true);
+    expect(canvasManages({ creator: false, writerManager: false }, 'admin')).toBe(true);
+    expect(canvasManages({ creator: false, writerManager: false }, 'owner')).toBe(true);
+    expect(canvasManages({ creator: false, writerManager: false }, 'member')).toBe(false);
   });
 });
