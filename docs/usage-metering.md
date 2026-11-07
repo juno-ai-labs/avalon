@@ -329,6 +329,8 @@ for the same reads.
 query must say `sidekick_id = ?` to use it; one by `substream_id` alone still
 scans.
 
+Shipped in juno-ai-labs/avalon#1487.
+
 ### 2026-10-08 — A plan change pushes the new meter to every member
 
 **What changed:** After either plan route answers, `publishOrganizationUsage`
