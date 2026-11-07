@@ -252,11 +252,30 @@ export const ReadTranscriptResultSchema = z.strictObject({
 });
 
 /** Internal inspection does not seat a viewer or acknowledge the conversation. */
+/**
+ * What a Sidekick run spent, read from the run's own object for its first
+ * page: model calls (one assistant turn per provider response) and every
+ * tool's calls and time, with a program's own requests counted apart.
+ */
+export const SidekickRunUsageSchema = z.strictObject({
+  modelCalls: z.number().int().nonnegative(),
+  tools: z.array(z.strictObject({
+    toolName: z.string(),
+    fromProgram: z.boolean(),
+    calls: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    ms: z.number().nullable(),
+    maxMs: z.number().nullable(),
+  })),
+});
+
 export const SidekickRunTranscriptResultSchema = z.strictObject({
   transcriptAvailability: z.enum(["available", "not_provisioned"]),
   turns: z.array(TranscriptTurnSchema),
   throughSequence: z.number().int().nonnegative(),
   nextAfterSequence: z.number().int().nonnegative().nullable(),
+  /** On the first page only. */
+  usage: SidekickRunUsageSchema.optional(),
 });
 
 /**
