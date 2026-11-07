@@ -731,7 +731,7 @@ run it already made. The object must hold an accepted revision
 | Trigger | Entry | Occurrence key | Refusals |
 | --- | --- | --- | --- |
 | **Manual** | `POST /automations/:id/run` with an `idempotency-key` header; `runNow` | `manual:<idempotencyKey>` | `sidekick_not_active` unless `active`; `sidekick_forbidden` unless the caller may manage it |
-| **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`; the next occurrence is computed from now and re-armed |
+| **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`, and unless the row's `next_due_at` has arrived: an entry that runs after a pause and resume, or an apply that kept the schedule, moved it into the future, and admitting it would start the next occurrence early; the next occurrence is computed from now and re-armed |
 | **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `occurrence:<key>` when the connector named the occurrence the event reports, else `external:<workspaceEventId>` | `sidekick_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
 | **Inbound email** | `resend-inbound-email-service.ts` calling `admitInboundEmail` once per delivery | `inbound_email:<resendEmailId>` | see below; the refusal is written to `inbound_email_receipts` |
 
@@ -1173,14 +1173,17 @@ Canvases and Sidekicks plan.
 A run its triggers start, or that a delegate asks for, acts as a delegate: its
 coordinator, re-picked from the eligible delegates when that person becomes
 unavailable, and its connector operations may use any delegate's personal
-account and the Organization's connections. A run a member who is not a
-delegate asks for in the shared conversation acts as that member alone, the
-PRD's "a shared Sidekick uses delegate access only for its own runs":
+account and the Organization's connections. A run someone who is not a
+delegate asks for in the shared conversation, a member or a guest on its list,
+acts as that person alone, the PRD's "a shared Sidekick uses delegate access
+only for its own runs":
 
 - `sidekick_runs.requester_user_id` (WorkspaceDO migration 138) records them,
   and `coordinator_user_id` is them too. Start, provisioning and every
-  continuation keep them (`runPrincipal`) for as long as they are an active
-  member; no delegate is ever substituted.
+  continuation keep them (`runPrincipal`) for as long as they are in the
+  Organization, as a member or a guest; no delegate is ever substituted, and
+  once they leave the run has nobody to act as and its account view names
+  nobody.
 - The run's account view, `readExecutionDelegation` with its `runId`, names
   only the requester (`delegates: [requester]`, `requesterUserId`), so the
   inventory, the personal-connection owner check and
@@ -1190,9 +1193,11 @@ PRD's "a shared Sidekick uses delegate access only for its own runs":
   `sidekick_requester_account_unavailable` (a `ConnectorError` whose `details.code`
   and message name it), so the run's reply can say why rather than reporting a
   generic failure.
-- A guest who is not a delegate is still refused (`run_no_eligible_delegate`):
-  they hold no Organization access to run under.
-
+- The Sidekick's shared Terminal files hold what runs under its delegates'
+  access wrote, so a requester's run refuses the Terminal with
+  `sidekick_requester_files_unavailable` rather than reaching them.
+- A guest on the Sidekick's list runs under their own access as a member does;
+  a tool that needs an account they lack refuses by its named code.
 
 ### Scheduled self-review
 

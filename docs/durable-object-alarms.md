@@ -564,7 +564,13 @@ a failing target a free immediate attempt.
   runtime does not know an alarm is in progress and will deliver a real one on
   top of it — which re-enters `alarm()` and drains entries the first pass had
   not settled yet, something that cannot happen in production. Drive the drain
-  directly, or park the alarm first.
+  directly, or park the alarm first. The overlap is not always only a test
+  artefact, though: the extra Sidekick schedule run it produced also exposed a
+  production race, an entry whose schedule had moved its next occurrence into
+  the future while an earlier entry in the same pass was awaited, and
+  `executeSchedule` now refuses an occurrence that has not arrived. When a
+  forced pass changes an outcome, ask whether one real pass interleaved with an
+  RPC could change it the same way.
 - Trap: an alarm armed for `now + 1` after pending-input or execution-receipt
   admission can fire while the test is still setting up, and the loop it drains
   can settle the very rows the next assertion reads. Park it in the *same*
