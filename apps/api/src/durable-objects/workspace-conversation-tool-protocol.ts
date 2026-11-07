@@ -16,19 +16,15 @@ import { z } from "zod";
  * stable code, which the tool turns into its model-visible sentence.
  */
 
-export const ConversationToolScopeSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("sidekick"),
-    automationId: IdSchema,
-    /** The Sidekick's authoring conversation, which alone may announce a review's change in a Channel; a run never sees that Channel. */
-    authoring: z.boolean().optional(),
-  }),
-  z.strictObject({ kind: z.literal("conversation"), parentId: IdSchema, substreamId: SubstreamIdSchema }),
-]);
+export const ConversationToolScopeSchema = z.strictObject({
+  kind: z.literal("sidekick"),
+  automationId: IdSchema,
+  /** Asked from the Sidekick's configuration conversation, where its own conversation is `isOwn`; a run's is `isParent`. */
+  authoring: z.boolean().optional(),
+});
 /**
- * Whose conversations a tool call reaches: a Sidekick's, or a Thread or
- * Breakout loop's own, the Thread's Main for a Breakout, the Channels the
- * Thread is in, and every Thread and Breakout in those Channels.
+ * Whose conversations a tool call reaches: a Sidekick's own, the Canvases it
+ * writes, and the Canvases attached to it.
  */
 export type ConversationToolScope = z.input<typeof ConversationToolScopeSchema>;
 
@@ -40,12 +36,8 @@ export type ConversationToolScope = z.input<typeof ConversationToolScopeSchema>;
 export const ConversationPostRequestSchema = z.strictObject({
   schemaVersion: z.literal(1),
   workspaceId: z.string().min(1),
-  /**
-   * Whose conversation `workstreamId` names: a Thread's (the default, which
-   * every post sent before this field existed meant), a Sidekick's own shared
-   * conversation, or a Canvas's Chat.
-   */
-  parentKind: z.enum(["workstream", "automation", "canvas"]).default("workstream"),
+  /** Whose conversation `workstreamId` names: a Sidekick's own shared conversation, or a Canvas's Chat. */
+  parentKind: z.enum(["automation", "canvas"]),
   workstreamId: z.string().min(1),
   substreamId: z.union([z.literal("0"), z.string().min(1)]),
   clientMessageId: z.string().min(1).max(300),
@@ -66,22 +58,18 @@ export const ConversationToolScopeRequestSchema = z.strictObject({
 export type ConversationToolScopeRequest = z.input<typeof ConversationToolScopeRequestSchema>;
 
 /**
- * One conversation a tool can reach. `kind` is in storage words and is the
- * host's to route on, never the model's to see: a Thread's Main (`channel`,
- * read from its conversation object), a Breakout (`breakout`, the same), a
- * Sidekick's own shared conversation (`sidekick`, the same, with `parentId`
- * the Sidekick's id and `substreamId` "0"), or a Channel (`space`, read from
- * WorkspaceDO's feed, with `parentId` the Space's id and `substreamId` "0").
- * `isParent` marks a conversation this one sits inside: a Breakout's Thread,
- * a Thread's Channel, or a run's Sidekick.
+ * One conversation a tool can reach, read from its own conversation object.
+ * `kind` is the host's to route on, never the model's to see: a Sidekick's
+ * own shared conversation (`sidekick`, `parentId` the Sidekick's id) or a
+ * Canvas's Chat (`canvas`, `parentId` the Canvas's id), both substream "0".
+ * `isParent` marks the conversation a run sits inside: its Sidekick's.
  */
 export const ConversationToolEntrySchema = z.strictObject({
   conversationId: z.string().min(1),
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
-  kind: z.enum(["channel", "breakout", "sidekick", "space"]),
+  kind: z.enum(["canvas", "sidekick"]),
   title: z.string(),
-  isHome: z.boolean(),
   isOwn: z.boolean(),
   isParent: z.boolean(),
 });
@@ -94,8 +82,8 @@ export interface ConversationToolScopeResult {
 export const ConversationToolResolveRequestSchema = z.strictObject({
   ...Addressed,
   scope: ConversationToolScopeSchema,
-  /** A conversationId or an exact title; null means the Sidekick's home. */
-  reference: z.string().min(1).nullable(),
+  /** A conversationId or an exact title. */
+  reference: z.string().min(1),
 });
 export type ConversationToolResolveRequest = z.input<typeof ConversationToolResolveRequestSchema>;
 
@@ -105,7 +93,6 @@ export const CONVERSATION_TOOL_REFUSAL_CODES = [
   "conversation_not_found",
   "conversation_archived",
   "conversation_access_denied",
-  "conversation_home_missing",
 ] as const;
 export type ConversationToolRefusalCode = typeof CONVERSATION_TOOL_REFUSAL_CODES[number];
 

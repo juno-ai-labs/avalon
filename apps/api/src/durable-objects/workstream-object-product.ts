@@ -2967,11 +2967,6 @@ export class WorkstreamObjectProductService {
     const background = this.storage.sql.exec<{ root_substream_id: string | null }>(
       "SELECT root_substream_id FROM background_agent WHERE id = 1",
     ).toArray()[0];
-    // Main's list is the Channel rail's. A breakout sends its own too, which
-    // its parent does not read.
-    const sidekickAttachmentIds = this.storage.sql.exec<{ sidekick_id: string }>(
-      `SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`,
-    ).toArray().map((row) => row.sidekick_id);
     // A Sidekick run's steps and its last reply, for its row in the
     // Sidekick's conversation (the Sidekick copies the preview onto the run's
     // summary). Read only in a run: no other conversation's parent reads them.
@@ -3018,7 +3013,6 @@ export class WorkstreamObjectProductService {
         ? iso(Math.min(...terminalCandidates))
         : null,
       resourceLinks,
-      sidekickAttachmentIds,
       ...(stepCount !== undefined ? { stepCount } : {}),
       ...(attachmentReservationReleases.length > 0 ? { attachmentReservationReleases } : {}),
       createdAt: iso(root.created_at)!,

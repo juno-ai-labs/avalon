@@ -87,15 +87,12 @@ catalog descriptions while retaining the assigned tool name.
 
 Substream migration 43 adds `sidekick_attachments` (conversation-owned, deduplicated
 by Sidekick) and `sidekick_execution_skills` (admitted snapshots and activation
-refs pinned to an execution). Loading attaches within the current substream; removal
-affects future executions. `directory_common` has an optional
-`sidekickAttachmentIds` that WorkspaceDO applies as Main's Channel-rail list
-([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)).
-Every common effect carries the list, in attach order, and an attach or a
-removal commits a common effect with its write. A Main that has never reported
-is asked to by its parent when a reader opens the Channel
-(`wake({ reportAttachments: true })`), which commits a common effect then.
-Future runs reauthorize attachments and pin the latest
+refs pinned to an execution). `sidekick_attachments` was written only by a
+Thread's conversation, which filed a loaded Sidekick there and reported the
+list to its Channel's rail in `directory_common.sidekickAttachmentIds`; a
+Canvas's and a Sidekick's conversations attach nothing, so the table is unread
+and the field is no longer sent (plan step C-3). Future runs reauthorize the
+skills they load and pin the latest
 accepted revisions. Workspace migration 35 projects the owner stored `loadable`
 policy output; unknown legacy values exclude discovery. Workspace migration 36
 adds `external_registration_generations` for ordered registration replacements
@@ -1983,6 +1980,11 @@ delivery a Channel run made. Two readers still see a retired kind, through
 `identityForRetirement`: the constructor, so a Thread's object still
 constructs and `retireObject` can close it, and `conversationTranscriptText`,
 the operator dump that must read it first (`thread-retirement-service.ts`).
+Such an object's alarm runs no lane: `alarm` logs
+`conversation_parent_kind_retired:<kind>` and clears the slot, and its derived
+wake candidates are empty, since every lane reads the hosted identity and a
+leftover wake reason (a memory sweep retry, an outbox row, an agent timer)
+would otherwise throw on each pass until `retire_threads` closes the object.
 
 **Why:** The Canvases and Sidekicks PRD's decision log: Threads, Channels,
 Spaces and Breakouts leave the product, a Canvas's Chat is an ordinary

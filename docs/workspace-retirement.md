@@ -268,6 +268,9 @@ committed transcript to `PAYLOADS` as text, under
 operator `read_thread` tool formats with, over every committed turn, so tool
 payloads, thinking and internal agent messages are left out. It is the only
 copy once the retirement runs, and it is for operators, not a product surface.
+It is the one read that sees a retired parent kind: the object's product reads
+refuse a stored `workstream` or `space` with `conversation_parent_kind_retired`,
+and this one reads it through `identityForRetirement`.
 
 - **The R2 object is the receipt.** A pass skips any key that is already
   there, so a rerun writes nothing new and an interrupted pass resumes where it
