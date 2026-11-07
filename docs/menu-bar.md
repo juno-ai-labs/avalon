@@ -67,7 +67,7 @@ one newer than the person's one read mark, which only **Mark all read** moves
 ([`digests.md`](digests.md#the-activity-tab)). Opening a thread reads the
 thread, not its Activity row, so the row and the count stay until then, as the
 tab's dot does. The Threads button's badge and the dock badge still count
-`attentionItems` ([`attention-menu.md`](attention-menu.md)), so they can show
+`attentionItems` (the attention menu, retired), so they can show
 a different number: they answer "which threads have unread messages", and this
 answers "what has happened since I last cleared Activity". The sidebar's
 Activity button carries this same number.

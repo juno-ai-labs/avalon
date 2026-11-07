@@ -5,7 +5,6 @@ import { defineLocalCacheSlice, localCacheEpoch } from './local-cache';
 import { mirrorQueriesToLocalCache, queryKeyIsOneOf, type QueryMirror } from './local-cache-mirror';
 import { SIDEBAR_LIST_QUERY_KEYS, sidebarListApplied } from './sidebar-list-store';
 import type { AutomationSummary } from './types';
-import { isAutomationSummaryLike } from './workspace-directory-cache';
 
 /**
  * What the Canvases and Sidekicks lists paint from before the workspace socket
@@ -13,12 +12,6 @@ import { isAutomationSummaryLike } from './workspace-directory-cache';
  * scope. A list is on the row only once the socket has applied it in the
  * session that wrote it, so an absent list is "never heard", which seeds
  * nothing, rather than an empty one, which would paint "no Canvases".
- *
- * A slice of its own rather than two more fields on the workspace directory
- * row: that row is the Channel and Thread directory the cutover deletes (plan
- * step B-3), and is only read back when the Channel list is also unseeded.
- * The Sidekick list therefore sits on both rows until then; each seeds only a
- * cache that is still empty, so whichever lands first is the one painted.
  */
 export interface CachedCanvasDirectory {
   canvases?: CanvasSidebarRow[];
@@ -26,6 +19,23 @@ export interface CachedCanvasDirectory {
 }
 
 export const CANVAS_DIRECTORY_CACHE_KEY = 'canvas-directory';
+
+const AUTOMATION_SCOPES = new Set(['you', 'workspace']);
+const AUTOMATION_STATUSES = new Set(['active', 'paused', 'draft']);
+
+/** The fields a Sidekick row needs to paint; a newer build's extra fields pass through. */
+function isAutomationSummaryLike(value: unknown): value is AutomationSummary {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate['id'] === 'string'
+    && typeof candidate['name'] === 'string'
+    && typeof candidate['description'] === 'string'
+    && typeof candidate['scope'] === 'string'
+    && AUTOMATION_SCOPES.has(candidate['scope'])
+    && typeof candidate['status'] === 'string'
+    && AUTOMATION_STATUSES.has(candidate['status'])
+    && typeof candidate['updatedAt'] === 'string';
+}
 
 function parseRows<T>(value: unknown, accept: (item: unknown) => item is T): T[] | null | undefined {
   if (value === undefined) return undefined;

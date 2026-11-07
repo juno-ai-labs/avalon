@@ -1,21 +1,17 @@
 import { SubstreamIdSchema } from '@rally/contracts';
 import { MessageIssueProvider } from '../components/message-issue-dialog';
-import { useSidekickActivity } from '../lib/use-sidekick-activity';
 import { validateAnnotationSend } from '../lib/use-annotation-pins';
 import { TranscriptHistoryStatus } from '../components/transcript-history-status';
 import { loadAnnotationPreview, readAnnotationVersion } from '../lib/annotation-preview';
 import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artifact-annotations';
-import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
-import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
+import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES } from "../lib/workspace-invitees";
 import { mentionLinksAsText } from "@rally/contracts/citations";
 import { useWorkspaceMembers } from "../lib/workspace-members";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
-import { artifactActivitySubject, conversationActivitySubject, reportActivityEvent } from '../lib/activity-events';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { skipToken, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchThroughOwner } from '../lib/fetch-through-owner';
-import { useArtifactPinAction, useArtifactPins, usePinnedIds } from '../lib/pins';
 import clsx from 'clsx';
 import { personalColor, personalColorInk } from '../components/personal-avatar';
 import { MemberPresentationContext } from '../lib/member-presentation';
@@ -28,13 +24,10 @@ import {
   Plus,
   RefreshCcw,
   Search,
-  UserPlus,
 } from 'lucide-react';
-import { resolveMentionPayload } from '../lib/mention-draft';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { openResourceRequest, useChannelPane, usePaneExpansion } from '../lib/navigation-routes';
-import { expandToggle } from '../components/pane-expand-toggle';
+import { useLocation, useSearchParams } from 'react-router-dom';
+import { expandToggle, openResourceRequest, usePaneExpansion } from '../lib/navigation-routes';
 import {
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
@@ -42,45 +35,25 @@ import {
   type TranscriptTurn,
   type WorkstreamMessageDeliveryState,
   type WorkstreamTranscriptSnapshot,
-  type SpaceSummary,
-  type ConversationMergeResult,
-  type ConversationSuggestion,
   type SidekickMessageIntent,
-  mergeResourceIds,
-  suggestionTurnIsVisible,
 } from '@rally/contracts';
 import type { ConversationParentKind } from '@rally/contracts/conversation-parent';
 import type { SubstreamInitialContext } from '@rally/contracts/substream-creation';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { useCitations } from '../lib/use-citations';
-import { artifactPinActions, combineResourceActions } from '../lib/artifact-pin-actions';
-import { copyArtifactLink } from '../lib/copy-workstream-link';
-import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
-import { readDraftText, writeDraftText } from '../lib/draft-cache';
-import { IconCheck, IconChevronDown, IconCloudDownload, IconCornerDownRight, IconCornerUpLeft, IconLock } from '@tabler/icons-react';
-import { conversationAnnotationScope, conversationDraftKey, workstreamDraftKey } from '../lib/draft-keys';
-import { useSpaceDirectories } from '../lib/use-space-directories';
+import { conversationAnnotationScope, conversationDraftKey } from '../lib/draft-keys';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
-import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
-import type { TitleMenuPeople } from '@rally/ui/components/conversation-menus';
-import { usePeopleRanking } from '../lib/use-people-ranking';
 import { TitlePillLeading, TitlePillNavigation, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { WorkstreamGlyph, workstreamMark } from '@rally/ui/components/workstream-glyph';
-import { RelativeTime } from '../components/relative-time';
-import { BreakoutOrigin, breakoutOriginMessages, originExcerpt } from '../components/breakout-origin';
-import { formatDateTime } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { layoutKey, readArtifactPanel, writeLayout } from '../lib/desktop-layout';
 import {
   currentSurfaceEntrypoint,
   reportTelemetryProductIntent,
-  telemetryCountBucket,
-  telemetryVisibility,
   type WorkstreamFeedSource,
   workstreamFeedSourceQueryKey,
-  workstreamNavigation,
 } from '../lib/telemetry';
 import {
   adjacentTranscriptRange,
@@ -108,32 +81,20 @@ import { useWindowFilePaste } from '../lib/use-file-paste';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useTranscriptHistory } from '../lib/use-transcript-history';
 import { useVirtualScrollAnchor } from '../lib/use-virtual-scroll-anchor';
-import { resolveFeedOpenSource, useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
-import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useSiteArtifacts } from '../lib/use-site-artifacts';
 import { ActivityPresence, InferenceDelayNotice, JumpToLatestButton } from '../components/conversation-follow';
 import { openRailAtEvenSplit, restoreRail, useRailFillsPane } from '../lib/rail-split';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   orderedTranscriptQueryKey,
+  useWorkstreamSocket,
   substreamInitialContextQueryKey,
   type SocketState,
   type WorkstreamMessageDeliveryMode,
-  type WorkstreamSocketConnection,
 } from '../lib/use-workstream-socket';
-import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
-import { WORKSTREAMS_QUERY_KEY, useCachedWorkstreamPlacements } from '../lib/use-workstreams-query';
-import { useMergeChannels } from '../lib/use-merge-channels';
-import { evictCachedWorkstream, patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
-import {
-  SubstreamLaunchSurface,
-  type LaunchingSubstream,
-  type SubstreamLaunchProps,
-} from '../components/substream-launch';
-import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
-import { useOpenFirstWorkstream } from '../lib/workstream-landing';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, MessageMergedInto, Participant, PendingOpening, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import { patchCachedWorkstreamViewerState, workstreamDetailQueryKey } from '../lib/workstreams-cache';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, PendingOpening, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
@@ -142,12 +103,8 @@ import type { AttachmentPreview } from '../components/attachments';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import { HumanMessageBody } from '../components/workstream-blocks';
 import { Avatar, Badge, Button, EmptyState, IconButton, ErrorNotice, LoadingState, Modal } from '../components/primitives';
-import { ConversationAccessRequest } from '../components/conversation-access-request';
-import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
 import { CopyButton } from '../components/copy-button';
-import { feedRowKind, MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
-import { SuggestionChip, suggestionExcerpt } from '@rally/ui/components/conversation-suggestion';
-import { MergeResponseCard } from '@rally/ui/components/merge-response-card';
+import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import {
   ConnectorConnectionsProvider,
   connectorConnectionCardInput,
@@ -920,13 +877,13 @@ export function AddResourceDialog({
 export function WorkstreamErrorState({
   description,
   onRetry,
-  parentNoun = 'channel',
+  parentNoun = 'Canvas',
   workstreamId,
 }: {
   description: string;
   onRetry: () => void;
-  /** What could not be opened, for the title: a work stream or an automation. */
-  parentNoun?: 'channel' | 'automation' | 'Canvas';
+  /** What could not be opened, for the title. */
+  parentNoun?: 'Sidekick' | 'Canvas';
   workstreamId: string;
 }): React.JSX.Element {
   const copyWorkstreamId = (): void => {
@@ -941,21 +898,21 @@ export function WorkstreamErrorState({
       <div className="screen-drag-strip window-drag" />
       <div className="screen-state-actions window-no-drag">
         <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild><IconButton label="More thread actions"><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
+          <DropdownMenu.Trigger asChild><IconButton label={`More ${parentNoun} actions`}><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-              <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy thread ID</DropdownMenu.Item>
+              <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy {parentNoun} ID</DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       </div>
       <EmptyState
         action={<div className="empty-state-actions">
-          <ErrorNotice detailsLabel="Connection details" title={`${parentNoun === 'automation' ? 'Sidekick' : parentNoun === 'Canvas' ? 'Canvas' : 'Thread'} could not be opened`}>{description}</ErrorNotice>
+          <ErrorNotice detailsLabel="Connection details" title={`${parentNoun} could not be opened`}>{description}</ErrorNotice>
           <Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>
         </div>}
         description="Try opening it again."
-        title={parentNoun === 'automation' ? 'Sidekick' : parentNoun === 'Canvas' ? 'Canvas' : 'Thread'}
+        title={parentNoun}
       />
     </div>
   );
@@ -1089,12 +1046,12 @@ export function RunFailureNotice({
 }
 
 /** Hoisted for identity: a `?? []` per render would re-key the citation lookup. */
-const NO_SHARED_INVITEES: readonly string[] = [];
 const NO_MEMBERS: WorkspaceMember[] = [];
 
 const NO_WORKSPACE_PRESENCE: Record<string, string[]> = {};
 
 const NO_RESOURCES: WorkstreamDetail['resources'] = [];
+const IGNORE_FILES = (): void => undefined;
 
 /**
  * What a conversation's right panel holds: one of its resources, with the
@@ -1115,28 +1072,10 @@ export interface ConversationHeaderContext {
   detail: WorkstreamDetail;
   socketState: SocketState;
   presentUserIds: readonly string[];
-  openParticipantDialog: () => void;
   openResource: (resourceId: string, returnFocus: HTMLElement) => void;
   openRail: (variant: RailVariant) => void;
   /** Open one of this conversation's artifacts in its own right panel. */
-  openArtifact?: (id: string, returnFocus: HTMLElement) => void;
-  rename: (title: string) => Promise<void>;
-  setAppearance: WorkstreamSocketConnection['setAppearance'];
-  /** A Breakout's origin message, for its title menu's "Started from" card. */
-  origin?: { byline: string; text: string } | undefined;
-  /** Adding people to this conversation from inside its title menu. */
-  people?: TitleMenuPeople | undefined;
-}
-
-export interface ConversationSubstreamLaunch {
-  /** The main-conversation turn the substream branches from, or null from the sidebar. */
-  throughTurnId: string | null;
-  /** A suggestion's drafted opening prompt, seeded into the launch composer once. */
-  initialDraft?: string | undefined;
-  launching: LaunchingSubstream | null;
-  error?: string | undefined;
-  onCancel: () => void;
-  onCreate: SubstreamLaunchProps['onCreate'];
+  openArtifact: (id: string, returnFocus: HTMLElement) => void;
 }
 
 
@@ -1154,219 +1093,12 @@ export interface ScrollToTurnRequest {
 /** The keys that scroll a focused transcript. */
 const TRANSCRIPT_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
-/** Where this conversation's Merge goes, or null when nothing here can merge. */
-export type MergeTarget =
-  | { kind: 'thread'; threadTitle: string }
-  | {
-    kind: 'channel';
-    channels: Array<{ id: string; name: string; scope: SpaceSummary['scope'] }>;
-    /** The thread is private: the Channel sees its merge without the thread's name. */
-    threadPrivate: boolean;
-  };
-
-/**
- * A Breakout merges into its Thread. A Thread's Main merges into one of its
- * Channels this person can post in, private or not: the server's rule, asked
- * here only so a Merge that would be refused is not offered. A Sidekick's
- * conversation merges nowhere.
- */
-export function mergeTargetFor(input: {
-  parentKind: ConversationParentKind;
-  substreamId: string;
-  guest: boolean;
-  thread: Pick<WorkstreamDetail, 'title' | 'scope' | 'spaceIds'> | null | undefined;
-  /** The thread's placements from the directory, which wins over the detail's when present. */
-  placements?: readonly string[] | undefined;
-  /** The server's eligible Channels, earliest placement first. Absent until read. */
-  eligible?: readonly string[] | undefined;
-  spaces: readonly Pick<SpaceSummary, 'id' | 'name' | 'scope' | 'reach'>[];
-}): MergeTarget | null {
-  if (input.parentKind !== 'workstream' || !input.thread) return null;
-  if (input.substreamId !== '0') return { kind: 'thread', threadTitle: input.thread.title };
-  if (input.guest) return null;
-  const byId = new Map(input.spaces.map((space) => [space.id as string, space]));
-  // The server owns eligibility; the directory stands in until that read lands.
-  const channels = (input.eligible ?? input.placements ?? input.thread.spaceIds).flatMap((spaceId) => {
-    const space = byId.get(spaceId);
-    // A Channel reached only through a Thread is read-only to this person.
-    return space && space.reach !== 'through_channel'
-      ? [{ id: space.id as string, name: space.name, scope: space.scope }]
-      : [];
-  });
-  return channels.length > 0 ? { kind: 'channel', channels, threadPrivate: input.thread.scope !== 'workspace' } : null;
-}
-
-/** What a Merge action reads as: "Merge to thread", or the default Channel's name. */
-export function mergeLabel(target: MergeTarget): string {
-  return target.kind === 'thread' ? 'Merge to thread' : `Merge to ${target.channels[0]!.name}`;
-}
-
-/**
- * The merge composer's audience line: who will see it and open what it embeds,
- * named when the conversation knows them. A merge shares its embeds with its
- * parent, so the two audiences are one. A private thread's merge into a
- * Channel also says the thread's name stays hidden.
- */
-export function mergeAudience(
-  target: MergeTarget,
-  channel: { name: string; scope: SpaceSummary['scope'] } | null,
-  people: number | null,
-  artifacts: readonly string[],
-): string {
-  const named = artifacts.length === 0 ? null
-    : artifacts.length <= 2 ? artifacts.join(' and ')
-      : `${artifacts.length} artifacts`;
-  if (target.kind === 'thread') {
-    const title = target.threadTitle || 'the thread';
-    const who = people === null ? `Everyone in ${title}` : people === 1 ? `The 1 person in ${title}` : `The ${people} people in ${title}`;
-    return named ? `${who} will see this and can open ${named}.` : `${who} will see this.`;
-  }
-  if (!channel) return '';
-  const who = channel.scope === 'workspace' ? `Everyone in ${channel.name}` : `People in ${channel.name}`;
-  const sees = named ? `${who} will see this and can open ${named}` : `${who} will see this`;
-  return target.threadPrivate ? `${sees}, but not the thread’s name.` : `${sees}.`;
-}
-
-/** The titles of the artifacts a merge draft cites, as this conversation knows them. */
-function mergeArtifactTitles(draft: string, resources: readonly Pick<WorkstreamResource, 'id' | 'slug' | 'title'>[]): string[] {
-  const byToken = new Map(resources.flatMap((resource) => [
-    [resource.id, resource.title] as const,
-    ...(resource.slug ? [[resource.slug, resource.title] as const] : []),
-  ]));
-  return [...new Set(mergeResourceIds(draft).flatMap((token) => {
-    const title = byToken.get(token);
-    return title ? [title] : [];
-  }))];
-}
-
-/**
- * Where the merge goes, in the composer's toolbar: the target as a pill, and
- * its menu, which picks among a thread's Channels and cancels the merge.
- */
-function MergeTargetPill({ channelId, label, onCancel, onPick, target }: {
-  channelId: string | null;
-  label: string;
-  onCancel: () => void;
-  onPick: (channelId: string) => void;
-  target: MergeTarget;
-}): React.JSX.Element {
-  return <DropdownMenu.Root>
-    <DropdownMenu.Trigger asChild>
-      <button aria-label={`${label}, change`} className="composer-merge-target" type="button">
-        <IconCornerUpLeft aria-hidden="true" size={13} stroke={1.9} />
-        <span>{label}</span>
-        <IconChevronDown aria-hidden="true" size={12} stroke={2} />
-      </button>
-    </DropdownMenu.Trigger>
-    <DropdownMenu.Portal>
-      <DropdownMenu.Content align="start" className="menu-content" side="top" sideOffset={8}>
-        {target.kind === 'channel' && target.channels.length > 1 && <>
-          <DropdownMenu.RadioGroup onValueChange={onPick} value={channelId ?? undefined}>
-            {target.channels.map((channel) => (
-              <DropdownMenu.RadioItem className="menu-item" key={channel.id} value={channel.id}>
-                <span>Merge to {channel.name}</span>
-                <DropdownMenu.ItemIndicator asChild><IconCheck aria-hidden="true" size={15} stroke={2} /></DropdownMenu.ItemIndicator>
-              </DropdownMenu.RadioItem>
-            ))}
-          </DropdownMenu.RadioGroup>
-          <DropdownMenu.Separator className="menu-separator" />
-        </>}
-        <DropdownMenu.Item className="menu-item" onSelect={onCancel}>Cancel merge</DropdownMenu.Item>
-      </DropdownMenu.Content>
-    </DropdownMenu.Portal>
-  </DropdownMenu.Root>;
-}
-
-function mergeFailureMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    switch (error.code) {
-      case 'merge_channel_not_placed': return 'That channel no longer holds this thread.';
-      case 'merge_target_not_writable': return 'You can’t post there.';
-      case 'merge_resource_not_shareable': return 'An embedded artifact can’t be shared there, so nothing was merged.';
-      case 'conversation_archived': return 'That conversation is archived.';
-      default: break;
-    }
-  }
-  return 'The merge couldn’t be made. Try again.';
-}
-
 export interface ConversationSurfaceProps {
   parentKind: ConversationParentKind;
   parentId: string;
   substreamId: string;
-  /** Parent-owned sidebar data; never substitute the selected child's roster or inventory. */
-  workstreamContext?: WorkstreamDetail;
-  /** Shared directory state, including resolution from title menus or merges. */
-  resolved?: boolean;
-  /** The host owns resolution, including navigation, pending state and failures. */
-  onResolve?: () => void;
-  resolveDisabled?: boolean;
-  sidebarScope?: "workstream" | "conversation";
-  /** Opens the launch pane at a turn; a suggestion passes the drafted opening prompt to seed it with. */
-  onStartSubstream?: (throughTurnId: string, initialDraft?: string) => void;
-  /**
-   * A substream being written in front of this conversation.
-   *
-   * It replaces the three rows of the column — header, transcript, dock — and
-   * nothing else: the sidebar, the inspector and the parent's own socket
-   * belong to the work stream, which has not been left. The turns it fades in
-   * above its composer come from this transcript, which is the one place they
-   * are already loaded.
-   */
-  substreamLaunch?: ConversationSubstreamLaunch | null;
   renderHeader?: (context: ConversationHeaderContext) => React.ReactNode;
-  /**
-   * The rail to draw while this conversation's first snapshot is in flight,
-   * from state the workspace socket already holds, or null when the host has
-   * nothing to draw it from yet and the placeholder rail should stand in.
-   * Called only while `renderSidebar`'s context does not exist.
-   */
-  renderOpeningSidebar?: () => React.ReactNode;
-  /**
-   * This Channel's Breakouts, for the cards under each origin message and the
-   * tick bar down the feed's leading edge. Main only; a Breakout passes none.
-   */
-  breakouts?: readonly BreakoutMark[] | undefined;
-  /** The Breakout open beside this conversation, if any. */
-  openBreakoutId?: string | null;
-  onOpenBreakout?: (substreamId: string) => void;
-  /**
-   * The Channel this thread is open under, for links that name it; the
-   * screen reads it from the route. Null where no Channel holds it for the
-   * reader, as for a guest outside every Channel they see.
-   */
-  linkSpaceId?: string | null;
-  /** Opens the merge a Merged chip in this feed names, where it landed. */
-  onOpenMerge?: (merge: MessageMergedInto) => void;
-  /** Open the response card at the end of the feed, empty: the title menu's Merge. A new nonce asks again. */
-  mergeRequest?: number | null;
-  /** A merge from this conversation landed: the host opens where it went. */
-  onMerged?: (result: ConversationMergeResult) => void;
   scrollToTurn?: ScrollToTurnRequest | null;
-  /**
-   * A Breakout's origin in its Channel: the turn it started from, and the
-   * Channel's name for the card's byline. The messages themselves are read
-   * from the Channel's own transcript cache, which the Channel pane beside
-   * this one keeps current; nothing here fetches them.
-   */
-  breakoutOrigin?: { turnId: string | null | undefined; channelTitle: string } | undefined;
-  /**
-   * The levels this conversation sits in, as crumbs, for a panel it opens
-   * that stands alone: a breakout's Channel and thread. Without it, the
-   * Channel's crumb while the Channel is off screen.
-   */
-  parentCrumbs?: readonly TitlePillLevel[] | undefined;
-  /**
-   * Whether the `?turn=&sequence=` search target names this conversation. Two
-   * conversations share the route when a Breakout is open beside its Channel,
-   * and the target is only ever in one of them.
-   */
-  honorsSearchTarget?: boolean;
-  /**
-   * Tells two surfaces of one conversation apart — the Channel and the launch
-   * surface writing a Breakout from it — so each owns its own right panel.
-   */
-  paneKey?: string;
   /**
    * What every message sent from this surface is for, when the host says:
    * `edit_sidekick` marks it for a Sidekick's wizard. The server routes an
@@ -1379,10 +1111,6 @@ export interface ConversationSurfaceProps {
   composerPlaceholder?: string;
   /** Draw the feed without a composer: a run's own conversation, read from its Sidekick. */
   readOnly?: boolean;
-  renderSidebar?: (context: ConversationHeaderContext & {
-    focusTranscript: () => void;
-    openArtifact: (id: string, returnFocus: HTMLElement) => void;
-  }) => React.ReactNode;
 }
 
 /**
@@ -1404,28 +1132,8 @@ function ConversationSurfaceContent({
   parentKind,
   parentId: id,
   substreamId,
-  workstreamContext,
-  resolved = false,
-  onResolve,
-  resolveDisabled = false,
-  sidebarScope = "workstream",
   renderHeader,
-  renderOpeningSidebar,
-  renderSidebar,
-  onStartSubstream,
-  substreamLaunch,
-  breakouts,
-  openBreakoutId = null,
-  onOpenBreakout,
-  linkSpaceId = null,
-  onOpenMerge,
-  mergeRequest = null,
-  onMerged,
   scrollToTurn = null,
-  honorsSearchTarget = true,
-  paneKey,
-  breakoutOrigin,
-  parentCrumbs,
   messageIntent,
   composerMenuActions: hostMenuActions,
   composerPlaceholder,
@@ -1435,13 +1143,10 @@ function ConversationSurfaceContent({
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
   const parentDetailQueryKey = useMemo(() => workstreamDetailQueryKey(id, '0'), [id]);
   const transcriptQueryKey = useMemo(() => orderedTranscriptQueryKey(id, substreamId), [id, substreamId]);
-  const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
-  const parentNoun = parentKind === 'automation' ? 'automation' : parentKind === 'canvas' ? 'Canvas' : 'channel';
-  const navigate = useNavigate();
-  const openFirstWorkstream = useOpenFirstWorkstream();
+  const parentNoun = parentKind === 'automation' ? 'Sidekick' : 'Canvas';
   const [searchParams, setSearchParams] = useSearchParams();
   const searchSequence = Number(searchParams.get('sequence'));
-  const searchTurnId = honorsSearchTarget && Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
+  const searchTurnId = Number.isSafeInteger(searchSequence) && searchSequence > 0 ? searchParams.get('turn') : null;
 
   const requestedSearch = useRef<string | null>(null);
 
@@ -1460,11 +1165,10 @@ function ConversationSurfaceContent({
   const railScope = useUiStore((state) => state.railScope);
   const setRailLeaving = useUiStore((state) => state.setRailLeaving);
   const setRailScope = useUiStore((state) => state.setRailScope);
-  // The right slot belongs to one conversation at a time. A Channel and its
-  // open Breakout are both on screen, so the slot is scoped to the
-  // conversation that opened it rather than to the Channel: each pane opens,
-  // closes and fades only its own panel.
-  const railScopeKey = `${substreamId === '0' ? id : `${id}:${substreamId}`}${paneKey ? `#${paneKey}` : ''}`;
+  // The right slot belongs to one conversation at a time, so it is scoped to
+  // the conversation that opened it: a surface opens, closes and fades only
+  // its own panel.
+  const railScopeKey = substreamId === '0' ? id : `${id}:${substreamId}`;
   const claimRail = useCallback((): void => {
     if (useUiStore.getState().railScope !== railScopeKey) setRailScope(railScopeKey);
   }, [railScopeKey, setRailScope]);
@@ -1485,59 +1189,11 @@ function ConversationSurfaceContent({
   const conversationGenerationRef = useRef(0);
   const olderRequestsRef = useRef(new Map<string, Promise<void>>());
   const [positionedConversation, setPositionedConversation] = useState<string | null>(null);
-  const [participantDialogOpen, setParticipantDialogOpen] = useState(false);
-  /** The participant the title menu asked to take out, held until the reader confirms. */
-  const [removeConfirmRequest, setRemoveConfirm] = useState<{ member: WorkspaceMember; parentId: string; target: string } | null>(null);
-  // The surface outlives a route change, so a request asked in another
-  // conversation is not this one's to confirm.
-  const removeConfirm = removeConfirmRequest?.parentId === id && removeConfirmRequest.target === substreamId ? removeConfirmRequest : null;
-  useEffect(() => { setRemoveConfirm(null); }, [id, substreamId]);
-  const [participantDialogSubstreamId, setParticipantDialogSubstreamId] = useState(substreamId);
   const [resourceDialogOpen, setResourceDialogOpen] = useState(false);
   const [resourceSearch, setResourceSearch] = useState('');
   const [debouncedResourceSearch, setDebouncedResourceSearch] = useState('');
   const [sendError, setSendError] = useState<string | undefined>();
   const [sending, setSending] = useState(false);
-  // Merge-back (docs/conversation-merge.md): the composer's merge mode,
-  // opened prefilled from a message's words. `channelId` is the Channel a
-  // thread merges into, picked from its Channels; a Breakout merges into its
-  // Thread and names none.
-  // The response card (docs/conversation-merge.md): open under the turn the
-  // merge was asked from, or at the end of the feed from the title menu.
-  const [mergeCard, setMergeCard] = useState<{ nonce: number; channelId: string | null; anchorTurnId: string | null } | null>(null);
-  // The merge note as it is typed, for the audience line's artifact names and the card.
-  const [mergeDraft, setMergeDraft] = useState('');
-  // Suggestions this reader dismissed, hidden at once while the room confirms.
-  const [dismissedSuggestionIds, setDismissedSuggestionIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [mergeError, setMergeError] = useState<string | undefined>();
-  const [merging, setMerging] = useState(false);
-  // A merge note that mentions somebody not yet in a personal Thread asks
-  // before it lands, as the composer does for any message: the people named
-  // are added with the merge, or the note stays open.
-  const [mergeConfirmation, setMergeConfirmation] = useState<{ text: string; members: WorkspaceMember[] } | null>(null);
-  const [mergeConfirming, setMergeConfirming] = useState(false);
-  // One operation id per merge until it succeeds: a send whose response was
-  // lost is retried with the same id, so the server answers it as a replay
-  // rather than posting it twice. New words, or a new target, are a new merge.
-  const mergeAttemptRef = useRef<{ key: string; id: string } | null>(null);
-  useEffect(() => { setMergeCard(null); setMergeError(undefined); }, [id, substreamId]);
-  const activeSpaces = useSpaceDirectories().active.data;
-  const threadPlacements = useCachedWorkstreamPlacements(id);
-  const startMergeRef = useRef<((text: string, anchorTurnId?: string) => void) | undefined>(undefined);
-  // A request counts once: the one standing when this surface mounts was
-  // already answered by an earlier mount, so coming back does not reopen it.
-  const handledMergeRequestRef = useRef(mergeRequest);
-  useEffect(() => {
-    if (mergeRequest === null || mergeRequest === handledMergeRequestRef.current) return;
-    handledMergeRequestRef.current = mergeRequest;
-    startMergeRef.current?.('');
-  }, [mergeRequest]);
-  // The merge composer on screen now, so a merge that finishes after it was
-  // cancelled and another opened leaves the newer one and its draft alone.
-  const mergeNonceRef = useRef<number | null>(null);
-  // A pane closed mid-merge has no composer on screen: its merge still lands
-  // but moves nobody.
-  useEffect(() => () => { mergeNonceRef.current = null; }, []);
   // Declared up here because sending clears it, and the composer's send is
   // defined long before the fold below that maintains it.
   const [carriedStopAcknowledgement, setCarriedStopAcknowledgement] = useState(NO_STOP_ACKNOWLEDGEMENT);
@@ -1579,34 +1235,31 @@ function ConversationSurfaceContent({
   const openResourceDetails = useCallback((resourceId: string): void => {
     openPanel({ kind: 'resource', resourceId });
   }, [openPanel]);
-  const openWorkstreamResourceDetails = useCallback((resourceId: string): void => {
-    openPanel({ kind: 'resource', resourceId, workstreamScoped: true });
-  }, [openPanel]);
-  // A navigation can ask this thread's Main to open onto an artifact (a
-  // Channel merge card's embed). Arriving by it, the panel restored below is
-  // that artifact rather than the one this conversation saved.
+  // A navigation can ask this conversation to open onto an artifact (a
+  // Canvas opened onto one). Arriving by it, the panel restored below is that
+  // artifact rather than the one this conversation saved.
   const location = useLocation();
   const resourceRequest = openResourceRequest(location.state);
-  const requestedResourceId = resourceRequest?.threadId === id && substreamId === '0' ? resourceRequest.resourceId : null;
+  const requestedResourceId = resourceRequest?.conversationId === id && substreamId === '0' ? resourceRequest.resourceId : null;
   // Each navigation onto an artifact is a request of its own: selecting the
   // same pinned row again, after closing its panel, opens it again.
   const resourceRequestKey = requestedResourceId === null ? null : location.key;
   const workspaceId = session?.workspace?.id ?? 'unbound';
-  // Requests to join waiting on this reader, kept by the workspace socket; the
-  // People level lists the ones for the conversation on screen.
-  const accessRequests = useAccessRequests(workspaceId);
-  const decideAccessRequest = useDecideAccessRequest(api ?? null, workspaceId);
   const workspaceRegion = session?.workspace?.region ?? 'global';
   const attachmentDraft = useFileAttachments(api, conversationDraftKey(workspaceRegion, workspaceId, parentKind, id, substreamId));
-  const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
-  const railDrop = useFileDrop(attachmentDraft.addFiles);
+  // A read-only conversation (a run read from its Sidekick) has no composer to
+  // show what lands in its draft, so a drop or a paste there would upload a
+  // file nobody can see or send: it takes none.
+  const acceptFiles = readOnly ? IGNORE_FILES : attachmentDraft.addFiles;
+  const transcriptDrop = useFileDrop(acceptFiles);
+  const railDrop = useFileDrop(acceptFiles);
   // The composer does not take focus when a work stream opens, so a paste that
   // lands on the document reaches the same draft the transcript and rail accept
   // files into.
   const conversationVisible = useContext(ConversationVisibilityContext);
   const conversationVisibleRef = useRef(conversationVisible);
   conversationVisibleRef.current = conversationVisible;
-  useWindowFilePaste(attachmentDraft.addFiles, !conversationVisible);
+  useWindowFilePaste(acceptFiles, !conversationVisible);
   const loadAttachmentContent = useCallback(
     (resourceId: string, signal?: AbortSignal) => api!.getResourcePreviewContent(resourceId, signal),
     [api],
@@ -1633,8 +1286,7 @@ function ConversationSurfaceContent({
     setPanel(savedPanel ? { kind: 'resource', ...savedPanel } : null);
     setResourceDialogOpen(false);
     // Claimed on arrival when there is a panel to restore, or when nobody holds
-    // the slot; a Breakout opening beside its Channel must not take a panel
-    // the Channel has open.
+    // the slot.
     if (savedPanel || useUiStore.getState().railScope === null) setRailScope(railScopeKey);
     if (savedPanel) restoreRail(railScopeKey, () => useUiStore.getState().openRail('context'));
     restoredPanelKey.current = artifactPanelKey;
@@ -1647,8 +1299,8 @@ function ConversationSurfaceContent({
       }
     };
   }, [artifactPanelKey, closeRail, inspect, railScopeKey, requestedResourceId, resourceRequestKey, setRailScope]);
-  // Only a Channel draws the browser rail; a Sidekick's links stay external.
-  useBrowserRailLinks(parentKind === 'workstream', layoutElement, claimRail);
+  // Only a Canvas draws the browser rail; a Sidekick's links stay external.
+  useBrowserRailLinks(parentKind === 'canvas', layoutElement, claimRail);
 
   useLayoutEffect(() => {
     activeConversationAddressRef.current = conversationAddress;
@@ -1677,11 +1329,6 @@ function ConversationSurfaceContent({
   // The admitted conversation socket is the only producer of these caches.
   // Its canonical snapshot installs detail and transcript together, including
   // after a cursor-zero recovery, so Retry restarts that same ordered path.
-  const initialFeedCacheState = useMemo(() => (
-    queryClient.getQueryData(transcriptQueryKey) !== undefined
-      ? 'feed_cached'
-      : queryClient.getQueryData(detailQueryKey) !== undefined ? 'detail_cached' : 'cold'
-  ), [detailQueryKey, queryClient, transcriptQueryKey]);
   const workstream = useQuery<WorkstreamDetail | undefined>({
     queryKey: detailQueryKey,
     queryFn: fetchThroughOwner,
@@ -1714,22 +1361,6 @@ function ConversationSurfaceContent({
     initialData: [],
     staleTime: Number.POSITIVE_INFINITY,
   });
-  const telemetryOpenedWorkstreamRef = useRef<string | null>(null);
-  const pinnedThreads = usePinnedIds('thread');
-  useEffect(() => {
-    const detail = workstream.data;
-    if (parentKind !== 'workstream') return;
-    if (!detail || detail.id !== id || telemetryOpenedWorkstreamRef.current === detail.id) return;
-    telemetryOpenedWorkstreamRef.current = detail.id;
-    reportTelemetryProductIntent({
-      kind: 'workstream_opened',
-      workstreamId: detail.id,
-      visibility: telemetryVisibility(detail.scope),
-      navigation: workstreamNavigation(detail.id),
-      origin: detail.systemKind ? 'system' : 'ad_hoc',
-      pinned: pinnedThreads.has(detail.id),
-    });
-  }, [id, parentKind, pinnedThreads, workstream.data]);
   const payloadBelongsToRoute = workstreamPayloadBelongsToRoute(
     id,
     workstream.data,
@@ -1744,26 +1375,6 @@ function ConversationSurfaceContent({
       observedActiveRun.current = routedDetail.latestHarnessRunId ?? routedDetail.latestHarnessRun?.id ?? null;
     }
   }, [routedDetail]);
-  // Only a thread's Main merges into a Channel; nothing else asks.
-  const eligibleMergeChannels = useMergeChannels(api, id,
-    parentKind === 'workstream' && substreamId === '0' && !guest && routedDetail !== undefined);
-  const merge = mergeTargetFor({
-    parentKind,
-    substreamId,
-    guest,
-    thread: substreamId === '0' ? routedDetail : workstreamContext?.id === id ? workstreamContext : null,
-    placements: threadPlacements,
-    eligible: eligibleMergeChannels,
-    spaces: activeSpaces?.items ?? [],
-  });
-  const mergeChannel = merge?.kind === 'channel'
-    ? mergeCard ? merge.channels.find((channel) => channel.id === mergeCard.channelId) ?? null : merge.channels[0]!
-    : null;
-  // An open draft keeps its chosen audience. If it disappears, close the
-  // card and preserve its draft rather than choosing another Channel for it.
-  useEffect(() => {
-    if (mergeCard?.channelId && !mergeChannel) setMergeCard(null);
-  }, [mergeCard, mergeChannel]);
   const feedSource = useQuery<WorkstreamFeedSource | null>({
     queryKey: workstreamFeedSourceQueryKey(id, substreamId),
     queryFn: async () => null,
@@ -1778,35 +1389,6 @@ function ConversationSurfaceContent({
    * live snapshot that replaces it; what stays is reading and composing.
    */
   const feedFromLocalCache = feedSource.data === 'local_cache';
-  const initialFeedTelemetrySnapshot = useMemo<{
-    feedSource: WorkstreamFeedSource;
-    messageCount: ReturnType<typeof telemetryCountBucket>;
-  } | null>(() => {
-    if (!routedDetail || !orderedTranscript.data) return null;
-    const resolvedFeedSource = resolveFeedOpenSource(initialFeedCacheState, feedSource.data);
-    if (!resolvedFeedSource) return null;
-    return {
-      feedSource: resolvedFeedSource,
-      messageCount: telemetryCountBucket(orderedTranscript.data.ranges.reduce(
-        (count, range) => count + range.turns.reduce(
-          (turnCount, turn) => turnCount + turn.blocks.length,
-          0,
-        ),
-        orderedTranscript.data.activeTurns.reduce(
-          (count, turn) => count + turn.blocks.length,
-          0,
-        ),
-      )),
-    };
-  }, [feedSource.data, initialFeedCacheState, orderedTranscript.data, routedDetail]);
-  useWorkstreamFeedOpenTelemetry({
-    cacheState: initialFeedCacheState,
-    feedSource: initialFeedTelemetrySnapshot?.feedSource,
-    isReady: payloadBelongsToRoute,
-    messageCount: initialFeedTelemetrySnapshot?.messageCount,
-    readSocketOpenContext,
-    workstreamId: id,
-  });
   // The rail's detail reads through the *preview* route, exactly as the
   // attachment lightbox does: it materializes readable text for a file that is
   // not already text, which is what makes a cited Word file or PDF worth
@@ -1828,66 +1410,20 @@ function ConversationSurfaceContent({
   const siteArtifacts = useSiteArtifacts(api);
   useEffect(() => {
     if (!resourcePanel) return;
-    const resourceOwner = resourcePanel.workstreamScoped
-      ? workstreamContext?.id === id ? workstreamContext : null
-      : routedDetail;
-    if (!resourceOwner || resourceOwner.resources.some((resource) => resource.id === resourcePanel.resourceId)) return;
+    if (!routedDetail || routedDetail.resources.some((resource) => resource.id === resourcePanel.resourceId)) return;
     setPanel(null);
     closeOwnRail();
-  }, [resourcePanel, closeOwnRail, id, routedDetail, workstreamContext]);
+  }, [resourcePanel, closeOwnRail, routedDetail]);
   // Popped-out windows follow new versions from the app shell
   // (`App.tsx`), which reads every version this conversation's socket carries
   // through `followResourceHeads`.
-  // Attaching always targets the Channel's main conversation, from any breakout.
   const attachResource = useMutation({
     mutationFn: (resource: WorkstreamResource) => api!.attachResource(id, resource.id),
     onSuccess: (updated) => queryClient.setQueryData(parentDetailQueryKey, updated),
   });
-  const attachResourceToChannel = attachResource.mutate;
-  // One attach at a time: each answers with the whole Channel detail, so two in
-  // flight could land out of order and drop the other's resource from the cache.
-  const attachPending = attachResource.isPending;
-  // Guests get no Channel context and cannot attach there, so they get no menu.
-  const breakoutResources = substreamId === '0' ? undefined : routedDetail?.resources;
-  const channelResources = parentKind === 'workstream' && workstreamContext?.id === id
-    ? workstreamContext.resources
-    : undefined;
-  // Keyed on what the menu reads, not on the arrays: a socket snapshot replaces
-  // them unchanged, and a new context identity re-renders every citation.
-  const citationActionsIdentity = JSON.stringify([
-    breakoutResources?.map((resource) => [resource.id, resource.direction]),
-    channelResources?.map((resource) => resource.id),
-  ]);
-  // Pin and Unpin on what the thread's Main holds as an artifact: Main's own
-  // list there, and in a breakout what was attached to its thread.
-  const artifactPins = useArtifactPins();
-  const setArtifactPinned = useArtifactPinAction(api);
-  const pinnedArtifactIds = useMemo(() => new Set(artifactPins.map((pin) => pin.id)), [artifactPins]);
-  const pinnableResources = parentKind !== 'workstream' ? undefined
-    : substreamId === '0' ? routedDetail?.resources : channelResources;
-  const pinActionsIdentity = JSON.stringify([
-    pinnableResources?.map((resource) => [resource.id, resource.direction]),
-    [...pinnedArtifactIds],
-  ]);
-  const citationActions = useMemo(() => combineResourceActions(
-    breakoutResources && channelResources
-      ? breakoutResourceActions({ attach: attachResourceToChannel, breakoutResources, channelResources, pending: attachPending })
-      : undefined,
-    pinnableResources
-      ? artifactPinActions({ pinnedIds: pinnedArtifactIds, setPinned: setArtifactPinned, threadId: id, threadResources: pinnableResources })
-      : undefined,
-  ), [attachPending, attachResourceToChannel, citationActionsIdentity, pinActionsIdentity]);
-  // Pins name Main's artifacts. Links can name any file in Main, including uploads.
-  const isMainArtifact = (resourceId: string): boolean =>
-    Boolean(pinnableResources?.some((resource) => resource.id === resourceId && resource.direction === 'artifact'));
-  const resourceLink = (resourceId: string): (() => Promise<void>) | undefined => {
-    const workspace = session?.workspace;
-    const spaceId = linkSpaceId ?? threadPlacements?.[0] ?? null;
-    // The destination opens Main, so files available only in a breakout cannot be named.
-    if (!workspace || !spaceId || !pinnableResources?.some((resource) => resource.id === resourceId)) return undefined;
-    return () => copyArtifactLink({ region: workspace.region, workspaceId: workspace.id }, spaceId, id, resourceId);
-  };
-  const citationPinned = useCallback((resourceId: string) => pinnedArtifactIds.has(resourceId), [pinnedArtifactIds]);
+  // Renaming is for what this conversation generated, not for a file somebody attached.
+  const isGeneratedArtifact = (resourceId: string): boolean =>
+    Boolean(routedDetail?.resources.some((resource) => resource.id === resourceId && resource.direction === 'artifact'));
   // Citations resolve against the loaded work stream's resources, and the
   // transcript needs this before the screen has decided it has a work stream to
   // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
@@ -1895,18 +1431,10 @@ function ConversationSurfaceContent({
   // declared after the preview read because it now takes it: the embed card's
   // excerpt is the same derivative the rail's panel shows.
   const citations = useCitations({
-    actions: citationActions,
     loadResourceContent,
-    pinned: citationPinned,
     onOpenPreview: openAttachment,
     onOpenResourceDetails: openResourceDetails,
     resources: routedDetail?.resources ?? NO_RESOURCES,
-  });
-  const sidebarCitations = useCitations({
-    loadResourceContent,
-    onOpenPreview: openAttachment,
-    onOpenResourceDetails: openWorkstreamResourceDetails,
-    resources: workstreamContext?.id === id ? workstreamContext.resources : NO_RESOURCES,
   });
   // The store holds the rail's open state, but on the render that changes the
   // route it is still describing the previous work stream — the effect above
@@ -1923,8 +1451,7 @@ function ConversationSurfaceContent({
     // Only a resource is restored after relaunch: an attachment preview is a
     // loader closure, with nothing to write down.
     writeLayout(artifactPanelKey, railOpen && railVariant === 'context' && resourcePanel
-      ? JSON.stringify({ resourceId: resourcePanel.resourceId,
-        workstreamScoped: resourcePanel.workstreamScoped === true }) : null);
+      ? JSON.stringify({ resourceId: resourcePanel.resourceId, workstreamScoped: false }) : null);
   }, [artifactPanelKey, panel, resourcePanel, railOpen, railVariant]);
   // A route switch is not a sidebar hand-off: scope the fade to the work stream
   // so the previous stream's inspector never dissolves over the arriving feed.
@@ -1935,37 +1462,11 @@ function ConversationSurfaceContent({
   useEffect(() => {
     if (panel && !railOpen && !railLeaving) setPanel(null);
   }, [panel, railLeaving, railOpen]);
-  // A pinned artifact on screen is seen at the version it was opened at: its
-  // pin's unread state and its Activity rows settle on the same waterline. A
-  // version that arrives while it is open is not the one on screen, so it
-  // stays unread until the artifact is opened again.
-  // Behind the browser rail it is not on screen.
+  // The panel is expanded over its conversation, or beside it. A navigation
+  // onto an artifact asks for it expanded; an artifact opened from the
+  // transcript opens beside. Only the requested artifact honours the request,
+  // so another opened after it opens beside.
   const panelShown = railOpen && railVariant === 'context' && Boolean(panel);
-  // A gallery says which of its images is on screen, for the preview it was
-  // opened with; until it has, nothing in it is.
-  const [galleryShown, setGalleryShown] = useState<{ preview: AttachmentPreview; resourceId: string | null } | null>(null);
-  const reportGalleryShown = useCallback((preview: AttachmentPreview, resourceId: string | null) => {
-    setGalleryShown({ preview, resourceId });
-  }, []);
-  const shownResourceId = !panelShown || !panel ? null
-    : panel.kind === 'resource' ? panel.resourceId
-      : galleryShown?.preview === panel.preview ? galleryShown.resourceId : null;
-  const shownPin = shownResourceId === null ? undefined : artifactPins.find((pin) => pin.id === shownResourceId);
-  const [openedAt, setOpenedAt] = useState<{ id: string | null; version: number | null }>({ id: null, version: null });
-  if (openedAt.id !== shownResourceId) setOpenedAt({ id: shownResourceId, version: shownPin?.currentVersion ?? null });
-  else if (openedAt.version === null && shownPin) setOpenedAt({ id: shownResourceId, version: shownPin.currentVersion });
-  const seenVersion = shownPin?.unread && openedAt.id === shownPin.id ? openedAt.version : null;
-  useEffect(() => {
-    if (!api || !shownPin || seenVersion === null) return;
-    reportActivityEvent(api, queryClient, {
-      kind: 'read', subject: artifactActivitySubject(shownPin.id), through: seenVersion,
-    });
-  }, [api, queryClient, shownPin?.id, seenVersion]);
-  // The panel is the stack's last level: expanded over its conversation, as a
-  // thread is over its Channel, or beside it. A navigation onto an artifact
-  // (its pinned row, its Activity row) asks for it expanded; an artifact
-  // opened from the transcript opens beside. Only the requested artifact
-  // honours the request, so another opened after it opens beside.
   const panelKey = !panelShown || !panel ? null
     : panel.kind === 'resource' ? `resource:${panel.resourceId}` : `attachment:${panel.preview.resourceId ?? panel.preview.name}`;
   const { expanded: panelExpanded, setExpanded: setPanelExpanded } = usePaneExpansion(
@@ -1979,26 +1480,23 @@ function ConversationSurfaceContent({
     setRailExpanded(panelExpanded);
     return () => setRailExpanded(false);
   }, [ownsRail, panelExpanded, setRailExpanded]);
-  const channelPane = useChannelPane();
   // Too narrow for the panel beside its conversation, a phone included, the
   // panel covers the pane whether or not it was expanded, so it offers
   // neither Expand nor a Collapse that would change nothing. The expansion
   // is kept for when the window widens.
   const panelFillsPane = useRailFillsPane(useUiStore((state) => state.sidebarWidth));
   const panelExpandAction = panelFillsPane ? undefined : expandToggle(panelExpanded, true, setPanelExpanded);
-  // Alone on screen, the panel carries the crumbs of what it covers
-  // (`docs/pane-stack.md`). A breakout's mark is seeded by its own id.
+  // Alone on screen, the panel carries the crumb of the conversation it covers.
   const conversationTitle = routedDetail?.title ?? '';
   const conversationMarkId = substreamId === '0' ? id : substreamId;
   const panelAncestors: TitlePillLevel[] | undefined = !panelExpanded && !panelFillsPane ? undefined : [
-    ...(parentCrumbs ?? (channelPane?.shifted ? [channelPane.crumb] : [])),
     {
       key: `panel-conversation:${conversationAddress}`,
       icon: <WorkstreamGlyph appearance={routedDetail?.appearance} id={conversationMarkId} size={24} />,
       bridge: {
         mark: workstreamMark(conversationMarkId, routedDetail?.appearance ?? undefined),
         name: conversationTitle,
-        action: parentKind === 'automation' ? 'Open Sidekick' : substreamId === '0' ? 'Open thread' : 'Open breakout',
+        action: parentKind === 'automation' ? 'Open Sidekick' : 'Open Canvas',
       },
       title: conversationTitle,
       label: `Show ${conversationTitle || 'the conversation'}`,
@@ -2022,18 +1520,8 @@ function ConversationSurfaceContent({
     staleTime: 60_000,
   });
   const visibleMembers = guest ? routedDetail?.participants ?? NO_MEMBERS : members.data ?? NO_MEMBERS;
-  const peopleRanking = usePeopleRanking(api, workspaceId, session?.user.id, channelPane?.channelId ?? null, !guest && parentKind === 'workstream');
   const visibleConnections = guest ? routedDetail?.connections : connections.data;
-  // People invited to the Organization who have not joined: offered where a
-  // member can share this Channel with them, and named in its chips.
-  const invitesInvitees = parentKind === 'workstream' && !guest
-    && Boolean(session?.workspace) && session?.workspace?.accessClass !== 'guest';
-  const invitees = useWorkspaceInvitees(api, invitesInvitees);
-  const visibleInvitees = invitesInvitees ? invitees.data ?? NO_INVITEES : NO_INVITEES;
-  const emailMentions = useMemo(
-    () => emailMentionDirectory(visibleMembers, visibleInvitees),
-    [visibleInvitees, visibleMembers],
-  );
+  const emailMentions = useMemo(() => emailMentionDirectory(visibleMembers, NO_INVITEES), [visibleMembers]);
   const availableResources = useInfiniteQuery({
     queryKey: ['resources', debouncedResourceSearch],
     queryFn: ({ pageParam, signal }) => api!.listResources({
@@ -2047,11 +1535,13 @@ function ConversationSurfaceContent({
     enabled: Boolean(api && resourceDialogOpen),
     staleTime: 15_000,
   });
-  const socketConnection = useRetainedWorkstreamSocket(
+  const socketConnection = useWorkstreamSocket(
     api,
     id,
     Boolean(api && id),
-    parentKind,
+    'active_workstream',
+    undefined,
+    true,
     substreamId,
   );
   const requestSocketSnapshot = socketConnection.requestSnapshot;
@@ -2059,14 +1549,6 @@ function ConversationSurfaceContent({
     if (socketConnection.state !== 'connected' || payloadBelongsToRoute) return;
     requestSocketSnapshot();
   }, [payloadBelongsToRoute, requestSocketSnapshot, socketConnection.state]);
-  useWorkstreamSendReadyTelemetry({
-    // A composer over a seed is painted but cannot send, so it is not the
-    // milestone this measures.
-    isReady: socketConnection.sendReady && !feedFromLocalCache,
-    workspaceSocketState: socketConnection.workspaceSocketState,
-    workstreamId: id,
-    substreamId,
-  });
   const socketState = socketConnection.state;
   /** The room is on the line and what is on screen is its own: ranges can be asked for against it. */
   const feedLive = socketState === 'connected' && !feedFromLocalCache;
@@ -2085,21 +1567,6 @@ function ConversationSurfaceContent({
     id,
     visibleMembers,
   ), [id, visibleMembers, orderedTranscript.data]);
-  // The Channel's transcript, read from the cache its own pane keeps, for a
-  // Breakout's origin card. Subscribed rather than fetched.
-  const channelTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
-    queryKey: orderedTranscriptQueryKey(id, '0'),
-    queryFn: fetchThroughOwner,
-    enabled: false,
-  });
-  const originTurnId = substreamId === '0' ? undefined : breakoutOrigin?.turnId;
-  const origin = useMemo(() => (originTurnId
-    ? breakoutOriginMessages(orderedTranscriptMessages(channelTranscript.data, id, visibleMembers), originTurnId)
-    : null), [channelTranscript.data, id, originTurnId, visibleMembers]);
-  // The Channel sends counts for all of its conversations; this composer
-  // shows only the agents started from the conversation it belongs to.
-  const runningSidekicks = useSidekickActivity(id && parentKind === 'workstream'
-    ? { parentKind, parentId: id, substreamId } : null);
   const backgroundAgents = useQuery({
     queryKey: ['workstream-background-agents', id], queryFn: skipToken,
     initialData: null as Record<string, number> | null,
@@ -2208,30 +1675,6 @@ function ConversationSurfaceContent({
   }, [conversationAddress, feedLive, id, loadTranscriptRange, orderedTranscript.data, releaseTranscriptFollow,
     searchSequence, searchTurnId, setSearchParams, transcript, transcriptVirtualizer]);
 
-  // Breakouts placed in this feed: cards under each origin turn, and the tick
-  // bar's order, which follows the turns as they are loaded. A card's byline
-  // says who started the Breakout and when, as a Channel's thread card does.
-  //
-  const breakoutCards = useMemo(() => breakouts && onOpenBreakout && breakouts.length > 0
-    ? {
-      byTurn: breakoutsByOrigin(breakouts),
-      openSubstreamId: openBreakoutId,
-      onOpen: onOpenBreakout,
-      renderMeta: (breakout: BreakoutMark): React.ReactNode => {
-        if (!breakout.createdByUserId || !breakout.createdAt) return null;
-        const author = visibleMembers.find((member) => member.id === breakout.createdByUserId);
-        return <>
-          {author && <Avatar member={author} size="small" title={null} />}
-          <span>{author?.name ?? 'Someone'}</span>
-          <span aria-hidden="true">·</span>
-          <RelativeTime value={breakout.createdAt} />
-        </>;
-      },
-    }
-    : undefined, [breakouts, onOpenBreakout, openBreakoutId, visibleMembers]);
-  const tickBreakouts = useMemo(() => breakouts && breakouts.length > 0
-    ? orderBreakoutsForTicks(breakouts, transcript.flatMap((message) => message.transcriptTurnId ?? []))
-    : [], [breakouts, transcript]);
   const revealTurn = useCallback((turnId: string): boolean => {
     const index = transcript.findIndex((message) => message.transcriptTurnId === turnId);
     if (index < 0) return false;
@@ -2350,10 +1793,9 @@ function ConversationSurfaceContent({
   const historyStatusShown = (olderTranscriptRange !== null && !olderMessagesError) || loadingOlder
     || (nearHistoryEdge && !feedLive && !feedFromLocalCache);
   const historyRetryShown = olderTranscriptRange !== null && olderMessagesError !== undefined && !loadingOlder;
-  const originShown = Boolean(origin && breakoutOrigin && !olderTranscriptRange);
   useVirtualScrollAnchor(transcriptVirtualizer, transcriptRef, scrollTranscriptTo, {
     enabled: () => !isFollowingTranscript(),
-    layoutKey: `${historyStatusShown}:${historyRetryShown}:${olderMessagesError ?? ''}:${otherHistoryError ?? ''}:${originShown}`,
+    layoutKey: `${historyStatusShown}:${historyRetryShown}:${olderMessagesError ?? ''}:${otherHistoryError ?? ''}`,
   });
 
   const loadNewerMessages = useCallback(async (): Promise<void> => {
@@ -2493,104 +1935,6 @@ function ConversationSurfaceContent({
     }
   }, [feedLive, jumpToLatest, loadNewerMessages, loadOlderMessages]);
 
-  const cacheAddedParticipant = (target: string, member: WorkspaceMember): void => {
-    queryClient.setQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target), (current) => current ? {
-      ...current,
-      participants: current.participants.some((person) => person.id === member.id)
-        ? current.participants : [...current.participants, member],
-    } : current);
-  };
-
-  const addParticipant = useMutation({
-    mutationFn: async ({ member, target }: { member: WorkspaceMember; target: string }): Promise<WorkstreamDetail | undefined> => {
-      if (target === '0') return api!.addParticipant(id, member.id);
-      await api!.addSubstreamParticipant(id, target, member.id);
-      return undefined;
-    },
-    onSuccess: (updated, { target, member }) => {
-      if (updated) queryClient.setQueryData(workstreamDetailQueryKey(id, target), updated);
-      else cacheAddedParticipant(target, member);
-      // The roster is the dialog's job: it stays open so another person can be
-      // added or removed without reopening. Dismissal is click-outside, Escape,
-      // or the header close control. Self-removal still closes, below, because
-      // that person is leaving the room.
-    },
-  });
-
-  // Guest invitations for the title menu's People level, loaded once it opens.
-  const [invitesWanted, setInvitesWanted] = useState(false);
-  // Loaded with the People level, and whenever the Organization has invitees
-  // to offer: the composer needs to know who is already shared in here.
-  const invitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId,
-    refreshParticipants: () => queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) }),
-    enabled: (invitesWanted || visibleInvitees.length > 0) && Boolean(api && session?.workspace) && parentKind === 'workstream' });
-  const sharedInviteeEmails = useMemo(
-    () => invitations.pending.data?.map((guest) => guest.email) ?? NO_SHARED_INVITEES,
-    [invitations.pending.data],
-  );
-  // The participant dialog's own target, which may be a breakout other than the
-  // one on screen. Same cache entry as the share panel it embeds.
-  const dialogInvitations = useScopeInvitations({ api: api!, workspaceId, parentId: id, substreamId: participantDialogSubstreamId,
-    enabled: participantDialogOpen && invitesInvitees });
-  const dialogInvitees = useMemo(() => {
-    const shared = new Set(dialogInvitations.pending.data?.map((guest) => guest.email) ?? []);
-    return visibleInvitees.map((invitee) => invitee.email).filter((email) => !shared.has(email));
-  }, [dialogInvitations.pending.data, visibleInvitees]);
-
-  const removeParticipant = useMutation({
-    mutationFn: ({ member, target }: { member: WorkspaceMember; target: string }) => target === '0'
-      ? api!.removeParticipant(id, member.id)
-      : api!.removeSubstreamParticipant(id, target, member.id),
-    // Read before the request, not after it. Leaving a personal Main revokes
-    // this reader's socket, and its close evicts the cached detail, usually
-    // before the DELETE answers: read in `onSuccess`, the scope was gone, the
-    // screen stayed, and the reader was left on "could not be opened".
-    onMutate: ({ target }) => {
-      const previous = queryClient.getQueryData<WorkstreamDetail>(workstreamDetailQueryKey(id, target));
-      // Beside a Channel, the landing returns to it; a thread open on its own
-      // returns to its first Channel.
-      return { previous, spaceId: previous?.spaceIds?.[0] };
-    },
-    onSuccess: (_result, { member, target }, context) => {
-      const targetKey = workstreamDetailQueryKey(id, target);
-      const previous = context?.previous;
-      queryClient.setQueryData<WorkstreamDetail>(targetKey, (current) => current ? {
-        ...current,
-        participants: current.participants.filter((participant) => participant.id !== member.id),
-      } : current);
-      void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-      if (member.id !== session?.user.id) return;
-      // Leave-room navigation is only for a substream or a personal Main, but
-      // the dialog has to close for every self-removal: a workspace-scoped
-      // Main still lets the person view, and the portaled Remove menu is no
-      // longer an outside click that would dismiss it for free.
-      setParticipantDialogOpen(false);
-      if (target !== '0') {
-        queryClient.removeQueries({ queryKey: targetKey, exact: true });
-        void navigate(`/workstreams/${id}`, { replace: true });
-        return;
-      }
-      if (previous?.scope === 'personal') {
-        evictCachedWorkstream(queryClient, id);
-        openFirstWorkstream([id], context?.spaceId);
-      }
-    },
-  });
-
-  // The header renames in place, so both the open detail and the sidebar list
-  // have to show the new title without a refetch round trip.
-  const renameWorkstream = useMutation({
-    mutationFn: async (title: string) => {
-      if (substreamId === '0' && !guest) return api!.renameWorkstream(id, title);
-      await api!.renameSubstream(id, substreamId, title);
-      return undefined;
-    },
-    onSuccess: (updated) => {
-      if (!updated) return;
-      patchCachedWorkstream(queryClient, updated.id, { title: updated.title, titleStatus: updated.titleStatus, updatedAt: updated.updatedAt });
-    },
-  });
-
   // The shell needs to know whether the inspector is still fading out so it
   // reserves the same width for that final frame.
   useLayoutEffect(() => {
@@ -2673,7 +2017,7 @@ function ConversationSurfaceContent({
   // The rail's detail shows one resource at a time, so its history is fetched
   // for that one rather than for every attachment the work stream carries.
   const inspectedResourceId = resourcePanel ? resourcePanel.resourceId : inspector?.type === 'resource' ? inspector.id : null;
-  const inspectedResourceVersion = (resourcePanel?.workstreamScoped ? workstreamContext : workstream.data)?.resources
+  const inspectedResourceVersion = workstream.data?.resources
     .find((resource) => resource.id === inspectedResourceId)?.currentVersion ?? null;
   const resourceVersions = useQuery({
     queryKey: resourceVersionsQueryKey(inspectedResourceId, inspectedResourceVersion),
@@ -2790,26 +2134,13 @@ function ConversationSurfaceContent({
     }
   };
 
-  // A thread's own composer imports a conversation as a new Breakout of it.
-  // Imports are a member's, as a new thread's import is: the API refuses a
-  // guest, so a guest is not offered one. Only the Mac app has the embedded
-  // browser the import runs in; the browser shows the entry disabled, saying so.
-  const openBrowserImport = typeof window === 'undefined' ? undefined : window.rally?.openBrowserImport;
-  const composerMenuActions: ComposerMenuAction[] | undefined = parentKind === 'workstream' && substreamId === '0' && !guest ? [{
-    ...(openBrowserImport ? {} : { disabledReason: 'Importing needs the Rally Mac app' }),
-    icon: <IconCloudDownload aria-hidden="true" />,
-    label: 'Import from Claude or ChatGPT',
-    onSelect: () => void openBrowserImport?.({ spaces: [], breakout: { workstreamId: id, title: displayedDetail.title } }),
-  }] : undefined;
-
   const sendMessage = async (
     text: string,
     mentions: MentionIdentity[],
     confirmedParticipantUserIds: string[] = [],
     deliveryMode?: WorkstreamMessageDeliveryMode,
-    invitedEmails: string[] = [],
   ): Promise<void> => {
-    if (!api || !routedDetail) throw new Error('This thread is not ready to receive messages.');
+    if (!api || !routedDetail) throw new Error('This conversation is not ready to receive messages.');
     if (annotationDraft?.readyPins.length && (sending || activeElicitation)) throw new Error(activeElicitation ? 'Answer the open question before sending artifact comments.' : 'Your artifact comments are still sending.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
     // refuse must not appear in the transcript first and be pulled back out of
@@ -2858,23 +2189,6 @@ function ConversationSurfaceContent({
     }
     const annotationContent = sentPins.length ? { kind: 'artifact_annotations', annotations: sentPins.map((p) => p.annotation), names: Object.fromEntries(sentPins.map((p) => [p.annotation.target.resourceId, p.name])) } : undefined;
     const attachmentLease = await attachmentDraft.leaseReady();
-    // Shared before the message is sent, as a member mentioned from outside is
-    // added with it, and after the send holds its attachments, so nothing typed
-    // or attached meanwhile joins this message. An address already shared here
-    // is not shared again: each share is its own email.
-    const toShare = invitedEmails.filter((email) => !sharedInviteeEmails.includes(email)).sort();
-    if (toShare.length > 0) {
-      try {
-        await invitations.invite.mutateAsync(toShare);
-      } catch (error) {
-        await attachmentDraft.restoreLease(attachmentLease.leaseId);
-        pendingSendCount.current = Math.max(0, pendingSendCount.current - 1);
-        if (pendingSendCount.current === 0) setSending(false);
-        setSendError(`${toShare.join(', ')} couldn’t be invited, so the message wasn’t sent. Try again.`);
-        throw error;
-      }
-      void invitations.pending.refetch();
-    }
     const readyAttachments = attachmentLease.attachments;
     const clientId = crypto.randomUUID();
     queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) => {
@@ -2921,22 +2235,12 @@ function ConversationSurfaceContent({
       });
     });
     try {
-      // Private-child membership belongs to the parent. The generic message
-      // confirmation only updates the conversation-local participant roster,
-      // which cannot grant discovery or socket admission to a private child.
-      if (parentKind === 'workstream' && substreamId !== '0') {
-        for (const userId of confirmedParticipantUserIds) {
-          await api.addSubstreamParticipant(id, substreamId, userId);
-          const member = visibleMembers.find((person) => person.id === userId);
-          if (member) cacheAddedParticipant(substreamId, member);
-        }
-      }
       const created = await socketConnection.createMessage({
         ...(sentPins.length ? { annotations: sentPins.map((p) => p.annotation) } : {}),
         text,
         clientId,
         mentions,
-        confirmedParticipantUserIds: parentKind === 'workstream' && substreamId !== '0' ? [] : confirmedParticipantUserIds,
+        confirmedParticipantUserIds,
         attachmentIds: [...readyAttachments.flatMap((attachment) => attachment.resource ? [attachment.resource.id] : []), ...sentPins.flatMap((p) => p.annotation.content.imageAttachmentId ? [p.annotation.content.imageAttachmentId] : [])],
         ...(deliveryMode ? { runMode: deliveryMode } : {}),
         ...(messageIntent ? { intent: messageIntent } : {}),
@@ -3033,8 +2337,6 @@ function ConversationSurfaceContent({
     });
   }, [id, routedDetail, transcript, transcriptVirtualizer]);
 
-  // The last Activity read this pane reported, so an unchanged view sends nothing.
-  const activityReportedRef = useRef<{ address: string; through: number } | null>(null);
   const acknowledgeVisibleMessages = useCallback((): void => {
     // A seed's waterlines are what the room said some launches ago; an
     // acknowledgement built on them could read past a mark made since.
@@ -3055,19 +2357,6 @@ function ConversationSurfaceContent({
       visibleIndexes,
       detail.latestAttentionSequenceNumber,
     );
-    // What Activity is told is what the person has seen, whether or not this
-    // room's own read position needs moving: a position another client already
-    // moved, or one from before Activity kept waterlines, still owes Activity
-    // the read. Once per opening, then again only when it rises; 0 is an open.
-    const reported = activityReportedRef.current;
-    if (reported?.address !== conversationAddress || highestVisibleSequence > reported.through) {
-      activityReportedRef.current = { address: conversationAddress, through: highestVisibleSequence };
-      reportActivityEvent(api, queryClient, {
-        kind: 'read',
-        subject: conversationActivitySubject(id, substreamId),
-        through: highestVisibleSequence,
-      });
-    }
     const pending = conversationReadAcknowledgement({
       parentId: id,
       substreamId,
@@ -3139,33 +2428,15 @@ function ConversationSurfaceContent({
           description={socketConnection.openingError
             ?? (socketConnection.state === 'reconnecting'
               ? 'The live connection could not be opened. Try again while Rally reconnects.'
-              : `This ${parentKind === 'automation' ? 'Sidekick' : parentNoun} is unavailable.`)}
+              : `This ${parentNoun} is unavailable.`)}
           onRetry={socketConnection.retryOpening}
           parentNoun={parentNoun}
           workstreamId={id}
         />
       );
-      // A member holding a link to a Channel or Breakout they are not in sees
-      // its name and can ask to join; every other failure keeps its own screen.
-      return parentKind === 'workstream' && !guest
-        ? <ConversationAccessRequest api={api} fallback={errorState} onRetry={socketConnection.retryOpening} parentId={id} substreamId={substreamId} />
-        : errorState;
+      return errorState;
     }
-    const openingLabel = `Opening ${parentKind === 'automation' ? 'Sidekick' : parentNoun}…`;
-    const openingRail = renderSidebar ? renderOpeningSidebar?.() : null;
-    if (openingRail) {
-      // The same tree as the live layout below, rail first, so the rail is
-      // kept rather than remounted when the snapshot lands: focus, an open
-      // tip and the scroll position survive. Only the feed changes.
-      return (
-        <ConnectorConnectionsProvider connections={visibleConnections}>
-          <div className="conversation-layout conversation-opening-skeleton">
-            {openingRail}
-            <ConversationOpeningFeed label={openingLabel} parentKind={parentKind} />
-          </div>
-        </ConnectorConnectionsProvider>
-      );
-    }
+    const openingLabel = `Opening ${parentNoun}…`;
     return (
       <ConversationOpeningSkeleton
         label={openingLabel}
@@ -3175,7 +2446,6 @@ function ConversationSurfaceContent({
   }
 
   const detail = routedDetail;
-  const launchAuthor = workspaceMemberFromSession(session);
   const runTiming = workstreamRunTiming(detail.harnessStatus, detail.latestHarnessRun);
   const orderedOwnsRunTiming = orderedTranscriptOwnsRunTiming(
     orderedTranscript.data,
@@ -3198,10 +2468,6 @@ function ConversationSurfaceContent({
     runTiming,
   });
   const visibleTranscript = transcript;
-  // The origin card a breakout being started from here will open with.
-  const launchOrigin = substreamLaunch && parentKind !== 'automation'
-    ? breakoutOriginMessages(visibleTranscript, substreamLaunch.throughTurnId)
-    : null;
   const firstUnreadSequenceNumber = detail.firstUnreadSequenceNumber;
   const firstUnreadIndex = firstUnreadSequenceNumber === null
     ? -1
@@ -3217,241 +2483,6 @@ function ConversationSurfaceContent({
       presenceUserIdsByWorkstream[id] ?? [],
     ),
   };
-  const mergeDraftKey = `${workstreamDraftKey(workspaceRegion, workspaceId, id, substreamId)}:merge`;
-  // Opens the card. The words given win; an empty request from the title menu
-  // reopens whatever an earlier card left under the draft key.
-  const startMerge = merge ? (text: string, anchorTurnId?: string): void => {
-    const nonce = Date.now();
-    void (text ? writeDraftText(mergeDraftKey, text).then(() => text) : readDraftText(mergeDraftKey).then((draft) => draft?.text ?? ''))
-      .then((words) => {
-        setMergeDraft(words);
-        setMergeError(undefined);
-        setMergeCard({ nonce, channelId: merge.kind === 'channel' ? merge.channels[0]!.id : null, anchorTurnId: anchorTurnId ?? null });
-      });
-  } : undefined;
-  mergeNonceRef.current = mergeCard?.nonce ?? null;
-  const changeMergeDraft = (words: string): void => {
-    setMergeDraft(words);
-    void writeDraftText(mergeDraftKey, words);
-  };
-  // The conversation suggestions (docs/conversation-suggestions.md): drawn
-  // under the judged turn only while that turn is among the newest three
-  // messages the feed holds, counting what people and Rally said and not tool
-  // cards or system rows, and only for a viewer who can take the action.
-  // Not memoized: this sits below the surface's early returns, where a hook
-  // cannot go, and one pass over the visible rows is cheaper than the feed's
-  // own render.
-  const readableTurnIds: string[] = [];
-  for (const message of visibleTranscript) {
-    const turnId = message.transcriptTurnId;
-    if (!turnId || feedRowKind(message) === 'event') continue;
-    if (readableTurnIds[readableTurnIds.length - 1] !== turnId) readableTurnIds.push(turnId);
-  }
-  const canStartBreakout = parentKind === 'workstream' && substreamId === '0' && Boolean(onStartSubstream);
-  const mergeTargetName = merge ? (merge.kind === 'thread' ? merge.threadTitle : (mergeChannel?.name ?? merge.channels[0]!.name)) : null;
-  const textOfTurn = (turnId: string): string => visibleTranscript.find((message) => message.transcriptTurnId === turnId && message.text)?.text ?? '';
-  const dismissSuggestion = (suggestion: ConversationSuggestion): void => {
-    setDismissedSuggestionIds((current) => new Set([...current, suggestion.suggestionId]));
-    void api?.dismissSuggestion(id, substreamId, suggestion.suggestionId).catch(() => {
-      setDismissedSuggestionIds((current) => new Set([...current].filter((other) => other !== suggestion.suggestionId)));
-    });
-  };
-  const visibleSuggestions = socketConnection.suggestions.filter((suggestion) =>
-    suggestion.status === 'open'
-    && !dismissedSuggestionIds.has(suggestion.suggestionId)
-    && suggestionTurnIsVisible(suggestion.judgedTurnId, readableTurnIds)
-    && (suggestion.kind === 'mark_resolved' ? !resolved && parentKind === 'workstream' && Boolean(api)
-      : suggestion.kind === 'merge_up' ? !resolved && merge !== null && startMerge !== undefined : canStartBreakout));
-  const afterTurn = new Map<string, React.ReactNode>();
-  for (const suggestion of visibleSuggestions) {
-    if (mergeCard?.anchorTurnId === suggestion.judgedTurnId) continue;
-    const pending = suggestion.draft.status === 'pending';
-    if (suggestion.kind === 'mark_resolved') {
-      afterTurn.set(suggestion.judgedTurnId, <SuggestionChip
-        action={{ label: 'Mark resolved', disabled: Boolean(detail.archivedAt || workstreamContext?.archivedAt), onAct: () => {
-          setDismissedSuggestionIds((current) => new Set([...current, suggestion.suggestionId]));
-          void api?.resolveSuggestion(id, substreamId, suggestion.suggestionId).catch(() => {
-            setDismissedSuggestionIds((current) => new Set([...current].filter((other) => other !== suggestion.suggestionId)));
-          });
-        } }}
-        excerpt={null}
-        kind="mark_resolved"
-        label="Suggestion: mark resolved"
-        onDismiss={() => dismissSuggestion(suggestion)}
-        pending={false}
-        sentence="This conversation's work looks complete."
-        title="Mark resolved"
-      />);
-    } else if (suggestion.kind === 'merge_up') {
-      const words = suggestion.draft.text ?? textOfTurn(suggestion.judgedTurnId);
-      afterTurn.set(suggestion.judgedTurnId, <SuggestionChip
-        action={{ label: 'Merge', onAct: () => startMerge?.(words, suggestion.judgedTurnId) }}
-        excerpt={pending ? null : suggestionExcerpt(words)}
-        kind="merge_up"
-        resolveAction={onResolve ? { label: 'Resolve without merge', onAct: onResolve, disabled: resolveDisabled } : undefined}
-        label={`Suggestion: merge to ${mergeTargetName ?? ''}`}
-        onDismiss={() => dismissSuggestion(suggestion)}
-        pending={pending}
-        sentence={<>This might be a good time to merge this back into <strong>{mergeTargetName}</strong>.</>}
-        title={<>Merge to <strong>{mergeTargetName}</strong>{merge?.kind === 'channel' && merge.channels.length > 1
-          && <IconChevronDown aria-hidden="true" className="suggestion-chip-caret" size={11} stroke={2} />}</>}
-      />);
-    } else {
-      afterTurn.set(suggestion.judgedTurnId, <SuggestionChip
-        action={{ label: 'Start', onAct: () => onStartSubstream?.(suggestion.judgedTurnId, suggestion.draft.text ?? undefined) }}
-        excerpt={!pending && suggestion.draft.text ? suggestionExcerpt(suggestion.draft.text) : null}
-        kind="start_breakout"
-        label={`Suggestion: breakout${suggestion.draft.subject ? ` ${suggestion.draft.subject}` : ''}`}
-        onDismiss={() => dismissSuggestion(suggestion)}
-        pending={pending}
-        sentence="Want to break this out?"
-        title={pending || !suggestion.draft.subject
-          ? <>Breakout{pending && <>: <span aria-label="Rally is choosing a subject" className="skeleton-bar suggestion-chip-subject-skeleton" /></>}</>
-          : <>Breakout: <strong>{suggestion.draft.subject}</strong></>}
-      />);
-    }
-  }
-  // The response card (docs/conversation-merge.md): the merge as the parent
-  // will draw it, editable, under the turn it was asked from or at the end.
-  const mergeResources = [...displayedDetail.resources, ...(workstreamContext?.id === id ? workstreamContext.resources : [])];
-  const mergeCardNode = mergeCard && merge && (merge.kind === 'thread' || mergeChannel) ? <MergeResponseCard
-    audience={mergeAudience(
-      merge,
-      mergeChannel,
-      merge.kind === 'thread' && workstreamContext?.id === id ? workstreamContext.participants.length : null,
-      mergeArtifactTitles(mergeDraft, mergeResources),
-    )}
-    embeds={mergeResourceIds(mergeDraft).flatMap((token) => {
-      const resource = mergeResources.find((candidate) => candidate.id === token || candidate.slug === token);
-      return resource ? [{
-        id: token,
-        title: resource.title,
-        onRemove: () => changeMergeDraft(mergeDraft
-          .replace(new RegExp(`!?\\[[^\\]]*\\]\\(resource://${token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'), '')
-          .replace(/\n{3,}/g, '\n\n').trim()),
-      }] : [];
-    })}
-    error={mergeError}
-    label={`Merge to ${mergeTargetName ?? ''}`}
-    mergedBy={<span>{session?.user.name ?? 'You'}</span>}
-    onCancel={() => setMergeCard(null)}
-    onChange={changeMergeDraft}
-    onSubmit={() => submitMergeFromCard(mergeDraft)}
-    // A private thread's merge is drawn as the Channel's other readers will
-    // see it: from a private thread, with no name and no quote line.
-    quote={merge.kind === 'channel' && !merge.threadPrivate ? ((visibleTranscript.find((message) => message.authorType === 'human' && message.text)?.text ?? '').split('\n')[0] ?? null) : null}
-    source={merge.kind === 'channel' && merge.threadPrivate
-      ? { mark: <IconLock aria-hidden="true" size={10} stroke={2} />, title: 'Private thread' }
-      : { mark: <IconCornerDownRight aria-hidden="true" size={10} stroke={2} />, title: displayedDetail.title }}
-    submitting={merging}
-    targetName={mergeTargetName ?? ''}
-    targetPill={<MergeTargetPill
-      channelId={mergeChannel?.id ?? null}
-      label={merge.kind === 'thread' ? 'Merge to thread' : `Merge to ${mergeChannel?.name ?? ''}`}
-      onCancel={() => setMergeCard(null)}
-      onPick={(channelId) => setMergeCard({ ...mergeCard, channelId })}
-      target={merge}
-    />}
-    time={<span>now</span>}
-    value={mergeDraft}
-  /> : null;
-  const mergeCardAnchored = Boolean(mergeCard?.anchorTurnId && readableTurnIds.includes(mergeCard.anchorTurnId));
-  const mergeConfirmationNames = mergeConfirmation?.members.map((member) => member.name) ?? [];
-  const mergeConfirmationNode = mergeConfirmation ? <Modal
-    description={mergeConfirmationNames.length > 1
-      ? `${mergeConfirmationNames.join(', ')} are not currently participants. Would you like to add them with this merge? If you do not add them, they will not be able to see the mentions or this thread.`
-      : `${mergeConfirmationNames[0] ?? 'This person'} is not currently a participant. Would you like to add them with this merge? If you do not add them, they will not be able to see the mention or this thread.`}
-    footer={
-      <>
-        <Button disabled={mergeConfirming} onClick={() => setMergeConfirmation(null)}>Cancel</Button>
-        <Button className="button-primary" disabled={mergeConfirming} onClick={() => void confirmMergeParticipants()}>
-          {mergeConfirming ? <LoaderCircle className="spin" size={14} /> : <UserPlus size={14} />}
-          {mergeConfirmationNames.length > 1 ? 'Add all and merge' : 'Add and merge'}
-        </Button>
-      </>
-    }
-    onOpenChange={(open) => { if (!open && !mergeConfirming) setMergeConfirmation(null); }}
-    open
-    title={mergeConfirmationNames.length > 1 ? 'Add participants?' : 'Add participant?'}
-  >
-    {mergeConfirmation.members.map((member) => (
-      <div className="mention-confirm-person" key={member.id}>
-        <Avatar member={member} size="large" />
-        <span><strong>{member.name}</strong><small>{member.email}</small></span>
-      </div>
-    ))}
-  </Modal> : null;
-  const mergeCardWithDialog = mergeCardNode ? <>{mergeCardNode}{mergeConfirmationNode}</> : null;
-  if (mergeCardWithDialog && mergeCard?.anchorTurnId && mergeCardAnchored) afterTurn.set(mergeCard.anchorTurnId, mergeCardWithDialog);
-  /**
-   * The card's Merge. A Breakout merge resolves the `@` mentions typed in its
-   * note the way a message's are (`api.mergeConversation`); when one names a
-   * member who is not in a personal Thread, the confirmation the composer
-   * would have shown is shown here, and the merge carries the people added.
-   */
-  const submitMergeFromCard = (text: string): void => {
-    const thread = merge?.kind === 'thread' && workstreamContext?.id === id ? workstreamContext : null;
-    if (thread && thread.scope === 'personal' && text.includes('@')) {
-      const active = visibleMembers.filter((member) => (member.status ?? 'active') === 'active');
-      const resolved = new Set(resolveMentionPayload(text, [], active.map((member) => ({
-        type: 'person', label: member.name, userId: member.id, connectorType: null,
-      }))).flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []));
-      const participants = new Set(thread.participants.map((person) => person.id));
-      const nonparticipants = active.filter((member) => resolved.has(member.id) && !participants.has(member.id));
-      if (nonparticipants.length > 0) {
-        setMergeConfirmation({ text, members: nonparticipants });
-        return;
-      }
-    }
-    void submitMerge(text, []).catch(() => undefined);
-  };
-  const confirmMergeParticipants = async (): Promise<void> => {
-    if (!mergeConfirmation) return;
-    const confirmed = mergeConfirmation;
-    setMergeConfirming(true);
-    setMergeConfirmation(null);
-    try {
-      await submitMerge(confirmed.text, [], confirmed.members.map((member) => member.id));
-    } catch {
-      // The card keeps the words and shows the failure.
-    } finally {
-      setMergeConfirming(false);
-    }
-  };
-  const submitMerge = async (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]): Promise<void> => {
-    if (!api || !merge || !mergeCard || (merge.kind === 'channel' && !mergeChannel)) return;
-    const nonce = mergeCard?.nonce ?? null;
-    const draftKey = mergeDraftKey;
-    setMerging(true);
-    setMergeError(undefined);
-    const target = merge.kind === 'thread'
-      ? { breakoutId: substreamId, mentions, ...(confirmedParticipantUserIds?.length ? { confirmedParticipantUserIds } : {}) }
-      : mergeChannel ? { channelId: mergeChannel.id } : {};
-    const attemptKey = JSON.stringify([text, target]);
-    if (mergeAttemptRef.current?.key !== attemptKey) mergeAttemptRef.current = { key: attemptKey, id: crypto.randomUUID() };
-    try {
-      const result = await api.mergeConversation(id, { body: text, clientMessageId: mergeAttemptRef.current.id, ...target });
-      mergeAttemptRef.current = null;
-      const current = mergeNonceRef.current;
-      if (current === nonce) setMergeCard(null);
-      // Cancelled and not reopened, the draft is these words; reopened, it is
-      // the newer merge's.
-      if (current === nonce || current === null) void writeDraftText(draftKey, '');
-      // Only the merge still on screen moves the reader; a newer one is theirs.
-      if (current === nonce) onMerged?.(result);
-    } catch (error) {
-      if (mergeNonceRef.current === nonce) setMergeError(mergeFailureMessage(error));
-      // The composer keeps the words when a send throws.
-      throw error;
-    } finally {
-      setMerging(false);
-    }
-  };
-  startMergeRef.current = startMerge;
-  const sidebarDetail = sidebarScope === "conversation" ? displayedDetail : workstreamContext?.id === id ? workstreamContext : {
-    ...displayedDetail, resources: [], participants: [], viewers: [],
-  };
-  const resourceManagementDetail = resourcePanel?.workstreamScoped ? sidebarDetail : displayedDetail;
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
   ).values()];
@@ -3468,137 +2499,17 @@ function ConversationSurfaceContent({
     <EmailMentionContext.Provider value={emailMentions}>
     <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout" ref={layoutRef}>
-      {renderSidebar?.({
-        detail: sidebarDetail,
-        socketState,
-        presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
-        openParticipantDialog: () => { setParticipantDialogSubstreamId(sidebarScope === 'workstream' ? '0' : substreamId); setParticipantDialogOpen(true); },
-        openResource: sidebarScope === 'workstream' ? openWorkstreamResourceDetails : openResourceDetails,
-        openRail: openOwnRail,
-        rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
-        setAppearance: socketConnection.setAppearance,
-        openArtifact: sidebarScope === 'workstream' ? sidebarCitations.openPreview : citations.openPreview,
-        focusTranscript: () => transcriptRef.current?.focus({ preventScroll: true }),
-      })}
     <div className={clsx(
       'workstream-screen has-message-capsule',
       parentKind === 'automation' && 'automation-screen',
-      // The launch geometry, taken whole from the work-stream launcher: an
-      // `auto` header row that can grow into place, the launcher's own dock
-      // padding and composer treatment while composing, and nothing of its own
-      // once `is-launching` lands — by then the element is already dressed as
-      // the conversation it is about to become.
-      substreamLaunch && 'workstream-launch-screen',
-      substreamLaunch?.launching && 'is-launching',
     )}>
-      {substreamLaunch ? <SubstreamLaunchSurface
-        api={api}
-        connecting={feedFromLocalCache ? <ConnectingCard
-          detail="Starting a breakout is available once Rally connects"
-          error={socketConnection.openingError}
-          name={detail.titleStatus === 'naming' ? null : detail.title}
-          onRetry={socketConnection.retryOpening}
-          state={socketConnection.openingError
-            ? 'failed'
-            : socketState === 'unavailable' ? 'offline' : 'connecting'}
-          subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'thread' : 'breakout'}
-        /> : null}
-        currentUser={launchAuthor}
-        draft={{
-          throughTurnId: substreamLaunch.throughTurnId,
-          provenance: branchProvenance(visibleTranscript, substreamLaunch.throughTurnId),
-          ...(substreamLaunch.initialDraft ? { initialDraft: substreamLaunch.initialDraft } : {}),
-        }}
-        error={substreamLaunch.error}
-        launching={substreamLaunch.launching}
-        {...(api ? { loadAttachmentContent } : {})}
-        members={visibleMembers}
-        invitees={visibleInvitees}
-        onCancel={substreamLaunch.onCancel}
-        onCreate={substreamLaunch.onCreate}
-        onOpenAttachment={openAttachment}
-        parent={displayedDetail}
-        sendBlocked={feedFromLocalCache || Boolean(activeElicitation && annotationDraft?.readyPins.length)}
-        titlePill={parentKind !== 'automation'}
-        {...(launchOrigin ? { origin: { channelTitle: displayedDetail.title, ...launchOrigin } } : {})}
-        workspaceId={workspaceId}
-        workspaceRegion={workspaceRegion}
-      /> : <>
       {renderHeader?.({
         detail: displayedDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
-        openParticipantDialog: () => { setParticipantDialogSubstreamId(substreamId); setParticipantDialogOpen(true); },
         openResource: openResourceDetails,
         openRail: openOwnRail,
-        openArtifact: sidebarScope === 'workstream' ? sidebarCitations.openPreview : citations.openPreview,
-        rename: (title) => renameWorkstream.mutateAsync(title).then(() => undefined),
-        setAppearance: socketConnection.setAppearance,
-        people: parentKind === 'workstream' ? {
-          ...peopleRanking,
-          candidates: visibleMembers,
-          invitees: visibleInvitees.map((invitee) => invitee.email),
-          onAdd: async (member) => {
-            removeParticipant.reset();
-            invitations.invite.reset();
-            invitations.remove.reset();
-            await addParticipant.mutateAsync({ member, target: substreamId });
-          },
-          adding: addParticipant.isPending,
-          error: decideAccessRequest.error
-            ? 'That request couldn’t be answered. Try again.'
-            : addParticipant.error
-            ? refusalMessage(addParticipant.error) ?? 'That person couldn’t be added.'
-            : invitations.invite.error ? 'They couldn’t be invited. Try again.'
-              : invitations.remove.error
-                // They signed in between the list loading and the click: the invite is used.
-                ? invitations.remove.error instanceof ApiError && invitations.remove.error.code === 'scope_revision_conflict'
-                  ? 'They have already joined. Remove them from the people instead.'
-                  : 'That invite couldn’t be cancelled. Try again.'
-                : undefined,
-          currentUserId: session?.user.id,
-          requests: {
-            items: accessRequests
-              .filter((request) => request.parentId === id && request.substreamId === substreamId)
-              .map((request) => ({ id: request.id, userId: request.requesterUserId, name: request.requesterName })),
-            onDecide: (requestId, decision) => decideAccessRequest.mutate({ id: requestId, decision }),
-          },
-          onRemove: (member) => {
-            addParticipant.reset();
-            removeParticipant.reset();
-            setRemoveConfirm({ member, parentId: id, target: substreamId });
-          },
-          invites: api && session?.workspace ? {
-            pending: invitations.pending.data?.map((guest) => guest.email),
-            loadFailed: invitations.pending.isError,
-            onRetryLoad: () => { void invitations.pending.refetch(); },
-            onInvite: async (emails) => {
-              // A failed add earlier in the same submission stays reported.
-              invitations.remove.reset();
-              await invitations.invite.mutateAsync([...emails].sort());
-              // The hook refreshes both lists in the background and suppresses
-              // duplicate addresses until those reads catch up with the commit.
-            },
-            onRevoke: (email) => {
-              const guest = invitations.pending.data?.find((candidate) => candidate.email === email);
-              if (!guest) return;
-              invitations.invite.reset();
-              addParticipant.reset();
-              invitations.remove.mutate(guest, {
-                onError: (error) => {
-                  if (error instanceof ApiError && error.code === 'scope_revision_conflict') {
-                    void queryClient.invalidateQueries({ queryKey: workstreamDetailQueryKey(id, substreamId) });
-                  }
-                },
-              });
-            },
-            onLoad: () => setInvitesWanted(true),
-          } : undefined,
-        } : undefined,
-        origin: origin ? {
-          byline: `Started from ${origin.origin.authorType === 'agent' ? 'Rally’s' : `${origin.origin.author?.name ?? 'a'}’s`} message · ${formatDateTime(origin.origin.createdAt)}`,
-          text: originExcerpt(origin.origin.text ?? ''),
-        } : undefined,
+        openArtifact: citations.openPreview,
       })}
       {/* Focusable so the transcript can be scrolled from the keyboard at all.
           Chromium gives Page Up, Home, and the arrows to a scroller only when it
@@ -3607,17 +2518,6 @@ function ConversationSurfaceContent({
           a streaming turn, which is the whole thing the follow is built around.
           `log` rather than `region`: the content is appended over time and a
           screen reader should treat it that way. */}
-      {tickBreakouts.length > 0 && onOpenBreakout && <BreakoutTickBar
-        breakouts={tickBreakouts}
-        onOpen={(breakout) => {
-          onOpenBreakout(breakout.substreamId);
-          if (breakout.originTurnId) revealTurn(breakout.originTurnId);
-        }}
-        openSubstreamId={openBreakoutId}
-        renderAge={(breakout) => breakout.lastActivityAt
-          ? <RelativeTime value={breakout.lastActivityAt} />
-          : null}
-      />}
       <div
         aria-label="Transcript"
         className={clsx('transcript-scroll', transcriptDrop.dragging && 'is-file-dragging')}
@@ -3669,7 +2569,7 @@ function ConversationSurfaceContent({
               state={socketConnection.openingError
                 ? 'failed'
                 : socketState === 'unavailable' ? 'offline' : 'connecting'}
-              subject={parentKind === 'automation' ? 'Sidekick' : substreamId === '0' ? 'thread' : 'breakout'}
+              subject={parentKind === 'automation' ? 'Sidekick' : 'Canvas'}
             />
           )}
         </ConnectingCardSlot>
@@ -3693,14 +2593,6 @@ function ConversationSurfaceContent({
           )}
           {olderMessagesError && <ErrorNotice>{olderMessagesError}</ErrorNotice>}
           {otherHistoryError && <ErrorNotice>{otherHistoryError}</ErrorNotice>}
-          {/* No starting context here: it is what the child's runs read, not a
-              turn anybody said. `docs/substream-creation.md` has why. The
-              origin card is the Channel's own messages, which people did say,
-              and only above the Breakout's first message, never above a
-              window that still has earlier pages to load. */}
-          {originShown && origin && breakoutOrigin && (
-            <BreakoutOrigin channelTitle={breakoutOrigin.channelTitle} context={origin.context} origin={origin.origin} />
-          )}
           {/* Not while a run is going. A work stream opened the instant it was
               created has an empty transcript and an agent already working on
               it, and inviting the person to start it is both wrong and the
@@ -3715,9 +2607,7 @@ function ConversationSurfaceContent({
               title="Ready to begin"
               description={parentKind === 'automation'
                 ? 'Tell your Sidekick what you’d like help with. You can ask for changes as you go.'
-                : parentKind === 'canvas'
-                  ? 'Ask Rally for what you want to make. Everyone in this Canvas sees the conversation.'
-                  : 'Send a message to start work in this thread.'}
+                : 'Ask Rally for what you want to make. Everyone in this Canvas sees the conversation.'}
             />
           ) : (
             <MessageFeed
@@ -3731,15 +2621,6 @@ function ConversationSurfaceContent({
               liveMessageIds={liveMessageIds}
               onAnswerElicitation={answerElicitation}
               onOpenAttachment={openAttachment}
-              onStartSubstream={parentKind === 'workstream' && substreamId === '0' ? onStartSubstream : undefined}
-              {...(merge && startMerge ? { merge: {
-                label: mergeLabel(merge),
-                onMerge: startMerge,
-              } } : {})}
-              {...(afterTurn.size > 0 ? { afterTurn } : {})}
-              {...(onOpenBreakout ? { onOpenBreakout } : {})}
-              {...(onOpenMerge ? { onOpenMerge } : {})}
-              {...(breakoutCards ? { breakoutCards } : {})}
               {...(api ? { onAcceptDraft: (automationId: string) => {
                 acceptProposedAutomation.mutate(automationId);
               } } : {})}
@@ -3789,17 +2670,11 @@ function ConversationSurfaceContent({
             || stopAcknowledgement.pendingRunId !== null
             || stopAcknowledgement.runId !== null)
             && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
-          {mergeCardWithDialog && !mergeCardAnchored && <div className="merge-response-card-end">{mergeCardWithDialog}</div>}
           {!readOnly && <WorkstreamComposer
             api={api ?? undefined}
             placeholder={composerPlaceholder ?? (parentKind === 'automation'
               ? 'Ask your Sidekick…'
-              : parentKind === 'canvas'
-                ? 'Ask Rally or the people here…'
-              // A name still being chosen is not one to address yet.
-              : displayedDetail.titleStatus === 'naming' || !displayedDetail.title
-                ? 'Message the thread…'
-                : substreamId === '0' ? `Message ${displayedDetail.title}` : `Reply in ${displayedDetail.title}`)}
+              : 'Ask Rally or the people here…')}
             attachments={attachmentDraft.attachments}
             error={sendError
               ?? attachmentDraft.error
@@ -3808,8 +2683,6 @@ function ConversationSurfaceContent({
               ?? (retry.error ? 'The run couldn’t be retried.' : undefined)}
             fileInputRef={fileInputRef}
             members={visibleMembers}
-            invitees={visibleInvitees}
-            sharedInviteeEmails={sharedInviteeEmails}
             /* Locked, because a pin is written once when the conversation is
                created and nothing afterwards edits it. What it names is the
                latest run's model first and the pin only as a fallback: an
@@ -3831,7 +2704,6 @@ function ConversationSurfaceContent({
               await stop.mutateAsync();
             }}
             backgroundAgentCount={backgroundAgents.data}
-            runningSidekickCount={runningSidekicks}
             sendBlocked={feedFromLocalCache}
             sending={sending}
             uploading={attachmentDraft.uploading}
@@ -3839,11 +2711,10 @@ function ConversationSurfaceContent({
             workstream={displayedDetail}
             draftKey={conversationDraftKey(workspaceRegion, workspaceId, parentKind, displayedDetail.id, substreamId)}
             substreamId={substreamId}
-            {...(composerMenuActions || hostMenuActions ? { menuActions: [...composerMenuActions ?? [], ...hostMenuActions ?? []] } : {})}
+            {...(hostMenuActions ? { menuActions: hostMenuActions } : {})}
           />}
         </div>
       </div>
-      </>}
 
       {railVariant === 'context' && resourcePanel && (railOpen || railLeaving) && <InspectorRail
         panel={{
@@ -3862,26 +2733,21 @@ function ConversationSurfaceContent({
               ? 'refresh'
               : attachResource.error ? 'attach' : undefined}
         leaving={railLeaving}
-        onAddParticipant={() => { setParticipantDialogSubstreamId(resourcePanel?.workstreamScoped ? '0' : substreamId); setParticipantDialogOpen(true); }}
-        {...(substreamId === '0' || resourcePanel?.workstreamScoped ? {
+        {...(substreamId === '0' ? {
           onAddResource: () => setResourceDialogOpen(true),
           onDetachResource: (resource: WorkstreamResource) => detachResource.mutateAsync(resource),
           onRefreshResource: (resource: WorkstreamResource) => refreshResource.mutate(resource),
           onToggleWatch: (resource: WorkstreamResource, enabled: boolean) => watchResource.mutate({ resource, enabled }),
         } : {})}
         onOpenResourceVersion={openResourceVersion}
-        {...(api && isMainArtifact(resourcePanel.resourceId) ? {
+        {...(api && isGeneratedArtifact(resourcePanel.resourceId) ? {
           onRenameResource: (resource: WorkstreamResource, title: string) => renameResource.mutateAsync({ resource, title }),
         } : {})}
-        resourceLink={(resource: WorkstreamResource) => resourceLink(resource.id)}
-        resourcePin={(resource: WorkstreamResource) => isMainArtifact(resource.id)
-          ? { on: pinnedArtifactIds.has(resource.id), onChange: (next: boolean) => setArtifactPinned(resource.id, next, id) }
-          : undefined}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
         resourceVersions={resourceVersions.data}
         resourceVersionsFailed={Boolean(resourceVersions.error)}
         {...(siteArtifacts ? { siteArtifacts } : {})}
-        workstream={resourceManagementDetail}
+        workstream={displayedDetail}
       />}
 
       {railVariant === 'browser' && (railOpen || railLeaving) && window.rally && <EmbeddedBrowserRail
@@ -3897,66 +2763,14 @@ function ConversationSurfaceContent({
         expandAction={panelExpandAction}
         onClose={closeOwnRail}
         onResize={setRailWidth}
-        onShow={reportGalleryShown}
         preview={panel.preview}
-        resourceLink={resourceLink}
         width={railWidth}
       />}
 
-      <AddParticipantDialog
-        sharing={participantDialogOpen && parentKind === 'workstream' && api && session?.workspace ?
-          <ScopeSharingPanel key={participantDialogSubstreamId} api={api} workspaceId={workspaceId} parentId={id} substreamId={participantDialogSubstreamId} /> : null}
-        privateSubstream={participantDialogSubstreamId !== '0'}
-        current={participantDialogSubstreamId === '0' && renderSidebar ? sidebarDetail.participants : displayedDetail.participants}
-        failure={addParticipant.error || dialogInvitations.invite.error ? 'add' : removeParticipant.error ? 'remove' : undefined}
-        failureMessage={dialogInvitations.invite.error
-          ? 'They couldn’t be invited. Try again.'
-          : refusalMessage(addParticipant.error ?? removeParticipant.error)}
-        members={visibleMembers}
-        invitees={dialogInvitations.pending.data ? dialogInvitees : []}
-        onInvite={invitesInvitees ? (email) => {
-          dialogInvitations.invite.mutate([email], { onSettled: () => { void dialogInvitations.pending.refetch(); } });
-        } : undefined}
-        onAdd={(member) => {
-          removeParticipant.reset();
-          addParticipant.mutate({ member, target: participantDialogSubstreamId });
-        }}
-        onRemove={(member) => {
-          addParticipant.reset();
-          removeParticipant.mutate({ member, target: participantDialogSubstreamId });
-        }}
-        onOpenChange={(next) => {
-          // A refused add is only worth showing while the dialog that provoked
-          // it is open. Reopening starts clean rather than reporting the last
-          // attempt as though it were this one.
-          if (!next) {
-            addParticipant.reset();
-            removeParticipant.reset();
-            dialogInvitations.invite.reset();
-          }
-          setParticipantDialogOpen(next);
-        }}
-        open={participantDialogOpen}
-        pending={addParticipant.isPending || removeParticipant.isPending || dialogInvitations.invite.isPending}
-      />
-      <RemoveParticipantDialog
-        failure={removeConfirm && removeParticipant.error
-          ? refusalMessage(removeParticipant.error) ?? 'That participant couldn’t be removed.'
-          : undefined}
-        noun={removeConfirm?.target === '0' ? 'thread' : 'breakout'}
-        onCancel={() => { setRemoveConfirm(null); removeParticipant.reset(); }}
-        onContinue={() => {
-          if (!removeConfirm) return;
-          removeParticipant.mutate({ member: removeConfirm.member, target: removeConfirm.target }, { onSuccess: () => setRemoveConfirm(null) });
-        }}
-        pending={removeParticipant.isPending}
-        member={removeConfirm?.member}
-        self={removeConfirm?.member.id === session?.user.id}
-      />
       <AddResourceDialog
         incomplete={availableResources.data?.pages.some((page) => page.complete === false) ?? false}
         onRetry={() => { void availableResources.refetch(); }}
-        current={resourceManagementDetail.resources}
+        current={displayedDetail.resources}
         failure={availableResources.error ? 'load' : attachResource.error ? 'attach' : undefined}
         fetching={availableResources.isFetchingNextPage}
         hasMore={Boolean(availableResources.hasNextPage)}
@@ -3975,14 +2789,9 @@ function ConversationSurfaceContent({
         onSearchChange={setResourceSearch}
         onUpload={() => {
           setResourceDialogOpen(false);
-          if (resourcePanel?.workstreamScoped && substreamId !== '0') {
-            closeOwnRail();
-            void navigate(`/workstreams/${id}`);
-            return;
-          }
           fileInputRef.current?.click();
         }}
-        uploadLabel={resourcePanel?.workstreamScoped && substreamId !== '0' ? 'Upload in Main log' : 'Upload file'}
+        uploadLabel="Upload file"
         open={resourceDialogOpen}
         pending={attachResource.isPending}
         resources={discoveredResources}

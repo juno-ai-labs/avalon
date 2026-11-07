@@ -3,7 +3,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { setCachedWorkstreams } from '../lib/workstreams-cache';
 import type { AutomationDetail } from '../lib/types';
 import { AutomationScreen } from './automation';
 
@@ -159,9 +158,8 @@ describe('AutomationScreen load failure', () => {
 });
 
 describe('AutomationScreen archival', () => {
-  it('refreshes channels and leaves the archived Sidekick route', async () => {
+  it('leaves the archived Sidekick route', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    setCachedWorkstreams(client, []);
     renderScreen(client);
     await showProfile();
 
@@ -172,7 +170,6 @@ describe('AutomationScreen archival', () => {
 
     await screen.findByText('Sidekicks library');
     expect(archiveAutomation).toHaveBeenCalledWith(SIDEKICK_ID);
-    expect(client.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
   });
 });
 

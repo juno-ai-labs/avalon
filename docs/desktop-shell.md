@@ -285,6 +285,39 @@ It does not own:
 
 ## Changelog
 
+### 2026-11-07 — The Channel, Thread and Breakout screens are deleted; the pane stack and attention menu are retired
+
+**What changed:** The Channel screen (`screens/channel.tsx`), the Thread
+screen (`screens/workstream.tsx`), the Breakout launch surface, the old
+landing (`lib/workstream-landing.ts`), the Thread directory and its caches
+(`use-workstreams-query.ts`, `workstream-state-store.ts`,
+`channel-viewer-state.ts`, `channel-rails.ts`, `conversation-directory.ts`,
+`workspace-directory-cache.ts`), the Thread socket pool, the access-request
+dialog, the attention ranking behind the Threads count, and the Channel and
+Space places in search are deleted. The workspace socket no longer applies
+Space snapshots, Thread pages, recency, state or rail frames, access requests
+or Space nudges. **`pane-stack.md` is retired**: it described the stack a
+Channel, a thread, a breakout and a panel formed, two on screen with the rest
+as breadcrumbs; what survives of it is the right panel expanding over its
+conversation (`usePaneExpansion`, `expandToggle`, now in
+`lib/navigation-routes.ts`). **`attention-menu.md` is retired**: it kept what
+counted as needing attention (`attentionItems`) for the Threads count and the
+dock badge, and both now count the Canvases and Sidekicks lists
+(`useSectionCounts`); the dock badge is the rail's counts added up. A search
+result opens its Canvas on the turn it names.
+
+**Why:** Plan step B-3 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+Channels, Threads and Breakouts are deleted (decision log, 2026-11-06), and
+their screens were unreachable after B-1. Both documents described mechanisms
+that no longer have code; their decisions are summarised here so the reasoning
+is not lost.
+
+**Consequences:** A server mid-deployment still sends the Thread and Space
+frames; the socket ignores a type it no longer reads, as it does any unknown
+type. Opening a second pane beside a conversation would have to be built again
+rather than restored.
+
 ### 2026-11-07 — The rail becomes Canvases and Sidekicks
 
 **What changed:** The rail lists two sections, Canvases and Sidekicks, with
@@ -1005,7 +1038,7 @@ Activity) beside one list. The Space pills, the All filter, the attention
 pop-out, the Space dashboard and the Space-scoped new-channel screen are
 deleted. A Channel has its own screen, and a thread opens beside it; opening a
 breakout or a panel moves the Channel into the first breadcrumb
-([`pane-stack.md`](pane-stack.md)).
+(the pane stack, retired 2026-11).
 
 **Why:** The hierarchy became Channel, thread, breakout
 ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)). People need to

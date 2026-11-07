@@ -11,11 +11,6 @@ import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, splitPinned
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 
-/** How many Canvases hold something this viewer has not read: the section's badge. */
-export function useUnreadCanvasCount(): number {
-  return (useCanvasList() ?? []).filter((row) => row.unread).length;
-}
-
 /**
  * The Canvases section: a Pinned group, then every Canvas by recent activity.
  * A row is the Canvas's mark and name, and a second line naming who is in it

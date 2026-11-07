@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AutomationDetail, WorkstreamBoot } from '../lib/types';
+import type * as UseWorkstreamSocketModule from '../lib/use-workstream-socket';
 
 /*
  * A Sidekick's shared conversation as a person uses it: the screen, the real
@@ -30,15 +31,16 @@ const api = vi.hoisted(() => ({
 }));
 const session = vi.hoisted(() => ({ current: null as unknown }));
 const createMessage = vi.hoisted(() => vi.fn());
+const addFiles = vi.hoisted(() => vi.fn());
 vi.mock('../lib/collaboration-session', () => ({
   useOptionalCollaborationSession: () => null,
   useCollaborationSession: () => ({ api, session: session.current }),
   useShellCapabilities: () => ({ host: 'desktop', guest: false }),
 }));
 vi.mock('../lib/use-client-feature-flags', () => ({ useClientFeatureFlags: () => ({ data: {} }) }));
-vi.mock('../lib/workstream-socket-pool', () => ({
-  useWorkstreamSocketOpenContext: () => () => ({}),
-  useRetainedWorkstreamSocket: () => ({
+vi.mock('../lib/use-workstream-socket', async (importOriginal) => ({
+  ...await importOriginal<typeof UseWorkstreamSocketModule>(),
+  useWorkstreamSocket: () => ({
     suggestions: [], activeCompaction: null, activeInferenceDelays: [], createMessage,
     setAppearance: vi.fn(), requestSnapshot: vi.fn(), retryOpening: vi.fn(),
     sendReady: true, state: 'connected', workspaceSocketState: 'connected',
@@ -50,7 +52,7 @@ vi.mock('../lib/workspace-socket', () => ({
 }));
 vi.mock('../lib/use-file-attachments', () => ({
   useFileAttachments: () => ({
-    addFiles: vi.fn(), attachments: [], consume: vi.fn(),
+    addFiles, attachments: [], consume: vi.fn(),
     leaseReady: vi.fn(async () => ({ leaseId: 'lease', attachments: [] })),
     commitLease: vi.fn(), restoreLease: vi.fn(), error: undefined, ready: [],
     removeAttachment: vi.fn(), retryAttachment: vi.fn(), uploading: false,
@@ -152,6 +154,24 @@ describe("a Sidekick's shared conversation", () => {
     await screen.findByText('Ready to begin');
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
+  });
+
+  it("takes no file dropped or pasted on a run's own conversation, which has no draft to show it", async () => {
+    renderSidekick(AUTHOR, '?run=run-1');
+    await screen.findByText('Ready to begin');
+    const file = new File(['notes'], 'notes.txt', { type: 'text/plain' });
+    const transfer = { files: [file], items: [{ kind: 'file', type: 'text/plain', getAsFile: () => file }], types: ['Files'] };
+    fireEvent.drop(screen.getByRole('log', { name: 'Transcript' }), { dataTransfer: transfer });
+    fireEvent.paste(window, { clipboardData: transfer });
+    expect(addFiles).not.toHaveBeenCalled();
+  });
+
+  it('takes a file dropped on the shared conversation into its draft', async () => {
+    renderSidekick(AUTHOR);
+    await screen.findByRole('textbox', { name: 'Message Incident triage and the team' });
+    const file = new File(['notes'], 'notes.txt', { type: 'text/plain' });
+    fireEvent.drop(screen.getByRole('log', { name: 'Transcript' }), { dataTransfer: { files: [file], items: [{ kind: 'file', type: 'text/plain', getAsFile: () => file }], types: ['Files'] } });
+    expect(addFiles).toHaveBeenCalled();
   });
 
   it('offers someone who does not manage it no edit', async () => {

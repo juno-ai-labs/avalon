@@ -99,11 +99,9 @@ arrive after reconnect.
   composes. Both adapters render `MessageFeed`; windowing is the one thing it
   takes from its host, because only the paging surface needs it.
 - `MessageActions` in `workstream-blocks.tsx` is the one hover row under a
-  message, on every surface that draws one: Rally's turn, a person's turn and a
-  merged result in a Thread or Breakout, and a Channel's own messages and merges
-  (`screens/channel.tsx`). The host passes what it can offer (New breakout,
-  Merge, whether the text actions apply); the row owns order, labels, fade and
-  metrics, styled by the single `.message-actions` class in `app.css`.
+  message, on every surface that draws one: Rally's turn and a person's turn.
+  The host says whether the text actions apply; the row owns order, labels,
+  fade and metrics, styled by the single `.message-actions` class in `app.css`.
 - `apps/desktop/src/renderer/components/message-text-menu.tsx` is the Radix
   right-click menu on a feed `MarkdownBody` — assistant and human prose, not
   glances, stills, the inspector, or the lightbox. Copy writes the rendered
@@ -115,7 +113,7 @@ arrive after reconnect.
   Share are macOS-only, behind trusted IPC. Share sends the selected or
   whole-message rendered plain text, never the stored markdown.
 - `apps/desktop/src/main/editable-text-menu.ts` gives editable text fields in
-  the main, Sidekicks, and settings windows an
+  the main and settings windows an
   Electron native context menu for spelling suggestions, dictionary learning,
   and editing commands. The main process installs it only for editable targets;
   message prose and sidebar rows retain their renderer-owned menus.
@@ -124,9 +122,6 @@ arrive after reconnect.
   delay and one provider through. A new tooltip comes from there rather than
   from Radix's five parts; eight files still assemble those by hand and predate
   it.
-- `packages/ui/src/components/conversation-menus.tsx` owns the Channel and
-  Breakout title-pill menus that replaced the Channel rail
-  ([`desktop-shell.md`](desktop-shell.md)).
 - `apps/desktop/src/renderer/lib/window-activation.ts` answers the one question
   every one of those surfaces has to ask before it opens: whether the hover or
   the focus it is looking at came from the person or from the window being
@@ -509,19 +504,18 @@ pause, resume, delete, run now, the run-history dialog) outside the feed rather 
 inside it. Neither host may smuggle those controls through an optional common
 prop.
 
-The work-stream host passes no `renderSidebar`. What the Channel rail held now
-lives in the Channel's title-pill menu: its Space, people, Sidekicks, artifacts,
-actions and Breakouts. Each conversation's header is a `TitlePillHeader` that
-the host renders through `renderHeader`, and the header context carries
-`openArtifact` for the menu's artifact rows. A Channel's Main surface also takes
-`breakouts`, `openBreakoutId` and `onOpenBreakout`, and from them draws the
-chips under each origin turn and the tick bar along its edge. `scrollToTurn`
-asks it to bring a turn into view, and `honorsSearchTarget` says whether
-`?turn=&sequence=` names this conversation. The right panel is scoped to the
-conversation, not the Channel, because a Channel and its open Breakout are
-mounted together. [`desktop-shell.md`](desktop-shell.md) owns the panes, the
-pills and that scope. `renderSidebar` (and its `renderOpeningSidebar`
-placeholder) remains on the surface, but no host passes it.
+Each conversation's header is what the host renders through `renderHeader`;
+the header context carries the detail, the socket state, who is present, and
+`openArtifact` and `openResource` for opening one of the conversation's
+artifacts in the right panel. `scrollToTurn` asks the surface to bring a turn
+into view, and a `?turn=&sequence=` search target (a search result) is honoured
+the same way. The right panel is scoped to the conversation that opened it.
+[`desktop-shell.md`](desktop-shell.md) owns the panes and that scope.
+
+A conversation read with `readOnly` (a run's own conversation, read from its
+Sidekick) draws no composer and takes no file: a drop on the transcript or the
+rail and a paste on the window go nowhere, because a file added to a draft no
+composer shows would be uploaded and never sent.
 
 The sidebar never ends a line it cannot fit with an ellipsis or a hard cut: the
 line fades out. `@keyframes clipped-line-fade` in `app.css` carries a
@@ -863,6 +857,41 @@ consume unrelated pins. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
+
+### 2026-11-07 — Breakouts, merge-back, suggestions and the Thread branches leave the surface
+
+**What changed:** `ConversationSurface` loses every Breakout, merge and
+suggestion prop and the code behind them (the launch surface, the origin card,
+Breakout cards and ticks, the merge response card and target pill, the
+suggestion chips), the Thread-only behaviour (the access request on a refused
+Main, the participant and remove dialogs, the People level, rename over the
+Thread route, artifact pins and Thread links, Activity read events, the browser
+import composer action, the feed-open and send-ready telemetry), and the
+`renderSidebar`, `renderOpeningSidebar`, `workstreamContext`, `paneKey`,
+`parentCrumbs` and `honorsSearchTarget` props. `MessageFeed` and `MessageBlock`
+lose `onStartSubstream`, `merge`, `onOpenBreakout`, `onOpenMerge` and
+`breakoutCards`, and the New breakout and Merge hover actions go. The surface
+dials its conversation socket directly (`useWorkstreamSocket`); the
+`WorkstreamSocketPool` that kept Threads' sockets warm is deleted. A read-only
+conversation takes no dropped or pasted file. Only a Canvas's Chat hosts the
+embedded browser's links.
+
+**Why:** Plan step B-3 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+the surface's two hosts are a Canvas's Chat and a Sidekick's conversation, and
+Threads, Breakouts and merge-back are deleted (decision log, 2026-11-06). The
+pool existed to warm pinned and recent Threads ahead of a click; with no Thread
+list there is nothing to warm, and a pool wrapper with one caller would be
+indirection with no second implementation. The read-only drop fix is from the
+review of the run view: a run's conversation had no composer, so a dropped
+file was a silent server upload.
+
+**Consequences:** The generic capabilities stay: transcript, composer, drafts,
+attachments, dictation, annotations, elicitation and the right rail. The
+storage names (`WorkstreamDetail`, `workstreamDetailQueryKey`,
+`useWorkstreamSocket`) stay, per the storage-name rule. A host that needs a
+participant list or a title-pill menu builds it from its own detail, as the
+Canvas screen does with its Share dialog.
 
 ### 2026-11-07 — A Canvas's Chat and a Sidekick's shared conversation are this surface
 

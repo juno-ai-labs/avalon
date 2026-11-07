@@ -4491,14 +4491,6 @@ function registerIpc(): void {
     // with no router of its own, such as Settings, asks for one.
     emitDeepLink(sidekickDeepLink({ region: workspace.region, workspaceId: workspace.id, sidekickId }), 'in_app_link');
   });
-  ipcMain.handle('system:open-thread', (event, rawWorkstreamId: unknown) => {
-    assertTrustedIpcSender(event);
-    const workstreamId = parseRouteId(rawWorkstreamId);
-    if (!workstreamId) throw new Error('Invalid thread id');
-    // The route a menu-bar pick or a finished import takes, so the main window
-    // opens the Thread whether or not it was up, and comes forward to show it.
-    emitDeepLink(`${customProtocol}://workstreams/${workstreamId}`, 'in_app_link');
-  });
   ipcMain.handle('system:open-settings', async (event, rawSection: unknown) => {
     assertTrustedIpcSender(event);
     const section = rawSection === undefined ? undefined : parseDesktopSettingsSection(rawSection);

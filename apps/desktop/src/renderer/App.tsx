@@ -41,8 +41,6 @@ import type { Workspace } from './lib/types';
 import { useWindowActivationTracking } from './lib/window-activation';
 import { useEscapeClosesWindow } from './lib/window-escape';
 import { useOptionalWorkspaceSocket, WorkspaceSocketProvider } from './lib/workspace-socket';
-import { WorkspaceWorkstreamSockets } from './lib/workspace-workstream-sockets';
-import { BrowserImportProgress } from './lib/browser-import-progress';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { AutomationScreen } from './screens/automation';
 import { CanvasScreen } from './screens/canvas';
@@ -54,7 +52,6 @@ import { AccountOnboardingGate, WorkspaceOnboardingJourney } from './screens/gui
 import { ErrorNotice } from './components/primitives';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
 import { SidekicksLibraryRoute } from './screens/sidekicks-library';
-import { BrowserImportWindow } from './screens/browser-import';
 import { WorkspaceSettingsScreen } from './screens/workspace-settings';
 import { SidekickMentionProvider } from './lib/sidekick-mentions';
 
@@ -235,7 +232,7 @@ export function WorkspaceApp(): React.JSX.Element {
   }, [signOut, signOutIfCredentialCleared, surrenderActiveWorkspace, workspace.error]);
 
   const surface = new URLSearchParams(window.location.search).get('surface');
-  const mainSurface = surface !== 'settings' && surface !== 'browser-import';
+  const mainSurface = surface !== 'settings';
   // A window that closes on Escape has to do it before its screen exists, too.
   // `Opening workspace…` and the service-setup error are the states a person is
   // most stuck in, and until the profile lands Settings has not mounted the
@@ -255,10 +252,7 @@ export function WorkspaceApp(): React.JSX.Element {
     enabled: surface === 'settings' && !workspace.data,
   });
   const scope = `${session!.user.email}:${desktopWorkspaceIdentityKey(session!.workspace!.region, session!.workspace!.id)}`;
-  // The import window needs the session's API and nothing from the profile
-  // read, so its browser opens without waiting on that round trip.
-  const content = surface === 'browser-import' ? <BrowserImportWindow />
-    : workspace.error
+  const content = workspace.error
     ? <ServiceSetupState error={workspace.error} onRetry={() => void workspace.refetch()} />
     : workspace.data ? <WorkspaceAppContent workspace={workspace.data} />
       : <LoadingState label="Opening organization…" />;
@@ -285,10 +279,7 @@ export function WorkspaceApp(): React.JSX.Element {
         <AppRouteNavigation />
         <WorkstreamSocketResumeProvider scope={scope}>
           <WorkspaceOnboardingJourney workspace={workspace.error ? null : workspace.data ?? null}>
-            <WorkspaceWorkstreamSockets api={workspace.error ? null : api}>
-              <BrowserImportProgress />
-              {content}
-            </WorkspaceWorkstreamSockets>
+            {content}
           </WorkspaceOnboardingJourney>
         </WorkstreamSocketResumeProvider>
       </HashRouter> : content}

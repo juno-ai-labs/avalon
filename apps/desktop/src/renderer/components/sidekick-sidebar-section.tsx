@@ -12,13 +12,8 @@ import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { AutomationGlyph } from './workstream-glyph';
 
 /** This viewer's Sidekicks as the workspace socket keeps them; `undefined` until it has said. */
-function useSidekickList(): AutomationSummary[] | undefined {
+export function useSidekickList(): AutomationSummary[] | undefined {
   return useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
-}
-
-/** How many Sidekicks wait on someone or hold something unread: the section's badge. */
-export function useSidekickAttentionCount(): number {
-  return (useSidekickList() ?? []).filter((row) => row.needsInput || row.unread).length;
 }
 
 /** A Sidekick row's second line: what it is waiting on, or where it stands. */
