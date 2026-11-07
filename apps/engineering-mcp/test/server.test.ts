@@ -24,6 +24,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     sendMessage: vi.fn<EngineeringInspectionRpcBinding["sendMessage"]>(),
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
     dumpThreadTranscripts: vi.fn<EngineeringInspectionRpcBinding["dumpThreadTranscripts"]>(),
+    retireThreads: vi.fn<EngineeringInspectionRpcBinding["retireThreads"]>(),
     retireOrg: vi.fn<EngineeringInspectionRpcBinding["retireOrg"]>(),
     readChannel: vi.fn<EngineeringInspectionRpcBinding["readChannel"]>(),
     readConversation: vi.fn<EngineeringInspectionRpcBinding["readConversation"]>(),
@@ -254,12 +255,36 @@ describe("Rally engineering MCP tools", () => {
     expect(global.dumpThreadTranscripts).not.toHaveBeenCalled();
   });
 
-  it("publishes dump_thread_transcripts as an idempotent write that takes a confirmation", async () => {
+  it("publishes the dump as an idempotent write and the retirement as a destructive one, each taking a confirmation", async () => {
     const response = await rpc(testEnv(), "tools/list");
-    const tool = (response.result as { tools: Array<{ name: string; inputSchema: { required?: string[] }; annotations?: Record<string, boolean> }> })
-      .tools.find((item) => item.name === "dump_thread_transcripts");
-    expect(tool?.inputSchema.required).toEqual(["orgId", "confirm"]);
-    expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
+    const tools = (response.result as { tools: Array<{ name: string; inputSchema: { required?: string[] }; annotations?: Record<string, boolean> }> }).tools;
+    const dump = tools.find((item) => item.name === "dump_thread_transcripts");
+    const retire = tools.find((item) => item.name === "retire_threads");
+    expect(dump?.inputSchema.required).toEqual(["orgId", "confirm"]);
+    expect(dump?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
+    expect(retire?.inputSchema.required).toEqual(["orgId", "confirm"]);
+    expect(retire?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
+  });
+
+  it("routes retire_threads to the Organization's region only when confirm names it", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
+    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
+    vi.mocked(enterprise.retireThreads).mockResolvedValue({ region: "enterprise", orgId, parents: 2, conversations: 3,
+      retiredParents: 2, retiredConversations: 3, retainedOutbox: 0, failed: [] });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+
+    const refused = await rpc(env, "tools/call", { name: "retire_threads", arguments: { orgId, confirm: "Acme" } });
+    expect(refused.result).toMatchObject({ isError: true, content: [{ type: "text", text: "confirm must equal orgId; nothing was changed" }] });
+    expect(enterprise.retireThreads).not.toHaveBeenCalled();
+
+    const response = await rpc(env, "tools/call", { name: "retire_threads", arguments: { orgId, confirm: orgId } });
+    expect(JSON.parse((response.result as { content: Array<{ text: string }> }).content[0]!.text)).toEqual({
+      region: "enterprise", orgId, parents: 2, conversations: 3, retiredParents: 2, retiredConversations: 3, retainedOutbox: 0, failed: [],
+    });
+    expect(enterprise.retireThreads).toHaveBeenCalledExactlyOnceWith({ orgId, confirm: orgId }, principal);
+    expect(global.retireThreads).not.toHaveBeenCalled();
   });
 
   it("sends Organization creation to only the named region", async () => {
@@ -337,6 +362,7 @@ describe("Rally engineering MCP tools", () => {
       "resume_sidekick",
       "retire_org",
       "dump_thread_transcripts",
+      "retire_threads",
       "read_channel",
       "read_thread",
       "read_breakout",
