@@ -3,10 +3,10 @@
 Rally pushes to signed-in Macs through APNs, and to signed-in browser tabs
 through Web Push, whatever lands on the workspace notification intent: a
 mention or an add, and a Sidekick run that needs input or finished
-([below](#a-sidekick-run-that-needs-input-or-finished)). The run notices are
-recorded today; a mention or add in a Canvas's Chat is not, because the
-conversation's effect stops at its parent
-([known gap](workstream-durable-object.md#directory-effects-and-notifications)). Each device registers with one transport and
+([below](#a-sidekick-run-that-needs-input-or-finished)). A mention or add in a
+Canvas's Chat or a Sidekick's conversation is recorded by its parent
+([A mention or an add](hosted-conversation-parents.md#a-mention-or-an-add)),
+and a run notice by the Sidekick. Each device registers with one transport and
 is sent only that transport's payload. Push is enabled for everyone from launch through
 `push-notifications-enabled`. A mention and an add also go by email or Slack
 when the person chose that for them
@@ -31,6 +31,14 @@ workspace, so a guest workspace's notifications still reach a device that a
 membership in the same deployment registered. Delivery requires a live session bound to that device; another installation's
 session cannot keep it alive. The device switch and a separate push installation
 ID persist in the existing application settings file on the Mac.
+
+A mention or an add in a Canvas's Chat or a Sidekick's conversation becomes
+an intent where the conversation's effect lands: the hosted parent records it
+beside the effect's receipt and the activity consumer processes it at once
+([A mention or an add](hosted-conversation-parents.md#a-mention-or-an-add)).
+Processing reads whether the recipient is still an active member (D1), may
+still open the parent and is not the author, then sends each channel the
+person chose.
 
 The producer enqueues only region, workspace, recipient and intent identifiers.
 Settlement retains the payload only when push was enqueued, until the existing
@@ -129,8 +137,8 @@ when a native notification response arrives during asynchronous app startup.
 Push delivery reads notification intents only. A Queue message for a retired
 Activity row is logged `activity_item_retired` and acknowledged (its id logged
 as `activity_item_id`). The events are a mention or add (the intent above,
-which nothing records for a Canvas's Chat today) and a Sidekick run's two
-notices, below.
+recorded by the Canvas or Sidekick whose conversation carried it) and a
+Sidekick run's two notices, below.
 
 ### A Sidekick run that needs input or finished
 
@@ -363,7 +371,11 @@ off; `hosted-sidekick.test.ts` covers who each notice is recorded for
 (requester and managers for Needs input, the requester alone for a finish,
 managers alone for a scheduled run's Needs input and nobody for its finish),
 and `test/workspace-notification-intent-run-kinds-migration.test.ts` migration
-145 over populated rows. `test/conversation-effect-service.test.ts` covers
+145 over populated rows. `hosted-mention-notifications.test.ts` starts from the message: a mention
+posted in a Canvas's Chat and in an Organization-wide Sidekick's conversation
+reaches the parent, records one `mention` intent for the recipient, enqueues
+one push and sends its literal alert, and a redelivery of every effect sends
+nothing again. `test/conversation-effect-service.test.ts` covers
 a mention whose conversation has no link: Slack and email log
 `conversation_not_linkable` with `parent_kind`, and the intent settles. The provider itself and macOS alert
 presentation require a signed installed build.
@@ -377,6 +389,27 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-07 — A mention in a Canvas's Chat or a Sidekick's conversation is delivered
+
+**What changed:** The hosted parent records a conversation's mention and add
+effects as intents, and the activity consumer delivers them (owned by
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-mention-or-an-add)).
+`notificationDirectoryState` reads the recipient's relationship through
+`readRelationship`, which asks D1 once for somebody the Organization object
+has not heard of, instead of reading its table alone.
+
+**Why:** The PRD keeps push for these mentions, and none was sent: the parent
+receipted the effect and wrote no intent, and every delivery test seeded its
+intent row by hand, so the pipeline was proved from the row onward and never
+from the message. Reading the table alone made a recipient whose relationship
+the object had never read (a Sidekick's admission does not read it) count as
+nobody, so an Organization-wide Sidekick's mention was skipped as
+`recipient_not_listable`.
+
+**Consequences:** An inactive recipient's mention is now recorded and skipped
+at delivery as `recipient_inactive_or_identity_missing`, where the Thread path
+never recorded it; the row is reaped with the rest.
 
 ### 2026-11-07 — Push is a Canvas mention and a Sidekick run's two notices, checked against the Canvas or Sidekick and opening it
 

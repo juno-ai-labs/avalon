@@ -1,4 +1,4 @@
-import type { ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
+import { isPersonNotificationEffect, type ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
 import {
   ConversationParentAuthorityRequestSchema,
   ConversationParentAuthorityResultSchema,
@@ -29,6 +29,19 @@ import type { ApiError } from "../lib/api-error";
 import { parseRpcInput } from "../lib/rpc-input";
 import { logWarn } from "../observability/logger";
 import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
+import { recordPersonNotificationIntent, type PersonNotificationEnvelope } from "./workspace-notification-intent-storage";
+
+/** What one batch of a conversation's effects left for the consumer to do. */
+export interface ReceivedChildEffects {
+  accepted: { messageId: string; payloadHash: string }[];
+  /**
+   * The intent of every mention or add the batch carried, new or replayed,
+   * for the consumer to deliver. A replay names it again because the
+   * delivery, not the record, is what a redelivery may still owe: a Slack
+   * send that failed transiently gets its second attempt this way.
+   */
+  notificationIntentIds: string[];
+}
 
 // The same replay window `SidekickDO` kept: a fence, not history.
 const CHILD_EFFECT_RECEIPT_RETENTION_MS = 180 * 24 * 60 * 60_000;
@@ -207,13 +220,14 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
    * envelope is its own transaction; nothing leaves this object, and a
    * redelivery is answered by its receipt.
    */
-  receiveChildEffects(input: ReceiveChildEffectsRequest): { messageId: string; payloadHash: string }[] {
+  receiveChildEffects(input: ReceiveChildEffectsRequest): ReceivedChildEffects {
     const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
     // The parent's identity does not change inside a batch, so it is read
     // once; each envelope is still its own transaction.
     const identity = this.identity();
     if (!identity) throw new Error(`${this.codeNoun}_missing`);
     const accepted: { messageId: string; payloadHash: string }[] = [];
+    const notificationIntentIds: string[] = [];
     for (const envelope of request.envelopes) {
       if (envelope.region !== this.env.AVALON_REGION) throw new Error("conversation_effect_region_mismatch");
       if (envelope.substreamId !== request.substreamId) throw new Error("conversation_effect_substream_mismatch");
@@ -223,7 +237,8 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
       if (identity.workspaceId !== envelope.workspaceId || this.parentId !== envelope.parentId) {
         throw new Error(`${this.codeNoun}_effect_identity_mismatch`);
       }
-      this.applyChildEnvelope(request.substreamId, envelope);
+      const intentId = this.applyChildEnvelope(request.substreamId, envelope);
+      if (intentId !== null) notificationIntentIds.push(intentId);
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
     // The receipt is a replay fence, not history: past retention a
@@ -237,11 +252,18 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
         )`,
       now - CHILD_EFFECT_RECEIPT_RETENTION_MS,
     );
-    return accepted;
+    return { accepted, notificationIntentIds };
   }
 
-  private applyChildEnvelope(substreamId: string, envelope: ConversationEffectEnvelope): void {
-    this.storage.transactionSync(() => {
+  /**
+   * Apply one envelope with its receipt, in one transaction. A mention or an
+   * add is recorded as a notification intent (one per recipient: the
+   * conversation sends one effect per person) and its id returned, also on a
+   * replay; every other kind returns null.
+   */
+  private applyChildEnvelope(substreamId: string, envelope: ConversationEffectEnvelope): string | null {
+    const notification = isPersonNotificationEffect(envelope.effect) ? envelope as PersonNotificationEnvelope : null;
+    return this.storage.transactionSync(() => {
       const now = Date.now();
       // The receipt first: its insert is the witness that this envelope is
       // new, and a redelivery reads the hash it was first accepted with.
@@ -258,7 +280,7 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
           this.parentId, substreamId, envelope.messageId,
         ));
         if (receipt?.payload_hash !== envelope.payloadHash) throw new Error("substream_effect_idempotency_conflict");
-        return;
+        return notification?.effect.intentId ?? null;
       }
       if (envelope.effect.kind === "directory_common") {
         const accepted = this.acceptChildProjection(substreamId, envelope, now);
@@ -267,6 +289,9 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
       if (envelope.effect.kind === "directory_user" && substreamId === "0") {
         this.acceptViewerRead(envelope.effect, envelope.sourceVersion, now);
       }
+      // The Thread host recorded these from a `parent_effect`; a hosted
+      // parent records them here, beside the receipt that fences a replay.
+      return notification ? recordPersonNotificationIntent(this.storage, notification, now) : null;
     });
   }
 

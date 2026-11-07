@@ -7,18 +7,11 @@ import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logInfo, logWarn } from "../observability/logger";
 import {
-  ParentEffectEnvelopeSchema,
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
-  conversationEffectHash,
-  isDirectoryEffect,
-  type ParentEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
 import { workspaceDOName } from "../durable-objects/names";
-import {
-  WorkspaceDirectoryNotificationStateSchema,
-  WorkspaceRegionalEffectApplyResultSchema,
-} from "../durable-objects/workspace-directory-protocol";
+import { WorkspaceDirectoryNotificationStateSchema } from "../durable-objects/workspace-directory-protocol";
 import {
   WorkspaceNotificationIntentClaimResultSchema,
   WorkspaceNotificationIntentTransitionResultSchema,
@@ -44,124 +37,6 @@ interface NotificationIntentTransitionPort {
   transitionWorkstreamNotificationIntent(
     input: WorkspaceNotificationIntentTransitionRequest,
   ): Promise<unknown>;
-}
-
-export interface WorkstreamRegionalEffectResult {
-  replayed: boolean;
-  notificationIntentId: string | null;
-}
-
-/**
- * Apply one parent's activity or notification effect to the regional delivery
- * plane. Product state commits idempotently in WorkspaceDO together with its
- * receipt; a redelivery converges on the same event or intent identity.
- * Directory effects never enter here.
- */
-export async function applyWorkstreamRegionalEffect(
-  env: Env,
-  input: ParentEffectEnvelope,
-): Promise<WorkstreamRegionalEffectResult> {
-  const message = ParentEffectEnvelopeSchema.parse(input);
-  if (message.region !== env.AVALON_REGION) throw new Error("workstream_effect_region_mismatch");
-  if (
-    conversationEffectHash(message.effect, message.requiredProjectionVersion)
-    !== message.payloadHash
-  ) {
-    throw new Error("workstream_effect_payload_hash_mismatch");
-  }
-  if (isDirectoryEffect(message.effect) || message.effect.kind === "directory_automation" || message.effect.kind === "scope_grant_directory") {
-    throw new Error("workspace_owned_effect_misdirected_to_regional_queue");
-  }
-
-  const route = await env.DB.prepare(
-    `SELECT generation, state FROM workstream_authority_routes
-      WHERE workspace_id = ? AND workstream_id = ?`,
-  ).bind(message.workspaceId, message.parentId).first<{ generation: number; state: string }>();
-  if (route?.state === "active" && route.generation > message.generation) {
-    // A previous authority generation can still have Queue messages in flight.
-    // Its state was superseded at cutover, so acknowledging it is the only
-    // terminal and safe outcome; applying it would regress the current owner.
-    logInfo(env, "workstream_regional_effect_apply_terminal", {
-      workspace_id: message.workspaceId,
-      workstream_id: message.parentId,
-      message_id: message.messageId,
-      effect_kind: message.effect.kind,
-      outcome: "skipped",
-      reason: "authority_generation_superseded",
-      message_generation: message.generation,
-      active_generation: route.generation,
-    });
-    return { replayed: true, notificationIntentId: null };
-  }
-  if (route?.state !== "active" || route.generation !== message.generation) {
-    throw new Error("workstream_effect_route_not_active");
-  }
-
-  // Current regional identity crosses into the object as data: the actor and
-  // targets that still exist, and whether the mention recipient is still an
-  // active member. The object commits the product row and its replay receipt
-  // in one transaction — invariant 14's "effect and receipt together" — so
-  // there is no longer a regional D1 receipt that can disagree with it. A
-  // same-source re-emission under a new message ID converges on the product
-  // identities (event dedupe key, intent identity) instead of a receipt row.
-  let actorUserId: string | null = null;
-  let targetUserIds: string[] = [];
-  let recipientIsActiveMember = false;
-  if (message.effect.kind === "activity_event") {
-    const effect = message.effect;
-    const currentActor = effect.actorUserId
-      ? await env.DB.prepare(`SELECT id FROM users WHERE id = ?`)
-        .bind(effect.actorUserId).first<{ id: string }>()
-      : null;
-    actorUserId = currentActor?.id ?? null;
-    if (effect.targets.length > 0) {
-      const placeholders = effect.targets.map(() => "?").join(",");
-      const users = await env.DB.prepare(
-        `SELECT id FROM users WHERE id IN (${placeholders})`,
-      ).bind(...effect.targets.map((target) => target.userId)).all<{ id: string }>();
-      targetUserIds = (users.results ?? []).map((user) => user.id);
-    }
-  } else {
-    const activeMember = await env.DB.prepare(
-      `SELECT 1 FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
-    ).bind(message.workspaceId, message.effect.recipientUserId).first();
-    recipientIsActiveMember = Boolean(activeMember);
-  }
-
-  const workspace = await durableObjectStubForWorkspace(
-    env,
-    env.WORKSPACE_DOS,
-    message.workspaceId,
-    workspaceDOName(message.region, message.workspaceId),
-  );
-  const applied = WorkspaceRegionalEffectApplyResultSchema.parse(
-    await workspace.applyWorkstreamRegionalEffect({
-      workspaceId: message.workspaceId,
-      envelope: message,
-      actorUserId,
-      targetUserIds,
-      recipientIsActiveMember,
-    }),
-  );
-
-  if (message.effect.kind !== "activity_event" && !applied.notificationIntentId) {
-    logInfo(env, "workstream_notification_terminal", {
-      workspace_id: message.workspaceId,
-      workstream_id: message.parentId,
-      message_id: message.messageId,
-      kind: message.effect.kind,
-      recipient_user_id: message.effect.recipientUserId,
-      outcome: "skipped",
-      reason: recipientIsActiveMember ? "notification_intent_not_created" : "recipient_inactive",
-      replayed: applied.replayed,
-    });
-  }
-
-  return {
-    replayed: applied.replayed,
-    notificationIntentId: applied.notificationIntentId,
-  };
 }
 
 /** Resolve current regional identity/delivery state and execute one intent. */

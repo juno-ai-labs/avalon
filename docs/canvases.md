@@ -125,7 +125,9 @@ guest (`assertAudienceInOrganization`, the check a Sidekick's audience uses;
 `canvas_audience_not_member`); a `participants` Canvas names someone other than
 its creator (`canvas_audience_participants_empty`). Narrowing the audience
 backgrounds the presence of anyone it no longer admits and re-sends presence to
-the people still in the Canvas, before the one Canvas list the write sends.
+the people still in the Canvas, before the one Canvas list the write sends, and
+closes the open Chat feed of each person it took away through the
+access-revocation Queue ([`access-revocation.md`](access-revocation.md)).
 
 ### Guests
 

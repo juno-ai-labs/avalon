@@ -101,9 +101,9 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `apps/api/src/durable-objects/workspace-notification-intent-protocol.ts`, `workspace-notification-intent-storage.ts` | Runtime-validated notification claim/transition/maintenance RPC contract and the private WorkspaceDO SQL state machine behind it. |
 | `apps/api/src/services/workspace-runtime-database.ts` | Allowlisted D1-compatible adapter: WorkspaceDO tables use native RPC, underlying control tables use D1, and mixed-authority transactions fail closed. |
 | `apps/api/src/services/sidebar-reads.ts` | `SIDEBAR_LIST_LIMIT`, the bound every sidebar list shares. |
-| `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for scheduling, resource lookup, feedback, and regional effect application. |
+| `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for scheduling, resource lookup and feedback. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The shared request schemas, aggregation helpers and Queue batching every hosted parent reuses. |
-| `apps/api/src/durable-objects/hosted-conversation.ts`, `hosted-sidekick.ts`, `hosted-canvas.ts`, `automation-do-protocol.ts` | `HostedConversation`, the parent contract both kinds share, and `HostedSidekick` (definition revisions, schedules, runs and inbound-email receipts) and `HostedCanvas` (directory row and audience) inside `WorkspaceDO`; neither forwards what its children say. Owned by [`hosted-conversation-parents.md`](hosted-conversation-parents.md), [`automation-lifecycle.md`](automation-lifecycle.md) and [`canvases.md`](canvases.md). |
+| `apps/api/src/durable-objects/hosted-conversation.ts`, `hosted-sidekick.ts`, `hosted-canvas.ts`, `automation-do-protocol.ts` | `HostedConversation`, the parent contract both kinds share, and `HostedSidekick` (definition revisions, schedules, runs and inbound-email receipts) and `HostedCanvas` (directory row and audience) inside `WorkspaceDO`; neither forwards what its children say, and each records its conversations' mentions and adds as notification intents. Owned by [`hosted-conversation-parents.md`](hosted-conversation-parents.md), [`automation-lifecycle.md`](automation-lifecycle.md) and [`canvases.md`](canvases.md). |
 | `packages/contracts/src/conversation-parent.ts` | The parent contract every Worker-side caller is written against: `authorizeViewer`, `authority`, `reserveChild`, `listChildren`, and the parent kind enum. |
 | `packages/contracts/src/conversation-effects.ts` | The two effect envelopes (`conversation_effect` from a child, `parent_effect` from a parent), the effect union, `conversationEffectHash`, `WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT`, and `EFFECT_QUEUE_MESSAGE_MAX_BYTES`. |
 | `apps/api/src/services/conversation-parent-client.ts` | `conversationParentStub`: the stub for whichever object a conversation's parent is, for callers that need only the contract. |
@@ -128,15 +128,15 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `apps/api/src/runtime/local-authorities.ts` | The one boundary where an object declares what it owns about a conversation — its messages, resources, harness runs, receipts, scheduling, identity rows, and Terminal — installed on the environment a run is handed, so no port below has to discover whether its authority is local. Holds the ownership rule the endpoints enforce. |
 | `apps/api/src/lib/uuid-v7.ts` | RFC 9562 UUIDv7 generation for cross-socket/Queue event identities; ordering correctness remains in authority-local waterlines. |
 | `apps/api/src/services/workstream-object-client.ts` | Typed Worker-to-`AgentLoopDO` product RPCs. |
-| `apps/api/src/queues/activity-consumer.ts` | `consumeActivityQueue`: the one consumer of both effect legs. A `conversation_effect` goes to its parent's `receiveChildEffects`; a `parent_effect` goes to WorkspaceDO by effect kind. |
-| `apps/api/src/services/conversation-effect-service.ts` | The consumer's handoff of a parent effect into WorkspaceDO (`applyWorkstreamRegionalEffect`): person notifications with their intent lifecycle; an `activity_event` is receipted and stored nowhere. |
+| `apps/api/src/queues/activity-consumer.ts` | `consumeActivityQueue`: the one consumer of both effect legs. A `conversation_effect` goes to its parent's `receiveChildEffects`, and each notification intent the parent names is delivered; a `parent_effect`, which only the deleted Channel host sent, is acknowledged as `parent_effect_producer_retired`, apart from a `scope_grant_directory` row. |
+| `apps/api/src/services/conversation-effect-service.ts` | A notification intent's delivery: who may still be told, and the push, Slack and email sends. |
 | `scripts/eslint-rules/durable-object-sql-storage.mjs` | Rejects Durable Object `get`, `put`, `delete`, `list`, and async `transaction` KV calls, including aliases. |
 | `scripts/eslint-rules/durable-object-region-routing.mjs` | Rejects direct/aliased namespace construction and use of the low-level region-only resolver. |
 | `scripts/eslint-rules/durable-object-native-rpc.mjs` | Rejects internal Durable Object `fetch()` calls; HTTP `fetch()` remains for WebSocket upgrades and genuine HTTP flows. |
 | `scripts/eslint-rules/durable-object-sync-transaction.mjs` | Rejects explicit or type-resolvable Promise-returning callbacks passed to `transactionSync`, `commitRuntimeMutation`, or `commitWithRegionalEffects`. |
 | `packages/db/migrations/0043_hypersight.sql`, `0078_rename_hypersight_to_block_dashboard.sql` | Immutable historical migrations retained byte-for-byte after feature removal. They are migration ledger, not live product authority. |
 | `packages/db/migrations/0079_workstream_do_authority_cutover.sql` | Maintenance control, routes, import receipts, identity anchors, and permanent legacy-product/pin writer fences. |
-| `packages/db/migrations/0080_workstream_do_regional_effects.sql` | Legacy causally fenced notification-intent shells; the activity/mention effect replay receipt is object-local (`workspace_workstream_effect_receipts`), never a D1 row. |
+| `packages/db/migrations/0080_workstream_do_regional_effects.sql` | Legacy causally fenced notification-intent shells. A mention's replay receipt is the hosted parent's `sidekick_child_receipts` row, never a D1 row; `workspace_workstream_effect_receipts` is unwritten since 2026-11-07, dropped with the Thread-era tables. |
 | `packages/db/migrations/0081_workstream_do_full_serving.sql` | Serving-contract attestation and idempotent creation receipts (`workstream_create_receipts`, which Canvas and Sidekick creation still read); it intentionally creates no directory projection tables. |
 | `packages/db/migrations/0082_workspace_durable_object_placement_affinity.sql` | Immutable Global/regional workspace affinity projection and migration/background fallbacks. |
 | `packages/db/migrations/0083_workspace_product_do_authority.sql` | Per-workspace product import routes plus permanent D1 writer fences for the migrated activity and opportunity families. |
@@ -1100,21 +1100,21 @@ AgentLoopDO SQLite product transaction
        conversation_effect -> parent.receiveChildEffects({substreamId, envelopes})
          -> Canvas or Sidekick (WorkspaceDO, HostedConversation): receipt +
             child projection, and for "0" each reader's read, one transaction;
-            a Sidekick also moves the run row; nothing is forwarded
-       parent_effect -> WorkspaceDO.applyWorkstreamRegionalEffect:
-            receipt + a workstream_notification_intents row for an active
-            member's mention or add; an activity_event is receipted and
-            stored nowhere. No producer sends a parent_effect now.
+            a Sidekick also moves the run row; a mention_notification or
+            participant_notification becomes a pending
+            workstream_notification_intents row; nothing is forwarded
+         -> consumer: processWorkstreamNotificationIntent for each intent the
+            parent names (push, Slack, email as the person chose)
+       parent_effect -> acknowledged as parent_effect_producer_retired
+            (a scope_grant_directory row aside). No producer sends one now.
 ```
 
-**Known gap: a conversation's mention and add effects reach no intent.** A
-conversation still writes `mention_notification` and
-`participant_notification` effects, but they travel as `conversation_effect`
-like the rest, and `HostedConversation` receipts every kind and applies only
-`directory_common` and `directory_user`. The Channel host that forwarded them
-as `parent_effect` is deleted, so a mention in a Canvas's Chat records no
-notification intent and nobody is pushed, emailed or messaged for it. The
-Sidekick run notices do not take this path ([`push-notifications.md`](push-notifications.md)).
+A conversation writes one mention or add effect per person. The parent records
+it beside the envelope's receipt and names its intent back, also on a replay,
+so the Queue's retry is what gives a failed delivery its second attempt; the
+intent's own state keeps a settled one from sending twice
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-mention-or-an-add)).
+The Sidekick run notices do not take this path ([`push-notifications.md`](push-notifications.md)).
 
 Nothing loads an envelope back from the sender and nothing acknowledges one to
 it. The child's outbox row is deleted the moment `sendBatch` resolves. A batch
@@ -1123,8 +1123,7 @@ after that point is the Queue's (the consumer calls `retry()` with exponential
 backoff, and the regional activities queue has a dead-letter queue), and the
 receiver's receipt is what makes a redelivery a no-op: the parent keys its
 receipts (`sidekick_child_receipts`, for either kind) on
-`(substream_id, message_id)` and refuses a replay whose hash differs, and
-WorkspaceDO does the same in `workspace_workstream_effect_receipts`. A
+`(substream_id, message_id)` and refuses a replay whose hash differs. A
 redelivery older than the receipt window converges on the per-key waterlines
 instead.
 
@@ -1184,10 +1183,9 @@ complete relationship map is:
 | Worker | WorkspaceDO (hosted Canvas or Sidekick parent) | typed RPC | the conversation-parent contract: the caller needs the answer (a viewer decision, the generation and archive state, a child reservation at creation) |
 | AgentLoopDO | regional Queue | Cloudflare Queue | child `durable_outbox` row, sent with its envelope inline and deleted when the Queue accepts it |
 | AgentLoopDO (a Sidekick run child) | WorkspaceDO | typed RPC | child `durable_outbox` row on channel `external_conversation_binding_v1`, written in the tool receipt's `complete` transaction when a send reports where its replies arrive; the alarm delivers it with `recordOutboundExternalConversationBinding`, naming the child as the target, and deletes it once WorkspaceDO has it. A row that does not parse is parked `dead`. See [`external-conversation-bindings.md`](external-conversation-bindings.md) |
-| regional Queue Worker | WorkspaceDO (hosted parent) | typed RPC | `receiveChildEffects`: parent receipt, child projection and each reader's read in one transaction; a replay is answered from the receipt |
+| regional Queue Worker | WorkspaceDO (hosted parent) | typed RPC | `receiveChildEffects`: parent receipt, child projection, each reader's read and any mention's or add's notification intent in one transaction; a replay is answered from the receipt and names the intent again for the consumer to deliver |
 | WorkspaceDO alarm | regional Queue, then WorkspaceDO | Cloudflare Queue, typed RPC | `sidekick_run_provision`: a run's entry hands it to the consumer, which opens its conversation and reports `sidekickRunProvisioned`; the entry sends again, later each time, until the report |
 | WorkspaceDO alarm | regional Queue, then WorkspaceDO and the wizard's AgentLoopDO, then WorkspaceDO | Cloudflare Queue, typed RPC | `sidekick_review`: a Sidekick's review entry hands the request to the consumer, which reads the notice back with `sidekickReviewDelivery`, admits it with `admitSidekickReview` (idempotent on the review id) and reports `sidekickReviewDelivered`; the entry sends again, later each time, until the report ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)) |
-| regional Queue Worker | WorkspaceDO | typed RPC | `applyWorkstreamRegionalEffect`: a person notification's intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data. An `activity_event` is receipted and stored nowhere |
 | a run's loop | WorkspaceDO | typed RPC | `readRunDefinition` at loop start (the definition revision is immutable, so a reference rather than a copy travels in the loop input) and `readRunState` before every provider write |
 | a Sidekick run child's `claimPersistentLoopExecution` | WorkspaceDO | typed RPC | `sidekickContinueRun` before a pending input activates the loop: the run's context and run-as principal at the accepted revision, or a refusal code the child settles the input with ([continuing a run](automation-lifecycle.md#continuing-a-run)) |
 | a loop with a conversation scope | WorkspaceDO, then the target Canvas's or Sidekick's AgentLoopDO | typed RPC | the conversation tools: `conversationToolScope` and `resolveConversationToolTarget` (scope, then `authorizeViewer`), then the target's `readableMessagesBefore` or `appendConversationPost`, keyed on the harness run and receipt; see [`conversation-tools.md`](conversation-tools.md) |
@@ -1345,7 +1343,7 @@ misrouted product statement now fails because the table or column is absent.
 - **A child never writes to *the conversation* after its parent's archive.** The parent reports `archived`, the ticket carries it, the conversation object refuses writes on that socket with `409 conversation_parent_archived`, and the Worker's `writableClient` refuses REST writes. A write path that admits on the participant row alone lets a run keep changing a room that was closed. The reader's own `member_attention` row is outside this: it records what that person has read rather than changing the room, an archived automation's conversation stays readable, and its read-state route therefore resolves a read-authorized client deliberately.
 - **A child is reserved by its parent before it is addressed.** `reserveChild` (or a Sidekick's `create` for `"0"`) runs before the object is initialized, so `listChildren` is complete and revocation can reach every socket. A child that exists only in its own namespace is one nothing can enumerate.
 - **A child's outbox row is deleted when the Queue accepts it, and retry is the Queue's from there.** The receiver's receipt makes a redelivery a no-op. Keeping the row, loading it back, or acknowledging it from the consumer reintroduces the attempt ledger, the load-back RPC, and the acknowledge RPC this design deleted, all of which existed to distrust a primitive that already retries.
-- **A hosted parent forwards nothing its children say.** A conversation's directory effects stop at its Canvas or Sidekick, which derives its own list row from them; the workspace hears that row. Forwarding a run's `directory_common` would put every run in the Organization's lists.
+- **A hosted parent forwards nothing its children say.** A conversation's directory effects stop at its Canvas or Sidekick, which derives its own list row from them; the workspace hears that row. A mention or an add is recorded as a notification intent in the parent's own transaction ([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-mention-or-an-add)). Forwarding a run's `directory_common` would put every run in the Organization's lists.
 - **High-volume child reads and streams never proxy through a parent.** Doing so would turn the control plane into the throughput and availability ceiling for every child.
 - **User messages and transcript/token feeds go directly to their admitted `AgentLoopDO`; aggregate metadata rides each Canvas's and Sidekick's row on the `WorkspaceDO` workspace socket.** The socket attachment fixes workspace, parent, substream, user, session, and admitted role, while the object-local participant row remains the write check.
 - **An open conversation socket is not foreground presence.** Electron reports application, window, and route foreground explicitly on its WorkspaceDO socket; a feed socket may stay open while its conversation is in the background.
@@ -1539,7 +1537,7 @@ already have committed across the object boundary.
 
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_sidebar_list_state` | The `automations` and `canvases` list waterlines each list push carries. |
-| `workspace_workstream_effect_receipts` | Message/hash receipts making regional effect retries idempotent; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
+| `workspace_workstream_effect_receipts` | The Thread host's regional effect receipts, unwritten since 2026-11-07, dropped with the Thread-era tables. A conversation's effects are receipted in `sidekick_child_receipts`. |
 | `channels`, `channel_viewers`, `spaces`, `space_viewers`, `breakouts`, `breakout_viewers`, `parent_*` | The retired Thread, Channel and Breakout directory and parent state, kept by migration 147 because the Thread retirement's inventory reads them; nothing else does, and they go once `retire_threads` has run in every Organization ([`workspace-retirement.md`](workspace-retirement.md)). |
 
 WorkspaceDO migration 147 dropped the Activity, suggested-work, digest,
@@ -1692,7 +1690,7 @@ the ticket; a conversation object never widens it.
 
 Health endpoints report role and object-local database bytes. Migration errors
 include component/version reason. Inspect `_sql_schema_migrations`,
-`workspace_directory_state`, `workspace_workstream_effect_receipts`,
+`workspace_directory_state`, `sidekick_child_receipts`, `workstream_notification_intents`,
 `substream_loops`, pending inputs, assistant reservations, linked execution
 receipts, attempt leases, child and
 parent `durable_outbox` (a row there means the Queue has not yet accepted it),

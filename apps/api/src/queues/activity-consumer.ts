@@ -59,7 +59,6 @@ import { refreshMemoryDigestCopies } from "../services/memory-digest-service";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { admitConnectorEvent } from "../services/workspace-connector-event-ingress";
 import {
-  applyWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
 } from "../services/conversation-effect-service";
 import { conversationParentStub } from "../services/conversation-parent-client";
@@ -950,6 +949,13 @@ function effectRejection(
 }
 
 /**
+ * How long an effect whose notification intent another delivery is holding
+ * waits before the Queue brings it back. Carried over unchanged from the
+ * deleted `parent_effect` branch; why 30 was chosen was not recorded.
+ */
+const NOTIFICATION_HELD_RETRY_SECONDS = 30;
+
+/**
  * One effect message, at-least-once and unordered.
  *
  * A child's effect goes to its parent, a parent's to the workspace. Both
@@ -980,16 +986,39 @@ async function consumeEffect(
   try {
     if (envelope.kind === "conversation_effect") {
       const parent = await conversationParentStub(env, envelope);
-      await parent.receiveChildEffects({ substreamId: envelope.substreamId, envelopes: [envelope] });
+      // A retired parent answers with receipts alone, so it names no intent.
+      const { notificationIntentIds = [] } = await parent.receiveChildEffects({
+        substreamId: envelope.substreamId, envelopes: [envelope],
+      }) as { notificationIntentIds?: string[] };
       if (envelope.effect.kind === "directory_common" && envelope.effect.attachmentReservationReleases?.length) {
         const workspace = await workspaceDirectory(env,envelope.workspaceId);
         await workspace.publishConversationAttachments(envelope);
       }
+      // A mention or an add the parent recorded: deliver it now. The parent
+      // names it again on a redelivery and the intent's own state makes a
+      // second delivery a no-op, so a send that failed is retried this way.
+      let notificationOutcome: "delivered" | "skipped" | null = null;
+      for (const intentId of notificationIntentIds) {
+        const outcome = await processWorkstreamNotificationIntent(env, envelope.workspaceId, intentId);
+        if (outcome === "busy") {
+          logInfo(env, "conversation_effect_deferred", {
+            ...fields,
+            substream_id: envelope.substreamId,
+            notification_intent_id: intentId,
+            reason: "notification_busy",
+            retry_delay_seconds: NOTIFICATION_HELD_RETRY_SECONDS,
+          });
+          message.retry({ delaySeconds: NOTIFICATION_HELD_RETRY_SECONDS });
+          return;
+        }
+        notificationOutcome = outcome;
+      }
       logInfo(env, "conversation_effect_terminal", {
         ...fields,
         substream_id: envelope.substreamId,
-        outcome: "applied",
-        reason: "parent_accepted",
+        outcome: notificationOutcome ?? "applied",
+        reason: notificationOutcome ? "notification_terminal" : "parent_accepted",
+        ...(notificationIntentIds.length > 0 ? { notification_intent_id: notificationIntentIds.join(",") } : {}),
       });
       message.ack();
       return;
@@ -1010,33 +1039,12 @@ async function consumeEffect(
       message.ack();
       return;
     }
-    const applied = await applyWorkstreamRegionalEffect(env, envelope);
-    let notificationOutcome: "delivered" | "skipped" | null = null;
-    if (applied.notificationIntentId) {
-      const outcome = await processWorkstreamNotificationIntent(
-        env,
-        envelope.workspaceId,
-        applied.notificationIntentId,
-      );
-      if (outcome === "busy") {
-        logInfo(env, "conversation_effect_deferred", {
-          ...fields,
-          notification_intent_id: applied.notificationIntentId,
-          reason: "notification_busy",
-          retry_delay_seconds: 30,
-        });
-        message.retry({ delaySeconds: 30 });
-        return;
-      }
-      notificationOutcome = outcome;
-    }
-    logInfo(env, "conversation_effect_terminal", {
-      ...fields,
-      outcome: notificationOutcome ?? "applied",
-      reason: notificationOutcome ? "notification_terminal" : "effect_applied",
-      notification_intent_id: applied.notificationIntentId,
-      replayed: applied.replayed,
-    });
+    // An activity row, a mention or an add as a `parent_effect`: only the
+    // Thread host published these, from its `parent_outbox`, and Threads are
+    // retired. A hosted parent records a mention where its conversation's
+    // effect lands (`HostedConversation.applyChildEnvelope`), so a late copy
+    // from a retired Thread is acknowledged and named rather than applied.
+    logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "ignored", reason: "parent_effect_producer_retired" });
     message.ack();
   } catch (error) {
     logWarn(env, "conversation_effect_processing_failed", {

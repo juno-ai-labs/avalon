@@ -190,6 +190,7 @@ import { uuidV7 } from "../lib/uuid-v7";
 
 import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import {
+  publishAccessRevocation,
   revocationClosesSession,
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
@@ -307,16 +308,12 @@ import {
   WorkspaceDirectoryNotificationStateSchema,
   WorkspaceDirectoryScheduleTargetsRequestSchema,
   WorkspaceDirectoryScheduleTargetsResultSchema,
-  WorkspaceRegionalEffectApplyRequestSchema,
-  WorkspaceRegionalEffectApplyResultSchema,
   type WorkspaceAttentionRequest,
   type WorkspaceAttentionResult,
   type WorkspaceDirectoryNotificationRequest,
   type WorkspaceDirectoryNotificationState,
   type WorkspaceDirectoryScheduleTargetsRequest,
   type WorkspaceDirectoryScheduleTargetsResult,
-  type WorkspaceRegionalEffectApplyRequest,
-  type WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
 import {
   SLACK_REACTION_COLUMN_STATEMENTS,
@@ -492,9 +489,6 @@ import {
   PARTICIPANT_PROJECTION_ALARM,
 } from "./scope-grant-storage";
 import { SCOPE_INVITATION_DELIVERY_ALARM, SCOPE_INVITATION_INDEX_ALARM } from "./scope-invitation-storage";
-import {
-  applyWorkstreamRegionalEnvelope,
-} from "./workspace-regional-effect-storage";
 import {
   WorkspaceConnectorResourceResolveRequestSchema,
   WorkspaceDiscoveredResourcesRequestSchema,
@@ -5112,11 +5106,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const envelope = request.envelopes[0]!;
     if (envelope.parentKind === "automation") {
       return this.sidekickCall(envelope.parentId, envelope.workspaceId,
-        (sidekick) => ({ accepted: sidekick.receiveChildEffects(request) }));
+        (sidekick) => sidekick.receiveChildEffects(request));
     }
     if (envelope.parentKind === "canvas") {
       const canvas = await this.hostedCanvas(envelope.parentId, envelope.workspaceId);
-      return this.canvasWrite(() => ({ accepted: canvas.receiveChildEffects(request) }));
+      return this.canvasWrite(() => canvas.receiveChildEffects(request));
     }
     // A Thread's or Space's effect: the envelope admits the retired kinds so
     // the refusal is named here and the message dead-letters loudly, rather
@@ -5329,14 +5323,76 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */
   async canvasSetAudience(input: Parameters<HostedCanvas["setAudience"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
-    return this.canvasWrite(async () => {
+    return this.canvasWrite(() => this.closingNarrowedConversations(input.workspaceId, [input.canvasId], async () => {
       const detail = await canvas.setAudience(input);
       // Someone the Canvas no longer admits stops being shown in it, and the
       // people still in it are told who is left, before the one Canvas list
       // the write sends.
       this.broadcastPresence();
       return detail;
-    });
+    }));
+  }
+
+  /**
+   * Run an audience change, then close the open conversation sockets of
+   * everyone it took a parent's shared conversation away from.
+   *
+   * The conversation objects hold those sockets and authorized each one
+   * when it connected, so nothing they can see tells them the audience
+   * moved. Each person who could open a parent before the write and cannot
+   * after it is told through the access-revocation Queue, the mechanism a
+   * membership removal uses: a `substream` hop per Canvas conversation, or an
+   * `automation` hop that names a Sidekick's conversations, each reaching the
+   * conversation object's `revokeSocketAccess`, which closes that person's
+   * sockets with `WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE`.
+   *
+   * Who is asked is everyone this object knows as an active relationship:
+   * a person's workspace socket and every Canvas admission read theirs, so
+   * anyone holding a conversation socket is among them. The question is the
+   * one the conversation's own admission asks (`conversationToolAdmission`),
+   * of the shared conversation; a person kept only on a child reconnects to
+   * it. A widening, or a change that took nobody away, publishes nothing.
+   */
+  private async closingNarrowedConversations<T>(workspaceId: string, parentIds: readonly string[], write: () => Promise<T>): Promise<T> {
+    const before = await this.conversationReaders(workspaceId, parentIds);
+    const result = await write();
+    const after = await this.conversationReaders(workspaceId, parentIds);
+    for (const parentId of parentIds) {
+      const kept = after.get(parentId)!;
+      const removed = [...before.get(parentId)!].filter((userId) => !kept.has(userId)).sort();
+      if (removed.length === 0) continue;
+      const canvas = this.state.storage.sql.exec(`SELECT 1 FROM canvas_directory WHERE canvas_id = ?`, parentId).toArray().length > 0;
+      const targets = canvas
+        ? new HostedCanvas(this.hostedCanvasHost(), parentId).childRegistry()
+          .map((child) => ({ scope: "substream" as const, workstreamId: parentId, substreamId: child.substreamId }))
+        : [{ scope: "automation" as const, automationId: parentId }];
+      const published = await Promise.all(removed.flatMap((userId) => targets.map((target) => publishAccessRevocation(this.env, {
+        reason: "workstream_participant_removed", workspaceId: asWorkspaceId(workspaceId), userId, sessionId: null, target,
+      }))));
+      logInfo(this.env, "conversation_audience_narrowed", {
+        workspace_id: workspaceId, parent_id: parentId, parent_kind: canvas ? "canvas" : "automation",
+        removed_user_ids: removed.join(","), revocations: published.length,
+        unpublished: published.filter((sent) => !sent).length,
+      });
+    }
+    return result;
+  }
+
+  /** Who of the people this object knows may open each parent's shared conversation now. */
+  private async conversationReaders(workspaceId: string, parentIds: readonly string[]): Promise<Map<string, Set<string>>> {
+    const known = this.state.storage.sql.exec<{ user_id: string; relationship_json: string }>(
+      `SELECT user_id, relationship_json FROM workspace_member_status WHERE active = 1 AND relationship_json IS NOT NULL`,
+    ).toArray().map((row) => ({ userId: row.user_id, relationship: WorkspaceRelationshipSchema.parse(JSON.parse(row.relationship_json)) }));
+    const readers = new Map<string, Set<string>>();
+    for (const parentId of parentIds) {
+      const admitted = new Set<string>();
+      for (const { userId, relationship } of known) {
+        const admission = await this.conversationToolAdmission(workspaceId, { parentId, substreamId: "0" }, userId, relationship);
+        if (admission.authorized && !admission.archived) admitted.add(userId);
+      }
+      readers.set(parentId, admitted);
+    }
+    return readers;
   }
 
   /**
@@ -5777,7 +5833,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async sidekickSetAudience(input: Parameters<HostedSidekick["setAudience"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setAudience(input));
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => {
+      // A Canvas the Sidekick writes admits the Sidekick's audience, so a
+      // narrowing reaches those Chats too.
+      const written = this.state.storage.sql.exec<{ canvas_id: string }>(
+        `SELECT canvas_id FROM canvas_directory WHERE writer_sidekick_id = ? ORDER BY canvas_id`, input.automationId,
+      ).toArray().map((row) => row.canvas_id);
+      return this.closingNarrowedConversations(input.workspaceId, [input.automationId, ...written], () => sidekick.setAudience(input));
+    });
   }
 
   async sidekickPause(input: Parameters<HostedSidekick["pause"]>[0]) {
@@ -9016,23 +9079,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { applied };
   }
 
-  /**
-   * Apply one Channel or Space parent's activity/mention effect and its replay receipt in a
-   * single transaction. The caller resolves current D1 identity (actor, target
-   * membership, mention recipient) before the call; the object never reaches
-   * back into the regional database mid-transaction, and the receipt can never
-   * commit without the product row it acknowledges.
-   */
-  async applyWorkstreamRegionalEffect(
-    input: WorkspaceRegionalEffectApplyRequest,
-  ): Promise<WorkspaceRegionalEffectApplyResult> {
-    await this.initialized;
-    const request = WorkspaceRegionalEffectApplyRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = applyWorkstreamRegionalEnvelope(this.state.storage, request, Date.now());
-    return WorkspaceRegionalEffectApplyResultSchema.parse(result);
-  }
-
   async readNotificationIntentForDelivery(input: WorkspaceNotificationIntentRequest): Promise<WorkspaceNotificationIntentDelivery | null> {
     await this.initialized;
     const request = WorkspaceNotificationIntentRequestSchema.parse(input);
@@ -10397,12 +10443,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // The role beside the access class: an owner or administrator opens every
     // Canvas (`canvasReaderAllows`), so reading every member as `member`
     // withheld a mention from an administrator a creator-only Canvas admits.
-    const relationship = sql.exec<{ access_class: string | null; role: string | null }>(
-      `SELECT json_extract(relationship_json, '$.accessClass') AS access_class,
-              json_extract(relationship_json, '$.role') AS role
-         FROM workspace_member_status WHERE user_id = ? AND active = 1`, request.userId,
-    ).toArray()[0];
-    const actorRole = relationship?.access_class !== "member" ? null
+    // Read through `readRelationship`, not the table alone: a member this
+    // object has not heard of yet (a Sidekick's admission never reads them)
+    // read as nobody, and an Organization-wide Sidekick's mention was skipped
+    // as `recipient_not_listable`.
+    const relationship = await this.readRelationship(request.workspaceId, request.userId);
+    const actorRole = relationship?.status !== "active" || relationship.accessClass !== "member" ? null
       : relationship.role === "owner" || relationship.role === "admin" ? relationship.role : "member" as const;
     const canvas = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, request.workstreamId).toArray()[0];
     if (canvas) {
@@ -11686,10 +11732,8 @@ applyRetirementGate(WorkspaceDO, {
     // A conversation's effects for a hosted parent, handed to the Queue before
     // the tombstone landed. Acknowledged as the legacy parents did, so the
     // message stops redelivering an effect nothing will apply.
+    // It names no notification intent, so the consumer delivers nothing.
     receiveChildEffects: ([input]) => ({ accepted: droppedEnvelopeReceipts(input) }),
-    // `replayed` is this receiver's terminal answer — it already means "this
-    // changed nothing, do not send it again", which is exactly true here.
-    applyWorkstreamRegionalEffect: () => ({ replayed: true, notificationIntentId: null }),
     // An HTTP door refuses in the protocol it speaks rather than by throwing,
     // so a caller reads a status instead of a 500 it has to guess about.
     fetch: () => retiredObjectResponse(),
