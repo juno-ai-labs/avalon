@@ -137,10 +137,10 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
   "workspaceId" | "parentKind" | "parentId" | "substreamId" | "executionPrincipal">,
   request: { canvas?: string | undefined; title?: string | undefined } = {}): Promise<{ parentId: string; substreamId: string } | null> {
   if (input.parentKind !== "automation" || input.executionPrincipal.type !== "user") return null;
-  const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS,
-    asWorkspaceId(input.workspaceId), workspaceDOName(env.AVALON_REGION, input.workspaceId));
   const runId = input.substreamId && input.substreamId !== "0" ? input.substreamId : null;
   if (runId !== null) {
+    const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS,
+      asWorkspaceId(input.workspaceId), workspaceDOName(env.AVALON_REGION, input.workspaceId));
     const found = await workspace.canvasForSidekickRun({
       workspaceId: input.workspaceId, sidekickId: input.parentId, runId, canvasId: request.canvas ?? null,
     }).catch((error: unknown) => {

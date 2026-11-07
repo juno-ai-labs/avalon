@@ -221,7 +221,7 @@ describe('transcript search migration', () => {
       applyDurableObjectSqliteMigrations({ storage: state.storage,
         migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 41),
         component: 'substream_agent_do', workerVersionId: 'v41', now: 1_000 });
-      seedWorkstreamRoot(state);
+      seedWorkstreamRoot(state, 1, { parentKind: 'automation' });
       await new WorkstreamTranscriptStorage(state.storage).appendParticipantMessage({
         turnId: 'historical-turn', actor: 'system', authorUserId: null, authorSnapshot: null,
         text: 'Historical searchable message', createdAtUtc: '2026-09-05T00:00:00Z', attentionOrdinal: 1,
@@ -259,7 +259,7 @@ describe('conversation display projection', () => {
     await runInDurableObject(stub, async (_instance, state) => {
       applyDurableObjectSqliteMigrations({ storage: state.storage, migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
         component: 'substream_agent_do', workerVersionId: 'search', now: 2_000 });
-      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: identity.parentId });
+      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: identity.parentId, parentKind: 'automation' });
       const sql = state.storage.sql;
       sql.exec(`DELETE FROM durable_outbox`);
       // Bookkeeping writes on the identity row are not display changes.
@@ -289,7 +289,7 @@ describe('conversation display projection', () => {
       applyDurableObjectSqliteMigrations({ storage: state.storage,
         migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 51),
         component: 'substream_agent_do', workerVersionId: 'v51', now: 1_000 });
-      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: identity.parentId });
+      seedWorkstreamRoot(state, 1, { workspaceId, workstreamId: identity.parentId, parentKind: "automation" });
       const transcript = new WorkstreamTranscriptStorage(state.storage);
       for (const [turnId, ordinal] of [['delivered-turn', 1], ['pending-turn', 2]] as const) {
         await transcript.appendParticipantMessage({ turnId, actor: 'system', authorUserId: null, authorSnapshot: null,
@@ -362,7 +362,7 @@ describe.each([
       applyDurableObjectSqliteMigrations({ storage: state.storage,
         migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= substreamFrom),
         component: 'substream_agent_do', workerVersionId: `v${substreamFrom}`, now: 1_000 });
-      seedWorkstreamRoot(state, 1, identity);
+      seedWorkstreamRoot(state, 1, { ...identity, parentKind: 'automation' });
       const transcript = new WorkstreamTranscriptStorage(state.storage);
       for (const [turnId, ordinal] of [['lost-turn', 1], ['waiting-turn', 2]] as const) {
         await transcript.appendParticipantMessage({ turnId, actor: 'system', authorUserId: null, authorSnapshot: null,
