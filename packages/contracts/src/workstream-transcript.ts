@@ -251,12 +251,44 @@ export const ReadTranscriptResultSchema = z.strictObject({
   nextAfterSequence: z.number().int().nonnegative().nullable(),
 });
 
+/**
+ * What a Sidekick run's conversation spent, for its first page: model calls
+ * as the provider counted them, and each tool's calls and time.
+ */
+export const SidekickRunUsageSchema = z.strictObject({
+  model: z.strictObject({
+    calls: z.number().int().nonnegative(),
+    failedAttempts: z.number().int().nonnegative(),
+    inputTokens: z.number().int().nonnegative(),
+    outputTokens: z.number().int().nonnegative(),
+    cachedInputTokens: z.number().int().nonnegative(),
+    costUsd: z.number().nonnegative(),
+    firstCallInputTokens: z.number().int().nonnegative().nullable(),
+    lastCallInputTokens: z.number().int().nonnegative().nullable(),
+    largestCallInputTokens: z.number().int().nonnegative().nullable(),
+    ms: z.number().nonnegative(),
+  }),
+  tools: z.array(z.strictObject({
+    toolName: z.string(),
+    fromProgram: z.boolean(),
+    calls: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    ambiguous: z.number().int().nonnegative(),
+    ms: z.number().nullable(),
+    maxMs: z.number().nullable(),
+  })),
+});
+
+export type SidekickRunUsage = z.infer<typeof SidekickRunUsageSchema>;
+
 /** Internal inspection does not seat a viewer or acknowledge the conversation. */
 export const SidekickRunTranscriptResultSchema = z.strictObject({
   transcriptAvailability: z.enum(["available", "not_provisioned"]),
   turns: z.array(TranscriptTurnSchema),
   throughSequence: z.number().int().nonnegative(),
   nextAfterSequence: z.number().int().nonnegative().nullable(),
+  /** On the first page only. */
+  usage: SidekickRunUsageSchema.optional(),
 });
 
 /**

@@ -35,6 +35,7 @@ const DISPATCHED_OPERATIONS = [
   "receiptForCall",
   "receiptsForCalls",
   "receiptsForRun",
+  "toolUsage",
   "canvaCleanupForRun",
   "canvaTransactionOwned",
   "claimCanvaCleanup",

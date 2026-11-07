@@ -20,7 +20,9 @@ type LocalOnlyHarnessRunOperation =
   | "prepareHostOutcome"
   | "publishPreparedHostOutcome"
   | "launchRun"
-  | "terminalizeWorkflowFailureInCurrentTransaction";
+  | "terminalizeWorkflowFailureInCurrentTransaction"
+  // Read by the owning object for a run review's first page.
+  | "modelUsage";
 export type HarnessRunOperation = Exclude<keyof WorkstreamHarnessRunStorage, LocalOnlyHarnessRunOperation>;
 
 export type HarnessRunObjectPort = ObjectPortOf<Pick<WorkstreamHarnessRunStorage, HarnessRunOperation>>;
