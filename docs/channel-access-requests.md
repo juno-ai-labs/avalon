@@ -26,6 +26,13 @@ these places, and every one settles the same stored request:
 
 The person who asked gets an email when the request is approved or declined.
 
+**The desktop and browser clients no longer draw any of this.** The pivot to
+two sections (Canvases, Sidekicks) deleted the requester's screen, the
+Activity rows, the title menu's **Asked to join** section and the menu bar
+rows; the email's approve link and the API below remain until the server half
+of the pivot retires them. The client paragraphs below describe what the
+clients did until 2026-11-07.
+
 ## Where the code lives
 
 | Path | Responsibility |
@@ -36,14 +43,6 @@ The person who asked gets an email when the request is approved or declined.
 | `apps/api/src/services/conversation-access-request-service.ts` | The preview, the request (approver, row, email), `decide` (approve or decline from the app), `approveConversationAccess` (the email's link), `grant` (the ordinary add, as the approver) and `tellRequester` (the decision email). |
 | `apps/api/src/routes/conversations.ts` | `GET …/substreams/:substreamId/access-preview`, `POST …/substreams/:substreamId/access-requests`, and `POST /conversations/access-requests/:requestId/{approve,decline}`. |
 | `apps/api/src/routes/conversation-access.ts` | The public `GET` and `POST /conversation-access/approve` pages behind the email's button. |
-| `apps/desktop/src/renderer/components/conversation-access-request.tsx` | The requester's screen, shown in place of "Channel could not be opened". |
-| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Refreshes waiting access previews on `workspace_reach_changed` and on Organization socket subscribe, so newly available access immediately retries the conversation. |
-| `apps/desktop/src/renderer/lib/access-requests.ts` | The approver's list in the query cache (written only by the workspace socket) and the approve/decline mutation, which drops the row at once and restores it if refused. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | Request rows at the top of the Activity tab, with the two icon buttons; the row opens the dialog. The Threads badge counts them. |
-| `packages/ui/src/components/conversation-menus.tsx` | The People level's **Asked to join** section (`TitleMenuPeople.requests`); a requester is left out of **Suggested**. `conversation-surface.tsx` passes the requests for the conversation on screen. |
-| `packages/ui/src/styles/app.css` | `.decision-button`, the approve and decline buttons both surfaces share: green (`sys.color.success.tint`) and red (`sys.color.danger.tint`) on hover. |
-| `apps/desktop/src/renderer/components/access-request-dialog.tsx` | The dialog, opened from a row or from the menu bar's deep link. |
-| `apps/desktop/src/main/channel-directory-watch.ts`, `menu-bar-content.ts`, `menu-bar-menu.ts` | The main process's copy of the list and its menu bar rows. |
 | `packages/contracts/src/desktop-deep-link-intent.ts` | `access-requests/<id>`, the link a menu bar row emits to reach the main window. |
 
 ## How it works
@@ -198,10 +197,6 @@ the approver's inbox, and it acts only as the approver.
 pnpm --filter @rally/api exec vitest run test/conversation-access-approval.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/conversation-access-requests.test.ts
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-reach-changed.test.ts
-pnpm --filter @rally/desktop exec vitest run src/renderer/components/conversation-access-request.test.tsx \
-  src/renderer/lib/workspace-socket.test.tsx \
-  src/renderer/components/navigation-sidebar.test.tsx src/renderer/components/access-request-dialog.test.tsx \
-  src/main/menu-bar-menu.test.ts src/main/channel-directory-watch.test.ts
 pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test.ts
 ```
 
@@ -212,6 +207,23 @@ pnpm --filter @rally/contracts exec vitest run src/desktop-deep-link-intent.test
 - Should requests and their links expire?
 
 ## Changelog
+
+### 2026-11-07 — The clients stop drawing access requests
+
+**What changed:** The desktop and browser clients' access-request surfaces —
+the requester's screen, the Activity tab's request rows, the title menu's
+**Asked to join**, the dialog and the menu bar's Needs attention rows — are
+deleted, with the client code that read `workspace_access_requests`. The
+server half (storage, routes, email) is unchanged.
+
+**Why:** The client pivot to Canvases and Sidekicks removed the Threads and
+Breakouts a request asks to join, so nothing in the client can open the
+conversation a request names.
+
+**Consequences:** An approver can still answer from the email. The
+`access-requests/<id>` deep link is still parsed by
+`desktop-deep-link-intent.ts` but nothing emits or handles it in the client.
+The server half is retired with the rest of the Thread model.
 
 ### 2026-10-22 — Preserve the requester's waiting state on reopen
 
