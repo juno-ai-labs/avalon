@@ -149,6 +149,9 @@ await Promise.all([
   retireFlag('live-artifacts-enabled'),
   retireFlag('agent-model-workstream-description'),
   retireFlag('agent-model-suggestion-draft'),
+  retireFlag('agent-model-work-opportunity-admission'),
+  retireFlag('agent-model-work-opportunity-ranking'),
+  retireFlag('agent-model-session-import'),
 ]);
 await Promise.all([
   ensureFlag('suggested-work-enabled', 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.'),
@@ -157,9 +160,6 @@ await Promise.all([
   ensureModelFlag('agent-model-workstream', 'Runs the main participant-visible work stream and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-inline-child', 'Runs a bounded read-only child task delegated by a work-stream agent and returns the result to its parent.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-workstream-naming', 'Titles a long pasted text from its contents, so the attachment chip has a name.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
-  ensureModelFlag('agent-model-work-opportunity-admission', 'Decides whether recent unclaimed activity should become a personal or workspace suggestion and drafts its candidate.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
-  ensureModelFlag('agent-model-work-opportunity-ranking', 'Orders admitted suggestions for one person, accounting for freshness and impressions before storing the visible set.', 'google/gemini-2.5-flash-lite', ['google/gemini-3.8-flash']),
-  ensureModelFlag('agent-model-session-import', 'Drives the person\'s desktop browser (page script, page outline, screenshots, input) to read a ChatGPT or Claude conversation and its files into a new Channel. Must accept images.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-memory-sweep', 'Reads a window of a Canvas or Sidekick conversation after it settles and decides which facts Rally should remember, revise or retract; the judgment is what a colleague would need later, so it runs on a strong model.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
   ensureModelFlag('agent-model-sidekick-authoring', 'Creates and revises Sidekick definitions in their authoring conversations, including event bindings, schedules, tools, and durable run instructions.', 'openai/gpt-6.1-sol', ['google/gemini-3.8-flash']),
 ]);

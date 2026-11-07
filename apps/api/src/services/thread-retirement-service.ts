@@ -62,7 +62,7 @@ export async function threadRetirementInventory(env: Env, workspaceId: Workspace
  * `retiredConversationKey`, skipping any key already written.
  *
  * Reads go to the conversation's own object, which formats with
- * `conversationAsText`, the formatter the operator `read_thread` tool uses. An
+ * `conversationAsText`, the formatter the operator conversation reads use. An
  * object that holds a different identity than the name it was reached by, or
  * a conversation of another parent kind, is refused by code and left
  * unwritten, so the retirement that follows stays refused until an operator
