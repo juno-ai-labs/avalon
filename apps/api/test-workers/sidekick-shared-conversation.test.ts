@@ -4,9 +4,11 @@
  * A Sidekick's shared conversation keeps the wizard and run separation.
  *
  * Substream "0" under a Sidekick is its own conversation. A message there that
- * the addressing classifier sends to an agent is the wizard's when its sender
- * manages the Sidekick, and otherwise starts a run under the Sidekick's
- * definition with the message as its opening, the path a manual run takes.
+ * the addressing classifier sends to an agent starts a run under the
+ * Sidekick's definition with the message as its opening, the path a manual run
+ * takes, whoever sent it; it is the wizard's only when a manager marked it
+ * `intent: "edit_sidekick"`. Each run then has a row in "0" kept current from
+ * the Sidekick's runs.
  * Everything runs on real workerd: the Organization object that hosts the
  * Sidekick, the shared conversation and its persistent loop, the run child,
  * and the regional D1 the run authority reads members from. The model is the

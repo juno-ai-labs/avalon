@@ -1,6 +1,6 @@
 import { renderPersonalSystemPrompt } from "@rally/agent-harness";
 import { AnnotatedMessageContentSchema, annotationCommentText } from "@rally/contracts";
-import { AnnotationsSchema, validateAnnotationAttachments } from "@rally/contracts";
+import { AnnotationsSchema, SidekickMessageIntentSchema, validateAnnotationAttachments } from "@rally/contracts";
 import { ResourceService } from "../services/resource-service";
 import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-share-rules";
 import { stableUuid } from "../lib/stable-uuid";
@@ -173,12 +173,8 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   attachmentIds: z.array(z.string().uuid()).max(10).default([]),
   annotations: AnnotationsSchema.optional(),
   runMode: z.enum(["steer", "queue"]).optional(),
-  /**
-   * `SidekickMessageIntentSchema`'s values, read only in a Sidekick's shared
-   * conversation. Spelled out rather than imported: the imported schema here
-   * sends `tsc` into an unrelated TS2719 in `substream-agent.ts`.
-   */
-  intent: z.enum(["edit_sidekick"]).optional(),
+  /** Read only in a Sidekick's shared conversation. */
+  intent: SidekickMessageIntentSchema.optional(),
   telemetryOperationId: z.string().min(1).max(180).optional(),
   telemetryRequestReceivedAt: z.number().int().nonnegative().optional(),
   telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).optional(),
