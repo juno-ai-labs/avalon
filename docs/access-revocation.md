@@ -108,15 +108,11 @@ The producers are:
   membership, or atomically suspends it while abandoning a workspace whose last
   active member is leaving, then publishes the same membership-wide message.
   The self-leave route cannot skip the producer by performing its own delete.
-- **A room participant is removed.** `WorkstreamService.removeParticipant`
-  tells the room, which closes its own sockets, then publishes with
-  `sessionId: null` and a `workstream_automations` target naming the room. A
-  room owns no Sidekick any more, so the consumer acknowledges that hop without
-  a call; the producer still publishes it.
-- **A workstream grant is revoked.** The durable grant-directory effect publishes
-  the same `workstream_automations` hop before acknowledgment, which likewise
-  reaches nothing. Main and child
-  conversation membership is independently handled by participant projections.
+- **History: a room participant removed, a workstream grant revoked.** These
+  published a `workstream_automations` hop naming the room. No room owns a
+  Sidekick any more and nothing publishes that hop now; the consumer keeps the
+  target in its schema only so a message already queued at a deploy still
+  parses, and acknowledges it without a call.
 - **A session is revoked.** `AuthService.logout` returns the rows it revoked
   (`RETURNING id, user_id, workspace_id`) and publishes one message per row,
   carrying that session's id. Only the windows that presented that session are
@@ -166,9 +162,8 @@ beside `closedUserIds`. Both keep the older fields so a consumer from before
 this change still reaches everything, and the consumer falls back to the older
 hops when an object from before it answers without the new ones. The
 `workstream` hop stays: messages of that kind may already be queued at a
-deploy. Workers still publish `workstream_automations` for a removed
-participant and a revoked grant, and the consumer acknowledges it without a
-call, since a room owns no Sidekick.
+deploy. The same holds for `workstream_automations`: no Worker publishes it,
+and the consumer acknowledges one still queued without a call.
 
 The fan-out is queue-driven rather than one long call chain for three reasons: a
 hop that fails is retried alone rather than restarting the walk; no single
@@ -208,9 +203,9 @@ and is unfiltered by person for the reason the artifact list is: an
 automation's conversation admits its author, its run-as principal, any member
 when it is workspace-scoped, and anyone it is shared with, so the workspace
 cannot tell which automations a person holds a socket on, and a hop that finds
-nothing to drop costs one call. No room owns an automation, so a participant
-removal no longer reaches one; the `workstream_automations` hop its writer
-still publishes ends at the consumer.
+nothing to drop costs one call. No room owns an automation, so nothing
+publishes the `workstream_automations` hop; one still queued ends at the
+consumer.
 
 A **narrowed audience** is the one hop that names nobody. Every other message
 is about one person, because every other way access ends names one: a member is
@@ -552,7 +547,9 @@ callers.
 
 **What changed:** `WorkspaceDO.automationIdsOwnedByWorkstream` is deleted, and
 the consumer acknowledges a `workstream_automations` message without a call.
-`revokeNarrowedAudienceAccess` answers an empty `automationIds`.
+`revokeNarrowedAudienceAccess` answers an empty `automationIds`. The last
+producer of that hop is deleted too (11e82d0): nothing publishes it, and the
+target stays in `AccessRevocationMessageSchema` only so a queued message parses.
 
 **Why:** The Canvases and Sidekicks PRD converts every Thread-scoped Sidekick
 to the Organization's scope, so no room owns one and a person who loses a room
@@ -563,10 +560,9 @@ scope and audience, which a room removal does not change.
 still publish it and messages of that kind may be queued at a deploy, so a
 rejected parse would dead-letter them.
 
-**Consequences:** The producers (`WorkstreamService.removeParticipant`, the
-grant-directory effect, the guest-reach path) still publish a hop that reaches
-nothing; removing those publishes, and then the target, is a later change. A
-future rule that lets a room admit someone to a Sidekick needs a new hop here,
+**Consequences:** Removing the target from the schema is safe once no
+message of that kind can still be queued, which is one queue-retention period
+after the deploy that stopped the publishes. A future rule that lets a room admit someone to a Sidekick needs a new hop here,
 not the old one revived.
 
 ### 2026-10-07 — Organization settings can suspend a member

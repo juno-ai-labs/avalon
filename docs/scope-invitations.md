@@ -52,16 +52,11 @@ workspace and actor override no caller-provided identity fields: such fields are
 rejected by the public schema. Every target must be in that Canvas, and
 current direct/inherited collaborator grants must authorize sharing it. Its
 participant-authority handoff must complete before an invitation is recorded.
-Grants are the only serving authority for Channels and Breakouts. New Main
-conversations finish the bootstrap handoff before creation returns; private
-children finish it when their opening content becomes durable and they become
-ready. Existing conversations import their historical rosters once, in the
-foreground when addressed or through the upgrade's durable migration alarms.
-Main imports preserve existing Channel grants; child imports use only the
-parent's historical child membership, never a stale child-local seat. If grants
-already exist, the handoff freezes and reconciles the source without importing
-its roster over those decisions. Frozen snapshots, incarnation bindings, receipts
-and alarms retain the existing recovery protocol.
+Grants are the serving authority for a Canvas's conversations. Frozen
+snapshots, incarnation bindings, receipts and alarms retain the existing
+recovery protocol. (History: Channels and Breakouts were served the same way,
+with a one-time import of each Thread's historical roster; that import went
+with Threads.)
 
 Sharing choices, transport, resource authorization and Breakout listings read
 grants. No serving path falls back to a directory or historical roster. Pending
@@ -93,10 +88,10 @@ Manual adds, confirmed mentions and connector audiences all issue parent grant
 commands, for members and guests alike. Connector events retain immutable
 receipts, so replay cannot restore a participant revoked later. Correcting creator
 attribution does not itself seat anyone. Existing-conversation additions address
-only that conversation; inherited Channel shares must be managed at their owning
-scope. The owning Thread's Remove/Leave command retracts its direct parent and
-Main grants atomically; a conversation-only removal still refuses inherited
-access. Creation-time participants retain the new Thread's initial access.
+only that conversation; inherited shares must be managed at their owning
+scope, and a conversation-only removal still refuses inherited access. (The
+Thread's Remove/Leave command, which retracted its direct parent and Main
+grants together, went with Threads.)
 
 The conversation's `participants` table remains a versioned projection for names,
 unread state, participant epochs and socket admission. Its identity/status writes
@@ -128,7 +123,7 @@ legacy roster authority, and durable recovery or an operator must resolve an
 invalid source identity/authority before it can serve that conversation.
 
 Synchronous grant listing uses the shared current-membership SQL predicate. The
-socket, Breakout-list and Sidekick entry points learn a previously unknown
+socket and Sidekick entry points learn a previously unknown
 Organization relationship before invoking it; subsequent reads stay local.
 
 ### Claiming
@@ -241,8 +236,8 @@ empty author row; it stays in place so the preview remains a contiguous suffix
 and “earlier messages” still means every omitted turn came before it.
 
 **Which conversation is the one the invitation opens onto**: the first target,
-which is Main for a work-stream offer and that conversation for a conversation
-offer. Never a second conversation, and never the parent of a child-only share.
+which is the Canvas's Chat (`"0"`) for a Canvas offer and that conversation
+for a conversation offer. Never a second conversation, and never the parent of a child-only share.
 The preview is bounded by the offered scope exactly as the grants are; a preview
 that widened would put work outside the share into a mailbox nobody has
 authenticated, which is the thing scoped invitations exist to prevent.
@@ -310,8 +305,8 @@ another independently granted scope.
 `POST /sharing/list` accepts an exact target and derives the actor from the
 session. The owner first checks sharing authority on that target, then releases
 only invitation summaries whose every target is still shareable by that actor.
-An invitation spanning Main and a child is hidden from someone who can share only
-the child, even if they could previously manage Main. Listing never returns
+An invitation spanning the Chat (`"0"`) and a child is hidden from someone who
+can share only the child, even if they could previously manage the Chat. Listing never returns
 credentials, email bodies or grant-operation receipts.
 
 The shared panel deduplicates normalized email addresses. A failed response keeps
@@ -325,10 +320,11 @@ managed through grant/participant management.
 The panel reads `/sharing/:parentId/options` for shareable scope choices. Choices use canonical grants after any required historical import.
 Choices are advisory; creating the invitation repeats current authority checks.
 
-Several independent scopes can be selected. The complete-workstream choice is
-available only when the actor can share every existing ready restricted child
-and the parent. Its targets contain the parent grant and explicit restricted
-children, without redundant Main or inheriting-child grants. `completeWorkstream`
+Several independent scopes can be selected. The complete-parent choice
+(`completeWorkstream`, the storage name) is available only when the actor can
+share every existing ready restricted child and the parent. Its targets
+contain the parent grant and explicit restricted children, without redundant
+`"0"` or inheriting-child grants. `completeWorkstream`
 asks the owner to verify current coverage immediately before committing creation;
 a newly added restricted child returns `scope_changed`, rather than accepting a
 stale incomplete selection. A committed operation still replays its original
@@ -355,7 +351,7 @@ revision and retains an operation ID for that grant/revision across retries.
 A conflict refreshes the list for a new explicit action. A retried old removal
 cannot overwrite a later re-share. Lists refresh after success; they do not
 infer current access from an old operation receipt. Removing a direct child
-grant leaves Main, parent and sibling grants intact. Inherited access can remain,
+grant leaves the `"0"`, parent and sibling grants intact. Inherited access can remain,
 and the panel states that distinction. Existing last-participant rules apply.
 
 ### Invitees in the people pickers
@@ -428,8 +424,8 @@ grant.
 - An invitee's stand-in id (`invitee:<address>`) never reaches the server. It
   carries `status: 'invited'`, and every surface that sends ids already keeps a
   membership that is not active out of what it sends.
-- The preview reads the offered conversation and no other. Main is previewed
-  only where Main is what is offered.
+- The preview reads the offered conversation and no other. The Canvas's Chat
+  is previewed only where the Chat is what is offered.
 - Nothing rendered into the email can fail the invitation. A name, a title or a
   transcript that cannot be read is left out; only the link is load-bearing.
 - Email bodies are not returned by public routes. The only stored readable copy
@@ -544,6 +540,9 @@ Canvas host is the service's only constructor, so the branch was unreachable.
 
 **Consequences:** The `parent` a Canvas host passes is the whole description
 of what is shared; a new kind of shared parent passes its own hook and link.
+The body's Thread, Channel, Breakout and Main prose (roster imports, the
+Thread's Remove/Leave, a work-stream offer) is cut or marked as history to
+match: none of it has code now.
 
 ### 2026-11-07 — A Canvas is shared through the same invitations
 
