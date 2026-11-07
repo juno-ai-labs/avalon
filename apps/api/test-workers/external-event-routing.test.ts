@@ -169,9 +169,9 @@ async function seedWorkspaceObject(): Promise<void> {
   });
 }
 
-/** A work stream watching the channel: opened, provisioned, the resource attached with its watch on. */
+/** A Canvas chat watching the channel: opened, provisioned, the resource attached with its watch on. */
 async function seedWatchingWorkstream(workstreamId: string): Promise<void> {
-  await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, workstreamId, "workstream");
+  await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, workstreamId, "canvas");
   await provisionWorkstreamObject(TEST_ENV, {
     workspaceId: WORKSPACE_ID,
     workstreamId,

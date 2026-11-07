@@ -1,4 +1,5 @@
 import { uuidV7 } from "../lib/uuid-v7";
+import { hostedConversationParentKind } from "../durable-objects/workstream-object-storage";
 import { SearchLinkSchema } from '../durable-objects/conversation-link-search';
 import {
   ElicitationSchema,
@@ -19,7 +20,6 @@ import {
   type Workstream,
   type WorkstreamDetail,
   type WorkstreamTranscriptSnapshot,
-  type WorkstreamAppearancePatch,
   type WorkstreamMessageAdmissionReceipt,
 } from "@rally/contracts";
 import type {
@@ -186,9 +186,9 @@ export class WorkstreamObjectClient {
      * identity before it runs anything. A conversation is addressed by id, so
      * this is what keeps a Space id from reaching a Channel operation — see
      * `productOperation` in `agent-loop-do.ts`. The plain constructor means
-     * a Channel; {@link WorkstreamObjectClient.forParent} names another kind.
+     * Channel; {@link WorkstreamObjectClient.forParent} names the kind.
      */
-    private readonly parentKind: ConversationParentKind = "workstream",
+    private readonly parentKind: ConversationParentKind,
   ) {}
 
   /**
@@ -224,7 +224,7 @@ export class WorkstreamObjectClient {
       // value it already has.
       {
         ...body,
-        parentKind: this.parentKind,
+        parentKind: hostedConversationParentKind(this.parentKind),
         auth: {
           sessionId: this.auth.sessionId,
           userId: this.auth.userId,
@@ -339,10 +339,6 @@ export class WorkstreamObjectClient {
    * The Channel path for this is a socket command, which a Space has no socket
    * for. Same write, same effect, reached over the product request instead.
    */
-  async setAppearance(patch: WorkstreamAppearancePatch): Promise<void> {
-    await this.request({ operation: "set_appearance", operationId: uuidV7(), patch });
-  }
-
   async attachResource(resourceId: string): Promise<WorkstreamResource> {
     return WorkstreamResourceSchema.parse(await this.request({ operation: "attach_resource", resourceId }));
   }

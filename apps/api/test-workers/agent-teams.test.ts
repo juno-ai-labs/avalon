@@ -9,11 +9,11 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000f70");
 const firstParent = "00000000-0000-7000-8000-000000000f71";
 const secondParent = "00000000-0000-7000-8000-000000000f72";
 const sidekickParent = "00000000-0000-7000-8000-000000000f73";
-const root = agentIdForAddress({ parentKind: "workstream", parentId: firstParent, substreamId: asSubstreamId("0") });
-const second = agentIdForAddress({ parentKind: "workstream", parentId: secondParent, substreamId: asSubstreamId("0") });
+const root = agentIdForAddress({ parentKind: "canvas", parentId: firstParent, substreamId: asSubstreamId("0") });
+const second = agentIdForAddress({ parentKind: "canvas", parentId: secondParent, substreamId: asSubstreamId("0") });
 const sidekick = agentIdForAddress({ parentKind: "automation", parentId: sidekickParent, substreamId: asSubstreamId("0") });
-const worker = agentIdForAddress({ parentKind: "workstream", parentId: firstParent, substreamId: asSubstreamId("00000000-0000-7000-8000-000000000f74") });
-const nested = agentIdForAddress({ parentKind: "workstream", parentId: firstParent, substreamId: asSubstreamId("00000000-0000-7000-8000-000000000f75") });
+const worker = agentIdForAddress({ parentKind: "canvas", parentId: firstParent, substreamId: asSubstreamId("00000000-0000-7000-8000-000000000f74") });
+const nested = agentIdForAddress({ parentKind: "canvas", parentId: firstParent, substreamId: asSubstreamId("00000000-0000-7000-8000-000000000f75") });
 const address = { workspaceId: WORKSPACE_ID };
 function workspace() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));

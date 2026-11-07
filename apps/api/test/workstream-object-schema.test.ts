@@ -1262,11 +1262,11 @@ describe("the Workstream Durable Object relational schema", () => {
     const store = new WorkstreamObjectStore(objectStorage(database), "worker-one", "global");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "global");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: WORKSTREAM_ID }, "global");
 
       expect(() => store.ensureIdentity({
         workspaceId: WORKSPACE_ID,
-        parentKind: "workstream",
+        parentKind: "canvas",
         parentId: asWorkstreamId("00000000-0000-7000-8000-0000000000ff"),
       }, "global")).toThrow("workstream_object_identity_mismatch");
     } finally {
@@ -1281,7 +1281,7 @@ describe("the Workstream Durable Object relational schema", () => {
     const store = new WorkstreamObjectStore(storage, "worker-one", "enterprise");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "enterprise");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: WORKSTREAM_ID }, "enterprise");
       const now = Date.now();
       const at = new Date(now).toISOString();
       activateRealtimeExecution(storage, now);
@@ -1399,7 +1399,7 @@ describe("the Workstream Durable Object relational schema", () => {
     const store = new WorkstreamObjectStore(storage, "worker-one", "global");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "global");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: WORKSTREAM_ID }, "global");
       const now = Date.now();
       const at = new Date(now).toISOString();
       activateRealtimeExecution(storage, now, { linkPersistentLoop: false });
@@ -1436,7 +1436,7 @@ describe("the Workstream Durable Object relational schema", () => {
     const store = new WorkstreamObjectStore(storage, "worker-one", "global");
     try {
       await store.waitUntilReady();
-      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID }, "global");
+      store.ensureIdentity({ workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: WORKSTREAM_ID }, "global");
       const at = "2026-08-21T03:00:00.000Z";
       activateRealtimeExecution(storage, Date.parse(at));
       store.commitRealtimeEvent(ServerSocketEventSchema.parse({
