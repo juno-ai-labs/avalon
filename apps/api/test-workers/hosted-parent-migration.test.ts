@@ -131,7 +131,7 @@ async function upgradeFromPopulatedV70(name: string): Promise<{ stub: DurableObj
 
   await runInDurableObject(stub, (_instance, state) => {
     applyDurableObjectSqliteMigrations({
-      storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+      storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 146) /* 147 drops what this reads */,
       component: "workspace_do", workerVersionId: "with-hosted-parents", now: 2,
     });
   });

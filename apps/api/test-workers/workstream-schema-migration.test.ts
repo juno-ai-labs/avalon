@@ -624,7 +624,8 @@ describe("workspace schema migration in workerd", () => {
 
       applyDurableObjectSqliteMigrations({
         storage: state.storage,
-        migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
+        // Through 146: 147 drops the tables this proof reads afterwards.
+      migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 146),
         component: "workspace_do",
         workerVersionId: "worker-current",
         now: 2_000,

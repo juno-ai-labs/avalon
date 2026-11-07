@@ -53,7 +53,7 @@ describe("migrations 97 and 98", () => {
 
     await runInDurableObject(stub, (_instance, state) => {
       applyDurableObjectSqliteMigrations({
-        storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, component: "workspace_do",
+        storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 146) /* 147 drops what this reads */, component: "workspace_do",
         workerVersionId: "with-navigation", now: 2,
       });
       const sql = state.storage.sql;
@@ -95,7 +95,7 @@ describe("migration 110", () => {
 
     await runInDurableObject(stub, (_instance, state) => {
       applyDurableObjectSqliteMigrations({
-        storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS, component: "workspace_do",
+        storage: state.storage, migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 146) /* 147 drops what this reads */, component: "workspace_do",
         workerVersionId: "with-artifact-pins", now: 2,
       });
       const sql = state.storage.sql;
