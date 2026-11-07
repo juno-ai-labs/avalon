@@ -1,3 +1,4 @@
+import { isRetiredLinkPath } from '@rally/contracts/links';
 import { TELEMETRY_ENVELOPE_SCHEMA } from '@rally/contracts/telemetry';
 import { reportXIntent } from './x-pixel-loader';
 import type {
@@ -247,7 +248,8 @@ export function normalizedTelemetryPathname(pathname: string): string {
   // The Space, Channel, Breakout and Thread forms, which the handoff page now
   // answers as gone. Still counted, so how often a retired link is followed
   // stays visible, but as one path: which of them it was no longer matters.
-  if (/^\/app\/[^/]+\/[^/]+\/(?:s|i)\/./u.test(path) || /^\/app\/(?:workspaces|workstreams)\//u.test(path)) {
+  // The same test the handoff page answers with, so the two cannot disagree.
+  if (isRetiredLinkPath(path)) {
     return '/app/:retired';
   }
   if (path.startsWith('/app/')) return '/app/:unrecognized';

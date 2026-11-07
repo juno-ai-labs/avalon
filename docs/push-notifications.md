@@ -189,7 +189,10 @@ through `conversationCanonicalUrl`: a mention or Needs input in a Canvas's
 Chat opens the Canvas, and a Sidekick's conversation or a finished run opens
 the Sidekick. A conversation with neither — a Thread or Breakout, whose
 surfaces are gone — has no link, and its delivery is skipped with the reason
-`conversation_not_linkable` rather than sent to open nothing.
+`conversation_not_linkable` rather than sent to open nothing. A push
+resolves that link once per intent, through `conversationLink`, and only after
+`notificationAllows` has let the intent through; a skip logs
+`conversation_not_linkable` with the conversation's `parent_kind`.
 
 **The trigger is the directory write.** `applyDirectoryBatch` reads each
 conversation's row either side of its common effect and names what moved in
