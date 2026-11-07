@@ -695,21 +695,16 @@ describe('single-platform desktop identity routing', () => {
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('workspace'));
   });
 
-  it.each([
-    { width: 1280, sheetOpen: false },
-    { width: 390, sheetOpen: true },
-  ])('opens the sidebar on Activity from the digest\'s link at $width px, opening the sheet only at phone width', async ({ width, sheetOpen }) => {
-    const innerWidth = window.innerWidth;
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
-    useUiStore.setState({ sidebarSection: 'channels', sidebarOpen: false });
+  it('opens the Canvases section from Activity\'s old link', async () => {
+    useUiStore.setState({ sidebarSection: 'sidekicks', sidebarOpen: false });
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
     await dispatchDeepLink('rallywithai://activity');
 
-    expect(useUiStore.getState()).toMatchObject({ sidebarSection: 'activity', sidebarOpen: sheetOpen });
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: innerWidth });
+    await waitFor(() => expect(window.location.hash).toBe('#/canvases'));
+    expect(useUiStore.getState().sidebarSection).toBe('canvases');
   });
 
   it('does not drain a cold-start OAuth callback until runtime endpoints are loaded', async () => {
@@ -1412,24 +1407,10 @@ describe('single-platform desktop identity routing', () => {
     {
       name: 'Activity',
       url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/activity',
-      // A changed organization parks the pane on `/opening`; Activity names no
-      // route of its own, so it must leave for the default landing.
+      // Activity is gone; its old link lands on the Canvases home.
       assertDestination: async () => {
-        await waitFor(() => expect(window.location.hash).toBe('#/'));
-        expect(useUiStore.getState().sidebarSection).toBe('activity');
-      },
-    },
-    {
-      name: 'Activity at phone width',
-      url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/activity',
-      width: 390,
-      // The sidebar resets the sheet when the switch remounts it and moves the
-      // route, so the link leaves the opening to that reset.
-      assertDestination: async () => {
-        await waitFor(() => expect(window.location.hash).toBe('#/'));
-        expect(useUiStore.getState()).toMatchObject({
-          sidebarSection: 'activity', sidebarOpen: false, sheetAfterNavigation: true,
-        });
+        await waitFor(() => expect(window.location.hash).toBe('#/canvases'));
+        expect(useUiStore.getState().sidebarSection).toBe('canvases');
       },
     },
     {
@@ -1451,7 +1432,7 @@ describe('single-platform desktop identity routing', () => {
     const { url, assertDestination } = testCase;
     const innerWidth = window.innerWidth;
     if ('width' in testCase) Object.defineProperty(window, 'innerWidth', { configurable: true, value: testCase.width });
-    useUiStore.setState({ sidebarSection: 'channels', sidebarOpen: false, sheetAfterNavigation: false });
+    useUiStore.setState({ sidebarSection: 'sidekicks', sidebarOpen: false, sheetAfterNavigation: false });
     const targetWorkspaceId = '00000000-0000-7000-8000-000000000030';
     bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession, expiresAt: futureExpiry });
     bridge.activateWorkspace.mockResolvedValue({

@@ -1,7 +1,7 @@
 # Desktop layout restoration
 
 Rally restores a person's local reading layout when the desktop app reopens. The
-Organization still owns which Channels, threads, Breakouts, and resources exist;
+Organization still owns which Canvases, Sidekicks and resources exist;
 the device remembers only the view the person chose.
 
 ## Where the code lives
@@ -11,31 +11,30 @@ the device remembers only the view the person chose.
 | `apps/desktop/src/renderer/lib/ui-store.ts` | Rail widths and collapse preferences. |
 | `apps/desktop/src/renderer/lib/rail-split.ts` | The even split an attachment or artifact panel opens or restores at. |
 | `apps/desktop/src/renderer/lib/desktop-layout.ts` | Scoped local keys and artifact panel selection. `useSemanticScroll` is still exported and tested, but nothing calls it. |
-| `apps/desktop/src/renderer/components/app-shell.tsx`, `screens/workstream-landing.tsx` | Last route save and directory-checked startup restoration. |
-| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Artifact panel selection per Channel or Breakout. |
+| `apps/desktop/src/renderer/components/app-shell.tsx`, `screens/landing.tsx`, `lib/landing.ts` | Last route save and startup restoration. |
+| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Artifact panel selection per conversation. |
 | `apps/desktop/src/main/artifact-window-state.ts`, `main-window-state.ts`, `main/index.ts` | Native artifact window registry and the display clamp shared with the main window. |
 | `apps/desktop/src/renderer/App.tsx` | Fresh content authorization for detached windows after sign-in. |
 
 ## How it works
 
-The renderer keeps the sidebar's width, its open section
-(`rally.sidebar-section`) and the Threads sort (`rally.sidebar-thread-sort`),
-the width of a thread beside its Channel (`thread-width`) and of a breakout
-beside its thread (`breakout-width`) in local storage. The Space filter
-(`rally.sidebar-space-filter`) is no longer read; the sidebar has no Spaces to
-filter by. The sidebar no longer collapses, so there is no collapsed state to
-keep. **The sidebar's scroll position is not restored**: the old sidebar kept
-the first visible row by id (`useSemanticScroll`), and the new Threads,
-Channels and Activity lists do not call it, so each opens at its top. The
-selected artifact panel is scoped to a thread and Breakout address; its resource is looked up in the freshly loaded
-conversation before the panel is drawn.
+The renderer keeps the sidebar's width and its open section
+(`rally.sidebar-section`, `canvases` or `sidekicks`) in local storage. Keys
+written before the 2026-11 cutover are no longer read: the Threads and Channels
+sorts (`rally.sidebar-thread-sort`, `rally.sidebar-channel-sort`), the Space
+filter (`rally.sidebar-space-filter`), and the widths of a thread beside its
+Channel (`thread-width`) and of a Breakout beside its thread
+(`breakout-width`). The sidebar no longer collapses, so there is no collapsed
+state to keep. **The sidebar's scroll position is not restored**: neither list
+calls `useSemanticScroll`, so each opens at its top. The selected artifact
+panel is scoped to a conversation (`artifact-panel:<conversation>`, a Canvas's
+Chat); its resource is looked up in the freshly loaded conversation before the
+panel is drawn.
 
 Every attachment and artifact opens its panel at an even split with the
 conversation (`openRailAtEvenSplit`, called from `openPanel`). **No panel
 resizes the window**: the panel and the conversation share the main pane, and
-the split is half of it, in the desktop app and a browser tab alike. A
-Breakout taking over its Channel's panel splits the same pane, the room kept
-for the outgoing panel included.
+the split is half of it, in the desktop app and a browser tab alike.
 
 **The panel never floats over the conversation.** At any width above the phone
 layout (641px and up) the main pane gives up the panel's width and the panel
@@ -57,22 +56,21 @@ with no stored width restores at the even split, the same width a click gives. D
 edge resets it to the even split it opened at; unlike the opening, the reset is
 the person's own act, so it is saved as the conversation's width like a drag.
 
-Every draggable edge, the sidebar's, the right panel's, and the
-split-conversation divider's, takes the same hit width,
-`--resize-hit-size` in `packages/ui/src/styles/app.css`. The sidebar's is
-centred on its line. The panel's and the divider's sit inside the panel or
-Breakout and reach only 2px over the conversation, so the transcript's
+Every draggable edge, the sidebar's and the right panel's, takes the same hit
+width, `--resize-hit-size` in `packages/ui/src/styles/app.css`. The sidebar's
+is centred on its line. The panel's sits inside the panel and reaches only 2px
+over the conversation, so the transcript's
 scrollbar beside them stays draggable. A panel holding a live site or a
 browser page is the exception: its native view covers the panel's body and
 takes the pointer from anything under it, so there the target reaches over
 the conversation instead and covers the scrollbar's last few pixels.
 
-The shell records Channel routes (`/channels/:id`, with or without an open
-thread) and lone thread routes (`/workstreams/:id`), including a breakout
-query; it omits transient search-result turn and sequence parameters. The root
-landing reopens the saved route unless a leaving screen named its thread; a
-thread that has gone shows its own unavailable state. Otherwise it opens the
-first pinned Channel, then General, then the first Channel A–Z.
+The shell records the Canvas and Sidekick routes (`/canvases`, `/canvases/:id`,
+`/sidekicks`, `/sidekicks/:id`) as `last-route`, without a query. The root
+landing reopens the saved route when it is one of those (`restorableRoute`); a
+Canvas or Sidekick that has gone shows its own unavailable state. Otherwise,
+including a Channel or Thread route saved before the cutover, it opens
+`/canvases`.
 
 Each detached artifact window has a local main-process record with resource
 identity, version, title, normal bounds, and display ID. Moving or resizing
@@ -90,8 +88,9 @@ has gone away.
 ## Invariants
 
 - Local state is a view preference, never permission to read a resource. A
-  restored route waits for the directory; a detached window gets current
-  authorized content from the API before it is created.
+  restored route opens a screen that reads its own subject and shows the
+  unavailable state when the reader cannot open it; a detached window gets
+  current authorized content from the API before it is created.
 - Single-use site URLs and generated preview bytes never enter the window
   registry. Persisting either would reopen stale content or retain a credential.
 - A window's state belongs to one person and Organization. Showing another
@@ -117,7 +116,7 @@ the windows the person left open.
 
 ## Testing
 
-`workstream-landing.test.tsx` checks route restoration and the landing order;
+`screens/landing.test.tsx` checks route restoration;
 `desktop-layout.test.tsx` checks the unused semantic row hook;
 `artifact-window-state.test.ts` checks the local registry and monitor clamp;
 `rail-split.test.ts` checks the width a panel opens at.
@@ -125,6 +124,26 @@ The desktop acceptance check opens, moves, quits, and relaunches real Electron
 windows, and checks that rail positions and panels return visibly.
 
 ## Changelog
+
+### 2026-11-07 — The landing reopens a Canvas or Sidekick, or the Canvases home
+
+**What changed:** `last-route` is written only for Canvas and Sidekick routes
+and either home, and the landing reopens it or opens `/canvases`. The Channel
+fallback chain (first pinned Channel, General, A–Z) and the
+directory-checked restore are gone, and the Threads and Channels sorts and the
+`thread-width` and `breakout-width` keys are no longer read.
+
+**Why:** Plan step B-1 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+Channels, Threads and Breakouts are deleted, so a saved route naming one has
+nothing to reopen, and the pane widths for a thread beside its Channel and a
+Breakout beside its thread describe panes that no longer exist. The restore no
+longer waits on a directory because the Canvas and Sidekick screens each read
+their own subject and show the unavailable state themselves.
+
+**Consequences:** Old keys stay in a device's local storage, unread and
+harmless; nothing removes them. A route added to the shell is restored only
+once `restorableRoute` admits it.
 
 ### 2026-10-18 — A restored panel nobody resized opens at the even split
 

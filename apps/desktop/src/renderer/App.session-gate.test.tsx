@@ -54,8 +54,8 @@ vi.mock('./screens/onboarding', () => ({
   SignInScreen: () => <div>sign in screen</div>,
 }));
 vi.mock('./components/app-shell', () => ({ AppShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
-vi.mock('./screens/channel', () => ({ ChannelScreen: () => <div>channel screen</div> }));
-vi.mock('./screens/workstream', () => ({ WorkstreamScreen: () => <div>workstream</div> }));
+vi.mock('./screens/canvas', () => ({ CanvasScreen: () => <div>canvas screen</div> }));
+vi.mock('./screens/canvases-home', () => ({ CanvasesHomeScreen: () => <div>canvases home</div> }));
 vi.mock('./screens/automation', () => ({ AutomationScreen: () => <div>automation</div> }));
 vi.mock('./screens/workspace-settings', () => ({
   WorkspaceSettingsScreen: ({ workspace }: { workspace: { name: string; timezone: string } }) => (
@@ -175,9 +175,8 @@ describe('SessionGate identity-first ordering', () => {
     expect(sessionState.api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
     expect(screen.getByText('Opening organization…')).toBeVisible();
     await act(async () => { finishProfile(profile); });
-    // The landing opens a Channel, so it waits on the Channel list the socket
-    // has not delivered here; the thread sockets above were warmed regardless.
-    expect(await screen.findByText('Opening channels…')).toBeVisible();
+    // The landing opens the Canvases home; the sockets above were warmed regardless.
+    expect(await screen.findByText('canvases home')).toBeVisible();
     expect(sessionState.api.getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
     expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6);
     expect(sessionState.api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
@@ -234,8 +233,8 @@ describe('SessionGate identity-first ordering', () => {
   });
 
   it.each([
-    ['/channels/00000000-0000-7000-8000-00000000a001', 'channel screen'],
-    ['/workstreams/00000000-0000-7000-8000-000000000031', 'workstream'],
+    ['/canvases/00000000-0000-7000-8000-00000000a001', 'canvas screen'],
+    ['/sidekicks/00000000-0000-7000-8000-000000000031', 'automation'],
   ])('preserves explicit route %s', async (route, destination) => {
     window.history.replaceState({}, '', `/#${route}`);
     sessionState.session = {
@@ -245,6 +244,24 @@ describe('SessionGate identity-first ordering', () => {
     renderGate();
     expect(await screen.findByText(destination)).toBeVisible();
     expect(window.location.hash).toBe(`#${route}`);
+  });
+
+  it.each([
+    '/channels/00000000-0000-7000-8000-00000000a001/threads/00000000-0000-7000-8000-00000000a002',
+    '/spaces/00000000-0000-7000-8000-00000000a001',
+    '/workstreams/00000000-0000-7000-8000-000000000031?substream=2',
+    '/projects/launch',
+    '/activity',
+    '/artifacts',
+  ])('opens the Canvases home from the removed route %s', async (route) => {
+    window.history.replaceState({}, '', `/#${route}`);
+    sessionState.session = {
+      ...identitySession,
+      workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' },
+    };
+    renderGate();
+    expect(await screen.findByText('canvases home')).toBeVisible();
+    expect(window.location.hash).toBe('#/canvases');
   });
 
   it('does not poll members while the WorkspaceDO socket owns invalidation', async () => {
@@ -287,7 +304,7 @@ describe('SessionGate identity-first ordering', () => {
       currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    expect(await screen.findByText('workstream')).toBeVisible();
+    expect(await screen.findByText('canvases home')).toBeVisible();
 
     const retryAttempt = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 60_100);
     expect(retryAttempt).not.toBe(firstAttempt);

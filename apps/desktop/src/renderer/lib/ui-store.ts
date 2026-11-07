@@ -1,17 +1,12 @@
 import { create } from 'zustand';
 
-/** The general channel context rail remains retired; artifact reading uses the slot directly. */
-export const CONTEXT_SIDEBAR_ENABLED = false;
-
 export type RailVariant = 'context' | 'browser';
-/** How the sidebar orders the Channels nobody pinned. */
-export type SidebarChannelSort = 'alphabetical' | 'recent' | 'needs_you';
 /**
- * Which list the sidebar's section switcher shows. `canvases` and `sidekicks`
- * are the sections the rail switches to at cutover (plan step B-1); until then
- * nothing in the rail selects them.
+ * Which list the sidebar's rail shows. A section stored before the 2026-11
+ * cutover (`channels`, `threads`, `pinned`, `artifacts`, `activity`) reads as
+ * the default, Canvases.
  */
-export type SidebarSection = 'pinned' | 'channels' | 'threads' | 'artifacts' | 'activity' | 'canvases' | 'sidekicks';
+export type SidebarSection = 'canvases' | 'sidekicks';
 /** The panel occupying the right sidebar slot. */
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
@@ -28,10 +23,6 @@ interface UiState {
   sheetAfterNavigation: boolean;
   sidebarWidth: number;
   sidebarSection: SidebarSection;
-  /** How the Threads tab orders the threads nobody pinned; Recent until changed. */
-  threadSort: SidebarChannelSort;
-  /** How the Channels tab orders the Channels nobody pinned; A–Z until changed. */
-  channelSort: SidebarChannelSort;
   railOpen: boolean;
   /** The open panel is expanded over its conversation, taking the whole pane. */
   railExpanded: boolean;
@@ -44,8 +35,6 @@ interface UiState {
   setSheetAfterNavigation: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
   setSidebarSection: (section: SidebarSection) => void;
-  setThreadSort: (sort: SidebarChannelSort) => void;
-  setChannelSort: (sort: SidebarChannelSort) => void;
   openRail: (variant?: RailVariant) => void;
   closeRail: () => void;
   setRailExpanded: (expanded: boolean) => void;
@@ -72,8 +61,6 @@ import { SINGLE_SIDEBAR_DEFAULT_WIDTH } from '@rally/ui/lib/sidebar-geometry';
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
 const SIDEBAR_SECTION_STORAGE_KEY = 'rally.sidebar-section';
-const THREAD_SORT_STORAGE_KEY = 'rally.sidebar-thread-sort';
-const CHANNEL_SORT_STORAGE_KEY = 'rally.sidebar-channel-sort';
 
 /** A device preference read once; storage that throws or holds junk reads as the fallback. */
 function loadPreference<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
@@ -139,9 +126,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
   sheetAfterNavigation: false,
   sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
-  sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['pinned', 'channels', 'threads', 'artifacts', 'activity', 'canvases', 'sidekicks'], 'channels'),
-  threadSort: loadPreference<SidebarChannelSort>(THREAD_SORT_STORAGE_KEY, ['alphabetical', 'recent', 'needs_you'], 'recent'),
-  channelSort: loadPreference<SidebarChannelSort>(CHANNEL_SORT_STORAGE_KEY, ['alphabetical', 'recent', 'needs_you'], 'alphabetical'),
+  sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['canvases', 'sidekicks'], 'canvases'),
   railOpen: false,
   railExpanded: false,
   railVariant: 'context',
@@ -159,14 +144,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   setSidebarSection: (sidebarSection) => {
     savePreference(SIDEBAR_SECTION_STORAGE_KEY, sidebarSection);
     set({ sidebarSection });
-  },
-  setThreadSort: (threadSort) => {
-    savePreference(THREAD_SORT_STORAGE_KEY, threadSort);
-    set({ threadSort });
-  },
-  setChannelSort: (channelSort) => {
-    savePreference(CHANNEL_SORT_STORAGE_KEY, channelSort);
-    set({ channelSort });
   },
   openRail: (railVariant = 'context') => set({ railOpen: true, railVariant, inspector: null }),
   // The detail view is cleared when the rail is next opened rather than as it
