@@ -400,7 +400,7 @@ SQL joins.
   full rest outright. `decision` records the outcome including `kept`, because
   knowing the loop looked is what separates a description that still fits from one
   nothing has examined. See
-  [`workstream-naming.md`](workstream-naming.md) (retired).
+  [`workstream-descriptions.md`](workstream-descriptions.md) (retired).
 - `workstream.scope` answers who may read a work stream, in the same
   `personal`/`workspace` vocabulary `notes.scope` uses. Privacy is a declared
   property of the row rather than a rule each caller has to remember. The

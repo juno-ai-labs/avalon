@@ -375,7 +375,7 @@ identity, scheduling and message ports resolve to the Breakout, and the window
 it reads and the row it rewrites appear to be the Breakout's own.
 
 **Why it is suspicious.** The comment and the resolution rule disagree, and
-[`workstream-naming.md`](workstream-naming.md) (retired) says both that "the
+[`workstream-descriptions.md`](workstream-descriptions.md) (retired) said both that "the
 loop below only reads Main" and that "a Breakout's run settlement writes one
 from its first message while it is still empty". Either Main's description is
 never re-evaluated from Breakout activity (a gap the loop's `rest_until` would

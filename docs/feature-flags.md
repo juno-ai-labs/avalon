@@ -108,15 +108,18 @@ Admission and ranking get separate flags because admission turns connector
 activity into prompts while ranking orders them per user, and pinning one should
 not move the other.
 
-The description loop is the one role whose default is most likely to want
-raising. It reads a window of up to 600 messages and decides whether a work
-stream's purpose has moved, which is a harder judgment than the classifiers it
-shares a default with — see
-[`workstream-naming.md`](workstream-naming.md) (retired). Retarget the flag
-rather than changing the shared `OPENROUTER_STRUCTURED_MODEL` variable, which
-would move the classifiers with it.
+The `workstream_description` role has no caller. The description loop that read
+it was deleted in plan step C-2 with the Thread naming pass, and the role and
+its key, `agent-model-workstream-description`, stay in the catalog only until
+that key is retired in Flagship, as
+[`workstream-naming.md`](workstream-naming.md) records. Retargeting the flag
+changes nothing. The loop read a window of up to 600 messages to judge whether
+a Thread's purpose had moved, which is why it once wanted a stronger default
+than the classifiers it shared one with;
+[`workstream-descriptions.md`](workstream-descriptions.md) (retired) keeps its
+changelog.
 
-Naming sits at the other end: it relabels one request in a single turn, runs
+Naming sits at the cheap end: it relabels one request in a single turn, runs
 while somebody watches for the result, and asks for no reasoning at all, so the
 smallest classifier model is the right default and latency is the thing a
 retarget would spend.
@@ -696,7 +699,7 @@ what they do with the model they are handed:
 | The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
 | Why **Debug enabled** crosses no trust boundary | [`security.md`](security.md) |
 | Why `userPlatformId` is the stable per-person id | [`regionalization.md`](regionalization.md) |
-| The description loop that most wants its default raised | [`workstream-naming.md`](workstream-naming.md) (retired) |
+| The retired description loop's changelog | [`workstream-descriptions.md`](workstream-descriptions.md) (retired) |
 | Provisioning credentials and the release health gate | [`runbook.md`](runbook.md) |
 
 A subsystem that wants a rollout adds a flag here and reads it through the

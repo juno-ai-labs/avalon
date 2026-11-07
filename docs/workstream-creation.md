@@ -815,7 +815,7 @@ accepts a message and the object that stores it cannot drift apart again.
 **Consequences:** Truncation was considered and rejected: a silently shortened
 message is one whose author does not know what Rally read. Raising the
 description to match the message was rejected for the reason
-[`workstream-naming.md`](workstream-naming.md) (retired)
+[`workstream-descriptions.md`](workstream-descriptions.md#2026-08-24--the-provisional-description-is-the-opening-line) (retired)
 records — it is a sidebar line and a classifier input backed by a 4,000-character
 column CHECK, not a place to put a paste. A create path added later gets the
 guard by registering the middleware; a bound added to a composed message
