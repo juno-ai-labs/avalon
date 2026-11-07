@@ -13,9 +13,9 @@ help/
   01-getting-started/
     index.md                     -> /help/getting-started/          (chapter opener)
     01-install-rally.md          -> /help/getting-started/install-rally/
-    02-your-first-channel.md     -> /help/getting-started/your-first-channel/
-    images/first-channel.png     (only published if a page uses it)
-  02-spaces-and-channels/
+    05-your-first-canvas.md      -> /help/getting-started/your-first-canvas/
+    images/first-canvas.png      (only published if a page uses it)
+  02-canvases/
     ...
 ```
 
@@ -26,7 +26,9 @@ help/
 - The number only sets the order and never shows up in a URL. Readers see
   chapters counted 1, 2, 3 and pages as 3.1, 3.2, whatever the folder numbers
   are, so leave gaps (`10-`, `20-`) if you expect to slot things in.
-- Renaming a file changes its URL. Do it only when you mean it.
+- Renaming a file changes its URL. Do it only when you mean it, and add a 301
+  for the old address (and its `.md` copy) to `apps/site/public/_redirects` in
+  the same change, because old links live on in emails, Slack and search.
 
 ## Front matter
 
@@ -65,7 +67,7 @@ The alert kinds are `NOTE`, `TIP`, `IMPORTANT`, `WARNING` and `CAUTION`.
   page's heading. Start sections at `##`. The right-hand outline lists every
   `#`, `##` and `###`.
 - **Link to other pages by their file**, relatively, the way GitHub would:
-  `[Sidekicks](../05-sidekicks/index.md)` or `[schedules](02-schedules.md#weekly)`.
+  `[Sidekicks](../03-sidekicks/index.md)` or `[schedules](02-schedules.md#weekly)`.
   The build rewrites these into site URLs, and fails if the file or the heading
   doesn't exist. Heading anchors are the heading text lowercased with spaces as
   hyphens, as on GitHub.
@@ -101,14 +103,16 @@ Write like a person who likes the reader and has used the product a lot.
 - **Plain words.** The reader is smart and not an engineer. Say "the agent
   reads your Linear issues", not "the connector exposes Linear's tools via MCP".
   If a technical word is the only accurate one, explain it the first time.
-- **Short sentences, active voice, second person.** "Click **New Channel**", not
-  "A new channel can be created by clicking".
+- **Short sentences, active voice, second person.** "Click **New Canvas**", not
+  "A new canvas can be created by clicking".
 - **Be funny, a little.** A dry aside or a dad joke now and then, never two in a
   row, never in a warning or anything about data, privacy, money or access.
   The joke has to be about the thing on the page.
 - **Name things exactly as the app does.** Bold UI labels: **Settings →
-  Connections**. Use today's names: Organization, Channel, Thread, Breakout,
-  Sidekick.
+  Connections**. Use today's names: Organization, Canvas, Sidekick, run,
+  Comments, Pinned, Needs input. Channels, Threads, Breakouts, Spaces and
+  Activity were removed; mention them only in the past tense, to tell a reader
+  where something went.
 - **Say what happens, then why it matters.** Every feature gets: what it is,
   why you'd want it, how to do it, and what to watch out for.
 

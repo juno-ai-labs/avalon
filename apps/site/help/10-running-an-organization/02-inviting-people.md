@@ -14,7 +14,7 @@ Only owners and administrators can invite people. Members do not see the
 > [!NOTE]
 > This page is about bringing someone into the whole Organization. To let a
 > client into one conversation and nothing else, share that conversation with
-> them instead, as described in [Sharing with people outside your Organization](../03-spaces-and-breakouts/05-sharing-with-guests.md).
+> them instead, as described in [Sharing with people outside your Organization](../02-canvases/09-sharing-with-guests.md).
 
 ## Send an invitation
 

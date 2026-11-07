@@ -3,14 +3,14 @@ title: Memory and coming back later
 description: Rally can remember things across conversations, keep running lists, and set itself a reminder to continue later.
 ---
 
-Inside one Thread, Rally already remembers the conversation. This page is
+Inside one Canvas, Rally already remembers the conversation. This page is
 about the things that last longer than that: facts Rally keeps from one
 conversation to the next, lists it keeps up to date between runs, and
 reminders it sets itself to come back and finish a job.
 
 ## Memory
 
-Without memory, you would tell Rally in every new Thread that your financial
+Without memory, you would tell Rally in every new Canvas that your financial
 year starts in April, that you like summaries as bullet points, and that "the
 board" means four specific people. With memory, you tell it once.
 
@@ -49,12 +49,10 @@ Rally picks the narrowest one that fits, and you can tell it which you mean.
 
 | Kept for | Used by | Example |
 | --- | --- | --- |
-| **This Thread** | Rally in this Thread only | "In this Thread, amounts are in euros." |
+| **This Canvas** | Rally in this Canvas only | "In this Canvas, amounts are in euros." |
 | **A Sidekick** | That Sidekick's future runs | "Already reported the outage on 2 May." |
-| **You** | Rally when it is working for you, in any Thread | "I am in the London office." |
+| **You** | Rally when it is working for you, in any Canvas | "I am in the London office." |
 | **The Organization** | Rally for everyone in the Organization | "Our financial year starts on 1 April." |
-
-There is no memory kept for a whole Channel.
 
 Anyone can ask Rally to remember things for themselves. Only owners and
 administrators can have Rally save a memory for the whole Organization.
@@ -106,14 +104,14 @@ does not keep secrets or whole copies of the original messages in them, only
 what it needs to keep track.
 
 Sidekicks themselves are covered in
-[Where a Sidekick's results go](../07-sidekicks/05-where-results-go.md).
+[Where a Sidekick's results go](../03-sidekicks/07-where-results-go.md).
 
 ## Coming back later: scheduled wake-ups
 
 Some jobs cannot be finished now. The deploy has not finished. The client has
 not replied. The recap should go out on Friday, and it is Tuesday. For these,
 Rally can set itself a reminder and pick the work back up later, in the same
-Thread.
+Canvas.
 
 Ask in plain words:
 
@@ -126,7 +124,7 @@ wake-up**. You can ask what is waiting ("What wake-ups have you got
 scheduled?") and cancel one ("Cancel the Friday recap"), and you will see
 **Checking scheduled wake-ups** and **Cancelling a wake-up**.
 
-When the time comes, Rally starts a new run in the Thread with the note it
+When the time comes, Rally starts a new run in the Canvas with the note it
 wrote itself. It first checks whether the conversation has already settled the
 matter. If someone already sent the recap, it says so briefly rather than
 sending it twice.
@@ -137,7 +135,7 @@ sending it twice.
   yours. Say "London time" or "Pacific" if you mean somewhere else.
 - **At least a minute, at most a year.** A wake-up has to be at least 60
   seconds away and no more than a year away.
-- **Up to 20 waiting per Thread.** If a Thread already has 20, one has to be
+- **Up to 20 waiting per Canvas.** If a Canvas already has 20, one has to be
   cancelled before Rally can add another.
 - **Rally does not put things off.** It will not schedule a wake-up for work it
   can finish now. Patience is a virtue, but not one Rally needs at 10 a.m. on a
@@ -149,6 +147,6 @@ sending it twice.
 > [!TIP]
 > A wake-up is a one-off. For something that should happen every Friday, not
 > only this Friday, make a Sidekick with a schedule instead. See
-> [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md).
+> [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md).
 
 Next: [Helpers, other conversations and receipts](06-helpers-and-receipts.md).

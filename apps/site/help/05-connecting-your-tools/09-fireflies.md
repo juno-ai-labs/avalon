@@ -15,7 +15,7 @@ With Fireflies connected, Rally can:
 
 The tools of a personal connection come from Fireflies itself, so the list can change without a Rally update, and some of them change or share meetings. Rally does not ask before each action, so be as clear about sharing as you would be with a colleague.
 
-A new personal connection does not start Sidekicks when a meeting is processed. Only an older Organization connection (see below) does that. See [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md).
+A new personal connection does not start Sidekicks when a meeting is processed. Only an older Organization connection (see below) does that. See [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md).
 
 ## Connecting
 

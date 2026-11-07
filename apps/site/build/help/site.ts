@@ -152,7 +152,7 @@ function llmsIndex(site: HelpSite): string {
     '',
     `> ${site.home.frontMatter.description}`,
     '',
-    'Rally is a desktop app where people and AI agents work together in Spaces, Channels and Breakouts. This is its user manual, written as a book: chapters run from installing Rally to running Sidekicks across an Organization.',
+    'Rally is a desktop app where people and AI agents work together in Canvases and Sidekicks. This is its user manual, written as a book: chapters run from installing Rally to running Sidekicks across an Organization.',
     '',
     `Every page is Markdown at the URL listed below, and any page URL answers \`Accept: text/markdown\` with the same Markdown. Each chapter has its own index at /help/<chapter>/llms.txt. The whole manual in one file: ${SITE_ORIGIN}/help/llms-full.txt`,
     '',

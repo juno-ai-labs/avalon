@@ -16,10 +16,10 @@ The symbols are the ones on a Mac keyboard: <kbd>⌘</kbd> is Command,
 | Keys | What they do |
 | --- | --- |
 | <kbd>⌘</kbd> <kbd>,</kbd> | Open [Settings](01-the-settings-window.md). |
-| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>F</kbd> | Open **Search organization**, to find a message, link, artifact or file. See [Search and links](../03-spaces-and-breakouts/06-search-and-links.md). |
+| <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>F</kbd> | Open **Search organization**, to find a message, link, artifact or file. See [Search and links](../02-canvases/11-search-and-links.md). |
 | <kbd>⌘</kbd> <kbd>W</kbd> | Close the front window. |
 | <kbd>⌘</kbd> <kbd>Q</kbd> | Quit Rally. (Closing the window does not; see [Rally on your Mac](03-rally-on-your-mac.md#closing-the-window-is-not-quitting).) |
-| <kbd>Esc</kbd> | In the Settings and Sidekicks windows, close the window, as long as nothing else is open and you are not mid-way through typing. |
+| <kbd>Esc</kbd> | In Settings, close it, as long as nothing else is open and you are not mid-way through typing. |
 
 ## In the search pop-up
 
@@ -42,13 +42,13 @@ straight over it.
 
 ## In the message box
 
-These work in the message box of any Thread or Breakout, and in a Channel's
-message box when you start a new Thread. [The message box](../02-working-in-a-channel/01-the-message-box.md)
+These work in the message box of any Canvas or Sidekick conversation, and in
+the **Start from a prompt** box. [The message box](../02-canvases/02-the-message-box.md)
 covers lists, mentions and slash commands in more detail.
 
 | Keys | What they do |
 | --- | --- |
-| <kbd>Return</kbd> | Send the message. In a Channel's message box, start the Thread; on a new Breakout's screen, create the Breakout. |
+| <kbd>Return</kbd> | Send the message. In the **Start from a prompt** box, start the Canvas. |
 | <kbd>⇧</kbd> <kbd>Return</kbd> | Start a new line without sending. |
 | <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>8</kbd> | Turn the line, or the selected lines, into a bulleted list. |
 | <kbd>⌘</kbd> <kbd>⇧</kbd> <kbd>7</kbd> | Turn them into a numbered list. |
@@ -70,7 +70,7 @@ the message half-written.
 ## Answering Rally's questions
 
 When Rally stops to ask you something with a card of options (see
-[While Rally works](../02-working-in-a-channel/03-while-rally-works.md)):
+[While Rally works](../02-canvases/04-while-rally-works.md)):
 
 | Keys | What they do |
 | --- | --- |
@@ -114,17 +114,17 @@ With a tab button selected, <kbd>←</kbd> and <kbd>→</kbd> move between tabs,
 | <kbd>Return</kbd>, on a panel's edge | Put the right-hand panel back to its usual width. |
 
 Pins are reordered by dragging; there is no key for it. See
-[Arranging your Threads](../03-spaces-and-breakouts/02-arranging-channels.md#pinning).
+[The Canvases list](../02-canvases/01-what-a-canvas-is.md#the-canvases-list).
 
-## In a title pill's menu
+## In a header pill's menu
 
-Once you have clicked a Thread's or Breakout's name to open its menu:
+Once you have clicked a Canvas's name to open its menu:
 
 | Keys | What they do |
 | --- | --- |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Move through the menu's items. |
 | <kbd>Tab</kbd> | Move through everything in the menu, including its search box and **Add** buttons. |
-| <kbd>Esc</kbd> or <kbd>←</kbd> | In **People**, **Sidekicks**, **Breakouts** or **More**, go back to the top of the menu. At the top, <kbd>Esc</kbd> closes it. |
+| <kbd>Esc</kbd> or <kbd>←</kbd> | In a submenu such as **More**, go back to the top of the menu. At the top, <kbd>Esc</kbd> closes it. |
 
 ## On computers other than a Mac
 

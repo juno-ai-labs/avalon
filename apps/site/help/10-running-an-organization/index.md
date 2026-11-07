@@ -33,8 +33,8 @@ The difference between an administrator and a member fits on a postcard:
   shares, and the settings that come with them, such as which GitHub
   repositories Rally may touch.
 
-Everything else, from starting Threads to building Sidekicks, is open to every
-member. That is deliberate. Rally has no approval queue for new Threads, no
+Everything else, from starting Canvases to building Sidekicks, is open to every
+member. That is deliberate. Rally has no approval queue for new Canvases, no
 form to fill in before someone connects their own Google account, and nothing
 to tick before Rally may use a tool. Every gate an administrator has to mind is
 a gate somebody is waiting at, so Rally keeps them few. You set
@@ -51,7 +51,7 @@ to a person.
 
 ## Separate worlds, checked every time
 
-First, an Organization is a separate world. Threads, Channels, Sidekicks,
+First, an Organization is a separate world. Canvases, Sidekicks,
 connections and members each belong to exactly one Organization, and nothing
 crosses between them. If you belong to two, you switch from one to the other.
 You never see both at once.
