@@ -67,7 +67,7 @@ docs/                      Product, architecture, security, setup, runbooks
    the temporary details-rail width and small-display limits. Detached artifact
    windows use the same display clamp and restore their own identity and placement
    after fresh resource authorization; [`desktop-layout.md`](desktop-layout.md)
-   owns that device-local lifecycle. Settings and the Sidekicks window also close on
+   owns that device-local lifecycle. Settings also closes on
    **Escape**, a convenience rather than the platform gesture, and only when no
    IME composition, dialog, select menu, or unsaved text field has a nearer
    claim on the keystroke; `renderer/lib/window-escape.ts` is the one predicate

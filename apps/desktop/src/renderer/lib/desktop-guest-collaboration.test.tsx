@@ -144,8 +144,8 @@ it('opens Settings in its own window on a section a guest does not have, and sho
   expect(refused()).toEqual([]);
 });
 
-it('opens the Sidekicks window without the library or creation', async () => {
-  await open('?surface=sidekicks', '#/sidekicks/new');
+it('opens the Sidekicks home without the library or creation', async () => {
+  await open('', '#/sidekicks/new');
   await screen.findByText('Sidekicks open from conversations');
   expect(screen.queryByRole('link', { name: /New Sidekick/u })).not.toBeInTheDocument();
   expect(refused()).toEqual([]);

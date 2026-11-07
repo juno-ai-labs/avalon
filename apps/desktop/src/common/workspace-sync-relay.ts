@@ -3,8 +3,8 @@ import type { WorkspaceConversationViewEvent } from '@rally/contracts/conversati
 
 /**
  * The Organization-sync relay: what the main window's workspace socket learns,
- * handed on by main to the Settings and Sidekicks windows so neither holds a
- * second socket to the same room. `docs/websocket-architecture.md` owns the mechanism.
+ * handed on by main to the Settings window so it holds no second socket to
+ * the same room. `docs/websocket-architecture.md` owns the mechanism.
  *
  * Main parses what the main window sends (`main/workspace-sync-relay.ts`); that
  * is the one untrusted edge. What main sends on is built from that parse, so

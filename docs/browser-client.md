@@ -651,8 +651,8 @@ app's main window.
 browser tab giving them the whole tab would draw a different product from the
 Mac app.
 
-**Consequences:** The Mac app's separate Sidekicks window keeps its own entry
-until plan step B-2 removes it; nothing in the browser opens it.
+**Consequences:** The Mac app's separate Sidekicks window kept its own entry
+until plan step B-2 removed it; nothing in the browser opens it.
 
 ### 2026-11-03 — A protected site's link signs you in and brings you back
 

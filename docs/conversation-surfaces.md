@@ -47,10 +47,11 @@ prompt it carries for the run.
 
 ## Sidekick navigation and attachments
 
-The main-window `/sidekicks` route renders the library in place on both hosts
-(plan step A-13); the Mac app's separate Sidekicks window keeps its own entry
-until it is removed. Opening the account item from an existing
-detail navigates that window's singleton back to the library. The sidebar recognizes both
+The main-window `/sidekicks` route renders the library on both hosts; there
+is no separate Sidekicks window (plan step B-2). The account menu's Sidekicks
+item opens `/sidekicks` with the Sidekicks section selected, and a Settings
+memory row naming a Sidekick opens it in the main window through
+`openSidekick`. The sidebar recognizes both
 legacy automation details and new Sidekick details. Attachment remove buttons
 have their own class so accessibility labels on the row do not apply button-only
 layout. Disabled email triggers hide the displayed address while preserving its
@@ -712,10 +713,8 @@ running; it does not wait for the ticket or the provider's session
 acknowledgement, and the microphone is the only thing it waits for. OS
 permission and device startup remain prerequisites for capture. On desktop,
 Chromium still asks Electron per WebContents: `allowsTrustedAudioCapture` in
-`apps/desktop/src/main/media-permission.ts` admits the main window and the
-Sidekicks window only, and only for audio. The Sidekicks composer is a different
-window from the main Rally window, so a main-only allowlist denies it with a
-permission error even when Rally is already enabled in System Settings.
+`apps/desktop/src/main/media-permission.ts` admits the main window only, and
+only for audio: every composer, a Sidekick's included, is in it.
 
 The press itself is answered before any of that. The microphone control takes
 `is-arming` while the hook is `requesting` (an arc in the button's own ink

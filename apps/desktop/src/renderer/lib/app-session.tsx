@@ -27,7 +27,6 @@ import type {
 import { accountReconnectRequired, workspaceActivationFailureCode } from '../../common/workspace-activation-error';
 import { SLACK_PERSONAL_CAPABILITIES } from './slack-personal-capabilities';
 import { RallyApi } from './api';
-import { NEW_SIDEKICK_TARGET } from '../../common/sidekicks';
 import { CollaborationSessionProvider, shellCapabilities, type ConnectorSetupCapability, type PendingConnectorOAuth } from './collaboration-session';
 export type { PendingConnectorOAuth } from './collaboration-session';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
@@ -196,7 +195,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'onDeepLink'
   | 'onSessionChanged'
   | 'openExternal'
-  | 'openSidekicks'
+  | 'openSidekick'
   | 'openSettings'
   | 'refreshSession'
   | 'reselectActiveWorkspace'
@@ -1450,11 +1449,10 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     ],
   );
 
-  const createSidekick = useCallback(() => bridge.openSidekicks(NEW_SIDEKICK_TARGET), [bridge]);
   const connectorSetup = useMemo(() => ({ pendingConnectorOAuth, setPendingConnectorOAuth,
     resourceAuthorizationAttempts, setResourceAuthorizationAttempt,
     openExternal: (url: string) => bridge.openExternal(url) }), [bridge, pendingConnectorOAuth, resourceAuthorizationAttempts, setResourceAuthorizationAttempt]);
-  return <AppSessionValueProvider value={value} connectorSetup={connectorSetup} createSidekick={createSidekick}>{children}</AppSessionValueProvider>;
+  return <AppSessionValueProvider value={value} connectorSetup={connectorSetup}>{children}</AppSessionValueProvider>;
 }
 
 /**
@@ -1462,18 +1460,16 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
  * shared surface reads. The desktop builds its value from the bridge; the
  * browser builds one over its cookie session.
  */
-export function AppSessionValueProvider({ value, connectorSetup, createSidekick, children }: PropsWithChildren<{
+export function AppSessionValueProvider({ value, connectorSetup, children }: PropsWithChildren<{
   value: AppSessionValue;
   connectorSetup: ConnectorSetupCapability | null;
-  createSidekick: (() => Promise<void>) | null;
 }>): React.JSX.Element {
-  // Starting a connection and authoring a Sidekick are a member's: their
-  // routes refuse a guest, so on either host a guest's shell is handed neither
-  // and offers neither. Existing connectors and attached Sidekicks still work.
+  // Starting a connection is a member's: its routes refuse a guest, so on
+  // either host a guest's shell is not handed it. Existing connectors still work.
   const { guest } = shellCapabilities(value);
   return <AppSessionContext.Provider value={value}>
     <CollaborationSessionProvider api={value.api} host={value.host} session={value.session}
-      connectorSetup={guest ? null : connectorSetup} createSidekick={guest ? null : createSidekick}>{children}</CollaborationSessionProvider>
+      connectorSetup={guest ? null : connectorSetup}>{children}</CollaborationSessionProvider>
   </AppSessionContext.Provider>;
 }
 
