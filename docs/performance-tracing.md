@@ -31,9 +31,9 @@ necessarily keeps apart.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `inDurableObjectPhase`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place a Rally identifier becomes an attribute name. |
-| `apps/api/src/routes/workstreams.ts`, `routes/conversations.ts` | Root spans for work-stream creation/open/message flows and substream preparation/confirmation. |
+| `apps/api/src/routes/canvases.ts`, `routes/conversations.ts` | Root spans for Canvas creation and conversation open/message flows. |
 | `apps/api/src/services/socket-service.ts` | `SocketService.upgrade`: the edge half of a socket open. |
-| `apps/api/src/durable-objects/substream-agent.ts` | The room: product operations, socket acceptance, subscription, snapshot assembly. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | `AgentLoopDO`, the room: product operations, socket acceptance, subscription, snapshot assembly. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Workspace synchronization and the released-client compatibility handler for the former parent-routed `create_message`. |
 | `apps/api/test/helpers/cloudflare-workers.ts` | The Node suite's stand-in for `tracing`, and `recordedSpans()`, which is how a Node test asserts on span names and attributes. |
 | `apps/desktop/src/renderer/lib/perf-trace.ts` | The renderer tracer, its governed diagnostic projection, and `newRequestId`. Not OpenTelemetry — see [The desktop half](#the-desktop-half). |
@@ -211,7 +211,7 @@ summed durations may exceed `initial_activations_ms`. Bind's
 `bind_plugin_rehydration_ms` now excludes a second connector authorization
 for IDs this host just checked and persisted, but still includes eligibility
 and any dynamic tool loading. `before_model_principal_ms` and `before_model_identity_ms`
-separate the D1 membership and Channel identity reads; conversation and
+separate the D1 membership and conversation identity reads; conversation and
 automation authority fields appear only when that path runs. The forced lease
 renewals expose their attempt and persistent-loop parts as
 `liveness_inference_start_*_ms` and `liveness_before_model_*_ms`.
