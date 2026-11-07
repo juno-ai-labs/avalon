@@ -1502,6 +1502,60 @@ describe("a hosted Sidekick", () => {
     });
   }
 
+  /** Two runs as the projection finds them working: one a person asked for, one a schedule started. */
+  async function workingRuns(prefix: string): Promise<{ requested: string; scheduled: string }> {
+    const requested = `00000000-0000-7000-8000-00000000${prefix}001`;
+    const scheduled = `00000000-0000-7000-8000-00000000${prefix}002`;
+    await runInDurableObject(workspaceStub(), (_instance, state) => {
+      for (const [runId, trigger] of [
+        [requested, JSON.stringify({ kind: "manual", requestedByUserId: OUTSIDER_ID })],
+        [scheduled, JSON.stringify({ kind: "schedule", scheduleId: "daily", scheduledFor: NOW })],
+      ] as const) {
+        state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
+            harness_run_id, state, summary, opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at,
+            completed_at, updated_at)
+          VALUES (?, ?, ?, ?, 1, ?, 'running', NULL, NULL, NULL, ?, ?, 1, 1, NULL, 1)`,
+          AUTOMATION_ID, runId, `notice:${runId}`, trigger, `${runId}-harness`, AUTHOR_ID, AUTHOR_ID);
+      }
+    });
+    return { requested, scheduled };
+  }
+
+  async function runNotices() {
+    return runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
+      recipient_user_id: string; notification_kind: string; workstream_id: string; payload_json: string; state: string;
+    }>(`SELECT recipient_user_id, notification_kind, workstream_id, payload_json, state FROM workstream_notification_intents
+         ORDER BY payload_json, recipient_user_id`).toArray().map((row) => ({ ...row, payload: JSON.parse(row.payload_json) as unknown, payload_json: undefined })));
+  }
+
+  it("tells the requester and the Sidekick's managers when a run needs input, and only the managers for a scheduled run", async () => {
+    await activeAutomation();
+    const { requested, scheduled } = await workingRuns("a");
+    await finishRuns([requested, scheduled], "needs_input");
+    const notice = (runId: string, recipient: string) => ({
+      recipient_user_id: recipient, notification_kind: "needs_input", workstream_id: AUTOMATION_ID, state: "delivered",
+      payload_json: undefined,
+      payload: { kind: "needs_input", sidekickId: AUTOMATION_ID, runId, sidekickName: "Manual helper", state: "needs_input",
+        reply: `Run ${runId} finished`, occurredAt: expect.any(Number) },
+    });
+    await expect.poll(runNotices, { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([
+      notice(requested, AUTHOR_ID), notice(requested, OUTSIDER_ID), notice(scheduled, AUTHOR_ID),
+    ].sort((a, b) => a.payload.runId.localeCompare(b.payload.runId)));
+  });
+
+  it("tells only the requester when a run finishes, and nobody when a scheduled run does", async () => {
+    await activeAutomation();
+    const { requested, scheduled } = await workingRuns("b");
+    await finishRuns([requested, scheduled], "failed");
+    await expect.poll(runNotices, { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([{
+      recipient_user_id: OUTSIDER_ID, notification_kind: "run_finished", workstream_id: AUTOMATION_ID, state: "delivered",
+      payload_json: undefined,
+      payload: { kind: "run_finished", sidekickId: AUTOMATION_ID, runId: requested, sidekickName: "Manual helper", state: "failed",
+        reply: `Run ${requested} finished`, occurredAt: expect.any(Number) },
+    }]);
+    void scheduled;
+  });
+
   it("asks its wizard for a review once ten runs have finished, with the counts, and not before", async () => {
     await activeAutomation();
     const runIds = await startRuns(SIDEKICK_REVIEW_RUN_FLOOR, "review-run");
