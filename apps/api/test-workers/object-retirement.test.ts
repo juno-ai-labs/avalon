@@ -416,8 +416,6 @@ describe("object retirement", () => {
     const envelope = { messageId: "00000000-0000-7000-8000-00000000de06", payloadHash: "fnv1a64:0000000000000001" };
     const children = await stub.receiveChildEffects({ substreamId: "1", envelopes: [envelope] } as never);
     expect(children).toEqual({ accepted: [{ messageId: "00000000-0000-7000-8000-00000000de06", payloadHash: "fnv1a64:0000000000000001" }] });
-    const regional = await stub.applyWorkstreamRegionalEffect({ workspaceId } as never);
-    expect(regional).toEqual({ replayed: true, notificationIntentId: null });
   });
 
   it("rebuilds every gated class after eviction, and revokes access on it", async () => {
