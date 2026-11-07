@@ -33,7 +33,7 @@ export const ConversationToolScopeSchema = z.discriminatedUnion("kind", [
 export type ConversationToolScope = z.input<typeof ConversationToolScopeSchema>;
 
 /**
- * A `conversation_post`, as the addressed conversation's SubstreamAgent takes
+ * A `conversation_post`, as the addressed conversation's AgentLoopDO takes
  * it (`appendConversationPost`): the conversation it is for, the host-derived
  * key it lands once under, and the Sidekick's post.
  */

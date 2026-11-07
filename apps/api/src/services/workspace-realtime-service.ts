@@ -141,7 +141,7 @@ function connectionPublications(pathname: string): WorkspaceSyncPublication[] {
 /**
  * Complete workspace-query invalidation map for authenticated desktop writes,
  * each with who it is news to. Workstream-local detail/feed state is also
- * pushed by SubstreamAgent; the authoritative workspace-directory topic is
+ * pushed by AgentLoopDO; the authoritative workspace-directory topic is
  * named here because the sidebar is a WorkspaceDO query the conversation
  * socket does not own.
  */

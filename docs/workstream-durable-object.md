@@ -1,13 +1,15 @@
 # Workspace, work-stream, automation, and substream Durable Objects
 
-Rally's regional stateful hierarchy is `WorkspaceDO -> {hosted Channel, Space
-and Sidekick parents} -> SubstreamAgent`. There is one `WorkspaceDO` per
-workspace, which hosts the parent authority of every Channel, Space and Sidekick
-in it, and one `SubstreamAgent` per independently addressable model context. A
-`SubstreamAgent` has a typed parent, `{kind: "workstream" | "automation" |
-"space", id}`; substream `0` is that parent's primary conversation (a work
-stream's main feed, an automation's own chat, or the idle conversation of a
-Space created before 2026-09-26),
+Rally's regional stateful hierarchy is `WorkspaceDO -> {hosted Channel, Space,
+Sidekick and Canvas parents} -> AgentLoopDO`. There is one `WorkspaceDO` per
+workspace, which hosts the parent authority of every Channel, Space, Sidekick
+and Canvas in it, and one `AgentLoopDO` (the class was `SubstreamAgent` until
+Wrangler tag v15 renamed it; much of this document still uses the old name) per
+independently addressable model context. An `AgentLoopDO` has a typed parent,
+`{kind: "workstream" | "automation" | "space" | "canvas", id}`; substream `0`
+is that parent's primary conversation (a work stream's main feed, an
+automation's own chat, a Canvas's Chat, or the idle conversation of a Space
+created before 2026-09-26),
 and every other substream is a child context under it (an automation's runs, a
 Channel's breakouts and background agents).
 
@@ -1957,6 +1959,36 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-11-07 — The conversation class is `AgentLoopDO`, and a conversation may belong to a Canvas
+
+**What changed:** The class `SubstreamAgent` is renamed `AgentLoopDO`
+(`agent-loop-do.ts`) by a Wrangler `renamed_classes` tag, v15, in the global
+and scratch configs; the test config, which starts every run empty, declares
+the new name in its v1. Every object keeps its id and its SQLite database; its
+migration ledger continues under the `substream_agent_do` component, and loop
+ids (`workstream:<parentId>:substream:<id>:loop`) and object names are
+unchanged. The `SUBSTREAM_AGENTS` binding keeps its name. Conversation
+migration 83 widens the root row's `parent_kind` CHECK to admit `canvas`,
+carrying the singleton, the three columns added after version 66 and all nine
+triggers on it across the rebuild.
+
+**Why:** The Canvases and Sidekicks decision log: a Canvas's conversation is an
+ordinary conversation object, the class is renamed because it describes a
+Breakout that no longer exists, and no new Durable Object is added.
+
+**Considered and rejected:** Renaming the `SUBSTREAM_AGENTS` binding, which is
+read in about four hundred places for no behavioral change. Renaming the
+`substream_agent_do` component key, which would split the fleet's schema
+history in the migration tracker under two keys for a schema that did not
+change.
+
+**Consequences:** The rename is irreversible once deployed; rolling back means
+a further rename tag, not removing v15. A report or a forced-migration command
+the outgoing build sends under the old class name is translated by the tracker
+and the command consumer
+([`durable-object-migration-tracking.md`](durable-object-migration-tracking.md)).
+Version 83's literal is frozen; a later widening copies it.
 
 ### 2026-10-31 — Crash repair names a program's completed nested calls
 

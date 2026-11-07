@@ -16,7 +16,7 @@ import {
   planSocketReplay,
   splitActiveStreamCheckpointText,
   conversationObjectName,
-} from "../src/durable-objects/substream-agent";
+} from "../src/durable-objects/agent-loop-do";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { unlistedResourceMetadata } from "../src/services/resource-listing";

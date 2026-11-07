@@ -23,7 +23,7 @@ export async function searchWorkspace(env: Env, auth: AuthContext, request: Sear
  * own attributes. The searcher's audience groups are read once from the
  * WorkspaceDO (`readSearchAudience`), and the index returns only rows whose
  * `audience` shares one, so nothing here admits candidates one by one and
- * nothing reads a content owner (SubstreamAgent) or R2. A failed group read
+ * nothing reads a content owner (AgentLoopDO) or R2. A failed group read
  * fails the search; it never returns an unfiltered page. Not finding something
  * is the safe failure; the page never reports which rows it left out.
  */

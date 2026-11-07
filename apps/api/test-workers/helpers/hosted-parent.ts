@@ -70,7 +70,7 @@ export function insertChannelRow(
 }
 
 /** Canonical grant setup for directory-only fixtures with no conversation source.
- * Runtime handoff fixtures provision a real SubstreamAgent instead. */
+ * Runtime handoff fixtures provision a real AgentLoopDO instead. */
 export async function seedParticipantGrants(
   env: Env, workspaceId: string, parentId: string, userIds: readonly string[], substreamId?: string,
 ): Promise<void> {

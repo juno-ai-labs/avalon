@@ -424,7 +424,7 @@ interface LocalMessageWrite {
   inserted: boolean;
 }
 
-/** A durable-loop wakeup request for the SubstreamAgent that owns execution. */
+/** A durable-loop wakeup request for the AgentLoopDO that owns execution. */
 interface WorkstreamPendingInputActivationRequest {
   kind: "activate_substream_loop";
   loopId: string;
@@ -512,7 +512,7 @@ function userFromRow(row: UserRow) {
 }
 
 /**
- * Product repository for one conversation: the `SubstreamAgent` whose storage
+ * Product repository for one conversation: the `AgentLoopDO` whose storage
  * this is.
  *
  * Every method reads or mutates only this object's normalized SQL for product
@@ -2529,7 +2529,7 @@ export class WorkstreamObjectProductService {
     return committed.result;
   }
 
-  /** Detail for the canonical transcript snapshot assembled by SubstreamAgent. */
+  /** Detail for the canonical transcript snapshot assembled by AgentLoopDO. */
   async boot(auth: AuthContext, viewers: WorkstreamDetail["viewers"] = []): Promise<{
     workstream: WorkstreamDetail;
   }> {

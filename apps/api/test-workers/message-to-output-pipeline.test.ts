@@ -3,7 +3,7 @@
 /**
  * The complete member-visible pipeline: a message goes in, something comes out.
  *
- * This drives the SubstreamAgent through its real product endpoint and direct
+ * This drives the AgentLoopDO through its real product endpoint and direct
  * room socket with real D1 session auth, and then lets the
  * real alarm execute the run. Nothing is seeded into the object by hand; every
  * row the pipeline needs is created by the pipeline.
@@ -53,7 +53,7 @@ import {
 } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import {
   capturedProviderRequests,
   capturedCompletionRequests,
@@ -263,7 +263,7 @@ beforeEach(async () => {
   // never a slow query.
 }, 30_000);
 
-function agentStub(): DurableObjectStub<SubstreamAgent> {
+function agentStub(): DurableObjectStub<AgentLoopDO> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
   ));
@@ -442,7 +442,7 @@ async function waitForLoopRelease(stub: DurableObjectStub): Promise<void> {
 }
 
 /**
- * Give one real SubstreamAgent isolate a deterministic OpenRouter boundary.
+ * Give one real AgentLoopDO isolate a deterministic OpenRouter boundary.
  *
  * The Worker test deliberately omits a selected model so unrelated pipeline
  * cases cannot reach the network. This test needs the stronger oracle: the
@@ -3255,7 +3255,7 @@ describe("a member's message travels the whole pipeline", () => {
       ).one().count), { timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS, interval: 25 }).toBe(1);
   });
 
-  it("leaves successful activation alarm ownership with the SubstreamAgent", async () => {
+  it("leaves successful activation alarm ownership with the AgentLoopDO", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
     await externallySettledRun(stub, opened.body.harnessRunId as string);

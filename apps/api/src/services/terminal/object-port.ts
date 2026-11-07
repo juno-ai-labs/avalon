@@ -18,7 +18,7 @@ import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespac
  * Builds a port for one conversation's Terminal authority; injected so callers
  * stay testable.
  *
- * `substreamId` names the conversation whose SubstreamAgent owns the sandbox
+ * `substreamId` names the conversation whose AgentLoopDO owns the sandbox
  * rows. A factory bound at plugin composition already carries the run's
  * authority substream, so its callers omit it; the lifecycle sweep, the
  * settings service, and the Daytona webhook name one explicitly because they
@@ -84,7 +84,7 @@ export function createTerminalPortFactory(
 /**
  * A Worker-side handle on one work stream's Terminal authority.
  *
- * Each method is one round trip to the owning SubstreamAgent, where the whole
+ * Each method is one round trip to the owning AgentLoopDO, where the whole
  * operation runs synchronously against the object's SQLite. Callers never see
  * SQL, a table name, or a database handle: the previous arrangement typed this
  * as `D1Database` and prepared statements naming `workstream_sandboxes`, a

@@ -27,7 +27,7 @@ function handshake(): Request {
  */
 describe("subprotocol negotiation in workerd", () => {
   it("passes a room rejection through untouched rather than rebuilding it", () => {
-    // `SubstreamAgent.connect` answers six paths with JSON and no socket —
+    // `AgentLoopDO.connect` answers six paths with JSON and no socket —
     // 426, 400, 403, 401 on replay, 409, and 500. Rebuilding one as a 101
     // throws a RangeError that no branch in the error middleware matches, so a
     // deliberate rejection would surface as an unhandled 500.

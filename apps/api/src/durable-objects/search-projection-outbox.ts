@@ -153,7 +153,7 @@ export const CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS = [
  * instead, the same pass migration 52 ran, at a cost already measured. The
  * statement is a copy of 52's rather than a shared constant: 52's text is
  * hashed into a receipt on every migrated object, and an edit to a shared
- * constant would fail every SubstreamAgent constructor in both regions.
+ * constant would fail every AgentLoopDO constructor in both regions.
  *
  * A delivered reference is recreated as pending; one still waiting keeps the
  * newer of the two revisions and becomes due now. The consumer rewrites each

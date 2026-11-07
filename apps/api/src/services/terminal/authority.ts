@@ -17,7 +17,7 @@ import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespac
  * Which conversation's Terminal a run uses.
  *
  * A sandbox belongs to one conversation of a work stream — the one whose
- * `SubstreamAgent` holds its `terminal_workspace` row — and a run uses the
+ * `AgentLoopDO` holds its `terminal_workspace` row — and a run uses the
  * sandbox of the conversation it works *for*. For an ordinary run that is its
  * own conversation. All conversations under one Sidekick use its authoring
  * conversation (substream 0). For a background agent in a work stream it is
@@ -43,7 +43,7 @@ export interface TerminalRunScope {
   backgroundAgent: boolean;
   /** The conversation this run executes in. */
   runSubstreamId: string;
-  /** The conversation whose `SubstreamAgent` owns the sandbox this run uses. */
+  /** The conversation whose `AgentLoopDO` owns the sandbox this run uses. */
   authoritySubstreamId: string;
 }
 
