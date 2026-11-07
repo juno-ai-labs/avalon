@@ -407,6 +407,15 @@ recreates it without copying rows. There is no authoritative answer for which
 Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
+## Canvas and Sidekick pins in the client
+
+A Canvas's or a Sidekick's pin is its row's `pinnedPosition`, not an entry in
+the `pins` list, so its section reads its Pinned group from its own list: the
+rows with a position, in position order, above every other row. Dragging an
+unpinned row into the group pins it (`useRowPinDrop`), at the end of the
+group; a row's context menu pins and unpins it. The rows' order within the
+group is not changed from the client yet.
+
 ## Changelog
 
 ### 2026-11-07 — A Canvas and a Sidekick can be pinned
@@ -426,6 +435,14 @@ drop its sidebar payload.
 
 **Consequences:** A new pinnable kind rides its own list's rows, not `pins`.
 See [`canvases.md`](canvases.md#the-canvas-list).
+
+The client pins a Canvas through `POST /canvases/:id/pin`: from its row's
+context menu, its title menu, or by dragging the row into the Canvases
+section's Pinned group. That drag is `useRowPinDrop`
+(`components/navigation-rows.tsx`), the list-agnostic sibling of `usePinDrop`
+for a list whose pins are a flag on its own rows; it pins at the end of the
+group, since no route exposes `reorderSidebarPins` yet, so the group does not
+offer reordering.
 
 ### 2026-10-17 — Generated artifacts can be pinned
 

@@ -31,6 +31,11 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
 | `apps/api/src/services/authorization-service.ts` | A Canvas conversation's and its artifacts' canonical read decision, from `hostedConversationAuthorizationFacts`. |
+| `apps/desktop/src/renderer/screens/canvases-home.tsx` | `/canvases`: the home page — New Canvas, search, the filter chips, Live now and Recent, and the first-run "Start from a prompt" card. |
+| `apps/desktop/src/renderer/screens/canvas.tsx` | `/canvases/:id`: the Chat as a `canvas` conversation in `ConversationSurface`, its header (pill, people present, Share, menu), and opening the newest artifact in the right rail. |
+| `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Share: who can open it, for a manager; the same audience read-only for anyone else; a guest invited by email. |
+| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx` | The Canvases sidebar section: a Pinned group and every Canvas by recent activity. |
+| `apps/desktop/src/renderer/lib/canvases.ts` | The list as the socket keeps it (`useCanvasList`), the routes, a row's second line, and creating a Canvas. |
 
 ## How it works
 
@@ -261,6 +266,52 @@ socket's access class, not the person's role, so an owner or administrator who
 opens a private Canvas they are not otherwise in does not appear in its face
 pile.
 
+### In the client
+
+The desktop renderer, which the browser host also mounts, draws a Canvas from
+what the server already exposes; nothing in it is a new primitive. The rail
+does not list the section yet (plan step B-1), so `/canvases` and
+`/canvases/:id` are reached by URL.
+
+- **The list** is the `canvases` query the workspace socket fills
+  (`workspace_canvas_list`, `applyVersionedSidebarList`), read with
+  `useSocketOwnedList`; there is no list route. The home page and the sidebar
+  section group it client-side from the row's fields: Live now is a row with
+  someone other than the viewer in `presentUserIds`, Made by me is
+  `createdByUserId`, Shared with me `sharedWithMe`, From Sidekicks
+  `writerSidekickId`. A row's second line names who is there now, else its
+  last editor, else who made it.
+- **Making one** is `POST /canvases`, with the "Start from a prompt" card's
+  text as `prompt`; the client then opens the new Canvas, whose Chat already
+  holds the prompt as the creator's message.
+- **An open Canvas** is `ConversationSurface` with `parentKind: "canvas"` and
+  substream `"0"`, the same surface a Thread's Main is, so the composer,
+  annotations (a Canvas's comments), the inspector rail, its resource cards and
+  versions menu, and the per-conversation panel restore
+  (`artifact-panel:<canvas id>:0` in `lib/desktop-layout.ts`) are the ones a
+  Thread uses. With nothing saved there, the screen opens the newest artifact
+  of `GET /canvases/:id` through `openThreadResourceState`, the route state a
+  pinned artifact's row already uses; with no artifact, the rail stays closed
+  on the conversation's empty state. Closing the panel clears what was saved,
+  so the next opening shows the newest artifact again.
+- **The header** is a `TitlePillHeader` naming the Canvas, the face pile of
+  everyone else in it now (`workspace_presence`, through the surface's
+  `presentUserIds`), Share, and the pill's menu (Pin and Share).
+- **Share** offers the three visibilities and a people picker to someone the
+  detail says may manage it (`canManage`), and saves with
+  `POST /canvases/:id/audience`; anyone else sees the same audience read-only.
+  A guest is invited by email through the conversation share panel
+  (`ScopeSharingPanel`) with a `workstream` target naming the Canvas, without
+  its waiting-shares list, which a Canvas does not answer yet.
+- **Pinning** is `POST /canvases/:id/pin`, from the pill's menu, a row's
+  context menu, or dragging a row into the section's Pinned group
+  (`useRowPinDrop`). A pin lands at the end of the group: the order is
+  `reorderSidebarPins` in `WorkspaceDO`, which no route exposes yet.
+
+Not built yet, because nothing on the server answers them: renaming a Canvas
+(no route writes `canvas_directory.title`) and copying its link (the Canvas
+link form is plan step B-5).
+
 ## Invariants
 
 - **A Canvas is admitted by `canvasAdmits` and nothing else, and it is the
@@ -337,6 +388,17 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   refusal.
 - `apps/desktop/src/renderer/lib/sidebar-list-store.test.ts` — the Canvas list
   orders by its own waterline.
+- `apps/desktop/src/renderer/screens/canvases-home.test.tsx` — the home page
+  from a socket-fed list: Live now and Recent, the filters and search, the
+  prompt card and New Canvas, no create for a guest, and no empty state before
+  the list arrives.
+- `apps/desktop/src/renderer/screens/canvas.test.tsx` — the open Canvas: a
+  `canvas` conversation under its header; the newest artifact opened when
+  nothing is saved, the saved panel left to the surface's restore, the rail
+  left closed with no artifact; pinning; Share for a manager and read-only for
+  anyone else.
+- `apps/desktop/src/renderer/components/canvas-sidebar-section.test.tsx` — the
+  section's Pinned group and rows, drag to pin, unpin, and the skeleton.
 - `apps/api/test/workstream-object-schema.test.ts` — conversation migration 83
   carries a populated v82 root, every column and all nine triggers across the
   rebuild.
@@ -396,5 +458,13 @@ not the grant, is the authority for whom managers added; a writer Sidekick's
 audience is read live. A new hosted parent kind extends `HostedConversation`
 and is dispatched in `WorkspaceDO.hostedConversationParent`. Listing a Canvas's
 shares and grants is not routed yet.
+
+The client (plan step A-12) draws a Canvas with the conversation layout a
+Thread has: the Chat in `ConversationSurface` and the artifacts in the existing
+right rail, with its per-conversation restore, rather than the mockup's
+artifact-first pane with Chat and Comments tabs, which would have been the one
+new client primitive of the pivot (decision log, "An open Canvas reuses the
+conversation layout"). Its home page and sidebar section group the socket's
+list on the client from the row's own fields, so no list route was added.
 
 Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.

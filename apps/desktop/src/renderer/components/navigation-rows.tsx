@@ -1,0 +1,185 @@
+import { IconPin } from '@tabler/icons-react';
+import clsx from 'clsx';
+import { useEffect, useId, useState, type ReactNode } from 'react';
+
+import { Tip } from './primitives';
+import { SidebarSkeletonRows } from './sidebar-skeleton';
+
+/*
+ * The navigation sidebar's row primitives, shared by every list it draws: a
+ * row's layout, a section heading, and the Pinned group a row is dragged into.
+ * Nothing here knows what a row stands for; each section supplies its tiles,
+ * names and pin writes.
+ */
+
+/**
+ * The Pinned section of a tab. It is always there, because it is where a row
+ * is dragged to pin it: with nothing pinned it says so, and it wakes in the
+ * accent while a row is being dragged. The whole section, heading included,
+ * is the drop target, so a release in a gap between rows still counts.
+ */
+export function PinnedSection({ children, count, drop, heading = 'Pinned', howToPin, label, loading = false, noun, pinnedOnly = false, reorderable, target }: {
+  children: ReactNode;
+  count: number;
+  /** A row being dragged toward the section, and the slot it would take; null while none is. */
+  drop: { index: number | null } | null;
+  heading?: string;
+  /** The heading mark's tip while there is nothing to arrange, where dragging a row in is not how this kind is pinned. */
+  howToPin?: string;
+  label: string;
+  /**
+   * In the Pinned tab, where no list beside it shows its own placeholders:
+   * the rows are still being read, so placeholders stand in for them.
+   */
+  loading?: boolean;
+  noun: string;
+  /** In the Pinned tab, where no unpinned row sits beside it to be moved in. */
+  pinnedOnly?: boolean;
+  /** Whether any one kind holds two or more pins; each kind reorders on its own. */
+  reorderable: boolean;
+  target: React.HTMLAttributes<HTMLElement>;
+}): React.JSX.Element {
+  const hint = useId();
+  // How to reorder is said once, for the section; each row says only its
+  // place (`pinnedPosition`). As a per-row description it would be repeated
+  // before every title.
+  return <section aria-busy={loading || undefined} aria-describedby={reorderable ? hint : undefined} aria-label={label} className="navigation-section" {...target}>
+    <SectionHeading motionKey={pinnedOnly ? `pinned:${noun}` : 'pinned'} trailing={<PinnedMark howToPin={howToPin} reorderable={reorderable} />}>{heading}</SectionHeading>
+    {reorderable && <p className="sr-only" id={hint}>Hold Alt and press the up or down arrow to move a pinned {noun}.</p>}
+    {loading && <SidebarSkeletonRows count={Math.max(1, count)} />}
+    {!loading && count === 0 && drop?.index == null && <div className={clsx('pinned-empty-drop-surface', drop && 'is-armed')}>
+      <IconPin aria-hidden="true" size={15} stroke={1.7} />
+      <span>{pinnedOnly ? `Pin ${/^[aeiou]/u.test(noun) ? 'an' : 'a'} ${noun} to keep it here` : `Move a ${noun} here to pin it`}</span>
+    </div>}
+    {children}
+  </section>;
+}
+
+/** A pinned row's place, read after its title. */
+export function pinnedPosition(index: number, count: number): string {
+  return `Pinned, ${index + 1} of ${count}.`;
+}
+
+
+/**
+ * Where a link's own click should be left to the browser: a modifier or a
+ * button other than the main one opens it somewhere else (a new tab, in the
+ * web app), so it is not this window opening the row.
+ */
+export function opensElsewhere(event: React.MouseEvent): boolean {
+  return event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+}
+
+
+/** A placeholder row: a picture of where a dragged row would land, out of reach of focus and assistive technology. */
+export function ghostProps(ghost: boolean): React.HTMLAttributes<HTMLElement> {
+  return ghost ? { 'aria-hidden': true, tabIndex: -1 } : {};
+}
+
+
+/**
+ * A section's heading. It is a held row of the list motion, so it travels with
+ * the rows under it when a section above appears or goes, rather than being
+ * the thing seen to leave.
+ */
+export function SectionHeading({ children, motionKey, trailing }: {
+  children: ReactNode;
+  motionKey: string;
+  trailing?: ReactNode;
+}): React.JSX.Element {
+  return <div className="navigation-section-heading" data-motion-hold="" data-motion-key={`heading:${motionKey}`}>
+    <span>{children}</span>
+    {trailing && <span className="navigation-section-trailing">{trailing}</span>}
+  </div>;
+}
+
+/** The Pinned heading's pin; its tooltip says how to pin, then how to arrange once there is something to arrange. */
+export function PinnedMark({ howToPin = 'Drag a row here or right-click it to pin', reorderable }: { howToPin?: string | undefined; reorderable: boolean }): React.JSX.Element {
+  const mark = <span aria-hidden="true" className="navigation-section-mark">
+    <IconPin size={14} stroke={1.8} />
+  </span>;
+  return <Tip label={reorderable ? 'Drag to reorder' : howToPin}>{mark}</Tip>;
+}
+
+
+/**
+ * One row of any of the three lists: a tile, a name with its time, and a
+ * second line with an optional unread dot at its end.
+ */
+export function RowLayout({ detail, tile, time, title, titleExtra, unread }: {
+  detail: ReactNode;
+  tile: ReactNode;
+  time?: ReactNode;
+  title: ReactNode;
+  titleExtra?: ReactNode;
+  unread: boolean;
+}): React.JSX.Element {
+  return <>
+    {tile}
+    <span className="navigation-row-copy">
+      <span className="navigation-row-line">
+        <span className="navigation-row-title">{title}</span>
+        {titleExtra}
+        {time}
+      </span>
+      <span className="navigation-row-line">
+        <span className="navigation-row-detail">{detail}</span>
+        {unread && <span aria-label="Unread" className="navigation-row-unread-dot" role="img" />}
+      </span>
+    </span>
+  </>;
+}
+
+
+/** An unpinned row being dragged toward a Pinned group, and whether it was let go there. */
+export interface RowPinDrop {
+  id: string;
+  index: number | null;
+  landed: boolean;
+}
+
+/**
+ * Pinning by dragging an unpinned row into its list's Pinned group, for a list
+ * whose pins are a flag on its own rows (`pinnedPosition`) rather than the
+ * shared pin list: a Canvas, a Sidekick. A drop pins the row at the end of the
+ * group; a landed row's state clears once the list holds the pin, and goes
+ * back if the write fails.
+ */
+export function useRowPinDrop(pinnedIds: ReadonlySet<string>, pin: (id: string) => Promise<void>): {
+  drop: RowPinDrop | null;
+  sourceProps: (id: string) => React.HTMLAttributes<HTMLElement> & { draggable: boolean };
+  targetProps: React.HTMLAttributes<HTMLElement>;
+} {
+  const [state, setState] = useState<RowPinDrop | null>(null);
+  const drop = state && !pinnedIds.has(state.id) ? state : null;
+  const settled = state?.landed === true && pinnedIds.has(state.id);
+  useEffect(() => {
+    if (settled) setState(null);
+  }, [settled]);
+  return {
+    drop,
+    sourceProps: (id) => ({
+      draggable: true,
+      onDragStart: (event) => {
+        event.dataTransfer.effectAllowed = 'move';
+        // Chromium will not start a drag with an empty payload.
+        event.dataTransfer.setData('text/plain', id);
+        setState({ id, index: null, landed: false });
+      },
+      onDragEnd: () => setState((current) => (current?.landed ? current : null)),
+    }),
+    targetProps: {
+      onDragOver: (event) => {
+        if (!drop || drop.landed) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+      },
+      onDrop: (event) => {
+        if (!drop || drop.landed) return;
+        event.preventDefault();
+        setState({ ...drop, landed: true });
+        pin(drop.id).catch(() => setState((current) => (current?.id === drop.id ? null : current)));
+      },
+    },
+  };
+}
