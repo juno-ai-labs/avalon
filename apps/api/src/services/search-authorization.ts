@@ -1,9 +1,9 @@
 import { RegionSchema } from "@rally/contracts/regions";
 import { z } from 'zod';
-import type { AuthContext, Env } from '../env';
+import type { Env } from '../env';
 import { logInfo, logWarn, diagnosticErrorCode } from '../observability/logger';
 import { AuthorizationService, authorizationWorkspace } from './authorization-service';
-import { AccessContext, AuthorizationDecisionSchema, AuthorizationResourceSchema, AuthorizationSubjectSchema,
+import { AuthorizationDecisionSchema, AuthorizationResourceSchema, AuthorizationSubjectSchema,
   type AuthorizationDecision, type AuthorizationResource, type AuthorizationSubject, type AuthorizationResolver } from './authorization-policy';
 
 export const SearchAuthorizationTimingSchema = z.strictObject({ origin: z.enum(['source_mutation', 'workspace_mutation']).optional(), mutationAt: z.number().int().nonnegative(), enqueuedAt: z.number().int().nonnegative() });
@@ -151,11 +151,6 @@ export class SearchAuthorizationResolver implements AuthorizationResolver {
     const resolved = await fill();
     return decisions.map((decision, index) => decision ?? resolved.get(index)!);
   }
-}
-
-export function createSearchAccessContext(env: Env, auth: AuthContext, defer?: DeferredWork) {
-  return new AccessContext({ workspaceId: auth.workspaceId, userId: auth.userId, delegation: null },
-    new SearchAuthorizationResolver(env, undefined, defer));
 }
 
 /**
