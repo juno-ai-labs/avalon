@@ -162,7 +162,7 @@ export const THREAD_BACKFILL_RESUME_MIGRATION: readonly string[] = [
  * written directly by a mutation. The default tables carry a `kind`, because a
  * resource and a Sidekick recommendation are one mechanism with two consumers.
  * And there is one `revision` rather than the Project's three generations,
- * which is the contract's decision recorded in `SpaceSummarySchema`.
+ * which the retired Space contract (`SpaceSummarySchema`) recorded.
  */
 export const WORKSPACE_SPACE_SCHEMA_STATEMENTS: readonly string[] = [
   // `source_version` starts at zero on a reservation and every real projection

@@ -136,16 +136,6 @@ export async function issueSocketTicket(
   options: IssueWorkstreamSocketTicketOptions = {},
 ): Promise<string> {
   assertSessionPrincipal(auth);
-  // A Space's conversation is a storage detail of the Space, not a product
-  // surface: it has no composer, no transcript and no Main link, and the
-  // object it belongs to refuses the upgrade a ticket would be spent on. The
-  // refusal is here as well as there because a ticket is a signed credential —
-  // minting one for a conversation nothing may open is the kind of thing that
-  // is later mistaken for authorization.
-  if (parent.kind === "space") {
-    throw new ApiError(403, "space_feed_socket_refused",
-      "A channel has no conversation feed to open");
-  }
   const now = options.issuedAt ?? Math.floor(Date.now() / 1_000);
   return new SignJWT({
     purpose: "workstream_socket",
@@ -211,7 +201,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       payload.purpose !== "workstream_socket" || typeof payload.sub !== "string" ||
       typeof payload.sid !== "string" ||
       typeof payload.wid !== "string" || typeof payload.wsid !== "string" || typeof payload.ssid !== "string" ||
-      (payload.pk !== "workstream" && payload.pk !== "automation" && payload.pk !== "canvas") ||
+      (payload.pk !== "automation" && payload.pk !== "canvas") ||
       typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
       !isConfiguredRegion(payload.region)
     ) throw new Error("Incomplete socket claims");

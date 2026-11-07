@@ -8,6 +8,18 @@ import { IdSchema } from "./identifiers";
  * parse.
  */
 
+/**
+ * Every kind of parent a retirement walk closes: the hosted Canvas and
+ * Sidekick (`automation`), and the retired Thread (`workstream`) and Space
+ * parents whose objects still await the Thread retirement operation. Wider
+ * than `ConversationParentKindSchema`, which names only what is hosted, and an
+ * independent list rather than an import: this contract crosses to Ace and is
+ * parsed on both sides, so widening it is a deliberate decision about what an
+ * operator is told, not a transitive one.
+ */
+export const RetirementParentKindSchema = z.enum(["workstream", "automation", "space", "canvas"]);
+export type RetirementParentKind = z.infer<typeof RetirementParentKindSchema>;
+
 /** What retiring a workspace answers with. */
 export const WorkspaceRetirementResultSchema = z.strictObject({
   workspaceId: IdSchema,
@@ -20,13 +32,7 @@ export const WorkspaceRetirementResultSchema = z.strictObject({
   retiredChildren: z.number().int().nonnegative(),
   retainedOutbox: z.number().int().nonnegative(),
   failed: z.array(z.strictObject({
-    /**
-     * An independent copy of `ConversationParentKindSchema`, not an import.
-     * This contract crosses to Ace and is parsed on both sides; the two lists
-     * are kept in step by hand so widening the conversation vocabulary is a
-     * deliberate decision about what an operator is told, not a transitive one.
-     */
-    parentKind: z.enum(["workstream", "automation", "space", "canvas"]),
+    parentKind: RetirementParentKindSchema,
     parentId: z.string().min(1),
     error: z.string().min(1),
   })),

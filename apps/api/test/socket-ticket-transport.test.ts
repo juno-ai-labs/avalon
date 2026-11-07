@@ -100,7 +100,7 @@ describe("socket ticket transport", () => {
       workspaceId,
       region: "global",
       role,
-    }, { kind: "workstream", id: workstreamId }, "0", undefined, 42, true, {
+    }, { kind: "canvas", id: workstreamId }, "0", undefined, 42, true, {
       admission: {
         authorityGeneration: 7,
         role,
@@ -163,7 +163,7 @@ describe("socket ticket transport", () => {
       workspaceId,
       region: "global",
       role: "member",
-    }, { kind: "workstream", id: workstreamId });
+    }, { kind: "canvas", id: workstreamId });
     const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}/socket`, {
       headers: {
         Origin: "app://avalon",
@@ -223,7 +223,7 @@ describe("socket ticket transport", () => {
       workspaceId,
       region: "global",
       role: "member",
-    }, { kind: "workstream", id: workstreamId });
+    }, { kind: "canvas", id: workstreamId });
     const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}/socket`, {
       headers: {
         Origin: "app://avalon",
@@ -293,7 +293,7 @@ describe("socket ticket transport", () => {
     };
     const refusal = { status: 403, code: "non_session_principal_cannot_hold_socket" };
 
-    await expect(issueSocketTicket(env, auth, { kind: "workstream", id: "00000000-0000-7000-8000-000000000724" }))
+    await expect(issueSocketTicket(env, auth, { kind: "canvas", id: "00000000-0000-7000-8000-000000000724" }))
       .rejects.toMatchObject(refusal);
     await expect(issueWorkspaceSocketTicket(env, auth)).rejects.toMatchObject(refusal);
   });

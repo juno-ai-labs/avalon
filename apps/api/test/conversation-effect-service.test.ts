@@ -83,7 +83,7 @@ function message(
     sourceVersion: number;
     requiredProjectionVersion?: number;
     parentId?: string;
-    parentKind?: "workstream" | "automation";
+    parentKind?: "canvas" | "automation";
   },
 ): ParentEffectEnvelope {
   const requiredProjectionVersion = isPersonNotificationEffect(effect)
@@ -94,7 +94,7 @@ function message(
     contractVersion: 1,
     region: "global",
     workspaceId: WORKSPACE_ID,
-    parentKind: input.parentKind ?? "workstream",
+    parentKind: input.parentKind ?? "canvas",
     parentId: input.parentId ?? WORKSTREAM_ID,
     generation: 1,
     messageId: input.messageId,
@@ -111,7 +111,7 @@ function childMessage(
   effect: ConversationEffect,
   input: {
     messageId: string;
-    parentKind: "workstream" | "automation";
+    parentKind: "canvas" | "automation";
     parentId: string;
     substreamId?: string;
   },
@@ -855,7 +855,7 @@ describe("the activity Queue consumer's effect legs", () => {
     });
     const envelope = childMessage(directoryCommon(), {
       messageId: MESSAGE_ID,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: WORKSTREAM_ID,
     });
     const { batch, ack, retry } = queued(envelope);
@@ -870,7 +870,7 @@ describe("the activity Queue consumer's effect legs", () => {
       expect(info).toHaveBeenCalledWith(expect.objectContaining({
         event: "conversation_effect_terminal",
         workspace_id: WORKSPACE_ID,
-        parent_kind: "workstream",
+        parent_kind: "canvas",
         workstream_id: WORKSTREAM_ID,
         substream_id: "0",
         message_id: MESSAGE_ID,
@@ -916,7 +916,7 @@ describe("the activity Queue consumer's effect legs", () => {
     const receiveChildEffects = vi.fn<(input: unknown) => Promise<void>>(async () => undefined);
     const env = regionalEnv(database, workspace, { workstreamReceive: receiveChildEffects });
     const envelope = childMessage(directoryCommon(), {
-      messageId: MESSAGE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID,
+      messageId: MESSAGE_ID, parentKind: "canvas", parentId: WORKSTREAM_ID,
     });
     const { batch, ack, retry } = queued({ ...envelope, effect: { ...envelope.effect, futureField: [] } });
     try {
@@ -942,7 +942,7 @@ describe("the activity Queue consumer's effect legs", () => {
     // A declared field is still invalid even though unknown fields are stripped.
     const envelope = childMessage(directoryCommon(), {
       messageId: MESSAGE_ID,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: WORKSTREAM_ID,
     });
     const { batch, ack, retry } = queued({ ...envelope, effect: { ...envelope.effect, title: [] } });
@@ -975,7 +975,7 @@ describe("the activity Queue consumer's effect legs", () => {
     });
     const { batch, ack, retry } = queued(childMessage(directoryCommon(), {
       messageId: MESSAGE_ID,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: WORKSTREAM_ID,
     }), 2);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -1140,7 +1140,7 @@ describe("the activity Queue consumer's effect legs", () => {
     });
     const envelope = childMessage(directoryCommon(), {
       messageId: MESSAGE_ID,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: WORKSTREAM_ID,
     });
     const { batch, ack, retry } = queued({ ...envelope, region: "enterprise" });
