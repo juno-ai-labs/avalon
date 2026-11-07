@@ -1,8 +1,4 @@
-import {
-  parseSidekickLinkPathTarget,
-  parseSpaceLinkPathTarget,
-  parseWorkstreamLinkPathTarget,
-} from "@rally/contracts/workstream-links";
+import { parseLinkPathTarget } from "@rally/contracts/links";
 import { asWorkspaceId } from "@rally/contracts";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -14,9 +10,9 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { ApiError } from "../lib/api-error";
 
 /**
- * Public, signed-out reads behind a shared link. Holding a Space, Channel,
- * Breakout or Sidekick link is the permission to see its name; nothing here
- * reaches what is inside it. See docs/workstream-links.md#the-handoff-page.
+ * Public, signed-out reads behind a shared link. Holding a Canvas or Sidekick
+ * link is the permission to see its name; nothing here reaches what is inside
+ * it. See docs/links.md#the-handoff-page.
  */
 export const linkRoutes = new Hono<HonoAppEnv>();
 
@@ -26,19 +22,12 @@ const LinkTitleResponseSchema = z.strictObject({ title: z.string().min(1) });
 
 /** The workspace and resource a canonical link path names, or null for any other path. */
 export function linkTitleTarget(pathname: string): { region: string; request: WorkspaceLinkTitleRequest } | null {
-  const workstream = parseWorkstreamLinkPathTarget(pathname);
-  if (workstream?.region && workstream.workspaceId) {
-    return { region: workstream.region, request: { workspaceId: workstream.workspaceId, target: workstream.substreamId
-      ? { kind: "breakout", workstreamId: workstream.workstreamId, substreamId: workstream.substreamId }
-      : { kind: "channel", workstreamId: workstream.workstreamId } } };
-  }
-  const space = parseSpaceLinkPathTarget(pathname);
-  if (space) return { region: space.region, request: { workspaceId: space.workspaceId, target: { kind: "space", spaceId: space.spaceId } } };
-  const sidekick = parseSidekickLinkPathTarget(pathname);
-  if (sidekick) {
-    return { region: sidekick.region, request: { workspaceId: sidekick.workspaceId, target: { kind: "sidekick", sidekickId: sidekick.sidekickId } } };
-  }
-  return null;
+  const target = parseLinkPathTarget(pathname);
+  if (!target) return null;
+  // A Canvas link that opens onto one artifact still names the Canvas.
+  return { region: target.region, request: { workspaceId: target.workspaceId, target: target.kind === "canvas"
+    ? { kind: "canvas", canvasId: target.canvasId }
+    : { kind: "sidekick", sidekickId: target.sidekickId } } };
 }
 
 linkRoutes.get("/title", async (c) => {

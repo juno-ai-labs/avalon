@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { parseDesktopTarget } from '../src/auth-handoff';
 import { parseSlackLinkFragment, slackDesktopTarget } from '../src/slack-link';
 import { classifyDesktopHandoffTarget } from '../src/desktop-open';
-import { handoffAppTarget, handoffDevice, handoffHeading, isIosDevice, legacyIosWorkstreamHandoff } from '../src/workstream-link';
+import { handoffAppLink, handoffDevice, handoffHeading, handoffPlan } from '../src/link-handoff';
 import { parseComparison, renderComparisonPage } from '../src/comparison-pages';
 import { loadBlogPosts, parseBlogPost, renderBlogIndex, renderBlogPost } from '../src/blog-pages';
 import { blogPosts, comparisons, renderBlogSitemap, renderComparisonSitemap, renderLlmsTxt, renderSiteChrome } from '../src/site-chrome';
@@ -19,42 +19,44 @@ const readProjectFile = (path: string): string =>
   readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 describe('public Rally site', () => {
-  it('keeps Space-only handoffs on the web when iOS has no Space screen', () => {
-    expect(isIosDevice('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', 'iPhone', 5)).toBe(true);
-    expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 5)).toBe(true);
-    expect(isIosDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X)', 'MacIntel', 0)).toBe(false);
-  });
   it('quotes the linked name in the handoff heading and cuts it past 40 characters', () => {
     expect(handoffHeading('Q3 launch plan')).toBe('Opening “Q3 launch plan” in Rally');
     expect(handoffHeading('x'.repeat(40))).toBe(`Opening “${'x'.repeat(40)}” in Rally`);
     expect(handoffHeading(`${'x'.repeat(39)} tail`)).toBe(`Opening “${'x'.repeat(39)}…” in Rally`);
   });
-  it('names which Rally app a shared link can open on each device', () => {
+  it('names which device runs the Mac app, an iPad that reports a Mac included', () => {
     expect(handoffDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 0)).toBe('mac');
-    expect(handoffDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 5)).toBe('ios');
+    expect(handoffDevice('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 5)).toBe('other');
+    expect(handoffDevice('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', 'iPhone', 5)).toBe('other');
     expect(handoffDevice('Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32', 0)).toBe('other');
     expect(handoffDevice('Mozilla/5.0 (Linux; Android 14; Pixel 8)', 'Linux armv8l', 5)).toBe('other');
   });
-  it('leaves a shared link to the web app where no Rally app can open it', () => {
-    const workspace = { region: 'global', workspaceId: '00000000-0000-7000-8000-0000000000a1' };
-    const workstream = { ...workspace, spaceId: '00000000-0000-7000-8000-0000000000a9', workstreamId: '00000000-0000-7000-8000-0000000000b1' };
-    const space = { ...workspace, spaceId: '00000000-0000-7000-8000-0000000000a9' };
-    const none = { workstream: null, space: null, sidekick: null };
-    expect(handoffAppTarget('other', { ...none, workstream })).toBeNull();
-    expect(handoffAppTarget('ios', { ...none, space })).toBeNull();
-    expect(handoffAppTarget('ios', { ...none, workstream })).toEqual({
-      app: 'ios',
-      href: 'rallywithai://handoff/workspaces/global/00000000-0000-7000-8000-0000000000a1/workstreams/00000000-0000-7000-8000-0000000000b1',
-    });
-    expect(handoffAppTarget('mac', { ...none, space })?.app).toBe('mac');
-    expect(handoffAppTarget('mac', { ...none, space })?.href.startsWith('rallywithai://workspace/global/')).toBe(true);
+  it('hands a Canvas or Sidekick link to the Mac app, and to the web app where none runs', () => {
+    const canvas = handoffPlan('/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/');
+    expect(canvas).toEqual({ kind: 'open', target: {
+      kind: 'canvas', region: 'global', workspaceId: '00000000-0000-7000-8000-000000000001', canvasId: '00000000-0000-7000-8000-000000000002',
+    } });
+    if (canvas.kind !== 'open') throw new Error('expected a Canvas');
+    expect(handoffAppLink('mac', canvas.target)).toBe('rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/1111117Hxt1fAWDjN7TX');
+    expect(handoffAppLink('other', canvas.target)).toBeNull();
+    const artifact = handoffPlan('/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/a/1111117Hxt1fAWDjN7TY/');
+    if (artifact.kind !== 'open') throw new Error('expected a Canvas');
+    expect(handoffAppLink('mac', artifact.target))
+      .toBe('rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/1111117Hxt1fAWDjN7TX/artifacts/1111117Hxt1fAWDjN7TY');
+    const sidekick = handoffPlan('/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7TX/');
+    if (sidekick.kind !== 'open') throw new Error('expected a Sidekick');
+    expect(handoffAppLink('mac', sidekick.target)).toBe('rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/sidekicks/1111117Hxt1fAWDjN7TX');
   });
-  it('hands canonical Channel paths to iPhone builds through their legacy addressed reader', () => {
-    expect(legacyIosWorkstreamHandoff({
-      region: 'global', workspaceId: '00000000-0000-7000-8000-0000000000a1',
-      spaceId: '00000000-0000-7000-8000-0000000000a9',
-      workstreamId: '00000000-0000-7000-8000-0000000000b1',
-    })).toBe('rallywithai://handoff/workspaces/global/00000000-0000-7000-8000-0000000000a1/workstreams/00000000-0000-7000-8000-0000000000b1');
+  it('answers a Space, Channel, Breakout or Thread link as gone, and anything else as invalid', () => {
+    for (const retired of [
+      '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/',
+      '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY',
+      '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY/b/1111117Hxt1fAWDjN7Te',
+      '/app/workspaces/global/00000000-0000-7000-8000-00000000000a/workstreams/00000000-0000-7000-8000-00000000000b',
+      '/app/workstreams/00000000-0000-7000-8000-00000000000b',
+    ]) expect(handoffPlan(retired)).toEqual({ kind: 'gone' });
+    expect(handoffPlan('/app/global/1111117Hxt1fAWDjN7TW/cv/not-base58/')).toEqual({ kind: 'invalid' });
+    expect(handoffPlan('/app/')).toEqual({ kind: 'invalid' });
   });
   it('parses a Slack identity fragment and builds the exact desktop target', () => {
     const token = 'a'.repeat(43);
@@ -74,23 +76,20 @@ describe('public Rally site', () => {
   });
 
   it('removes resource identity from public handoff paths and classifies invalid targets truthfully', () => {
-    expect(normalizedTelemetryPathname(
-      '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY/b/1111117Hxt1fAWDjN7Te',
-    )).toBe('/app/:region/:organization/s/:space/c/:channel/b/:breakout');
-    expect(normalizedTelemetryPathname(
-      '/app/workspaces/enterprise/00000000-0000-7000-8000-000000000009/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30',
-    )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
-    expect(normalizedTelemetryPathname('/app/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30'))
-      .toBe('/app/workstreams/:id');
-    expect(normalizedTelemetryPathname(
-      '/app/workspaces/enterprise/private-workspace/workstreams/private-workstream/extra',
-    )).toBe('/app/workspaces/:region/:workspace/workstreams/:id');
-    expect(normalizedTelemetryPathname('/app/workspaces/enterprise/private-workspace'))
-      .toBe('/app/workspaces/:region/:workspace/workstreams/:id');
+    expect(normalizedTelemetryPathname('/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/'))
+      .toBe('/app/:region/:organization/cv/:canvas');
+    expect(normalizedTelemetryPathname('/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/a/1111117Hxt1fAWDjN7TY/'))
+      .toBe('/app/:region/:organization/cv/:canvas/a/:artifact');
     expect(normalizedTelemetryPathname('/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7TX/'))
       .toBe('/app/:region/:organization/sk/:sidekick');
-    expect(normalizedTelemetryPathname('/app/global/private-org/s/private-space/c'))
-      .toBe('/app/:unrecognized');
+    expect(normalizedTelemetryPathname(
+      '/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY/b/1111117Hxt1fAWDjN7Te',
+    )).toBe('/app/:retired');
+    expect(normalizedTelemetryPathname(
+      '/app/workspaces/enterprise/00000000-0000-7000-8000-000000000009/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30',
+    )).toBe('/app/:retired');
+    expect(normalizedTelemetryPathname('/app/workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30')).toBe('/app/:retired');
+    expect(normalizedTelemetryPathname('/app/global/private-org/cv')).toBe('/app/:unrecognized');
     expect(normalizedTelemetryPathname('/trust/privacy/')).toBe('/trust/privacy/');
     expect(sitePageForPath('/trust')).toBe('legal');
     expect(sitePageForPath('/trust/')).toBe('legal');
@@ -101,8 +100,14 @@ describe('public Rally site', () => {
     expect(sitePageForPath('/help/')).toBe('support');
     expect(sitePageForPath('/help/sidekicks/triggers-and-schedules/')).toBe('support');
     expect(sitePageForPath('/helpful')).toBe('landing');
-    expect(classifyDesktopHandoffTarget('avalon://workstreams/not-a-uuid')).toEqual({
-      handoffType: 'workstream', validity: 'invalid',
+    expect(classifyDesktopHandoffTarget('rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/1111117Hxt1fAWDjN7TX')).toEqual({
+      handoffType: 'canvas', validity: 'valid',
+    });
+    expect(classifyDesktopHandoffTarget('rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/canvases/not-base58')).toEqual({
+      handoffType: 'canvas', validity: 'invalid',
+    });
+    expect(classifyDesktopHandoffTarget('avalon://workstreams/2f1d3c4b-5a69-4f2e-8c11-9d7b6a5e4f30')).toEqual({
+      handoffType: 'unknown', validity: 'invalid',
     });
     expect(classifyDesktopHandoffTarget('rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000009/activity')).toEqual({
       handoffType: 'activity', validity: 'valid',
@@ -111,7 +116,7 @@ describe('public Rally site', () => {
       handoffType: 'unknown', validity: 'invalid',
     });
 
-    expect(sitePageForPath('/app/workspaces/:region/:workspace/workstreams/:id'))
+    expect(sitePageForPath('/app/:region/:organization/cv/:canvas'))
       .toBe('workstream_handoff');
   });
 

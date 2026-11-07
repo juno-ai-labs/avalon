@@ -235,22 +235,21 @@ function report<TName extends TelemetryEventName>(
 
 export function normalizedTelemetryPathname(pathname: string): string {
   const path = pathname.toLowerCase().slice(0, 160);
-  if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/c\/[^/]+\/b\/[^/]+\/?$/u.test(path)) {
-    return '/app/:region/:organization/s/:space/c/:channel/b/:breakout';
+  if (/^\/app\/[^/]+\/[^/]+\/cv\/[^/]+\/a\/[^/]+\/?$/u.test(path)) {
+    return '/app/:region/:organization/cv/:canvas/a/:artifact';
   }
-  if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/c\/[^/]+\/?$/u.test(path)) {
-    return '/app/:region/:organization/s/:space/c/:channel';
-  }
-  if (/^\/app\/[^/]+\/[^/]+\/s\/[^/]+\/?$/u.test(path)) {
-    return '/app/:region/:organization/s/:space';
+  if (/^\/app\/[^/]+\/[^/]+\/cv\/[^/]+\/?$/u.test(path)) {
+    return '/app/:region/:organization/cv/:canvas';
   }
   if (/^\/app\/[^/]+\/[^/]+\/sk\/[^/]+\/?$/u.test(path)) {
     return '/app/:region/:organization/sk/:sidekick';
   }
-  if (path.startsWith('/app/workspaces/')) {
-    return '/app/workspaces/:region/:workspace/workstreams/:id';
+  // The Space, Channel, Breakout and Thread forms, which the handoff page now
+  // answers as gone. Still counted, so how often a retired link is followed
+  // stays visible, but as one path: which of them it was no longer matters.
+  if (/^\/app\/[^/]+\/[^/]+\/(?:s|i)\/./u.test(path) || /^\/app\/(?:workspaces|workstreams)\//u.test(path)) {
+    return '/app/:retired';
   }
-  if (path.startsWith('/app/workstreams/')) return '/app/workstreams/:id';
   if (path.startsWith('/app/')) return '/app/:unrecognized';
   return /^\/[a-z0-9_:/.-]*$/u.test(path) ? path : '/';
 }

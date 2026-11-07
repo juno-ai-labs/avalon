@@ -11,7 +11,7 @@ import { describeZodIssues, zodDiagnosticCode } from '@rally/contracts/zod-diagn
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { watchWorkspaceSocket, type ReachWatchDiagnostic } from '@rally/contracts/workspace-reach-watch';
 import { ArtifactPinListSchema } from '@rally/contracts';
-import { sidekickDeepLink, workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
+import { canvasCanonicalUrl, canvasDeepLink, sidekickDeepLink } from '@rally/contracts/links';
 import { z, type ZodType } from 'zod';
 import {
   ActivateWorkspaceRequestSchema,
@@ -173,7 +173,7 @@ import { DebugSettingsController } from './debug-settings';
 import {
   acceptedDeepLink,
   shouldDeliverConnectorResultToSettings,
-  workstreamHttpsDeepLink,
+  httpsLinkDeepLink,
 } from "./deep-links";
 import { DesktopAuthAttemptStore } from './desktop-auth-attempts';
 import { DeveloperSettingsFlagController } from './developer-settings-flag';
@@ -1484,7 +1484,7 @@ const desktopPush = new DesktopPushNotifications({
   clicked: (url) => {
     if (applicationLaunchObserved) applicationOpenObserver.opened('push_notification');
     else prelaunchPushObserved = true;
-    const link = url ? workstreamHttpsDeepLink(url) : null;
+    const link = url ? httpsLinkDeepLink(url) : null;
     if (link) sendDeepLink(link, 'notification');
     else if (app.isReady()) void createMainWindow();
   },
@@ -4248,6 +4248,13 @@ function registerIpc(): void {
       const record = poppedOutArtifacts.get(window)!;
       const command = artifactWindowActionRequest(record.request, raw);
       const session = inMemorySession;
+      if ('canvasId' in command) {
+        const workspace = session?.workspace;
+        if (!workspace) throw new Error('Sign in before copying a link');
+        return canvasCanonicalUrl(runtimeConfig().webBaseUrl, {
+          region: workspace.region, workspaceId: workspace.id, canvasId: command.canvasId, artifactId: record.resourceId,
+        });
+      }
       const assertSession = (): void => {
         assertArtifactRenderer(event);
         if (!session || !artifactWindowSessionMatches(record, { userId: inMemorySession?.user.id ?? null, workspaceId: inMemorySession?.workspace?.id ?? null, region: inMemorySession?.workspace?.region ?? null })) throw new Error('The Rally session changed');
@@ -4288,15 +4295,6 @@ function registerIpc(): void {
         saveArtifactWindowStates();
       }
       if (action.type === 'pin-state') return ArtifactPinListSchema.parse(result).some((pin) => pin.id === record.resourceId);
-      if (action.type === 'link') {
-        const { spaceIds } = z.object({ spaceIds: z.array(IdSchema) }).parse(result);
-        const workspace = session?.workspace;
-        if (!workspace || !spaceIds[0]) throw new Error('This artifact has no link to share');
-        return workstreamCanonicalUrl(runtimeConfig().webBaseUrl, {
-          region: workspace.region, workspaceId: workspace.id, spaceId: spaceIds[0],
-          workstreamId: record.request.annotationScope!.split(':')[0]!, artifactId: record.resourceId,
-        });
-      }
       return result;
     } catch (error) {
       const diagnostic = zodDiagnosticCode(error, 'artifact_window_response');
@@ -5316,7 +5314,7 @@ if (!singleInstanceLock) {
 
   app.on('continue-activity', (event, type, _userInfo, details) => {
     if (type !== 'NSUserActivityTypeBrowsingWeb' || !details.webpageURL) return;
-    const link = workstreamHttpsDeepLink(details.webpageURL);
+    const link = httpsLinkDeepLink(details.webpageURL);
     if (!link) return;
     event.preventDefault();
     observeAcceptedDeepLinkOpen();

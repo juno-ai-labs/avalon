@@ -16,15 +16,16 @@
   </head>
   <body>
     <main class="handoff-shell">
-      <section class="handoff-card" aria-labelledby="workstream-title">
+      <section class="handoff-card" aria-labelledby="link-title">
         <img class="handoff-mark" src="/brand/rally-mark-ink.svg" width="56" height="56" alt="" />
-        <h1 id="workstream-title">Opening in Rally</h1>
+        <h1 id="link-title">Opening in Rally</h1>
+        <p class="handoff-status" hidden id="link-gone">Rally replaced Channels, Threads and Breakouts with Canvases. Ask whoever sent this link for one to the Canvas that holds the work now.</p>
         <a aria-disabled="true" class="handoff-open" href="#" id="open-rally">Open in Rally for Mac</a>
         <a class="handoff-secondary" hidden href="#" id="open-browser">Continue in browser</a>
-        <p class="handoff-help" id="workstream-help">Don’t have the Mac app? <a download href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg">Download it</a>, then open this link again.</p>
-        <p class="handoff-error" hidden id="workstream-error" role="alert">This link is incomplete or invalid.</p>
+        <p class="handoff-help" id="link-help">Don’t have the Mac app? <a download href="https://downloads.rallywith.ai/stable/darwin/arm64/Rally.dmg">Download it</a>, then open this link again.</p>
+        <p class="handoff-error" hidden id="link-error" role="alert">This link is incomplete or invalid.</p>
       </section>
     </main>
-    <script type="module" src="/src/workstream-link.ts"></script>
+    <script type="module" src="/src/link-handoff.ts"></script>
   </body>
 </html>

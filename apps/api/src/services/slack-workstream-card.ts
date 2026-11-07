@@ -1,3 +1,4 @@
+import { parseLinkTarget, type LinkTarget } from "@rally/contracts/links";
 import { codeShaped, describeZodIssues, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import { ConnectorError, slackApi } from "@rally/connectors";
 import { z } from "zod";
@@ -6,15 +7,12 @@ import { sha256 } from "../lib/crypto";
 import { logWarn, type LogEnv } from "../observability/logger";
 
 /**
- * The Slack unfurl card for a work-stream link, shared by the live
- * `link_shared` path and the maintenance sweep that refreshes posted cards.
- *
- * The card carries the work stream's title, last activity, and automation
- * origin, plus a status badge while it is running, needs input, or failed —
- * enough to know whether the link is worth opening and whether the agent is
- * blocked — and no work-stream contents. See
- * `docs/workstream-links.md` for the audience rule that decides between this
- * and the anonymous card.
+ * The Slack unfurl card for a Rally link. A Canvas or Sidekick link, posted
+ * live from `link_shared`, carries the resource's name. A card posted for a
+ * Thread link before Canvases replaced Threads also carried a status badge and
+ * last activity, and the maintenance sweep still rewrites those until their
+ * rows go with Threads. Neither carries any contents. See `docs/links.md` for
+ * the audience rule that decides between this and the anonymous card.
  */
 export interface WorkstreamUnfurlSummary {
   title: string;
@@ -61,6 +59,31 @@ export const TERMINAL_UNFURL_REASONS = new Set([
 
 export function slackUnfurlErrorReason(error: unknown): string {
   return slackErrorReason(error);
+}
+
+/**
+ * The Canvas and Sidekick links in one `link_shared` event that this Slack
+ * team's own Organization holds, keyed by the URL Slack reported, at most
+ * SLACK_UNFURL_MAX_LINKS of them. A link to another Organization or region,
+ * a retired Thread link and anything that is not a Rally link are left out:
+ * Slack shows its own preview for those.
+ */
+export function slackUnfurlLinkTargets(
+  links: readonly Record<string, unknown>[],
+  scope: { webBaseUrls: readonly string[]; region: string; workspaceId: string },
+): Map<string, LinkTarget> {
+  const linked = new Map<string, LinkTarget>();
+  for (const link of links) {
+    if (typeof link.url !== "string" || linked.size >= SLACK_UNFURL_MAX_LINKS) continue;
+    const target = parseLinkTarget(link.url, { webBaseUrl: scope.webBaseUrls });
+    if (target && target.region === scope.region && target.workspaceId === scope.workspaceId) linked.set(link.url, target);
+  }
+  return linked;
+}
+
+/** A Canvas's or a Sidekick's card: its name when it may be shown, else the anonymous card. */
+export function linkUnfurlBlocks(title: string | null, url: string): Record<string, unknown>[] {
+  return workstreamUnfurlBlocks(title ? { title, harnessStatus: "", lastActivityAt: null } : null, url);
 }
 
 export function workstreamUnfurlSummary(row: Record<string, unknown>): WorkstreamUnfurlSummary {

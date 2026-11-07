@@ -41,7 +41,6 @@ import {
   type WorkstreamId,
 } from "@rally/contracts";
 import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
-import { canonicalWorkstreamUrl } from "../src/services/workstream-link-service";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import { WORKSPACE_BREAKOUT_SCHEMA_STATEMENTS } from "../src/durable-objects/workspace-breakout-storage";
@@ -817,7 +816,7 @@ describe("WorkspaceDO space authority", () => {
     })).resolves.toEqual({ spaceIds: [spaceId] });
   });
 
-  it("chooses one active Space placement for a canonical Channel link", async () => {
+  it("chooses one active Space placement for a Channel", async () => {
     const first = await reserve("First");
     const second = await reserve("Second");
     await publishChannel(CHANNEL_A, null);
@@ -827,12 +826,6 @@ describe("WorkspaceDO space authority", () => {
       .resolves.toEqual({ spaceId: [first, second].sort()[0] });
     await expect(workspace().canonicalChannelSpace({ workspaceId: WORKSPACE_ID, workstreamId: CHANNEL_B }))
       .resolves.toEqual({ spaceId: null });
-    await expect(canonicalWorkstreamUrl(env, {
-      region: "global", workspaceId: WORKSPACE_ID, workstreamId: CHANNEL_B,
-    })).resolves.toBe(new URL(
-      `/app/workspaces/global/${WORKSPACE_ID}/workstreams/${CHANNEL_B}`,
-      env.PUBLIC_WEB_BASE_URL,
-    ).toString());
   });
 
   it("prefers an Organization-wide placement over a personal Space for a shared Channel link", async () => {
