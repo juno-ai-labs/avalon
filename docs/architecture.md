@@ -198,8 +198,10 @@ The child sends it over the activity Queue to `WorkspaceDO.receiveChildEffects`,
 where the Canvas or Sidekick (`HostedConversation`) records the receipt, the
 child's projection and each reader's read of `"0"` in one transaction, and
 republishes the list rows that moved on the workspace socket. A person
-notification (a mention, somebody added) goes to
-`WorkspaceDO.applyWorkstreamRegionalEffect`, which records its intent. D1
+notification is an intent in `WorkspaceDO` (`workstream_notification_intents`):
+a Sidekick run's notices are recorded there by the Sidekick; a conversation's
+mention effect stops at its parent today
+([known gap](workstream-durable-object.md#directory-effects-and-notifications)). D1
 resolves current membership and profile identity; WorkspaceDO resolves the
 destination and checks the recipient against the parent's own reader rule, so
 Queue reordering cannot outrun a removal. The object therefore owns the fact

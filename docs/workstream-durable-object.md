@@ -1101,10 +1101,20 @@ AgentLoopDO SQLite product transaction
          -> Canvas or Sidekick (WorkspaceDO, HostedConversation): receipt +
             child projection, and for "0" each reader's read, one transaction;
             a Sidekick also moves the run row; nothing is forwarded
-       a person notification -> WorkspaceDO.applyWorkstreamRegionalEffect:
+       parent_effect -> WorkspaceDO.applyWorkstreamRegionalEffect:
             receipt + a workstream_notification_intents row for an active
-            member; an activity_event is receipted and stored nowhere
+            member's mention or add; an activity_event is receipted and
+            stored nowhere. No producer sends a parent_effect now.
 ```
+
+**Known gap: a conversation's mention and add effects reach no intent.** A
+conversation still writes `mention_notification` and
+`participant_notification` effects, but they travel as `conversation_effect`
+like the rest, and `HostedConversation` receipts every kind and applies only
+`directory_common` and `directory_user`. The Channel host that forwarded them
+as `parent_effect` is deleted, so a mention in a Canvas's Chat records no
+notification intent and nobody is pushed, emailed or messaged for it. The
+Sidekick run notices do not take this path ([`push-notifications.md`](push-notifications.md)).
 
 Nothing loads an envelope back from the sender and nothing acknowledges one to
 it. The child's outbox row is deleted the moment `sendBatch` resolves. A batch
