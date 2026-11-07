@@ -103,7 +103,6 @@ interface BindingRow extends Record<string, SqlStorageValue> {
   created_at: string;
   updated_at: string;
   /** Read only where it is selected: `resolve`. */
-  space_matched?: number;
 }
 
 const COLUMNS = `installation_id, path_json, target_kind, space_id, parent_kind, parent_id,
@@ -212,7 +211,7 @@ export class ExternalConversationBindingStorage {
   }): ExternalBindingResolution {
     const keys = input.path.map((_, index) => externalPathKey(input.path.slice(0, index + 1)));
     const rows = this.sql.exec<BindingRow>(
-      `SELECT ${COLUMNS}, space_matched FROM external_conversation_bindings
+      `SELECT ${COLUMNS} FROM external_conversation_bindings
         WHERE installation_id = ? AND path_json IN (${keys.map(() => "?").join(", ")})`,
       input.installationId,
       ...keys,

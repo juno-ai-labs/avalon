@@ -26,6 +26,7 @@ const EXECUTOR = "00000000-0000-7000-8000-00000000a004";
 const GUEST = "00000000-0000-7000-8000-00000000a005";
 const SUSPENDED = "00000000-0000-7000-8000-00000000a006";
 const REJOINED = "00000000-0000-7000-8000-00000000a007";
+const ADMINISTRATOR = "00000000-0000-7000-8000-00000000a008";
 const PRIVATE = "00000000-0000-7000-8000-00000000c002";
 const SIDEKICK_WORKSPACE = "00000000-0000-7000-8000-00000000d001";
 const SIDEKICK_PERSONAL = "00000000-0000-7000-8000-00000000d002";
@@ -39,11 +40,12 @@ const CONNECTION_DISABLED = "00000000-0000-7000-8000-00000000e003";
 const workspace = () => env.WORKSPACE_DOS.getByName(workspaceDOName("global", asWorkspaceId(WORKSPACE_ID)));
 let sequence = 0;
 
-async function relate(userId: string, accessClass: "member" | "guest", status: "active" | "suspended" = "active") {
+async function relate(userId: string, accessClass: "member" | "guest", status: "active" | "suspended" = "active",
+  role: "member" | "admin" = "member") {
   sequence += 1;
   await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence, removed: false,
     relationship: WorkspaceRelationshipSchema.parse({ workspaceId: WORKSPACE_ID, userId, accessClass,
-      role: accessClass === "member" ? "member" : null, status, incarnation: `incarnation-${userId}`, revision: sequence }) });
+      role: accessClass === "member" ? role : null, status, incarnation: `incarnation-${userId}`, revision: sequence }) });
 }
 
 let seeded = false;
@@ -58,6 +60,7 @@ async function seedOrganization() {
   await relate(GUEST, "guest");
   await relate(SUSPENDED, "member", "suspended");
   await relate(REJOINED, "member");
+  await relate(ADMINISTRATOR, "member", "active", "admin");
   await runInDurableObject(workspace(), (_instance, state) => {
     const sql = state.storage.sql;
     const sidekick = (id: string, scope: string, author: string, runAs: string | null, owning: string | null, lifecycle = "active") =>
@@ -132,6 +135,8 @@ describe("search audience: the person side", () => {
     expect(await groups(BREAKOUT_MEMBER)).toEqual(expect.arrayContaining([privateChat, openChat]));
     expect(await groups(MEMBER)).toContain(openChat);
     expect(await groups(MEMBER)).not.toContain(privateChat);
+    // An administrator manages, so opens, a private Canvas they are not on.
+    expect(await groups(ADMINISTRATOR)).toContain(privateChat);
     // A guest is not admitted by Organization visibility.
     expect(await groups(GUEST)).not.toContain(openChat);
   });
