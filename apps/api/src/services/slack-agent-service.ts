@@ -76,7 +76,6 @@ import {
   WorkspaceSlackIngressRecoverableResultSchema,
   WorkspaceSlackIngressSweepResultSchema,
   WorkspaceSlackThreadRoutableResultSchema,
-  WorkspaceSlackFeedbackResultSchema,
 } from "../durable-objects/workspace-slack-protocol";
 import {
   ExternalBindingLatestOutboundResultSchema,
@@ -808,37 +807,6 @@ export class SlackAgentService {
       ).bind(identity.connection.id, identity.auth.userId, slackUserId, selected.includes("needs_input") ? 1 : 0, selected.includes("automation_completed") ? 1 : 0, nowIso()).run();
       await this.publishHome(teamId, slackUserId);
       return;
-    }
-    if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_feedback_submit") {
-      const workstreamId = slackModalWorkstreamId(view.private_metadata);
-      const rating = modalSelectedValues(view.state, "rating", "value")[0];
-      if (!workstreamId || (rating !== "helpful" && rating !== "needs_improvement")) throw new ApiError(422, "slack_feedback_invalid", "Slack feedback is invalid");
-      // `ingress_job_id` is UNIQUE, so a redelivered submission is a replay
-      // rather than a second rating. The insert always ignored the conflict;
-      // what is new is that the object reports which case it was, and the only
-      // thing worth doing with that is making a redelivery visible — a replay
-      // means Slack sent the same submission twice, which nothing else here
-      // would show.
-      const feedback = WorkspaceSlackFeedbackResultSchema.parse(
-        await (await this.workspaceDirectory(identity.auth.workspaceId)).recordSlackFeedback({
-          workspaceId: identity.auth.workspaceId,
-          feedbackId: newId(),
-          ingressJobId: jobId,
-          workstreamId,
-          userId: identity.auth.userId,
-          connectionId: identity.connection.id,
-          rating,
-          comment: modalTextValue(view.state, "comment", "value"),
-          at: nowIso(),
-        }),
-      );
-      if (feedback.outcome === "replayed") {
-        logInfo(this.env, "slack_feedback_replayed", {
-          workspace_id: identity.auth.workspaceId,
-          workstream_id: workstreamId,
-          ingress_job_id: jobId,
-        });
-      }
     }
   }
 
@@ -2662,34 +2630,12 @@ function modalPrompt(state: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-/**
- * The work stream a feedback modal was opened for, or null if it does not name
- * one.
- *
- * Slack echoes `private_metadata` back from what Rally put there, so a
- * malformed value is not expected in practice. It is checked anyway because the
- * typed methods take `IdSchema`: an unparseable id would now reach the object,
- * fail its parse, and surface as a 500 with no modal response — where the
- * callers have a "this task is no longer available" branch that says something
- * a person can act on. The generic statement this replaced simply matched no
- * row and fell into that branch, and this keeps it reachable.
- */
-function slackModalWorkstreamId(privateMetadata: unknown): string | null {
-  const parsed = z.string().uuid().safeParse(privateMetadata);
-  return parsed.success ? parsed.data : null;
-}
-
 function modalSelectedValues(state: unknown, blockId: string, actionId: string): string[] {
   const action = asRecord(asRecord(asRecord(state).values)[blockId])[actionId];
   const value = asRecord(action);
   if (Array.isArray(value.selected_options)) return value.selected_options.flatMap((option) => typeof asRecord(option).value === "string" ? [String(asRecord(option).value)] : []);
   const selected = asRecord(value.selected_option).value;
   return typeof selected === "string" ? [selected] : [];
-}
-
-function modalTextValue(state: unknown, blockId: string, actionId: string): string | null {
-  const value = asRecord(asRecord(asRecord(asRecord(state).values)[blockId])[actionId]).value;
-  return typeof value === "string" && value.trim() ? value.trim().slice(0, 2000) : null;
 }
 
 function nestedString(value: Record<string, unknown>, key: string, nested: string): string | null {

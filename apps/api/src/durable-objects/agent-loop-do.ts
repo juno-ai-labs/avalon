@@ -3187,7 +3187,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       span.setError("conversation_parent_kind_mismatch");
       return jsonResponse({
         error: "conversation_parent_kind_mismatch",
-        message: "Thread not found",
+        message: "Conversation not found",
       }, 404);
     }
     // Two principals, two verifications. A login session is checked against
@@ -6255,7 +6255,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   ): Promise<void> {
     try {
       if (!this.objectStore.isRealtimeWritable()) {
-        throw new ApiError(503, "workstream_maintenance", "Threads are temporarily unavailable");
+        throw new ApiError(503, "workstream_maintenance", "Conversations are temporarily unavailable");
       }
       assertParentWritable(attachment);
       const auth = await this.socketViewerAuth(attachment);
@@ -6264,7 +6264,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         return;
       }
       const identity = this.objectStore.identity();
-      if (!identity) throw new ApiError(404, "workstream_not_found", "Thread not found");
+      if (!identity) throw new ApiError(404, "workstream_not_found", "Conversation not found");
 
       if (command.type === "answer_elicitation") {
         const result = await this.product.answerElicitationForAdmittedSocket(
@@ -6431,7 +6431,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     }, async (span) => {
       try {
         if (!this.objectStore.isRealtimeWritable()) {
-          throw new ApiError(503, "workstream_maintenance", "Threads are temporarily unavailable");
+          throw new ApiError(503, "workstream_maintenance", "Conversations are temporarily unavailable");
         }
         assertParentWritable(attachment);
         if (!attachment.sessionId || attachment.role === undefined) {

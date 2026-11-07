@@ -1685,7 +1685,7 @@ creates without a recorded provider key cannot use this recovery path.
 
 ## Changelog
 
-### 2026-11-07 — The origin capability is deleted
+### 2026-11-07 — The origin capability and the legacy ID-only activity producers are deleted
 
 **What changed:** `ConnectorAdapter.origin`, `describeConnectorOrigin`,
 `connectorOriginFromActivity`, `connectorOriginUrl`, the origin locator and
@@ -1709,9 +1709,12 @@ and generic webhook ingresses were deleted: every deployment binds
 `WORKSPACE_DOS`, so they could only run in a test, and each still produced the
 ID-only `ActivityQueueMessage` the consumer acks as
 `legacy_message_after_cutover`. That tombstone stays for a message already in
-flight. The provider-wide webhook service keeps its legacy branch, and so its
-ID-only producer, until its Node suite (`test/provider-webhooks.test.ts`, which
-drives only that branch over a fake D1) is moved onto WorkspaceDO.
+flight. The commit-before-send recovery scan (`recoverPendingActivityQueue`)
+and the connector-poll Workflow's `enqueue-normalized-activities` step went
+the same way; a poll instance replaying across the deploy never reaches the
+deleted step. The provider-wide webhook service keeps its legacy branch, and
+so its ID-only producer, until its Node suite (`test/provider-webhooks.test.ts`,
+which drives only that branch over a fake D1) is moved onto WorkspaceDO.
 
 ### 2026-10-22 — Report shortened Sheets cell text
 

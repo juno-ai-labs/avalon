@@ -1007,7 +1007,7 @@ export class WorkstreamObjectProductService {
 
   private root(): RootRow {
     const row = first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
-    if (!row) throw new ApiError(404, "workstream_not_found", "Thread not found");
+    if (!row) throw new ApiError(404, "workstream_not_found", "Conversation not found");
     if (row.authority_mode !== "authoritative" || row.authority_generation <= 0) {
       throw new ApiError(503, "workstream_maintenance", "Work-stream maintenance is in progress");
     }
@@ -1206,13 +1206,13 @@ export class WorkstreamObjectProductService {
   private locallyAuthorizedRoot(auth: AuthContext, includeArchived = false): RootRow {
     const root = this.root();
     if (root.parent_workspace_key !== auth.workspaceId || root.workstream_key === "") {
-      throw new ApiError(404, "workstream_not_found", "Thread not found");
+      throw new ApiError(404, "workstream_not_found", "Conversation not found");
     }
     if (!this.canRead(auth.userId)) {
-      throw new ApiError(404, "workstream_not_found", "Thread not found");
+      throw new ApiError(404, "workstream_not_found", "Conversation not found");
     }
     if (!includeArchived && root.archived_at !== null) {
-      throw new ApiError(404, "workstream_not_found", "Thread not found");
+      throw new ApiError(404, "workstream_not_found", "Conversation not found");
     }
     return root;
   }
@@ -1225,7 +1225,7 @@ export class WorkstreamObjectProductService {
     ).bind(auth.workspaceId, auth.userId).first<{ access_class: "member" | "guest" }>();
     if (!membership || (membership.access_class === "guest" && !this.isParticipant(auth.userId)
       && !(root.scope === "workspace" && await this.channelReader(root, auth.userId)))) {
-      throw new ApiError(404, "workstream_not_found", "Thread not found");
+      throw new ApiError(404, "workstream_not_found", "Conversation not found");
     }
     return root;
   }
@@ -4207,7 +4207,7 @@ export class WorkstreamObjectProductService {
           requestHash,
         );
         const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
-        if (!current) throw new ApiError(404, "workstream_not_found", "Thread not found");
+        if (!current) throw new ApiError(404, "workstream_not_found", "Conversation not found");
         const replay = first(sql.exec<{
           id: string; sequence_number: number; attention_ordinal: number | null; created_at: number;
         } & Record<string, SqlStorageValue>>(
@@ -4672,7 +4672,7 @@ export class WorkstreamObjectProductService {
     const admitted = this.storage.transactionSync(() => {
       const sql = this.storage.sql;
       const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
-      if (!current) throw new ApiError(404, "workstream_not_found", "Thread not found");
+      if (!current) throw new ApiError(404, "workstream_not_found", "Conversation not found");
       const changed = sql.exec<{ elicitation_id: string }>(
         `UPDATE elicitation_requests SET status = 'answered', answer_json = ?,
                 answered_by_user_id = ?, answered_at = ?
