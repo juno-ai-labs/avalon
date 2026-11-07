@@ -32,35 +32,12 @@ Bind's `protocol_user_appended` transition, so the next Rally execution sees
 the updated source transcript without inventing a Rally run or treating imported
 assistant text as Rally's own output.
 
-Opening messages in Threads and Breakouts use `opening-message.ts` before any
-participant-count or attachment fast path. Its one JEV Choice distinguishes
-`prompt_to_process`, `human_to_human`, and `conversation_description` (including
-names). Only the latter two suppress a run; the message is still persisted.
-The original text, resolved mentions, attachment count, and annotation comments
-are the decision's evidence. Mixed work requests and ambiguity belong to
-`prompt_to_process`. Missing credentials, provider or schema failures, and
-confidence at or below the existing addressing floor (`0.5`) also process the
-prompt, without a generative fallback. The existing one-second JEV admission
-budget applies. These remain inherited operating defaults. See the [evaluation README](../packages/agent-harness/evals/opening-message/README.md)
-for comparison results and their limitations.
+A Thread's and a Breakout's first message had its own classifier
+(`opening-message.ts`, with an evaluation under `evals/opening-message`); both
+were deleted in plan step C-3 with Thread creation. A Canvas's or a Sidekick's
+first message is addressed like any other.
 
-Only member-composed openings (`opening_message`, without a Slack origin or
-started opportunity) use this gate. Explicit summons already authorize work.
-Thread initialization commits either an idle conversation with no run or its
-ordinary opening run. Replay reads that committed result without classifying
-again. Breakouts use the same gate on their first local message, before any
-canonical turn or earlier pending input; frozen parent context is not a local
-message. Later messages retain ordinary addressing. Imported history, merge
-posts, explicit system activations, and scripted demo seeds retain their own
-admission rules. Diagnostics use the metered `addressing_classifier` activity,
-the `opening_message_addressing` schema, and one
-`opening_message_classifier_outcome` row per decision.
-These are internal diagnostics only: the admission service returns a boolean,
-and neither the classifier prompt nor its label, confidence, or failure details
-are inserted into the conversation or the responding agent's context. A silent
-decision adds no assistant acknowledgement or explanation.
-
-Subsequent message addressing is a two-stage cascade. JEV receives every
+Message addressing is a two-stage cascade. JEV receives every
 message passed to the classifier using the optimized TypeSafe choice question and
 structured state recorded by the eval. A choice is accepted only when its
 confidence is strictly greater than `0.5`; exactly `0.5`, lower confidence, an

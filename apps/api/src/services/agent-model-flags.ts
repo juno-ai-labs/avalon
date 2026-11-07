@@ -207,9 +207,9 @@ async function resolveAgentModelRoutingForSubject(
 }
 
 /**
- * Stable resolver for every ordinary agent evaluation. New work-stream
- * creation uses `resolveNewWorkstreamModelRouting` until its product facts are
- * committed.
+ * Stable resolver for every ordinary agent evaluation. A scheduled run's
+ * recorded model is resolved by `resolveNewWorkstreamModelRouting`, before the
+ * conversation's product facts exist.
  */
 export async function resolveAgentModelRouting(
   env: Env,

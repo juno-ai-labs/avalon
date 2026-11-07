@@ -30,7 +30,6 @@ import { conversationSearchAudience } from '../services/search-audience';
 import { ConversationParentKindSchema } from "@rally/contracts/conversation-parent";
 
 import { workspaceDOName } from "./names";
-import { initialContextFrames } from "./substream-context-transfer";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { pendingBindToolBatch, type HarnessToolResult } from "@rally/agent-harness";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
@@ -296,7 +295,6 @@ import {
   type DurableObjectRpcResult,
   type ObjectPortOutcome,
 } from "./rpc-result";
-import { startReadCursorAtLatest } from "./member-attention";
 
 export { applyActiveStreamCheckpointEvent, splitActiveStreamCheckpointText } from "./workstream-object-storage";
 
@@ -506,8 +504,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("mark_unread") }),
   productOperation({ operation: z.literal("create_message"),
     input: WorkstreamObjectCreateMessageInputSchema }),
-  productOperation({ operation: z.literal("add_participant"), userId: IdSchema,
-    operationId: IdSchema.optional() }),
+  productOperation({ operation: z.literal("add_participant"), userId: IdSchema }),
   // The appearance write over the product request. A Space admits no feed
   // socket, so the socket command that carries this for a Channel cannot reach
   // it; the write itself is the same one.
@@ -892,7 +889,6 @@ type SocketSnapshotEvent = Extract<ServerSocketEvent, { type: "snapshot" }>;
 
 interface PreparedSocketSnapshot {
   event: SocketSnapshotEvent;
-  initialContextChunks: Extract<ServerSocketEvent, { type: "initial_context_snapshot_chunk" }>[];
   pendingInputChunks: WorkstreamTranscriptSnapshot["pendingInputs"][];
   encodedBytes: number;
   transcriptSnapshot: SocketAttachment["transcriptSnapshot"];
@@ -1442,119 +1438,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     };
   }
 
-  async applyPrivateChildLifecycle(input: {
-    workspaceId: string; parentId: string; substreamId: string; version: number; archivedAt: number | null;
-  }): Promise<void> {
-    await this.storageReady;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, parentId: IdSchema,
-      substreamId: SubstreamIdSchema.refine((id) => id !== "0"),
-      version: z.number().int().positive(), archivedAt: z.number().int().nonnegative().nullable(),
-    }).parse(input);
-    const identity = this.objectStore.identity();
-    if (!identity || identity.parentKind !== "workstream" || identity.workspaceId !== request.workspaceId
-      || identity.parentId !== request.parentId || this.externalSubstreamId() !== request.substreamId) {
-      throw new Error("private_child_lifecycle_identity_mismatch");
-    }
-    await this.product.applyPrivateChildLifecycle(request.version, request.archivedAt);
-    await this.armNextAlarm();
-  }
-
-  /** Apply one versioned mirror of the parent-owned roster for a private child. */
-  async applyPrivateChildMembership(input: {
-    workspaceId: string;
-    parentId: string;
-    substreamId: string;
-    userId: string;
-    actorUserId: string;
-    active: boolean;
-    membershipVersion: number;
-  }): Promise<{ outcome: "applied" | "stale" | "unchanged" }> {
-    await this.storageReady;
-    const request = z.strictObject({
-      workspaceId: WorkspaceIdSchema,
-      parentId: IdSchema,
-      substreamId: SubstreamIdSchema.refine((value) => value !== "0"),
-      userId: UserIdSchema,
-      actorUserId: UserIdSchema,
-      active: z.boolean(),
-      membershipVersion: z.number().int().positive(),
-    }).parse(input);
-    const identity = this.objectStore.identity();
-    const persistedSubstream = this.state.storage.sql.exec<{ external_substream_id: string }>(
-      `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
-    ).toArray()[0]?.external_substream_id;
-    if (!identity || identity.workspaceId !== request.workspaceId
-      || identity.parentId !== request.parentId || identity.parentKind !== "workstream"
-      || persistedSubstream !== request.substreamId) {
-      throw new Error("private_child_membership_identity_mismatch");
-    }
-    const now = Date.now();
-    // Read before the commit, because the effects that carry them are built
-    // inside it and an effect callback cannot await a regional round trip.
-    // This is the same preparation `addParticipant` does for the main
-    // conversation's add.
-    const names = await this.product.participantEffectNames(request.actorUserId, request.userId);
-    const { result: outcome } = await this.objectStore.commitWithRegionalEffects(() => {
-      const current = this.state.storage.sql.exec<{ version: number; active: number }>(
-        `SELECT version, active FROM private_child_membership_authority WHERE user_id = ?`,
-        request.userId,
-      ).toArray()[0];
-      if (current && current.version > request.membershipVersion) return "stale" as const;
-      if (current?.version === request.membershipVersion) {
-        if (current.active !== Number(request.active)) throw new Error("private_child_membership_version_conflict");
-        return "unchanged" as const;
-      }
-      this.state.storage.sql.exec(
-        `INSERT INTO private_child_membership_authority(user_id, version, active, actor_user_id, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(user_id) DO UPDATE SET version = excluded.version, active = excluded.active,
-           actor_user_id = excluded.actor_user_id, updated_at = excluded.updated_at`,
-        request.userId, request.membershipVersion, Number(request.active), request.actorUserId, now,
-      );
-      if (request.active) {
-        const wasActive = this.state.storage.sql.exec(
-          `SELECT 1 FROM participants WHERE user_id = ? AND status = 'active'`,
-          request.userId,
-        ).toArray().length > 0;
-        this.state.storage.sql.exec(
-          `INSERT INTO participants
-             (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-              added_at, removed_at, updated_at)
-           VALUES (?, 'explicit', ?, 'active', 0, ?, NULL, ?)
-           ON CONFLICT(user_id) DO UPDATE SET participation_reason = 'explicit',
-             added_by_user_id = excluded.added_by_user_id, status = 'active',
-             participant_epoch = participants.participant_epoch + CASE WHEN participants.status = 'removed' THEN 1 ELSE 0 END,
-             added_at = CASE WHEN participants.status = 'removed' THEN excluded.added_at ELSE participants.added_at END,
-             removed_at = NULL, updated_at = excluded.updated_at`,
-          request.userId, request.actorUserId, now, now,
-        );
-        if (!wasActive) {
-          startReadCursorAtLatest(
-            this.state.storage.sql, request.userId, now, request.actorUserId !== request.userId,
-          );
-        }
-      } else {
-        this.state.storage.sql.exec(
-          `UPDATE participants SET status = 'removed', removed_at = ?,
-             participant_epoch = participant_epoch + 1, updated_at = ?
-           WHERE user_id = ? AND status = 'active'`,
-          now, now, request.userId,
-        );
-      }
-      return "applied" as const;
-    }, (_sql, applied) => applied !== "applied" ? [] : this.product.privateChildMembershipEffects({
-      substreamId: request.substreamId,
-      userId: request.userId,
-      actorUserId: request.actorUserId,
-      actorName: names.actorName,
-      recipientName: names.recipientName,
-      active: request.active,
-      now,
-    }));
-    if (!request.active && outcome === "applied") this.evictReadersWhoLostLocalAccess();
-    return { outcome };
-  }
-
   /**
    * Prepare one feed admission while its already-issued ticket is in transit.
    *
@@ -1664,7 +1547,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         // Pending-input spill is intentionally unbounded by aggregate transport
         // size. It must stay a streaming delivery path, never retained as a
         // prepared array of encoded frames.
-        if (snapshot.pendingInputChunks.length > 0 || snapshot.initialContextChunks.length > 0) {
+        if (snapshot.pendingInputChunks.length > 0) {
           return { outcome: "admission_prepared" };
         }
         this.clearPreparedSocketSnapshot();
@@ -8514,7 +8397,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         ),
       });
       socket.send(JSON.stringify(snapshot.event));
-      for (const chunk of snapshot.initialContextChunks) socket.send(JSON.stringify(chunk));
       for (const [chunkIndex, inputs] of snapshot.pendingInputChunks.entries()) {
         const frame = JSON.stringify(ServerSocketEventSchema.parse({
           type: "pending_inputs_snapshot_chunk",
@@ -8593,9 +8475,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       : null;
     const occurredAt = new Date().toISOString();
     let pendingInputChunks: WorkstreamTranscriptSnapshot["pendingInputs"][] = [];
-    const initialContextChunks = initialContextFrames(this.transcript.initialContext(), {
-      sequence, occurredAt, snapshotId: transcript.snapshotId,
-    });
     const snapshotEvent = (): SocketSnapshotEvent => ServerSocketEventSchema.parse({
       type: "snapshot",
       reason,
@@ -8604,7 +8483,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       workstream,
       transcript,
       pendingInputChunkCount: pendingInputChunks.length,
-      initialContextChunkCount: initialContextChunks.length,
+      // A Breakout's inherited context was the only producer of these chunks.
+      initialContextChunkCount: 0,
       activeStreams,
       activeCompaction,
       activeInferenceDelays: workstream.harnessStatus === "running"
@@ -8679,7 +8559,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return {
       event,
       pendingInputChunks,
-      initialContextChunks,
       encodedBytes,
       transcriptSnapshot: {
         snapshotId: transcript.snapshotId,
