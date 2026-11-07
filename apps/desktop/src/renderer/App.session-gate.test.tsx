@@ -2,10 +2,8 @@ import "../../../../tests/isolated-region";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WorkstreamSummary } from './lib/types';
 import type { DesktopSession } from '../common/desktop';
 import { SessionGate } from './App';
-import { setCachedWorkstreams } from './lib/workstreams-cache';
 import { ApiError } from './lib/api';
 import {
   abandonPendingWorkstreamFeedOpen,
@@ -94,7 +92,6 @@ const completeWorkspaceSession: DesktopSession = {
 
 function renderGate(): QueryClient {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  setCachedWorkstreams(queryClient, []);
   render(<QueryClientProvider client={queryClient}><SessionGate /></QueryClientProvider>);
   return queryClient;
 }
@@ -139,46 +136,23 @@ describe('SessionGate identity-first ordering', () => {
     };
     renderGate();
 
-    // With no Channels the landing waits inside the shell for General.
     expect(await screen.findByRole('main')).toBeVisible();
     expect(sessionState.getOnboardingState).not.toHaveBeenCalled();
   });
 
-  it('starts organization admission and the landing feeds while organization details are pending', async () => {
+  it('starts organization admission while organization details are pending', async () => {
     sessionState.session = { ...identitySession, workspace: { id: 'workspace-1', name: 'Rally Studio', region: 'global', role: 'owner' } };
     const profile = { id: 'workspace-1', name: 'Rally Studio', region: 'global', currentUser: { id: 'user-1', email: 'adam@example.com', name: 'Adam', role: 'owner' } };
     let finishProfile!: (value: typeof profile) => void;
     sessionState.api.getWorkspace.mockImplementationOnce(() => new Promise((resolve) => { finishProfile = resolve; }));
-    const client = renderGate();
+    renderGate();
     expect(screen.getByText('Opening organization…')).toBeVisible();
     expect(sessionState.api.getWorkspace).toHaveBeenCalledTimes(1);
     expect(sessionState.api.getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
-    const id = '00000000-0000-7000-8000-000000000031';
-    // The workspace provider's canonical directory write can land before REST.
-    const first: WorkstreamSummary = {
-      id, title: 'First channel', titleStatus: 'settled', scope: 'workspace',
-      harnessStatus: 'completed', latestAttentionSequenceNumber: 0, readThroughSequenceNumber: 0,
-      manualUnreadFromSequenceNumber: null, manualUnreadGeneration: 0, hasUnread: false,
-      firstUnreadSequenceNumber: null, lastActivityAt: '2025-01-01T12:00:00Z',
-      lastAccessedAt: '2026-09-09T12:00:00Z',
-      pinPosition: null, nextPendingWakeup: null, participantUserIds: [], participantExtraCount: 0,
-      spaceIds: [],
-    };
-    // Recently viewed wins the landing even outside the five most active rows.
-    const recent = Array.from({ length: 5 }, (_, index) => ({ ...first,
-      id: `00000000-0000-7000-8000-${String(index + 40).padStart(12, '0')}`,
-      lastActivityAt: '2026-09-09T13:00:00Z', lastAccessedAt: '2026-09-08T12:00:00Z',
-    }));
-    act(() => setCachedWorkstreams(client, [first, ...recent]));
-    await waitFor(() => expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6));
-    expect(sessionState.api.getSocketTicket.mock.calls.some(([target]) => target === id)).toBe(true);
-    expect(sessionState.api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
-    expect(screen.getByText('Opening organization…')).toBeVisible();
     await act(async () => { finishProfile(profile); });
-    // The landing opens the Canvases home; the sockets above were warmed regardless.
+    // The landing opens the Canvases home, on the one Organization socket.
     expect(await screen.findByText('canvases home')).toBeVisible();
     expect(sessionState.api.getWorkspaceSocketTicket).toHaveBeenCalledTimes(1);
-    expect(sessionState.api.getSocketTicket).toHaveBeenCalledTimes(6);
     expect(sessionState.api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
   });
 

@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AttachmentPanel } from './attachment-panel';
 import type { AttachmentPreview } from './attachments';
-import { copyArtifactLink } from '../lib/copy-workstream-link';
+import { desktopBridge } from '../lib/platform';
 
 const copyText = vi.hoisted(() => vi.fn<(text: string) => Promise<void>>(async () => undefined));
 vi.mock('../lib/platform', () => ({
@@ -12,12 +12,8 @@ vi.mock('../lib/platform', () => ({
 
 const firstResourceId = '00000000-0000-7000-8000-000000000009';
 const secondResourceId = '00000000-0000-7000-8000-0000000000a9';
-const workspaceId = '00000000-0000-7000-8000-000000000003';
-const spaceId = '00000000-0000-7000-8000-000000000004';
-const threadId = '019fec70-fba0-7b0e-9f7a-3dd1ef56520f';
-const resourceLink = (resourceId: string) => () => copyArtifactLink(
-  { region: 'global', workspaceId }, spaceId, threadId, resourceId,
-);
+/** The host's link for an artifact: whatever it copies, the panel offers it as Copy URL. */
+const resourceLink = (resourceId: string) => () => desktopBridge().copyText(`https://rallywith.ai/artifacts/${resourceId}`);
 
 function renderPanel(preview: AttachmentPreview, onClose = vi.fn()) {
   render(<Tooltip.Provider><AttachmentPanel onClose={onClose} onResize={vi.fn()} preview={preview} resourceLink={resourceLink} width={360} /></Tooltip.Provider>);
@@ -40,7 +36,7 @@ describe('AttachmentPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next attachment' }));
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Attachment menu: second.png' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy URL' }));
-    await waitFor(() => expect(copyText).toHaveBeenCalledWith('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TY/s/1111117Hxt1fAWDjN7TZ/c/CduMrko5vpzwph2okTVLJ/a/1111117Hxt1fAWDjN7WQ'));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(`https://rallywith.ai/artifacts/${secondResourceId}`));
     expect(await screen.findByText('Copied.')).toBeVisible();
     expect(screen.queryByRole('menuitem', { name: 'Download' })).toBeNull();
   });

@@ -161,7 +161,7 @@ card is hovered or focused, and in its right-click menu: one list of actions
 image or media tile carries a pin in its corner. The **Artifacts** tab lists
 the pins alone for now, and the **Pinned** tab draws them as a third part,
 **Artifacts**. A row opens its thread with the artifact's panel expanded
-(`openThreadResourceState`; [`pane-stack.md`](pane-stack.md)).
+(`openThreadResourceState`; the pane stack (retired 2026-11)).
 
 ### Older desktops' per-Space pins
 

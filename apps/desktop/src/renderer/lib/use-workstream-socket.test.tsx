@@ -31,11 +31,6 @@ import {
   workstreamOpenTimeoutMs,
   type WorkstreamSocketApi,
 } from './use-workstream-socket';
-import {
-  RECENT_WORKSTREAM_SOCKET_RETENTION_MS,
-  WorkstreamSocketPool,
-  useRetainedWorkstreamSocket,
-} from './workstream-socket-pool';
 import { WorkstreamSocketResumeProvider } from './workstream-socket-resume';
 import { conversationCacheKey, conversationSlice } from './conversation-cache';
 import { clearAllLocalCache } from './local-cache';
@@ -1240,127 +1235,6 @@ describe('useWorkstreamSocket', () => {
       .toBeUndefined();
   });
 
-  it('reuses the same socket when returning to a recently viewed channel', async () => {
-    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const firstWorkstreamId = '00000000-0000-7000-8000-000000000621';
-    const secondWorkstreamId = '00000000-0000-7000-8000-000000000622';
-    const queryClient = new QueryClient();
-    for (const workstreamId of [firstWorkstreamId, secondWorkstreamId]) {
-      queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId }));
-      queryClient.setQueryData(['ordered-transcript', workstreamId], emptyTranscriptSnapshot());
-    }
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async (workstreamId: string) => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: `socket-ticket-${workstreamId}`,
-        protocols: socketTicketProtocols(`socket-ticket-${workstreamId}`),
-      })),
-    });
-    function ActiveConnection({ workstreamId }: { workstreamId: string }): React.JSX.Element {
-      const connection = useRetainedWorkstreamSocket(api, workstreamId, true);
-      return <div>{connection.state}</div>;
-    }
-    const view = render(
-      <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <ActiveConnection workstreamId={firstWorkstreamId} />
-      </WorkstreamSocketPool>,
-      { wrapper: createWrapper(queryClient) },
-    );
-    await flushPromises();
-    const firstSocket = FakeWebSocket.instances[0]!;
-    firstSocket.send.mockImplementation((frame: string) => {
-      if (frame === 'ping') queueMicrotask(() => firstSocket.rawMessage('pong'));
-      else if (frame.includes('request_snapshot')) queueMicrotask(() => firstSocket.message(snapshotFrame({
-        sequence: 1, workstream: {id: firstWorkstreamId},
-      })));
-    });
-    act(() => firstSocket.open());
-    await flushPromises();
-    const firstClose = vi.spyOn(firstSocket, 'close');
-
-    view.rerender(
-      <WorkstreamSocketPool activeWorkstreamId={secondWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <ActiveConnection workstreamId={secondWorkstreamId} />
-      </WorkstreamSocketPool>,
-    );
-    await flushPromises();
-    const secondSocket = FakeWebSocket.instances[1]!;
-    secondSocket.send.mockImplementation((frame: string) => {
-      if (frame === 'ping') queueMicrotask(() => secondSocket.rawMessage('pong'));
-      else if (frame.includes('request_snapshot')) queueMicrotask(() => secondSocket.message(snapshotFrame({
-        sequence: 1, workstream: {id: secondWorkstreamId},
-      })));
-    });
-    act(() => secondSocket.open());
-    await flushPromises();
-    expect(FakeWebSocket.instances).toHaveLength(2);
-    expect(firstClose).not.toHaveBeenCalled();
-
-    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
-    view.rerender(
-      <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <ActiveConnection workstreamId={firstWorkstreamId} />
-      </WorkstreamSocketPool>,
-    );
-    await flushPromises();
-
-    expect(FakeWebSocket.instances).toHaveLength(2);
-    expect(firstClose).not.toHaveBeenCalled();
-  });
-
-  it('closes an idle recently viewed socket only after five minutes', async () => {
-    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const firstWorkstreamId = '00000000-0000-7000-8000-000000000623';
-    const secondWorkstreamId = '00000000-0000-7000-8000-000000000624';
-    const queryClient = new QueryClient();
-    for (const workstreamId of [firstWorkstreamId, secondWorkstreamId]) {
-      queryClient.setQueryData(['workstream', workstreamId], workstreamDetail({ id: workstreamId }));
-      queryClient.setQueryData(['ordered-transcript', workstreamId], emptyTranscriptSnapshot());
-    }
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async (workstreamId: string) => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: `socket-ticket-${workstreamId}`,
-        protocols: socketTicketProtocols(`socket-ticket-${workstreamId}`),
-      })),
-    });
-    function ActiveConnection({ workstreamId }: { workstreamId: string }): React.JSX.Element {
-      const connection = useRetainedWorkstreamSocket(api, workstreamId, true);
-      return <div>{connection.state}</div>;
-    }
-    const view = render(
-      <WorkstreamSocketPool activeWorkstreamId={firstWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <ActiveConnection workstreamId={firstWorkstreamId} />
-      </WorkstreamSocketPool>,
-      { wrapper: createWrapper(queryClient) },
-    );
-    await flushPromises();
-    const firstSocket = FakeWebSocket.instances[0]!;
-    firstSocket.send.mockImplementation((frame: string) => {
-      if (frame === 'ping') queueMicrotask(() => firstSocket.rawMessage('pong'));
-      else if (frame.includes('request_snapshot')) queueMicrotask(() => firstSocket.message(snapshotFrame({
-        sequence: 1, workstream: {id: firstWorkstreamId},
-      })));
-    });
-    act(() => firstSocket.open());
-    await flushPromises();
-    const firstClose = vi.spyOn(firstSocket, 'close');
-
-    view.rerender(
-      <WorkstreamSocketPool activeWorkstreamId={secondWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
-        <ActiveConnection workstreamId={secondWorkstreamId} />
-      </WorkstreamSocketPool>,
-    );
-    await flushPromises();
-    await act(async () => vi.advanceTimersByTimeAsync(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
-    expect(firstClose).not.toHaveBeenCalled();
-
-    act(() => vi.advanceTimersByTime(1));
-    expect(firstClose).toHaveBeenCalledTimes(1);
-  });
-
   it.each(['close', 'manual'] as const)('preserves a pending message and its receipt across %s recovery', async (recovery) => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -1837,32 +1711,9 @@ describe('useWorkstreamSocket', () => {
       operationId: appearanceCommand.operationId,
     }));
     await expect(appearance).resolves.toBeUndefined();
-    expect(queryClient.getQueryData<{ privateChildren: Array<{ appearance?: unknown }> }>(
-      ['workstream-children', workstreamId],
-    )?.privateChildren[0]?.appearance).toEqual({ icon: 'orbit', color: 'purple' });
+    // A child's appearance is its own: the parent's row is not repainted.
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.appearance)
       .toEqual({ icon: 'atom', color: 'gray' });
-
-    const lateAppearance = result.current.setAppearance({ icon: 'rocket' });
-    await flushPromises();
-    const lateAppearanceCommand = sentFrames(second).filter((frame): frame is Extract<ClientSocketEvent, {
-      type: 'set_workstream_appearance';
-    }> => frame.type === 'set_workstream_appearance').at(-1)!;
-    // Another authoritative parent projection lands while this receipt is in
-    // flight. The receipt only confirms the older command and must not regress
-    // the newer row.
-    queryClient.setQueryData(['workstream-children', workstreamId], {
-      privateChildren: [{ substreamId, title: 'Private child', appearance: { icon: 'heart', color: 'blue' } }],
-    });
-    act(() => second.message({
-      type: 'client_command_succeeded',
-      command: 'set_workstream_appearance',
-      operationId: lateAppearanceCommand.operationId,
-    }));
-    await expect(lateAppearance).resolves.toBeUndefined();
-    expect(queryClient.getQueryData<{ privateChildren: Array<{ appearance?: unknown }> }>(
-      ['workstream-children', workstreamId],
-    )?.privateChildren[0]?.appearance).toEqual({ icon: 'heart', color: 'blue' });
   });
 
   it('rejects failed and mismatched private command receipts', async () => {

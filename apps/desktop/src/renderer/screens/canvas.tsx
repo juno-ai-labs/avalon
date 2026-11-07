@@ -11,7 +11,7 @@ import { AvatarStack, Button, EmptyState, ErrorNotice } from '../components/prim
 import { canvasDetailQueryKey, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { layoutKey, readArtifactPanel } from '../lib/desktop-layout';
-import { openResourceRequest, openThreadResourceState } from '../lib/navigation-routes';
+import { openResourceRequest, openResourceState } from '../lib/navigation-routes';
 import { ConversationSurface } from './conversation-surface';
 
 /**
@@ -45,7 +45,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const [sharing, setSharing] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
   useOpenNewestArtifact(id, canvas.data, session?.workspace?.id, session?.user.id, location.state, (resourceId) => {
-    void navigate(`${location.pathname}${location.search}`, { replace: true, state: openThreadResourceState(id, resourceId) });
+    void navigate(`${location.pathname}${location.search}`, { replace: true, state: openResourceState(id, resourceId) });
   });
   const title = canvas.data?.title ?? row?.title ?? '';
   const pinned = row ? row.pinnedPosition !== null : false;

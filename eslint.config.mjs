@@ -17,9 +17,6 @@ import { noRawEntryPointCheckRule } from "./scripts/eslint-rules/no-raw-entry-po
 import { providerJsonSchemaComplexityRule } from "./scripts/eslint-rules/provider-json-schema-complexity.mjs";
 import { requireValidatedResponseRule } from "./scripts/eslint-rules/require-validated-response.mjs";
 import {
-  noDirectWorkstreamsCacheWriteRule,
-} from "./scripts/eslint-rules/renderer-cache-boundaries.mjs";
-import {
   noDiagnosticMessageInPresentationRule,
   presentationBoundaryFiles,
   presentationBoundaryIgnores,
@@ -77,7 +74,6 @@ export default tseslint.config(
           "tool-input-number-boundary": toolInputNumberBoundaryRule,
           "no-application-contract-test-cast": noApplicationContractTestCastRule,
           "no-direct-cloudflare-test-cast": noDirectCloudflareTestCastRule,
-          "no-direct-workstreams-cache-write": noDirectWorkstreamsCacheWriteRule,
           "no-diagnostic-message-in-presentation": noDiagnosticMessageInPresentationRule,
           "no-production-double-assertion": noProductionDoubleAssertionRule,
           "durable-object-sql-storage": durableObjectSqlStorageRule,
@@ -296,13 +292,6 @@ export default tseslint.config(
     ignores: ["**/*.test.{ts,tsx}"],
     rules: {
       "rally/require-websocket-ticket": "error",
-    },
-  },
-  {
-    files: ["apps/desktop/src/renderer/**/*.{ts,tsx}", "packages/ui/src/**/*.{ts,tsx}"],
-    ignores: ["apps/desktop/src/renderer/lib/workstreams-cache.ts"],
-    rules: {
-      "rally/no-direct-workstreams-cache-write": "error",
     },
   },
   {

@@ -47,7 +47,7 @@ already reads Channel, thread, breakout, so every link already shared still
 opens what it named. Inside the app, a Space route (`/spaces/:id/*`) redirects
 to `/channels/:id`, and a lone thread route (`/workstreams/:id`) redirects to
 `/channels/:channel/threads/:id` when the device knows a Channel the thread
-sits in ([`pane-stack.md`](pane-stack.md)).
+sits in (the pane stack, retired 2026-11).
 
 ## The two forms
 

@@ -487,7 +487,7 @@ Shipped in #1203.
 **What changed:** `MIN_SIDEBAR_WIDTH` is 306px, up from 240px. A saved width
 below it is raised on the next launch by `sidebar-preferences.ts`'s clamp.
 
-**Why:** The attention menu ([`attention-menu.md`](attention-menu.md)) made
+**Why:** The attention menu (the attention menu, retired) made
 the top bar four buttons, five while an update waits. On macOS the bar starts
 at 100px to clear the traffic lights (82px inset plus 18px padding) and keeps
 14px on the right, which at 240px left 126px for buttons that need 192px
