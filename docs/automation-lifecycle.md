@@ -1081,7 +1081,9 @@ gets the delegation tools alone.
 The desktop's Sidekick screen marks every message a manager sends there as an
 edit until the shared conversation gets its own composer (plan step A-13), so
 that screen keeps working as the Sidekick's editor; anyone else's message there
-is unmarked and asks the Sidekick for a run.
+is unmarked and asks the Sidekick for a run. The client's check
+(`viewerManagesSidekick`) cannot see who manages a Thread-scoped Sidekick's
+Thread, so a manager who is only that does not get the mark there.
 
 ### Runs in the shared conversation
 
