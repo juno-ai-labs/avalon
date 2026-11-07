@@ -4,7 +4,6 @@ import { useConversationAdmission } from './conversation-admission';
 import { safeParseSocketEvent } from "@rally/contracts";
 import type { SidekickMessageIntent, WorkstreamAppearancePatch } from '@rally/contracts';
 import {
-  type ConversationSuggestion,
   ServerSocketEventSchema,
   WorkstreamSocketCommandResultSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
@@ -79,7 +78,7 @@ import {
   upsertTranscriptMessage,
 } from './transcript';
 import type { HarnessStatus, Message, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from './types';
-import { evictCachedSubstream, patchCachedGeneratedIcon, patchCachedWorkstream, patchCachedWorkstreamAppearance, setCachedWorkstreams, workstreamDetailQueryKey } from './workstreams-cache';
+import { evictCachedSubstream, patchCachedWorkstream, workstreamDetailQueryKey } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import {
   conversationSeededFromLocalCache,
@@ -135,8 +134,6 @@ export interface WorkstreamSocketConnection {
   workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
   activeInferenceDelays: InferenceDelayState[];
   activeCompaction: AgentCompactionState | null;
-  /** The open conversation suggestions, as the room last published them; the surface decides which are visible. */
-  suggestions: ConversationSuggestion[];
   createMessage(input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn>;
   answerElicitation(
     elicitationId: string,
@@ -535,11 +532,6 @@ export function applyHarnessStatus(
     current && current.harnessStatus !== harnessStatus
       ? { ...current, harnessStatus, stopRequested: false }
       : current);
-  if (substreamId !== '0') return;
-  setCachedWorkstreams(queryClient, (current) =>
-    current?.map((workstream) => workstream.id === workstreamId && workstream.harnessStatus !== harnessStatus
-      ? { ...workstream, harnessStatus }
-      : workstream));
 }
 
 /**
@@ -771,7 +763,6 @@ export function useWorkstreamSocket(
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
   // From the resume state: a remount that resumes after the cursor replays no
   // snapshot, and the open chips must not vanish until a forced one.
-  const [suggestions, setSuggestions] = useState<ConversationSuggestion[]>(resumeState.suggestions);
   const attempts = useRef(0);
   const reconnectRef = useRef<(() => void) | null>(null);
   const retryOpening = useCallback((): void => {
@@ -1221,26 +1212,8 @@ export function useWorkstreamSocket(
       const command = { type: 'set_workstream_appearance' as const, operationId: uuidV7(), appearance };
       const result = appearanceQueue.then(async () => {
         if (closedByEffect) throw new ApiError('The conversation is no longer available.', 409, 'workstream_socket_unavailable');
-        const submitted = submitSubstreamCommand(command);
-        // Read after the submit, which starts a connection attempt when none is
-        // open and bumps the generation as it does.
-        const sentOnGeneration = connectGeneration;
-        const receipt = await submitted;
+        const receipt = await submitSubstreamCommand(command);
         if (receipt.command !== 'set_workstream_appearance') throw new Error('substream_command_receipt_mismatch');
-        // The sidebar row has no preview of its own and the projection that
-        // would update it is several hops away; the header keeps the picker's
-        // preview, so only the row is written. The receipt is the commit —
-        // on the connection that carried the command. A receipt that arrives
-        // after a reconnect answers a resend, and the room answers a resend of
-        // an already committed operation from its receipt without publishing
-        // anything, so it may describe a value another client has since
-        // replaced and whose newer state this client already holds. The
-        // reconnect's snapshot carries the current value, so the patch is
-        // simply not needed there, and applying it could put the older choice
-        // back with nothing left to correct it.
-        if (sentOnGeneration === connectGeneration) {
-          if (substreamId === '0') patchCachedWorkstreamAppearance(queryClient, parentId, appearance);
-        }
       });
       appearanceQueue = result.catch(() => undefined);
       return result;
@@ -1596,8 +1569,6 @@ export function useWorkstreamSocket(
         else queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         setActiveCompaction(event.activeCompaction);
         updateInferenceDelays(event.activeInferenceDelays);
-        resumeState.suggestions = event.suggestions ?? [];
-        setSuggestions(resumeState.suggestions);
         queryClient.setQueryData<number>(
           workstreamSocketSnapshotGenerationQueryKey(parentId, substreamId),
           (current) => (current ?? 0) + 1,
@@ -1697,10 +1668,6 @@ export function useWorkstreamSocket(
             );
           queryClient.setQueryData<WorkstreamDetail>(detailQueryKey, (current) =>
             current ? advance(current) : current);
-          if (substreamId === '0') {
-            setCachedWorkstreams(queryClient, (current) => current?.map((workstream) =>
-              workstream.id === parentId ? advance(workstream) : workstream));
-          }
         }
       } else if (event.type === 'transcript_activity_upserted') {
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
@@ -1728,19 +1695,6 @@ export function useWorkstreamSocket(
         // `settled` when nothing will change it again; the event says which,
         // and neither is a reason to keep waiting.
         patchCachedWorkstream(queryClient, parentId, { title: event.title, titleStatus: event.titleStatus }, substreamId);
-        // A naming pass also chooses the icon, and only where nobody has, so
-        // the event carries one exactly when the server wrote one. The sidebar
-        // row takes it if it has no icon of its own; the header waits for the
-        // versioned projection. Both conditions are the writer's, and
-        // `patchCachedGeneratedIcon` holds the reasons for each.
-        if (event.icon && substreamId === '0') patchCachedGeneratedIcon(queryClient, parentId, event.icon);
-      } else if (event.type === 'conversation_suggestion_changed') {
-        // The row's whole state each time: replace what is held for that id,
-        // and drop it once it is no longer open. The newest-three rule that
-        // hides a line is the surface's to apply against the feed it holds.
-        const others = resumeState.suggestions.filter((suggestion) => suggestion.suggestionId !== event.suggestion.suggestionId);
-        resumeState.suggestions = event.suggestion.status === 'open' ? [...others, event.suggestion] : others;
-        setSuggestions(resumeState.suggestions);
       } else if (event.type === 'workstream_scope_changed') {
         // Whoever this change excluded has already been disconnected by the
         // room, so everyone still here may read it and only needs the lock on
@@ -2628,7 +2582,6 @@ export function useWorkstreamSocket(
       workspaceSocketState,
       activeCompaction,
       activeInferenceDelays,
-      suggestions,
       answerElicitation,
       createMessage,
       loadTranscriptRange,
@@ -2642,7 +2595,6 @@ export function useWorkstreamSocket(
       admissionAllowed,
       activeCompaction,
       activeInferenceDelays,
-      suggestions,
       answerElicitation,
       createMessage,
       loadTranscriptRange,

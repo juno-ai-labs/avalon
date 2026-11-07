@@ -40,7 +40,6 @@ function detail(overrides: Partial<WorkstreamDetail> = {}): WorkstreamDetail {
     pinPosition: null,
     participantUserIds: [],
     participantExtraCount: 0,
-    spaceIds: [],
     lastActivityAt: '2026-09-01T12:00:00.000Z',
     createdAt: '2026-09-01T11:00:00.000Z',
     participants: [],

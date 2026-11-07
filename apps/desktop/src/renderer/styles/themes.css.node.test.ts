@@ -225,9 +225,6 @@ describe('token references', () => {
     // The open Breakout's pane width, set by SplitConversationLayout from the
     // width the reader dragged it to.
     '--split-breakout-width',
-    // How far a pane slides when it takes the whole width or gives it back,
-    // measured by SplitConversationLayout at the step.
-    '--split-motion-from',
     // How far back an origin-context message sits, set per row by BreakoutOrigin.
     '--origin-step',
     // A picker swatch's ink dot, set per swatch from markColors().
