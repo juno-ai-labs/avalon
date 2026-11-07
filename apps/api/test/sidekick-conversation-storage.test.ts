@@ -59,13 +59,13 @@ function seedSidekick(database: DatabaseSync, id = SIDEKICK, lifecycle = "active
   ).run(id, WORKSPACE_ID, AUTHOR, lifecycle, CHANNEL);
 }
 
-function seedCanvas(database: DatabaseSync, id: string, title: string, updatedAt: number, writer: string | null = null): void {
+function seedCanvas(database: DatabaseSync, id: string, title: string, createdAt: number, writer: string | null = null): void {
   database.prepare(
     `INSERT INTO canvas_directory
        (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, writer_sidekick_id,
         visibility, authority_generation)
-     VALUES (?, ?, ?, ?, 1, ?, ?, 'creator', 1)`,
-  ).run(id, WORKSPACE_ID, title, AUTHOR, updatedAt, writer);
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'creator', 1)`,
+  ).run(id, WORKSPACE_ID, title, AUTHOR, createdAt, createdAt, writer);
 }
 
 /** Every WorkspaceDO migration, the way a current object holds them. */
@@ -107,7 +107,7 @@ describe("the WorkspaceDO home-conversation migration", () => {
 });
 
 describe("a Sidekick's scope", () => {
-  it("puts its own conversation first, then the Canvases it writes newest first, then its attachments in order", () => {
+  it("puts its own conversation first, then the Canvases it writes newest made first, then its attachments in order", () => {
     const database = currentWorkspace();
     const sql = createTestSqlStorage(database);
     seedSidekick(database);

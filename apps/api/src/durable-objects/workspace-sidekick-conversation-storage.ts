@@ -95,7 +95,8 @@ function canvasConversation(canvasId: string, title: string): ScopedConversation
 /**
  * Every conversation in a Sidekick's scope that the Organization still holds,
  * before admission: the Sidekick's own conversation first, then the Canvases it
- * writes, newest first, then the Canvases attached to it in the order they
+ * writes, newest made first (creation, not edit, so a list's pages do not
+ * move as a Canvas is edited), then the Canvases attached to it in the order they
  * were attached. A Canvas both written and attached is listed once. An
  * attachment of a retired Thread (`parent_kind = 'workstream'`) names nothing.
  */
@@ -111,7 +112,7 @@ export function scopeConversations(sql: SqlStorage, scope: ConversationToolScope
   const seen = new Set<string>();
   for (const row of sql.exec<{ canvas_id: string; title: string }>(
     `SELECT canvas_id, title FROM canvas_directory WHERE writer_sidekick_id = ?
-      ORDER BY updated_at DESC, canvas_id`,
+      ORDER BY created_at DESC, canvas_id`,
     scope.automationId,
   ).toArray()) {
     seen.add(row.canvas_id);

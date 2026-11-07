@@ -9,8 +9,8 @@ never new tools. The model never supplies, names, or widens a scope.
 To the model every conversation is the same thing: an id, a title, and
 messages. A Sidekick's own conversation and a Canvas's Chat are both read from
 the conversation's own object; the entry's internal `kind` (`sidekick` or
-`canvas`) routes the search audience and the post's parent kind, and no tool
-output carries it.
+`canvas`) routes the search audience and the post's parent kind. Only
+`conversation_attach`'s output carries it, as `canvas`.
 
 Read this before changing what an agent can read or post to outside its own
 conversation, and before giving a new kind of loop these tools. The tool design
@@ -42,7 +42,7 @@ conversations are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 A Canvas's Chat gets no conversation tools: its own transcript is its context.
 The Canvases a Sidekick writes are those whose `writer_sidekick_id` names it
-(each run's Canvas), newest first; attachments follow in the order they were
+(each run's Canvas), newest made first; attachments follow in the order they were
 made, a Canvas both written and attached listed once. An attachment row of a
 retired Thread (`parent_kind = 'workstream'`) names nothing. Canonical
 admission decides each candidate for the acting person on every call: a Canvas
@@ -152,8 +152,7 @@ sees it, or a Canvas's title among the Canvases the person can open.
 ### Admission
 
 WorkspaceDO answers each read or post in one call: it builds the scope from its
-own `automation_directory`, attachment rows, `channels`, `breakouts`,
-`channel_viewers`, `breakout_viewers` and active `space_channel_memberships`, matches the reference against it,
+own `automation_directory`, `canvas_directory` and attachment rows, matches the reference against it,
 and then admits the acting person to that one conversation: an active
 relationship in `workspace_member_status`, then the hosted parent's
 `authorizeViewer`, the same admission the conversation's transport uses, with
@@ -290,6 +289,13 @@ Channels and Breakouts; nothing writes the directories the old scope read, so
 a Canvas a Sidekick should report into was unreachable (the gap the previous
 entry recorded). Each Canvas is admitted by `canvasAdmits` through its hosted
 parent, the rule its own transport applies, rather than a second rule here.
+
+**Considered and rejected:** Conversation tools for a Canvas's Chat: its own
+transcript and the Canvas's content are its context (the PRD's "Agent
+behavior"), and no PRD flow needs Rally in a Canvas to read another Canvas or
+a Sidekick's conversation. A Sidekick's conversation as an attachment of
+another Sidekick: nothing in the PRD has one Sidekick report into another, so
+only a Canvas's Chat is attachable.
 
 **Respect:** A title names only Canvases the acting person can open: an attach
 by title admits every match before it reports one, so a private Canvas's id is

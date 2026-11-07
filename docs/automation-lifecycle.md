@@ -257,7 +257,7 @@ cursor). The hash a continuation checks covers the run and its transcript, the
 turns and their tool calls, not the output bodies. A run whose transcript or
 result moved is refused as changed evidence, and so is a continuation whose
 rebuilt page does not carry the same outputs in full. Receipt authority
-metadata, credentials and private reasoning stay private. Feedback in the home or another attached conversation
+metadata, credentials and private reasoning stay private. Feedback in the Sidekick's own conversation or an attached Canvas's Chat
 is read separately through conversation tools.
 
 Every page resolves current Organization membership and Sidekick read access;
@@ -478,7 +478,7 @@ the open composers. Counts have no REST fetch, polling, or per-Sidekick socket.
 | `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by an agent's `create_sidekick`; and `AutomationService`, the Worker-side access every route goes through. It passes who is asking; whether they manage the Sidekick is decided where the Sidekick lives. |
 | `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /:id`, `GET /:id/delegation`, `POST /:id/delegation`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/audience`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
 | `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; the history projection's `sidekick_review_due` branch, which admits the notice row as the model's user turn; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a room. |
-| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 86), and the conversation scope a Sidekick or a Channel or Breakout loop reaches. |
+| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | `sidekick_conversation_attachments` (WorkspaceDO migration 86) and the conversation scope a Sidekick reaches: its own conversation, the Canvases it writes, and its attached Canvases. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
 | `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), `SidekickReviewNoticeV1` (the review row's structured content: counts and the sampled run ids), and `AutomationDraftProposedV1` (the card). |
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
@@ -521,8 +521,7 @@ owning room's waterline. `owning_workstream_id`, `owning_substream_id` and
 because released CHECKs name them. Nothing writes them, and migration 137 left
 them null. A few legacy readers still look and tolerate null: the search
 audience universe (`search-authorization-universe.ts`), the memory facts'
-home and subject keys (`workspace-memory-facts-storage.ts`), `sidekickHome`
-(`workspace-sidekick-conversation-storage.ts`) and the engineering inspection
+home and subject keys (`workspace-memory-facts-storage.ts`) and the engineering inspection
 read (`engineering-inspection-bridge.ts`); phase C removes them.
 `AutomationScopeSchema` is `personal | workspace`, and a stored draft or
 transcript row that says `workstream` reads as `workspace`
@@ -1318,13 +1317,12 @@ and `setOwningRoomArchived` and the archive cascade that called it are gone.
 
 A Sidekick reads and posts through the `rally:conversations` plugin
 ([`conversation-tools.md`](conversation-tools.md)), whose scope for a Sidekick is
-its own conversation plus the conversations attached to it in WorkspaceDO's
-`sidekick_conversation_attachments`. Only the Sidekick's configuration
-conversation attaches (the `conversation_attach` tool), and only a conversation
-the attaching person can post in, since attaching is the consent to publish
-there. A run posts with `conversation_post`, which defaults to the Sidekick's own
-conversation; nothing posts a run's result for it, and a Channel's feed takes no
-Sidekick post. That table is not `parent_sidekicks` or a conversation's
+its own conversation, every Canvas it writes, and the Canvases attached to it
+in WorkspaceDO's `sidekick_conversation_attachments`. Only the Sidekick's
+configuration conversation attaches (the `conversation_attach` tool), and only
+a Canvas the attaching person can open, since attaching is the consent to
+publish there. A run posts with `conversation_post`, which defaults to the
+Sidekick's own conversation; nothing posts a run's result for it. That table is not `parent_sidekicks` or a conversation's
 `sidekick_attachments`: those record that a conversation may load the Sidekick
 as a skill, and loading writes them automatically.
 
