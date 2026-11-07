@@ -60,7 +60,8 @@ log against the measured numbers.
 
 1. **A longer program deadline.** Rejected: a running program holds the object's
    I/O context, and the platform allows ten Dynamic Workers per object.
-   Continuation keeps each program inside the existing deadline.
+   Continuation keeps each program inside the existing deadline. (Revisited:
+   see the decision log, 2026-11-07.)
 2. **Continuation for `code_execute`.** Deferred: an ad hoc program has no tested
    contract for its own continuation input. Saved tools have one, tested by
    `sidekick_tool_test`.
@@ -120,24 +121,16 @@ principal and receipts as the tool's single program does today.
 
 ## Decision log
 
-- **2026-11-07: Not built yet; page within the budget first, then move the
-  deadline if needed.** Daily Active Rally Organizations' tool, timed at 16 reads
-  at once, finishes about 2.6 conversations a second, about 235 in a 90-second
-  share. It stopped after one 100-row page, so about 450 conversations took five
-  calls; paging until the budget runs out brings that to about two. A review of
-  this design found it no better than a longer program on the grounds non-goal 1
-  gives: segments run back to back hold the object as long as one longer program,
-  with one Dynamic Worker at a time. Shipped as written it would also loop
-  silently, since root runs have no wall clock and Stop does not reach a running
-  tool call (`docs/agent-harness.md`, "Loop stop"), so its segment cap could not
-  ship open. The `cap × CODE_PROGRAM_TOOL_TIMEOUT_MS` timer breaks the 1,050,000 ms
-  tool timeout ceiling at a cap of 7 or more. If a run still needs more than three
-  calls after paging, the next step is moving `CODE_PROGRAM_DEADLINE_MS`, which
-  `limits.ts` already marks provisional, or a per-tool budget under a ceiling the
-  team sets. This PRD is the fallback if neither is enough; building it then
-  needs a set cap, the run's deadline in place of Bind's tool timer, a host seam
-  that reads a requested stop, and the loop in `executeProgram` so `code_execute`
-  gets it too.
+- **2026-11-07: Not built yet. Page within the budget first, then move
+  `CODE_PROGRAM_DEADLINE_MS` if a run still needs more than three calls.** Two
+  reasons. Segments run back to back hold the object as long as one longer
+  program, so non-goal 1's rejection of a longer deadline does not hold. And the
+  segment cap cannot ship open: root runs have no wall clock and Stop does not
+  reach a running tool call (`docs/agent-harness.md`, "Loop stop"), so a tool
+  that always continues would loop silently. Building this later needs a set
+  cap, the run's deadline in place of Bind's tool timer (which the cap would
+  push past its ceiling), a host seam that reads a requested stop, and the loop
+  in `executeProgram` so `code_execute` gets it too.
 
 ## Key design decisions
 
