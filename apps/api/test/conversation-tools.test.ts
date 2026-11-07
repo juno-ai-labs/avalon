@@ -27,7 +27,6 @@ import {
   readStructuredFailure,
   canvasCanonicalUrl,
   sidekickCanonicalUrl,
-  type ChannelFeedPage,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 
@@ -56,22 +55,21 @@ import { withToolPagination } from "../src/services/tool-pagination";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 const WORKSPACE_ID = "00000000-0000-4000-8000-000000000001";
-const CHANNEL_ID = "00000000-0000-4000-8000-000000000002";
-const BREAKOUT_ID = "00000000-0000-4000-8000-000000000003";
+const CANVAS_ID = "00000000-0000-4000-8000-000000000002";
 const SIDEKICK_ID = "00000000-0000-4000-8000-00000000000a";
 const RUN_ID = "00000000-0000-4000-8000-00000000000b";
 const HARNESS_RUN_ID = "00000000-0000-4000-8000-00000000000c";
 const USER_ID = "00000000-0000-4000-8000-000000000009";
-const SPACE_ID = "00000000-0000-4000-8000-000000000004";
+const OTHER_CANVAS_ID = "00000000-0000-4000-8000-000000000004";
 const OTHER_WORKSPACE_ID = "00000000-0000-4000-8000-000000000005";
-const OTHER_SPACE_ID = "00000000-0000-4000-8000-000000000006";
+const UNLISTED_CANVAS_ID = "00000000-0000-4000-8000-000000000006";
 
 function loop(overrides: Partial<WorkstreamWorkflowInput> = {}): WorkstreamWorkflowInput {
   return {
     workspaceId: WORKSPACE_ID,
-    parentKind: "workstream",
-    parentId: CHANNEL_ID,
-    loopId: `workstream:${CHANNEL_ID}:substream:0:loop`,
+    parentKind: "canvas",
+    parentId: CANVAS_ID,
+    loopId: `canvas:${CANVAS_ID}:substream:0:loop`,
     harnessRunId: HARNESS_RUN_ID,
     region: "global",
     reason: "human_message",
@@ -80,7 +78,6 @@ function loop(overrides: Partial<WorkstreamWorkflowInput> = {}): WorkstreamWorkf
   } as WorkstreamWorkflowInput;
 }
 
-const breakoutLoop = () => loop({ substreamId: BREAKOUT_ID as never });
 const configLoop = () => loop({ parentKind: "automation", parentId: SIDEKICK_ID });
 const runLoop = (triggerMessageId?: string) => loop({
   parentKind: "automation", parentId: SIDEKICK_ID, substreamId: RUN_ID as never,
@@ -89,15 +86,16 @@ const runLoop = (triggerMessageId?: string) => loop({
     trigger: { kind: "manual", requestedByUserId: USER_ID } } as never,
 });
 
+/** A Canvas's Chat attached to the Sidekick, and what a reference resolves to when it names nothing listed. */
 const home: ConversationToolEntry = {
-  conversationId: `${CHANNEL_ID}/${BREAKOUT_ID}`, parentId: CHANNEL_ID, substreamId: BREAKOUT_ID as never,
-  kind: "breakout", title: "Weekly call", isHome: true, isOwn: false, isParent: false,
+  conversationId: CANVAS_ID, parentId: CANVAS_ID, substreamId: "0" as never,
+  kind: "canvas", title: "Weekly call", isOwn: false, isParent: false,
 };
 
-/** A Channel the Thread is in: read from WorkspaceDO's feed, not a conversation object. */
+/** The Sidekick's own conversation, which a run sits inside. */
 const gtm: ConversationToolEntry = {
-  conversationId: SPACE_ID, parentId: SPACE_ID, substreamId: "0" as never,
-  kind: "space", title: "GTM", isHome: false, isOwn: false, isParent: true,
+  conversationId: SIDEKICK_ID, parentId: SIDEKICK_ID, substreamId: "0" as never,
+  kind: "sidekick", title: "GTM", isOwn: false, isParent: true,
 };
 
 
@@ -120,31 +118,17 @@ class Ports implements ConversationToolPorts {
   linkOrigins = ["https://rally.test"];
   /** What the scope lists, and what a reference resolves to when it names nothing listed. */
   scoped: ConversationToolEntry[] = [home];
-  /** The Channel's feed, newest first, split into the feed RPC's own pages by `feedPages`. */
-  feed: ChannelFeedPage["items"] = [];
-  feedPages: number[] | null = null;
-  feedReads: Array<string | null> = [];
   /** Every reference a read or post resolved, as the tools sent it. */
-  resolved: Array<string | null> = [];
+  resolved: string[] = [];
   indexHits: ConversationIndexHit[] = [];
   indexSearches: Array<Parameters<ConversationToolPorts["searchMessages"]>[0]> = [];
   workspace = async () => ({
     conversationToolScope: async () => ({ conversations: this.scoped }),
-    resolveConversationToolTarget: async (request: { reference: string | null }) => (this.resolved.push(request.reference), this.refusal)
+    resolveConversationToolTarget: async (request: { reference: string }) => (this.resolved.push(request.reference), this.refusal)
       ? { ok: false as const, code: this.refusal, available: [home.conversationId], resourceId: null }
       : { ok: true as const, conversation: this.scoped.find((entry) => entry.conversationId === request.reference) ?? home,
         sidekickName: "Weekly call prep" },
     attachSidekickConversation: async () => ({ ok: true as const, conversation: home, alreadyAttached: false }),
-    postSidekickChannelMessage: async () => ({ ok: true as const, messageId: "00000000-0000-7000-8000-00000000c0de", replayed: false }),
-    listChannelFeed: async (request: { cursor: string | null }) => {
-      this.feedReads.push(request.cursor);
-      // The feed's own pages: a cursor is the index its page starts at.
-      const start = request.cursor === null ? 0 : Number(request.cursor);
-      const size = this.feedPages?.[this.feedReads.length - 1] ?? this.feed.length;
-      const end = start + size;
-      return { ok: true as const, page: { items: this.feed.slice(start, end),
-        nextCursor: end < this.feed.length ? String(end) : null, latestAttentionSequenceNumber: null } };
-    },
   });
   searchMessages = async (request: Parameters<ConversationToolPorts["searchMessages"]>[0]) => {
     this.indexSearches.push(request);
@@ -194,12 +178,9 @@ const context = (effectIntentId: string): HarnessToolContext => ({
 });
 
 describe("which loops get the conversation tools", () => {
-  it("gives a Breakout loop and a Thread's Main loop list, read and search", () => {
-    expect(conversationToolAccess(breakoutLoop())).toEqual({ actingUserId: USER_ID, tools: ["list", "read", "search"],
-      scope: { kind: "conversation", parentId: CHANNEL_ID, substreamId: BREAKOUT_ID } });
-    // A Main loop reads the Channels its thread is in.
-    expect(conversationToolAccess(loop())).toEqual({ actingUserId: USER_ID, tools: ["list", "read", "search"],
-      scope: { kind: "conversation", parentId: CHANNEL_ID, substreamId: "0" } });
+  it("gives a Canvas's Chat none: its own transcript is its context", () => {
+    expect(conversationToolAccess(loop())).toBeNull();
+    expect(createConversationsPlugin(loop(), new Ports(), expand)).toBeNull();
   });
 
   it("gives a Sidekick's configuration every tool and its runs no attach", () => {
@@ -225,12 +206,6 @@ describe("the conversations plugin", () => {
       "conversation_list", "conversation_list_next", "conversation_read", "conversation_read_next",
       "conversation_search", "conversation_post", "conversation_attach",
     ]);
-    for (const input of [breakoutLoop(), loop()]) {
-      expect([...tools(input).keys()]).toEqual([
-        "conversation_list", "conversation_list_next", "conversation_read", "conversation_read_next",
-        "conversation_search",
-      ]);
-    }
     const modes = Object.fromEntries(plugin.tools.map((tool) => [tool.definition.name,
       [tool.definition.capability, tool.definition.mode, tool.definition.idempotency]]));
     expect(modes).toMatchObject({
@@ -253,15 +228,6 @@ describe("the conversations plugin", () => {
     const run = createConversationsPlugin(runLoop(), new Ports(), expand)!.systemMessage;
     expect(run).toContain("Use conversation_post to post to one of them. Leave conversation out to post in this Sidekick's own conversation, where everyone it is shared with reads it.");
     expect(run).not.toContain("conversation_attach");
-    const breakout = createConversationsPlugin(breakoutLoop(), new Ports(), expand)!.systemMessage;
-    expect(breakout).not.toMatch(/conversation_post|conversation_attach/u);
-    const parents = "conversation_list marks the conversations this one sits inside with isParent. When a person refers to something said or decided outside this conversation, such as a result above it, or you need more than the summary you started with, conversation_read them before answering.";
-    const resources = "Resources attached to the conversation this one branched from are in list_resources too.";
-    expect(breakout).toContain(parents);
-    expect(breakout).toContain(resources);
-    const thread = createConversationsPlugin(loop(), new Ports(), expand)!.systemMessage;
-    expect(thread).toContain(parents);
-    expect(thread).not.toContain(resources);
     expect(full).not.toContain("isParent");
   });
 
@@ -318,9 +284,9 @@ describe("the conversations plugin", () => {
 
   it("refuses an out-of-range limit and a model-authored cursor before executing", () => {
     const read = tools(configLoop()).get("conversation_read")!;
-    expect(read.validateInput?.({ conversation: CHANNEL_ID, limit: 51 })).not.toBeNull();
-    expect(read.validateInput?.({ conversation: CHANNEL_ID, cursor: "{}" })).not.toBeNull();
-    expect(read.validateInput?.({ conversation: CHANNEL_ID, limit: 50 })).toBeNull();
+    expect(read.validateInput?.({ conversation: CANVAS_ID, limit: 51 })).not.toBeNull();
+    expect(read.validateInput?.({ conversation: CANVAS_ID, cursor: "{}" })).not.toBeNull();
+    expect(read.validateInput?.({ conversation: CANVAS_ID, limit: 50 })).toBeNull();
     const post = tools(configLoop()).get("conversation_post")!;
     expect(post.validateInput?.({ text: "" })).not.toBeNull();
     expect(post.validateInput?.({ text: "hi", idempotencyKey: "x" })).not.toBeNull();
@@ -335,7 +301,7 @@ describe("a refusal", () => {
     ["conversation_archived", "That conversation is archived, so it cannot be read or posted to. Tell the person.", ["resourceId"]],
     ["conversation_access_denied", "The account this runs as cannot open that conversation. Ask someone with access to attach it or share it.", ["resourceId"]],
   ] as const)("names %s with the design's sentence and only allowlisted details", (code, sentence, keys) => {
-    const error = conversationRefusalError({ ok: false, code, available: [CHANNEL_ID], resourceId: CHANNEL_ID }, "Budget");
+    const error = conversationRefusalError({ ok: false, code, available: [CANVAS_ID], resourceId: CANVAS_ID }, "Budget");
     expect(error).toBeInstanceOf(ConversationToolError);
     expect(error.message).toBe(sentence);
     const failure = readStructuredFailure(error);
@@ -350,13 +316,6 @@ describe("a refusal", () => {
     // "Budget " is 7 units; the cut lands inside the first emoji, which is dropped whole.
     expect(conversationRefusalError({ ok: false, code: "conversation_not_found", available: [], resourceId: null },
       reference, 9).message).toContain('"Budget …"');
-  });
-
-  it("turns a missing home into invalid_arguments naming the field", () => {
-    const failure = readStructuredFailure(conversationRefusalError(
-      { ok: false, code: "conversation_home_missing", available: [], resourceId: null }, null));
-    expect(failure).toEqual({ code: "invalid_arguments",
-      details: { field: "conversation", expected: "a conversationId from conversation_list" } });
   });
 
   it("surfaces the WorkspaceDO's refusal from a read", async () => {
@@ -397,7 +356,7 @@ describe("conversation_post", () => {
     expect(ports.posted).toHaveLength(1);
     expect(ports.posted[0]).toMatchObject({
       clientMessageId: `conversation-post:${HARNESS_RUN_ID}:receipt-1`,
-      workstreamId: CHANNEL_ID, substreamId: BREAKOUT_ID,
+      parentKind: "canvas", workstreamId: CANVAS_ID, substreamId: "0",
       post: { type: "automation_activation", automationId: SIDEKICK_ID, automationName: "Weekly call prep",
         runId: RUN_ID, trigger: { kind: "manual" } },
     });
@@ -500,27 +459,27 @@ describe("conversation_attach", () => {
   it("turns a pasted Canvas or Sidekick link into its conversation id and refuses another Organization's", () => {
     const input = configLoop();
     const origins = ["https://rally.test"];
-    const link = (workspaceId: string) => canvasCanonicalUrl("https://rally.test", { region: "global", workspaceId, canvasId: CHANNEL_ID });
-    expect(__conversationToolTesting.attachReference(link(WORKSPACE_ID), input, origins)).toBe(CHANNEL_ID);
+    const link = (workspaceId: string) => canvasCanonicalUrl("https://rally.test", { region: "global", workspaceId, canvasId: CANVAS_ID });
+    expect(__conversationToolTesting.attachReference(link(WORKSPACE_ID), input, origins)).toBe(CANVAS_ID);
     expect(__conversationToolTesting.attachReference(
       sidekickCanonicalUrl("https://rally.test", { region: "global", workspaceId: WORKSPACE_ID, sidekickId: SIDEKICK_ID }), input, origins,
     )).toBe(SIDEKICK_ID);
     expect(__conversationToolTesting.attachReference(link(OTHER_WORKSPACE_ID), input, origins)).toBeNull();
     // A Thread's link went with Threads.
-    expect(__conversationToolTesting.attachReference(`https://rally.test/app/workspaces/global/${WORKSPACE_ID}/workstreams/${CHANNEL_ID}`, input, origins)).toBeNull();
+    expect(__conversationToolTesting.attachReference(`https://rally.test/app/workspaces/global/${WORKSPACE_ID}/workstreams/${OTHER_CANVAS_ID}`, input, origins)).toBeNull();
     expect(__conversationToolTesting.attachReference("Weekly call", input, origins)).toBe("Weekly call");
     expect(__conversationToolTesting.attachReference("https://elsewhere.test/app/x", input, origins)).toBeNull();
   });
 });
 
 describe("a conversation the loop sits inside", () => {
-  it("lists every conversation by id and title alone, marking the ones this one sits inside", async () => {
+  it("lists every conversation by id and title alone, marking the one a run sits inside", async () => {
     const ports = new Ports();
-    ports.scoped = [{ ...home, isHome: false, isOwn: true }, gtm];
-    const listed = await tools(loop(), ports).get("conversation_list")!.execute({}, context("a"));
+    ports.scoped = [gtm, home];
+    const listed = await tools(runLoop(), ports).get("conversation_list")!.execute({}, context("a"));
     expect((listed.output as { conversations: unknown[] }).conversations).toEqual([
-      { conversationId: home.conversationId, title: "Weekly call", isHome: false, isOwn: true, isParent: false },
-      { conversationId: SPACE_ID, title: "GTM", isHome: false, isOwn: false, isParent: true },
+      { conversationId: SIDEKICK_ID, title: "GTM", isOwn: false, isParent: true },
+      { conversationId: CANVAS_ID, title: "Weekly call", isOwn: false, isParent: false },
     ]);
   });
 
@@ -529,7 +488,7 @@ describe("a conversation the loop sits inside", () => {
 describe("conversation_search", () => {
   it("fetches full candidate pages for a small output limit and still returns the newest hit from a later page", async () => {
     const rows = Array.from({ length: 51 }, (_, index) => ({
-      id: `row-${String(index).padStart(3, "0")}`, source: "messages", scope_id: CHANNEL_ID,
+      id: `row-${String(index).padStart(3, "0")}`, source: "messages", scope_id: CANVAS_ID,
       source_id: `0/turn-${index}`, substream_id: "0", revision: 1, archived: false,
       text: index === 50 ? "Newest ICP" : "Earlier ICP", occurred_at: Date.parse(index === 50
         ? "2026-10-22T00:00:00.000Z" : "2026-10-01T00:00:00.000Z"),
@@ -542,43 +501,40 @@ describe("conversation_search", () => {
     });
     const env = createTestEnv({ APP_ENV: "development", AVALON_REGION: "global", TURBO_PUFFER_DEV_API_KEY: "test-only" });
     const found = await conversationToolPorts(env, loop()).searchMessages({
-      query: "ICP", limit: 1, conversations: [{ parentId: CHANNEL_ID, kind: "channel", substreamId: asSubstreamId("0") }],
+      query: "ICP", limit: 1, conversations: [{ parentId: CANVAS_ID, kind: "canvas", substreamId: asSubstreamId("0") }],
     });
-    expect(found).toEqual([{ parentId: CHANNEL_ID, substreamId: "0", messageId: "turn-50",
+    expect(found).toEqual([{ parentId: CANVAS_ID, substreamId: "0", messageId: "turn-50",
       sentAt: "2026-10-22T00:00:00.000Z", text: "Newest ICP" }]);
     expect(searchProvider.query).toHaveBeenCalledTimes(2);
     expect(searchProvider.query.mock.calls[0]?.[0]).toMatchObject({ limit: 50 });
   });
 
-  it("finds a merge in a Channel and a message in the Thread through one index, newest first, naming where each was said", async () => {
+  it("finds a message in the Sidekick's conversation and one in a Canvas's Chat through one index, newest first, naming where each was said", async () => {
     const ports = new Ports();
-    const own = { ...home, isHome: false, isOwn: true };
-    ports.scoped = [own, gtm];
+    const own = gtm;
+    ports.scoped = [own, home];
     ports.indexHits = [
-      { parentId: CHANNEL_ID, substreamId: BREAKOUT_ID, messageId: "turn-1", sentAt: "2026-10-18T09:00:00.000Z",
+      { parentId: CANVAS_ID, substreamId: "0", messageId: "turn-1", sentAt: "2026-10-18T09:00:00.000Z",
         text: "Who is our ICP?" },
-      { parentId: SPACE_ID, substreamId: "0", messageId: "m-icp", sentAt: "2026-10-19T11:00:00.000Z",
+      { parentId: SIDEKICK_ID, substreamId: "0", messageId: "m-icp", sentAt: "2026-10-19T11:00:00.000Z",
         text: "ICP: growth teams at Series A companies." },
       // A conversation the scope does not list is never returned, whatever the index says.
-      { parentId: OTHER_SPACE_ID, substreamId: "0", messageId: "m-other", sentAt: "2026-10-19T12:00:00.000Z",
+      { parentId: UNLISTED_CANVAS_ID, substreamId: "0", messageId: "m-other", sentAt: "2026-10-19T12:00:00.000Z",
         text: "ICP elsewhere" },
     ];
-    const result = await tools(loop(), ports).get("conversation_search")!.execute({ query: "ICP" }, context("a"));
+    const result = await tools(runLoop(), ports).get("conversation_search")!.execute({ query: "ICP" }, context("a"));
     expect(result.output).toEqual({ matches: [
-      { conversationId: SPACE_ID, title: "GTM", messageId: "m-icp", sentAt: "2026-10-19T11:00:00.000Z",
+      { conversationId: SIDEKICK_ID, title: "GTM", messageId: "m-icp", sentAt: "2026-10-19T11:00:00.000Z",
         text: "ICP: growth teams at Series A companies.", textTruncated: false },
       { conversationId: home.conversationId, title: "Weekly call", messageId: "turn-1", sentAt: "2026-10-18T09:00:00.000Z",
         text: "Who is our ICP?", textTruncated: false },
     ] });
-    expect(ports.indexSearches).toEqual([{ query: "ICP", limit: 25, conversations: [own, gtm] }]);
+    expect(ports.indexSearches).toEqual([{ query: "ICP", limit: 25, conversations: [own, home] }]);
   });
 
-  it("asks the index for the rows of the conversations in scope, a parent admitted through its Breakout included", () => {
-    const main = { kind: "channel" as const, parentId: CHANNEL_ID, substreamId: "0" as never };
-    const breakout = { kind: "breakout" as const, parentId: CHANNEL_ID, substreamId: BREAKOUT_ID as never };
-    expect(conversationSearchGroups([breakout, main, gtm])).toEqual([
-      `conversation:${CHANNEL_ID}/${BREAKOUT_ID}`, `conversation:${CHANNEL_ID}/0`, `space:${SPACE_ID}`,
-    ]);
+  it("asks the index for a Canvas's Chat under the group its turns are indexed with", () => {
+    const chat = { kind: "canvas" as const, parentId: CANVAS_ID, substreamId: "0" as never };
+    expect(conversationSearchGroups([chat])).toEqual([`conversation:${CANVAS_ID}/0`]);
   });
 
   it("asks the index for a Sidekick's own conversation under the group its turns are indexed with", () => {
@@ -587,7 +543,7 @@ describe("conversation_search", () => {
   });
 
   it("keeps the newest matches across every candidate page, whatever page they are on", async () => {
-    const hit = (messageId: string, day: number) => ({ parentId: SPACE_ID, substreamId: "0", messageId,
+    const hit = (messageId: string, day: number) => ({ parentId: CANVAS_ID, substreamId: "0", messageId,
       sentAt: `2026-10-${String(day).padStart(2, "0")}T00:00:00.000Z`, text: "ICP" });
     // The index's own order is a hash: the newest match is on the last page.
     const pages = [[hit("a", 3), hit("b", 1)], [hit("c", 2), hit("d", 4)], [hit("e", 19)]];
@@ -603,8 +559,8 @@ describe("conversation_search", () => {
 
   it("searches only the conversation it names", async () => {
     const ports = new Ports();
-    ports.scoped = [{ ...home, isHome: false, isOwn: true }, gtm];
-    await tools(loop(), ports).get("conversation_search")!.execute({ query: "ICP", conversation: SPACE_ID }, context("a"));
-    expect(ports.indexSearches.map((search) => search.conversations)).toEqual([[gtm]]);
+    ports.scoped = [gtm, home];
+    await tools(runLoop(), ports).get("conversation_search")!.execute({ query: "ICP", conversation: CANVAS_ID }, context("a"));
+    expect(ports.indexSearches.map((search) => search.conversations)).toEqual([[home]]);
   });
 });

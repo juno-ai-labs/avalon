@@ -131,7 +131,7 @@ export async function resolveTerminalRunScope(
  * which must be a Canvas this Sidekick writes), or the Canvas this run made,
  * which its first publish creates with the Sidekick as writer and the run's
  * principal as creator (`docs/canvases.md#from-a-sidekick-run`). The
- * Sidekick's own conversation keeps its admitted home.
+ * Sidekick's own conversation has no home to publish into.
  */
 export async function resolveTerminalPublicationHome(env: Env, input: Pick<WorkstreamWorkflowInput,
   "workspaceId" | "parentKind" | "parentId" | "substreamId" | "executionPrincipal">,
@@ -161,14 +161,9 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
   if (request.canvas) {
     throw new TerminalToolError("canvas_argument_unsupported", "Only a Sidekick run names a Canvas to publish into; omit canvas.", { field: "canvas" });
   }
-  const home = await workspace.resolveConversationToolTarget({
-    workspaceId: input.workspaceId, userId: input.executionPrincipal.userId,
-    scope: { kind: "sidekick", automationId: input.parentId }, reference: null,
-  });
-  if (home.ok) return { parentId: home.conversation.parentId, substreamId: home.conversation.substreamId };
-  if (home.code === "conversation_home_missing") return null;
-  throw new TerminalToolError(home.code,
-    "This Sidekick's home conversation is unavailable to the execution user. Restore its access before publishing there.");
+  // The Sidekick's own conversation publishes nowhere: its home was a
+  // Thread, and Threads are retired.
+  return null;
 }
 
 /**

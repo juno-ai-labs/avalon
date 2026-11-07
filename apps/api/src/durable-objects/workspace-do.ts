@@ -764,11 +764,9 @@ import {
 } from "./workspace-transcription-storage";
 import {
   SIDEKICK_CONVERSATION_ATTACHMENT_SCHEMA_STATEMENTS,
-  admissionAddress,
   attachSidekickConversation,
-  conversationIdOf,
-  conversationsTitled,
-  describeConversation,
+  canvasesTitled,
+  canvasTitle,
   matchConversationReference,
   parseConversationId,
   scopeConversations,
@@ -4425,7 +4423,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
 
 function conversationToolEntry(conversation: {
   conversationId: string; parentId: string; substreamId: string; kind: ConversationToolEntry["kind"];
-  title: string; isHome: boolean; isOwn: boolean; isParent: boolean;
+  title: string; isOwn: boolean; isParent: boolean;
 }): ConversationToolEntry {
   return {
     conversationId: conversation.conversationId,
@@ -4433,23 +4431,9 @@ function conversationToolEntry(conversation: {
     substreamId: asSubstreamId(conversation.substreamId),
     kind: conversation.kind,
     title: conversation.title,
-    isHome: conversation.isHome,
     isOwn: conversation.isOwn,
     isParent: conversation.isParent,
   };
-}
-
-/** Keep own and parent context ahead of peers on the paginated list. */
-function conversationToolEntries(
-  conversations: readonly ScopedConversation[],
-  channels: readonly ConversationToolEntry[],
-): ConversationToolEntry[] {
-  const leading: ConversationToolEntry[] = [];
-  const peers: ConversationToolEntry[] = [];
-  for (const conversation of conversations) {
-    (conversation.isOwn || conversation.isParent ? leading : peers).push(conversationToolEntry(conversation));
-  }
-  return [...leading, ...channels, ...peers];
 }
 
 function conversationToolRefusal(
@@ -7397,19 +7381,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(ConversationToolScopeRequestSchema, input, "conversation_tool_scope");
     this.assertWorkspace(request.workspaceId);
-    const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId, []);
+    const scoped = scopeConversations(this.state.storage.sql, request.scope);
     const conversations = await this.reachableConversations(request.workspaceId, scoped, request.userId);
-    return { conversations: conversationToolEntries(conversations, []) };
+    return { conversations: conversations.map(conversationToolEntry) };
   }
 
   /**
-   * The unarchived conversations of a scope this person can read, each
-   * admitted as its own transport admits it (`conversationToolAdmission`).
-   * A retired Thread's conversation is admitted to nobody.
+   * The conversations of a scope this person can read, each admitted as its
+   * own transport admits it (`conversationToolAdmission`): a Canvas by
+   * `canvasAdmits`, a Sidekick by `sidekickAdmits`.
    */
-  private async reachableConversations<T extends {
-    parentKind?: string; parentId: string; substreamId: string; readable: boolean; archived: boolean;
-  }>(
+  private async reachableConversations<T extends { parentId: string; substreamId: string }>(
     workspaceId: string,
     scoped: readonly T[],
     userId: string,
@@ -7418,7 +7400,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (relationship?.status !== "active") return [];
     const reachable: T[] = [];
     for (const conversation of scoped) {
-      if (conversation.archived) continue;
       const admission = await this.conversationToolAdmission(workspaceId, conversation, userId, relationship);
       if (admission.authorized && !admission.archived) reachable.push(conversation);
     }
@@ -7459,48 +7440,27 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = parseRpcInput(ConversationToolResolveRequestSchema, input, "conversation_tool_resolve");
     this.assertWorkspace(request.workspaceId);
-    const scoped = scopeConversations(this.state.storage.sql, request.scope, request.userId, []);
+    const scoped = scopeConversations(this.state.storage.sql, request.scope);
     // Only a refusal lists what the person can reach, so only a refusal pays for it.
-    const available = async () => conversationToolEntries(
-      await this.reachableConversations(request.workspaceId, scoped, request.userId), [],
-    ).map((conversation) => conversation.conversationId);
-    let target: ScopedConversation | undefined;
-    if (request.reference === null) {
-      target = scoped.find((conversation) => conversation.isHome);
-      if (!target) return conversationToolRefusal("conversation_home_missing", await available());
-    } else {
-      let match = matchConversationReference<ScopedConversation>(scoped, request.reference);
-      if (match.outcome === "ambiguous") {
-        // Peers include private conversations. Only name ids this person can
-        // actually open when disambiguating a title.
-        const reachable = await this.reachableConversations(request.workspaceId, scoped, request.userId);
-        match = matchConversationReference<ScopedConversation>(reachable, request.reference);
-      }
-      if (match.outcome === "missing") return conversationToolRefusal("conversation_not_in_scope", await available());
-      if (match.outcome === "ambiguous") {
-        return conversationToolRefusal("conversation_ambiguous", match.matches.map((conversation) => conversation.conversationId));
-      }
-      target = match.conversation;
+    const available = async () => (await this.reachableConversations(request.workspaceId, scoped, request.userId))
+      .map((conversation) => conversation.conversationId);
+    let match = matchConversationReference<ScopedConversation>(scoped, request.reference);
+    if (match.outcome === "ambiguous") {
+      // Only name ids this person can actually open when disambiguating a title.
+      const reachable = await this.reachableConversations(request.workspaceId, scoped, request.userId);
+      match = matchConversationReference<ScopedConversation>(reachable, request.reference);
     }
-    const resourceId = target.substreamId === "0" ? target.parentId : target.substreamId;
-    const referenceAddress = request.reference === null ? null : parseConversationId(request.reference);
-    const namedPeerByTitle = request.scope.kind === "conversation" && request.reference !== null
-      && !target.isOwn && !target.isParent
-      && (referenceAddress === null || conversationIdOf(referenceAddress) !== target.conversationId);
-    if (target.archived && !namedPeerByTitle) return conversationToolRefusal("conversation_archived", [], resourceId);
-    const admission = await this.conversationToolAdmission(
-      request.workspaceId, admissionAddress(request.scope, target), request.userId,
-    );
-    // A guessed title must not reveal a private peer's identity or archive state.
-    if (namedPeerByTitle && (!admission.authorized || target.archived || admission.archived)) {
-      return conversationToolRefusal("conversation_not_in_scope", await available());
+    if (match.outcome === "missing") return conversationToolRefusal("conversation_not_in_scope", await available());
+    if (match.outcome === "ambiguous") {
+      return conversationToolRefusal("conversation_ambiguous", match.matches.map((conversation) => conversation.conversationId));
     }
-    if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], resourceId);
-    if (admission.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
-    const sidekickName = request.scope.kind !== "sidekick" ? null
-      : this.state.storage.sql.exec<{ title: string }>(
-        `SELECT title FROM automation_directory WHERE automation_id = ?`, request.scope.automationId,
-      ).toArray()[0]?.title || "New Sidekick";
+    const target = match.conversation;
+    const admission = await this.conversationToolAdmission(request.workspaceId, target, request.userId);
+    if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], target.parentId);
+    if (admission.archived) return conversationToolRefusal("conversation_archived", [], target.parentId);
+    const sidekickName = this.state.storage.sql.exec<{ title: string }>(
+      `SELECT title FROM automation_directory WHERE automation_id = ?`, request.scope.automationId,
+    ).toArray()[0]?.title || "New Sidekick";
     return { ok: true, conversation: conversationToolEntry(target), sidekickName };
   }
 
@@ -7517,27 +7477,32 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = parseRpcInput(ConversationToolAttachRequestSchema, input, "conversation_tool_attach");
     this.assertWorkspace(request.workspaceId);
     const sql = this.state.storage.sql;
-    let address = parseConversationId(request.reference);
-    if (!address) {
-      const titled = conversationsTitled(sql, request.reference, request.userId);
+    // A Canvas named by id or link, or else by the title the person used,
+    // among the Canvases they can open: a title never reveals one they cannot.
+    const id = parseConversationId(request.reference);
+    let target: ScopedConversation;
+    if (id) {
+      const title = canvasTitle(sql, id.parentId);
+      if (title === null) return conversationToolRefusal("conversation_not_found", []);
+      target = { parentKind: "canvas", parentId: id.parentId, substreamId: "0", conversationId: id.parentId,
+        kind: "canvas", title, isOwn: false, isParent: false };
+    } else {
+      const titled = await this.reachableConversations(request.workspaceId, canvasesTitled(sql, request.reference), request.userId);
       if (titled.length === 0) return conversationToolRefusal("conversation_not_found", []);
       if (titled.length > 1) {
         return conversationToolRefusal("conversation_ambiguous", titled.map((conversation) => conversation.conversationId));
       }
-      address = titled[0]!;
+      target = titled[0]!;
     }
-    const facts = describeConversation(sql, address, request.userId);
-    if (!facts) return conversationToolRefusal("conversation_not_found", []);
-    const resourceId = address.substreamId === "0" ? address.parentId : address.substreamId;
-    if (facts.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
-    const admission = await this.conversationToolAdmission(request.workspaceId, address, request.userId);
-    if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], resourceId);
-    if (admission.archived) return conversationToolRefusal("conversation_archived", [], resourceId);
+    const admission = await this.conversationToolAdmission(request.workspaceId, target, request.userId);
+    if (!admission.authorized) return conversationToolRefusal("conversation_access_denied", [], target.parentId);
+    if (admission.archived) return conversationToolRefusal("conversation_archived", [], target.parentId);
     const attached = this.state.storage.transactionSync(() => {
       if (sql.exec(`SELECT 1 FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
         request.automationId).toArray().length === 0) return null;
       const result = attachSidekickConversation(sql, {
-        automationId: request.automationId, address: address!, userId: request.userId, now: Date.now(),
+        automationId: request.automationId, address: { parentKind: "canvas", parentId: target.parentId, substreamId: "0" },
+        userId: request.userId, now: Date.now(),
       });
       this.pendingSyncFollowUps.push(this.recordSyncFollowUp({
         workspaceId: request.workspaceId, syncTopics: ["automations", "sidekick_activity"],
@@ -7548,16 +7513,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // A notification failure must not turn a committed attachment into a
     // failed tool call. The normal post-commit lane retries the signal.
     await this.afterHostedWrite();
-    const scoped = scopeConversations(sql, { kind: "sidekick", automationId: request.automationId }, request.userId)
-      .find((conversation) => conversation.parentId === address!.parentId && conversation.substreamId === address!.substreamId);
-    return {
-      ok: true,
-      alreadyAttached: attached.alreadyAttached,
-      conversation: conversationToolEntry(scoped ?? {
-        ...address, conversationId: conversationIdOf(address), kind: facts.kind, title: facts.title,
-        isHome: false, isOwn: false, isParent: false,
-      }),
-    };
+    return { ok: true, alreadyAttached: attached.alreadyAttached, conversation: conversationToolEntry(target) };
   }
 
   /**

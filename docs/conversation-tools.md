@@ -7,9 +7,10 @@ and the tools it is offered. Adding a new kind of agent means adding a scope,
 never new tools. The model never supplies, names, or widens a scope.
 
 To the model every conversation is the same thing: an id, a title, and
-messages. A Channel, a Thread's Main and a Breakout are read from different
-places (WorkspaceDO's feed, or the conversation's own object), but that is the
-host's routing on the entry's internal `kind`, which no tool output carries.
+messages. A Sidekick's own conversation and a Canvas's Chat are both read from
+the conversation's own object; the entry's internal `kind` (`sidekick` or
+`canvas`) routes the search audience and the post's parent kind, and no tool
+output carries it.
 
 Read this before changing what an agent can read or post to outside its own
 conversation, and before giving a new kind of loop these tools. The tool design
@@ -21,12 +22,12 @@ conversations are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/services/conversation-tools.ts` | The plugin: `conversationToolAccess` (the one place a scope and tool set are derived from a loop), the tools, the refusal table (`conversationRefusalError`), a Channel's feed rendered as messages (`channelItemText`), the system message, the page-size and character-budget placeholders, and `conversationToolPorts`, the calls the tools make, `searchMessages` among them. |
+| `apps/api/src/services/conversation-tools.ts` | The plugin: `conversationToolAccess` (the one place a scope and tool set are derived from a loop), the tools, the refusal table (`conversationRefusalError`), the system message, the page-size and character-budget placeholders, and `conversationToolPorts`, the calls the tools make, `searchMessages` among them. |
 | `apps/api/src/services/integrations.ts` | `loadHarnessTools` builds the plugin next to the Sidekick plugin and passes the pagination wrapper under the `conversation` prefix. |
 | `apps/api/src/durable-objects/workspace-conversation-tool-protocol.ts` | The scope, the WorkspaceDO request schemas and discriminated outcomes with the refusal codes, and the post request `appendConversationPost` takes. |
-| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | Conversation ids, the scope read over `channels`, `breakouts`, their viewer rows and active Channel placements plus a Sidekick's own conversation, title lookup, and the attachment write. |
-| `apps/api/src/durable-objects/workspace-do.ts` | `conversationToolScope`, `resolveConversationToolTarget`, `attachSidekickConversation`: scope from the directories, then admission through the hosted parent's `authorizeViewer`. `conversationToolChannels`: the Channels a Thread or Breakout loop's thread is in, from Space storage. `listChannelFeed`, the Channel screen's own read, is what a Channel's read calls. |
-| `apps/api/src/durable-objects/substream-agent.ts` | `appendConversationPost`: a post appended to any Channel or Breakout conversation, or to a Sidekick's own conversation, keyed on its client message id, without waking that conversation's agent. |
+| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | Conversation ids, the scope read over `automation_directory`, `canvas_directory` (the Canvases a Sidekick writes) and `sidekick_conversation_attachments`, Canvas title lookup, and the attachment write. |
+| `apps/api/src/durable-objects/workspace-do.ts` | `conversationToolScope`, `resolveConversationToolTarget`, `attachSidekickConversation`: scope from the directories, then admission through the hosted parent's `authorizeViewer` (`canvasAdmits` for a Canvas, `sidekickAdmits` for a Sidekick) as the acting person. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | `appendConversationPost`: a post appended to a Canvas's Chat or a Sidekick's own conversation, keyed on its client message id, without waking that conversation's agent. |
 | `apps/api/src/durable-objects/workstream-message-storage.ts` | `readableMessagesBefore`: a conversation's messages newest first, without tool cards or suggestions. |
 | `packages/agent-harness/src/tool-activity.ts` | The transcript wording for each `conversation_*` tool. |
 
@@ -36,28 +37,22 @@ conversations are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 | Loop | Scope | Tools | Acts as |
 | --- | --- | --- | --- |
-| Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation, its Thread's Main, the Channels the Thread is in, and all Threads and Breakouts in those Channels | list, read, search | The person it works for, admitted to Main by the Breakout |
-| Thread Main (`parentKind: workstream`, substream `"0"`) | Its own thread, the Channels it is in, and all Threads and Breakouts in those Channels | list, read, search | The person it works for |
-| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's own conversation (`isOwn`) and its attachments | list, read, search, post, attach | The person talking to it |
-| Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`) and its attachments | list, read, search, post | The run-as user |
+| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's own conversation (`isOwn`), the Canvases it writes, and the Canvases attached to it | list, read, search, post, attach | The person talking to it |
+| Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`), the Canvases it writes, and the Canvases attached to it | list, read, search, post | The run-as user |
 
-A Thread's Channels are the ones `channelSpaceIds` lists for the acting person
-today, unarchived, Organization-wide first: the person's own reach, never the
-thread's placement, so a member outside a private Channel is not offered it
-even from a thread in it. Every active thread placement in those Channels adds
-that Thread's Main and all its Breakouts as candidates. Shared placements count
-once, and a sibling's other Channels do not extend the scope: it is one hop
-from the current Thread's Channels, never the whole Organization. Canonical
-admission still decides each candidate independently; being in a Channel grants
-no access to a private Thread or Breakout. Sidekick scopes stay at the
-Sidekick's own conversation and explicit attachments; a Sidekick has no home
-Thread and reaches no Channel.
+A Canvas's Chat gets no conversation tools: its own transcript is its context.
+The Canvases a Sidekick writes are those whose `writer_sidekick_id` names it
+(each run's Canvas), newest first; attachments follow in the order they were
+made, a Canvas both written and attached listed once. An attachment row of a
+retired Thread (`parent_kind = 'workstream'`) names nothing. Canonical
+admission decides each candidate for the acting person on every call: a Canvas
+by `canvasAdmits` (its visibility, creator, participants, and a writer
+Sidekick's audience), a Sidekick by `sidekickAdmits`.
 
 A Sidekick's own conversation is its shared conversation, substream `"0"`
 under the Sidekick (`kind: "sidekick"` to the host). Its `conversationId` is
 the Sidekick's id, it is always first in a Sidekick scope, and it is admitted by
-the Sidekick (`HostedSidekick.authorizeViewer`), never by a Channel's
-`readableSubstreams`. It is read and posted to like any other conversation.
+the Sidekick (`HostedSidekick.authorizeViewer`). It is read and posted to like any other conversation.
 Search asks the index for the Sidekick's group (`sidekick:<id>`), which is the
 group its turns are indexed under, and which its runs' conversations share;
 only hits in `"0"` are kept. A run's conversation is never in scope.
@@ -86,21 +81,17 @@ the activation.
 
 Wire names are `conversation_list`, `conversation_list_next`,
 `conversation_read`, `conversation_read_next`, `conversation_post` and
-`conversation_attach`. A `conversationId` is `<channelId>` for a Main
-conversation and `<channelId>/<breakoutId>` for a Breakout, because a Breakout
-id is unique only within its Channel. `conversation` accepts that id or the
-exact title of a conversation in scope (compared without case); `attach` also
-accepts a Rally link, which the Worker turns into an id before WorkspaceDO sees
-it.
+`conversation_attach`. A `conversationId` is the parent's id: a Canvas's for
+its Chat, a Sidekick's for its own conversation. `conversation` accepts that id
+or the exact title of a conversation in scope (compared without case); `attach`
+also accepts a Rally link, which the Worker turns into an id before WorkspaceDO
+sees it, or a Canvas's title among the Canvases the person can open.
 
-- **list** returns `{ conversations: [{ conversationId, title, isHome, isOwn, isParent }] }`
-  and a `nextPageId`. The home (or the loop's own) comes first, then (for a
-  Breakout loop) Main, then the Channels' feeds, then the peer Threads and
-  Breakouts ordered by id. Parents stay ahead of peers across list pages. A
-  Sidekick's own conversation comes first, then attachments in the order they were made. `isParent` marks a
-  conversation this one sits inside: a Breakout's Main, a Thread's Channel.
-  Every call re-reads the directories for the acting person and omits what they can no longer open and anything
-  archived. A Channel's id is its Space id, a UUID no Thread shares.
+- **list** returns `{ conversations: [{ conversationId, title, isOwn, isParent }] }`
+  and a `nextPageId`. The Sidekick's own conversation comes first, then the
+  Canvases it writes, then its attachments. `isParent` marks the conversation a
+  run sits inside, its Sidekick's. Every call re-admits each conversation for
+  the acting person and omits what they can no longer open.
 - **read** takes `conversation` and `limit` and returns
   `{ conversationId, title, messages, nextPageId }`, newest first. Each message
   has an author (`person`, `agent`, `sidekick`, `external`, `system`) with a
@@ -113,30 +104,16 @@ it.
   and the page size, stored by the pagination wrapper beside the loop's
   receipts. Every page is admitted again.
 
-  A Channel reads through `listChannelFeed` as the acting person, so a read
-  shows exactly what their Channel screen shows. Its items become messages:
-  a thread placed there reads as its starter writing `Started the conversation
-  "<title>": <description>`, and a merge as the person who merged it writing
-  `Merged the result of "<title>" here:` and the body, or `of a conversation`
-  when the thread is private to this reader. The feed's pages are larger than a
-  read's, so a Channel's continuation is the feed cursor of the page being read
-  and the last item returned from it (its placement time and id); the next
-  read fetches that page again and resumes after that item in the feed's own
-  order. Not after a count: a merge landing, or a message removed, between two
-  pages moves every item below it, and an offset would repeat or skip one.
 - **search** takes `query`, an optional `conversation` and `limit`, and returns
   `{ matches: [{ conversationId, title, messageId, sentAt, text, textTruncated }] }`,
   newest first, within the read budget. It searches the loop's scope, never
-  everything the person may read: in a shared Thread a search as the asker
-  would otherwise show their private threads to the room. The matching is
+  everything the person may read. The matching is
   member search's (`docs/text-search.md`): one substring query over the shared
-  index, Thread and Breakout messages under `messages` and Channel messages
-  under `channel_messages`. Its audience is the groups the scope's
-  conversations carry (`conversationSearchGroups`), not the person's own:
-  search reaches up exactly as far as read does. A Breakout member who cannot
-  open its Thread reads the Thread's Main through the Breakout, so they find
-  what was said there too; every group names a conversation already admitted,
-  and hits are named from those conversations. The index ranks substring
+  index, conversation messages under `messages`. Its audience is the groups the
+  scope's conversations carry (`conversationSearchGroups`: a Canvas's Chat's
+  `conversation:<canvasId>/0`, a Sidekick's `sidekick:<id>`), not the person's
+  own, so search reaches exactly as far as read does; every group names a
+  conversation already admitted, and hits are named from those conversations. The index ranks substring
   candidates by document id, a hash, and stores `occurred_at` unindexed
   (`filterable: false`), so it cannot order by time and the newest match can be
   on any page. Candidate pages use the existing maximum conversation page size
@@ -150,9 +127,8 @@ it.
 - **post** takes `text` and `conversation`, and returns
   `{ conversationId, messageId, replayed }`. `conversation` may always be left
   out: the post lands in the Sidekick's own conversation, where everyone the
-  Sidekick is shared with reads it. A Channel's feed refuses a Sidekick's post
-  (`conversation_not_in_scope`). The post request carries the target's `parentKind`
-  (`workstream`, the default, or `automation`), and
+  Sidekick is shared with reads it. The post request carries the target's `parentKind`
+  (`automation` or `canvas`, required), and
   `appendConversationPost` refuses one that does not match the object, or an
   `automation` target that is not substream `"0"`. The host derives the key
   `conversation-post:<harnessRunId>:<receiptId>`, and the target's
@@ -183,19 +159,9 @@ relationship in `workspace_member_status`, then the hosted parent's
 `authorizeViewer`, the same admission the conversation's transport uses, with
 `requireGrantAuthority` for a guest so a guest reaches only what a grant gives
 them. A list re-admits the same way: nothing for a person whose membership
-ended, the directories' viewer rows for a member, and for a guest each
-unarchived candidate's admission, since the viewer rows record no grants and
-would drop what a grant gives. One target is admitted by another conversation:
-in a Breakout loop's scope, the Channel's Main is admitted through the person's
-admission to the Breakout itself (`admissionAddress`), because a Breakout has
-full access to its parent and Breakout membership does not require the Channel.
-When titles collide, only canonically readable, unarchived candidates take part
-in disambiguation, so an ambiguity response never names an inaccessible peer.
-A guessed peer title that is inaccessible or archived returns
-`conversation_not_in_scope` without revealing its id or archive state, even
-when the title looks like an id. Only a normalized reference equal to the target's
-id counts as an id match. Own and parent conversations retain specific archive
-and access refusals when named by title.
+ended, and each candidate's own admission otherwise. When titles collide, only
+admitted candidates take part in disambiguation, so an ambiguity response never
+names a conversation the person cannot open.
 Attach admits the same way and additionally refuses an archived target,
 which is the rule a write through `ConversationService.writableClient` follows:
 attaching is the consent to publish there.
@@ -217,7 +183,7 @@ attaching is the consent to publish there.
   a new call in a later wake of the same run is a new post. Keying on the run
   alone, as `post_result` did, would swallow every reply after the first.
 - **Every read and post admits the acting person again.** A continuation page
-  or a listed id is never standing access; losing a Channel stops the next call.
+  or a listed id is never standing access; losing a Canvas stops the next call.
 - **The external-source marking is the host's.** The model cannot set or clear
   it, so a later reader can trust that a marked post forwarded someone else's
   words.
@@ -247,7 +213,7 @@ Each refusal is a typed failure with a stable `code`, a model-visible sentence
 | read, search, post, attach | `conversation_ambiguous` | `available` |
 | attach | `conversation_not_found` | `field` |
 | read, search, post, attach | `conversation_archived` | `resourceId` |
-| read, search, post, attach | `conversation_access_denied` (a Channel's feed refused included) | `resourceId` |
+| read, search, post, attach | `conversation_access_denied` | `resourceId` |
 | read_next, list_next | the wrapper's page codes, per [`tool-pagination.md`](tool-pagination.md) | as there |
 
 `available` is cut to the shared failure-detail bound,
@@ -257,8 +223,8 @@ other reason throws `conversation_post_refused:<code>`.
 Limits, all placeholders for the team to set per
 [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md),
 written as the numbers the design named: `MAXIMUM_SEARCH_CANDIDATE_PAGES`, open,
-bounds how many index pages one search reads. The complete scan can span all
-peer conversations in the current Thread's Channels; a finite bound would make
+bounds how many index pages one search reads. The complete scan can span every
+Canvas in a Sidekick's scope; a finite bound would make
 newest-hit results incomplete because the index is ordered by id. A page of 25
 by default and at most 50 for list, read and search (`list_resources`' numbers), and a read budget of 12,000
 characters per page (`read_resource`'s). They live as constants at the top of
@@ -267,61 +233,33 @@ characters per page (`read_resource`'s). They live as constants at the top of
 bound of its own. Every cut, the read budget's included, keeps a character
 whole rather than splitting it.
 
-**A Canvas Chat is not in reach yet.** A conversation tool or a Sidekick
-attach that names a Canvas Chat answers not found:
-`workspace-sidekick-conversation-storage.ts` still reads the Thread directories
-(`channels`, `breakouts`), which nothing writes any more, so only a Sidekick's
-own conversation is in scope. Reaching a Canvas Chat needs that read ported to
-`canvas_directory`; it is not built.
-
 ## Testing
 
 - `apps/api/test/conversation-tools.test.ts` (Node): which loop gets which
-  tools, the wire names and their order, each schema's required, optional and
-  forbidden arguments with the explicit unspecified value, the pinned
-  system-message lines (a run's final-message instruction among them), a
-  homeless Sidekick's required `conversation`, each refusal's sentence and
-  details, the post key and its replay, the read budget and its cut, the
-  continuation, and link parsing. A Channel: listed by id
-  and title alone, its feed read as messages, and its continuation resuming
-  inside a feed page and onto the next. Search: matches from a Channel and a
-  Thread, newest first, a hit outside the scope dropped, the newest matches kept
-  across candidate pages, index rows of both sources turned into hits, the
-  audience groups of a Breakout, its Thread's Main and a Channel, and a Channel
-  read resuming after its last item when a merge lands between pages.
-  WorkspaceDO and the target are a typed double there; everything they decide
-  is proved on workerd.
+  tools (none for a Canvas's Chat), the wire names and their order, each
+  schema's required, optional and forbidden arguments, the pinned
+  system-message lines (a run's final-message instruction among them), each
+  refusal's sentence and details, the post key and its replay, the read budget
+  and its cut, the continuation, link parsing, and search: matches from a
+  Sidekick's conversation and a Canvas's Chat, newest first, a hit outside the
+  scope dropped, the newest matches kept across candidate pages, and each
+  kind's audience group. WorkspaceDO and the target are a typed double there;
+  everything they decide is proved on workerd.
 - `apps/api/test/sidekick-conversation-storage.test.ts` (Node, the object
-  ledgers applied): the migrations, the attachment key, and the scope and title
-  queries.
-- `apps/api/test-workers/conversation-tools.test.ts` (workerd): the home
-  projection, archive cascading to a Breakout-homed Sidekick, attach refusal and
-  idempotency, scope refusal, list re-admission after leaving a Breakout or
-  after a membership ends, archived refusal, and an append that lands once
-  without waking. A guest: refused an Organization-wide Channel without a
-  grant, listed what a grant gives, and admitted to a Breakout-homed Sidekick
-  by the Breakout's grant rather than the Channel's; and a room member outside
-  the home Breakout refused by the three sites that narrow to it.
-  Thread and Breakout scopes: one-hop peer discovery, parents before peers,
-  current placement and access, opaque peer titles (including UUID-shaped ones),
-  and specific own/parent refusal codes.
-  A Breakout member outside its Channel: listed Main and admitted to it from the
-  Breakout's scope, and refused it from the Channel's own.
-- `apps/api/test-workers/channels-threads-navigation.test.ts` (deleted in plan step C-2) (workerd): a
-  thread's Channel listed as a parent and resolved by id and by name, from the
-  Thread and from one of its Breakouts, and a
-  private Channel neither listed nor resolved for a member outside it.
-- `apps/api/test-workers/external-bindings-mucker-flow.test.ts` (workerd): the
-  whole flow, a continued run's forward landing in the home Breakout.
+  ledgers applied): the attachment key filed as `canvas`, the scope's order
+  and deduplication, a deleted Canvas or Sidekick dropped, a retired Thread
+  attachment ignored, the title query, and conversation ids.
+- `apps/api/test-workers/conversation-tools.test.ts` (workerd), "a Sidekick's
+  Canvases through the conversation tools": the real plugin over the real
+  ports lists the Sidekick's conversation, its written Canvas and its attached
+  Canvases as each person may open them, refuses a read of one the person
+  cannot open, refuses to attach a Canvas the person cannot open (by title it
+  is not found, by id access is denied), and posts into a written Canvas's
+  Chat once per receipt and reads it back. Each was seen to fail with list
+  admission skipped, the title match unadmitted, or the post sent under the
+  Sidekick's parent kind.
 - `apps/api/test-workers/automation-post-result.test.ts` (workerd): a real run,
-  scripted with `useOpenRouterDouble`, calling `conversation_post` into its home.
-
-A Breakout's viewer rows reach WorkspaceDO through the hosted parent when the
-Breakout's own effects are delivered (`deliverChildEffects`). The re-admission
-test stops there: adding a Breakout member also queues a
-`participant_notification` parent effect, and the workers suite's empty D1 has
-none of the notification tables it needs, so draining the parent outbox would
-retry it until the helper gives up.
+  scripted with `useOpenRouterDouble`, calling `conversation_post`.
 
 ## Security and trust model
 
@@ -334,6 +272,28 @@ is published to the target's audience; the person who attached that
 conversation chose that audience.
 
 ## Changelog
+
+### 2026-11-07 — A Sidekick reaches its Canvases; Thread scopes are gone
+
+**What changed:** The scope is a Sidekick's alone: its own conversation, the
+Canvases it writes (`canvas_directory.writer_sidekick_id`) and the Canvases
+attached to it, read from `automation_directory`, `canvas_directory` and
+`sidekick_conversation_attachments` instead of `channels` and `breakouts`.
+`conversation_attach` resolves a Canvas by link, id or title and files it as
+`canvas`; `conversation_post` into a Canvas's Chat sends `parentKind: canvas`.
+The Thread and Breakout scope, the Sidekick's home (`isHome`,
+`conversation_home_missing`), the Channel feed read and the Breakout-to-Main
+admission are deleted, and a conversation id is one UUID.
+
+**Why:** The Canvases and Sidekicks PRD's decision log retires Threads,
+Channels and Breakouts; nothing writes the directories the old scope read, so
+a Canvas a Sidekick should report into was unreachable (the gap the previous
+entry recorded). Each Canvas is admitted by `canvasAdmits` through its hosted
+parent, the rule its own transport applies, rather than a second rule here.
+
+**Respect:** A title names only Canvases the acting person can open: an attach
+by title admits every match before it reports one, so a private Canvas's id is
+never disclosed by a guess.
 
 ### 2026-11-07 — The merge tool is retired
 
