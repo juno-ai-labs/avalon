@@ -207,13 +207,12 @@ pushes the new metadata to the Channel's control sockets. It then applies the
 directory rows to itself in the same invocation: it rejects stale or duplicate
 per-key waterlines, persists the current row with the same UUIDv7 for the
 affected common or viewer field, and publishes it on the workspace socket.
-Activity-log and mention-delivery rows leave on the alarm as `parent_effect`
-messages on the activity Queue. A Sidekick parent keeps the older shape: its
-own outbox, an alarm, and the Queue to reach `WorkspaceDO`
-([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). D1 resolves current membership and
-profile identity; WorkspaceDO resolves Slack/email destinations and mention
-delivery's causally required viewer version so Queue
-reordering cannot outrun a removal. The
+A Canvas or Sidekick parent records a mention or an add as a notification
+intent beside the effect's receipt, and the consumer delivers it at once
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-mention-or-an-add)).
+Delivery reads current membership from D1 and whether the recipient may still
+open the parent from WorkspaceDO, so a removal between the message and the
+delivery is honoured. The
 object therefore owns the fact that a mention or state change occurred without
 acquiring workspace credentials, placing product text in Queue storage, or
 turning a failed network call into a lost sidebar update.

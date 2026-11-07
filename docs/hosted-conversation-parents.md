@@ -37,7 +37,8 @@ Sidekick does, and who may do it, is
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method answers here, through `hostedConversationParent`, which resolves a Sidekick or a Canvas. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: the Queue consumer step that opens a run's conversation and starts its loop, off the Organization's alarm. |
 | `apps/api/src/services/conversation-parent-client.ts` | `hostedParentStub` and `conversationParentStub`: `WorkspaceDO` for every parent. |
-| `apps/api/src/queues/activity-consumer.ts` | A `conversation_effect` goes to `WorkspaceDO.receiveChildEffects`; a `sidekick_run_provision` message to `provisionSidekickRun`; a `sidekick_review` message to `deliverSidekickReview`. |
+| `apps/api/src/queues/activity-consumer.ts` | A `conversation_effect` goes to `WorkspaceDO.receiveChildEffects`, and each notification intent it names is delivered with `processWorkstreamNotificationIntent`; a `sidekick_run_provision` message to `provisionSidekickRun`; a `sidekick_review` message to `deliverSidekickReview`. |
+| `apps/api/src/durable-objects/workspace-notification-intent-storage.ts` | `recordPersonNotificationIntent`: the intent row a mention or an add becomes, written in the envelope's transaction. Delivery is owned by [`push-notifications.md`](push-notifications.md). |
 
 ## How it works
 
@@ -75,6 +76,30 @@ Scope invitations and grants are Canvas-only. `createScopeInvitations` and
 `revokeScopeInvitation` require a Canvas parent; `claimScopeInvitations`
 answers `[]` for any other id. The invitation index and delivery alarms run for
 Canvases ([`scope-invitations.md`](scope-invitations.md)).
+
+### A mention or an add
+
+A conversation tells its parent that somebody was mentioned, or added, with a
+`mention_notification` or `participant_notification` effect, one per person.
+`applyChildEnvelope` records each as a `pending` row of
+`workstream_notification_intents` (`recordPersonNotificationIntent`) in the
+transaction that writes the envelope's receipt, and `receiveChildEffects`
+names the intent back in `notificationIntentIds`. The activity consumer then
+delivers it with `processWorkstreamNotificationIntent`, which decides at that
+moment whether the person is still a member, may still open the Canvas or
+Sidekick, and is not the author, and sends push, Slack or email as they chose
+([`push-notifications.md`](push-notifications.md)). Recording asks none of
+those questions, so a removal between the message and the delivery is still
+honoured.
+
+A redelivered envelope is answered by its receipt and names its intent again:
+the Queue's retry is what gives a delivery that failed after the record its
+second attempt, and the intent's own state keeps a settled one from sending
+twice. A mention is identified by its message and recipient, an add by its
+source and recipient, so a re-emission under a new message id converges on the
+one row; the same identity under another intent id or other bytes is refused
+as `notification_intent_identity_conflict`. Both kinds of parent record them,
+for any conversation under them.
 
 ### A Sidekick
 
@@ -190,6 +215,7 @@ directory ([`scope-grant-directory.md`](scope-grant-directory.md)), invitations
 | --- | --- |
 | A child reports an effect for a retired Thread or Space parent | 409 `conversation_parent_kind_retired:<kind>`; the Queue retries and dead-letters it, which is the signal. |
 | A child is reserved under an id the Organization does not host | 404 `conversation_parent_not_found`. |
+| A mention or an add arrives under an identity already recorded with another intent id or other bytes | `notification_intent_identity_conflict`; the Queue retries and dead-letters it. A producer that reuses an identity is the defect. |
 | A stored Sidekick appearance no longer parses | The Sidekick is listed without one and logged `automation_directory_appearance_invalid`. |
 | One alarm phase throws | `workspace_alarm_phase_failed` names the phase; the other phases still run, and the alarm then fails and retries. |
 | A run's provisioning message is lost | The run's entry sends it again; the wait grows with the run's age until `sidekickRunProvisioned` settles it. |
@@ -209,7 +235,10 @@ different bytes refused. `scheduled-alarms.test.ts` cancels by key prefix only
 in the kinds named. `workspace-do-schema.test.ts` proves migration 92 drops the
 import ledger and keeps every directory row, and `forced-migration.test.ts`
 that a queued migration command for `SidekickDO` or `AutomationDO` is
-acknowledged rather than retried. The Canvas cases are in
+acknowledged rather than retried. `hosted-mention-notifications.test.ts` posts a mention in a Canvas's Chat
+and in a Sidekick's shared conversation, delivers the conversation's effects
+through the real consumer twice, and reads one intent for the recipient and
+the push it sent. The Canvas cases are in
 [`canvases.md`](canvases.md#testing). Run with
 `pnpm --filter @rally/api test:workers`.
 
@@ -250,6 +279,41 @@ generation fences and the claim/send/accept publisher survive in the resource
 version ledger.
 
 ## Changelog
+
+### 2026-11-07 — A hosted parent records its conversations' mentions and adds
+
+**What changed:** `HostedConversation.applyChildEnvelope` records a
+`mention_notification` or `participant_notification` effect as a notification
+intent in the transaction that writes its receipt, and `receiveChildEffects`
+answers `{ accepted, notificationIntentIds }`; the activity consumer delivers
+each intent it names. The `parent_effect` apply path the Thread host fed
+(`applyWorkstreamRegionalEffect` in the consumer, the service and `WorkspaceDO`,
+and `workspace-regional-effect-storage.ts`) is deleted: nothing has sent a
+`parent_effect` since the Thread retirement, and a late one is acknowledged as
+`parent_effect_producer_retired`. `notificationDirectoryState` reads the
+recipient through `readRelationship`, so a member the Organization object had
+not yet heard of is no longer read as nobody.
+
+**Why:** The [Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+keeps push for a mention in a Canvas's Chat or a Sidekick's conversation.
+`applyChildEnvelope` receipted every kind but applied only the directory ones,
+so no intent was written and nothing was sent; the one path that recorded
+intents was reached only from the Thread host's `parent_outbox`. The delivery
+tests seeded intent rows directly, so none of them saw it. The membership read
+surfaced in the same end-to-end test: a Sidekick's admission never reads the
+relationship, so an Organization-wide Sidekick's mention was skipped as
+`recipient_not_listable`.
+
+**Considered and rejected:** Rerouting the conversation's notification effects
+through a `parent_effect` the parent would publish: a second Queue hop and an
+outbox for a row the parent can write in the transaction it already holds.
+Checking the recipient's membership before recording, as the Thread path did:
+delivery reads it again as it is then, so the first read only decided whether a
+row existed.
+
+**Consequences:** A new hosted kind records mentions without doing anything.
+`workspace_workstream_effect_receipts` is no longer written or read, and can
+be dropped with the other Thread-era tables.
 
 ### 2026-11-07 — The Channel and Space host is deleted; an unhosted id gets a named answer
 

@@ -2,8 +2,6 @@ import { IdSchema, WorkspaceAttentionSchema } from "@rally/contracts";
 import { z } from "zod";
 import { deferredZodSchema } from "@rally/contracts/deferred-zod-schema";
 
-import { ParentEffectEnvelopeSchema } from "@rally/contracts/conversation-effects";
-
 const TimestampSchema = z.string().datetime({ offset: true });
 
 export const WorkspaceAttentionRequestSchema = deferredZodSchema(() => z.strictObject({
@@ -53,47 +51,9 @@ export const WorkspaceDirectoryScheduleTargetsResultSchema = deferredZodSchema((
   })).max(20_000),
 }));
 
-/**
- * One Channel or Space parent's activity/mention effect, applied with its receipt in a
- * single WorkspaceDO transaction. Current member/user identity crosses the
- * boundary as data: the regional caller resolves it from D1 and the object
- * commits only what it was handed, so the effect and its idempotency receipt
- * can never land in different authorities.
- */
-export const WorkspaceRegionalEffectApplyRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  envelope: ParentEffectEnvelopeSchema,
-  actorUserId: IdSchema.nullable(),
-  targetUserIds: z.array(IdSchema).max(100),
-  recipientIsActiveMember: z.boolean(),
-}).superRefine((request, context) => {
-  if (request.envelope.workspaceId !== request.workspaceId) {
-    context.addIssue({
-      code: "custom",
-      path: ["envelope", "workspaceId"],
-      message: "Workstream regional effects must target their owning workspace",
-    });
-  }
-  if (!["activity_event", "mention_notification", "participant_notification"]
-    .includes(request.envelope.effect.kind)) {
-    context.addIssue({
-      code: "custom",
-      path: ["envelope", "effect", "kind"],
-      message: "Only activity and person-notification effects may use the regional apply handoff",
-    });
-  }
-}));
-
-export const WorkspaceRegionalEffectApplyResultSchema = deferredZodSchema(() => z.strictObject({
-  replayed: z.boolean(),
-  notificationIntentId: z.string().min(1).max(300).nullable(),
-}));
-
 export type WorkspaceAttentionRequest = z.infer<typeof WorkspaceAttentionRequestSchema>;
 export type WorkspaceAttentionResult = z.infer<typeof WorkspaceAttentionResultSchema>;
 export type WorkspaceDirectoryNotificationRequest = z.infer<typeof WorkspaceDirectoryNotificationRequestSchema>;
 export type WorkspaceDirectoryNotificationState = z.infer<typeof WorkspaceDirectoryNotificationStateSchema>;
 export type WorkspaceDirectoryScheduleTargetsRequest = z.infer<typeof WorkspaceDirectoryScheduleTargetsRequestSchema>;
 export type WorkspaceDirectoryScheduleTargetsResult = z.infer<typeof WorkspaceDirectoryScheduleTargetsResultSchema>;
-export type WorkspaceRegionalEffectApplyRequest = z.infer<typeof WorkspaceRegionalEffectApplyRequestSchema>;
-export type WorkspaceRegionalEffectApplyResult = z.infer<typeof WorkspaceRegionalEffectApplyResultSchema>;

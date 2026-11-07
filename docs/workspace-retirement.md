@@ -144,8 +144,7 @@ as well: Ace's flag fan-out reads `workspaces` with `abandoned_at IS NULL`, and
 the access-revocation walk finds nothing beneath an object whose sockets
 retirement already closed.
 
-The effect receivers a Queue redelivers to (`receiveChildEffects`,
-`applyWorkstreamRegionalEffect`, and
+The effect receivers a Queue redelivers to (`receiveChildEffects` and
 `applyWorkstreamDirectoryEffects`, which no production path calls any more but
 the gate still lists) are the exception and are **dropped** in the gate
 instead: their consumers parse a `strictObject` acknowledgement and would treat

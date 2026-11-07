@@ -2106,7 +2106,7 @@ describe("a hosted Sidekick", () => {
     // time as unhandled, which fails the run even when the assertion held.
     await runInDurableObject(workspaceStub(), async (instance: WorkspaceDO) => {
       await expect(instance.receiveChildEffects({ substreamId: started.runId, envelopes: [latest] }))
-        .resolves.toEqual({ accepted: [{ messageId: latest.messageId, payloadHash: latest.payloadHash }] });
+        .resolves.toEqual({ accepted: [{ messageId: latest.messageId, payloadHash: latest.payloadHash }], notificationIntentIds: [] });
       await expect(instance.receiveChildEffects({ substreamId: started.runId, envelopes: [conflicting] }))
         .rejects.toThrow("substream_effect_idempotency_conflict");
     });
