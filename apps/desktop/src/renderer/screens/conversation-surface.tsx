@@ -999,7 +999,7 @@ export function highestVisibleAttentionSequence(
 /**
  * The acknowledgement one conversation owes, addressed to itself, or nothing.
  *
- * Every conversation keeps its own read waterline: a `SubstreamAgent` per
+ * Every conversation keeps its own read waterline: an `AgentLoopDO` per
  * substream, each with its own attention ordinals and its own
  * `member_attention` row. So the conversation on screen is always the one to
  * acknowledge, whether it is Main or a private child. This used to be a work

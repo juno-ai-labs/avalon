@@ -146,7 +146,7 @@ type EventRow = {
 /**
  * The one component key a report may still arrive under, and what it is now.
  *
- * Registry v3 renamed `SubstreamAgent`'s component, and the two Workers deploy
+ * Registry v3 renamed `AgentLoopDO`'s component, and the two Workers deploy
  * from independent workflows — the tracker's is much the smaller of the two, so
  * it usually lands first and reports from the outgoing API build keep arriving
  * under the old key after the migration has already run. v3 cannot catch those:
@@ -162,6 +162,17 @@ type EventRow = {
  */
 const RENAMED_COMPONENT_FROM = "workstream";
 const RENAMED_COMPONENT_TO = "substream_agent_do";
+
+/**
+ * Wrangler tag v15 renamed the conversation class `SubstreamAgent` to
+ * `AgentLoopDO`, and registry v6 rewrote every stored row. A report the
+ * outgoing API build sends under the old class name after that is filed under
+ * the new one, for the reason the component rename above is: the two Workers
+ * deploy independently. Delete it, and its test, once no deployed API build
+ * carries the old class.
+ */
+const RENAMED_CLASS_FROM = "SubstreamAgent";
+const RENAMED_CLASS_TO = "AgentLoopDO";
 
 const REPORTING_CLASS_LIST = REPORTING_CLASSES.map((name) => `'${name}'`).join(", ");
 
@@ -252,8 +263,9 @@ export class MigrationRegistry extends DurableObject<Env> {
     });
   }
 
-  private applyReport(report: DurableObjectMigrationReport, recordedAt: number): void {
+  private applyReport(received: DurableObjectMigrationReport, recordedAt: number): void {
     const sql = this.storage.sql;
+    const report = received.className === RENAMED_CLASS_FROM ? { ...received, className: RENAMED_CLASS_TO } : received;
     const component = report.component === RENAMED_COMPONENT_FROM
       ? RENAMED_COMPONENT_TO
       : report.component;

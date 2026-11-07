@@ -2,7 +2,7 @@ export { AshbyRegionalBridge } from "./ashby-regional-bridge";
 export { AshbyRoutingBridge } from "./ashby-routing-bridge";
 import workerEvents from "./worker-events";
 
-export { SubstreamAgent } from "./durable-objects/substream-agent";
+export { AgentLoopDO } from "./durable-objects/agent-loop-do";
 export { MigrationProbeDO } from "./durable-objects/migration-probe-do";
 export { WorkspaceDO } from "./durable-objects/workspace-do";
 export { CrashSymbolicatorContainer } from "./crash-symbolicator-container";

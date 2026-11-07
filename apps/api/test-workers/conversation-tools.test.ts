@@ -7,7 +7,7 @@
  * SidekickDO projects its home into WorkspaceDO's directory; WorkspaceDO
  * decides a conversation tool's scope from its own directories and admits the
  * acting person through the hosted parent's `authorizeViewer`; a Channel's or
- * Breakout's own SubstreamAgent appends a post. The model-driven path (a real
+ * Breakout's own AgentLoopDO appends a post. The model-driven path (a real
  * run calling `conversation_post`) is in `automation-post-result.test.ts`; the
  * tools' argument and failure shapes are in `test/conversation-tools.test.ts`.
  * A Breakout's full access to its Channel (its Main's messages through these

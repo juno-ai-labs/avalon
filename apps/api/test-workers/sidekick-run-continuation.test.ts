@@ -3,7 +3,7 @@
 /**
  * Input to a Sidekick run continues that run.
  *
- * A run child is a `SubstreamAgent` under the Sidekick, with the run id as its
+ * A run child is an `AgentLoopDO` under the Sidekick, with the run id as its
  * substream. The Sidekick's alarm starts its first activation with the run's
  * context; every later one starts from input somebody sent to the child, and
  * the child asks the Organization's `sidekickContinueRun` whether that input may continue the

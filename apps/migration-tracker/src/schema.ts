@@ -189,7 +189,8 @@ const V2_NAMESPACE_RETIREMENT = [
 ] as const;
 
 /**
- * The `SubstreamAgent` component key, renamed from `workstream`.
+ * The `SubstreamAgent` component key, renamed from `workstream`. (The class
+ * has since been renamed `AgentLoopDO`; see v6.)
  *
  * The key is the tracker's own identifier and nothing else: no Durable Object
  * stores it — `_sql_schema_migrations` records a version, a hash, and a build,
@@ -294,6 +295,22 @@ const V5_NAMESPACE_LISTING_STAMP = [
     WHERE last_swept_at IS NOT NULL`,
 ] as const;
 
+/**
+ * The conversation class renamed `SubstreamAgent` to `AgentLoopDO` (Wrangler
+ * tag v15). The Cloudflare namespace, its object ids and every object's
+ * storage are unchanged; only the class name the tracker filed them under
+ * moves, in the live rows, the report log, the heads, the namespaces and the
+ * runs, so the fleet is one class rather than two. The component key
+ * (`substream_agent_do`) names the schema, which did not change, and stays.
+ */
+const V6_AGENT_LOOP_CLASS = [
+  `UPDATE durable_objects SET class_name = 'AgentLoopDO' WHERE class_name = 'SubstreamAgent'`,
+  `UPDATE migration_events SET class_name = 'AgentLoopDO' WHERE class_name = 'SubstreamAgent'`,
+  `UPDATE component_versions SET class_name = 'AgentLoopDO' WHERE class_name = 'SubstreamAgent'`,
+  `UPDATE durable_object_namespaces SET class_name = 'AgentLoopDO' WHERE class_name = 'SubstreamAgent'`,
+  `UPDATE migration_runs SET class_name = 'AgentLoopDO' WHERE class_name = 'SubstreamAgent'`,
+] as const;
+
 export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
   version: 1,
   description: "durable object inventory, migration reports, and sweep receipts",
@@ -336,6 +353,10 @@ export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
   version: 5,
   description: "separate namespace discovery from successful object listings",
   statements: V5_NAMESPACE_LISTING_STAMP,
+}, {
+  version: 6,
+  description: "file the conversation class under its new name, AgentLoopDO",
+  statements: V6_AGENT_LOOP_CLASS,
 }];
 
 export const REGISTRY_SCHEMA_VERSION = REGISTRY_MIGRATIONS.at(-1)?.version ?? 0;

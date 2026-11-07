@@ -33,7 +33,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 
 import { WorkspaceConversationView } from "../src/durable-objects/workspace-conversation-view";
-import { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import { type SidekickDirectoryRow, writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
@@ -464,7 +464,7 @@ async function seatBootstrapParticipant(
  * hangs on a snapshot that is never sent.
  */
 async function provisionBootstrappedWorkstream(
-  stub: DurableObjectStub<SubstreamAgent>,
+  stub: DurableObjectStub<AgentLoopDO>,
   userId: string,
 ): Promise<void> {
   await seedCreatorProfile();
@@ -531,7 +531,7 @@ describe("Durable Objects in the Workers runtime", () => {
       workstream: await withHostedParent(workspace, WORKSTREAM_ID, (parent) => (
         (parent as unknown as { sessionAuth(value: typeof identity): Promise<unknown> }).sessionAuth(identity)
       )),
-      substream: await runInDurableObject(substream, async (instance: SubstreamAgent) => (
+      substream: await runInDurableObject(substream, async (instance: AgentLoopDO) => (
         (instance as unknown as { socketAuth(value: typeof identity): Promise<unknown> }).socketAuth(identity)
       )),
     });
@@ -1048,7 +1048,7 @@ describe("Durable Objects in the Workers runtime", () => {
       {
         namespace: env.SUBSTREAM_AGENTS,
         name: conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
-        constructor: SubstreamAgent,
+        constructor: AgentLoopDO,
         migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.length,
         tables: [
           "_sql_schema_migrations",

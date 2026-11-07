@@ -1,6 +1,6 @@
 import { configuredRegions, regions } from "./regions.mjs";
 /**
- * Eagerly wake every stored SubstreamAgent so its constructor applies the
+ * Eagerly wake every stored AgentLoopDO so its constructor applies the
  * currently deployed object-local SQLite schema.
  *
  * This is an operator-run transport over the same regional migration-command
@@ -12,7 +12,7 @@ import { configuredRegions, regions } from "./regions.mjs";
 import { isEntryPoint } from './entry-point.mjs';
 
 const API_BASE = 'https://api.cloudflare.com/client/v4';
-const CLASS_NAME = 'SubstreamAgent';
+const CLASS_NAME = 'AgentLoopDO';
 const QUEUE_BATCH_SIZE = 100;
 const OBJECT_PAGE_SIZE = 1_000;
 const NAMESPACE_PAGE_SIZE = 1_000;

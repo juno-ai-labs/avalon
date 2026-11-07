@@ -1,7 +1,7 @@
 import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
 
 import { conversationObjectName } from "../durable-objects/names";
-import type { SettledTurnJudgement } from "../durable-objects/substream-agent";
+import type { SettledTurnJudgement } from "../durable-objects/agent-loop-do";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { stableCode } from "../observability/logger";

@@ -32,7 +32,7 @@ export function createSchedulingPortFactory(
 /**
  * A Worker-side handle on one work stream's scheduling state.
  *
- * Each method is one round trip to the owning SubstreamAgent, where the whole
+ * Each method is one round trip to the owning AgentLoopDO, where the whole
  * operation runs synchronously against the object's SQLite. Callers never see
  * SQL, a table name, or a database handle.
  */

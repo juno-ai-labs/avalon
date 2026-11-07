@@ -3191,7 +3191,7 @@ export async function runWorkstreamHarness(
   const activeCredentialPluginIds = new Set<string>();
   // Inline child harnesses would create a second Bind loop inside this
   // substream's one persistent state machine. Keep the tool off the production
-  // surface until delegation is routed to its own durable child SubstreamAgent.
+  // surface until delegation is routed to its own durable child AgentLoopDO.
   let ambiguousToolOutcome = false;
   let suppressInferenceRequestCapture = false;
   const toolEffectIntents = createToolEffectIntents();

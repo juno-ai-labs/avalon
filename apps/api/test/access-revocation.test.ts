@@ -789,7 +789,7 @@ describe("carrying one revocation to the objects", () => {
 
     // A Space admits no client socket, so there is nothing here to close and
     // the hop never asks. Its hidden main conversation is an ordinary
-    // `SubstreamAgent` that does hold what was opened against it, and only the
+    // `AgentLoopDO` that does hold what was opened against it, and only the
     // Space can name it — addressed under the Space's own id, the way an
     // automation's conversations are addressed under its.
     expect(visits).toEqual([]);
@@ -1050,7 +1050,7 @@ describe("deciding whether one socket belongs to a revocation", () => {
     expect(revocationClosesSocket(sessionGone, { userId: MEMBER, sessionId: "session-a" })).toBe(true);
     // One window signing out must not sign the person out of the others.
     expect(revocationClosesSocket(sessionGone, { userId: MEMBER, sessionId: "session-b" })).toBe(false);
-    // Only SubstreamAgent's schema makes the field optional, which is exactly
+    // Only AgentLoopDO's schema makes the field optional, which is exactly
     // why this rule is shared: written out per role it diverged once already,
     // and `undefined !== "<id>"` exempted the transcript feed from every logout.
     expect(revocationClosesSocket(sessionGone, { userId: MEMBER })).toBe(true);

@@ -3,7 +3,7 @@ import { WorkstreamDirectoryService } from '../src/services/workstream-directory
 import { createResourceObjectPort } from '../src/runtime/resource-port';
 import { ResourceService } from '../src/services/resource-service';
 import { WorkspaceDO } from '../src/durable-objects/workspace-do';
-import { SubstreamAgent } from '../src/durable-objects/substream-agent';
+import { AgentLoopDO } from '../src/durable-objects/agent-loop-do';
 import { WorkstreamResourceStorage } from '../src/durable-objects/workstream-resource-storage';
 import { createAccessContext } from '../src/services/authorization-service';
 import { projectAuthorization } from '../src/services/authorization-projection-service';
@@ -13,7 +13,7 @@ import { searchAudienceGroup, searchAudienceGroupId } from '../src/services/sear
 /**
  * The conversation-parent contract, answered by both parents.
  *
- * A `SubstreamAgent` does not decide who may read it or whether it may still
+ * An `AgentLoopDO` does not decide who may read it or whether it may still
  * be written; its parent does. A room's parent, hosted in the Organization's
  * `WorkspaceDO`, answers from the room's scope and participants, and from a hosted Sidekick's author and scope and,
  * for a room's automation, from the room's participants through WorkspaceDO.
@@ -466,7 +466,7 @@ describe("conversation parent contract", () => {
       return Response.json({ rows: groups === null ? rows : rows.filter((row) =>
         Array.isArray(row.audience) && (row.audience as string[]).some((group) => groups.includes(group))) });
     });
-    const contentReads = vi.spyOn(SubstreamAgent.prototype, 'readAdmittedSearchContent');
+    const contentReads = vi.spyOn(AgentLoopDO.prototype, 'readAdmittedSearchContent');
     const resourceReads = vi.spyOn(WorkspaceDO.prototype, 'resourceSearchRecords');
     const searchEnv = { ...TEST_ENV, TURBO_PUFFER_DEV_API_KEY: 'test-only' };
     const response = await searchWorkspacePage(searchEnv, AUTH, { query: 'needle', category: 'all', pageSize: 7 });

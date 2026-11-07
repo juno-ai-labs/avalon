@@ -187,7 +187,7 @@ export function ownInventoryRevision(fingerprint: string): number | null {
 /**
  * Resolve the cross-authority resource projection without a cross-database
  * join. Link and watch state comes from the conversation that owns it
- * (`SubstreamAgent`), and for a Breakout from its Channel's Main as well; the
+ * (`AgentLoopDO`), and for a Breakout from its Channel's Main as well; the
  * workspace-owned resource and note authorization come from WorkspaceDO.
  */
 async function loadVisibleRows(
