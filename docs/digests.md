@@ -24,8 +24,6 @@ mention, or changing what a connector can deliver to a person.
 | Markdown → email HTML | `apps/api/src/services/email-markdown.ts` |
 | Which lines are code, for both of the above | `packages/contracts/src/markdown-code.ts` — see [`markdown-code.md`](markdown-code.md) |
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs` |
-| Settings → Notifications → Daily digest | `DailyDigestSettings` in `apps/desktop/src/renderer/components/notification-settings.tsx` |
-| The work-stream list every renderer surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts`, served by `WorkspaceDO` |
 | The Activity tab's read over the log and the directory, and its read mark | `apps/api/src/durable-objects/workspace-activity-feed.ts` |
 | Who is told about news in an Organization-wide Channel | `apps/api/src/durable-objects/activity-audience.ts` |
 | A breakout mention's emptied shape and its author-only audience | `apps/api/src/durable-objects/breakout-activity.ts` |
@@ -773,16 +771,20 @@ device registration, provider delivery and retry receipts.
 
 ## Changelog
 
-### 2026-11-07 — Settings stops offering the Personal Channel and the Thread-only kinds
+### 2026-11-07 — Settings stops offering the digest and the Thread-only kinds
 
 **What changed:** Settings → Notifications no longer lists **New threads**,
-**New breakouts** or **Merges** under Notify me about, and the Daily digest's
-Send to no longer offers **Personal Channel**. The stored preferences and the
-server's delivery are unchanged: a kind or a `personal_channel` target already
-saved stays saved and is still honoured.
+**New breakouts** or **Merges** under Notify me about, and the **Daily digest**
+section is gone from the client: `DailyDigestSettings`, `getDigestSchedule` and
+`updateDigestSchedule` are deleted with the API's `/digest` routes (plan step
+C-1), and a kind with no channel now reads **Off** rather than "Digest only".
+The stored notification preferences are unchanged: a kind already saved stays
+saved and is still honoured.
 
 **Why:** The client pivot to Canvases and Sidekicks removed Threads, Breakouts
-and merges, and with them every client screen that opens a Personal Channel.
+and merges, and with them every client screen that opens a Personal Channel;
+the PRD's decision log drops digests and keeps push. A pane that still asked
+for `/digest` after the routes went showed an error notice on every open.
 Offering a choice whose result nobody can open, or an announcement of
 something nobody can start, is a promise the app cannot keep.
 
@@ -791,10 +793,9 @@ which would be a data migration run from whichever device opened Settings
 first. Removing the kinds from `NotificationKindSchema`, which would reject
 stored records the server still writes.
 
-**Consequences:** A member whose digest goes only to the Personal Channel (the
-default pairs it with email) receives it where no client shows it, and cannot
-see that target selected. Retiring the Personal Channel destination, the three
-kinds, and moving stored targets is the server half of the pivot's work.
+**Consequences:** Nothing in the client reads or writes a digest schedule; the
+footnote under Notify me about no longer mentions one. Retiring the three
+kinds is the server half of the pivot's work.
 
 ### 2026-11-05 — News in an Organization-wide Channel reaches its participants only
 

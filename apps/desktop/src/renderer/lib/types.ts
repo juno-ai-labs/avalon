@@ -796,28 +796,4 @@ export interface SocketTicket {
   subscriptionBootstrap?: boolean;
 }
 
-/** One person's scheduled digest: which days, what times, and where it goes. */
-export interface DigestSchedule {
-  id: string;
-  enabled: boolean;
-  /** Sunday is 0, matching `Date#getDay`. */
-  days: number[];
-  /** Local wall-clock minutes past midnight in `timezone`. */
-  times: number[];
-  timezone: string;
-  deliveryTargets: DigestDeliveryTarget[];
-  nextRunAt: string | null;
-  lastDeliveredAt: string | null;
-}
-
-/** Where a digest goes: the person's own Personal Channel, or any automation destination. */
-export type DigestDeliveryTargetType = 'personal_channel' | AutomationDeliveryTargetType;
-
-export interface DigestDeliveryTarget {
-  type: DigestDeliveryTargetType;
-  connectionId: string | null;
-  displayName: string;
-  status: 'active' | 'needs_input' | 'disabled';
-  lastDeliveredAt: string | null;
-}
 
