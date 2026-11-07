@@ -304,9 +304,13 @@ async function actingAuth(env: Env, input: WorkstreamWorkflowInput): Promise<Aut
 export function conversationSearchGroups(
   conversations: ReadonlyArray<Pick<ConversationToolEntry, "kind" | "parentId" | "substreamId">>,
 ): string[] {
+  // A Sidekick's own conversation is indexed under the Sidekick's group
+  // (`conversationSearchAudience`), not a conversation's.
   return conversations.map((conversation) => conversation.kind === "space"
     ? searchAudienceGroup.space(conversation.parentId)
-    : searchAudienceGroup.conversation(conversation.parentId, conversation.substreamId));
+    : conversation.kind === "sidekick"
+      ? searchAudienceGroup.sidekick(conversation.parentId)
+      : searchAudienceGroup.conversation(conversation.parentId, conversation.substreamId));
 }
 
 /**
