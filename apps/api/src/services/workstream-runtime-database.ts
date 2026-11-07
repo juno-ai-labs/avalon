@@ -47,7 +47,7 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
   parentId: string,
   parentKind: ConversationParentKind,
 ): Promise<Env> {
-  const authority = await claimParentAnchor(env, workspaceId, parentId, parentKind);
+  const authority = await claimParentAnchor(env, workspaceId, parentId);
   const stub = await durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,
@@ -79,27 +79,21 @@ export async function claimParentAnchor(
   env: Env,
   workspaceId: string,
   parentId: string,
-  parentKind: ConversationParentKind,
 ): Promise<{ generation: number }> {
   const authority = await readWorkstreamAuthorityControl(env);
   const at = new Date().toISOString();
-  // A Channel create may name its own id, and claims it with its receipt only
-  // while no anchor has it. The read below is the other half of that claim,
-  // for a Space or Sidekick: anchor first, then refuse if a Channel's receipt
-  // already names the id. Whichever statement D1 runs first wins, so the two
-  // cannot both believe they own it. Their ids can be seen before their anchor
-  // exists when provisioning is replayed, which is the case this closes; it
-  // fails loudly rather than sharing the id's route. A Channel's own bootstrap
-  // is exempt: a receipt for its id is its own, and restoring a created
-  // Channel is one. The read rides in the anchor's batch.
-  const claims = parentKind !== "workstream";
+  // A Thread create named its own id and claimed it with a receipt while no
+  // anchor had it. The read below is the other half of that claim: anchor
+  // first, then refuse if a Thread's receipt already names the id. Threads
+  // retired, so no receipt is written any more, but the rows already written
+  // still hold their ids. The read rides in the anchor's batch.
   const results = await writeRegionalWorkstreamAnchorBatch(env, { workspaceId, workstreamId: parentId }, [
     parentRouteStatement(env, { workspaceId, parentId, generation: authority.generation, at }),
-    ...(claims ? [env.DB.prepare(
+    env.DB.prepare(
       "SELECT 1 AS claimed FROM workstream_create_receipts WHERE workstream_id = ? LIMIT 1",
-    ).bind(parentId)] : []),
+    ).bind(parentId),
   ]);
-  if (claims && (results[2]?.results?.length ?? 0) > 0) {
+  if ((results[2]?.results?.length ?? 0) > 0) {
     throw new ApiError(409, "workstream_id_unavailable", "This conversation id is already claimed by a thread create");
   }
   return authority;

@@ -12,10 +12,12 @@ const main = asSubstreamId("0");
 
 describe("agent communication contracts", () => {
   it("addresses independent main conversations without allocating another identity", () => {
-    const workstream = { parentKind: "workstream", parentId, substreamId: main } as const;
+    const canvas = { parentKind: "canvas", parentId, substreamId: main } as const;
     const sidekick = { parentKind: "automation", parentId: otherParentId, substreamId: main } as const;
-    expect(agentIdForAddress(workstream)).not.toBe(agentIdForAddress(sidekick));
-    expect(agentAddressForId(agentIdForAddress(workstream))).toEqual(workstream);
+    expect(agentIdForAddress(canvas)).not.toBe(agentIdForAddress(sidekick));
+    expect(agentAddressForId(agentIdForAddress(canvas))).toEqual(canvas);
+    // A Thread agent id is no longer an address: Threads retired.
+    expect(AgentIdSchema.safeParse(`workstream/${parentId}/0`).success).toBe(false);
     expect(agentAddressForId(agentIdForAddress(sidekick))).toEqual(sidekick);
     expect(AgentIdSchema.safeParse("0").success).toBe(false);
     expect(AgentIdSchema.safeParse(`${agentIdForAddress(sidekick)}/extra`).success).toBe(false);
@@ -23,9 +25,9 @@ describe("agent communication contracts", () => {
 
   it("shows a model a Sidekick's agent id as sidekick/… and takes either spelling back", () => {
     const stored = agentIdForAddress({ parentKind: "automation", parentId: otherParentId, substreamId: main });
-    const thread = agentIdForAddress({ parentKind: "workstream", parentId, substreamId: main });
+    const canvas = agentIdForAddress({ parentKind: "canvas", parentId, substreamId: main });
     expect(modelAgentId(stored)).toBe(`sidekick/${otherParentId}/0`);
-    expect(modelAgentId(thread)).toBe(`workstream/${parentId}/0`);
+    expect(modelAgentId(canvas)).toBe(`canvas/${parentId}/0`);
     expect(SendAgentMessageInputSchema.parse({ agentId: `sidekick/${otherParentId}/0`, message: "Hi" }).agentId).toBe(stored);
     expect(SendAgentMessageInputSchema.parse({ agentId: stored, message: "Hi" }).agentId).toBe(stored);
     expect(StopAgentInputSchema.parse({ agentId: `sidekick/${otherParentId}/0` }).agentId).toBe(stored);
@@ -52,7 +54,7 @@ describe("agent communication contracts", () => {
   it("supports existing attachments on start, send and reply while retaining distinct addressing", () => {
     const content = { message: "", attachmentIds: [parentId] };
     expect(StartAgentInputSchema.parse({ name: "Image", description: "Inspect image", ...content })).toMatchObject(content);
-    const agentId = agentIdForAddress({ parentKind: "workstream", parentId, substreamId: main });
+    const agentId = agentIdForAddress({ parentKind: "canvas", parentId, substreamId: main });
     expect(SendAgentMessageInputSchema.parse({ agentId, ...content })).toMatchObject(content);
     expect(ReplyToAgentMessageInputSchema.parse({ messageId: otherParentId, ...content })).toMatchObject(content);
     expect(SendAgentMessageInputSchema.safeParse({ agentId, message: " " }).success).toBe(false);
@@ -61,7 +63,7 @@ describe("agent communication contracts", () => {
   });
 
   it("returns the delivery sentence with every started agent and accepted message", () => {
-    const agentId = agentIdForAddress({ parentKind: "workstream", parentId, substreamId: main });
+    const agentId = agentIdForAddress({ parentKind: "canvas", parentId, substreamId: main });
     const next = "Its reply will arrive here as a message.";
     expect(StartAgentResultSchema.parse({ agentId, name: "Research", next })).toEqual({ agentId, name: "Research", next });
     expect(StartAgentResultSchema.safeParse({ agentId }).success).toBe(false);

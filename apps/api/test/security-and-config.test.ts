@@ -703,13 +703,13 @@ describe("environment guardrails", () => {
         region: "global",
         role: "owner",
       },
-      { kind: "workstream", id: "00000000-0000-7000-8000-000000000003" },
+      { kind: "canvas", id: "00000000-0000-7000-8000-000000000003" },
     );
     await expect(verifySocketTicket(env, ticket)).resolves.toMatchObject({
       sessionId: "session",
       userId: "00000000-0000-7000-8000-000000000001",
       workspaceId: "00000000-0000-7000-8000-000000000002",
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: "00000000-0000-7000-8000-000000000003",
       substreamId: "0",
       region: "global",

@@ -1364,7 +1364,7 @@ describe('browser cookie collaboration transport', () => {
     const api = new RallyApi(cookie.apiBaseUrl, cookie);
     await api.startProviderConnection('linear', 'you', ['linear.read']).catch(() => undefined);
     await api.reconnectConnection('connection-1', 'linear').catch(() => undefined);
-    await api.startConnectorResourceAuthorization({ connectionId: 'connection-1', parentKind: 'workstream', parentId: workstreamId,
+    await api.startConnectorResourceAuthorization({ connectionId: 'connection-1', parentKind: 'canvas', parentId: workstreamId,
       substreamId: '0', failedToolInvocationId: 'tool-1' } as Parameters<RallyApi['startConnectorResourceAuthorization']>[0]).catch(() => undefined);
     expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
       `${cookie.apiBaseUrl}/connections/linear/start?telemetryVersion=2&handoff=browser`,

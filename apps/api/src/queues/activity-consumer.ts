@@ -939,8 +939,14 @@ function effectRejection(
     : envelope.kind === "parent_effect" ? ParentEffectEnvelopeSchema
       : null;
   if (schema === null) return null;
-  const rejected = schema.safeParse(body);
   const text = (value: unknown) => typeof value === "string" ? codeShaped(value) : null;
+  if (envelope.parentKind === "workstream" || envelope.parentKind === "space") {
+    // A Thread's or Space's effect still in flight when the contract narrowed
+    // to Canvases and Sidekicks: its parent retired, so it is acked by name.
+    return { code: `conversation_parent_kind_retired:${envelope.parentKind}`,
+      workspaceId: text(envelope.workspaceId), messageId: text(envelope.messageId) };
+  }
+  const rejected = schema.safeParse(body);
   return {
     code: zodDiagnosticCode(rejected.success ? error : rejected.error, "effect_queue_message", { namesUnknownKeys: true })
       ?? "effect_queue_message_invalid",

@@ -3,7 +3,7 @@ import {
   asWorkspaceId,
   type WorkspaceId,
 } from "@rally/contracts";
-import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
+import type { RetirementParentKind } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -87,7 +87,7 @@ export interface WorkspaceRetirementReceipt {
   /** Effects the closed objects still hold and will never publish. */
   retainedOutbox: number;
   /** Nodes this pass could not finish, by id. The next pass returns to them. */
-  failed: { parentKind: ConversationParentKind; parentId: string; error: string }[];
+  failed: { parentKind: RetirementParentKind; parentId: string; error: string }[];
 }
 
 export async function retireWorkspaceGraph(

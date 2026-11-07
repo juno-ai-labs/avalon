@@ -22,7 +22,8 @@ export const SCOPE_GRANT_DIRECTORY_SCHEMA = [
 
 export function applyScopeGrantDirectory(storage: DurableObjectStorage, input: ParentEffectEnvelope): boolean {
   const envelope = ParentEffectEnvelopeSchema.parse(input);
-  if (envelope.parentKind !== "workstream" || envelope.effect.kind !== "scope_grant_directory") throw new Error("scope_grant_directory_effect_invalid");
+  // Only a Canvas grants a `workstream` target; a Thread parent retired.
+  if (envelope.parentKind !== "canvas" || envelope.effect.kind !== "scope_grant_directory") throw new Error("scope_grant_directory_effect_invalid");
   const { grant } = envelope.effect;
   if (grant.target.workspaceId !== envelope.workspaceId || grant.target.parentId !== envelope.parentId
     || conversationEffectHash(envelope.effect) !== envelope.payloadHash) throw new Error("scope_grant_directory_address_invalid");
