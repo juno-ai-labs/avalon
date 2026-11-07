@@ -280,8 +280,6 @@ describe("the shared Durable Object alarm list", () => {
         // its rows claimed and pending rather than spin this alarm.
         { phase: "space_default_publish", alarmKind: undefined },
         { phase: "space_bootstrap", alarmKind: undefined },
-        { phase: "channel_color_sync", alarmKind: undefined },
-        { phase: "thread_backfill", alarmKind: undefined },
         { phase: "import_reservation_reclaim", alarmKind: undefined },
         { phase: "memory_digest_sync", alarmKind: undefined },
         { phase: "activity_reap", alarmKind: undefined },

@@ -159,7 +159,7 @@ held once in `packages/contracts`.
 ### The backfill
 
 Suggestions shipped for turns settled from 2026-10-18 on. Existing
-conversations get theirs through the [thread backfill](thread-backfill.md)
+conversations get theirs through the thread backfill (retired)
 lane: migration 115 lists every open thread under `suggestion_backfill`, and
 the handler, `backfillSuggestion`, asks each conversation's object (Main and
 each open Breakout) for `backfillTurnDisposition`. The object picks
@@ -173,7 +173,7 @@ transient classifier failure, or a step that threw before judging, is thrown
 back to the lane so the row retries rather than settling with nothing judged;
 a classifier failure no retry would fix settles with the kind recorded. After the release, force `WorkspaceDO`
 from the migration tracker so every Organization fills its list
-([thread-backfill.md](thread-backfill.md#reaching-every-organization)).
+(thread-backfill.md (retired)).
 
 ### What the client shows
 

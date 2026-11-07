@@ -1609,7 +1609,7 @@ effect the same way a `hypersight-enabled` save always did.
 already named, reading a new `digests-enabled` boolean. It fails open, the
 same direction as the model flags and for the same reason. It is Ace's fifth
 managed flag — the first that is not presentation-only and the first Ace
-provisions on rather than off. `docs/digests.md#an-occurrence` and `docs/ace.md`
+provisions on rather than off. `docs/ace.md` and the retired `docs/digests.md` (in git history)
 carry the full rationale; this document's tables and provisioning walkthrough
 now include it alongside the other three resolvers.
 
