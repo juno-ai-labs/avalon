@@ -1753,6 +1753,25 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
+### 2026-11-07 — The parent-kind contract names only Canvas and Sidekick
+
+**What changed:** `ConversationParentKindSchema` in `@rally/contracts` is
+`automation | canvas`, as the object already hosted, so no request into the
+object can name a Thread or Space parent. The object's stored root row may
+still say `workstream` or `space`: it is read through
+`StoredConversationParentKindSchema` (all four kinds) in
+`workstream-object-storage.ts`, by `identityForRetirement` for the retirement
+readers, and refused by name (`conversation_parent_kind_retired:<kind>`) on
+every product read, as before. Effect envelopes keep the four kinds
+(`EffectParentKindSchema`) so a retired parent's effect still reaches its
+receiver and is refused there. The merge tag on message admission, its replay
+flag and its Activity metadata are deleted with the merge contracts.
+
+**Why:** plan step B-8 of the Canvases and Sidekicks pivot. The contract
+narrowed last, after C-3 stopped hosting the retired kinds, because a stored
+root or an in-flight effect may still name one; the readers that must see a
+retired kind each name their wider enum rather than widen the contract again.
+
 ### 2026-11-07 — The conversation class is `AgentLoopDO`, a conversation belongs to a Canvas or a Sidekick, and the Thread machinery is deleted
 
 **What changed:** The class `SubstreamAgent` is renamed `AgentLoopDO`

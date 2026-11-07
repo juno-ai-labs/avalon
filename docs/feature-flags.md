@@ -65,16 +65,12 @@ inherit the source conversation's model override:
 | --- | --- | --- | --- |
 | Work-stream agent | `agent-model-workstream` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Pasted-text naming (role `workstream_naming`) | `agent-model-workstream-naming` | `OPENROUTER_CLASSIFIER_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Suggested-work admission | `agent-model-work-opportunity-admission` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Suggested-work ranking | `agent-model-work-opportunity-ranking` | `OPENROUTER_STRUCTURED_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
-| Conversation import | `agent-model-session-import` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Memory sweep | `agent-model-memory-sweep` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 | Sidekick wizard | `agent-model-sidekick-authoring` | `OPENROUTER_PRIMARY_MODEL` | `OPENROUTER_FALLBACK_MODELS` |
 
 The checked-in primary model is `openai/gpt-6.1-sol`, with low reasoning
 from the harness model-default registry. Flagship variations still override
-the primary model. The conversation import agent reads screenshots, so any
-model its flag names must accept image input.
+the primary model.
 
 Message addressing is deliberately absent from this table and from Ace. Its
 evaluated cascade fixes JEV as primary and
@@ -102,10 +98,6 @@ model is platform policy recorded in the durable context recipe before
 inference starts. The structured-inference gateway accepts that explicit route
 with an empty fallback list, so a retry cannot pick up a later flag evaluation
 or Worker fallback change and produce a different seed under the same receipt.
-Admission and ranking get separate flags because admission turns connector
-activity into prompts while ranking orders them per user, and pinning one should
-not move the other.
-
 The `workstream_description` and `suggestion_draft` roles are retired: their
 callers (the description loop, the conversation suggestions) were deleted in
 plan step C-2, and the Ace deploy retires `agent-model-workstream-description`
@@ -1061,6 +1053,21 @@ both intent enqueue and delivery. Turning it off stops queued sends as well as
 hiding the Notifications section.
 
 ## Changelog
+
+### 2026-11-07 — The session-import and suggested-work model roles are retired
+
+**What changed:** `session_import`, `work_opportunity_admission` and
+`work_opportunity_ranking` left `AGENT_MODEL_ROLES`, the structured-inference
+roles, the route defaults and Ace's catalog, and the Ace deploy retires
+`agent-model-session-import`, `agent-model-work-opportunity-admission` and
+`agent-model-work-opportunity-ranking` instead of ensuring them.
+
+**Why:** session import made Channels and suggested work made Threads, both
+retired by the Canvases and Sidekicks pivot (plan step B-8); nothing calls the
+roles. `session_import` stays in the usage ledger's `METERED_ACTIVITIES` and
+`ORGANIZATION_PAYS`, so a usage event already queued still parses. With the
+two suggested-work roles gone `OPENROUTER_STRUCTURED_MODEL` has no reader;
+removing the Worker variable is a later, deploy-affecting change.
 
 ### 2026-11-07 — Thread-era model roles and `live-artifacts-enabled` are retired
 

@@ -10,6 +10,7 @@ import {
   SidekickCustomToolSchema,
   AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_OVERRIDES,
+  AgentModelOverrideSchema,
   AGENT_MODEL_ROLES,
   AgentModelRoutingSchema,
   ClientSocketEventSchema,
@@ -191,14 +192,19 @@ describe("boundary contracts", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("accepts a model override only from the closed list of selectable models", () => {
+    expect(AgentModelOverrideSchema.parse("deepseek/deepseek-v4-pro")).toBe("deepseek/deepseek-v4-pro");
+    // An override bypasses the rollout, so the reachable set is reviewed here
+    // rather than being whatever string a client sends.
+    expect(AgentModelOverrideSchema.safeParse("x-ai/grok-9").success).toBe(false);
+    expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
+  });
+
   it("owns the complete model-role, Flagship-key, and route-value contract", () => {
     expect(AGENT_MODEL_ROLES).toEqual([
       "workstream",
       "inline_child",
       "workstream_naming",
-      "work_opportunity_admission",
-      "work_opportunity_ranking",
-      "session_import",
       "memory_sweep",
       "sidekick_authoring",
     ]);
@@ -206,9 +212,6 @@ describe("boundary contracts", () => {
       "agent-model-workstream",
       "agent-model-inline-child",
       "agent-model-workstream-naming",
-      "agent-model-work-opportunity-admission",
-      "agent-model-work-opportunity-ranking",
-      "agent-model-session-import",
       "agent-model-memory-sweep",
       "agent-model-sidekick-authoring",
     ]);

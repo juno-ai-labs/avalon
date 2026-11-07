@@ -59,7 +59,7 @@ export interface AgentInferenceLogContext {
   /** Only the first durable attempt owns the user-request-to-dispatch SLO row. */
   inferenceStartEligible?: boolean;
   /** What this run's attempts are metered as. Compaction attempts are metered separately. */
-  usage?: { activity: "agent_run" | "sidekick_run" | "session_import"; sidekickId?: string };
+  usage?: { activity: "agent_run" | "sidekick_run"; sidekickId?: string };
 }
 
 export interface AgentInferenceLogger {
