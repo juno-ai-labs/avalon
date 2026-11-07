@@ -1051,7 +1051,7 @@ store partitions on `pinPosition` rather than asking twice.
 **Consequences:** `recents` now means *unpinned* recents, because the server
 excludes pins from the recency order — a pinned work stream appears in the menu
 once, under **Pinned**, exactly as it does in the sidebar. The five-pin display
-limit here must not grow into a cap on pinning: `workstream-pinning.md` records
+limit here must not grow into a cap on pinning: `pinning.md` records
 two attempts at a real limit and why both failed.
 
 ### 2026-08-11 — The suggestions get a group of their own, and both lists get a section header

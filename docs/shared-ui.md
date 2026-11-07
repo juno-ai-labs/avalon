@@ -187,14 +187,9 @@ appearance observation. Visual primitives share the same theme subscription.
 The People level and its ranked **Suggested** list were deleted with Threads
 (2026-11), with the server's people ranking (`GET /navigation/people-ranking`).
 Who is in a Canvas is chosen in its Share dialog, which is desktop host code
-([`canvases.md`](canvases.md)); nothing here ranks people.
-
-The title pill's `onMenuOpen` starts the host's optional ranking read before
-People is selected. People snapshots that order on entering the level: late
-responses apply on its next opening, so an Add button never moves under the
-pointer. Pending or failed reads silently keep the directory fallback usable.
-The host gates both automatic and manual reads on API, person and member
-eligibility, and shares any in-flight refresh on reopening.
+([`canvases.md`](canvases.md)); nothing here ranks people. The title pill's
+`onMenuOpen` ranking read and the People level's ordering snapshot went with
+them.
 
 ## Invariants
 

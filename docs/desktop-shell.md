@@ -88,7 +88,7 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   to update** when one is downloaded, and **Search organization** last, so it
   holds its place as the person moves between the two.
   [`canvases.md`](canvases.md#in-the-client) says what a Canvas row shows, and
-  [`workstream-pinning.md`](workstream-pinning.md) owns the Pinned group.
+  [`pinning.md`](pinning.md) owns the Pinned group.
 
 Every row in the lists is one layout (`RowLayout`): an `IdentityTile`
 (`packages/ui/src/components/identity-tile.tsx`), a name with a time, and a
@@ -260,7 +260,7 @@ It does not own:
 
 - what a Canvas is and who may open it ([`canvases.md`](canvases.md));
 - a Sidekick's screens and lifecycle ([`automation-lifecycle.md`](automation-lifecycle.md));
-- pin authority ([`workstream-pinning.md`](workstream-pinning.md));
+- pin authority ([`pinning.md`](pinning.md));
 - the feed, composer and panels inside a pane ([`conversation-surfaces.md`](conversation-surfaces.md));
 - what the desktop restores after relaunch ([`desktop-layout.md`](desktop-layout.md)).
 

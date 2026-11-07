@@ -3951,7 +3951,7 @@ activity and device-local history cannot express that order.
 
 **Consequences:** Access state belongs to WorkspaceDO, outside child-owned viewer
 projection writes. The complete ordering contract lives in
-[work-stream pinning](workstream-pinning.md#recent-work-streams).
+[work-stream pinning](pinning.md#recent-work-streams).
 
 ### 2026-09-07 — Search directory readability
 
