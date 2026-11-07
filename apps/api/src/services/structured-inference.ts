@@ -38,9 +38,7 @@ type StructuredInferenceRole = Extract<
   | "workstream"
   | "work_opportunity_admission"
   | "work_opportunity_ranking"
-  | "workstream_description"
   | "workstream_naming"
-  | "suggestion_draft"
   | "memory_sweep"
 >;
 

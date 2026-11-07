@@ -10774,14 +10774,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Terminal sandbox, for the Organization's network policy pass. Unfiltered
    * by person: the policy is the Organization's.
    */
-  async terminalSandboxParents(input: { workspaceId: string }): Promise<{ workstreamId: string; title: string }[]> {
+  async terminalSandboxParents(input: { workspaceId: string }): Promise<{
+    parentKind: "canvas" | "automation"; workstreamId: string; title: string;
+  }[]> {
     await this.initialized;
     this.assertWorkspace(WorkspaceIdSchema.parse(input.workspaceId));
-    return this.state.storage.sql.exec<{ id: string; title: string }>(
-      `SELECT canvas_id AS id, title FROM canvas_directory
-       UNION ALL SELECT automation_id, title FROM automation_directory WHERE lifecycle <> 'deleted'
+    return this.state.storage.sql.exec<{ kind: "canvas" | "automation"; id: string; title: string }>(
+      `SELECT 'canvas' AS kind, canvas_id AS id, title FROM canvas_directory
+       UNION ALL SELECT 'automation', automation_id, title FROM automation_directory WHERE lifecycle <> 'deleted'
        ORDER BY id`,
-    ).toArray().map((row) => ({ workstreamId: row.id, title: row.title }));
+    ).toArray().map((row) => ({ parentKind: row.kind, workstreamId: row.id, title: row.title }));
   }
 
   async workstreamScheduleTargets(

@@ -2773,7 +2773,6 @@ export async function runWorkstreamHarness(
       memoryDigest?(principal: string): MemoryDigestFact[] | null;
       readSidekickSkills(): SidekickSkillSnapshot | null;
       assignSidekickSkillNames(sources: SidekickSkillSnapshot["sources"]): Map<string, string>;
-      attachedSidekickIds(): string[];
       saveSidekickSkills(snapshot: SidekickSkillSnapshot): void;
       activateSidekickSkill(ref: string): Promise<void>;
       projection: BindLoopProjectionState | null;
@@ -2921,13 +2920,13 @@ export async function runWorkstreamHarness(
   if (storedSidekickSkills && storedSidekickSkills.sources.some((source) => storedSidekickSkills.activeRefs.includes(sidekickSkillRef(source.id)) && !currentSidekickSources.some((current) => current.id === source.id))) {
     throw new ApiError(403, "sidekick_access_changed", "A skill is no longer available to this execution");
   }
-  const attachedSidekickIds = new Set(runtime?.persistentLoop?.attachedSidekickIds() ?? []);
-  // A Channel's defaults were the only recommendations; a stored snapshot keeps its own.
-  const recommendations: readonly string[] = storedSidekickSkills?.recommendedRefs ?? [];
+  // A fresh snapshot starts with nothing active or recommended: only a Thread
+  // attached Sidekicks to itself, and a Channel's defaults were the only
+  // recommendations. A stored snapshot keeps its own.
   const sidekickSnapshot = storedSidekickSkills ?? {
     sources: currentSidekickSources,
-    activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),
-    recommendedRefs: recommendations.filter((ref) => currentSidekickSources.some((source) => sidekickSkillRef(source.id) === ref)),
+    activeRefs: [],
+    recommendedRefs: [],
   };
   if (!storedSidekickSkills) runtime?.persistentLoop?.saveSidekickSkills(sidekickSnapshot);
   const sidekickCatalog = sidekickSkillCatalog(sidekickSnapshot.sources,
@@ -3443,7 +3442,6 @@ export async function runWorkstreamHarness(
       initialRunAuthorityMs: authorityPreparation.elapsedMs ?? 0,
       sidekickAuthorityMs: sidekickSourcesPreparation.elapsedMs ?? 0,
       // A Channel's recommended Sidekicks were the only source; none is read now.
-      sidekickRecommendationsMs: 0,
       leaseHeartbeatMs,
       runContextMs: promptPreparation.elapsedMs ?? 0,
       transcriptBootstrapMs,
@@ -3452,7 +3450,6 @@ export async function runWorkstreamHarness(
       attachmentReplayMs: attachmentGroundingPreparation.elapsedMs ?? 0,
       transcriptBootstrapRequired: requiresCanonicalBootstrap,
       sidekickSnapshotReused: storedSidekickSkills !== null,
-      sidekickRecommendationsRead: false,
     } satisfies AgentInferencePreparationBreakdown,
   });
 

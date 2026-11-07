@@ -11,13 +11,11 @@ import {
   resolveSlackReactions,
   slackApi,
   slackActivityEventType,
-  slackDefaultReactionFor,
   slackMarkdownMessages,
   SLACK_DEFAULT_REACTIONS,
   type ConnectorConnectionContext,
   type SlackAgentReactionCommand,
   type SlackAgentReactionResult,
-  type SlackReactionOutcome,
   type SlackIngressEnvelope,
 } from "@rally/connectors";
 import {
@@ -33,7 +31,6 @@ import {
   addWorkspaceTarget,
   type ExternalActor,
   type SlackOriginAttachment,
-  type SlackOriginContext,
   type SlackOriginNearbyMessage,
   type SlackSearchAuthorization,
 } from "@rally/contracts";
@@ -65,9 +62,7 @@ import { decryptVersionedConnectorCredentials } from "./connector-credential-env
 import { persistNormalizedActivity } from "./normalized-activity-service";
 
 import { admitExternalWorkstreamMessage } from "./workstream-service";
-import { conversationCanonicalUrl } from "./conversation-link-service";
 
-import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
@@ -83,7 +78,6 @@ import {
   WorkspaceSlackThreadRoutableResultSchema,
   WorkspaceSlackSessionAssignResultSchema,
   WorkspaceSlackSessionExistsResultSchema,
-  WorkspaceSlackSessionReactionResultSchema,
   WorkspaceSlackFeedbackResultSchema,
   WorkspaceSlackSessionResultSchema,
   // The session row itself, rather than a structural copy of it here: every
@@ -1149,157 +1143,6 @@ export class SlackAgentService {
     return challenge;
   }
 
-  async deliverWorkstreamOutcome(
-    workspaceId: string,
-    workstreamId: string,
-    text: string | null,
-    deliveryKey: string,
-    outcomeStatus: "completed" | "needs_input" | "failed" | "stopped",
-    run: {
-      triggeringSlackUserId?: string | null;
-      /** Where this run's own status reaction sits; absent on payloads admitted before it was carried. */
-      reactionAnchor?: SlackReactionAnchor | null;
-      /** Follow-ups steered into this run, which have no run of their own to settle them. */
-      absorbedReactionAnchors?: readonly SlackReactionAnchor[];
-    } = {},
-  ): Promise<void> {
-    this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
-    const session = WorkspaceSlackSessionResultSchema.parse(
-      await (await this.workspaceDirectory(workspaceId)).slackSessionByWorkstream({
-        workspaceId,
-        workstreamId,
-      }),
-    ).session;
-    if (!session) return;
-    if (session.last_delivery_key === deliveryKey) return;
-    const connection = await this.connectionById(session.connection_id);
-    const token = await this.botToken(connection);
-    // Empty or absent canonical text creates no external reply. Status and
-    // reaction cleanup still settle below.
-    const responseText = text?.trim() || null;
-    // Only a run waiting on a person can have an open elicitation to deliver.
-    // This used to build a routed execution environment and read through it;
-    // the port needs no such handle, so what is left is the condition that
-    // environment was standing in for.
-    const openElicitation = responseText && outcomeStatus === "needs_input"
-      ? await createSchedulingObjectPort(this.env, workspaceId, workstreamId)
-        .oldestOpenElicitation()
-      : null;
-    // The session row names the person who opened the thread. Runs no longer
-    // belong to that one person, so delivery follows the member whose message
-    // triggered this run. Old workflow payloads lack the field and safely fall
-    // back to the opener while they drain during deployment.
-    const deliverySlackUserId = run.triggeringSlackUserId ?? session.slack_user_id;
-    const deliveryUserLinked = responseText && outcomeStatus === "needs_input"
-      ? await this.slackUserIsLinked(
-        session.connection_id,
-        workspaceId,
-        session.slack_team_id,
-        deliverySlackUserId,
-      )
-      : true;
-    let deliveryError: unknown;
-    // A room Slack does not thread gets its result top-level, never chained.
-    const sessionThread = session.threadable ? session.slack_thread_ts : undefined;
-    if (session.slack_stream_ts) {
-      try {
-        // Compatibility for sessions admitted before saved-turn-only delivery
-        // shipped. Close their placeholder, but never append run output to it;
-        // the complete canonical turn is posted below as an ordinary message.
-        await slackApi(token, "chat.stopStream", {
-          channel: session.slack_channel_id,
-          ts: session.slack_stream_ts,
-        }, AbortSignal.timeout(5_000));
-      } catch (error) {
-        if (!(error instanceof ConnectorError && error.message === "message_not_in_streaming_state")) {
-          logWarn(this.env, "slack_stream_close_failed", {
-            workspace_id: workspaceId,
-            workstream_id: workstreamId,
-            reason: error instanceof Error ? error.message : "unknown",
-          });
-        }
-      }
-    }
-    try {
-      if (responseText) {
-        await postSlackTextChunks(
-          token,
-          session.slack_channel_id,
-          responseText,
-          sessionThread,
-          `${session.id}:${deliveryKey}:result`,
-          undefined,
-          session.threadable,
-        );
-        await slackApi(token, "chat.postMessage", {
-          channel: session.slack_channel_id,
-          ...(sessionThread ? { thread_ts: sessionThread } : {}),
-          client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:controls`),
-          text: "Rally task controls",
-          blocks: responseActionBlocks(workstreamId, await conversationCanonicalUrl(this.env, {
-            region: this.env.AVALON_REGION, workspaceId, parentId: workstreamId,
-          })),
-        }, AbortSignal.timeout(10_000));
-      }
-      // A run that asked for something only a connected member can give, when
-      // the member who triggered this run is not connected. There is nothing
-      // to *claim* any more — the reply itself carries whoever sends it — so
-      // this is a nudge to connect and an invitation to answer, not a gate in
-      // front of the thread.
-      if (responseText && outcomeStatus === "needs_input" && !deliveryUserLinked) {
-        const dmChannel = await this.openDm(token, deliverySlackUserId);
-        // A button rather than a minted URL: this DM is a notification a member
-        // may open hours later, and a challenge embedded in it would be long
-        // dead by then with nothing on screen to say so.
-        const connectPrompt = "This task needs a Rally account of its own to continue. Connect yours, then reply in the thread.";
-        await slackApi(token, "chat.postMessage", {
-          channel: dmChannel,
-          client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:connect-link`),
-          text: connectPrompt,
-          blocks: connectPromptBlocks(connectPrompt),
-        }, AbortSignal.timeout(10_000));
-        if (dmChannel !== session.slack_channel_id) {
-          await slackApi(token, "chat.postMessage", {
-            channel: session.slack_channel_id,
-            ...(sessionThread ? { thread_ts: sessionThread } : {}),
-            client_msg_id: await stableUuid(`${session.id}:${deliveryKey}:connect-notice`),
-            text: openElicitation?.target_user_id
-              ? "This task needs input from a specific Rally workspace member. That member can reply here once their Rally account is connected."
-              : "This task needs personal Rally authority. Any connected Rally member in this conversation can reply here to continue it.",
-          }, AbortSignal.timeout(10_000));
-        }
-      }
-      await (await this.workspaceDirectory(workspaceId)).setSlackSessionDeliveryKey({
-        workspaceId,
-        sessionId: session.id,
-        deliveryKey,
-        at: nowIso(),
-      });
-    } catch (error) {
-      deliveryError = error;
-      logWarn(this.env, "slack_workstream_delivery_failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
-    } finally {
-      if (sessionThread) try {
-        await slackApi(token, "assistant.threads.setStatus", { channel_id: session.slack_channel_id, thread_ts: sessionThread, status: "" }, AbortSignal.timeout(5_000));
-      } catch (error) {
-        logWarn(this.env, "slack_thread_status_cleanup_failed", { workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
-      }
-      await this.applyOutcomeReaction(
-        session, connection, token, outcomeStatus,
-        run.reactionAnchor ?? null, run.absorbedReactionAnchors ?? [],
-      );
-      if (session.slack_stream_ts) {
-        await (await this.workspaceDirectory(workspaceId)).setSlackSessionStream({
-          workspaceId,
-          sessionId: session.id,
-          streamTs: null,
-          at: nowIso(),
-        });
-      }
-    }
-    if (deliveryError) throw deliveryError;
-  }
-
   /**
    * Sends one written digest to a person's Avalon Agent DM.
    *
@@ -2179,41 +2022,6 @@ export class SlackAgentService {
     }
   }
 
-  /**
-   * Whether this Slack identity is bound to an active Avalon member right now.
-   *
-   * Narrower than {@link linkedAccount} on purpose: it answers the question
-   * without decrypting the installation's credentials, which the delivery path
-   * has no other reason to touch.
-   */
-  private async slackUserIsLinked(
-    connectionId: string,
-    workspaceId: string,
-    teamId: string,
-    slackUserId: string,
-  ): Promise<boolean> {
-    // Two reads rather than one join. `slack_user_links` is WorkspaceDO-local
-    // and `workspace_members` is regional D1, so the join this used to be was
-    // claimed by the workspace runtime router — which matches on the local
-    // table it names — and executed inside an object that has no
-    // `workspace_members`. Every call threw `no such table: workspace_members`,
-    // which the Slack ingress reported as a settlement failure and retried
-    // until its budget was exhausted. `publishHome` already splits this exact
-    // pair across the two authorities; this now reads the same way.
-    const link = await this.env.DB.prepare(
-      `SELECT user_id FROM slack_user_links
-        WHERE connection_id = ? AND workspace_id = ?
-          AND slack_team_id = ? AND slack_user_id = ? AND status = 'active'
-        LIMIT 1`,
-    ).bind(connectionId, workspaceId, teamId, slackUserId).first<{ user_id: string }>();
-    if (!link) return false;
-    const member = await workspaceRegionalDatabase(this.env).prepare(
-      `SELECT 1 AS linked FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND status = 'active' LIMIT 1`,
-    ).bind(workspaceId, link.user_id).first<{ linked: number }>();
-    return member !== null;
-  }
-
   private workspaceDirectory(workspaceId: string) {
     return durableObjectStubForWorkspace(
       this.env,
@@ -2270,113 +2078,6 @@ export class SlackAgentService {
     // row and active membership verified just above are the authority; the
     // objects re-check the membership half themselves on every request.
     return { auth: { sessionId: `slack:${teamId}:${slackUserId}`, userId: asUserId(String(row.user_id)), workspaceId: asWorkspaceId(String(row.workspace_id)), region: this.env.AVALON_REGION, role: membership.role, principal: "connector" }, connection, slackUserId, teamId };
-  }
-
-  /**
-   * Swaps the reaction on each message a run answered for the one naming its
-   * outcome: the message that started it, and any follow-up steered into it.
-   *
-   * Never throws. A reaction is decoration on a run that has already happened,
-   * and the persisted Avalon run stays canonical whatever Slack answers here —
-   * so a failure leaves whatever is on the message and says so in the log.
-   */
-  private async applyOutcomeReaction(
-    session: WorkspaceSlackSession,
-    connection: SlackConnectionRow,
-    token: string,
-    outcome: SlackReactionOutcome,
-    ownAnchor: SlackReactionAnchor | null,
-    absorbedAnchors: readonly SlackReactionAnchor[],
-  ): Promise<void> {
-    if (ownAnchor || session.reaction_channel_id) {
-      await this.settleOutcomeReaction(session, connection, token, outcome, ownAnchor);
-    }
-    for (const anchor of absorbedAnchors) {
-      await this.settleOutcomeReaction(session, connection, token, outcome, anchor);
-    }
-  }
-
-  /** One message's outcome transition; `anchor` null is a run admitted before anchors were carried. */
-  private async settleOutcomeReaction(
-    session: WorkspaceSlackSession,
-    connection: SlackConnectionRow,
-    token: string,
-    outcome: SlackReactionOutcome,
-    anchor: SlackReactionAnchor | null,
-  ): Promise<void> {
-    try {
-      // Re-read rather than trusting the snapshot `deliverWorkstreamOutcome`
-      // took at the top. Between that read and this call a legacy stream close,
-      // the complete saved-turn post, the needs-input DMs, and the status clear
-      // have all run on 5-10s timeouts, and another writer may have changed
-      // `reaction_current` meanwhile. Removing a stale emoji answers
-      // `no_reaction`, which is swallowed as success — leaving two Rally
-      // reactions on the message, which is the one invariant this feature has.
-      const workspace = await this.workspaceDirectory(session.workspace_id);
-      const current = WorkspaceSlackSessionResultSchema.parse(
-        await workspace.slackSessionById({
-          workspaceId: session.workspace_id,
-          sessionId: session.id,
-        }),
-      ).session;
-      if (!current) return;
-      // The session's one slot may since belong to a newer prompt, usually
-      // with the same emoji; see "The status reaction" in
-      // docs/slack-integration.md.
-      const target = anchor
-        ?? (current.reaction_channel_id && current.reaction_message_ts
-          ? { channelId: current.reaction_channel_id, messageTs: current.reaction_message_ts }
-          : null);
-      if (!target) return;
-      const anchored = current.reaction_channel_id === target.channelId
-        && current.reaction_message_ts === target.messageTs;
-      const reactions = resolveSlackReactions(slackConnectionReactionOverride(connection));
-      // Once the slot has moved on, nothing records this message any more, and
-      // the only Rally emoji admission puts there is the acknowledgement. If
-      // that never landed, removing it answers `no_reaction`, which the adapter
-      // treats as success.
-      const placed = anchored ? current.reaction_current : reactions.acknowledgement;
-      const result = await this.executeSlackReaction(connection, token, {
-        kind: "reaction",
-        channelId: target.channelId,
-        timestamp: target.messageTs,
-        add: reactions.outcomes[outcome],
-        remove: placed,
-        fallback: slackDefaultReactionFor(outcome),
-      });
-      // The slot belongs to the newer anchor; its emoji is not this run's to record.
-      if (!anchored) return;
-      // Conditional on the anchor and the emoji removed, so a write or a
-      // re-anchor that slipped in behind the read is detected, not overwritten.
-      const written = WorkspaceSlackSessionReactionResultSchema.parse(
-        await workspace.settleSlackSessionReaction({
-          workspaceId: session.workspace_id,
-          sessionId: session.id,
-          channelId: target.channelId,
-          messageTs: target.messageTs,
-          expected: placed,
-          reaction: result?.reaction ?? null,
-          at: nowIso(),
-        }),
-      );
-      if (written.outcome === "raced") {
-        logWarn(this.env, "slack_outcome_reaction_raced", {
-          session_id: session.id,
-          outcome,
-          expected: placed,
-        });
-      }
-    } catch (error) {
-      if (slackReconnectRequired(error)) {
-        await this.markSlackReconnectRequired(connection.id, slackErrorReason(error));
-      }
-      logWarn(this.env, "slack_outcome_reaction_failed", {
-        session_id: session.id,
-        connection_id: connection.id,
-        outcome,
-        reason: error instanceof Error ? error.message : "unknown",
-      });
-    }
   }
 
   /** Runs one reaction transition through the connector's agent control plane. */
@@ -2761,9 +2462,6 @@ async function stableUuid(value: string): Promise<string> {
 /** What a run with no text response says, rather than posting nothing at all. */
 const SLACK_EMPTY_RESULT_TEXT = "Rally completed the task without a text response.";
 
-/** The message a run's status reaction sits on. */
-type SlackReactionAnchor = NonNullable<SlackOriginContext["reactionAnchor"]>;
-
 /**
  * The reaction vocabulary a workspace installation has configured, if any.
  *
@@ -2982,13 +2680,6 @@ function feedbackModal(workstreamId: string): Record<string, unknown> {
 
 // Every surface that asks an unlinked member to connect carries this button and
 // no URL, so no Slack surface holds a challenge that can go stale on it.
-function connectPromptBlocks(text: string): Record<string, unknown>[] {
-  return [
-    { type: "section", text: { type: "mrkdwn", text } },
-    { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Rally" }, action_id: "rally_connect" }] },
-  ];
-}
-
 // The one place a link challenge is ever rendered. It is opened in response to
 // the click that minted it, so its lifetime is a member deciding whether to
 // continue rather than however long App Home has been sitting published.
@@ -3075,24 +2766,6 @@ function personalAutomationsForHome(items: unknown): Record<string, unknown>[] {
       status: automation.status,
       next_run_at: automation.nextRunAt,
     }));
-}
-
-/** A conversation with no link (a Thread's, which no surface opens) gets no Open button. */
-function responseActionBlocks(workstreamId: string, url: string | null): Record<string, unknown>[] {
-  return [{ type: "actions", elements: [
-    ...(url ? [{ type: "button", text: { type: "plain_text", text: "Open task" }, url, action_id: "rally_open_task" }] : []),
-    { type: "button", text: { type: "plain_text", text: "Give feedback" }, action_id: "rally_feedback", value: workstreamId },
-  ] }, aiResponseDisclaimerBlock()];
-}
-
-function aiResponseDisclaimerBlock(): Record<string, unknown> {
-  return {
-    type: "context",
-    elements: [{
-      type: "mrkdwn",
-      text: "Generated by AI. Review important facts, decisions, and external actions.",
-    }],
-  };
 }
 
 function desktopHandoffUrl(webBase: string, target: string): string {

@@ -38,7 +38,6 @@ import {
   workspaceDOName,
 } from "../src/durable-objects/names";
 import type { AuthContext, Env } from "../src/env";
-import { SlackAgentService } from "../src/services/slack-agent-service";
 import { createAutomation } from "../src/services/automation-service";
 import { encryptString } from "../src/lib/crypto";
 import { attachWorkstreamRuntimeResource } from "../src/services/workstream-object-client";
@@ -884,8 +883,7 @@ describe("a room Sidekick's run and the room's agents", () => {
   });
 
   it.each(["worker", "sidekick"] as const)("keeps a %s final response local and sends only explicit replies", async (kind) => {
-    const deliveries = vi.spyOn(SlackAgentService.prototype, "deliverWorkstreamOutcome");
-    try {
+    {
       const input = WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID,
         parentKind: "canvas", parentId: ROOM_ID, substreamId: "0", loopId: `workstream:${ROOM_ID}:substream:0:loop`,
         harnessRunId: crypto.randomUUID(), triggerMessageId: null, activityId: null,
@@ -918,7 +916,6 @@ describe("a room Sidekick's run and the room's agents", () => {
       expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
         "SELECT COUNT(*) AS n FROM runs",
       ).one().n)).toBe(notices);
-      expect(deliveries.mock.calls.filter((args) => args[3].startsWith(`${run!.run_id}:`))).toEqual([]);
       expect(await runInDurableObject(roomConversation(), (_instance, state) => state.storage.sql.exec<{ n: number }>(
         `SELECT COUNT(*) AS n FROM (
           SELECT client_message_id FROM pending_loop_input_mailbox WHERE client_message_id LIKE 'agent-message:%'
@@ -933,8 +930,6 @@ describe("a room Sidekick's run and the room's agents", () => {
         { ...context, effectIntentId: crypto.randomUUID() });
       expect((await settledRun(child, 2))[1]).toMatchObject({ status: "completed" });
       expect((await settledRun(roomConversation(), notices + 1))[notices]).toMatchObject({ status: "completed" });
-    } finally {
-      deliveries.mockRestore();
     }
   });
 

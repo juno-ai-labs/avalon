@@ -323,45 +323,6 @@ export class WorkstreamIdentityStorage {
   }
 
   /**
-   * Put the thread's Channel colour on this conversation, keeping its icon.
-   *
-   * For now this is the only writer of a thread's or a Breakout's colour: the
-   * client's appearance command drops `color`, and WorkspaceDO decides the
-   * colour from the thread's Channel (`channel-color-sync.ts`). `revision` is
-   * that mark's number, unique and increasing; one at or below the newest this
-   * conversation applied is `superseded` and writes nothing, so a job that
-   * stalled behind a newer one cannot put the old colour back. `unchanged`
-   * records the revision without touching the appearance. An appearance this
-   * object cannot read is replaced rather than kept, unlike `rename`: the
-   * colour is the server's to set, and the icon falls back to the id-derived
-   * default the way a stored `null` does.
-   */
-  recolor(input: { color: SpaceColorKey; revision: number; now: number }): {
-    outcome: "recolored" | "unchanged" | "superseded";
-  } {
-    return this.storage.transactionSync(() => {
-      const root = this.identity();
-      const applied = first(this.sql.exec<{ channel_color_revision: number }>(
-        "SELECT channel_color_revision FROM workstream WHERE id = 1",
-      ))?.channel_color_revision ?? 0;
-      if (!root || input.revision <= applied) return { outcome: "superseded" as const };
-      const stored = root.appearance_json
-        ? WorkstreamAppearanceSchema.safeParse(JSON.parse(root.appearance_json)).data
-        : undefined;
-      const changed = stored?.color !== input.color;
-      this.sql.exec(
-        `UPDATE workstream
-            SET appearance_json = COALESCE(?, appearance_json), channel_color_revision = ?, updated_at = ?
-          WHERE id = 1`,
-        changed ? JSON.stringify(WorkstreamAppearanceSchema.parse({ icon: stored?.icon ?? null, color: input.color })) : null,
-        input.revision,
-        changed ? input.now : root.updated_at,
-      );
-      return { outcome: changed ? "recolored" as const : "unchanged" as const };
-    });
-  }
-
-  /**
    * Replace the description an evaluation read, if nobody else has.
    *
    * `expectedDescription` is the compare-and-swap the routed statement wrote as
