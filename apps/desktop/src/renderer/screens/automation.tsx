@@ -44,6 +44,23 @@ function ErrorActions({ onRetry }: { onRetry: () => void }): React.JSX.Element {
   );
 }
 
+/**
+ * Whether the viewer manages this Sidekick, as `HostedSidekick.managerAllows`
+ * decides it for the scopes a client can see: its author, the person it runs
+ * as, or an owner or admin of the Organization for an Organization Sidekick.
+ * Only what the composer marks follows from it; the server decides again.
+ */
+function viewerManagesSidekick(
+  detail: AutomationDetail,
+  session: ReturnType<typeof useCollaborationSession>['session'],
+): boolean {
+  const userId = session?.user.id;
+  if (!userId) return false;
+  if (detail.authorUserId === userId || detail.runAsUserId === userId) return true;
+  const role = session?.workspace?.role;
+  return detail.scope === 'workspace' && (role === 'owner' || role === 'admin');
+}
+
 function NewAutomationScreen(): React.JSX.Element {
   const { api } = useCollaborationSession();
   const navigate = useNavigate();
@@ -204,6 +221,10 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       runsError={runs.error?.message}
     />}>
       <ConversationSurface
+        // This screen is the Sidekick's editor until its shared conversation
+        // gets its own composer (plan step A-13): a manager's message here is
+        // an edit, marked so, and anyone else's asks the Sidekick for a run.
+        messageIntent={viewerManagesSidekick(detail, session) ? 'edit_sidekick' : undefined}
         parentId={id}
         parentKind="automation"
         renderHeader={() => <header className="sidekick-conversation-heading"><h2>Conversation</h2></header>}

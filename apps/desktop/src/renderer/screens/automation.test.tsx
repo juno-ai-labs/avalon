@@ -14,14 +14,19 @@ const archiveAutomation = vi.hoisted(() => vi.fn());
 const getSidekickDelegates = vi.hoisted(() => vi.fn());
 const createAutomation = vi.hoisted(() => vi.fn());
 const shell = vi.hoisted(() => ({ host: 'desktop' as 'desktop' | 'browser' }));
+const viewer = vi.hoisted(() => ({ session: undefined as { user: { id: string }; workspace: { role: string | null } } | undefined }));
+const surfaceIntents = vi.hoisted(() => [] as (string | undefined)[]);
 vi.mock('../lib/collaboration-session', () => ({
   useOptionalCollaborationSession: () => null,
-  useCollaborationSession: () => ({ api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance, getSidekickDelegates, createAutomation } }),
+  useCollaborationSession: () => ({ session: viewer.session, api: { archiveAutomation, getAutomation, getAutomationRuns, setAutomationAppearance, getSidekickDelegates, createAutomation } }),
   useShellCapabilities: () => ({ host: shell.host, guest: false }),
 }));
 // The conversation beside the profile is its own surface with its own sockets,
 // and none of it is what this file is about.
-vi.mock('./conversation-surface', () => ({ ConversationSurface: () => <div /> }));
+vi.mock('./conversation-surface', () => ({ ConversationSurface: ({ messageIntent }: { messageIntent?: string }) => {
+  surfaceIntents.push(messageIntent);
+  return <div />;
+} }));
 
 const SIDEKICK_ID = 'sidekick-1';
 
@@ -79,7 +84,35 @@ beforeEach(() => {
   getSidekickDelegates.mockReset().mockResolvedValue({ sidekickId: SIDEKICK_ID, creatorUserId: 'user-1', you: { userId: 'user-1', allowed: false }, delegates: [] });
   createAutomation.mockReset().mockResolvedValue({ automationId: SIDEKICK_ID });
   shell.host = 'desktop';
+  viewer.session = undefined;
+  surfaceIntents.length = 0;
   window.location.hash = '';
+});
+
+describe("The Sidekick's conversation composer", () => {
+  async function intentFor(userId: string, role: string | null, overrides: Partial<AutomationDetail> = {}) {
+    viewer.session = { user: { id: userId }, workspace: { role } };
+    getAutomation.mockResolvedValue(detail(overrides));
+    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    await waitFor(() => expect(surfaceIntents.length).toBeGreaterThan(0));
+    return surfaceIntents.at(-1);
+  }
+
+  it("marks the author's messages as wizard edits", async () => {
+    expect(await intentFor('user-1', 'member')).toBe('edit_sidekick');
+  });
+
+  it("marks an Organization admin's messages as edits of an Organization Sidekick", async () => {
+    expect(await intentFor('user-2', 'admin')).toBe('edit_sidekick');
+  });
+
+  it("leaves a member's messages unmarked, so they ask the Sidekick for a run", async () => {
+    expect(await intentFor('user-2', 'member')).toBeUndefined();
+  });
+
+  it("leaves an admin's messages unmarked on a personal Sidekick they did not write", async () => {
+    expect(await intentFor('user-2', 'admin', { scope: 'you' })).toBeUndefined();
+  });
 });
 
 describe('Immediate Sidekick creation', () => {

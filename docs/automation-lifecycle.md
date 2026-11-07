@@ -517,42 +517,42 @@ the open composers. Counts have no REST fetch, polling, or per-Sidekick socket.
 
 ## Where the code lives
 
-| Path                                                                                                                       | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/src/durable-objects/sidekick-activity.ts`                                                                        | Target-scoped running count from accepted Sidekick execution projections and the target's attachment relationships.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `apps/api/src/durable-objects/hosted-sidekick.ts`                                                                          | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitConversationMessage`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, `reviewDelivery`, `reviewDelivered`, the parent contract (`onChildCommonProjection` moves the run row and counts its finish), and the schedule, run, review and memory-table alarm entries. `WorkspaceDO` answers each as `sidekick*`.       |
-| `apps/api/src/services/sidekick-run-provisioning.ts`                                                                       | `provisionSidekickRun`: opens a run's conversation and starts its loop from the `sidekick_run_provision` Queue message the run's alarm entry sends.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `apps/api/src/services/sidekick-run-continuation.ts`                                                                       | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; the refusal text the run's transcript records; and `routeSidekickConversationMessage` with `SIDEKICK_MESSAGE_REFUSAL_TEXT`, the shared conversation's call to `admitConversationMessage` and what it says when a message started no run.                                                                                                                                                                                                                       |
-| `apps/api/src/lib/conversation-message-opening.ts`                                                                         | `conversationMessageOpening`: a shared-conversation message as the opening of the run it started, its sender named as data.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `apps/api/src/services/sidekick-review.ts`, `sidekick-review-notice.ts`                                                    | `deliverSidekickReview`: the `sidekick_review` Queue message's consumer, which reads the notice from the Sidekick, admits it into the wizard's conversation and reports back; `sidekickReviewText` and `renderSidekickReviewNotice`, the sentence people read and the Rally-attributed framing the model reads.                                                                                                                                                                                                                                                                     |
-| `apps/api/src/durable-objects/substream-agent.ts`                                                                          | `claimPersistentLoopExecution`, which continues a run from a run child's pending input and, in the shared conversation, asks who answers a person's message; `refuseSidekickRunInput`, which settles one the Sidekick refused; and `admitSidekickReview`, which admits the review notice into the wizard's conversation and only there.                                                                                                                                                                                                                                             |
-| `apps/api/src/services/workstream-participant-model-message.ts`                                                            | `renderRunContinuationNote`, and `externalInputFraming`, which renders outside text in a run child as evidence.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `apps/api/src/durable-objects/automation-do-protocol.ts`                                                                   | The request schemas the Worker and the Queue consumer send it (`AutomationReviewRequest` addresses one review), the alarm kinds `automation_schedule`, `automation_run` and `sidekick_review`, and the `sidekick_review` Queue message.                                                                                                                                                                                                                                                                                                                                             |
-| `apps/api/src/durable-objects/workstream-external-message-protocol.ts`                                                     | `AdmitSidekickReviewInputSchema`, the review's variant of the system-activation union a conversation object admits.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `apps/api/src/durable-objects/conversation-parent-object.ts`                                                               | The request shapes and aggregation helpers every hosted parent shares.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `apps/api/src/services/automation-service.ts`                                                                              | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through. It passes who is asking; whether they manage a room's Sidekick is decided where the Sidekick lives.                                                                                                                                                                                                                                               |
-| `apps/api/src/routes/automations.ts`                                                                                       | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`.                                                                                                                                                                                                                                         |
-| `apps/api/src/services/integrations.ts`                                                                                    | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; the history projection's `sidekick_review_due` branch, which admits the notice row as the model's user turn; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a room.    |
-| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts`                                                  | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 86), and the conversation scope a Sidekick or a Channel or Breakout loop reaches.                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `packages/agent-harness/src/automation-creator-tools.ts`                                                                   | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check.                                                                                                                                                                                                                                                                                                                                                                                 |
-| `packages/contracts/src/automation-agent.ts`                                                                               | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), `SidekickReviewNoticeV1` (the review row's structured content: counts and the sampled run ids), and `AutomationDraftProposedV1` (the card).                                                                                                                                                                                                                                          |
-| `packages/contracts/src/index.ts`                                                                                          | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`.                                                                                                                                                                                                                                                                                                                                                                       |
-| `packages/contracts/src/automation-evaluators.ts`                                                                          | The strict external-event evaluator grammar (`always`, or `matching` over leaves), the preprocess that still accepts the pre-rename `all` on rows already stored, the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read.                                                                                                                                                                                                        |
-| `apps/api/src/services/external-event-evaluator.ts`                                                                        | The pure predicate evaluator WorkspaceDO matches registrations with.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `apps/api/src/durable-objects/workspace-do.ts`                                                                             | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `listAutomationDirectory`, `listWorkstreamAutomations`, `automationOwner`, `workstreamParticipant`, `applyExternalEventRegistrations`, `matchExternalEventDestinations`, and the owning-room archive fan-out `notifyOwningRoomArchival`.                                                                                                                                                                                                                                                         |
-| `apps/api/src/queues/activity-consumer.ts`                                                                                 | Delivers a matched event to `sidekickAdmitExternalEvent`, a run child's effects through the shared effect leg, a `sidekick_run_provision` message to `provisionSidekickRun`, and a `sidekick_review` message to `deliverSidekickReview`, logging a failed delivery's code as `sidekick_review_delivery_retry`.                                                                                                                                                                                                                                                                      |
-| `apps/api/src/services/resend-inbound-email-service.ts`                                                                    | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `apps/api/src/services/memory-service.ts`                                                                                  | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `apps/api/src/services/sidekick-run-tools.ts`                                                                              | Wizard-only run history: current-member authorization, own-run admission, canonical transcript pages and exact replay results with explicit availability.                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`.                                                                                                                                                                                               |
-| `apps/desktop/src/renderer/components/appearance-picker.tsx`                                                               | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows.                                                                                                                                                                                                                                                                                                                                                     |
-| `apps/desktop/src/renderer/components/sidekick-section.tsx`                                                                | `SidekickSection`, the **Sidekicks** section the Channel menu renders, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in.                                                                                                                                                                                                                                                                                                                                  |
-| `packages/ui/src/components/conversation-menus.tsx`, `screens/conversation-surface.tsx`                                    | The section's place in the Channel's title menu, below its people; the two queries behind it (`workstream-sidekicks` and `attached-sidekicks`), the participant check that decides whether a row may be detached, and the 403 a non-participant viewer's listing is read as none.                                                                                                                                                                                                                                                                                                   |
-| `apps/desktop/src/renderer/components/workstream-glyph.tsx`                                                                | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen. |
-| `apps/desktop/src/renderer/screens/sidekicks-library.tsx`                                                                  | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts`                                                                | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route.                                                                                                                                                                                                                                                                                                                                                            |
-| `apps/desktop/src/renderer/components/owning-thread-label.tsx`                                                             | `OwningThreadLabel`: a Thread-owned Sidekick's Thread, as its glyph and title on a button that opens it, in the library row and the header's scope badge; the plain word "Thread" when the summary carries no `owningThread`.                                                                                                                                                                                                                                                                                                                                                       |
-| `apps/desktop/src/common/open-thread.ts`, `src/main/index.ts`, `src/renderer/lib/platform.ts`                              | `openThread` on the bridge: main parses the id with `parseThreadId` and emits the same `workstreams/<id>` deep link an in-app link takes, so the main window opens the Thread and comes forward; the browser tab routes to it.                                                                                                                                                                                                                                                                                                                                                      |
+| Path | Responsibility |
+| --- | --- |
+| `apps/api/src/durable-objects/sidekick-activity.ts` | Target-scoped running count from accepted Sidekick execution projections and the target's attachment relationships. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitConversationMessage`, `allowsManager`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, `reviewDelivery`, `reviewDelivered`, the parent contract (`onChildCommonProjection` moves the run row and counts its finish), and the schedule, run, review and memory-table alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
+| `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: opens a run's conversation and starts its loop from the `sidekick_run_provision` Queue message the run's alarm entry sends. |
+| `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; the refusal text the run's transcript records; `routeSidekickConversationMessage` with `SIDEKICK_MESSAGE_REFUSAL_TEXT`, the shared conversation's call to `admitConversationMessage` and what it says when a message started no run; and `sidekickAllowsManager`, which the shared conversation asks before it records an answer to the wizard. |
+| `apps/api/src/lib/conversation-message-opening.ts` | `conversationMessageOpening`: a shared-conversation message as the opening of the run it started, its sender named as data. |
+| `apps/api/src/services/sidekick-review.ts`, `sidekick-review-notice.ts` | `deliverSidekickReview`: the `sidekick_review` Queue message's consumer, which reads the notice from the Sidekick, admits it into the wizard's conversation and reports back; `sidekickReviewText` and `renderSidekickReviewNotice`, the sentence people read and the Rally-attributed framing the model reads. |
+| `apps/api/src/durable-objects/substream-agent.ts` | `claimPersistentLoopExecution`, which continues a run from a run child's pending input and, in the shared conversation, asks who answers a person's input; `refuseSidekickRunInput`, which settles one the Sidekick refused; and `admitSidekickReview`, which admits the review notice into the wizard's conversation and only there. |
+| `apps/api/src/services/workstream-participant-model-message.ts` | `renderRunContinuationNote`, and `externalInputFraming`, which renders outside text in a run child as evidence. |
+| `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it (`AutomationReviewRequest` addresses one review), the alarm kinds `automation_schedule`, `automation_run` and `sidekick_review`, and the `sidekick_review` Queue message. |
+| `apps/api/src/durable-objects/workstream-external-message-protocol.ts` | `AdmitSidekickReviewInputSchema`, the review's variant of the system-activation union a conversation object admits. |
+| `apps/api/src/durable-objects/conversation-parent-object.ts` | The request shapes and aggregation helpers every hosted parent shares. |
+| `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through. It passes who is asking; whether they manage a room's Sidekick is decided where the Sidekick lives. |
+| `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
+| `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; the history projection's `sidekick_review_due` branch, which admits the notice row as the model's user turn; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a room. |
+| `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 86), and the conversation scope a Sidekick or a Channel or Breakout loop reaches. |
+| `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
+| `packages/contracts/src/automation-agent.ts` | `AutomationScopeSchema`, `AutomationLifecycleStateSchema`, the run trigger, `AutomationRunReferenceV1` (what a run's loop input carries), `AutomationActivationV1` (the row a result becomes), `SidekickReviewNoticeV1` (the review row's structured content: counts and the sampled run ids), and `AutomationDraftProposedV1` (the card). |
+| `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
+| `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `matching` over leaves), the preprocess that still accepts the pre-rename `all` on rows already stored, the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read. |
+| `apps/api/src/services/external-event-evaluator.ts` | The pure predicate evaluator WorkspaceDO matches registrations with. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `listAutomationDirectory`, `listWorkstreamAutomations`, `automationOwner`, `workstreamParticipant`, `applyExternalEventRegistrations`, `matchExternalEventDestinations`, and the owning-room archive fan-out `notifyOwningRoomArchival`. |
+| `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `sidekickAdmitExternalEvent`, a run child's effects through the shared effect leg, a `sidekick_run_provision` message to `provisionSidekickRun`, and a `sidekick_review` message to `deliverSidekickReview`, logging a failed delivery's code as `sidekick_review_delivery_retry`. |
+| `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
+| `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
+| `apps/api/src/services/sidekick-run-tools.ts` | Wizard-only run history: current-member authorization, own-run admission, canonical transcript pages and exact replay results with explicit availability. |
+| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
+| `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
+| `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section the Channel menu renders, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
+| `packages/ui/src/components/conversation-menus.tsx`, `screens/conversation-surface.tsx` | The section's place in the Channel's title menu, below its people; the two queries behind it (`workstream-sidekicks` and `attached-sidekicks`), the participant check that decides whether a row may be detached, and the 403 a non-participant viewer's listing is read as none. |
+| `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen. |
+| `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
+| `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
+| `apps/desktop/src/renderer/components/owning-thread-label.tsx` | `OwningThreadLabel`: a Thread-owned Sidekick's Thread, as its glyph and title on a button that opens it, in the library row and the header's scope badge; the plain word "Thread" when the summary carries no `owningThread`. |
+| `apps/desktop/src/common/open-thread.ts`, `src/main/index.ts`, `src/renderer/lib/platform.ts` | `openThread` on the bridge: main parses the id with `parseThreadId` and emits the same `workstreams/<id>` deep link an in-app link takes, so the main window opens the Thread and comes forward; the browser tab routes to it. |
 
 ### Creation and ownership
 
@@ -633,7 +633,6 @@ its title menu. A running Sidekick still carries `SIDEKICK_RUNNING_MARKER`, the
 **play** in `success-base` cut out of its hexagon, wherever its glyph is drawn.
 
 ### Drafting in the conversation
-
 `sidekick_submit_draft` calls `WorkspaceDO.sidekickSaveDefinition` under the submitting
 actor's management authority. The owner appends an immutable revision and publishes
 it immediately when ready. New definitions carry `definitionVersion: 2`; inbound
@@ -651,7 +650,7 @@ and emails, so it can answer "Sarah" and can never answer "me" — every result
 therefore also carries `you`, the person the run acts for, read under the same
 active-membership predicate as the matches. The set of admissible person ids is
 seeded with that same id before the agent calls anything: the guard exists so a
-rule cannot name someone the agent _invented_, and the execution principal is
+rule cannot name someone the agent *invented*, and the execution principal is
 the one id on the run the host supplied itself. `rememberAutomationPeopleSearchResult`
 restores `you` alongside the matches so a resumed run rebuilding the set from
 replayed tool output agrees with a fresh one.
@@ -663,7 +662,7 @@ Granola, Fireflies or Ashby connection reports `activityTriggerCount: 0` —
 their webhooks belong to the workspace install, and `normalize` refuses every
 other connection. A zero count on a plugin that plainly has events reads as
 "this connector has no events", so the catalog entry also carries the scope
-those events _do_ need: `plugins_list`, `plugins_search` and `plugin_inspect`
+those events *do* need: `plugins_list`, `plugins_search` and `plugin_inspect`
 turn it into one sentence saying a workspace connection is required, and
 `set_evaluator_rules` refuses a rule on such a plugin with the same sentence
 rather than the generic "no event of that name" — which reads as a typo to
@@ -727,12 +726,12 @@ entry for the run. A repeated admission of the same occurrence answers with the
 run it already made. The object must hold an accepted revision
 (`sidekick_not_active` otherwise), and the run is pinned to that revision.
 
-| Trigger             | Entry                                                                           | Occurrence key                                                                                                   | Refusals                                                                                                                                                      |
-| ------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Manual**          | `POST /automations/:id/run` with an `idempotency-key` header; `runNow`          | `manual:<idempotencyKey>`                                                                                        | `sidekick_not_active` unless `active`; `sidekick_forbidden` unless the caller may manage it                                                                   |
-| **Schedule**        | the `automation_schedule` alarm for one schedule row; `executeSchedule`         | `schedule:<scheduleId>:<plannedFor>`                                                                             | skipped silently unless `active`; the next occurrence is computed from now and re-armed                                                                       |
+| Trigger | Entry | Occurrence key | Refusals |
+| --- | --- | --- | --- |
+| **Manual** | `POST /automations/:id/run` with an `idempotency-key` header; `runNow` | `manual:<idempotencyKey>` | `sidekick_not_active` unless `active`; `sidekick_forbidden` unless the caller may manage it |
+| **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`; the next occurrence is computed from now and re-armed |
 | **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `occurrence:<key>` when the connector named the occurrence the event reports, else `external:<workspaceEventId>` | `sidekick_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
-| **Inbound email**   | `resend-inbound-email-service.ts` calling `admitInboundEmail` once per delivery | `inbound_email:<resendEmailId>`                                                                                  | see below; the refusal is written to `inbound_email_receipts`                                                                                                 |
+| **Inbound email** | `resend-inbound-email-service.ts` calling `admitInboundEmail` once per delivery | `inbound_email:<resendEmailId>` | see below; the refusal is written to `inbound_email_receipts` |
 
 **Connector events** follow one regional path. The regional activity Queue
 hands a normalized event to `WorkspaceDO.ingestConnectorEvent`; a second,
@@ -760,7 +759,7 @@ it selects event families, content, people, and provider fields.
 by it.** The predicate above is the only runtime matcher and takes no semantic
 test; a registration carries `when` and nothing else, and the projection is built
 from `evaluator_rules_json` alone. So a ready `semantic_activity` trigger is
-_matched_ on exactly what a `connector_activity` trigger is: the evaluator rules
+*matched* on exactly what a `connector_activity` trigger is: the evaluator rules
 joined to it by `sourceBindingKey`. Its written condition is judged one step
 later, in the delivery, and `admitExternalEvent` refuses a gated event whose
 verdict does not admit or is missing — outcome codes `sidekick_semantic_*`. The
@@ -782,7 +781,7 @@ are still stored in `definition_revisions.evaluator_rules_json` and
 `workspace_external_event_registrations.evaluator_json`. A Zod `preprocess` on
 `ExternalEventPredicateV1Schema` rewrites the legacy discriminant before
 validation, so both columns keep parsing while every reader past that seam sees
-`matching` alone. Because it maps the value _before_ the union rather than
+`matching` alone. Because it maps the value *before* the union rather than
 adding a third branch to it, the JSON schema `set_evaluator_rules` derives for
 the drafting model still names one spelling — which is the point of the rename,
 `all` being indistinguishable from `always` to a model reading the two side by
@@ -791,7 +790,7 @@ side. What has to be true before the seam can go is in the changelog.
 A rule may also narrow itself to one resource, and `automationBindableResourceTypes`
 (contracts) is the single answer to which one: the resource types the rule's own
 triggers declare a `resourceRelationships` entry for. Those are the containers an
-event happens _inside_ — a repository, a channel, a project, a page, a folder, a
+event happens *inside* — a repository, a channel, a project, a page, a folder, a
 Drive file, a mail thread — never the files, commits, check runs, messages or
 pull requests the events themselves produce, and never a resource with no
 connection to bind through, which is every upload, note and generated document.
@@ -869,7 +868,7 @@ twice:
    `activateWorkstreamLoop` starts the run's own persistent loop with
    `parentKind: "automation"`, `parentId` the automation, `substreamId` the run,
    and `automationRun: {schemaVersion: 1, automationId, runId,
-definitionRevision, trigger}`.
+   definitionRevision, trigger}`.
 5. `runs.state` moves to `running`.
 
 The loop input carries a reference, not a copy. At loop start
@@ -1009,39 +1008,66 @@ is false), so a second completion sends no notification, and the Slack
 
 Substream `"0"` under a Sidekick is the Sidekick's own conversation: managers
 edit the Sidekick there through the wizard, and everyone who may read the
-Sidekick reads it. It keeps the wizard and run separation the
+Sidekick reads it and asks it for work. It keeps the wizard and run separation
+the
 [Canvases and Sidekicks decision log](PRDs/2026-11-06_canvases-and-sidekicks/prd.md#2026-11-06--the-shared-sidekick-conversation-keeps-the-wizard-and-run-separation)
-records: the conversation's own loop never acts on the Sidekick's
-definition.
+records, and a manager marks a wizard edit explicitly
+([2026-11-07](PRDs/2026-11-06_canvases-and-sidekicks/prd.md#2026-11-07--a-manager-marks-a-wizard-edit-explicitly)):
+the conversation's own loop never acts on the Sidekick's definition.
 
 **Who answers a message.** Admission is the ordinary one: a message in a room
 with more than one participant goes through the addressing classifier, and a
-message it keeps for the people there lands with no agent turn. A message it
-sends to an agent becomes pending input, and before the conversation's loop
+message it keeps for the people there lands with no agent turn. A message
+marked `intent: "edit_sidekick"` (`SidekickMessageIntentSchema`, on
+`create_message`) is addressed to the Sidekick by the mark and skips the
+classifier. Either becomes pending input, and before the conversation's loop
 takes it, `SubstreamAgent.claimPersistentLoopExecution` asks
-`WorkspaceDO.sidekickAdmitConversationMessage` (`HostedSidekick.admitConversationMessage`)
-who answers it, the way a run child asks `sidekickContinueRun`:
+`WorkspaceDO.sidekickAdmitConversationMessage`
+(`HostedSidekick.admitConversationMessage`) who answers it, the way a run child
+asks `sidekickContinueRun`:
 
-| Sender                                 | Answer    | What happens                                                                                                                                                                                                                                                                                     |
-| -------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Manages the Sidekick (`managerAllows`) | `wizard`  | The wizard's turn, as before, with `rally:sidekicks`.                                                                                                                                                                                                                                            |
-| Anyone else, an eligible delegate      | `run`     | A run under the Sidekick's definition, admitted the way `runNow` admits one (`manual` trigger, `requestedByUserId` the sender, occurrence key `message:<turnId>`), with the message as its opening (`conversationMessageOpening`). The message lands in `"0"` as said to the room.               |
-| Anyone else, otherwise                 | `refused` | The message lands, followed by a `system` row (`sidekick-message-refused:<inputId>`, `{kind: "sidekick_message_refused", code, turnId}`) whose text says why: `sidekick_not_active`, `sidekick_not_runnable` (instructions only, the same refusal `runNow` gives) or `run_no_eligible_delegate`. |
+| Input | Sender | Answer | What happens |
+| --- | --- | --- | --- |
+| For the wizard | Manages the Sidekick (`managerAllows`) | `wizard` | The wizard's turn, marked `sidekickWizard` on its execution context, with `rally:sidekicks`. |
+| For the wizard | Anyone else | `refused` | `sidekick_edit_requires_manager`. |
+| Anything else | Anyone, managers included, who is an eligible delegate | `run` | A run under the Sidekick's definition, admitted the way `runNow` admits one (`manual` trigger, `requestedByUserId` the sender, occurrence key `message:<turnId>`), with the message as its opening (`conversationMessageOpening`). The message lands in `"0"` as said to the room. |
+| Anything else | Anyone else | `refused` | `sidekick_not_active`, `sidekick_not_runnable` (instructions only, the same refusal `runNow` gives) or `run_no_eligible_delegate`. |
 
-Only a person's own message (`reason: "human_message"`) is routed; an
-elicitation answer, an agent exchange (another loop's setup instructions)
-and a review notice stay the wizard's. Because the decision is made when the
-loop takes the input, a message in `"0"` always queues rather than steering
-a turn already running. The sender's Organization role travels in the
-input's authorization so `managerAllows` can read it.
+Input is for the wizard when its sender marked it, or when it answers
+something the wizard asked: an elicitation answer (`reason:
+"elicitation_answer"`) or a resource authorization the wizard requested
+(`reason: "resource_authorization"`). Every person's input is routed, whatever
+its reason, except a demo seed's, which scripts its own turn. A refusal lands
+the input followed by a `system` row (`sidekick-message-refused:<inputId>`,
+`{kind: "sidekick_message_refused", code, turnId}`) whose text says why.
+Because the decision is made when the loop takes the input, a message in `"0"`
+always queues rather than steering a turn already running. The sender's
+Organization role and mark travel in the input's authorization so
+`managerAllows` can read them.
+
+An elicitation answer is also refused before it is recorded: answering marks
+the question answered, so a refusal at claim time would leave the wizard's
+question closed by someone who may not answer it. `answerElicitation` in `"0"`
+asks `sidekickAllowsManager` before it reserves anything and refuses a
+non-manager with a 403 `sidekick_edit_requires_manager`, leaving the question
+open for a manager.
 
 A message-started run acts only as its sender, and only when the sender is an
 eligible delegate (`coordinator(sender, [sender])`): borrowing another
 delegate's access for someone who is not one is what the decision log forbids.
 Running under a non-delegate's own access is the next step of the plan, not
-this one. Because a non-manager's message never reaches the wizard,
-`rally:sidekicks` loads only for a manager's wizard turn without a check of its
-own at plugin load.
+this one.
+
+Every turn that activates in `"0"` past the routing is the wizard's, and the
+claim marks its execution context `sidekickWizard: true`. `rally:sidekicks`
+loads its authoring tools in `"0"` only for a turn so marked
+(`services/integrations.ts`); a turn that reached `"0"`'s loop any other way
+gets the delegation tools alone.
+
+The desktop's Sidekick screen marks every message a manager sends there as an
+edit until the shared conversation gets its own composer (plan step A-13), so
+that screen keeps working as the Sidekick's editor; anyone else's message there
+is unmarked and asks the Sidekick for a run.
 
 ### Runs in the shared conversation
 
@@ -1275,12 +1301,12 @@ as a skill, and loading writes them automatically.
 
 ### Lifecycle
 
-| Transition                                                                               | Who                                                                                | What                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pause`                                                                                  | a manager                                                                          | `runs` in `pending`, `running`, or `needs_input` become `stopped`; `lifecycle = 'paused'`, `paused_by = 'person'`; schedule, run and review alarm entries cancelled; the workspace's registrations replaced with `[]`; sidebar row enqueued                                                                                                                                                                                             |
-| `resume`                                                                                 | a manager                                                                          | each schedule's next due instant recomputed from now (a paused automation does not fire what it slept through), `lifecycle = 'active'`, `paused_by` cleared, alarms re-armed (a review request still owed is resent at once, else the review entry is re-armed from the count), the accepted evaluator projection re-registered with a fresh sequence boundary; refused with `sidekick_room_archived` while the owning room is archived |
-| `archive` (`POST /sidekicks/:id/archive`; legacy `DELETE` remains for installed clients) | a manager                                                                          | open runs stopped, stored `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object, conversation, and run history remain stored but become inaccessible, and `authorizeViewer` answers unauthorized and archived from then on. `deleted` is the compatibility tombstone name, not a claim that retained data was destroyed. There is no unarchive operation or archived-Sidekick browser yet.            |
-| `setOwningRoomArchived`                                                                  | `WorkspaceDO`, from a directory effect that archived or unarchived the owning room | archiving uses the same terminal archive as an explicit Sidekick archive: active, paused and draft Sidekicks become `deleted`, open runs stop, triggers are cleared, and the Sidekick disappears from owned lists and becomes inaccessible. Replayed archive notifications are idempotent. Restoring the room never restores the Sidekick                                                                                               |
+| Transition | Who | What |
+| --- | --- | --- |
+| `pause` | a manager | `runs` in `pending`, `running`, or `needs_input` become `stopped`; `lifecycle = 'paused'`, `paused_by = 'person'`; schedule, run and review alarm entries cancelled; the workspace's registrations replaced with `[]`; sidebar row enqueued |
+| `resume` | a manager | each schedule's next due instant recomputed from now (a paused automation does not fire what it slept through), `lifecycle = 'active'`, `paused_by` cleared, alarms re-armed (a review request still owed is resent at once, else the review entry is re-armed from the count), the accepted evaluator projection re-registered with a fresh sequence boundary; refused with `sidekick_room_archived` while the owning room is archived |
+| `archive` (`POST /sidekicks/:id/archive`; legacy `DELETE` remains for installed clients) | a manager | open runs stopped, stored `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object, conversation, and run history remain stored but become inaccessible, and `authorizeViewer` answers unauthorized and archived from then on. `deleted` is the compatibility tombstone name, not a claim that retained data was destroyed. There is no unarchive operation or archived-Sidekick browser yet. |
+| `setOwningRoomArchived` | `WorkspaceDO`, from a directory effect that archived or unarchived the owning room | archiving uses the same terminal archive as an explicit Sidekick archive: active, paused and draft Sidekicks become `deleted`, open runs stop, triggers are cleared, and the Sidekick disappears from owned lists and becomes inaccessible. Replayed archive notifications are idempotent. Restoring the room never restores the Sidekick |
 
 Who may manage (`assertManager`): the author or the run-as principal; for a
 `workspace` automation also an owner or admin; for a room's automation only a
@@ -1329,7 +1355,7 @@ the colour vocabulary and the deterministic default all belong to
 where the value lives and how it travels.
 
 The Sidekick's directory row stores it, in `appearance_json`, beside the title and
-the lifecycle. The work stream keeps its appearance on the _main conversation_
+the lifecycle. The work stream keeps its appearance on the *main conversation*
 and reaches it with a socket command, and the difference is not an
 inconsistency: for a work stream the conversation is the room, while for a
 Sidekick the authoring conversation is a child of the object that owns the
@@ -1346,7 +1372,7 @@ who picked gets the committed value in one round trip and never watches their
 own choice arrive twice. The screen sends one at a time, chained on a ref, for
 that reason rather than for the object's: the object merges concurrent patches
 correctly in any order, but two whole Sidekicks landing out of order would leave
-the _cache_ holding the earlier one — the same serialization the work stream's
+the *cache* holding the earlier one — the same serialization the work stream's
 socket hook does, for the same reason.
 
 That chain orders these requests against each other and nothing else, so the
@@ -1596,29 +1622,29 @@ test:workers`. Desktop `sidekick-picker.test.tsx`, `sidekick-section.test.tsx`, 
 `workstream-sidekicks.test.tsx` cover selection, merged badges/removal, and switching
 substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
 
-| Suite                                                                                                                | Command                                   | Covers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `apps/api/test-workers/hosted-sidekick.test.ts`                                                                      | `pnpm --filter @rally/api test:workers`   | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg; and the scheduled self-review: ten finishes arming, requesting and delivering a review with the counts and sample, whose row carries the sentence a person reads and whose model turn is asked with the Rally-attributed notice first; the three-day floor, a new revision resetting the count and retiring a pending request, a finish under the previous revision not counting, delivery re-arming from the count, resume resending a request still owed; the accepted revision's runs sampled with failures before stops and other revisions excluded, a lost message resent and then delivered once. |
-| `apps/api/test/sidekick-review-notice.test.ts`, `test/model-protocol-transcript.test.ts`                             | `pnpm --filter @rally/api test`           | The notice's row sentence and model framing against literals, both windows and an empty sample; and the history projection admitting the notice as one user turn under Rally's first line.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `apps/api/test-workers/sidekick-run-continuation.test.ts`                                                            | `pnpm --filter @rally/api test:workers`   | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; a run's loop acting while its row still reads `pending`, before provisioning reports it running; and background workers beneath authoring or run conversations executing initial and follow-up assignments with inherited authority.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `apps/api/test-workers/automation-post-result.test.ts`                                                               | `pnpm --filter @rally/api test:workers`   | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `apps/api/test-workers/automation-directory.test.ts`                                                                 | `pnpm --filter @rally/api test:workers`   | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `apps/desktop/src/renderer/screens/automation.test.tsx`                                                              | `pnpm --filter @rally/desktop test`       | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `apps/desktop/src/renderer/components/workstream-glyph.test.tsx`                                                     | `pnpm --filter @rally/desktop test`       | The play cut out of the hexagon with its own mask, its hover target, and the sentence it reports.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `apps/api/test-workers/automation-acceptance-bindings.test.ts`                                                       | `pnpm --filter @rally/api test:workers`   | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `apps/api/test-workers/external-event-routing.test.ts`                                                               | `pnpm --filter @rally/api test:workers`   | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts`                    | `pnpm --filter @rally/api test:workers`   | The parent contract through the real ticket route, including refusal of author and participant access and fresh tickets after a room archive, retained legacy read-only admission, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `apps/api/test/external-event-evaluator.test.ts`                                                                     | `pnpm --filter @rally/api test`           | The pure predicate: legal and illegal documents, missing-field semantics, the connector vocabulary an authoring rule is held to — and the boundary between the two predicate spellings, which is where a change that let the model's `matching` reach a stored column would fail.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `apps/api/test-workers/sidekick-run-continuation.test.ts`                                                            | `pnpm --filter @rally/api test:workers`   | On real workerd with the effect queue held, so the run row still reads finished while the continuation runs: input to a completed run continuing it with `automationRun`, the run-as principal (changed since the run started) and the revision accepted since, with the continuation note last; paused, archived and unknown runs refused with their codes, both inputs landed, and the run continuing after a resume; two concurrent replies both reaching the model as the continued run; a finished row reopened only by a newer projection, a stale completion not closing it, repeated complete and reopen cycles, `idle` not reopening, and a paused Sidekick not reopening; an elicitation answer keeping the run's context.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `apps/api/test/run-authority-validity.test.ts`                                                                       | `pnpm --filter @rally/api test`           | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation; a continuation acting through a `completed` or `failed` row and a `stopped` one that stopped before the approval, and refused for a stop after it or a paused Sidekick.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `apps/api/test/model-protocol-transcript.test.ts`                                                                    | `pnpm --filter @rally/api test`           | Among the transcript projection cases: a bound-thread reply in a run child rendered as labelled evidence and never as a member request, in the transcript and in the live admission projection, and the continuation note's wording.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `apps/api/test/scoped-memory.test.ts`                                                                                | `pnpm --filter @rally/api test`           | A Sidekick's conversation resolving the workspace scope and its own `sidekick` scope.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts`, `workstream-email-address.test.ts` | `pnpm --filter @rally/api test`           | The single admission call, its receipts, and the address claim.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `apps/api/test/access-revocation.test.ts`                                                                            | `pnpm --filter @rally/api test`           | The workspace fan-out naming an automation and the consumer walking its children.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `packages/agent-harness/src/automation-creator-tools.test.ts`                                                        | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `matching` evaluator shape, the tool schema offering that spelling alone, the submission pre-check, and the sentence a scope-blocked connection carries into the catalog and into a refused rule.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `packages/contracts/src/automation-evaluator-resources.test.ts`                                                      | `pnpm --filter @rally/contracts test`     | Which resources a rule may name: the bindable set and its predicate, and the sentinel and structural cases that drop an id before the parse.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `apps/api/test-workers/sidekick-resource-registration.test.ts`                                                       | `pnpm --filter @rally/api test:workers`   | Provider-verified registration, canonical identity reuse, event binding and incoming-event resource resolution, inaccessible files, personal ownership, frozen grants, and connection revocation against real WorkspaceDO storage.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `apps/api/test/automation-creator-catalog.test.ts`                                                                   | `pnpm --filter @rally/api test`           | The drafting catalog and its research tools against the routed workspace database: the connection a webhook earns by its triggers alone, the triggers a personal connection is not offered and the workspace one still is, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Suite | Command | Covers |
+| --- | --- | --- |
+| `apps/api/test-workers/hosted-sidekick.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg; and the scheduled self-review: ten finishes arming, requesting and delivering a review with the counts and sample, whose row carries the sentence a person reads and whose model turn is asked with the Rally-attributed notice first; the three-day floor, a new revision resetting the count and retiring a pending request, a finish under the previous revision not counting, delivery re-arming from the count, resume resending a request still owed; the accepted revision's runs sampled with failures before stops and other revisions excluded, a lost message resent and then delivered once. |
+| `apps/api/test/sidekick-review-notice.test.ts`, `test/model-protocol-transcript.test.ts` | `pnpm --filter @rally/api test` | The notice's row sentence and model framing against literals, both windows and an empty sample; and the history projection admitting the notice as one user turn under Rally's first line. |
+| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; a run's loop acting while its row still reads `pending`, before provisioning reports it running; and background workers beneath authoring or run conversations executing initial and follow-up assignments with inherited authority. |
+| `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
+| `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read. |
+| `apps/desktop/src/renderer/screens/automation.test.tsx` | `pnpm --filter @rally/desktop test` | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived. |
+| `apps/desktop/src/renderer/components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The play cut out of the hexagon with its own mask, its hover target, and the sentence it reports. |
+| `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
+| `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and watched work streams; a redelivery admits once. |
+| `apps/api/test-workers/conversation-parent-contract.test.ts`, `conversation-effect-queue.test.ts` | `pnpm --filter @rally/api test:workers` | The parent contract through the real ticket route, including refusal of author and participant access and fresh tickets after a room archive, retained legacy read-only admission, and the effect legs an automation's children use, including a child effect producing no `parent_effect` row. Owned by [`workstream-durable-object.md`](workstream-durable-object.md#testing). |
+| `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, the connector vocabulary an authoring rule is held to — and the boundary between the two predicate spellings, which is where a change that let the model's `matching` reach a stored column would fail. |
+| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd with the effect queue held, so the run row still reads finished while the continuation runs: input to a completed run continuing it with `automationRun`, the run-as principal (changed since the run started) and the revision accepted since, with the continuation note last; paused, archived and unknown runs refused with their codes, both inputs landed, and the run continuing after a resume; two concurrent replies both reaching the model as the continued run; a finished row reopened only by a newer projection, a stale completion not closing it, repeated complete and reopen cycles, `idle` not reopening, and a paused Sidekick not reopening; an elicitation answer keeping the run's context. |
+| `apps/api/test/run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation; a continuation acting through a `completed` or `failed` row and a `stopped` one that stopped before the approval, and refused for a stop after it or a paused Sidekick. |
+| `apps/api/test/model-protocol-transcript.test.ts` | `pnpm --filter @rally/api test` | Among the transcript projection cases: a bound-thread reply in a run child rendered as labelled evidence and never as a member request, in the transcript and in the live admission projection, and the continuation note's wording. |
+| `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | A Sidekick's conversation resolving the workspace scope and its own `sidekick` scope. |
+| `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts`, `workstream-email-address.test.ts` | `pnpm --filter @rally/api test` | The single admission call, its receipts, and the address claim. |
+| `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out naming an automation and the consumer walking its children. |
+| `packages/agent-harness/src/automation-creator-tools.test.ts` | `pnpm --filter @rally/agent-harness test` | The drafting tools, the `matching` evaluator shape, the tool schema offering that spelling alone, the submission pre-check, and the sentence a scope-blocked connection carries into the catalog and into a refused rule. |
+| `packages/contracts/src/automation-evaluator-resources.test.ts` | `pnpm --filter @rally/contracts test` | Which resources a rule may name: the bindable set and its predicate, and the sentinel and structural cases that drop an id before the parse. |
+| `apps/api/test-workers/sidekick-resource-registration.test.ts` | `pnpm --filter @rally/api test:workers` | Provider-verified registration, canonical identity reuse, event binding and incoming-event resource resolution, inaccessible files, personal ownership, frozen grants, and connection revocation against real WorkspaceDO storage. |
+| `apps/api/test/automation-creator-catalog.test.ts` | `pnpm --filter @rally/api test` | The drafting catalog and its research tools against the routed workspace database: the connection a webhook earns by its triggers alone, the triggers a personal connection is not offered and the workspace one still is, people search, and `resources_search` returning only bindable containers — the fresher event resource beside them left out, and nothing at all where a connector declares no relationship. |
 
 Traps worth knowing before writing one here. The `test-workers` D1 starts with
 no schema, so a test that exercises membership or sessions declares those tables
@@ -1802,50 +1828,51 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
 
-### 2026-11-06 — The shared conversation starts runs for the people a Sidekick is shared with
+### 2026-11-07 — The shared conversation starts runs, and shows them
 
-**What changed:** A message in a Sidekick's conversation (`"0"`) that the
-addressing classifier sends to an agent is the wizard's only when its sender
-manages the Sidekick. Anyone else's starts a run under the Sidekick's
-definition, admitted as a manual run with the message as its opening, and
-lands in `"0"` as said to the room; a refusal lands with a `system` row that
-names it. See [the shared conversation](#the-shared-conversation). Every run
-also gets one row in `"0"`, an `automation_activation` turn carrying the run's
-id, state, step count and reply, kept current from `sidekick_runs` by triggers
-that arm a delivery on every change ([runs in the shared conversation](#runs-in-the-shared-conversation)).
+**What changed:** A message in a Sidekick's conversation (`"0"`) addressed to
+the Sidekick now starts a run under its definition, admitted as a manual run
+with the message as its opening, whoever sent it; the message lands in `"0"` as
+said to the room. Only input for the wizard reaches the wizard: a manager's
+message marked `intent: "edit_sidekick"`, or a manager's answer to what the
+wizard asked. Anything refused lands with a `system` row that names its code.
+Every run also has one row in `"0"`, an `automation_activation` turn carrying
+the run's id, state, step count and reply, kept current from `sidekick_runs`
+by triggers that arm a delivery on every change. See
+[the shared conversation](#the-shared-conversation) and
+[runs in the shared conversation](#runs-in-the-shared-conversation).
 
 **Why:** The Canvases and Sidekicks pivot opens a Sidekick's conversation to
-everyone it is shared with, and the product owner decided the conversation
-keeps the wizard and run separation: that split is what makes a run auditable
-and delegatable, and a conversation whose loop ran the definition on any
-message would act with delegate access for whoever typed. Before this every
-message in `"0"` ran the wizard with the authoring tools loaded, whoever sent
-it. Routing at claim time reuses the decision point a run child already has
-(`sidekickContinueRun`) and the admission `runNow` already has, so there is no
-new trigger kind and no new loop. Rejected: asking the classifier to tell the
-Sidekick from the wizard, which needs a new prompt and a model call for a
-question the sender's management right already answers. The same decision
-says runs appear as rows in that conversation and a run's row carries its
-reply; before this a run wrote nothing there, so the people who asked never
-saw an answer. The row reuses `automation_activation`, which every client
-already renders under the Sidekick's name, rather than a new message type,
-and it is a projection of `sidekick_runs` rather than a second record, so the
-two cannot disagree. Rejected: appending a new row per state change, which
-turns one run into a column of status lines.
+everyone it is shared with, and its decision log keeps the wizard and run
+separation there: that split is what makes a run auditable and delegatable,
+and a conversation whose loop ran the definition on any message would act with
+delegate access for whoever typed. Before this every message in `"0"` ran the
+wizard with the authoring tools loaded, whoever sent it, and a run wrote
+nothing there, so the people who asked never saw an answer. The first build
+of the routing sent every manager's message to the wizard, so a manager could
+not ask for work there; the 2026-11-07 decision has a manager mark an edit
+instead, because inferring an edit from the text would be a second classifier
+that can misroute. Routing at claim time reuses the decision point a run child
+already has (`sidekickContinueRun`) and the admission `runNow` already has, so
+there is no new trigger kind and no new loop. The row reuses
+`automation_activation`, which every client already renders under the
+Sidekick's name, and is a projection of `sidekick_runs` rather than a second
+record, so the two cannot disagree. Rejected: appending a row per state change,
+which turns one run into a column of status lines; arming the row at each of
+the seven places that write a run, where a writer added later would leave its
+row behind (the cost of the triggers is that the arming is in SQL).
 
-**Consequences:** A manager cannot start a run by message; they use Run now,
-as before, and a later change that wants it needs a signal other than the
-sender (a mention of the Sidekick, say). The row is a projection: anything
-that needs a run's truth reads `sidekick_runs`, and a row that drifted is
-rebuilt by a replay. Triggers were chosen over arming the entry at each of the
-seven places that write a run, because a writer added later would silently
-leave its row behind; the cost is that the arming is in SQL, not beside the
-code that writes. A run's summary is now its last reply rather than empty, so
-run history and the self-review read it too. Runs from before the change have
-no row. A message-started run runs only as an
-eligible delegate who sent it; a non-delegate is refused with
-`run_no_eligible_delegate` until runs can act under the requester's own
-access. A message in `"0"` can no longer steer a running turn.
+**Consequences:** Any new kind of human input in `"0"` must say whether it is
+the wizard's; the claim routes it as a run otherwise. Authoring tools in `"0"`
+follow `sidekickWizard`, not the conversation, so a producer that activates a
+turn there outside the claim gets none. The desktop's Sidekick screen marks a
+manager's every message as an edit until A-13 gives the conversation its own
+composer. A message-started run runs only as an eligible delegate who sent it,
+until runs can act under the requester's own access. A message in `"0"` can no
+longer steer a running turn. The row is a projection: anything that needs a
+run's truth reads `sidekick_runs`, and a row that drifted is rebuilt by a
+replay. A run's summary is now its last reply rather than empty, so run history
+and the self-review read it too. Runs from before the change have no row.
 
 ### 2026-11-06 — No saved instruction can turn a data report into a blocker
 
@@ -2581,6 +2608,7 @@ provider's capabilities defeats the connector-neutral composition model.
 an actual notes source event or polling. It must still verify note access and
 must not infer that an invitation proves a conversation occurred.
 
+
 ### 2026-10-16 — The membership-checking Sidekick directory read is gone
 
 **What changed:** `WorkspaceDO.listSidekickDirectory` is deleted. This
@@ -2604,7 +2632,6 @@ Shipped in juno-ai-labs/avalon#1251.
 ### 2026-10-15 — A room changes Sidekicks only through their authoring agent, and a thread-owned Sidekick names its thread
 
 **What changed:**
-
 - `submitDraft` keeps only the authoring conversation's path. The room branches
   that created a room-owned Sidekick on first submission, or edited one the room
   owned, are gone, since a room's tool list never carried `submit_draft`.
@@ -3134,7 +3161,7 @@ untouched on both sides.
 `all` means "every one of these leaves holds", `always` means "every event of
 this type". A model authoring this grammar has nothing to separate them, so the
 ambiguity landed in real rules rather than in review comments. But the
-discriminant is also _stored_, and Worker versions deploy gradually and can be
+discriminant is also *stored*, and Worker versions deploy gradually and can be
 rolled back, so a version serving beside or after this one must be able to read
 anything it writes. Renaming the stored spelling would have written rows the
 previous version cannot parse — the same silent outage as the reverse, arriving
@@ -3143,8 +3170,8 @@ the boundary buys the legibility with no stored change at all, so there is no
 compatibility window to manage and nothing to migrate later.
 
 **How the two stay apart:** `z.toJSONSchema(…, { io: "input" })` renders a
-transform's _input_, so the tool offers `matching` and never `all`; parsing
-yields its _output_, so every reader and every column sees `all`. The stored
+transform's *input*, so the tool offers `matching` and never `all`; parsing
+yields its *output*, so every reader and every column sees `all`. The stored
 schema does not admit `matching` at all, which is what makes "a `matching`
 reached a column" a parse failure in a test rather than a row nobody notices.
 `packages/contracts` and `apps/api/test/external-event-evaluator.test.ts` pin
@@ -3198,14 +3225,14 @@ submission the object then rejected would be worse than no echo, because it
 would be believed.
 
 **And the field itself now says what it is.** `sourceBindingKey`'s description
-told the model to take the value "from plugin*inspect or resources_search
+told the model to take the value "from plugin_inspect or resources_search
 rather than composed". Neither returns one: the `plugin_inspect` projection has
 no such field, and `resources_search` fills `sourceBindingKeys` with `[]` for
 every row. The value is a label the model composes, validated only as
-`^[a-z]a-z0-9*-]{0,62}$`and resolved away at apply, so the description named
+`^[a-z][a-z0-9_-]{0,62}$` and resolved away at apply, so the description named
 a lookup that has never existed. It now says the label is composed, that no
 tool returns one, that the identical label goes on each rule, and that
-narrowing to a channel or folder is`resourceId`'s business rather than this
+narrowing to a channel or folder is `resourceId`'s business rather than this
 field's. The rule half is described too, which it never was — the side that has
 to match was the undocumented one.
 
@@ -3219,7 +3246,7 @@ searched, found nothing, and reported to the person that a workspace
 administrator had to expose "a bindable Fireflies resource" — a thing no
 administrator can create. The draft it refused to make was already legal.
 
-**Consequences:** the one case where the value is _not_ the model's to choose
+**Consequences:** the one case where the value is *not* the model's to choose
 is where a resource search returns `sourceBindingKeys` for the resource a rule
 names; `evaluatorRuleIssues` has always narrowed to those when present, and the
 description now states that exception rather than leaving it to a refusal.
@@ -3317,21 +3344,21 @@ tooltip, in the platform's type, after its own delay, and never on keyboard
 focus, which the artifact rows had already rejected for the same slot-level
 reason on 2026-09-10 ([`conversation-surfaces.md`](conversation-surfaces.md)). And the play had nothing to say at all: it was introduced
 to replace a mark that had to be learned, and an unnamed symbol is one too. What
-it names is the part a play gets wrong on its own — it reads as _running right
-now_, while the marker is on every active Sidekick, including every one sitting
+it names is the part a play gets wrong on its own — it reads as *running right
+now*, while the marker is on every active Sidekick, including every one sitting
 idle between triggers.
 
 The description belongs to `HexagonMarker` beside the symbol and the colour,
 for the reason the knockout belongs to the hexagon: whoever adds the second
 marker states what it means or ships an unexplained one. Only the hexagon can
-say _when_ the marker is under the pointer, too, because the play is drawn in
+say *when* the marker is under the pointer, too, because the play is drawn in
 its viewBox rather than positioned by the rail. But the hexagon does not draw
 the answer, and that is the whole lesson below.
 
 **Considered and rejected:** a second `Tip` on the marker itself, nested inside
 the tile's. It is the obvious shape — the explanation hangs where the thing is —
 and it cannot work. A Radix root dispatches a document-wide "close everything
-else" the moment it _decides_ to open, which is before the controlled `open` a
+else" the moment it *decides* to open, which is before the controlled `open` a
 caller passes is consulted, so two roots nested like this resolve to whichever
 decided last rather than to the one being pointed at. Both failure modes were
 seen in a real window. First, plainly: a pointer crossing the tile on its way to
@@ -3344,7 +3371,7 @@ the native one and React delegates from the root container: the sidebar's own
 inside the marker's box too. Then, subtly: vetoing the tile's open with a
 controlled `open`, as `DragHint` vetoes its hint, leaves the dispatch in place,
 so the tile's refused open still closed the marker's — a pointer on the play got
-_no_ tooltip at all. One root has one answer and cannot race itself.
+*no* tooltip at all. One root has one answer and cannot race itself.
 
 Also rejected, again: naming the lifecycle in the tile's line. Every tile in the
 strip is active, so it spent the tile's one line on the one fact they all share.
@@ -3360,7 +3387,7 @@ the render. A third thing in the tile worth explaining is another branch in
 `SidekickTile`'s one answer.
 
 And a trap in testing it: advancing fake timers past both delays in a single
-`act` lets a tooltip mount _after_ the document event it should have heard,
+`act` lets a tooltip mount *after* the document event it should have heard,
 which reads as a pass for a race that is still there — it is how the nested
 version's regression test passed while the window showed the defect. Let each
 timer land in its own flush.
@@ -3419,8 +3446,8 @@ deliberately narrower than the length test it replaced: a relationship entry
 with no `resourceType` cannot equal any resource's type, so an id written
 against it could only ever be refused. That is unreachable through a parsed
 descriptor and is asserted in the contracts test rather than left as a trap.
-An empty `resourceTypes` means _nothing
-matches_, not _no filter_. A caller that means "every type" omits the field, and
+An empty `resourceTypes` means *nothing
+matches*, not *no filter*. A caller that means "every type" omits the field, and
 the product's own resource list does. Confining the page also costs the early
 exit the old query got from a common term — SQLite now scans the table rather
 than stopping at ten recent matches — which is accepted rather than indexed: the
@@ -3446,7 +3473,7 @@ they replace is gone. Neither rail keeps a heading over an empty list. The
 `workstream-sidekicks` alongside `attached-sidekicks`.
 
 **Why:** A room's Sidekick was reachable only through the library's ownership
-filter, which is the one surface that is _not_ the room — while this module has
+filter, which is the one surface that is *not* the room — while this module has
 said since the scope was introduced that such a Sidekick "is listed only in the
 room's rail". The rail had the client for it (`getWorkstreamAutomations`, dead
 code) and the server has always had the route; what was missing was the section.
@@ -3733,7 +3760,7 @@ sidebar tiles, the library list and every open profile.
 appearance on its main conversation and sets it with a socket command, and the
 obvious move was to lift the `parentKind === "workstream"` guard off that
 command and be done. It was rejected: for a work stream the main conversation
-_is_ the room, while a Sidekick's authoring chat is a child of the object that
+*is* the room, while a Sidekick's authoring chat is a child of the object that
 owns the Sidekick's name, scope and lifecycle. Putting the icon there would make
 substream `0` the authority for a fact about its parent, and `readDetail` — the
 one place every client reads a Sidekick from — would have had to go and ask a
@@ -3748,7 +3775,7 @@ treats that push as the signal to refetch open Sidekick details — it is how a
 chat publishing a revision reaches a second window today. Enqueuing the
 directory row puts the icon on that path. A dedicated appearance event on the
 authoring conversation's socket was the alternative and buys nothing here: it
-would reach only the people with the _chat_ open, leave the sidebar tiles to the
+would reach only the people with the *chat* open, leave the sidebar tiles to the
 existing push anyway, and add a second order to reconcile against the first.
 
 The person who picked does not wait for any of that: the route answers with the
@@ -3809,7 +3836,7 @@ Both the strictness of that test and the removal of the entrypoint mark below
 came from review on the pull request rather than from the first cut, which keyed
 the tile on the strip being empty and would have created a draft per press.
 
-**Considered and rejected:** Keying the tile on no _active_ Sidekick, which is
+**Considered and rejected:** Keying the tile on no *active* Sidekick, which is
 the strip's own predicate and was the first cut: it reads a paused workspace as
 an empty one and, because `/sidekicks/new` creates a draft on arrival, leaves
 the tile up in precisely the state where pressing it again is cheap. Making
@@ -3835,7 +3862,7 @@ window reports no `surface_viewed` today either way.
 
 The entrypoint mark went because it never worked. `markSurfaceEntrypoint` writes
 a module-local marker that `TelemetryRouteObserver` consumes on the next route
-change _in the same renderer_, and both tiles open a different renderer — one
+change *in the same renderer*, and both tiles open a different renderer — one
 whose surface in `App.tsx` mounts no observer at all. The marker could not reach
 the visit it described, and instead sat in the main window until its next
 unmarked navigation reported itself as `sidebar_automation`. Raised by Codex on
@@ -4417,7 +4444,7 @@ run context, sent by a loop after the run ended. That shape could not express
 "email the finance team, and DM me only if it is urgent", it needed a member to
 pick a connection at a moment the product no longer had, and it is what
 produced the four-field defect the previous entry cleaned up. The judgement
-about _where_ a result should go belongs with the judgement about _what_ it
+about *where* a result should go belongs with the judgement about *what* it
 should say, which is the loop's. So the automation knows nothing about
 delivery, and a run sends what its instructions ask for with the tools it was
 bound.
@@ -4451,14 +4478,14 @@ group is a no-op, and rebuilds `automation_acceptance` because SQLite refuses
 it, including the `owning_workstream_id` copy v9 had to null and this one
 preserves.
 
-**Considered and rejected:** _tolerating the key_ as an optional ignored field.
+**Considered and rejected:** *tolerating the key* as an optional ignored field.
 Lower risk for a run in flight at the moment of deploy, and it leaves a dead
 field in a frozen contract that every future reader has to know to ignore.
-_Keeping the deterministic path for untrusted triggers only._ That was the
+*Keeping the deterministic path for untrusted triggers only.* That was the
 recommended shape before the inbound-email filter came out, and it stops
 making sense once no trigger is special: the split would have to be drawn on a
-distinction the codebase no longer makes anywhere else. _Removing the
-classifier._ Its most-cited case is the one that survives.
+distinction the codebase no longer makes anywhere else. *Removing the
+classifier.* Its most-cited case is the one that survives.
 
 **What a future change has to respect:** the room wake is not a delivery target
 and must not be modelled as one — the moment it becomes a chosen destination it
@@ -4488,10 +4515,10 @@ provenance is done at ingress, where a sender must resolve to an active
 workspace member before a run exists, and where the same question can be asked
 of every trigger at once.
 
-**Considered and rejected:** _Leaving the guard in place until a general control
-replaces it_, which keeps a rule that misdescribes itself and defers the general
-question with no owner. _Generalizing the guard now into a trust flag on the
-workflow input gated at both tool-assembly sites_, which is the right shape if
+**Considered and rejected:** *Leaving the guard in place until a general control
+replaces it*, which keeps a rule that misdescribes itself and defers the general
+question with no owner. *Generalizing the guard now into a trust flag on the
+workflow input gated at both tool-assembly sites*, which is the right shape if
 the team decides trigger content should narrow tools; it needs a policy for
 which triggers and which tools, and that policy is a decision to be made, not a
 default to be typed into a refactor.
@@ -4532,13 +4559,13 @@ decisions. Four fields, four defects, of which
 [the previous entry](#2026-09-03--the-proposal-cards-create-stops-answering-500)
 fixed one:
 
-| Field                     | Card sent | Result                                                                       |
-| ------------------------- | --------- | ---------------------------------------------------------------------------- |
-| `modelOverride`           | `null`    | 500 on every card, fixed 2026-09-03                                          |
-| `activitySourcePluginIds` | `{}`      | every external-event draft refused, untabled, generic 409                    |
-| `deliveryTargets`         | `[]`      | **silent** — a draft asking for emailed results created delivering nothing   |
-| `defaultPluginIds`        | `[]`      | **silent** — an automation ran without the connectors its own overview named |
-| `resourceIds`             | `[]`      | parsed and never read by anything                                            |
+| Field | Card sent | Result |
+| --- | --- | --- |
+| `modelOverride` | `null` | 500 on every card, fixed 2026-09-03 |
+| `activitySourcePluginIds` | `{}` | every external-event draft refused, untabled, generic 409 |
+| `deliveryTargets` | `[]` | **silent** — a draft asking for emailed results created delivering nothing |
+| `defaultPluginIds` | `[]` | **silent** — an automation ran without the connectors its own overview named |
+| `resourceIds` | `[]` | parsed and never read by anything |
 
 Two loud and two silent, and the silent pair is the worse half: an automation
 created successfully that does less than the card described. Patching each field
@@ -4578,11 +4605,11 @@ are the ones this mattered most for, since nothing about them ever failed before
 (The delivery list and the delivery-channel check this entry first covered were
 removed the same day by the entry above.)
 
-**Considered and rejected:** _passing `suggestedActivitySourcePluginIds` at the
-call site_, which fixes the loud symptom and leaves the shape, the two silent
-defects, and the second source of truth. _Keeping the fields as optional
-overrides_, which keeps a schema nobody fills and invites the next empty value
-to be read as a decision. _Refusing `slack_agent_dm` at acceptance only_, which
+**Considered and rejected:** *passing `suggestedActivitySourcePluginIds` at the
+call site*, which fixes the loud symptom and leaves the shape, the two silent
+defects, and the second source of truth. *Keeping the fields as optional
+overrides*, which keeps a schema nobody fills and invites the next empty value
+to be read as a decision. *Refusing `slack_agent_dm` at acceptance only*, which
 puts the refusal after the drafting conversation has ended, where the person has
 nothing to act on — the same defect this entry is about, one field over.
 
@@ -4615,7 +4642,7 @@ is not an `ApiError` and matches no row of the error table — the boundary
 answered `500 internal_error` / "An unexpected error occurred". The field is
 gone (absent is how the schema spells "no override", and `accept` already
 coalesces it to the `null` the object stores), and the request is now annotated
-`z.input<typeof CreateAutomationRequestSchema>` so a field whose _type_ the
+`z.input<typeof CreateAutomationRequestSchema>` so a field whose *type* the
 schema cannot accept is a typecheck failure rather than a runtime fault. The
 schema's parse-time-only constraints — `resourceIds`' `.max(20)` and the
 `superRefine` over `deliveryTargets` and `scope` — are outside what an
@@ -4708,9 +4735,9 @@ proposal card, and `prepareAcceptance` threw `automation_evaluator_rules_require
 when somebody pressed Create. Reproduced on real workerd before the fix.
 
 `automation_authored_evaluator_sets` was added so an authored draft's rules had
-somewhere to live — its own schema comment names this failure, _"an event-driven
+somewhere to live — its own schema comment names this failure, *"an event-driven
 draft written in a work stream is proposed as ready and then refused at
-acceptance for rules it had no way to record"_ — but giving them a home did not
+acceptance for rules it had no way to record"* — but giving them a home did not
 make recording them required. This adds the requirement.
 
 Create is the wrong place for the refusal: the drafting loop has ended by then,
@@ -4744,7 +4771,7 @@ contracts beside the trigger union; the several other places in the tree that
 spell the three kinds out predate this and are not converted here.
 
 Author review added the drafting-tool half. The guard alone made the refusal
-_possible_ to repair; what the model actually received still did not say how,
+*possible* to repair; what the model actually received still did not say how,
 which is the difference between a loop that recovers and one that repeats
 itself. It also caught a stale claim in the pull request description — copy
 quoted from a file the drafting-stack deletion had already removed — and noted
@@ -4852,7 +4879,7 @@ because somebody unarchived the room, so only rows that say
 **Also, and it is a loosening:** acceptance no longer requires owner-or-admin
 for `workspace` scope. `connection-service.ts` already lists workspace-scoped
 connections to every member, so a member can call that connection's tools from a
-run in their own work stream today; a workspace automation adds a _schedule_ on
+run in their own work stream today; a workspace automation adds a *schedule* on
 something they can already do, not a capability they lacked. What the workspace
 acquires is a standing object it must manage, so editing, pausing and deleting
 one stay owner-or-admin. The residual is that it runs unattended and repeatedly
@@ -5081,7 +5108,7 @@ the other candidate and was rejected for that reason: rules are `.mjs` and would
 have to restate the list.
 
 Worth knowing about the region that has not cut over: migration 0090's guard is
-a `CHECK` that aborts, so such a region keeps the D1 shells — but every _writer_
+a `CHECK` that aborts, so such a region keeps the D1 shells — but every *writer*
 of `connector_connections` already routes through the port, so those shells are
 empty. Before this change that region did not answer 500; it answered
 `automation_delivery_connection_unavailable` for a connection that plainly
@@ -5360,7 +5387,7 @@ a person reads live in the desktop client.
 **Why:** The cutover already computed both of the first two codes — a legacy
 trigger with no equivalent in the new runtime, and a subscription that was
 already failing — and nothing carried them past WorkspaceDO. Worse, the
-cutover _pauses_ an automation whenever it sets one, and both readers rank
+cutover *pauses* an automation whenever it sets one, and both readers rank
 `paused` ahead of `attention_code`, so the entire account a person got of an
 automation that will never run again was the word "Paused". An upgrade that
 silently strands somebody's automation and then declines to say so is the

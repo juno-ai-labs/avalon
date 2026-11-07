@@ -5885,8 +5885,10 @@ async function loadHarnessTools(
   const customToolsPlugin = codeMode && env.CODE_LOADER && runDefinition?.definition.customTools.length
     ? await createCustomToolsPlugin(codeMode, runDefinition.definition.customTools, { loader: env.CODE_LOADER, input })
     : null;
+  // In a Sidekick's shared conversation the authoring tools are the wizard's,
+  // and a turn there is the wizard's only once the Sidekick routed it so.
   const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
-    || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
+    || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0" && input.sidekickWizard === true))
     ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages, codeMode)
     : input.executionPrincipal.type === "user" ? {
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
