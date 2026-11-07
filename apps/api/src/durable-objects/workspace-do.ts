@@ -5125,9 +5125,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * retired: its directory row and viewer rows (and a Thread's Breakout
    * directory), and its parent state in every table
    * `HOSTED_PARENT_STATE_TABLES` names that the schema still holds, so a table
-   * phase C drops first is skipped. The foreign keys that cascade from `channels` and `spaces`
-   * (pins, resource links, access rows) go with them; the resources a link
-   * names do not. Idempotent: a second call finds nothing to delete.
+   * phase C drops first is skipped. Nothing cascades from `channels` or
+   * `spaces` any more: migration 147 dropped the pin, resource-link and access
+   * tables that referenced them. Idempotent: a second call finds nothing to
+   * delete.
    */
   async deleteRetiredThreadParent(input: { parentKind: "workstream" | "space"; parentId: string }): Promise<void> {
     await this.initialized;

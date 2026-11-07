@@ -486,11 +486,8 @@ describe("a parent's effects on the regional delivery plane", () => {
       expect(database.prepare(
         `SELECT COUNT(*) AS count FROM activity_events WHERE id = ?`,
       ).get(EVENT_ID)).toEqual({ count: 0 });
-      // The Activity log is retired (plan step C-2): the event is receipted
-      // below and stored nowhere.
-      expect(workspace.database.prepare(
-        `SELECT COUNT(*) AS count FROM workspace_activity_events WHERE event_id = ?`,
-      ).get(EVENT_ID)).toEqual({ count: 0 });
+      // The Activity log is retired (plan step C-2) and its table dropped
+      // (migration 147): the event is receipted below and stored nowhere.
       expect(workspace.database.prepare(
         `SELECT COUNT(*) AS count FROM workspace_workstream_effect_receipts`,
       ).get()).toEqual({ count: 1 });
