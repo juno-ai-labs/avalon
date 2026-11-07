@@ -197,7 +197,6 @@ export const WorkspaceDirectoryNotificationRequestSchema = deferredZodSchema(() 
 
 export const WorkspaceDirectoryNotificationStateSchema = deferredZodSchema(() => z.strictObject({
   authorityGeneration: z.number().int().positive(),
-  viewerVersion: z.number().int().positive(),
   listable: z.boolean(),
   title: z.string().min(1).max(500),
   emailAddress: z.string().email().max(254).nullable(),

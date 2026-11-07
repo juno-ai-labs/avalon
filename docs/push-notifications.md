@@ -33,8 +33,12 @@ ID persist in the existing application settings file on the Mac.
 The producer enqueues only region, workspace, recipient and intent identifiers.
 Settlement retains the payload only when push was enqueued, until the existing
 intent retention expires. The consumer reads content through `WorkspaceDO.readNotificationIntentForDelivery`
-and reuses the processor's `notificationDeliveryContext`. A projection behind
-its required version retries; revoked access stops delivery. No presence check is
+and reuses the processor's `notificationDeliveryContext`, which asks
+`WorkspaceDO.notificationDirectoryState` whether the recipient may still open
+the conversation: the Canvas's row and who it admits, or the Sidekick's row and
+who it is shared with. An intent written from a newer parent generation than
+the object holds retries; one for any other parent (a retired Thread) is
+skipped as `notification_parent_missing`; revoked access stops delivery. No presence check is
 added. Successful enqueue with a live device is not proof of an Apple alert.
 
 Success receipts key on workspace, intent and device. A partial retry skips only
@@ -422,7 +426,8 @@ signed-Mac delivery.
 `push-device-service.test.ts` uses real migrated SQLite. `push-payload.test.ts` and
 `apns-transport.test.ts` cover encoding/signing, Apple responses, and the
 sandbox versus production host. The real
-workerd `push-delivery.test.ts` covers read RPC, receipts, revocation, retry,
+workerd `push-delivery.test.ts` covers read RPC, receipts, revocation (a Canvas
+made private, a Canvas deleted, a removed member), a newer parent generation, retry,
 and that `aps.badge` and the Web Push `badge` are the reader's attention count. `workspace-attention.test.ts` (deleted in plan step C-2)
 covers that count, Breakouts included, against the same directory projection,
 `dock-badge.test.tsx` covers when the Mac sends its local count, and
@@ -436,7 +441,9 @@ APNs credential fault that leaves Web Push sending. The contract test covers the
 host allowlist and key shapes, and `web-push.test.ts` covers registration,
 re-subscribing on a key change, and the permission prompt coming first.
 `activity-push.test.ts` (deleted in plan step C-2) drives Activity rows through `receiveChildEffects` on
-real workerd, and the consumer's read-back. The provider itself and macOS alert
+real workerd, and the consumer's read-back. `test/conversation-effect-service.test.ts` covers
+a mention whose conversation has no link: Slack and email log
+`conversation_not_linkable` with `parent_kind`, and the intent settles. The provider itself and macOS alert
 presentation require a signed installed build.
 
 Local acceptance on 2026-09-14: lint/typecheck, scoped API and desktop tests,
@@ -448,6 +455,26 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-07 — A Canvas mention is checked against the Canvas, not a Thread's directory
+
+**What changed:** `notificationDirectoryState` reads the Canvas's row and
+`canvasReaderAllows`, or the Sidekick's row and `sidekickReaderAllows`, instead
+of the Thread directory (`channels` and `channel_viewers`). The delivery gate
+waits only for the parent generation; the viewer-projection version gate and
+`viewerVersion` are gone, and a parent that is neither is skipped as
+`notification_parent_missing` instead of retrying as
+`directory_projection_pending` forever.
+
+**Why:** Plan step C-2 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
+keeps push for Canvas Chat mentions, but nothing writes the Thread directory
+any more, so every Canvas mention waited on a projection that never came. A
+Canvas's and a Sidekick's rows are written in the same object that answers, so
+there is no projection lag to wait for.
+
+**Consequences:** "Needs input" and finished-run pushes are not rebuilt here:
+they were Activity rows, and the push consumer still acknowledges a queued
+Activity row as `activity_item_retired`.
 
 ### 2026-11-07 — A push opens the Canvas or the Sidekick
 
