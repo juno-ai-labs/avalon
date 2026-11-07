@@ -33,7 +33,7 @@ import {
 } from "./helpers/workspace-object-rpcs";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000a1";
-const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000a2";
+const CANVAS_ID = "00000000-0000-7000-8000-0000000000a2";
 
 const databases: DatabaseSync[] = [];
 
@@ -105,22 +105,17 @@ function seedDraft(database: DatabaseSync, id: string, createdAt: string): void 
   ).run(id, WORKSPACE_ID, createdAt, createdAt);
 }
 
-function linkToWorkstream(database: DatabaseSync, resourceId: string): void {
+/** The draft is one of a Canvas's artifacts, which the reap keeps. */
+function holdOnCanvas(database: DatabaseSync, resourceId: string): void {
   database.prepare(
-    `INSERT OR IGNORE INTO channels
-       (workstream_id, authority_generation, waterline, source_event_id, payload_hash, title,
-        description, preview, scope, exact_state, last_activity_at, origin_type, title_status,
-        latest_attention_ordinal, unread_tracking_start_ordinal, source_created_at,
-        source_updated_at, projected_at)
-     VALUES (?, 1, 1, 'event-1', 'hash', 'Linked', '', '', 'workspace', 'running', 0, 'ad_hoc',
-             'settled', 0, 0, 0, 0, 0)`,
-  ).run(WORKSTREAM_ID);
+    `INSERT OR IGNORE INTO canvas_directory
+       (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, visibility,
+        authority_generation)
+     VALUES (?, ?, 'Linked', 'user-1', 0, 0, 'creator', 1)`,
+  ).run(CANVAS_ID, WORKSPACE_ID);
   database.prepare(
-    `INSERT INTO workspace_workstream_resource_links
-       (workstream_id, resource_id, watch_enabled, relationship_type, authority_generation,
-        waterline, source_event_id, projected_at)
-     VALUES (?, ?, 0, 'attachment', 1, 1, ?, 0)`,
-  ).run(WORKSTREAM_ID, resourceId, `link-${resourceId}`);
+    `INSERT INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, 0)`,
+  ).run(CANVAS_ID, resourceId);
 }
 
 function maintenance(targets: WorkspaceScheduleTarget[], id: string): WorkspaceScheduleTarget[] {
@@ -140,10 +135,10 @@ async function runMaintenance(database: DatabaseSync, id: string) {
 }
 
 describe("the expired-drafts due time", () => {
-  it("counts only the drafts the reap will remove, so a linked draft cannot pin the pass", async () => {
+  it("counts only the drafts the reap will remove, so a Canvas's draft cannot pin the pass", async () => {
     const database = workspaceObjectDatabase();
     seedDraft(database, "00000000-0000-7000-8000-0000000000d1", "2026-01-01T00:00:00.000Z");
-    linkToWorkstream(database, "00000000-0000-7000-8000-0000000000d1");
+    holdOnCanvas(database, "00000000-0000-7000-8000-0000000000d1");
 
     // The linked draft is the only draft: nothing is due.
     expect(expiredDrafts(await workspaceScheduleTargets(scheduleContext(database)))).toEqual([]);
@@ -293,7 +288,7 @@ describe("what a maintenance pass tells the stall check", () => {
          (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id, source_generation,
           source_version, required_directory_version, notification_kind, payload_hash, state, updated_at, created_at)
        VALUES (?, ?, ?, 'user-1', ?, 1, 1, 1, 'mention', 'hash', ?, ?, ?)`,
-    ).run(id, WORKSPACE_ID, WORKSTREAM_ID, `message-${id}`, state, updatedAt, updatedAt);
+    ).run(id, WORKSPACE_ID, CANVAS_ID, `message-${id}`, state, updatedAt, updatedAt);
     insert("00000000-0000-7000-8000-0000000000f1", "delivered", "2026-01-01T00:00:00.000Z");
     insert("00000000-0000-7000-8000-0000000000f2", "pending", "2026-01-01T00:00:00.000Z");
 
