@@ -13,9 +13,10 @@
  *
  * `writer_run_id` names the Sidekick run that created a Canvas, so a run's
  * later publishes can find the Canvas its first one made; the unique index
- * keeps a run to one Canvas. It does not make a create idempotent by itself: a
- * second create for the same run under another Canvas id fails on the index,
- * so a caller looks the run's Canvas up first.
+ * keeps a run to one Canvas. `HostedCanvas.create` looks the run's Canvas up
+ * in the same transaction before inserting, so a second create for the same
+ * run under another id answers with the first Canvas rather than failing on
+ * the index.
  */
 export const CANVAS_SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE canvas_directory (
@@ -109,4 +110,23 @@ export const CANVAS_SIDEKICK_PINS_STATEMENTS: readonly string[] = [
   `CREATE INDEX workspace_pins_order_idx
     ON workspace_pins(user_id, item_kind, position, item_id)`,
   `CREATE INDEX workspace_pins_item_idx ON workspace_pins(item_kind, item_id)`,
+];
+
+/**
+ * WorkspaceDO migration 142: the artifacts a Canvas's conversation generated,
+ * written by the publish that attached each one (`HostedCanvas.noteArtifact`),
+ * so the Canvas list and the detail read them without asking the
+ * conversation. Its own table, not `workspace_workstream_resource_links`,
+ * because that projection's foreign key names `workspace_workstream_directory`,
+ * where a Canvas has no row. Ordered by the resource's own `updated_at`, so
+ * nothing here copies it.
+ */
+export const CANVAS_ARTIFACTS_STATEMENTS: readonly string[] = [
+  `CREATE TABLE canvas_artifacts (
+    canvas_id TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    added_at INTEGER NOT NULL CHECK (added_at >= 0),
+    PRIMARY KEY (canvas_id, resource_id)
+  ) STRICT`,
+  `CREATE INDEX canvas_artifacts_resource_idx ON canvas_artifacts(resource_id)`,
 ];

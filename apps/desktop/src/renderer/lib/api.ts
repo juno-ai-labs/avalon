@@ -41,6 +41,12 @@ import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
+  CanvasDetailSchema,
+  CreatedCanvasSchema,
+  type CanvasAudienceUpdate,
+  type CanvasDetail,
+  type CreateCanvasRequest,
+  type CreatedCanvas,
   ConversationSuggestionActionResultSchema,
   type ConversationSuggestionActionResult,
   AutomationDetailSchema as WireAutomationDetailSchema,
@@ -1283,6 +1289,37 @@ export class RallyApi {
       method: 'POST',
       schema: wireExecutionPrincipalClaimSchema,
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Canvases (docs/canvases.md). A Canvas's Chat is an ordinary conversation,
+  // opened by its id as any conversation is; these are the Canvas's own reads
+  // and writes.
+  // -------------------------------------------------------------------------
+
+  /** A new Canvas with no artifacts; `prompt` is the "Start from a prompt" card's first message. */
+  createCanvas(input: CreateCanvasRequest = {}): Promise<CreatedCanvas> {
+    return this.request('/canvases', { method: 'POST', body: input, schema: CreatedCanvasSchema });
+  }
+
+  /** The Canvas as this person sees it: its row, who it is shared with, and its artifacts. */
+  getCanvas(id: string, signal?: AbortSignal): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}`, { schema: CanvasDetailSchema, signal });
+  }
+
+  /** Change who can open a Canvas; its creator's, an administrator's, or its Sidekick's manager's. */
+  setCanvasAudience(id: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}/audience`, { method: 'POST', body: update, schema: CanvasDetailSchema });
+  }
+
+  /** Pin a Canvas in, or out of, the Canvas list's Pinned group. */
+  async setCanvasPinned(id: string, pinned: boolean): Promise<void> {
+    await this.requestVoid(`/canvases/${encodeURIComponent(id)}/pin`, { method: 'POST', body: { pinned } });
+  }
+
+  /** Pin a Sidekick in, or out of, the Sidekick list's Pinned group. */
+  async setSidekickPinned(id: string, pinned: boolean): Promise<void> {
+    await this.requestVoid(`/sidekicks/${encodeURIComponent(id)}/pin`, { method: 'POST', body: { pinned } });
   }
 
   async getAutomation(id: string, signal?: AbortSignal): Promise<AutomationDetail> {

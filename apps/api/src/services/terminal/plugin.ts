@@ -18,7 +18,7 @@ import {
   TERMINAL_TOOL_NAMES,
   type TerminalToolExecutors,
 } from "./contract";
-import { resolveTerminalPublicationHome, resolveTerminalRunScope, workspaceAgentOwnerLookup, type TerminalRunScope } from "./authority";
+import { canvasArtifactNoter, resolveTerminalPublicationHome, resolveTerminalRunScope, workspaceAgentOwnerLookup, type TerminalRunScope } from "./authority";
 import { TerminalSandboxCoordinator } from "./coordinator";
 import { createHarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { createResourcePortFactory } from "../../runtime/resource-port";
@@ -294,13 +294,16 @@ export async function createAvalonTerminalPlugin(
       env,
       terminalPort,
       inObjectResourceAttacher,
-      input.parentKind === "automation" ? () => resolveTerminalPublicationHome(env, input) : null,
+      input.parentKind === "automation" ? (request) => resolveTerminalPublicationHome(env, input, request) : null,
       // A background agent imports what its own conversation has attached into
       // its owner's sandbox; the import records that conversation so the
       // revocation check asks it, not the owner's.
       scope.runSubstreamId === scope.authoritySubstreamId ? null : scope.runSubstreamId,
       runRequesterUserId(input),
       scope.authoritySubstreamId,
+      // A Canvas's Chat publishes into its Canvas as Rally; a Sidekick run into
+      // the Canvas it writes, as the Sidekick.
+      canvasArtifactNoter(env, input),
   );
   const runtime = createDaytonaTerminalRuntime(
     terminalPort,

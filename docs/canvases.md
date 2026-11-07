@@ -26,7 +26,9 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/durable-objects/hosted-canvas.ts` | `HostedCanvas`: one Canvas's parent state inside `WorkspaceDO`, scoped to a `canvas_id` — creation, the read rule over a row (`canvasReaderAllows`), the audience, guest shares and authorization facts. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Conversation object migration 83: its root row admits the `canvas` parent kind. |
-| `apps/api/src/services/canvas-service.ts` | `createCanvas`: the directory row, then the Chat's object, bootstrapped and provisioned with the creator seated. |
+| `apps/api/src/services/canvas-service.ts` | `createCanvas`: the directory row, then the Chat's object, bootstrapped and provisioned with the creator seated; `CanvasService`, the routes' service. |
+| `apps/api/src/routes/canvases.ts` | `POST /canvases`, `GET /canvases/:id`, `POST /canvases/:id/audience`, `POST /canvases/:id/pin`. |
+| `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
 | `apps/api/src/services/authorization-service.ts` | A Canvas conversation's and its artifacts' canonical read decision, from `hostedConversationAuthorizationFacts`. |
 
@@ -132,6 +134,58 @@ its delivery and index alarms, are routed for a Canvas id; listing a Canvas's
 shares and grants (`listScopeInvitations`, `scopeSharingOptions`,
 `listManagedScopeGrants`, `mutateScopeGrant`) is not yet, and still answers
 `scope_not_found`.
+
+### Making a Canvas
+
+`POST /canvases` (`CanvasService.create`, `createCanvas`) writes the directory
+row, then bootstraps and provisions the Chat with its creator seated, and
+answers with the Canvas id; the Canvas has no artifacts, which the client shows
+as the PRD's empty state. With `prompt`, the "Start from a prompt" card's first
+message is sent to the Chat as the creator's, through the ordinary message
+admission, and the answer names its turn. A guest makes no Canvas
+(`canvas_create_member_required`). `GET /canvases/:id` is the detail (row,
+participants, artifacts at their current versions, whether the reader may
+manage it); `POST /canvases/:id/audience` changes who can open it;
+`POST /canvases/:id/pin` and `POST /sidekicks/:id/pin` pin. The Chat is opened
+through the conversation routes like any conversation.
+
+### Artifacts and versions
+
+A Canvas's artifacts are resources its conversation generated: Rally's
+`publish_resource` from the Chat publishes under the identity it always has,
+`(conversation, path)`, and the conversation is now the Canvas. The first
+publish of a path is a new resource, version 1; a later publish of the same
+path is a new version of it; a different path is another artifact. A file of
+any kind, or a directory that becomes a site or an archive, as
+[`live-web-artifacts.md`](live-web-artifacts.md) decides.
+`artifact_registry.workstream_id` holds the Canvas id, which is the
+conversation's parent id, so no column changes meaning. After each publish the
+Terminal's resource bridge tells the Canvas (`canvasArtifactNoter`,
+`WorkspaceDO.canvasNoteArtifact`), which records the resource in
+`canvas_artifacts`, moves the Canvas's `updated_at`, and names its last editor:
+Rally for the Chat, the Sidekick for a run. The resource versioning layer
+records every version with its run, as it does everywhere; `canvas_artifacts`
+records only which resources the Canvas holds. A version somebody else made
+since a viewer last read the Chat makes the Canvas's row unread to them, by
+the rule a pinned artifact's news uses (a republish or replacement, not their
+own or one made on their behalf).
+
+### From a Sidekick run
+
+A Sidekick run (a child of the Sidekick, whose substream id is the run id)
+publishes into a Canvas, the Sidekick's output (`resolveTerminalPublicationHome`).
+Its first publish creates the run's Canvas: the run's principal is its
+creator, the Sidekick its writer, the publish's `displayName` its title, and
+whoever the Sidekick is shared with can open it. Every later publish of the
+run finds that Canvas (`canvasForSidekickRun`; `HostedCanvas.create` answers a
+second create for the same run with the first Canvas). A run asked to update a
+Canvas names it with `publish_resource`'s `canvas` argument, which must be a
+Canvas this Sidekick writes (`canvas_not_written_by_sidekick` otherwise);
+anything but a Sidekick run naming one is refused (`canvas_argument_unsupported`).
+The run's own conversation is attached too, so the run can read back what it
+published. "The Canvases it writes to" is `canvasesWrittenBy`, a query on the
+directory by writer, on the Sidekick's detail as `canvases`, filtered to what
+the reader may open.
 
 ### The Canvas list
 
@@ -242,6 +296,15 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   to a participant who has not opened it; a member's `set_presence` reaches the
   creator's row and face pile; a pin moves only its owner's row; a Canvas the
   viewer may not open is neither pinned nor present.
+- `canvas-conversation.test.ts` publishes through the Terminal's resource
+  bridge: the first publish is version 1 by Rally, a republish a new version
+  of the same artifact, another path another artifact; and a Sidekick run's
+  publish makes a Canvas its Sidekick's audience opens, read live, listed on
+  the Sidekick's detail, refusing a Canvas the Sidekick does not write.
+- `canvas-hosting.test.ts` also claims a share at sign-in for a recipient who
+  had no account.
+- `apps/api/test/canvas-routes.test.ts` — the routes' validation and the guest
+  refusal.
 - `apps/desktop/src/renderer/lib/sidebar-list-store.test.ts` — the Canvas list
   orders by its own waterline.
 - `apps/api/test/workstream-object-schema.test.ts` — conversation migration 83
@@ -258,6 +321,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
 | `sidekick_conversation_attachments` | `(automation_id, parent_kind, …)` | Migration 140 widens `parent_kind` to admit `canvas`. |
 | `workspace_pins` | `(user_id, item_kind, item_id)` | Migration 141 admits `canvas` and `sidekick`, with no parent. |
+| `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 142: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because `workspace_workstream_resource_links`' foreign key names a Thread's directory row, which a Canvas has none of. Indexed by resource. |
 
 ## Changelog
 
@@ -271,7 +335,9 @@ admitted to every Canvas. Its Chat is an ordinary conversation object on the
 one hosting primitive a Sidekick also uses, `HostedConversation`, and its
 artifacts are admitted to whoever opens it. `audienceAdmits` is the one rule
 under both `canvasAdmits` and `sidekickAdmits`. Each viewer's Canvas list,
-with unread, presence and pins, rides the workspace socket.
+with unread, presence and pins, rides the workspace socket. A Canvas is made
+with `POST /canvases`; its Chat's publishes are its artifacts, and a Sidekick
+run publishes into a Canvas it makes or one it writes.
 
 **Why:** The Canvases and Sidekicks decisions: a Canvas is identified by its
 conversation and starts empty, so it can generate many artifacts; it has its
