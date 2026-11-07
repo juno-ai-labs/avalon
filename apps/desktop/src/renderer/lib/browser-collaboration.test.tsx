@@ -56,7 +56,7 @@ afterEach(() => {
  * `protectedApi` mounts in `apps/api/src/app.ts`; a family added there belongs
  * here too.
  */
-const MEMBER_ONLY = /\/browser\/api\/[^/]+\/(workspace\/(?!socket$|members$|me\/device-timezone$)|workspaces|workstreams|sideline|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime)/u;
+const MEMBER_ONLY = /\/browser\/api\/[^/]+\/(workspace\/(?!socket$|members$|me\/device-timezone$)|workspaces|workstreams|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime)/u;
 
 // Full entry, the shell members use, API and socket hooks. Only browser
 // transport boundaries are substituted, so a guest exercises the same tree.
@@ -83,7 +83,7 @@ it('opens a guest in the shared shell without asking for anything a guest is ref
     }
     if (path.endsWith('/sidekicks') || path.endsWith('/recommended-sidekicks')) return Response.json({ items: [] });
     if (path.endsWith('/navigation/threads')) return Response.json({ items: [], pinned: [], nextCursor: null });
-    if (path.endsWith('/feature-flags')) return Response.json({ liveArtifactsEnabled: false });
+    if (path.endsWith('/feature-flags')) return Response.json({});
     return Response.json({ error: { message: 'Unexpected request: ' + path } }, { status: 404 });
   };
   history.replaceState(null, '', '/app/workspaces/global/' + workspace.id + '/workstreams/' + parent + '/substreams/' + child);

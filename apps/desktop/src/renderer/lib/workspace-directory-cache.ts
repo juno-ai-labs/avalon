@@ -84,7 +84,7 @@ export const DIRECTORY_CACHE_KEY = 'directory';
 
 const HARNESS_STATUSES = new Set(['scheduled', 'running', 'needs_input', 'completed', 'failed', 'stopped']);
 const SCOPES = new Set(['personal', 'workspace']);
-const AUTOMATION_SCOPES = new Set(['you', 'workspace', 'workstream']);
+const AUTOMATION_SCOPES = new Set(['you', 'workspace']);
 const AUTOMATION_STATUSES = new Set(['active', 'paused', 'draft']);
 
 function isWorkstreamSummaryLike(value: unknown): value is WorkstreamSummary {
@@ -109,7 +109,7 @@ function isWorkstreamSummaryLike(value: unknown): value is WorkstreamSummary {
     && (candidate['spacePins'] === undefined || Array.isArray(candidate['spacePins']));
 }
 
-function isAutomationSummaryLike(value: unknown): value is AutomationSummary {
+export function isAutomationSummaryLike(value: unknown): value is AutomationSummary {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
   return typeof candidate['id'] === 'string'

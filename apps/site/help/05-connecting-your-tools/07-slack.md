@@ -5,7 +5,7 @@ description: Install Rally in your Slack workspace for everyone, and connect you
 
 Slack connects in two parts, and they do different jobs. The Organization install puts Rally into your Slack workspace so people can talk to it there. A personal connection lets Rally see your own corner of Slack and act as you. You can have either, or both.
 
-This page covers connecting. For what to do with Rally once it is in Slack (direct messages, **@Rally**, `/rally`, shortcuts and the Home tab), read [Rally in Slack](../08-rally-everywhere/01-rally-in-slack.md) and [Slack: reading, replies and your own connection](../08-rally-everywhere/02-more-from-slack.md).
+This page covers connecting. For what to do with Rally once it is in Slack (Sidekicks that listen and post there, replies to a run, and the Home tab), read [Rally in Slack](../08-rally-everywhere/01-rally-in-slack.md) and [Slack: reading, replies and your own connection](../08-rally-everywhere/02-more-from-slack.md).
 
 ## Installing Rally in Slack for everyone
 
@@ -49,10 +49,10 @@ Clicking **Connect Rally** on Rally's Home tab in Slack can carry straight on in
 The list of things Rally can do with your personal connection comes live from Slack, so it can change without a Rally update. If you connected before Rally combined these steps, your connection may have fewer permissions than a new one. Click **Refresh** on its row to get the full set.
 
 > [!WARNING]
-> Your personal Slack connection can read your private messages. If you ask Rally to look something up in them inside a shared Thread, everyone in that Thread can read the answer. Ask in a Thread only you are in when it is private.
+> Your personal Slack connection can read your private messages. If you ask Rally to look something up in them inside a shared Canvas, everyone in that Canvas can read the answer. Ask in a Canvas only you can open when it is private.
 
 ## Slack as a place for results
 
-With the Organization install in place and your Slack account linked, Slack can be where things are delivered to you: a Sidekick's results, or your [digest](../08-rally-everywhere/05-the-digest.md), arriving as a direct message from Rally. See [Where a Sidekick's results go](../07-sidekicks/05-where-results-go.md).
+With the Organization install in place and your Slack account linked, Slack can be where things are delivered to you: a Sidekick's results, or a [notification](../08-rally-everywhere/03-notifications.md), arriving as a direct message from Rally. See [Where a Sidekick's results go](../03-sidekicks/07-where-results-go.md).
 
 Next, [Granola](08-granola.md).

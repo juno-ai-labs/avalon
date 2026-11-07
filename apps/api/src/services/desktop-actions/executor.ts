@@ -3,7 +3,7 @@ import type { DesktopAction, DesktopActionOutcome } from "@rally/contracts/deskt
 /**
  * Ask the person's desktop to do one thing and wait for its answer.
  *
- * Installed by the `SubstreamAgent` a run executes in. The request is durable
+ * Installed by the `AgentLoopDO` a run executes in. The request is durable
  * before it is published: a call re-entered after eviction with the same
  * `toolCallId` returns the answer its earlier attempt received, or asks again
  * if none came. Resolves when the desktop answers; rejects only when `signal`

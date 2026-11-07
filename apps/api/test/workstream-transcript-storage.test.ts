@@ -1812,7 +1812,7 @@ describe("canonical ordered work-stream transcript", () => {
       executionId: activated.receiptRunId,
       executionEpoch: 1,
       leaseOwner: "lease-1",
-      // Match SubstreamAgent's fresh fence read. The late input may commit
+      // Match AgentLoopDO's fresh fence read. The late input may commit
       // after settlement and legitimately advance the loop revision.
       expectedLoopRevision: first.loop.loop()!.revision,
       receiptRunId: activated.receiptRunId,

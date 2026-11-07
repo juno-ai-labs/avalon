@@ -27,8 +27,7 @@ import { getWorkspaceAuth, requireWorkspaceAuth } from "../middleware/auth";
 import { requestFlowSpan } from "../observability/tracing";
 import { ConversationMergeService } from "../services/conversation-merge-service";
 import { ConversationService } from "../services/conversation-service";
-import { WorkstreamService } from "../services/workstream-service";
-import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema, SidekickAttachmentsSchema, SidekickRecommendationOptionsSchema } from "@rally/contracts";
+import { ConversationAccessDecisionResultSchema, ConversationAccessPreviewSchema, ConversationAccessRequestResultSchema } from "@rally/contracts";
 import { ConversationAccessRequestService } from "../services/conversation-access-request-service";
 import { telemetryOperationId } from "../telemetry/api-emitter";
 import { SubstreamCreationService } from "../services/substream-creation-service";
@@ -124,8 +123,7 @@ conversationRoutes.post("/:parentId/merge",
 /**
  * Ordinary message admission for an authenticated client that does not hold a
  * conversation socket. Rally's conversation screen keeps using its admitted
- * socket; narrow command clients such as Sideline use this route rather than
- * manufacturing an impersonation relationship for the signed-in user.
+ * socket; a narrow command client sends through this route instead.
  */
 conversationRoutes.post("/:parentId/substreams/:substreamId/messages",
   requireSendableMessageLength("text"),
@@ -146,31 +144,6 @@ conversationRoutes.post("/:parentId/substreams/:substreamId/messages",
       telemetryJourney: "message_send",
     })), 201);
   });
-conversationRoutes.get("/:parentId/substreams/:substreamId/sidekick-recommendation-options", zValidator("param", substreamSocketParam), async (c) => {
-  const { parentId, substreamId } = c.req.valid("param");
-  return c.json(SidekickRecommendationOptionsSchema.parse(await new WorkstreamService(c.env, getWorkspaceAuth(c))
-    .sidekickRecommendationOptions(parentId, substreamId)));
-});
-conversationRoutes.get("/:parentId/substreams/:substreamId/recommended-sidekicks",zValidator("param",substreamSocketParam),async (c) => {
-  const { parentId,substreamId } = c.req.valid("param");
-  return c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env,getWorkspaceAuth(c)).recommendedSidekicks(parentId,substreamId)));
-});
-for (const method of ["put", "delete"] as const) {
-  conversationRoutes[method]("/:parentId/substreams/:substreamId/recommended-sidekicks/:sidekickId",
-    zValidator("param", substreamSocketParam.extend({ sidekickId: IdSchema })), async (c) => {
-      const { parentId, substreamId, sidekickId } = c.req.valid("param");
-      return c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getWorkspaceAuth(c))
-        .setSidekickRecommendation(parentId, sidekickId, method === "put", substreamId)));
-    });
-}
-conversationRoutes.get("/:parentId/substreams/:substreamId/sidekicks", zValidator("param", substreamSocketParam), async (c) => {
-  const { parentId, substreamId } = c.req.valid("param");
-  return c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getWorkspaceAuth(c)).sidekickAttachments(parentId, undefined, substreamId)));
-});
-conversationRoutes.delete("/:parentId/substreams/:substreamId/sidekicks/:sidekickId", zValidator("param", substreamSocketParam.extend({ sidekickId: IdSchema })), async (c) => {
-  const { parentId, substreamId, sidekickId } = c.req.valid("param");
-  return c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getWorkspaceAuth(c)).sidekickAttachments(parentId, sidekickId, substreamId)));
-});
 conversationRoutes.post("/:parentId/substreams/prepare", zValidator("param", parentParam), zValidator("json", z.strictObject({
   operationId: IdSchema,
   // Optional because the launch surface has no title field: a substream is
@@ -307,7 +280,7 @@ conversationRoutes.patch("/:parentId/substreams/:substreamId", zValidator("param
  * Move this person's read waterline in one conversation.
  *
  * Substream-addressed because read state is substream-owned: every
- * `SubstreamAgent` keeps its own attention ordinals and its own
+ * `AgentLoopDO` keeps its own attention ordinals and its own
  * `member_attention` row, and a child's ordinals are deliberately not
  * comparable to Main's. Addressing the work stream instead, which is what
  * `PATCH /workstreams/:id/read-state` did, could only ever advance Main, so a

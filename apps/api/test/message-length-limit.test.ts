@@ -3,7 +3,7 @@
  *
  * On 2026-08-24 a pasted meeting-agenda template opened a work stream that never
  * existed. `CreateWorkstreamRequestSchema` took an opening message of 50,000
- * characters; the description derived from it inside the SubstreamAgent was
+ * characters; the description derived from it inside the AgentLoopDO was
  * bounded at 4,000; and a message between the two passed the route, reserved an
  * email address, wrote its D1 rows, and then failed the object's own schema with
  * `invalid_product_request` — which the Worker translated for the person as "The

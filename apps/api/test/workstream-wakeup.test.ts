@@ -615,7 +615,7 @@ describe("wake-up tools", () => {
     // The user principal's own zone wins over the workspace's.
     expect(output.timezone).toBe("America/Los_Angeles");
     expect(String(output.dueAtLocal)).toContain("America/Los_Angeles");
-    // After cutover the timer's owner is the SubstreamAgent whose tool
+    // After cutover the timer's owner is the AgentLoopDO whose tool
     // inserted the row, not the workspace scheduler.
     expect(timerRefreshes).toEqual([WORKSTREAM_ID]);
 

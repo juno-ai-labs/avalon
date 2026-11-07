@@ -9,7 +9,6 @@ export interface SidekickAudienceSubject {
   authorUserId: string;
   /** Null on a directory row that has not been republished since it gained the column. */
   runAsUserId: string | null;
-  owningWorkstreamId: string | null;
 }
 
 export interface SidekickAudience {
@@ -23,8 +22,8 @@ export interface SidekickAudience {
 
 /**
  * A personal Sidekick is offered only where everyone present is its author or
- * whoever it runs as, never in an Organization-wide conversation; a room's own
- * Sidekick only in that room; an Organization Sidekick anywhere.
+ * whoever it runs as, never in an Organization-wide conversation; an
+ * Organization Sidekick anywhere.
  */
 export function sidekickAudienceAllows(sidekick: SidekickAudienceSubject, audience: SidekickAudience): boolean {
   if (sidekick.scope === "personal") {
@@ -33,5 +32,5 @@ export function sidekickAudienceAllows(sidekick: SidekickAudienceSubject, audien
       || audience.audienceScope === "workspace" || audience.audienceUserIds.length === 0
       || audience.audienceUserIds.some((id) => !people.has(id))) return false;
   }
-  return sidekick.scope !== "workstream" || audience.conversationParentId === sidekick.owningWorkstreamId;
+  return true;
 }

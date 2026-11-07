@@ -220,7 +220,7 @@ export async function verifySocketTicket(env: Env, ticket: string): Promise<Sock
       payload.purpose !== "workstream_socket" || typeof payload.sub !== "string" ||
       typeof payload.sid !== "string" ||
       typeof payload.wid !== "string" || typeof payload.wsid !== "string" || typeof payload.ssid !== "string" ||
-      (payload.pk !== "workstream" && payload.pk !== "automation") ||
+      (payload.pk !== "workstream" && payload.pk !== "automation" && payload.pk !== "canvas") ||
       typeof payload.jti !== "string" || typeof payload.exp !== "number" ||
       !isConfiguredRegion(payload.region)
     ) throw new Error("Incomplete socket claims");

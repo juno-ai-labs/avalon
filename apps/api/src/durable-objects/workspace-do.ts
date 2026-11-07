@@ -107,6 +107,7 @@ import {
   WorkspaceSpaceSnapshotEventSchema,
   WorkspaceNavigationStateEventSchema,
   WorkspaceSidebarListEventSchema,
+  WorkspaceCanvasListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceSidebarSchema,
   WorkspaceWorkstreamPageEventSchema,
@@ -130,7 +131,6 @@ import {
   WorkstreamIdSchema,
   WorkstreamSchema,
   type AutomationSummary,
-  type WorkstreamAutomationSummary,
   type WorkspaceSidebar,
   type PersonalOrder,
   type SpaceErrorCode,
@@ -171,7 +171,7 @@ import {
 import { WorkspaceImpersonationStorage } from "./workspace-impersonation-storage";
 import {
   AuthorizationSnapshotSchema, AuthorizationSubjectSchema, AuthorizationResourceSchema,
-  connectionAdmits, owningChannelAdmitsMember, sidekickAdmitsMember,
+  connectionAdmits, sidekickAdmits,
 } from '../services/authorization-policy';
 import { SearchAuthorizationSnapshotSchema, SearchAuthorizationTargetSchema, searchAuthorizationKey, searchDecisionFingerprint } from '../services/search-authorization';
 import { flushAuthorizationDeliveries, type AuthorizationProjectionJob } from './authorization-projection';
@@ -194,6 +194,10 @@ import { MEMORY_SEARCH_KEY_PURGE_MIGRATION, SEARCH_AUTHORIZATION_PUSH_MIGRATION 
 import {
   applyReportedSidekickAttachments,
   automationSummary,
+  AUTOMATION_AUDIENCE_SQL,
+  AUTOMATION_VIEWER_JOINS,
+  SIDEBAR_SIDEKICK_LISTED_SQL,
+  AUTOMATION_VIEWER_SQL,
   bumpChannelRail,
   CHANNEL_RAIL_MIGRATION,
   channelParticipantIds,
@@ -202,12 +206,9 @@ import {
   drainChannelRailChanges,
   mainAttachmentsUnreported,
   mainResourceLinksChanged,
-  ownedAutomationSummaries,
-  owningThreads,
   visibleSpaceChannelIdsAfter,
   type AutomationDirectoryRow,
   type InvalidAppearanceReport,
-  type InvalidThreadAppearanceReport,
 } from './channel-rails';
 import { observeSqlWrites } from './sql-write-observer';
 import { enumerateSearchAuthorizationUniverse, type SearchAuthorizationTarget } from './search-authorization-universe';
@@ -234,7 +235,6 @@ import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observabilit
 import {
   AccessRevocationMessageSchema,
   type AccessRevocationMessage,
-  descendantRevocation,
   publishDescendantRevocations,
   revocationClosesSession,
   SocketAccessRevocationSchema,
@@ -667,9 +667,6 @@ import {
   WorkspaceSpaceSeatInviteeRequestSchema,
   WorkspaceSpaceBootstrapStatusSchema,
   WorkspaceSpaceChannelPageRequestSchema,
-  type WorkspaceSidekickChannelPostRequest,
-  WorkspaceSidekickChannelPostRequestSchema,
-  type WorkspaceSidekickChannelPostResult,
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDirectoryResultSchema,
   WorkspaceSpaceConversationPageRequestSchema,
@@ -1222,14 +1219,15 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
+import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS } from "./canvas-schema";
+import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
+import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   hostedSidekickAlarmTarget,
   skillSource,
   skillSummary,
   type HostedSidekickRow,
-  sidekickReaderAllows,
   type HostedSidekickHost,
 } from "./hosted-sidekick";
 import {
@@ -1285,6 +1283,9 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   // A hosted Sidekick's own rows: `HostedSidekick` is their only writer.
   "sidekick_revisions", "sidekick_schedules", "sidekick_runs", "sidekick_email_receipts",
   "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_reviews",
+  "sidekick_audience", "sidekick_viewer_reads",
+  // A hosted Canvas's own rows: `HostedCanvas` is their only writer.
+  "canvas_directory", "canvas_participants", "canvas_artifacts",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
@@ -2136,7 +2137,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 3,
   description: "drop the two workspace tables no code reads or writes",
   statements: [
-    // As in the SubstreamAgent's migration 11, version 1 still creates these
+    // As in the AgentLoopDO's migration 11, version 1 still creates these
     // and must: its statements are hashed into every deployed object's
     // `_sql_schema_migrations` receipt. `WORKSPACE_FENCED_TABLES` still names
     // `external_delivery_attempts` for the same reason — it feeds v1's
@@ -4849,6 +4850,63 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record when a person became a Channel participant, so Activity tells them only what happened after",
   // See SPACE_VIEWER_JOINED_AT_MIGRATION and docs/digests.md#who-is-told-about-channel-news.
   statements: SPACE_VIEWER_JOINED_AT_MIGRATION,
+}, {
+  version: 135,
+  description: "count each Sidekick run's steps, and arm its row in the Sidekick's shared conversation whenever the run changes",
+  // See SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#runs-in-the-shared-conversation.
+  statements: SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS,
+}, {
+  version: 136,
+  description: "record who a Sidekick is shared with, and what each reader of its shared conversation has read",
+  // See SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#who-a-sidekick-is-shared-with.
+  statements: SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS,
+}, {
+  version: 137,
+  description: "retire the Thread-owned Sidekick scope: every one becomes an Organization Sidekick",
+  // The Canvases and Sidekicks decision: a Thread no longer owns a Sidekick.
+  // The owning columns stay as dead columns (released CHECKs name them), so
+  // the row's home is cleared to satisfy the scope CHECK. A Sidekick a room
+  // archive paused under the old rule is archived, as the current rule would
+  // have left it. See docs/automation-lifecycle.md#creation-and-ownership.
+  statements: [
+    // It bumped only the owning room's rail, and no row has one after this;
+    // dropped first so clearing the home bumps no owning room. The conversion
+    // still bumps the rails of the rooms that recommend or attach a converted
+    // Sidekick, through `channel_rail_sidekick_listed_update`.
+    `DROP TRIGGER IF EXISTS channel_rail_sidekick_owner_update`,
+    // The old rule read a room archive's marker as terminal whatever the
+    // lifecycle, so a draft or active row that carries it is archived too
+    // rather than becoming a live Organization Sidekick.
+    `UPDATE automation_directory SET lifecycle = 'deleted', paused_by = NULL
+      WHERE owning_room_archived_at IS NOT NULL AND lifecycle <> 'deleted'`,
+    `UPDATE automation_directory SET scope = 'workspace', owning_workstream_id = NULL, owning_substream_id = '0'
+      WHERE scope = 'workstream'`,
+  ],
+}, {
+  version: 138,
+  description: "record who started a Sidekick run under their own access",
+  // See SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#who-a-run-acts-as.
+  statements: SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
+}, {
+  version: 139,
+  description: "record each Canvas: its directory row and who besides its creator may open it",
+  // See CANVAS_SCHEMA_STATEMENTS and docs/canvases.md#data-model.
+  statements: CANVAS_SCHEMA_STATEMENTS,
+}, {
+  version: 140,
+  description: "admit a Canvas's Chat among the conversations a Sidekick is attached to",
+  // See SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS and docs/canvases.md#data-model.
+  statements: SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS,
+}, {
+  version: 141,
+  description: "pin a Canvas or a Sidekick in its list's Pinned group",
+  // See CANVAS_SIDEKICK_PINS_STATEMENTS and docs/canvases.md#the-canvas-list.
+  statements: CANVAS_SIDEKICK_PINS_STATEMENTS,
+}, {
+  version: 142,
+  description: "record the artifacts each Canvas's conversation generated",
+  // See CANVAS_ARTIFACTS_STATEMENTS and docs/canvases.md#artifacts-and-versions.
+  statements: CANVAS_ARTIFACTS_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5819,8 +5877,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ...request,
       now: new Date().toISOString(),
     });
-    // Who an operator may act as is their reach too: their Sideline catalog
-    // lists these people. Each operator is told about themselves.
+    // Who an operator may act as is their reach too: a surface that lists the
+    // people they may act as rereads on it. Each operator is told about themselves.
     this.publishReachChanged(new Set(request.relationships.map((relationship) => relationship.impersonatorUserId)));
     return result;
   }
@@ -6009,8 +6067,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       },
       applyLocalEffects: (envelopes) => this.applyLocalEffects(envelopes),
       noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
-      archiveOwnedSidekicks: (workspaceId, parentId, substreamId, archived, now) =>
-        this.archiveOwnedSidekicks(workspaceId, parentId, substreamId, archived, now),
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
       noteRelationship: (relationship) => this.noteRelationship(relationship),
     };
@@ -6300,29 +6356,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * A grant row in the outbox: applied (a replay of the parent's own
    * transaction, answered by its receipt, or a legacy row carried over at
-   * import) and, for a revoked Channel grant, sent on to the Channel's
-   * Sidekick conversations, which sit outside its participant projection.
-   * The Sidekicks the Channel owns are this object's rows, so their
-   * `automation` hops are published directly.
+   * import). A Channel owns no Sidekick, so a revoked grant has no Sidekick
+   * conversation to send on to.
    */
-  private async deliverRevokedGrant(workspaceId: string, envelope: ParentEffectEnvelope): Promise<void> {
+  private async deliverRevokedGrant(_workspaceId: string, envelope: ParentEffectEnvelope): Promise<void> {
     if (envelope.effect.kind !== "scope_grant_directory") return;
     this.state.storage.transactionSync(() => applyScopeGrantDirectory(this.state.storage, envelope));
-    const { grant } = envelope.effect;
-    if (grant.active || grant.target.kind !== "workstream") return;
-    const automationIds = this.automationIdsOwnedBy(grant.target.parentId);
-    if (automationIds.length === 0) return;
-    const revocation: SocketAccessRevocation = {
-      reason: "workstream_participant_removed", workspaceId: asWorkspaceId(workspaceId),
-      userId: grant.userId, sessionId: null,
-      ...(grant.membershipIncarnation ? { membershipIncarnation: grant.membershipIncarnation } : {}),
-    };
-    try {
-      await publishDescendantRevocations(this.env, automationIds.map((automationId) =>
-        descendantRevocation(revocation, { scope: "automation", automationId })));
-    } catch (error) {
-      throw new Error("scope_grant_sidekick_revocation_publish_failed", { cause: error });
-    }
   }
 
   /** Keep a row no attempt can deliver as `failed`, never due again, and say why. */
@@ -6407,13 +6446,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return true;
     }
     if (alarm.kind === SCOPE_INVITATION_INDEX_ALARM) {
-      await (await this.hostedParent(alarm.key)).indexPendingInvitations();
+      const canvas = await this.canvasParent(alarm.key);
+      await (canvas ?? await this.hostedParent(alarm.key)).indexPendingInvitations();
       return true;
     }
     if (alarm.kind === SCOPE_INVITATION_DELIVERY_ALARM) {
       const [parentId, invitationId] = alarm.key.split(":");
       if (!parentId || !invitationId) throw new Error("parent_invitation_delivery_key_invalid");
-      await (await this.hostedParent(parentId)).deliverInvitation(invitationId);
+      const canvas = await this.canvasParent(parentId);
+      await (canvas ?? await this.hostedParent(parentId)).deliverInvitation(invitationId);
       return true;
     }
     return false;
@@ -6433,17 +6474,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     parentId: string;
     viewer?: Omit<Parameters<HostedParent["authorizeViewer"]>[0], "workspaceId" | "parentId">;
   }): Promise<{
-    kind: "workstream" | "space" | "automation" | null;
+    kind: "workstream" | "space" | "automation" | "canvas" | null;
     authority: Awaited<ReturnType<HostedParent["authority"]>>;
     viewer?: Awaited<ReturnType<HostedParent["authorizeViewer"]>>;
   }> {
     const request = z.object({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }).parse(input);
-    const sidekick = await this.sidekickParent(request.parentId, request.workspaceId);
-    if (sidekick) {
-      const authority = sidekick.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
-      if (!input.viewer || !authority.exists) return { kind: authority.exists ? "automation" : null, authority };
-      const viewer = await sidekick.authorizeViewer({ ...input.viewer, workspaceId: request.workspaceId, parentId: request.parentId });
-      return { kind: "automation", authority, viewer };
+    const hosted = await this.hostedConversationParent(request.parentId, request.workspaceId);
+    if (hosted) {
+      const authority = hosted.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
+      if (!input.viewer || !authority.exists) return { kind: authority.exists ? hosted.parentKind : null, authority };
+      const viewer = await hosted.authorizeViewer({ ...input.viewer, workspaceId: request.workspaceId, parentId: request.parentId });
+      return { kind: hosted.parentKind, authority, viewer };
     }
     const parent = await this.hostedParent(request.parentId, request.workspaceId);
     const authority = await parent.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
@@ -6456,20 +6497,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async authority(input: Parameters<HostedParent["authority"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.authority(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.authority(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).authority(input);
   }
 
   async authorizeViewer(input: Parameters<HostedParent["authorizeViewer"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.authorizeViewer(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.authorizeViewer(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).authorizeViewer(input);
   }
 
   async reserveChild(input: Parameters<HostedParent["reserveChild"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.reserveChild(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.reserveChild(input);
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveChild(input));
   }
 
@@ -6490,8 +6531,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async reserveAgentChild(input: Parameters<HostedParent["reserveAgentChild"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.reserveAgentChild(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.reserveAgentChild(input);
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveAgentChild(input));
   }
 
@@ -6505,21 +6546,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async listChildren(input: Parameters<HostedParent["listChildren"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.listChildren(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.listChildren(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).listChildren(input);
   }
 
   async childTerminalDeadlines(input: Parameters<HostedParent["childTerminalDeadlines"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.childTerminalDeadlines(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.childTerminalDeadlines(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).childTerminalDeadlines(input);
   }
 
   /** The children a hosted parent knows, for the retirement walk. */
   async childrenForRetirement(input: { workspaceId: string; parentId: string }) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.childrenForRetirement();
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.childrenForRetirement();
     const parent = await this.hostedParent(input.parentId, input.workspaceId);
     if (!parent.metadataRow()) return { status: "missing" as const };
     return { status: "ok" as const, children: parent.childrenForRetirement() };
@@ -6539,6 +6580,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (envelope.parentKind === "automation") {
       return this.sidekickCall(envelope.parentId, envelope.workspaceId,
         (sidekick) => ({ accepted: sidekick.receiveChildEffects(request) }));
+    }
+    if (envelope.parentKind === "canvas") {
+      const canvas = await this.hostedCanvas(envelope.parentId, envelope.workspaceId);
+      return this.canvasWrite(() => ({ accepted: canvas.receiveChildEffects(request) }));
     }
     if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") {
       throw new Error("conversation_effect_parent_kind_unhosted");
@@ -6564,9 +6609,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async listAuthorizationChildren(input: Parameters<HostedParent["listAuthorizationChildren"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) {
-      return sidekick.authorizationDiscoveryChildren({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.parentId });
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) {
+      return hosted.authorizationDiscoveryChildren({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.parentId });
     }
     return (await this.hostedParent(input.parentId, input.workspaceId)).listAuthorizationChildren(input);
   }
@@ -6582,6 +6627,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return sidekick.readAuthorizationFacts(input);
   }
 
+  /**
+   * A hosted conversation's authorization facts, a Sidekick's or a Canvas's,
+   * each tagged by kind, in one call; `exists: false` when the id is neither.
+   */
+  async hostedConversationAuthorizationFacts(input: Parameters<HostedSidekick["readAuthorizationFacts"]>[0]) {
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted instanceof HostedCanvas) return { kind: "canvas" as const, ...await hosted.readAuthorizationFacts(input) };
+    if (hosted instanceof HostedSidekick) return { kind: "automation" as const, ...hosted.readAuthorizationFacts(input) };
+    return { kind: null, exists: false as const, validatedAt: Date.now() };
+  }
+
+  /** The hosted conversation an id names, a Sidekick or a Canvas; `null` for anything else. */
+  private async hostedConversationParent(parentId: string, workspaceId?: string): Promise<HostedSidekick | HostedCanvas | null> {
+    return await this.sidekickParent(parentId, workspaceId) ?? await this.canvasParent(parentId, workspaceId);
+  }
+
   // ---------------------------------------------------------------------------
   // Hosted Sidekicks. `HostedSidekick` is the Sidekick's parent; these lend it
   // this object's storage and the Organization facts it reads. See
@@ -6590,6 +6651,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /** Set by a hosted Sidekick write that moved a directory row; the sidebar list is published after it. */
   private sidekickDirectoryMoved = false;
+  /** Readers whose read of a Sidekick's shared conversation moved; see `publishSidekickList`. */
+  private readonly sidekickReadersMoved = new Set<string>();
 
   private queueSidekickSourcesForUsers(userIds: readonly string[]): boolean {
     if (userIds.length === 0) return false;
@@ -6603,6 +6666,247 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const host = this.hostedSidekickHost();
     for (const target of targets) new HostedSidekick(host, target.automation_id).scheduleSourceReconciliation();
     return targets.length > 0;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hosted Canvases. `HostedCanvas` is a Canvas's parent; these lend it this
+  // object's storage and relationships. See docs/canvases.md.
+  // ---------------------------------------------------------------------------
+
+  /** Set by a hosted Canvas write that moved a directory row; the Canvas list is published after it. */
+  private canvasDirectoryMoved = false;
+  /** Readers whose read of a Canvas's Chat moved; see `publishCanvasList`. */
+  private readonly canvasReadersMoved = new Set<string>();
+
+  /** Whether an id names a Canvas: its directory row. Asked before the Channel fallback. */
+  private isCanvasParent(parentId: string): boolean {
+    return this.state.storage.sql.exec(
+      `SELECT 1 FROM canvas_directory WHERE canvas_id = ? LIMIT 1`, parentId,
+    ).toArray().length > 0;
+  }
+
+  private hostedCanvasHost(): HostedCanvasHost {
+    return {
+      env: this.env,
+      storage: this.state.storage,
+      readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
+      noteRelationship: (relationship) => this.noteRelationship(relationship),
+      noteCanvasReadChanged: (userId) => {
+        this.state.storage.sql.exec(
+          `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'canvases'`,
+        );
+        this.canvasReadersMoved.add(userId);
+      },
+      noteCanvasDirectoryChanged: () => this.noteCanvasDirectoryMoved(),
+    };
+  }
+
+  /**
+   * Every viewer's Canvas list moved: a row, its participants, or who is in
+   * one. The waterline advances, since a client applies only a newer one.
+   */
+  private noteCanvasDirectoryMoved(): void {
+    this.state.storage.sql.exec(
+      `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'canvases'`,
+    );
+    this.canvasDirectoryMoved = true;
+  }
+
+  /** The hosted parent for a Canvas id; `null` for an id that names no Canvas. */
+  private async canvasParent(parentId: string, workspaceId?: string): Promise<HostedCanvas | null> {
+    await this.initialized;
+    if (!this.isCanvasParent(parentId)) return null;
+    if (workspaceId !== undefined) await this.ensureParentWorkspace(workspaceId);
+    return new HostedCanvas(this.hostedCanvasHost(), parentId);
+  }
+
+  /** A Canvas for a method that may also create it. */
+  private async hostedCanvas(canvasId: string, workspaceId: string): Promise<HostedCanvas> {
+    await this.initialized;
+    await this.ensureParentWorkspace(workspaceId);
+    return new HostedCanvas(this.hostedCanvasHost(), canvasId);
+  }
+
+  /** Run a hosted Canvas write, then publish what it moved and arm what it scheduled. */
+  private async canvasWrite<T>(run: () => Promise<T> | T): Promise<T> {
+    try {
+      return await run();
+    } finally {
+      this.publishCanvasList();
+      await this.afterParentWrite();
+    }
+  }
+
+  /** Create a Canvas's directory row; see `HostedCanvas.create`. */
+  async canvasCreate(input: Parameters<HostedCanvas["create"]>[0]) {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    return this.canvasWrite(() => canvas.create(input));
+  }
+
+  /** A Canvas as one reader sees it; see `HostedCanvas.detail`. */
+  async canvasDetail(input: Parameters<HostedCanvas["detail"]>[0]) {
+    return (await this.hostedCanvas(input.canvasId, input.workspaceId)).detail(input);
+  }
+
+  /** Record an artifact a publish attached to a Canvas; `noted: false` for an id that is no Canvas. See `HostedCanvas.noteArtifact`. */
+  async canvasNoteArtifact(input: Parameters<HostedCanvas["noteArtifact"]>[0]) {
+    const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
+    if (!canvas) return { noted: false };
+    return this.canvasWrite(() => canvas.noteArtifact(input));
+  }
+
+  /**
+   * Which Canvas a Sidekick run publishes into: the one named, which must be
+   * one this Sidekick writes, or the one this run already made; `null` when
+   * the run has made none yet, and its caller creates it.
+   */
+  async canvasForSidekickRun(input: { workspaceId: string; sidekickId: string; runId: string; canvasId: string | null }): Promise<{ canvasId: string | null }> {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    if (input.canvasId !== null) {
+      const row = this.state.storage.sql.exec<{ writer_sidekick_id: string | null }>(
+        `SELECT writer_sidekick_id FROM canvas_directory WHERE canvas_id = ? AND workspace_id = ?`, input.canvasId, input.workspaceId,
+      ).toArray()[0];
+      if (row?.writer_sidekick_id !== input.sidekickId) {
+        throw new ApiError(404, "canvas_not_written_by_sidekick", "This Sidekick does not write that Canvas");
+      }
+      return { canvasId: input.canvasId };
+    }
+    return { canvasId: this.state.storage.sql.exec<{ canvas_id: string }>(
+      `SELECT canvas_id FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`, input.sidekickId, input.runId,
+    ).toArray()[0]?.canvas_id ?? null };
+  }
+
+  /** The Canvases a Sidekick writes that this viewer may open; see `canvasesWrittenBy`. */
+  async canvasesWrittenBySidekick(input: { workspaceId: string; sidekickId: string; actor: { userId: string; actorRole: "owner" | "admin" | "member" | null } }) {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    return canvasesWrittenBy(this.state.storage.sql, input.sidekickId, input.actor);
+  }
+
+  /**
+   * What Rally is told about the Canvas whose Chat it answers in: its title
+   * and its artifacts at their current versions. A host read for a run the
+   * conversation already admitted, so it names no viewer; `null` for an id
+   * that is no Canvas.
+   */
+  async canvasContext(input: { workspaceId: string; canvasId: string }) {
+    const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
+    const row = canvas?.row();
+    if (!canvas || !row || row.workspace_id !== input.workspaceId) return null;
+    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.artifacts() };
+  }
+
+  /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */
+  async canvasSetAudience(input: Parameters<HostedCanvas["setAudience"]>[0]) {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    return this.canvasWrite(() => canvas.setAudience(input));
+  }
+
+  /**
+   * Send the Canvas list what moved since it was last sent: every socket for
+   * a change to a Canvas's row or who is in one, or only the sockets of the
+   * people whose read of a Chat moved. Read per socket, because the list is
+   * scoped to what its viewer may open.
+   */
+  private publishCanvasList(): void {
+    const everyone = this.canvasDirectoryMoved;
+    const readers = new Set(this.canvasReadersMoved);
+    this.canvasDirectoryMoved = false;
+    this.canvasReadersMoved.clear();
+    if (!everyone && readers.size === 0) return;
+    const occurredAt = new Date().toISOString();
+    const waterline = this.canvasListWaterline();
+    const present = this.presentByCanvas();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed || (!everyone && !readers.has(attachment.userId))) continue;
+      try {
+        socket.send(JSON.stringify(WorkspaceCanvasListEventSchema.parse({
+          type: "workspace_canvas_list", occurredAt, waterline, items: this.canvasList(attachment, present),
+        })));
+      } catch {
+        // A reconnect receives the whole list in the subscribe payload.
+      }
+    }
+  }
+
+  private canvasListWaterline(): number {
+    return this.state.storage.sql.exec<{ waterline: number }>(
+      `SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'canvases'`,
+    ).toArray()[0]?.waterline ?? 0;
+  }
+
+  /** One socket's Canvas list; see `canvasSidebarRows`. */
+  private canvasList(attachment: WorkspaceSocketAttachment, present = this.presentByCanvas()) {
+    return canvasSidebarRows(this.state.storage.sql,
+      { userId: attachment.userId, member: viewerOf(attachment).accessClass === "member" }, present, SIDEBAR_LIST_LIMIT);
+  }
+
+  /** Who is in each Canvas now: the people whose foreground socket has it open. */
+  private presentByCanvas(): Map<string, string[]> {
+    const present = new Map<string, Set<string>>();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!contributesPresence(attachment) || !this.isCanvasParent(attachment.foregroundWorkstreamId)) continue;
+      const users = present.get(attachment.foregroundWorkstreamId) ?? new Set<string>();
+      users.add(attachment.userId);
+      present.set(attachment.foregroundWorkstreamId, users);
+    }
+    return new Map([...present].map(([canvasId, users]) => [canvasId, [...users].sort()]));
+  }
+
+  /** The Canvas presence last published, so a presence change that moves no Canvas sends no list. */
+  private lastCanvasPresence = "[]";
+
+  /** A Canvas the viewer may open is visible to presence, as a listed Channel is; `null` for an id that is no Canvas. */
+  private canvasVisible(viewer: Viewer, canvasId: string): boolean | null {
+    const row = this.state.storage.sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, canvasId).toArray()[0];
+    if (!row) return null;
+    return canvasReaderAllows(row, { userId: viewer.userId, actorRole: viewer.accessClass === "member" ? "member" : null },
+      this.state.storage.sql);
+  }
+
+  /**
+   * Pin or unpin a Canvas or a Sidekick in the viewer's Pinned group of that
+   * list, or put that group in an order. The item must be one the viewer may
+   * open; the change goes out as that list's rows, to that viewer.
+   */
+  async setSidebarPin(input: {
+    workspaceId: string; userId: string; accessClass: "member" | "guest";
+    kind: "canvas" | "sidekick"; itemId: string; pinned: boolean;
+  }): Promise<{ ok: boolean }> {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    const viewer: Viewer = { userId: input.userId, accessClass: input.accessClass };
+    const visible = input.kind === "canvas"
+      ? this.canvasVisible(viewer, input.itemId) === true
+      : this.sidekickListed(input.workspaceId, input.userId, input.itemId);
+    if (input.pinned && !visible) return { ok: false };
+    const pins = new WorkspacePinStorage(this.state.storage);
+    const now = Date.now();
+    const changed = input.pinned ? pins.pin(input.userId, input.kind, input.itemId, null, now) : pins.unpin(input.userId, input.kind, input.itemId);
+    if (changed) this.publishPinnedList(input.kind, input.userId);
+    return { ok: true };
+  }
+
+  async reorderSidebarPins(input: { workspaceId: string; userId: string; kind: "canvas" | "sidekick"; itemIds: string[] }): Promise<void> {
+    await this.initialized;
+    this.assertWorkspace(input.workspaceId);
+    new WorkspacePinStorage(this.state.storage).reorder(input.userId, input.kind, input.itemIds, Date.now());
+    this.publishPinnedList(input.kind, input.userId);
+  }
+
+  /** A pin is one viewer's: only their list moves, at a new waterline. */
+  private publishPinnedList(kind: "canvas" | "sidekick", userId: string): void {
+    this.state.storage.sql.exec(`UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = ?`,
+      kind === "canvas" ? "canvases" : "automations");
+    if (kind === "canvas") {
+      this.canvasReadersMoved.add(userId);
+      this.publishCanvasList();
+    } else {
+      this.publishSidebarList("automations", new Set([userId]));
+    }
   }
 
   /**
@@ -6637,21 +6941,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.sidekickDirectoryMoved = true;
         this.noteSidekickActivityChanged(this.workspaceId()!);
       },
-      noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
-      channelColor: (workstreamId) => this.spaceStorage().channelColor(workstreamId),
-      isChannelParticipant: async (workstreamId, userId) => {
-        await this.readRelationship(this.workspaceId()!, userId);
-        return this.isWorkstreamParticipant(workstreamId, userId);
+      noteViewerReadChanged: (userId) => {
+        // The waterline is the list's, so it moves; only this reader is sent it.
+        this.state.storage.sql.exec(
+          `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`,
+        );
+        this.sidekickReadersMoved.add(userId);
       },
-      // A Sidekick's home is a Channel or one of its Breakouts, never another
-      // Sidekick, so this asks the hosted Channel parent directly.
-      channelViewer: async (input) => (await this.hostedParent(input.parentId, input.workspaceId)).authorizeViewer({
-        workspaceId: asWorkspaceId(input.workspaceId),
-        parentId: input.parentId,
-        substreamId: asSubstreamId(input.substreamId),
-        userId: asUserId(input.userId),
-        ...(input.requireGrantAuthority ? { requireGrantAuthority: true } : {}),
-      }),
+      noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
       readManagementAccess: async (input) => {
         const access = await this.readManagementAccess(input);
         return { allowed: access.allowed, writable: access.allowed ? access.writable : false };
@@ -6667,22 +6964,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           kind: "sidekick_review", region: this.env.AVALON_REGION, ...message,
         }));
       },
-      announcementSpaceId: (row) => this.sidekickAnnouncementSpaceId(row),
     };
-  }
-
-  /**
-   * The Channel a Sidekick's review announces a change in, for a Sidekick no
-   * room owns: General for an Organization's, or its author's Personal
-   * Channel when General is archived or absent; the author's Personal Channel
-   * for a personal one. A room's Sidekick announces in its home, which the
-   * conversation scope names, so it is null here. Null too before the
-   * Organization's Spaces are open or the Channel exists.
-   */
-  private sidekickAnnouncementSpaceId(row: { scope: string; author_user_id: string }): string | null {
-    if (row.scope === "workstream") return null;
-    const spaces = this.spaceStorage();
-    return (row.scope === "workspace" ? spaces.liveGeneralSpaceId() : null) ?? spaces.personalSpaceId(row.author_user_id);
   }
 
   /** The hosted parent for a Sidekick id; `null` for an id that names no Sidekick. */
@@ -6769,10 +7051,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     try {
       return await run(sidekick);
     } finally {
-      if (this.sidekickDirectoryMoved) {
-        this.sidekickDirectoryMoved = false;
-        this.publishSidebarList("automations");
-      }
+      this.publishSidekickList();
       await this.afterParentWrite();
     }
   }
@@ -6808,9 +7087,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          UNION ALL
          SELECT sidekick_id, 1, ROW_NUMBER() OVER (ORDER BY attached_at, sidekick_id)
            FROM parent_sidekicks WHERE ?2 IS NOT NULL AND parent_id = ?2
-         UNION ALL
-         SELECT automation_id, 2, ROW_NUMBER() OVER (ORDER BY automation_id)
-           FROM automation_directory WHERE ?2 IS NOT NULL AND owning_workstream_id = ?2 AND lifecycle <> 'deleted'
          UNION ALL
          SELECT automation_id, 3, ROW_NUMBER() OVER (ORDER BY automation_id)
            FROM automation_directory WHERE ?3 = 1 AND workspace_id = ?4 AND lifecycle = 'active' AND loadable = 1
@@ -6904,12 +7180,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.reconcileLoadable(input));
   }
 
-  async sidekickReadDetail(input: Parameters<HostedSidekick["readDetail"]>[0]) {
-    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readDetail(input));
+  async sidekickReadDetail(input: Parameters<HostedSidekick["readDetail"]>[0]): Promise<AutomationDetail> {
+    const detail = await this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.readDetail(input));
+    // "The Canvases it writes to": a query on the Canvas directory, in the same call.
+    return { ...detail, canvases: canvasesWrittenBy(this.state.storage.sql, input.automationId,
+      { userId: input.actor.userId, actorRole: input.actor.actorRole ?? null }) };
   }
 
   async sidekickSetAppearance(input: Parameters<HostedSidekick["setAppearance"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setAppearance(input));
+  }
+
+  async sidekickSetAudience(input: Parameters<HostedSidekick["setAudience"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.setAudience(input));
   }
 
   async sidekickPause(input: Parameters<HostedSidekick["pause"]>[0]) {
@@ -6930,6 +7213,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async sidekickRunSeeded(input: Parameters<HostedSidekick["runSeeded"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runSeeded(input));
+  }
+
+  /** Rebuild a Sidekick's run rows in its shared conversation from its runs; see `HostedSidekick.replayRunRows`. */
+  async sidekickReplayRunRows(input: Parameters<HostedSidekick["replayRunRows"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.replayRunRows(input));
+  }
+
+  /** Who answers a message in a Sidekick's shared conversation; see `HostedSidekick.admitConversationMessage`. */
+  async sidekickAdmitConversationMessage(input: Parameters<HostedSidekick["admitConversationMessage"]>[0]) {
+    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.admitConversationMessage(input));
+  }
+
+  /** Whether a person manages a Sidekick; see `HostedSidekick.allowsManager`. */
+  async sidekickAllowsManager(input: Parameters<HostedSidekick["allowsManager"]>[0]) {
+    return this.sidekickRead(input.automationId, input.workspaceId, (sidekick) => sidekick.allowsManager(input));
   }
 
   async sidekickListRuns(input: Parameters<HostedSidekick["listRuns"]>[0]) {
@@ -7076,8 +7374,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** The detail of each selected Sidekick, for an actor who may read every one of them. */
   async sidekickReadDetails(input: SidekickBatchDetailRequest): Promise<AutomationDetail[]> {
     await this.initialized;
-    const { automationIds, channelOwnedBy, ...request } = SidekickBatchDetailRequestSchema.parse(input);
-    const ids = [...new Set([...(automationIds ?? []), ...(channelOwnedBy === undefined ? [] : this.automationIdsOwnedBy(channelOwnedBy))])];
+    const { automationIds, ...request } = SidekickBatchDetailRequestSchema.parse(input);
+    const ids = [...new Set(automationIds ?? [])];
     await this.ensureParentWorkspace(request.workspaceId);
     const host = this.hostedSidekickHost();
     const details: AutomationDetail[] = [];
@@ -7133,14 +7431,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async createScopeInvitations(input: Parameters<HostedParent["createScopeInvitations"]>[0]) {
+    const canvas = await this.canvasParent(input.parentId, input.workspaceId);
+    if (canvas) return this.canvasWrite(() => canvas.createInvitations(input));
     return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).createScopeInvitations(input));
   }
 
+  /** A sign-in's claim of the shares addressed to it, for a Canvas as for a Channel. */
   async claimScopeInvitations(input: Parameters<HostedParent["claimScopeInvitations"]>[0]) {
+    const canvas = await this.canvasParent(input.parentId, input.workspaceId);
+    if (canvas) return this.canvasWrite(() => canvas.claimInvitations(input));
     return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).claimScopeInvitations(input));
   }
 
   async revokeScopeInvitation(input: Parameters<HostedParent["revokeScopeInvitation"]>[0]) {
+    const canvas = await this.canvasParent(input.parentId, input.workspaceId);
+    if (canvas) return this.canvasWrite(() => canvas.revokeInvitation(input));
     return (await this.channelParent(input.parentId, input.workspaceId)).revokeScopeInvitation(input);
   }
 
@@ -7288,7 +7593,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async revokeNarrowedAudienceAccess(input: Parameters<HostedParent["revokeNarrowedAudienceAccess"]>[0]): Promise<{
     closedUserIds: string[];
     substreams: { userId: string; substreamIds: string[] }[];
-    automationIds: string[];
   }> {
     const parent = await this.hostedParent(input.parentId, input.workspaceId);
     const { closedUserIds } = await parent.revokeNarrowedAudienceAccess(input);
@@ -7299,11 +7603,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       });
       substreams.push({ userId, substreamIds });
     }
-    return {
-      closedUserIds,
-      substreams,
-      automationIds: closedUserIds.length ? this.automationIdsOwnedBy(input.parentId) : [],
-    };
+    // A Channel owns no Sidekick, so closing it closes none.
+    return { closedUserIds, substreams };
   }
 
   /** The `workstream` revocation hop: close this Channel's control sockets and name its conversations. */
@@ -7803,15 +8104,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
   }
 
-  /** A Thread whose stored appearance no longer parses is named on its Sidekicks without one. */
-  private invalidThreadAppearanceReporter(workspaceId: string): InvalidThreadAppearanceReport {
-    return (workstreamId, code) => logWarn(this.env, "owning_thread_appearance_invalid", {
-      workspace_id: workspaceId,
-      workstream_id: workstreamId,
-      code,
-    });
-  }
-
   /** A Sidekick directory row whose stored appearance no longer parses is listed without one. */
   private invalidAppearanceReporter(workspaceId: string): InvalidAppearanceReport {
     return (automationId, code) => logWarn(this.env, "automation_directory_appearance_invalid", {
@@ -7862,6 +8154,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Main and record when they opened it.
    */
   private recordChannelOpened(attachment: WorkspaceSocketAttachment, workstreamId: string): void {
+    // A Canvas foregrounded wakes its Chat, as a Channel's Main is woken; it
+    // has no Thread recency row to record or send.
+    if (this.isCanvasParent(workstreamId)) {
+      this.wakeMainConversation(workstreamId);
+      return;
+    }
     const now = Date.now();
     // Opening a Channel is the moment its Main is about to be read. The
     // Channel control socket used to start this wake; a desktop that no
@@ -7987,6 +8285,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     for (const { attachment, workstreamId } of opened) this.recordChannelOpened(attachment, workstreamId);
+    // Who is in each Canvas rides the Canvas list's rows; send it when that moved.
+    const canvasPresence = JSON.stringify([...this.presentByCanvas()]);
+    if (canvasPresence !== this.lastCanvasPresence) {
+      this.lastCanvasPresence = canvasPresence;
+      this.noteCanvasDirectoryMoved();
+      this.publishCanvasList();
+    }
   }
 
   /**
@@ -8421,10 +8726,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           try {
             return await sidekick.runAlarm(alarm, sidekickTarget.key);
           } finally {
-            if (this.sidekickDirectoryMoved) {
-              this.sidekickDirectoryMoved = false;
-              this.publishSidebarList("automations");
-            }
+            this.publishSidekickList();
           }
         }
         if (await this.runHostedParentAlarm(alarm)) return;
@@ -8973,32 +9275,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * the revocation transport reaches inside the object.
    */
   /**
-   * The automations a work stream owns, for the revocation walk.
-   *
-   * A room-owned automation admits the room's participants, and removing one
-   * of them is a write the room makes locally, which no membership revocation
-   * follows. The room's writer publishes a `workstream_automations` hop, and
-   * this is how the consumer turns it into one `automation` hop per owned
-   * automation; unlike `listWorkstreamAutomations` it asks nothing about the
-   * caller, since the consumer is not a participant of anything.
-   */
-  async automationIdsOwnedByWorkstream(input: unknown): Promise<{ automationIds: string[] }> {
-    await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, workstreamId: IdSchema }).parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return { automationIds: this.automationIdsOwnedBy(request.workstreamId) };
-  }
-
-  /** The live Sidekicks a Channel owns, each an `automation` revocation hop. */
-  private automationIdsOwnedBy(workstreamId: string): string[] {
-    return this.state.storage.sql.exec<{ automation_id: string }>(
-      `SELECT automation_id FROM automation_directory
-        WHERE owning_workstream_id = ? AND lifecycle <> 'deleted' ORDER BY automation_id`,
-      workstreamId,
-    ).toArray().map((row) => row.automation_id);
-  }
-
-  /**
    * The `workstream` hop for every hosted Channel a person could hold a socket
    * on, run here in the same call as the workspace hop.
    *
@@ -9315,19 +9591,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return null;
   }
 
-  /** Which room owns an automation, and which of its conversations is home, for a caller resolving participation. */
-  async automationOwner(input: unknown): Promise<{ owningWorkstreamId: string | null; owningSubstreamId: string }> {
-    await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, automationId: IdSchema }).parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const row = this.state.storage.sql.exec<{ owning_workstream_id: string | null; owning_substream_id: string }>(
-      `SELECT owning_workstream_id, owning_substream_id FROM automation_directory
-        WHERE automation_id = ? AND lifecycle <> 'deleted'`,
-      request.automationId,
-    ).toArray()[0];
-    return { owningWorkstreamId: row?.owning_workstream_id ?? null, owningSubstreamId: row?.owning_substream_id ?? "0" };
-  }
-
   // ---------------------------------------------------------------------------
   // The conversation tools' scope: `rally:conversations` asks here, in one call
   // per tool call, which conversations a loop may reach and whether its acting
@@ -9365,21 +9628,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const viewer = await this.spaceReader(workspaceId, userId);
     if (!viewer) return [];
     const spaces = this.spaceStorage();
-    if (scope.kind === "sidekick") {
-      // The one Channel a Sidekick's review announces a change in, listed for
-      // the authoring conversation so the wizard can name it, and for no run:
-      // a run acts on its trigger's content, and a Channel's feed is not its
-      // audience. The feed read and the post admit the person again.
-      if (!scope.authoring) return [];
-      const row = this.state.storage.sql.exec<{ scope: string; author_user_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT scope, author_user_id FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
-        scope.automationId,
-      ).toArray()[0];
-      const spaceId = row ? this.sidekickAnnouncementSpaceId(row) : null;
-      const space = spaceId ? spaces.readable(viewer, spaceId) : false;
-      return space && spaceId ? [conversationToolEntry({ conversationId: spaceId, parentId: spaceId, substreamId: "0",
-        kind: "space", title: space.name, isHome: false, isOwn: false, isParent: false })] : [];
-    }
+    // A Sidekick reaches no Channel: it announces in its own conversation.
+    if (scope.kind === "sidekick") return [];
     return spaces.channelSpaceIds(viewer, scope.parentId).flatMap((spaceId) => {
       const space = spaces.readable(viewer, spaceId);
       return space ? [conversationToolEntry({ conversationId: spaceId, parentId: spaceId, substreamId: "0",
@@ -9394,7 +9644,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * relationship, each through its `admissionAddress`. Asked once per Channel,
    * inside this object.
    */
-  private async reachableConversations<T extends { parentId: string; substreamId: string; readable: boolean; archived: boolean }>(
+  private async reachableConversations<T extends {
+    parentKind?: string; parentId: string; substreamId: string; readable: boolean; archived: boolean;
+  }>(
     workspaceId: string,
     scope: ConversationToolScope,
     scoped: readonly T[],
@@ -9403,12 +9655,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const relationship = await this.readRelationship(workspaceId, userId);
     if (relationship?.status !== "active") return [];
     const unarchived = scoped.filter((conversation) => !conversation.archived);
-    if (!this.hostedParentSchemaPresent()) return [];
+    // A Sidekick's own conversation is the Sidekick's to admit, never a
+    // Channel's: asking `hostedParent` about its id would open a Channel there.
+    const sidekickReadable = new Set<string>();
+    for (const conversation of unarchived) {
+      if (conversation.parentKind !== "automation") continue;
+      const admission = await this.conversationToolAdmission(workspaceId, conversation, userId, relationship);
+      if (admission.authorized && !admission.archived) sidekickReadable.add(conversation.parentId);
+    }
+    if (!this.hostedParentSchemaPresent()) {
+      return unarchived.filter((conversation) => conversation.parentKind === "automation"
+        && sidekickReadable.has(conversation.parentId));
+    }
     const readable = new Map<string, ReadonlySet<string>>();
-    for (const parentId of new Set(unarchived.map((conversation) => conversation.parentId))) {
+    for (const parentId of new Set(unarchived.flatMap((conversation) =>
+      conversation.parentKind === "automation" ? [] : [conversation.parentId]))) {
       readable.set(parentId, new Set((await this.hostedParent(parentId)).readableSubstreams(asUserId(userId), relationship)));
     }
     return unarchived.filter((conversation) => {
+      if (conversation.parentKind === "automation") return sidekickReadable.has(conversation.parentId);
       const admitted = admissionAddress(scope, conversation);
       return readable.get(admitted.parentId)?.has(admitted.substreamId) === true;
     });
@@ -9424,8 +9689,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     workspaceId: string,
     address: { parentId: string; substreamId: string },
     userId: string,
+    /** The person's relationship when the caller already read it. */
+    known?: WorkspaceRelationship | null,
   ): Promise<{ authorized: boolean; archived: boolean }> {
-    const relationship = await this.readRelationship(workspaceId, userId);
+    const relationship = known ?? await this.readRelationship(workspaceId, userId);
     if (relationship?.status !== "active") return { authorized: false, archived: false };
     return this.authorizeViewer({
       workspaceId: asWorkspaceId(workspaceId),
@@ -9607,22 +9874,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.assertWorkspace(request.workspaceId);
     const candidates = this.state.storage.sql.exec<AutomationDirectoryRow & {
       author_user_id: string; run_as_user_id: string | null; owning_substream_id: string; workspace_id: string; last_run_at: number | null;
+      shared_count: number; shared: number;
     }>(
-      `SELECT directory.*,
+      `SELECT directory.*, ${AUTOMATION_AUDIENCE_SQL},
+              EXISTS (SELECT 1 FROM sidekick_audience audience
+                       WHERE audience.sidekick_id = directory.automation_id AND audience.user_id = ?2) AS shared,
               (SELECT MAX(created_at) FROM sidekick_runs WHERE sidekick_id = directory.automation_id) AS last_run_at
-         FROM automation_directory directory WHERE workspace_id = ? AND lifecycle <> 'deleted'
-        ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId,
+         FROM automation_directory directory WHERE workspace_id = ?1 AND lifecycle <> 'deleted'
+        ORDER BY title COLLATE NOCASE, automation_id`, request.workspaceId, request.userId,
     ).toArray();
     // The management read rule (`sidekickReaderAllows`), the same one the
     // detail screen applies: a guest is not listed Organization-scope
-    // Sidekicks, a Breakout-homed one is listed to that Breakout's members,
-    // and a personal one to the person it runs as.
+    // Sidekicks, and a personal one is listed to its author, the person it
+    // runs as and the people it is shared with.
     // The role decides Organization-scope rows only, so it is read at most
     // once and only when such a row is not already the person's own.
     let actorRole: "owner" | "admin" | "member" | null | undefined = request.accessClass === undefined
       ? undefined
       : request.accessClass === "guest" ? null : request.role ?? null;
-    const host = this.hostedSidekickHost();
     const admitted: typeof candidates = [];
     for (const row of candidates) {
       const own = row.author_user_id === request.userId || row.run_as_user_id === request.userId;
@@ -9630,57 +9899,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         const relationship = await this.readRelationship(request.workspaceId, request.userId);
         actorRole = relationship?.accessClass === "guest" ? null : relationship?.role ?? null;
       }
-      const actor = { userId: request.userId, actorRole: actorRole ?? null };
-      // A Main-homed Channel Sidekick asks `isWorkstreamParticipant`, a local
-      // read; only a Breakout-homed one asks the Breakout's viewer rule.
-      if (await sidekickReaderAllows({ ...row, run_as_user_id: row.run_as_user_id ?? null }, actor, host)) {
+      // `sidekickReaderAllows`' rule, with the list membership read above.
+      if (sidekickAdmits({ scope: row.scope, author: row.author_user_id === request.userId,
+        executor: row.run_as_user_id === request.userId, shared: row.shared === 1 }, (actorRole ?? null) !== null)) {
         admitted.push(row);
       }
     }
-    // Each Thread-owned row names its Thread to a reader who is in it, in one
-    // read for the whole list. An author who has left the Thread still reads
-    // the Sidekick, and sees "Thread" rather than the name of a room they are
-    // no longer in.
-    const threadIds = admitted.flatMap((row) => row.scope === "workstream" && row.owning_workstream_id !== null
-      && this.isWorkstreamParticipant(row.owning_workstream_id, request.userId) ? [row.owning_workstream_id] : []);
-    const threads = owningThreads(this.state.storage.sql, threadIds, this.invalidThreadAppearanceReporter(request.workspaceId));
     const report = this.invalidAppearanceReporter(request.workspaceId);
-    return {
-      items: admitted.map((row) => automationSummary(row, report,
-        row.owning_workstream_id === null ? null : threads.get(row.owning_workstream_id) ?? null)),
-    };
-  }
-
-  /**
-   * The automations one work stream owns, for that work stream's rail.
-   *
-   * The counterpart to the sidebar's list, which excludes exactly these rows.
-   * A room's automation is managed by the room's participants, so the gate is
-   * participation rather than authorship: the person who created it may be
-   * gone, and the automation is still theirs to pause. Participation, not
-   * listability: a workspace-scoped room is listable to every member, and
-   * gating on that would hand its automations to people who are not in it.
-   */
-  async listWorkstreamAutomations(input: unknown): Promise<{ items: WorkstreamAutomationSummary[] }> {
-    await this.initialized;
-    const request = z.strictObject({
-      workspaceId: WorkspaceIdSchema,
-      workstreamId: IdSchema,
-      userId: UserIdSchema,
-    }).parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's Sidekicks");
-    }
-    // An archived room's rail still renders. Its participants may read the
-    // owned list, which omits Sidekicks archived with the room.
-    if (!this.isWorkstreamParticipant(request.workstreamId, request.userId, { includeArchived: true })) {
-      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's Sidekicks");
-    }
-    return {
-      items: ownedAutomationSummaries(this.state.storage.sql, [request.workstreamId],
-        this.invalidAppearanceReporter(request.workspaceId)).get(request.workstreamId) ?? [],
-    };
+    return { items: admitted.map((row) => automationSummary(row, report)) };
   }
 
   /**
@@ -10650,32 +10876,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * first): the threads this viewer may open, each whole. One they may not open
    * is not on the page at all.
    */
-  /**
-   * A Sidekick's review announcing a change in the Channel it announces in,
-   * as a message from Rally that opens with the Sidekick's name. Only that
-   * Channel, and only for a person who can read it: the wizard's
-   * `conversation_post` reaches here when its target is a Channel.
-   */
-  async postSidekickChannelMessage(input: WorkspaceSidekickChannelPostRequest): Promise<WorkspaceSidekickChannelPostResult> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSidekickChannelPostRequestSchema, input, "post_sidekick_channel_message");
-    this.assertWorkspace(request.workspaceId);
-    const viewer = await this.spaceReader(request.workspaceId, request.userId);
-    if (!viewer) return { ok: false, code: "space_access_denied" };
-    const row = this.state.storage.sql.exec<{ scope: string; author_user_id: string; title: string } & Record<string, SqlStorageValue>>(
-      `SELECT scope, author_user_id, title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
-      request.automationId,
-    ).toArray()[0];
-    const spaces = this.spaceStorage();
-    if (!row || this.sidekickAnnouncementSpaceId(row) !== request.spaceId) return { ok: false, code: "space_not_found" };
-    if (!spaces.readable(viewer, request.spaceId)) return { ok: false, code: "space_access_denied" };
-    const posted = spaces.postMessage(request.spaceId, {
-      author: { kind: "rally" }, body: `**${row.title}**\n\n${request.text}`, key: request.key,
-    }, Date.now());
-    if (!posted.replayed) this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
-    return { ok: true, messageId: posted.messageId, replayed: posted.replayed };
-  }
-
   async listChannelFeed(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceChannelFeedResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceChannelPageRequestSchema, input, "list_channel_feed");
@@ -14134,12 +14334,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     this.publishChannelRows(this.collectRailChanges(rows));
-    // A Thread archive archives the Sidekicks it owns during the pass; their
-    // list goes out with nothing awaited after the Channel's row.
-    if (this.sidekickDirectoryMoved) {
-      this.sidekickDirectoryMoved = false;
-      this.publishSidebarList("automations");
-    }
+    this.publishSidekickList();
     if (topicsWorkspaceId !== null) {
       try {
         await this.publishSync([...topics], topicsWorkspaceId,
@@ -14208,12 +14403,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await Promise.all(followUp.watchReconciliations.map((workstreamId) => (
       this.reconcileWorkstreamResourceRegistrations({ workspaceId: followUp.workspaceId, workstreamId })
     )));
-    // Archiving a room is a decision about the room, and the automations it
-    // owns follow it. Each is its own object and is told on its own.
-    if (followUp.archivalChanges.length > 0 || followUp.breakoutArchivalChanges.length > 0) {
-      await this.notifyOwningRoomArchival(followUp.workspaceId, followUp.archivalChanges,
-        followUp.breakoutArchivalChanges);
-    }
     // A `directory_common` effect is the only writer of
     // `next_terminal_action_at`, so a deadline created or moved here would
     // otherwise wait for an unrelated target to reconcile before anything
@@ -14476,96 +14665,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (followUpId !== null) await this.runDirectoryFollowUps([followUpId]);
     if (this.state.storage.sql.exec("SELECT 1 FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources' LIMIT 1").toArray().length > 0) await this.armNextAlarm();
     return { applied };
-  }
-
-  /** Archive a room's owned Sidekicks in the canonical transition/projection transaction. */
-  private archiveOwnedSidekicks(workspaceId: string, parentId: string, substreamId: string, archived: boolean, now: number): void {
-    const owned = this.state.storage.sql.exec<{ automation_id: string }>(
-      `SELECT automation_id FROM automation_directory
-        WHERE owning_workstream_id = ? AND lifecycle <> 'deleted'
-          AND (? = '0' OR owning_substream_id = ?)
-          AND (? OR owning_room_archived_at IS NOT NULL)
-        ORDER BY automation_id`,
-      parentId, substreamId, substreamId, Number(archived),
-    ).toArray();
-    const host = this.hostedSidekickHost();
-    for (const row of owned) {
-      new HostedSidekick(host, row.automation_id).setOwningRoomArchived({
-        workspaceId: asWorkspaceId(workspaceId), automationId: row.automation_id, workstreamId: parentId, archived,
-      }, now);
-    }
-  }
-
-  /**
-   * Tell each automation a room owns that the room's archive state changed.
-   *
-   * Read from the directory rather than assumed from the effect: a replayed
-   * common effect reaches here too, and the row is what the archive is now.
-   * A Sidekick whose home is a Breakout counts as archived when the Breakout
-   * or its Channel is, so archiving either one tells it; `breakoutKeys` names
-   * the Breakouts (`<channelId>/<breakoutId>`) whose own archive moved.
-   */
-  private async notifyOwningRoomArchival(
-    workspaceId: string,
-    workstreamIds: readonly string[],
-    breakoutKeys: readonly string[] = [],
-    onlyAutomationId: string | null = null,
-  ): Promise<void> {
-    const owned = this.state.storage.sql.exec<{
-      automation_id: string;
-      workstream_id: string;
-      archived_at: number | null;
-      breakout_archived_at: number | null;
-    }>(
-      `SELECT automation.automation_id, directory.workstream_id, directory.archived_at,
-              breakout.archived_at AS breakout_archived_at
-         FROM automation_directory automation
-         JOIN channels directory
-           ON directory.workstream_id = automation.owning_workstream_id
-         LEFT JOIN parent_children breakout
-           ON automation.owning_substream_id <> '0'
-          AND breakout.parent_id = automation.owning_workstream_id
-          AND breakout.substream_id = automation.owning_substream_id
-        WHERE automation.lifecycle <> 'deleted'
-          AND (?3 IS NULL OR automation.automation_id = ?3)
-          AND (automation.owning_workstream_id IN (SELECT value FROM json_each(?1))
-            OR (automation.owning_substream_id <> '0'
-              AND automation.owning_workstream_id || '/' || automation.owning_substream_id
-                IN (SELECT value FROM json_each(?2))))
-        ORDER BY automation.automation_id`,
-      JSON.stringify(workstreamIds),
-      JSON.stringify(breakoutKeys),
-      onlyAutomationId,
-    ).toArray();
-    if (owned.length === 0) return;
-    await this.ensureParentWorkspace(workspaceId);
-    const host = this.hostedSidekickHost();
-    // Each Sidekick's archive, its registrations and its alarm entries
-    // commit in one local transaction per Sidekick, right after the archive
-    // that caused them, so one that fails leaves the others moved.
-    for (const row of owned) {
-      try {
-        const sidekick = new HostedSidekick(host, row.automation_id);
-        const now = Date.now();
-        this.state.storage.transactionSync(() => sidekick.setOwningRoomArchived({
-          workspaceId: asWorkspaceId(workspaceId),
-          automationId: row.automation_id,
-          workstreamId: row.workstream_id,
-          archived: row.archived_at !== null || row.breakout_archived_at !== null,
-        }, now));
-      } catch (error) {
-        logWarn(this.env, "sidekick_owning_room_archival_failed", {
-          workspace_id: workspaceId,
-          automation_id: row.automation_id,
-          workstream_id: row.workstream_id,
-          code: diagnosticErrorCode(error, "sidekick_owning_room_archival_failed"),
-        });
-      }
-    }
-    // The automations list is not published here: the pass that ran this
-    // sends it right after the archived Channel's row, in the same turn, so
-    // a client sees the room and its Sidekicks disappear together.
-    await this.armNextAlarm();
   }
 
   private async reconcileWorkstreamResourceRegistrations(input: {
@@ -17257,8 +17356,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         SELECT parent_id, ? FROM authorization_locations WHERE resource_id = ?`, key, resource.resourceId);
       if (resource.kind === 'memory') this.state.storage.sql.exec(`INSERT OR IGNORE INTO search_authorization_dependencies
         SELECT owner_id, ? FROM memory_scopes WHERE memory_scope_id = ?`, key, resource.scopeId);
-      if (resource.kind === 'conversation') this.state.storage.sql.exec(`INSERT OR IGNORE INTO search_authorization_dependencies
-        SELECT owning_workstream_id, ? FROM automation_directory WHERE automation_id = ? AND owning_workstream_id IS NOT NULL`, key, resource.parentId);
     }
     // No re-arm: nothing written here is a lane of this object's alarm. The
     // pending snapshot's trigger still records a `search_authorization_push`
@@ -17287,11 +17384,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // Indexed prior owners reach removed grants; current locations reach newly attached resources.
       keys = `SELECT cache_key FROM search_authorization_keys WHERE parent_id = ?
         UNION SELECT cache_key FROM search_authorization_dependencies WHERE parent_id = ?
-        UNION SELECT k.cache_key FROM authorization_locations l JOIN search_authorization_keys k ON k.resource_id = l.resource_id WHERE l.parent_id = ?
-        UNION SELECT k.cache_key FROM automation_directory a JOIN search_authorization_keys k ON k.parent_id = a.automation_id WHERE a.owning_workstream_id = ?
-        UNION SELECT k.cache_key FROM automation_directory a JOIN authorization_locations l ON l.parent_id = a.automation_id
-          JOIN search_authorization_keys k ON k.resource_id = l.resource_id WHERE a.owning_workstream_id = ?`;
-      bindings = Array.from({ length: 5 }, () => target.id);
+        UNION SELECT k.cache_key FROM authorization_locations l JOIN search_authorization_keys k ON k.resource_id = l.resource_id WHERE l.parent_id = ?`;
+      bindings = Array.from({ length: 3 }, () => target.id);
     }
     return this.state.storage.sql.exec<{ snapshot_json: string }>(
       `SELECT snapshot_json FROM authorization_snapshots WHERE cache_key IN (${keys})`, ...bindings).toArray()
@@ -17592,10 +17686,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Everything is read from this object's own tables. A conversation is
    * decided by its parent's own `readableSubstreams`, the rule its canonical
    * reads apply; a Sidekick and a connection by the predicates canonical
-   * authorization shares (`sidekickAdmitsMember`, `owningChannelAdmitsMember`,
-   * `connectionAdmits`). Two narrowings are search's own, from the PRD: a guest
-   * never holds a workspace connection, and reaches a Channel-owned Sidekick
-   * only through management access on that Channel. Archived Channels and
+   * authorization shares (`sidekickAdmits`,
+   * `connectionAdmits`). One narrowing is search's own, from the PRD: a guest
+   * never holds a workspace connection. Archived Channels and
    * Spaces are skipped: member search never returns an archived row. A person
    * who is not an active member of the Organization holds no groups.
    */
@@ -17634,27 +17727,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     for (const sidekick of sql.exec<{
-      automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null;
-      owning_workstream_id: string | null; owning_substream_id: string;
-    }>(`SELECT automation_id, scope, author_user_id, run_as_user_id, owning_workstream_id, owning_substream_id
-          FROM automation_directory WHERE lifecycle <> 'deleted'`).toArray()) {
-      // A guest reads a Sidekick only through management access on the Channel
-      // that owns it; a member through its scope, authorship, execution, or
-      // participation in that Channel while it is not archived. A Breakout home
-      // narrows both to whoever reads that Breakout, as viewer admission does.
-      let readable = member && sidekickAdmitsMember({ scope: sidekick.scope,
-        author: sidekick.author_user_id === request.userId, executor: sidekick.run_as_user_id === request.userId });
-      if (!readable && hosted && sidekick.scope === "workstream" && sidekick.owning_workstream_id) {
-        const owner = await parent(sidekick.owning_workstream_id);
-        const metadata = owner.metadataRow();
-        const home = sidekick.owning_substream_id;
-        readable = metadata !== null && (home !== "0"
-          ? metadata.archived_at === null && owner.readableSubstreams(request.userId, relationship).includes(asSubstreamId(home))
-          : member
-          ? owningChannelAdmitsMember({ archived: metadata.archived_at !== null, participant: owner.isParticipant(request.userId, relationship) })
-          : owner.managementAccess({ workspaceId: request.workspaceId, parentId: sidekick.owning_workstream_id,
-            userId: request.userId }, relationship).allowed);
-      }
+      automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null; shared: number;
+    }>(`SELECT automation_id, scope, author_user_id, run_as_user_id,
+               EXISTS (SELECT 1 FROM sidekick_audience audience
+                        WHERE audience.sidekick_id = automation_id AND audience.user_id = ?) AS shared
+          FROM automation_directory WHERE lifecycle <> 'deleted'`, request.userId).toArray()) {
+      // Whoever the Sidekick is shared with, the rule its canonical reads apply.
+      const readable = sidekickAdmits({ scope: sidekick.scope, author: sidekick.author_user_id === request.userId,
+        executor: sidekick.run_as_user_id === request.userId, shared: sidekick.shared === 1 }, member);
       if (readable) groups.push(searchAudienceGroup.sidekick(sidekick.automation_id));
     }
     // A guest never gets a workspace connection (the PRD's decision 7); every
@@ -18357,20 +18437,34 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       : [];
   }
 
+  /** Whether {@link listSidebarAutomations} lists this Sidekick to this viewer, asked of its one row. */
+  private sidekickListed(workspaceId: string, userId: string, automationId: string): boolean {
+    return this.state.storage.sql.exec(
+      `SELECT 1 FROM automation_directory directory
+        WHERE directory.automation_id = ?3 AND ${SIDEBAR_SIDEKICK_LISTED_SQL} LIMIT 1`,
+      userId, workspaceId, automationId,
+    ).toArray().length > 0;
+  }
+
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
-    return this.state.storage.sql.exec<AutomationDirectoryRow>(
-      `SELECT automation_id, loadable, appearance_json, lifecycle, scope, owning_workstream_id, title,
-              description, next_run_at, projected_at
-         FROM automation_directory
-        WHERE workspace_id = ? AND lifecycle <> 'deleted'
-          AND owning_workstream_id IS NULL
-          AND (scope = 'workspace' OR author_user_id = ?)
-        ORDER BY title COLLATE NOCASE, automation_id
-        LIMIT ?`,
-      workspaceId,
+    // The viewer's own Sidekicks, the Organization's, and those shared with
+    // them, each with what they have not read in its shared conversation.
+    return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_count: number; unread: number; needs_input: number; pinned_position: number | null }>(
+      `SELECT directory.automation_id, directory.loadable, directory.appearance_json, directory.lifecycle,
+              directory.scope, directory.title, directory.description,
+              directory.next_run_at, directory.projected_at, ${AUTOMATION_AUDIENCE_SQL}, ${AUTOMATION_VIEWER_SQL},
+              pin.position AS pinned_position
+         FROM automation_directory directory
+         ${AUTOMATION_VIEWER_JOINS}
+         LEFT JOIN workspace_pins pin ON pin.user_id = ?1 AND pin.item_kind = 'sidekick' AND pin.item_id = directory.automation_id
+        WHERE ${SIDEBAR_SIDEKICK_LISTED_SQL}
+        ORDER BY directory.title COLLATE NOCASE, directory.automation_id
+        LIMIT ?3`,
       userId,
+      workspaceId,
       limit,
-    ).toArray().map((row) => automationSummary(row, this.invalidAppearanceReporter(workspaceId)));
+    ).toArray().map((row) => ({ ...automationSummary(row, this.invalidAppearanceReporter(workspaceId)),
+      pinnedPosition: row.pinned_position }));
   }
 
   private pinnedDirectoryRows(viewer: Viewer, includeSystem: boolean, spaceId?: string): WorkspaceDirectoryRow[] {
@@ -18430,6 +18524,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private directoryVisible(viewer: Viewer, workstreamId: string): boolean {
+    // A Canvas a viewer may open is foregrounded the way a listed Channel is.
+    const canvas = this.canvasVisible(viewer, workstreamId);
+    if (canvas !== null) return canvas;
     return this.state.storage.sql.exec<{ one: number }>(
       `SELECT 1 AS one FROM channels directory
        LEFT JOIN channel_viewers viewer
@@ -18448,6 +18545,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Main's audience, so presence asks this rather than whether it is listed.
    */
   private mainOpenable(viewer: Viewer, workstreamId: string): boolean {
+    // A Canvas's face pile is everyone who may open it.
+    const canvas = this.canvasVisible(viewer, workstreamId);
+    if (canvas !== null) return canvas;
     return this.state.storage.sql.exec<{ one: number }>(
       `SELECT 1 AS one FROM channels directory
        LEFT JOIN channel_viewers viewer
@@ -18750,6 +18850,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           items: this.sidekickLibrary(attachment),
         },
         notes: { waterline: 0, items: [], nextCursor: null },
+        canvases: { waterline: this.canvasListWaterline(), items: this.canvasList(attachment) },
         ...spaces,
         channelsBySpace: true,
       });
@@ -18769,6 +18870,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       notes: {
         waterline: 0, items: [], nextCursor: null,
       },
+      canvases: { waterline: this.canvasListWaterline(), items: this.canvasList(attachment) },
       ...spaces,
     });
   }
@@ -18795,7 +18897,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * connect payload sends these lists too, and two producers cannot be ordered
    * by one of their transports.
    */
-  private publishSidebarList(list: SidebarList): void {
+  /**
+   * Send the Sidekick list what moved since it was last sent: every socket for
+   * a change to a Sidekick's row, or only the sockets of the people whose read
+   * of a shared conversation moved, as a Channel's `viewerChanges` does.
+   */
+  private publishSidekickList(): void {
+    if (this.sidekickDirectoryMoved) {
+      this.sidekickDirectoryMoved = false;
+      this.sidekickReadersMoved.clear();
+      this.publishSidebarList("automations");
+    } else if (this.sidekickReadersMoved.size > 0) {
+      const readers = new Set(this.sidekickReadersMoved);
+      this.sidekickReadersMoved.clear();
+      this.publishSidebarList("automations", readers);
+    }
+  }
+
+  private publishSidebarList(list: SidebarList, onlyUserIds?: ReadonlySet<string>): void {
     const occurredAt = new Date().toISOString();
     const waterline = this.sidebarListWaterline(list);
     // No authorization re-check on the way out. An open socket is closed by the
@@ -18804,7 +18923,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // replaced and asks for it not to come back.
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
-      if (!attachment?.subscribed) continue;
+      if (!attachment?.subscribed || (onlyUserIds && !onlyUserIds.has(attachment.userId))) continue;
       const page = { items: this.sidekickLibrary(attachment) };
       try {
         socket.send(JSON.stringify(WorkspaceSidebarListEventSchema.parse({
@@ -18826,8 +18945,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * moved: they joined or left a Channel or Breakout, or the people they may
    * act as changed.
    *
-   * Addressed to the person and to whoever can act as them — the authority the
-   * Sideline catalog reads the person's destinations under. It names people and
+   * Addressed to the person and to whoever can act as them through the
+   * **can impersonate** relationship. It names people and
    * no conversation, so it discloses no membership the receiver could not
    * already list; the receiver rereads its own view. Not on the waterline and
    * never replayed: a client that was away rereads when it subscribes.

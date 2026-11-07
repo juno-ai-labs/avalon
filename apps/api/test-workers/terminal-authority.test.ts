@@ -29,7 +29,7 @@ import { createDaytonaTerminalProvider } from "../src/services/terminal/daytona-
 import type { TerminalProviderRequestMeasurement } from "../src/services/terminal/tracing";
 
 import { conversationObjectName } from "../src/durable-objects/names";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import type { TerminalOperation } from "../src/durable-objects/workstream-terminal-protocol";
 import type { WorkstreamTerminalStorage } from "../src/durable-objects/workstream-terminal-storage";
 import { rpcResultBody } from "../src/durable-objects/rpc-result";
@@ -122,7 +122,7 @@ async function terminalCommonEffects(
 ): Promise<Array<string | null | undefined>> {
   return runInDurableObject(stub, async (instance, state) => {
     // The stub is untyped here; this file drives one class and it defines this.
-    await (instance as SubstreamAgent).executeTerminalOperation({
+    await (instance as AgentLoopDO).executeTerminalOperation({
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
       operation,
@@ -2663,7 +2663,7 @@ describe("provider observations", () => {
     // observed, so the settle's re-arm makes it due a check at once; that
     // check is the object working, and must not be what this read sees.
     const outcome = await runInDurableObject(stub, async (instance) => {
-      const settled = await (instance as SubstreamAgent).executeTerminalOperation({
+      const settled = await (instance as AgentLoopDO).executeTerminalOperation({
         workspaceId: WORKSPACE_ID,
         workstreamId: WORKSTREAM_ID,
         operation: "settleProviderObservation",

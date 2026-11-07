@@ -440,9 +440,6 @@ workspace with its work streams, automations, and onboarding checklist.
   empty, which is the check to repeat before believing otherwise. Anything that
   needs synthetic frames has to be played in from the main process; a state a
   component can simply be *given* belongs in a component test instead.
-- **The native iOS client.** The sandbox image has no Xcode or iOS SDK.
-  `apps/ios` is archived on a Mac (`docs/ios-client.md`, `apps/ios/README.md`).
-  `pnpm test:scripts` still checks the packaging invariants on Linux.
 - **The macOS menu bar status item, and the windowless half of a login launch.**
   The item is created only on darwin, and there is no menu bar to draw it into
   here. The launch skips its window only when a status item is actually present,
@@ -475,7 +472,6 @@ an older worktree so the smoke test sees both fixtures.
 | Start the configured Workers (workstation) | `pnpm dev:api` |
 | Global health | `curl -s http://127.0.0.1:8787/health` |
 | Desktop client, headless | see [§4](#4-run-the-desktop-client-headlessly) |
-| iOS client (Mac + Xcode 26) | `open apps/ios/Rally.xcodeproj` — see [`ios-client.md`](ios-client.md) |
 | Lint / typecheck / test | `pnpm lint`, `pnpm typecheck`, `pnpm test` |
 | Lint, ignoring the cache | `pnpm lint:fresh` |
 

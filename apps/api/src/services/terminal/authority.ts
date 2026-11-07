@@ -1,3 +1,4 @@
+import { createCanvas } from "../canvas-service";
 import {
   agentAddressForId,
   agentIdForAddress,
@@ -11,13 +12,14 @@ import {
 import { workspaceDOName } from "../../durable-objects/names";
 import type { Env } from "../../env";
 import { TerminalToolError } from "./tools";
+import { logWarn } from "../../observability/logger";
 import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 
 /**
  * Which conversation's Terminal a run uses.
  *
  * A sandbox belongs to one conversation of a work stream — the one whose
- * `SubstreamAgent` holds its `terminal_workspace` row — and a run uses the
+ * `AgentLoopDO` holds its `terminal_workspace` row — and a run uses the
  * sandbox of the conversation it works *for*. For an ordinary run that is its
  * own conversation. All conversations under one Sidekick use its authoring
  * conversation (substream 0). For a background agent in a work stream it is
@@ -43,7 +45,7 @@ export interface TerminalRunScope {
   backgroundAgent: boolean;
   /** The conversation this run executes in. */
   runSubstreamId: string;
-  /** The conversation whose `SubstreamAgent` owns the sandbox this run uses. */
+  /** The conversation whose `AgentLoopDO` owns the sandbox this run uses. */
   authoritySubstreamId: string;
 }
 
@@ -121,12 +123,44 @@ export async function resolveTerminalRunScope(
   };
 }
 
-/** The admitted home owns publications from setup, activations and workers alike. */
+/**
+ * Where a Sidekick's publication belongs.
+ *
+ * A run (substream other than `"0"`, whose id is the run's) publishes into a
+ * Canvas, the Sidekick's output: the one it was asked to update (`canvas`,
+ * which must be a Canvas this Sidekick writes), or the Canvas this run made,
+ * which its first publish creates with the Sidekick as writer and the run's
+ * principal as creator (`docs/canvases.md#from-a-sidekick-run`). The
+ * Sidekick's own conversation keeps its admitted home.
+ */
 export async function resolveTerminalPublicationHome(env: Env, input: Pick<WorkstreamWorkflowInput,
-  "workspaceId" | "parentKind" | "parentId" | "executionPrincipal">): Promise<{ parentId: string; substreamId: string } | null> {
+  "workspaceId" | "parentKind" | "parentId" | "substreamId" | "executionPrincipal">,
+  request: { canvas?: string | undefined; title?: string | undefined } = {}): Promise<{ parentId: string; substreamId: string } | null> {
   if (input.parentKind !== "automation" || input.executionPrincipal.type !== "user") return null;
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS,
     asWorkspaceId(input.workspaceId), workspaceDOName(env.AVALON_REGION, input.workspaceId));
+  const runId = input.substreamId && input.substreamId !== "0" ? input.substreamId : null;
+  if (runId !== null) {
+    const found = await workspace.canvasForSidekickRun({
+      workspaceId: input.workspaceId, sidekickId: input.parentId, runId, canvasId: request.canvas ?? null,
+    }).catch((error: unknown) => {
+      if ((error as { code?: string }).code === "canvas_not_written_by_sidekick") {
+        throw new TerminalToolError("canvas_not_written_by_sidekick",
+          "That Canvas is not one this Sidekick writes. Omit canvas to publish into this run's own Canvas, or name a Canvas this Sidekick made.",
+          { field: "canvas" });
+      }
+      throw error;
+    });
+    const canvasId = found.canvasId ?? (await createCanvas(env, {
+      workspaceId: input.workspaceId, creatorUserId: input.executionPrincipal.userId,
+      ...(request.title ? { title: request.title } : {}),
+      writer: { sidekickId: input.parentId, runId },
+    })).canvasId;
+    return { parentId: canvasId, substreamId: "0" };
+  }
+  if (request.canvas) {
+    throw new TerminalToolError("canvas_argument_unsupported", "Only a Sidekick run names a Canvas to publish into; omit canvas.", { field: "canvas" });
+  }
   const home = await workspace.resolveConversationToolTarget({
     workspaceId: input.workspaceId, userId: input.executionPrincipal.userId,
     scope: { kind: "sidekick", automationId: input.parentId }, reference: null,
@@ -135,4 +169,30 @@ export async function resolveTerminalPublicationHome(env: Env, input: Pick<Works
   if (home.code === "conversation_home_missing") return null;
   throw new TerminalToolError(home.code,
     "This Sidekick's home conversation is unavailable to the execution user. Restore its access before publishing there.");
+}
+
+/**
+ * The note a publish owes a Canvas: a Canvas's Chat publishes into its Canvas
+ * as Rally, a Sidekick run into the Canvas it writes as the Sidekick; `null`
+ * for a conversation whose publications can land in no Canvas.
+ */
+export function canvasArtifactNoter(env: Env, input: Pick<WorkstreamWorkflowInput, "workspaceId" | "parentKind" | "parentId" | "substreamId">):
+  ((target: { parentId: string; substreamId: string }, resourceId: string) => Promise<void>) | null {
+  if (input.parentKind !== "canvas" && !(input.parentKind === "automation" && (input.substreamId ?? "0") !== "0")) return null;
+  return async (target, resourceId) => {
+    if (target.substreamId !== "0") return;
+    const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, asWorkspaceId(input.workspaceId),
+      workspaceDOName(env.AVALON_REGION, input.workspaceId));
+    const { noted } = await workspace.canvasNoteArtifact({
+      workspaceId: input.workspaceId, canvasId: target.parentId, resourceId,
+      editor: input.parentKind === "canvas" ? { kind: "rally", id: null } : { kind: "sidekick", id: input.parentId },
+    });
+    // This run's publications land in a Canvas, so one the Organization does
+    // not hold is a defect to see, not a case to pass over.
+    if (!noted) {
+      logWarn(env, "canvas_artifact_note_failed", {
+        workspace_id: input.workspaceId, parent_id: target.parentId, resource_id: resourceId, error_code: "canvas_not_found",
+      });
+    }
+  };
 }

@@ -1393,6 +1393,7 @@ describe('useWorkstreamSocket', () => {
         text: 'Please continue.',
         clientId: clientMessageId,
         runMode: 'queue',
+        intent: 'edit_sidekick',
       });
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
@@ -1409,6 +1410,7 @@ describe('useWorkstreamSocket', () => {
         confirmedParticipantUserIds: [],
         attachmentIds: [],
         runMode: 'queue',
+        intent: 'edit_sidekick',
       },
     }));
     if (recovery === 'manual') act(() => result.current.retryOpening());

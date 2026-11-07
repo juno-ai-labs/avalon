@@ -1,12 +1,11 @@
 import { conversationSidekickCandidateIds } from "./sidekick-skills";
 import type { ExternalBindingClaim } from "../durable-objects/workspace-external-binding-protocol";
-import { AutomationService } from "./automation-service";
 import { readWorkspaceRelationship } from "./workspace-relationship-service";
 import { ConversationService } from "./conversation-service";
 import { forgetReviewedMemory, readMemoryReview } from "./memory-review-service";
 import type { MemoryReviewScope } from "../durable-objects/workspace-memory-facts-protocol";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
-import type { MemoryForgetResponse, MemoryReview, SidekickAttachment, SidekickRecommendationOptions } from "@rally/contracts";
+import type { MemoryForgetResponse, MemoryReview, SidekickAttachment } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
 import { HarnessFailureCodeSchema, asUserId, asHarnessRunId, asWorkspaceId, asWorkstreamId, asSubstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
@@ -26,7 +25,7 @@ import type {
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
-import { conversationObjectName } from "../durable-objects/substream-agent";
+import { conversationObjectName } from "../durable-objects/agent-loop-do";
 import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
 import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError } from "../lib/api-error";
@@ -804,55 +803,13 @@ export class WorkstreamService {
       durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
         conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, id, asSubstreamId(substreamId))),
     ]);
-    const [recommended, owned, loaded] = await Promise.all([
+    const [recommended, loaded] = await Promise.all([
       workspace.recommendedSidekickIds({ workspaceId: this.auth.workspaceId, parentId: id }),
-      workspace.automationIdsOwnedByWorkstream({ workspaceId: this.auth.workspaceId, workstreamId: id }),
       child.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id }),
     ]);
-    return conversationSidekickCandidateIds([...recommended, ...owned.automationIds], loaded);
+    return conversationSidekickCandidateIds(recommended, loaded);
   }
 
-
-  /** One capability/catalog decision for browser controls and person-authorized tools. */
-  async sidekickRecommendationOptions(id: string, substreamId = "0"): Promise<SidekickRecommendationOptions> {
-    const conversation = new ConversationService(this.env, this.auth);
-    const parent = await conversation.authorizeViewer(id, substreamId);
-    if (parent.kind !== "workstream") {
-      throw new ApiError(422, "sidekick_attachment_parent_kind_unsupported", "Sidekick recommendations belong to threads");
-    }
-    const relationship = await readWorkspaceRelationship(this.env.DB, this.auth.workspaceId, this.auth.userId);
-    if (relationship?.status !== "active") throw new ApiError(403, "workspace_membership_required", "Workspace access is required");
-    const room = await hostedParentStub(this.env, this.auth.workspaceId);
-    // Both reads are of this Channel's own rows; neither waits on the other.
-    const [recommended, management] = await Promise.all([
-      room.recommendedSidekickIds({ workspaceId: this.auth.workspaceId, parentId: id }),
-      room.readManagementAccess({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId }),
-    ]);
-    const explicit = new Set(recommended);
-    let sources: SidekickAttachment[];
-    if (relationship.accessClass === "member") {
-      sources = (await new AutomationService(this.env, this.auth).listSidekicks()).items
-        .filter((item) => item.scope === "workspace")
-        .map((item) => ({ id: item.id, name: item.name, description: item.description,
-          available: item.status === "active" && item.loadable }));
-    } else {
-      // A guest is offered only Organization Sidekicks already in reach of
-      // this conversation: the Channel's own and the ones it has loaded.
-      const child = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
-        conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, id, asSubstreamId(substreamId)));
-      sources = await this.conversationSidekickSummaries(id, substreamId, {
-        automationIds: await child.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id }),
-        channelId: id, onlyScope: "workspace",
-      });
-    }
-    await conversation.client(id, false, substreamId);
-    const current = await readWorkspaceRelationship(this.env.DB, this.auth.workspaceId, this.auth.userId);
-    if (current?.status !== "active" || current.incarnation !== relationship.incarnation || current.accessClass !== relationship.accessClass) {
-      throw new ApiError(403, "workspace_membership_changed", "Workspace access changed. Refresh and try again.");
-    }
-    return { canManage: management.allowed && management.writable,
-      items: sources.map((item) => ({ ...item, attached: explicit.has(item.id) })) };
-  }
 
   async setSidekickRecommendation(id: string, sidekickId: string, attached: boolean, substreamId = "0",
     /** Host-supplied execution context only; never accepted from a REST request. */
@@ -1040,7 +997,7 @@ export class WorkstreamService {
   /**
    * Resolve WorkspaceDO-owned provenance before initialize starts the first run.
    *
-   * SubstreamAgent enqueues the Workflow inside the initialize RPC, so attaching
+   * AgentLoopDO enqueues the Workflow inside the initialize RPC, so attaching
    * these after creation would race the run's first context read. WorkspaceDO
    * returns only roots visible to this member; this second check deliberately
    * keeps restricted connector objects out of a workspace-visible resource list.

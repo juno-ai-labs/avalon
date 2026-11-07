@@ -158,7 +158,7 @@ it("forwards the member shell's route families and still refuses token minting a
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ path:`/${family}/probe`,workspaceId });
   }
-  for (const family of ["auth","internal","ingest","access","slack","sideline","dev"]) {
+  for (const family of ["auth","internal","ingest","access","slack","dev"]) {
     const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/${family}/probe`,{ headers:{ cookie:entry.cookie } },bindings());
     expect(response.status).toBe(404);
   }

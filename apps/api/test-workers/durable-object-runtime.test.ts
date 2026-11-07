@@ -33,7 +33,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 
 import { WorkspaceConversationView } from "../src/durable-objects/workspace-conversation-view";
-import { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import { type SidekickDirectoryRow, writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
@@ -464,7 +464,7 @@ async function seatBootstrapParticipant(
  * hangs on a snapshot that is never sent.
  */
 async function provisionBootstrappedWorkstream(
-  stub: DurableObjectStub<SubstreamAgent>,
+  stub: DurableObjectStub<AgentLoopDO>,
   userId: string,
 ): Promise<void> {
   await seedCreatorProfile();
@@ -531,7 +531,7 @@ describe("Durable Objects in the Workers runtime", () => {
       workstream: await withHostedParent(workspace, WORKSTREAM_ID, (parent) => (
         (parent as unknown as { sessionAuth(value: typeof identity): Promise<unknown> }).sessionAuth(identity)
       )),
-      substream: await runInDurableObject(substream, async (instance: SubstreamAgent) => (
+      substream: await runInDurableObject(substream, async (instance: AgentLoopDO) => (
         (instance as unknown as { socketAuth(value: typeof identity): Promise<unknown> }).socketAuth(identity)
       )),
     });
@@ -1048,7 +1048,7 @@ describe("Durable Objects in the Workers runtime", () => {
       {
         namespace: env.SUBSTREAM_AGENTS,
         name: conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
-        constructor: SubstreamAgent,
+        constructor: AgentLoopDO,
         migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.length,
         tables: [
           "_sql_schema_migrations",
@@ -2746,7 +2746,7 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
-  it("answers subscribe with the whole sidebar and excludes room-owned automations", async () => {
+  it("answers subscribe with the whole sidebar", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
@@ -2779,7 +2779,6 @@ describe("Durable Objects in the Workers runtime", () => {
     // Notes remain workspace product state. Automations arrive as the row
     // their own AutomationDO publishes through its outbox.
     const subscriptionId = "00000000-0000-7000-8000-000000000704";
-    const workstreamSubscriptionId = "00000000-0000-7000-8000-000000000709";
     const resourceId = "00000000-0000-7000-8000-000000000705";
     await expect(stub.executeRuntimeSql({
       workspaceId: WORKSPACE_ID,
@@ -2800,26 +2799,10 @@ describe("Durable Objects in the Workers runtime", () => {
         authorUserId: USER_ID,
         lifecycle: "active",
         scope: "workspace",
-        owningWorkstreamId: null,
         title: "Monday brief",
         description: "Every Monday",
         nextRunAt: null,
       });
-    // The author owns both rows, but this one belongs to the room's rail. If
-    // the top-level query selects by author alone, its third scope makes the
-    // whole WorkspaceSidebar schema fail before the socket can send anything.
-    await writeSidekickDirectoryRow(env, {
-        workspaceId: WORKSPACE_ID,
-        automationId: workstreamSubscriptionId,
-        authorUserId: USER_ID,
-        lifecycle: "active",
-        scope: "workstream",
-        owningWorkstreamId: WORKSTREAM_ID,
-        title: "Room-owned standup",
-        description: "Lives on the work stream's own automation rail",
-        nextRunAt: null,
-      });
-
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
         Upgrade: "websocket",
@@ -2865,7 +2848,6 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(page.workstreams.nextCursor).toBeNull();
       expect(page.automations.items).toHaveLength(1);
       expect(page.automations.items[0]).toMatchObject({ id: subscriptionId, name: "Monday brief" });
-      expect(page.automations.items.map((item) => item.id)).not.toContain(workstreamSubscriptionId);
       // Served as stored: reconciling a route is a Global-registry call, and
       // this handler runs on the object's single thread beside the directory
       // read. The REST refresh is what fills it in.
@@ -3034,7 +3016,6 @@ describe("Durable Objects in the Workers runtime", () => {
       authorUserId: USER_ID,
       lifecycle,
       scope: "workspace",
-      owningWorkstreamId: null,
       title: "Weekly changelog",
       description: "Every Monday",
       nextRunAt,
@@ -7133,134 +7114,6 @@ describe("Durable Objects in the Workers runtime", () => {
       // Put the drain in the state a cancelled invocation leaves behind.
       void testable.agentDrain.resume(() => wedged, () => undefined);
       expect(testable.nextLoopWorkAt()).not.toBeNull();
-    });
-  });
-
-  describe("a work stream's own automations", () => {
-    const ROOM_ID = "00000000-0000-7000-800a-000000000001";
-    const OTHER_ROOM_ID = "00000000-0000-7000-800a-000000000002";
-    const OWNED_ID = "00000000-0000-7000-800a-000000000011";
-    const OTHER_OWNED_ID = "00000000-0000-7000-800a-000000000012";
-    const WORKSPACE_AUTOMATION_ID = "00000000-0000-7000-800a-000000000013";
-    const DELETED_ID = "00000000-0000-7000-800a-000000000014";
-    const STRANGER_ID = "00000000-0000-7000-800a-000000000021";
-
-    async function seededWorkspace(): Promise<DurableObjectStub<WorkspaceDO>> {
-      // Membership is a D1 read, and this list is gated on it.
-      await seedOpenAuthority();
-      const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
-        workspaceDOName("global", WORKSPACE_ID),
-      ));
-      await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
-      await env.DB.prepare(
-        `INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
-         VALUES (?, ?, 'active', 'member', '2026-09-01T00:00:00.000Z')`,
-      ).bind(WORKSPACE_ID, STRANGER_ID).run();
-      await runInDurableObject(stub, (_instance, state) => {
-        const automation = (
-          id: string,
-          lifecycle: string,
-          scope: string,
-          owning: string | null,
-          title: string,
-          projectedAt: number,
-        ): void => {
-          state.storage.sql.exec(
-            `INSERT INTO automation_directory
-               (automation_id, workspace_id, author_user_id, source_version, payload_hash,
-                lifecycle, scope, owning_workstream_id, title, description, next_run_at,
-                projected_at)
-             VALUES (?, ?, ?, 1, 'test', ?, ?, ?, ?, 'Runs weekly', NULL, ?)`,
-            id, WORKSPACE_ID, USER_ID, lifecycle, scope, owning, title, projectedAt,
-          );
-        };
-        automation(OWNED_ID, "active", "workstream", ROOM_ID, "Weekly changelog", 200);
-        automation(DELETED_ID, "deleted", "workstream", ROOM_ID, "Retired", 300);
-        automation(OTHER_OWNED_ID, "active", "workstream", OTHER_ROOM_ID, "Another room's", 400);
-        automation(WORKSPACE_AUTOMATION_ID, "active", "workspace", null, "Shared digest", 500);
-        for (const id of [ROOM_ID, OTHER_ROOM_ID]) {
-          state.storage.sql.exec(
-            `INSERT INTO channels
-               (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
-                title, description, preview, scope, exact_state, system_kind, last_activity_at,
-                completed_at, archived_at, email_address, origin_type, origin_label,
-                created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
-                title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
-                next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
-                source_created_at, source_updated_at, projected_at)
-             VALUES (?, 1, 1, ?, 'test', 'A room', '', '', 'workspace', 'idle', NULL, 1,
-                     NULL, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
-                     'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
-            id, `00000000-0000-7000-800b-${id.slice(-12)}`, USER_ID,
-          );
-        }
-        state.storage.sql.exec(
-          `INSERT INTO channel_viewers
-             (workstream_id, user_id, authority_generation, waterline, source_event_id,
-              payload_hash, is_participant, participant_added_at, unread_count,
-              you_are_mentioned, unseen, listable, seen_attention_ordinal,
-              manual_unread_from_ordinal, manual_unread_generation,
-              latest_mention_attention_ordinal, projected_at)
-           VALUES (?, ?, 1, 1, ?, 'test', 1, 1, 0, 0, 0, 1, 0, NULL, 0, 0, 1)`,
-          ROOM_ID, USER_ID, `00000000-0000-7000-800c-000000000001`,
-        );
-      });
-      await seedParticipantGrants(env, WORKSPACE_ID, ROOM_ID, [USER_ID]);
-      return stub;
-    }
-
-    it("lists what this room owns, and nothing another room or the workspace owns", async () => {
-      const stub = await seededWorkspace();
-
-      const listed = await stub.listWorkstreamAutomations({
-        workspaceId: WORKSPACE_ID,
-        workstreamId: ROOM_ID,
-        userId: USER_ID,
-      });
-
-      // Exactly the complement of the sidebar list. Another room's automation
-      // appearing here would let somebody pause it from a room it has nothing
-      // to do with, and a deleted one is a row the projection has not reaped.
-      expect(listed.items.map((item) => item.id)).toEqual([OWNED_ID]);
-      expect(listed.items[0]).toMatchObject({ name: "Weekly changelog", status: "active" });
-      // No scope: every row here is owned by the room showing it.
-      expect(listed.items[0]).not.toHaveProperty("scope");
-    });
-
-    it("refuses a workspace member who can see the room but is not in it", async () => {
-      const stub = await seededWorkspace();
-
-      // A workspace-scoped room is listable to every member of the workspace,
-      // so gating on listability would hand the names, descriptions and
-      // schedules of its automations to people who are not in it — while
-      // `authorizeAutomationViewer` goes on refusing them the details. The
-      // wider half of that pair is the one that leaks.
-      await runInDurableObject(stub, async (instance) => {
-        await expect(instance.listWorkstreamAutomations({
-          workspaceId: WORKSPACE_ID,
-          workstreamId: ROOM_ID,
-          userId: STRANGER_ID,
-        })).rejects.toMatchObject({ code: "sidekick_directory_access_denied", status: 403 });
-      });
-    });
-
-    it("answers whoever may read the room, not only whoever created the automation", async () => {
-      const stub = await seededWorkspace();
-
-      // The gate is the viewer row. A workspace member with no view of this
-      // room gets a refusal, not an empty list — an empty list would say the
-      // room owns nothing, which is a different and false statement.
-      //
-      // Asserted inside the object rather than over its stub: a rejection
-      // crossing the stub is reported a second time as an unhandled one and
-      // fails the run even though the assertion held.
-      await runInDurableObject(stub, async (instance) => {
-        await expect(instance.listWorkstreamAutomations({
-          workspaceId: WORKSPACE_ID,
-          workstreamId: ROOM_ID,
-          userId: STRANGER_ID,
-        })).rejects.toMatchObject({ code: "sidekick_directory_access_denied", status: 403 });
-      });
     });
   });
 });

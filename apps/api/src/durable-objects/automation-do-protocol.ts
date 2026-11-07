@@ -6,12 +6,12 @@ import {
   DemoSeedSchema,
   IdSchema,
   PickedAppearanceSchema,
-  SubstreamIdSchema,
+  SidekickAudienceUpdateSchema,
+  SidekickMessageIntentSchema,
   UserIdSchema,
   WorkspaceExternalEventSchema,
   WorkspaceIdSchema,
   WorkstreamAppearancePatchSchema,
-  type SubstreamId,
 } from "@rally/contracts";
 import { z } from "zod";
 
@@ -41,28 +41,7 @@ export const AutomationCreateRequestSchema = z.strictObject({
   ...Addressed,
   authorUserId: UserIdSchema,
   scope: AutomationScopeSchema,
-  owningWorkstreamId: IdSchema.nullable(),
-  /**
-   * The home conversation under `owningWorkstreamId`: `"0"` for its Main
-   * conversation, a Breakout id when the Sidekick was set up from a Breakout.
-   */
-  owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   authorityGeneration: z.number().int().positive(),
-}).superRefine((value, context) => {
-  if ((value.scope === "workstream") !== (value.owningWorkstreamId !== null)) {
-    context.addIssue({
-      code: "custom",
-      path: ["owningWorkstreamId"],
-      message: "A room-scoped automation names its room, and no other scope may.",
-    });
-  }
-  if (value.owningWorkstreamId === null && value.owningSubstreamId !== "0") {
-    context.addIssue({
-      code: "custom",
-      path: ["owningSubstreamId"],
-      message: "Only a room-scoped automation has a home Breakout.",
-    });
-  }
 });
 export type AutomationCreateRequest = z.input<typeof AutomationCreateRequestSchema>;
 
@@ -129,6 +108,14 @@ export const AutomationSetAppearanceRequestSchema = z.strictObject({
 });
 export type AutomationSetAppearanceRequest = z.infer<typeof AutomationSetAppearanceRequestSchema>;
 
+/** A manager's choice of who a Sidekick is shared with (`SidekickAudienceUpdateSchema`). */
+export const AutomationSetAudienceRequestSchema = z.strictObject({
+  ...Addressed,
+  actor: AutomationActorSchema,
+  update: SidekickAudienceUpdateSchema,
+});
+export type AutomationSetAudienceRequest = z.input<typeof AutomationSetAudienceRequestSchema>;
+
 export const AutomationRunNowRequestSchema = z.strictObject({
   ...Addressed,
   actor: AutomationActorSchema,
@@ -152,13 +139,6 @@ export const AutomationRunSeededRequestSchema = z.strictObject({
   seed: DemoSeedSchema,
 });
 export type AutomationRunSeededRequest = z.infer<typeof AutomationRunSeededRequestSchema>;
-
-export const AutomationOwningRoomArchivedRequestSchema = z.strictObject({
-  ...Addressed,
-  workstreamId: IdSchema,
-  archived: z.boolean(),
-});
-export type AutomationOwningRoomArchivedRequest = z.infer<typeof AutomationOwningRoomArchivedRequestSchema>;
 
 /**
  * What the caller judged a `semantic_activity` trigger's written condition to be.
@@ -286,6 +266,72 @@ export const SidekickRunContinuationSchema = z.discriminatedUnion("outcome", [
 ]);
 export type SidekickRunContinuation = z.infer<typeof SidekickRunContinuationSchema>;
 
+/**
+ * A person's input in the Sidekick's shared conversation (substream `"0"`)
+ * that reaches an agent, asked about once before the conversation's loop
+ * takes it. `messageId` is the turn the input lands as, so a retried claim
+ * admits the same run. `intent` is `edit_sidekick` when the input is for the
+ * wizard: a message its sender marked as an edit, or an answer to something
+ * the wizard asked. `authorName` is the sender's display name as the
+ * conversation snapshotted it, unbounded like `UserSchema.name`.
+ */
+export const SidekickConversationMessageRequestSchema = z.strictObject({
+  ...Addressed,
+  actor: AutomationActorSchema,
+  messageId: IdSchema,
+  intent: SidekickMessageIntentSchema.nullable(),
+  authorName: z.string().nullable(),
+  text: z.string().min(1),
+});
+/** The caller's side, so a default (`participantOfOwningWorkstream`) need not be spelled. */
+export type SidekickConversationMessageRequest = z.input<typeof SidekickConversationMessageRequestSchema>;
+
+/** Why a message addressed to the Sidekick started no run. */
+export const SidekickConversationMessageRefusalCodeSchema = z.enum([
+  "sidekick_not_active",
+  "sidekick_not_runnable",
+  "run_no_eligible_delegate",
+  /** The input was for the wizard (`intent: "edit_sidekick"`) and its sender does not manage the Sidekick. */
+  "sidekick_edit_requires_manager",
+]);
+export type SidekickConversationMessageRefusalCode = z.infer<typeof SidekickConversationMessageRefusalCodeSchema>;
+
+/**
+ * Who answers the message: the wizard (an edit from a manager, which is the
+ * authoring turn), a run the message started, or nobody, with why.
+ */
+export const SidekickConversationMessageRouteSchema = z.discriminatedUnion("route", [
+  z.strictObject({ route: z.literal("wizard") }),
+  z.strictObject({ route: z.literal("run"), runId: IdSchema, reused: z.boolean() }),
+  z.strictObject({ route: z.literal("refused"), code: SidekickConversationMessageRefusalCodeSchema }),
+]);
+export type SidekickConversationMessageRoute = z.infer<typeof SidekickConversationMessageRouteSchema>;
+
+/**
+ * One run, as its row in the Sidekick's shared conversation shows it: a
+ * projection of the Sidekick's `sidekick_runs` row, sent whole each time so
+ * any delivery converges. `version` is the run row's `updated_at`; the
+ * conversation applies a projection not older than the one it holds.
+ */
+export const SidekickRunRowProjectionSchema = z.strictObject({
+  ...Addressed,
+  runId: IdSchema,
+  automationName: z.string().min(1).max(300),
+  triggerKind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+  createdAt: z.number().int().nonnegative(),
+  state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
+  stepCount: z.number().int().nonnegative(),
+  reply: z.string().max(1_000).nullable(),
+  version: z.number().int().nonnegative(),
+  /**
+   * Set by a replay: apply this projection even when the conversation holds a
+   * newer version. Safe because the projection is the run read at delivery,
+   * and it is how a row whose version ran ahead of its run is repaired.
+   */
+  replay: z.boolean().default(false),
+});
+export type SidekickRunRowProjection = z.input<typeof SidekickRunRowProjectionSchema>;
+
 export const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
 export const AUTOMATION_RUN_ALARM_KIND = "automation_run";
 /** One entry per Sidekick, armed when enough runs have finished; see `HostedSidekick.startReview`. */
@@ -322,10 +368,9 @@ export const SidekickBatchSkillReadRequestSchema = SidekickSkillReadRequestSchem
 }).strict();
 export type SidekickBatchSkillReadRequest = z.infer<typeof SidekickBatchSkillReadRequestSchema>;
 
-/** Several Sidekicks' details in one call: by id, every one a Channel owns, or both. */
+/** Several Sidekicks' details in one call, by id. */
 export const SidekickBatchDetailRequestSchema = AutomationActorRequestSchema.omit({ automationId: true }).extend({
   automationIds: z.array(IdSchema).optional(),
-  channelOwnedBy: IdSchema.optional(),
 }).strict();
 export type SidekickBatchDetailRequest = z.infer<typeof SidekickBatchDetailRequestSchema>;
 

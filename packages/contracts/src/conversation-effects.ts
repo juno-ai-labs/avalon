@@ -63,6 +63,11 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
    * the Channel rail's list. Absent on an envelope written before it existed.
    */
   sidekickAttachmentIds: z.array(IdSchema).optional(),
+  /**
+   * A Sidekick run's tool calls so far, its steps: what the run's row in the
+   * Sidekick's shared conversation counts. Sent only by a run's conversation.
+   */
+  stepCount: z.number().int().nonnegative().optional(),
   attachmentReservationReleases: z.array(z.object({
     inputId: IdSchema,
     resourceId: IdSchema,
@@ -110,8 +115,13 @@ export const AutomationDirectoryEffectSchema = z.strictObject({
    */
   runAsUserId: IdSchema.optional(),
   lifecycle: z.enum(["draft", "active", "paused", "deleted"]),
+  /**
+   * `workstream` and a room are kept so an effect queued before the room
+   * scope was retired still parses; nothing writes either now, so the room
+   * defaults to none.
+   */
   scope: z.enum(["personal", "workspace", "workstream"]),
-  owningWorkstreamId: IdSchema.nullable(),
+  owningWorkstreamId: IdSchema.nullable().default(null),
   /**
    * The home conversation under `owningWorkstreamId`: `"0"` for the Channel's
    * Main conversation, a Breakout id otherwise. Optional because an effect an

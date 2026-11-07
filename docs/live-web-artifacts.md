@@ -745,6 +745,39 @@ shows its saved quote and image. The script and trust boundaries are owned by
 
 ## Changelog
 
+### 2026-11-07 — A Canvas's artifact is opened by whoever opens the Canvas
+
+**What changed:** An artifact generated in a Canvas's Chat is admitted at the
+identity door by the Canvas's audience (`canvasAdmits`): its creator,
+participants, writer Sidekick's audience, the Organization when it is open to
+it, and owners and administrators. `artifact_registry.workstream_id` holds the
+Canvas id, which is the conversation's parent id, so no column changes
+meaning. A publish from a Canvas's Chat, or from a Sidekick run into the
+Canvas it writes, keeps the `(conversation, path)` identity with the Canvas as
+the conversation, and tells the Canvas which artifact it made.
+
+**Why:** A Canvas, not a Thread, is each artifact's owner and audience (the
+Canvases and Sidekicks decision log).
+
+**Consequences:** The serving Worker's public-by-default rules are unchanged;
+only the protected door's admission moved. See [`canvases.md`](canvases.md).
+
+### 2026-11-06 — The site surfaces are no longer flagged
+
+**What changed:** `useSiteArtifacts` no longer reads `liveArtifactsEnabled`,
+and that flag is removed (see [`feature-flags.md`](feature-flags.md)). The
+rail's site detail, the preview pane, the Data view and the artifact window
+appear for every signed-in Electron or browser window; a site falls back to
+the ordinary resource card only where no API session or bridge exists.
+
+**Why:** The Canvases and Sidekicks PRD turns a live artifact into a Canvas,
+and a Canvas is opened through these surfaces, so they cannot be off for
+anyone. The flag was always presentation-only — authorization is structural —
+so removing it changes what is drawn and nothing about who may read a site.
+
+**Consequences:** A future change that wants to hide a site surface needs a
+reason specific to that surface, not a product-wide toggle.
+
 ### 2026-11-03 — Per-viewer rows, sign-in from a site's link, public submissions
 
 **What changed:** A table with a `private_to_viewer` column is private: the

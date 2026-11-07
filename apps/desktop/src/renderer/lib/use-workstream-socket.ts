@@ -4,7 +4,7 @@ import { useConversationAdmission } from './conversation-admission';
 import { mainReachable, useConversationDirectory } from './conversation-directory';
 import { useCachedWorkstreamSummary } from './use-workstreams-query';
 import { safeParseSocketEvent } from "@rally/contracts";
-import type { WorkstreamAppearancePatch } from '@rally/contracts';
+import type { SidekickMessageIntent, WorkstreamAppearancePatch } from '@rally/contracts';
 import {
   type ConversationSuggestion,
   ServerSocketEventSchema,
@@ -127,6 +127,7 @@ export interface CreateWorkstreamMessageInput {
   confirmedParticipantUserIds?: string[];
   attachmentIds?: string[];
   runMode?: WorkstreamMessageDeliveryMode;
+  intent?: SidekickMessageIntent;
 }
 
 export interface WorkstreamSocketConnection {
@@ -1189,6 +1190,7 @@ export function useWorkstreamSocket(
             confirmedParticipantUserIds: input.confirmedParticipantUserIds ?? [],
             attachmentIds: input.attachmentIds ?? [],
             ...(input.runMode ? { runMode: input.runMode } : {}),
+            ...(input.intent ? { intent: input.intent } : {}),
           },
         };
         const result = await trace.step('command_round_trip', () => submitSubstreamCommand(command));

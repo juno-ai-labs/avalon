@@ -25,9 +25,17 @@ export function artifactWindowActionRequest(preview: DesktopArtifactWindowReques
       path: `${root}${action.version ? `/versions/${action.version}` : ''}/${action.original ? 'content' : 'preview'}`,
       method: 'GET', binary: true,
     };
-    const [parentId, substreamId] = preview.annotationScope?.split(':') ?? [];
-    const parent = IdSchema.safeParse(parentId);
-    if (preview.editable !== true || !parent.success || substreamId !== '0') throw new Error('This artifact has no editable thread context');
+    // A Canvas's Chat registers `canvas:<canvasId>` (`conversationAnnotationScope`);
+    // everything else `<parentId>:<substreamId>`.
+    const [first, second] = preview.annotationScope?.split(':') ?? [];
+    const canvas = first === 'canvas';
+    const parent = IdSchema.safeParse(canvas ? second : first);
+    if (preview.editable !== true || !parent.success || (!canvas && second !== '0')) throw new Error('This artifact has no editable thread context');
+    if (canvas && (action.type === 'link' || action.type === 'pin')) {
+      // A Canvas artifact's pin and link belong to the Canvas, not a thread;
+      // neither has a route from a detached window yet (plan step B-5).
+      throw new Error(`A Canvas artifact cannot be ${action.type === 'pin' ? 'pinned' : 'linked'} from its own window; use the Canvas`);
+    }
     if (action.type === 'link') return { path: `/workstreams/${parent.data}/link-spaces`, method: 'GET' };
     if (action.type === 'pin') return {
       path: `/navigation/artifact-pins/${encodeURIComponent(preview.resourceId)}`,

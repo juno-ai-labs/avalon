@@ -414,8 +414,7 @@ describe('Rally API wire adapter', () => {
     // them; the trigger lines are rendered here rather than in the header.
     vi.stubGlobal('fetch', vi.fn(async () => json({
       ...wireAutomationDetail,
-      scope: 'workstream',
-      owningWorkstreamId: workstreamId,
+      scope: 'workspace',
       status: 'active',
       lifecycle: 'active',
       acceptedDefinitionRevision: 1,
@@ -425,8 +424,7 @@ describe('Rally API wire adapter', () => {
 
     await expect(api.getAutomation(automationId)).resolves.toMatchObject({
       id: automationId,
-      scope: 'workstream',
-      owningWorkstreamId: workstreamId,
+      scope: 'workspace',
       status: 'active',
       lifecycle: 'active',
       currentDefinitionRevision: 1,
@@ -490,63 +488,6 @@ describe('Rally API wire adapter', () => {
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
     expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined();
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(`https://api.rally.test/sidekicks/${automationId}/runs`);
-  });
-
-  it('lists a channel\u2019s own Sidekicks from the Sidekick surface, not the legacy prefix', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      void input;
-      void init;
-      return json({ items: [{
-        id: automationId, name: 'Release notes', description: 'Draft the notes.', loadable: true,
-        emailAddress: null, status: 'active', nextRunAt: null, lastRunAt: null,
-        updatedAt: '2026-09-09T16:00:00.000Z',
-      }] });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://api.rally.test', session);
-
-    await expect(api.getWorkstreamSidekicks(workstreamId))
-      .resolves.toEqual([expect.objectContaining({ id: automationId, name: 'Release notes' })]);
-
-    // The path is the whole behaviour of this method: its one caller renders
-    // the refusal of a wrong route as an error where a room's list belongs.
-    expect(String(fetchMock.mock.calls[0]?.[0]))
-      .toBe(`https://api.rally.test/sidekicks/workstream/${workstreamId}`);
-  });
-
-  it('reads recommendations through the authorized conversation, including Main', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => { void input; return json({ items: [] }); });
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://api.rally.test', session);
-    await api.getRecommendedSidekicks(workstreamId, undefined, 'child-scope');
-    await api.getRecommendedSidekicks(workstreamId);
-    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
-      `https://api.rally.test/conversations/${workstreamId}/substreams/child-scope/recommended-sidekicks`,
-      `https://api.rally.test/conversations/${workstreamId}/substreams/0/recommended-sidekicks`,
-    ]);
-  });
-
-  it('reads recommendation capabilities through the selected conversation', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => { void input; return json({ canManage: false, items: [] }); });
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://api.rally.test', session);
-    await expect(api.getSidekickRecommendationOptions(workstreamId, 'child-scope')).resolves.toEqual({ canManage: false, items: [] });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      `https://api.rally.test/conversations/${workstreamId}/substreams/child-scope/sidekick-recommendation-options`);
-  });
-
-  it('changes recommendations through the selected conversation route', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      void input; void init; return json({ items: [] });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://api.rally.test', session);
-    await api.setRecommendedSidekick(workstreamId, automationId, true, 'child-scope');
-    await api.setRecommendedSidekick(workstreamId, automationId, false, 'child-scope');
-    expect(fetchMock.mock.calls.map(([url, init]) => [String(url), init?.method])).toEqual([
-      [`https://api.rally.test/conversations/${workstreamId}/substreams/child-scope/recommended-sidekicks/${automationId}`, 'PUT'],
-      [`https://api.rally.test/conversations/${workstreamId}/substreams/child-scope/recommended-sidekicks/${automationId}`, 'DELETE'],
-    ]);
   });
 
   it('tells the person to restart Rally when a plain response does not match its schema', async () => {

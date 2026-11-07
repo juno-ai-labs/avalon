@@ -44,10 +44,10 @@ You need an Ashby API key, made by someone who administers Ashby, with the **Rea
 4. Paste the key into **Ashby organization API key**.
 5. Click **Connect for organization**.
 
-Rally then subscribes to all 27 kinds of event Ashby announces. There are no boxes to tick during setup. You choose which events matter when you build a Sidekick, as [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md) describes.
+Rally then subscribes to all 27 kinds of event Ashby announces. There are no boxes to tick during setup. You choose which events matter when you build a Sidekick, as [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md) describes.
 
 > [!WARNING]
-> Paste the API key only into the **Ashby organization API key** box in Settings. Never paste it into a Thread, an email or a support message. Rally stores it encrypted.
+> Paste the API key only into the **Ashby organization API key** box in Settings. Never paste it into a Canvas, an email or a support message. Rally stores it encrypted.
 
 Events can be about candidates and jobs that a person's own Ashby account would not show them. Consider that when you decide which Sidekicks use them and where those Sidekicks post.
 

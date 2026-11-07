@@ -4785,7 +4785,7 @@ export class WorkspaceSpaceStorage {
    *
    * For the retirement walk, which has to close an object rather than list a
    * product surface: a Space created before 2026-09-26 still holds a hidden
-   * main conversation (a `SubstreamAgent`), and a graph that skipped it would
+   * main conversation (an `AgentLoopDO`), and a graph that skipped it would
    * report the Organization closed with that object still open. Guarded like every
    * other Space read, so an Organization the cutover never reached enumerates
    * nothing rather than aborting the tombstone on a missing table.
@@ -5268,7 +5268,7 @@ export class WorkspaceSpaceStorage {
    * row, which is in this object's SQLite whenever the Channel's parent is
    * hosted here, so it is written now rather than sent out and back in. The
    * rest take the Queue: a resource is attached through the Channel's main
-   * conversation (a SubstreamAgent), and a Sidekick target whose Channel parent
+   * conversation (an AgentLoopDO), and a Sidekick target whose Channel parent
    * is not hosted yet, is archived, whose Sidekick this Organization's
    * directory does not show as a live workspace Sidekick, or whose requester
    * cannot manage the Channel (or is not known here yet) keeps the canonical

@@ -76,7 +76,7 @@ export const MemorySweepMessageSchema = z.strictObject({
   type: z.literal("memory_sweep"),
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
-  parentKind: z.enum(["workstream", "automation"]),
+  parentKind: z.enum(["workstream", "automation", "canvas"]),
   parentId: IdSchema,
   substreamId: z.string().min(1),
   fromSeq: z.number().int().nonnegative(),
@@ -88,7 +88,7 @@ export type MemorySweepMessage = z.infer<typeof MemorySweepMessageSchema>;
 
 export interface MemorySweepTarget {
   workspaceId: string;
-  parentKind: "workstream" | "automation" | "space";
+  parentKind: "workstream" | "automation" | "space" | "canvas";
   parentId: string;
   substreamId: string;
 }

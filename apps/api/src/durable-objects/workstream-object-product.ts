@@ -1,6 +1,6 @@
 import { renderPersonalSystemPrompt } from "@rally/agent-harness";
 import { AnnotatedMessageContentSchema, annotationCommentText } from "@rally/contracts";
-import { AnnotationsSchema, validateAnnotationAttachments } from "@rally/contracts";
+import { AnnotationsSchema, SidekickMessageIntentSchema, validateAnnotationAttachments } from "@rally/contracts";
 import { ResourceService } from "../services/resource-service";
 import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-share-rules";
 import { stableUuid } from "../lib/stable-uuid";
@@ -173,6 +173,8 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   attachmentIds: z.array(z.string().uuid()).max(10).default([]),
   annotations: AnnotationsSchema.optional(),
   runMode: z.enum(["steer", "queue"]).optional(),
+  /** Read only in a Sidekick's shared conversation. */
+  intent: SidekickMessageIntentSchema.optional(),
   telemetryOperationId: z.string().min(1).max(180).optional(),
   telemetryRequestReceivedAt: z.number().int().nonnegative().optional(),
   telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).optional(),
@@ -422,7 +424,7 @@ interface LocalMessageWrite {
   inserted: boolean;
 }
 
-/** A durable-loop wakeup request for the SubstreamAgent that owns execution. */
+/** A durable-loop wakeup request for the AgentLoopDO that owns execution. */
 interface WorkstreamPendingInputActivationRequest {
   kind: "activate_substream_loop";
   loopId: string;
@@ -510,7 +512,7 @@ function userFromRow(row: UserRow) {
 }
 
 /**
- * Product repository for one conversation: the `SubstreamAgent` whose storage
+ * Product repository for one conversation: the `AgentLoopDO` whose storage
  * this is.
  *
  * Every method reads or mutates only this object's normalized SQL for product
@@ -553,6 +555,14 @@ export class WorkstreamObjectProductService {
     claimedAt: number;
   }>();
   private readonly inputPreparationWaiters = new Map<string, Set<() => void>>();
+  /**
+   * Whether a person manages the Sidekick this conversation belongs to. The
+   * conversation object sets it (`sidekickAllowsManager`), so this service
+   * never names the Organization object's type.
+   */
+  sidekickAllowsManager: (input: {
+    workspaceId: string; automationId: string; actor: { userId: string; actorRole: AuthContext["role"] };
+  }) => Promise<boolean> = () => Promise.reject(new Error("sidekick_manager_check_unavailable"));
 
   constructor(
     private readonly storage: DurableObjectStorage,
@@ -2519,7 +2529,7 @@ export class WorkstreamObjectProductService {
     return committed.result;
   }
 
-  /** Detail for the canonical transcript snapshot assembled by SubstreamAgent. */
+  /** Detail for the canonical transcript snapshot assembled by AgentLoopDO. */
   async boot(auth: AuthContext, viewers: WorkstreamDetail["viewers"] = []): Promise<{
     workstream: WorkstreamDetail;
   }> {
@@ -3994,6 +4004,22 @@ export class WorkstreamObjectProductService {
     const sidekickAttachmentIds = this.storage.sql.exec<{ sidekick_id: string }>(
       `SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`,
     ).toArray().map((row) => row.sidekick_id);
+    // A Sidekick run's steps and its last reply, for its row in the
+    // Sidekick's conversation (the Sidekick copies the preview onto the run's
+    // summary). Read only in a run: no other conversation's parent reads them.
+    const identity = this.objectStore.identity();
+    const sidekickRun = identity?.parentKind === "automation" && this.externalSubstreamId() !== "0" && background === undefined;
+    const stepCount = sidekickRun
+      ? Number(this.storage.sql.exec<{ steps: number }>(
+        `SELECT COUNT(*) AS steps FROM participant_transcript_blocks WHERE block_kind = 'tool'`,
+      ).one().steps)
+      : undefined;
+    const preview = sidekickRun
+      ? this.storage.sql.exec<{ content: string | null }>(
+        `SELECT content FROM canonical_conversation_turn_details
+          WHERE author_type = 'agent' AND message_type = 'text' ORDER BY sequence_number DESC LIMIT 1`,
+      ).toArray()[0]?.content ?? ""
+      : root.preview;
     return {
       kind: "directory_common" as const,
       backgroundAgent: background !== undefined,
@@ -4003,7 +4029,7 @@ export class WorkstreamObjectProductService {
       appearance: root.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json)) : undefined,
       title: truncateUtf16Safe(root.title, 500),
       description: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
-      preview: truncateUtf16Safe(root.preview, 1_000),
+      preview: truncateUtf16Safe(preview, 1_000),
       scope: root.scope,
       state: root.exact_state,
       systemKind: root.system_kind,
@@ -4023,6 +4049,7 @@ export class WorkstreamObjectProductService {
         : null,
       resourceLinks,
       sidekickAttachmentIds,
+      ...(stepCount !== undefined ? { stepCount } : {}),
       ...(attachmentReservationReleases.length > 0 ? { attachmentReservationReleases } : {}),
       createdAt: iso(root.created_at)!,
       updatedAt: iso(root.updated_at)!,
@@ -5052,7 +5079,13 @@ export class WorkstreamObjectProductService {
     const participantCount = Number(first(this.storage.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
     ))?.count ?? 0) + missingParticipantUserIds.filter((userId) => !this.isParticipant(userId)).length;
-    let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0 || Boolean(input.annotations?.some((a)=>a.comment.trim()));
+    const sharedSidekickConversation = this.objectStore.identity()?.parentKind === "automation"
+      && this.externalSubstreamId() === "0";
+    // A message its sender marked as a wizard edit is addressed to the
+    // Sidekick by that mark, so no classifier is asked. Whether the sender may
+    // edit is the Sidekick's to say when the loop takes the message.
+    const editsSidekick = sharedSidekickConversation && input.intent === "edit_sidekick";
+    let shouldInvoke = editsSidekick || Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0 || Boolean(input.annotations?.some((a)=>a.comment.trim()));
     if (input.merge || input.recordOnly) {
       // A merge is a result posted for the thread's readers, never a request
       // to Rally, and a record-only message says so explicitly: neither starts
@@ -5280,7 +5313,10 @@ export class WorkstreamObjectProductService {
         const result = this.loops.completeInputPreparation({
           inputId: messageId,
           preparedTurnId: messageId,
-          mode: shouldInvoke ? input.runMode ?? "queue" : "queue",
+          // The Sidekick's shared conversation decides who answers when its
+          // loop takes the message (wizard or a run), so nothing there may
+          // steer a turn already running past that decision.
+          mode: shouldInvoke && !sharedSidekickConversation ? input.runMode ?? "queue" : "queue",
           startsRun: shouldInvoke,
           actor: "human",
           authorUserId: auth.userId,
@@ -5312,6 +5348,10 @@ export class WorkstreamObjectProductService {
             executionPrincipal: { type: "user", userId: auth.userId },
             sessionId: auth.sessionId,
             principal: auth.principal ?? "session",
+            // Read when the Sidekick decides who answers a message in its
+            // shared conversation: the sender's role and their mark.
+            actorRole: auth.role,
+            intent: editsSidekick ? "edit_sidekick" : null,
             confirmedParticipantUserIds,
             participantEpochs: this.pendingParticipantEpochs([
               auth.userId,
@@ -5706,6 +5746,17 @@ export class WorkstreamObjectProductService {
         inserted: false,
       };
     }
+    // In a Sidekick's shared conversation every question is the wizard's,
+    // and so is its answer, which only a manager may give. Refused before
+    // anything is reserved for the answer, so a manager can still give it.
+    const identity = this.objectStore.identity();
+    if (identity?.parentKind === "automation" && this.externalSubstreamId() === "0"
+      && !await this.sidekickAllowsManager({
+        workspaceId: auth.workspaceId, automationId: identity.parentId,
+        actor: { userId: auth.userId, actorRole: auth.role },
+      })) {
+      throw new ApiError(403, "sidekick_edit_requires_manager", "Only the people who manage this Sidekick can answer its questions");
+    }
     const localRoot = this.locallyAuthorizedRoot(auth);
     const reservationNow = Date.now();
     const preparation = await this.reserveInputPreparation({
@@ -5876,6 +5927,9 @@ export class WorkstreamObjectProductService {
           executionPrincipal: { type: "user", userId: auth.userId },
           sessionId: auth.sessionId,
           principal: auth.principal ?? "session",
+          // An answer in a Sidekick's shared conversation is the wizard's,
+          // and the Sidekick reads the role when it checks who manages it.
+          actorRole: auth.role,
           confirmedParticipantUserIds: [],
           participantEpochs: this.pendingParticipantEpochs([auth.userId]),
           reason: "elicitation_answer",

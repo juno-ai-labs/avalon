@@ -135,7 +135,7 @@ export function applyDurableObjectSqliteMigrations(
     }
     // The pre-cutover WorkstreamRoom ledger has every correctness field but
     // predates the human-readable description. Adding it is metadata-only and
-    // lets the renamed SubstreamAgent retain its existing receipts verbatim.
+    // lets the renamed AgentLoopDO retain its existing receipts verbatim.
     ledgerNeedsDescription = !ledgerColumns.has("description");
     const applied = sql.exec<{
       version: number;

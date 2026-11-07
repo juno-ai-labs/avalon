@@ -1,4 +1,4 @@
-import type { ArtifactPinList, ChannelStats, ContainerOrder, PersonalOrder, PinList, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
+import type { ArtifactPinList, CanvasSidebarRow, ChannelStats, ContainerOrder, PersonalOrder, PinList, PinnedOrder, SpaceSnapshot } from '@rally/contracts';
 import { useQuery, type InfiniteData, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import { sameContainer } from './personal-order';
@@ -20,12 +20,14 @@ import type { AutomationSummary, SpaceConversationSummary } from './types';
  * route, and only the second of those two pushes carries a higher number.
  */
 
-export type SidebarList = 'automations';
+export type SidebarList = 'automations' | 'canvases';
 type SidebarWaterline = SidebarList | 'spaces';
 
 /** The cache entries the shell reads these lists under. */
 export const SIDEBAR_LIST_QUERY_KEYS = {
   automations: ['automations'],
+  /** This viewer's Canvases (`workspace_canvas_list`); see docs/canvases.md. */
+  canvases: ['canvases'],
 } as const satisfies Record<SidebarList, readonly unknown[]>;
 
 export const SPACES_QUERY_KEY = ['spaces'] as const;
@@ -133,6 +135,7 @@ function pinWaterlineLedger(queryClient: QueryClient): void {
 
 interface SidebarListItems {
   automations: AutomationSummary[];
+  canvases: CanvasSidebarRow[];
 }
 
 /**
@@ -160,6 +163,15 @@ export function applyVersionedSidebarList<K extends SidebarList>(
   );
   queryClient.setQueryData<SidebarListItems[K]>(SIDEBAR_LIST_QUERY_KEYS[list], items);
   return true;
+}
+
+/**
+ * Whether the socket has applied this list in this session. A seed from the
+ * local cache writes the list but never the ledger, so this is what tells a
+ * mirror the list is the socket's rather than the disk's own copy back.
+ */
+export function sidebarListApplied(queryClient: QueryClient, list: SidebarList): boolean {
+  return queryClient.getQueryData<Partial<Record<SidebarList, number>>>(SIDEBAR_LIST_WATERLINES_KEY)?.[list] !== undefined;
 }
 
 /**

@@ -3,18 +3,27 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { SidekicksLibraryScreen, SidekicksWindow } from './sidekicks-library';
+import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
+import type { AutomationSummary } from '../lib/types';
+import { SidekicksLibraryRoute, SidekicksLibraryScreen, SidekicksWindow } from './sidekicks-library';
 
 const getSidekicks = vi.hoisted(() => vi.fn());
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api: { getSidekicks } }) }));
+const shell = vi.hoisted(() => ({ host: 'desktop' as 'desktop' | 'browser', guest: false }));
+vi.mock('../lib/collaboration-session', () => ({ useShellCapabilities: () => shell }));
+// Whether a workspace socket is mounted above the screen, as in the main window.
+const socket = vi.hoisted(() => ({ mounted: false }));
+vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => socket.mounted ? {} : null }));
 const openThread = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('../lib/platform', async (importOriginal) => ({
   ...await importOriginal<typeof PlatformModule>(),
   desktopBridge: () => ({ openThread }),
 }));
-const THREAD_ID = '0191c0de-0000-7000-8000-00000000cafe';
 
 beforeEach(() => {
+  socket.mounted = false;
+  shell.host = 'desktop';
+  shell.guest = false;
   getSidekicks.mockReset().mockResolvedValue([
     { id: 'personal', name: 'Daily brief', description: 'Prepare my morning notes.', scope: 'you', status: 'active' },
     { id: 'team', name: 'Team brief', description: 'Share the latest product news.', scope: 'workspace', status: 'active' },
@@ -47,27 +56,53 @@ describe('SidekicksLibraryScreen', () => {
     expect(screen.queryByRole('link', { name: /Team brief/ })).toBeNull();
     expect(within(screen.getByRole('group', { name: 'Sidekick ownership' })).getByRole('button', { name: 'Everyone' })).toHaveAttribute('aria-pressed', 'true');
   });
+});
 
-  it('names the owning Thread and opens it without opening the Sidekick', async () => {
-    getSidekicks.mockResolvedValue([
-      { id: 'notes', name: 'Release notes', description: 'Draft the notes.', scope: 'workstream', status: 'active',
-        owningWorkstreamId: THREAD_ID, owningThread: { id: THREAD_ID, title: 'Release room', appearance: { icon: 'rocket', color: 'purple' } } },
-      { id: 'left', name: 'Standup', description: 'Collect updates.', scope: 'workstream', status: 'draft', owningWorkstreamId: THREAD_ID },
-    ]);
+describe('the Sidekicks home', () => {
+  it('lists each Sidekick the workspace socket keeps as a row with its status, who it is shared with and when it next wakes', async () => {
+    // The rows as the socket's sidebar read carries them: only it says
+    // `needsInput`, which `GET /sidekicks` never does.
+    socket.mounted = true;
+    const client = new QueryClient();
+    applyVersionedSidebarList(client, 'automations', 1, [
+      { id: 'triage', name: 'Incident triage', description: 'Watches alerts.', scope: 'you', audience: 'people', status: 'active', needsInput: true, updatedAt: '2026-11-07T09:00:00.000Z' },
+      { id: 'changelog', name: 'Weekly changelog', description: 'Every Friday.', scope: 'workspace', audience: 'workspace', status: 'active', nextRunAt: '2099-11-13T22:00:00.000Z', updatedAt: '2026-11-07T09:00:00.000Z' },
+      { id: 'revenue', name: 'Revenue analyst', description: 'Keeps revenue current.', scope: 'you', audience: 'personal', status: 'paused', updatedAt: '2026-11-07T09:00:00.000Z' },
+    ] satisfies AutomationSummary[]);
+    render(<QueryClientProvider client={client}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
+    expect(getSidekicks).not.toHaveBeenCalled();
+    const triage = (await screen.findByRole('link', { name: 'Incident triage' })).closest('li')!;
+    expect(within(triage).getByText('Needs input')).toBeInTheDocument();
+    expect(within(triage).getByText('Named people')).toBeInTheDocument();
+    const changelog = screen.getByRole('link', { name: 'Weekly changelog' }).closest('li')!;
+    expect(within(changelog).getByText('Organization')).toBeInTheDocument();
+    expect(within(changelog).getByText('Active')).toBeInTheDocument();
+    expect(within(changelog).getByText('Next').nextElementSibling).not.toHaveTextContent('—');
+    const revenue = screen.getByRole('link', { name: 'Revenue analyst' }).closest('li')!;
+    expect(within(revenue).getByText('Paused')).toBeInTheDocument();
+    expect(within(revenue).getByText('Next').nextElementSibling).toHaveTextContent('—');
+    fireEvent.click(screen.getByRole('button', { name: 'Paused' }));
+    expect(screen.getByRole('link', { name: 'Revenue analyst' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Weekly changelog' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Only you' }));
+    // Shared with named people is not only its author's.
+    expect(screen.queryByRole('link', { name: 'Incident triage' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Revenue analyst' })).toBeInTheDocument();
+  });
+
+  it('offers New Sidekick beside the empty copy when there are none', async () => {
+    getSidekicks.mockResolvedValue([]);
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
+    expect(await screen.findByText('No Sidekicks yet')).toBeInTheDocument();
+    expect(screen.getByText('Describe what you would like to delegate to create one.')).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'New Sidekick' })).toHaveLength(2);
+  });
 
-    const notes = (await screen.findByRole('link', { name: 'Release notes' })).closest('li')!;
-    const thread = within(notes).getByRole('button', { name: 'Release room' });
-    // A sibling of the row's link, never inside it: a button in an anchor is
-    // invalid markup and reads as one control to a screen reader.
-    expect(thread.closest('a')).toBeNull();
-    fireEvent.click(thread);
-    expect(openThread).toHaveBeenCalledWith(THREAD_ID);
-
-    // A row whose Thread the reader is not in keeps the plain word.
-    const standup = screen.getByRole('link', { name: 'Standup' }).closest('li')!;
-    expect(within(standup).getByText('Thread').closest('small')).toHaveTextContent('Draft · Thread');
-    expect(within(standup).queryByRole('button')).toBeNull();
+  it.each(['desktop', 'browser'] as const)('renders in the main window rather than handing off to the Sidekicks window (%s)', async (host) => {
+    shell.host = host;
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SidekicksLibraryRoute /></MemoryRouter></QueryClientProvider>);
+    expect(await screen.findByRole('link', { name: /Daily brief/ })).toHaveAttribute('href', '/sidekicks/personal');
+    expect(screen.queryByText('Opening Sidekicks…')).toBeNull();
   });
 });
 

@@ -686,12 +686,12 @@ describe("Rally engineering MCP tools", () => {
     const flags = flagAdministration();
     vi.mocked(flags.updateProductFlag).mockResolvedValue({
       ok: true,
-      value: { key: "live-artifacts-enabled", default_variation: "on" },
+      value: { key: "multiple-workspaces-enabled", default_variation: "on" },
     });
     const env = testEnv({ FLAG_ADMINISTRATION: flags });
     const update = {
-      key: "live-artifacts-enabled",
-      description: "Live artifacts.",
+      key: "multiple-workspaces-enabled",
+      description: "Multiple workspaces.",
       enabled: true,
       default_variation: "off",
       rules: [{
@@ -704,7 +704,7 @@ describe("Rally engineering MCP tools", () => {
     const response = await rpc(env, "tools/call", { name: "update_feature_flag", arguments: update });
     const result = response.result as { isError?: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBeUndefined();
-    expect(JSON.parse(result.content[0]!.text)).toEqual({ key: "live-artifacts-enabled", default_variation: "on" });
+    expect(JSON.parse(result.content[0]!.text)).toEqual({ key: "multiple-workspaces-enabled", default_variation: "on" });
     expect(flags.updateProductFlag).toHaveBeenCalledWith({
       actor: { subject: "engineer-1" },
       update,

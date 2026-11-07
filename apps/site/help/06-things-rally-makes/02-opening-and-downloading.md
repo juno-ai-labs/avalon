@@ -7,7 +7,7 @@ Rally gives you four ways to look at a file, depending on how long you want to l
 
 ## The preview
 
-Click any file in the conversation, whether it is a picture you attached, a file card Rally posted, or a tile in a message, and Rally opens a large preview over the window. You can look at it without downloading anything or leaving the Thread.
+Click any file in the conversation, whether it is a picture you attached, a file card Rally posted, or a tile in a message, and Rally opens a large preview over the window. You can look at it without downloading anything or leaving the Canvas.
 
 What you see depends on the kind of file:
 
@@ -19,7 +19,7 @@ What you see depends on the kind of file:
 | Word, PDF and similar | Readable text that Rally extracted from the file |
 | Web pages saved as HTML files | A locked-down page with no scripts and nothing loaded from the internet |
 
-Audio and video are only fetched when you open them, so a Thread full of recordings does not slow down.
+Audio and video are only fetched when you open them, so a Canvas full of recordings does not slow down.
 
 If Rally cannot show a file, the preview says **This resource has no preview available.** You can still download it.
 
@@ -51,17 +51,17 @@ The preview normally lays a see-through, slightly blurred wash over the window b
 
 ## Opening an artifact
 
-Click an artifact's card in the conversation, or its row under **Artifacts** in the Thread's menu (**More**), and it opens with its title in the header and a row of buttons beside it:
+Click an artifact's card in the conversation, or in the panel on the right, and it opens with its title in the header and a row of buttons beside it:
 
 - **Open in a righthand sidebar** docks it beside the conversation (below).
 - **Open in a new window** gives it a window of its own (further below).
 - **Versions** shows its history, as described in [Artifacts](01-artifacts.md#versions).
-- **Archive** removes it from the Thread. See [Resources: things you bring in](04-resources.md#archiving-a-resource) before you click it.
+- **Archive** removes it from the Canvas. See [Resources: things you bring in](04-resources.md#archiving-a-resource) before you click it.
 - **Close resource preview** closes it.
 
 ## Docking an artifact beside the conversation
 
-Sometimes you want to read a document and talk about it at the same time: "the second paragraph is too long", "swap sections three and four". The artifact sidebar keeps one artifact open on the right of the Thread while you carry on in the conversation.
+Sometimes you want to read a document and talk about it at the same time: "the second paragraph is too long", "swap sections three and four". The artifact sidebar keeps one artifact open on the right of the Canvas while you carry on in the conversation. It is where Rally opens what it makes, so most of the time it is already open.
 
 1. Open the artifact.
 2. Click **Open in a righthand sidebar** in its header.
@@ -72,7 +72,7 @@ This is the best way to give notes on a draft. You point at the paragraph, Rally
 
 Good to know:
 
-- Rally remembers which artifact you had docked in each Thread and each Breakout, on this device, and brings it back the next time you open Rally.
+- Rally remembers which artifact you had docked in each Canvas, on this device, and brings it back the next time you open Rally.
 - The button is greyed out for files Rally cannot show, and for sites when the live view of sites is not available to you (see [Live sites](03-live-sites.md)).
 - If you open a web link while an artifact is docked, Rally's built-in browser covers the panel. Close the browser and the artifact is back. The browser itself is covered in [Research and the built-in browser](../04-working-with-rally/02-research-and-the-web.md).
 - The docked sidebar works in the Mac app and in the web browser version.
@@ -107,7 +107,7 @@ To save a file to your Mac as the original file:
 
 A download is the stored file exactly as it is. A Markdown document downloads as a `.md` file, which opens in any text editor and in many writing apps.
 
-There is no button that converts a document to Word or PDF. If you need another format, ask Rally in the Thread, for example "make a Word version of that brief". It can produce a new file when its private computer is available, which is not guaranteed at every moment. To save one of Rally's replies (rather than a file) as a PDF or image, see [Saving and sharing what Rally wrote](05-saving-and-exporting.md).
+There is no button that converts a document to Word or PDF. If you need another format, ask Rally in the Canvas, for example "make a Word version of that brief". It can produce a new file when its private computer is available, which is not guaranteed at every moment. To save one of Rally's replies (rather than a file) as a PDF or image, see [Saving and sharing what Rally wrote](05-saving-and-exporting.md).
 
 Some things to watch for:
 

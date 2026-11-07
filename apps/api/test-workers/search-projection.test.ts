@@ -314,8 +314,8 @@ describe('conversation display projection', () => {
 /**
  * Whole-fleet re-projections: once after the 2026-09-10 deploy dead-lettered
  * document jobs whose publish intent the source had already cleared (WorkspaceDO
- * 51, SubstreamAgent 53), and once so rows written before search audience carry
- * one (WorkspaceDO 77, SubstreamAgent 70). Each object re-projects on its next wake.
+ * 51, AgentLoopDO 53), and once so rows written before search audience carry
+ * one (WorkspaceDO 77, AgentLoopDO 70). Each object re-projects on its next wake.
  */
 describe.each([
   { pass: 'after the consumer version skew', workspaceFrom: 50, substreamFrom: 52, suffix: '1' },

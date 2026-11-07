@@ -63,7 +63,7 @@ This is explicit, user-authored feedback. It is separate from product telemetry,
 crash reporting, and conversation mutations. It stores issue text and stable
 provenance, not another copy of the reported message body. There is no public
 report listing endpoint or automatic Slack forwarding. The shared surface is
-used on macOS and web; native iOS has no Oopsie UI yet.
+used on macOS and web.
 
 ## Failure modes and limits
 

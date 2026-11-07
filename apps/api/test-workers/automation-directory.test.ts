@@ -16,7 +16,7 @@
 
 import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { asAutomationId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId, type AutomationDetail, type AutomationScope } from "@rally/contracts";
 
@@ -24,13 +24,10 @@ import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 import { AutomationService, createAutomation } from "../src/services/automation-service";
-import { searchAudienceGroup, searchAudienceGroupIds } from "../src/services/search-audience";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
 import { hostedParentStub, withHostedParent } from "./helpers/hosted-parent";
 import { writeSidekickDirectoryRow } from "./helpers/sidekick";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
-import { placeMembership } from "./helpers/space-membership";
 
 /** Its own workspace: object names are shared across files, storage is not. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000ad20");
@@ -135,7 +132,6 @@ async function createAndPublish(scope: AutomationScope): Promise<string> {
     workspaceId: WORKSPACE_ID,
     authorUserId: AUTHOR_ID,
     scope,
-    owningWorkstreamId: scope === "workstream" ? ROOM_ID : null,
     automationId,
   });
   expect(created.created).toBe(true);
@@ -144,7 +140,6 @@ async function createAndPublish(scope: AutomationScope): Promise<string> {
     author_user_id: AUTHOR_ID,
     lifecycle: "draft",
     scope,
-    owning_workstream_id: scope === "workstream" ? ROOM_ID : null,
   });
   return automationId;
 }
@@ -162,101 +157,6 @@ beforeEach(async () => {
 });
 
 describe("automation directory", () => {
-  it.each([
-    { home: "0", storedColor: "purple", expectedColor: "green", canonicalColor: "green" },
-    { home: "00000000-0000-7000-8000-00000000ad25", storedColor: "purple", expectedColor: "green", canonicalColor: "green" },
-    { home: "00000000-0000-7000-8000-00000000ad25", storedColor: null, expectedColor: "green", canonicalColor: "green" },
-    { home: "0", storedColor: "purple", expectedColor: "purple" },
-    { home: "00000000-0000-7000-8000-00000000ad25", storedColor: "black", expectedColor: "black" },
-    { home: "0", storedColor: "not-a-color", expectedColor: "lime" },
-    { home: "00000000-0000-7000-8000-00000000ad25", storedColor: "not-a-color", expectedColor: "emerald" },
-    { home: "0", storedColor: null, expectedColor: "lime" },
-    { home: "00000000-0000-7000-8000-00000000ad25", storedColor: null, expectedColor: "emerald" },
-  ] as const)("inherits home $home color $storedColor at creation expected $expectedColor", async (testCase) => {
-    const { home, storedColor, expectedColor } = testCase;
-    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    await runInDurableObject(workspaceStub(), (instance, state) => {
-      // The test Worker defaults to error-only logging. Exercise the production
-      // warning path without changing the binding for unrelated tests.
-      if (storedColor === "not-a-color") {
-        const target = instance as unknown as { env: Env };
-        target.env = new Proxy(target.env, {
-          get: (current, property, receiver) => property === "LOG_LEVEL"
-            ? "warn" : Reflect.get(current, property, receiver),
-        });
-      }
-      // Without a canonical Channel color, the exact home wins over its sibling.
-      state.storage.sql.exec("UPDATE channels SET appearance_json = ? WHERE workstream_id = ?",
-        JSON.stringify({ icon: "rocket", color: home === "0" ? storedColor : "orange" }), ROOM_ID);
-      if (home !== "0") {
-        state.storage.sql.exec(`INSERT INTO breakouts
-          (workstream_id, substream_id, authority_generation, waterline, source_event_id,
-           payload_hash, title, description, scope, exact_state, title_status,
-           last_activity_at, latest_attention_ordinal, unread_tracking_start_ordinal,
-           source_created_at, source_updated_at, projected_at, appearance_json)
-          VALUES (?, ?, 1, 1, 'breakout-color', 'hash', 'Release breakout', '', 'personal',
-                  'idle', 'settled', 0, 0, 0, 0, 0, 0, ?)`, ROOM_ID, home,
-        storedColor === null ? null : JSON.stringify({ icon: "book", color: storedColor }));
-      }
-    });
-    if ("canonicalColor" in testCase) {
-      const reserved = await workspaceStub().reserveSpace({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-        space: { name: "Release channel", iconKey: "briefcase", colorKey: "purple", scope: "workspace" } });
-      if (!reserved.ok) throw new Error(reserved.code);
-      await placeMembership(workspaceStub(), { workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-        spaceId: reserved.space.id, workstreamId: ROOM_ID });
-      await workspaceStub().noteSpacePresentation({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID,
-        spaceId: reserved.space.id, presentation: { name: "Release channel", iconKey: "briefcase", colorKey: testCase.canonicalColor } });
-      // The recolor authority moved, but neither conversation projection has.
-      const projected = await runInDurableObject(workspaceStub(), (_instance, state) =>
-        state.storage.sql.exec<{ appearance_json: string }>(
-          "SELECT appearance_json FROM channels WHERE workstream_id = ?", ROOM_ID).one());
-      expect(JSON.parse(projected.appearance_json).color).toBe(home === "0" ? "purple" : "orange");
-    }
-    const automationId = nextAutomationId();
-    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
-      scope: "workstream", owningWorkstreamId: ROOM_ID, owningSubstreamId: home, automationId });
-    const detail: AutomationDetail = await workspaceStub().sidekickReadDetail({ workspaceId: WORKSPACE_ID, automationId,
-      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true } });
-    expect(detail.appearance).toEqual({ icon: null, color: expectedColor });
-    expect(JSON.parse((await directoryRow(automationId)).appearance_json!))
-      .toEqual({ icon: null, color: expectedColor });
-    if (storedColor === "not-a-color") {
-      expect(warned).toHaveBeenCalledWith(expect.objectContaining({
-        event: "sidekick_home_appearance_invalid", workspace_id: WORKSPACE_ID,
-        automation_id: automationId, workstream_id: ROOM_ID, substream_id: home,
-        code: "sidekick_home_appearance_invalid:color:invalid_value",
-      }));
-      expect(JSON.stringify(warned.mock.calls)).not.toContain("not-a-color");
-    }
-  });
-
-  it.each(["orange", "not-a-color"])("keeps edited appearance on creation replay with home color %s", async (color) => {
-    const automationId = await createAndPublish("workstream");
-    await workspaceStub().sidekickSetAppearance({ workspaceId: WORKSPACE_ID, automationId,
-      actor: { userId: AUTHOR_ID, actorRole: "member", participantOfOwningWorkstream: true },
-      appearance: { icon: "rocket", color: "green" } });
-    await runInDurableObject(workspaceStub(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE channels SET appearance_json = ? WHERE workstream_id = ?",
-        JSON.stringify({ icon: null, color }), ROOM_ID);
-    });
-    const replay = await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
-      scope: "workstream", owningWorkstreamId: ROOM_ID, automationId });
-    expect(replay.created).toBe(false);
-    const listed = await workspaceStub().listWorkstreamAutomations({ workspaceId: WORKSPACE_ID,
-      workstreamId: ROOM_ID, userId: AUTHOR_ID });
-    expect(listed.items.map((item) => item.appearance)).toEqual([{ icon: "rocket", color: "green" }]);
-  });
-
-  it("learns a historical participant before listing the Thread's Sidekick rail", async () => {
-    const automationId = await createAndPublish("workstream");
-    await runInDurableObject(workspaceStub(), (_instance, state) => {
-      state.storage.sql.exec("DELETE FROM workspace_member_status WHERE user_id = ?", AUTHOR_ID);
-    });
-    const listed = await workspaceStub().listWorkstreamAutomations({ workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, userId: AUTHOR_ID });
-    expect(listed.items.map((item) => item.id)).toEqual([automationId]);
-  });
-
   it("lists a personal draft in its author's sidebar and in nobody else's", async () => {
     const automationId = await createAndPublish("personal");
 
@@ -271,90 +171,11 @@ describe("automation directory", () => {
     expect(await sidebar(MEMBER_ID)).toEqual([{ id: automationId, status: "draft", scope: "workspace" }]);
   });
 
-  it("lists a room's draft only in that room's rail, to that room's participants", async () => {
-    const automationId = await createAndPublish("workstream");
-
-    expect(await sidebar(AUTHOR_ID)).toEqual([]);
-    expect(await sidebar(MEMBER_ID)).toEqual([]);
-    const rail = await workspaceStub().listWorkstreamAutomations({
-      workspaceId: WORKSPACE_ID,
-      workstreamId: ROOM_ID,
-      userId: AUTHOR_ID,
-    });
-    expect(rail.items.map((item) => ({ id: item.id, status: item.status }))).toEqual([
-      { id: automationId, status: "draft" },
-    ]);
-    expect(await workspaceStub().automationOwner({ workspaceId: WORKSPACE_ID, automationId }))
-      .toEqual({ owningWorkstreamId: ROOM_ID, owningSubstreamId: "0" });
-    // A member who is not in the room does not get the room's rail at all.
-    // Asked inside the object: a rejection over the stub is reported a second
-    // time as unhandled, which fails the run even when the assertion held.
-    await expect(runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.listWorkstreamAutomations({
-      workspaceId: WORKSPACE_ID,
-      workstreamId: ROOM_ID,
-      userId: MEMBER_ID,
-    }))).rejects.toMatchObject({ code: "sidekick_directory_access_denied", status: 403 });
-  });
-
-  it("authorizes library summaries across personal, workspace, and room scopes", async () => {
+  it("authorizes library summaries across personal and workspace scopes", async () => {
     const personal = await createAndPublish("personal");
     const shared = await createAndPublish("workspace");
-    const owned = await createAndPublish("workstream");
-    expect((await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items.map((item) => item.id).sort()).toEqual([personal, shared, owned].sort());
+    expect((await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID })).items.map((item) => item.id).sort()).toEqual([personal, shared].sort());
     expect((await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID })).items.map((item) => item.id)).toEqual([shared]);
-  });
-
-  it("lists a Channel's Sidekick to the Channel's participants, not only its author, and not to anyone else", async () => {
-    // Somebody else's Sidekick in the room, so the room's participant sees
-    // it only through the Channel's own participant rows.
-    const automationId = nextAutomationId();
-    await writeSidekickDirectoryRow(env, {
-      automationId, workspaceId: WORKSPACE_ID, authorUserId: "00000000-0000-7000-8000-00000000ad2f",
-      lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID, title: "Release notes", description: "",
-    });
-
-    expect((await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
-      .items.map((item) => item.id)).toEqual([automationId]);
-    expect((await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: MEMBER_ID }))
-      .items).toEqual([]);
-  });
-
-  it("names the owning Thread to a reader who is in it, and to nobody who has left it", async () => {
-    // One Sidekick the author made and one somebody else made, so both the
-    // reader's own row and a row read through the Thread are covered.
-    const authored = await createAndPublish("workstream");
-    const othersId = nextAutomationId();
-    await writeSidekickDirectoryRow(env, {
-      automationId: othersId, workspaceId: WORKSPACE_ID, authorUserId: "00000000-0000-7000-8000-00000000ad2f",
-      lifecycle: "active", scope: "workstream", owningWorkstreamId: ROOM_ID, title: "Release notes", description: "",
-    });
-    await runInDurableObject(workspaceStub(), (_instance, state) => {
-      state.storage.sql.exec(`UPDATE channels SET appearance_json = ? WHERE workstream_id = ?`,
-        JSON.stringify({ icon: "rocket", color: "purple" }), ROOM_ID);
-    });
-    const thread = { id: ROOM_ID, title: "Release room", appearance: { icon: "rocket", color: "purple" } };
-    const author = { userId: AUTHOR_ID, actorRole: "member" as const, participantOfOwningWorkstream: true };
-
-    const library = await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
-    expect(Object.fromEntries(library.items.map((item) => [item.id, item.owningThread])))
-      .toEqual({ [authored]: thread, [othersId]: thread });
-    const detail: AutomationDetail = await workspaceStub().sidekickReadDetail({
-      workspaceId: WORKSPACE_ID, automationId: authored, actor: author,
-    });
-    expect(detail.owningThread).toEqual(thread);
-
-    // The author leaves the Thread. They still read the Sidekick they made,
-    // and it no longer names the room.
-    await runInDurableObject(workspaceStub(), (_instance, state) => {
-      state.storage.sql.exec("UPDATE parent_grants SET grant_json = json_set(grant_json, '$.active', json('false')) WHERE parent_id = ? AND user_id = ?", ROOM_ID, AUTHOR_ID);
-    });
-    const after = await workspaceStub().listSidekickDirectoryForAuthorizedMember({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID });
-    expect(after.items.map((item) => ({ id: item.id, owningThread: item.owningThread })))
-      .toEqual([{ id: authored, owningThread: null }]);
-    const detailAfter: AutomationDetail = await workspaceStub().sidekickReadDetail({
-      workspaceId: WORKSPACE_ID, automationId: authored, actor: { ...author, participantOfOwningWorkstream: false },
-    });
-    expect(detailAfter.owningThread).toBeNull();
   });
 
   it("reads the Sidekicks asked for and the ones a Channel recommends in one call, asked-for first and each once", async () => {
@@ -364,7 +185,7 @@ describe("automation directory", () => {
     for (const [automationId, title] of [[a, "A"], [b, "B"], [c, "C"], [d, "D"]] as const) {
       await writeSidekickDirectoryRow(env, {
         automationId, workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID,
-        lifecycle: "active", scope: "workspace", owningWorkstreamId: null, title, description: "",
+        lifecycle: "active", scope: "workspace", title, description: "",
       });
     }
     // The Channel recommends B first, then A, which is also asked for and
@@ -388,10 +209,9 @@ describe("automation directory", () => {
     expect(summaries.map((summary) => summary.name)).toEqual(["D", "C", "A", "B"]);
   });
 
-  it("learns a cold library reader once and reuses their membership on subsequent reads", async () => {
+  it("lists the library from the membership its authentication read, reading none itself", async () => {
     const personal = await createAndPublish("personal");
     const shared = await createAndPublish("workspace");
-    const owned = await createAndPublish("workstream");
     // Every statement the Organization object sends to D1 from here on. The
     // request's own authentication already joined the member row; a second
     // read of it inside the object is the round trip this listing must not pay.
@@ -413,28 +233,19 @@ describe("automation directory", () => {
       sessionId: SESSION_ID, userId, workspaceId: WORKSPACE_ID, region: "global", role: "member", accessClass: "member",
     }).listSidekicks();
 
-    // Who sees what is unchanged: the author sees all three, a member only the workspace one.
-    expect((await library(AUTHOR_ID)).items.map((item) => item.id).sort()).toEqual([personal, shared, owned].sort());
+    // Who sees what is unchanged: the author sees both, a member only the workspace one.
+    expect((await library(AUTHOR_ID)).items.map((item) => item.id).sort()).toEqual([personal, shared].sort());
     expect((await library(MEMBER_ID)).items.map((item) => item.id)).toEqual([shared]);
-    expect(objectReads.filter((sql) => sql.includes("workspace_members"))).toHaveLength(1);
-    objectReads.length = 0;
-    await library(MEMBER_ID);
+    // The role and access class arrive with the request, so the object reads no member row.
     expect(objectReads.filter((sql) => sql.includes("workspace_members"))).toEqual([]);
   });
 
-  it("keeps the three scopes apart in one workspace", async () => {
+  it("keeps the two scopes apart in one workspace", async () => {
     const personal = await createAndPublish("personal");
     const shared = await createAndPublish("workspace");
-    const owned = await createAndPublish("workstream");
 
     expect((await sidebar(AUTHOR_ID)).map((item) => item.id).sort()).toEqual([personal, shared].sort());
     expect((await sidebar(MEMBER_ID)).map((item) => item.id)).toEqual([shared]);
-    const rail = await workspaceStub().listWorkstreamAutomations({
-      workspaceId: WORKSPACE_ID,
-      workstreamId: ROOM_ID,
-      userId: AUTHOR_ID,
-    });
-    expect(rail.items.map((item) => item.id)).toEqual([owned]);
   });
 
   it("carries a chosen icon and colour into every list, one field at a time", async () => {
@@ -487,61 +298,18 @@ describe("automation directory", () => {
     expect(detail.appearance).toBeUndefined();
   });
 
-  it("keeps a claimant's human search access tied to the home without changing creator preference", async () => {
-    const automationId = await createAndPublish("workstream");
-    const [group] = await searchAudienceGroupIds([searchAudienceGroup.sidekick(automationId)]);
-    const audience = (userId: string) => workspaceStub().readSearchAudience({ workspaceId: WORKSPACE_ID, userId });
-    // The member is not in the owning room and cannot search its Sidekick.
-    expect(await audience(MEMBER_ID)).not.toContain(group);
-    // Taking it over is for whoever may manage the room; a grant on the room
-    // makes the member one, the way sharing a Channel does.
-    await withHostedParent(workspaceStub(), ROOM_ID, (parent) => {
-      const grants = (parent as unknown as { scopeGrants(address: { workspaceId: string; parentId: string }): ScopeGrantStorage })
-        .scopeGrants({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID });
-      expect(grants.mutate({ operationId: crypto.randomUUID(), actorUserId: AUTHOR_ID, userId: MEMBER_ID,
-        target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID }, active: true, expectedRevision: 0 },
-      "existing-member")).toMatchObject({ status: "committed" });
-    });
-    // The canonical grant already makes them a participant and therefore a reader.
-    expect(await audience(MEMBER_ID)).toContain(group);
-    const claim = await workspaceStub().sidekickClaimExecutionPrincipal({
-      workspaceId: WORKSPACE_ID,
-      automationId,
-      actor: { userId: MEMBER_ID, actorRole: "member", participantOfOwningWorkstream: false },
-    });
-    expect(claim.changed).toBe(true);
-    expect((await directoryRow(automationId)).run_as_user_id).toBe(AUTHOR_ID);
-    expect(await workspaceStub().sidekickReadExecutionDelegation({ workspaceId: WORKSPACE_ID, automationId }))
-      .toMatchObject({ creatorUserId: AUTHOR_ID, delegates: expect.arrayContaining([{ userId: MEMBER_ID,
-        generation: 1, grantedAt: expect.any(Number) }]) });
-    expect(await audience(MEMBER_ID)).toContain(group);
-    await withHostedParent(workspaceStub(), ROOM_ID, (parent) => {
-      const grants = (parent as unknown as { scopeGrants(address: { workspaceId: string; parentId: string }): ScopeGrantStorage })
-        .scopeGrants({ workspaceId: WORKSPACE_ID, parentId: ROOM_ID });
-      expect(grants.mutate({ operationId: crypto.randomUUID(), actorUserId: AUTHOR_ID, userId: MEMBER_ID,
-        target: { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID }, active: false, expectedRevision: grants.read(MEMBER_ID, { kind: "workstream", workspaceId: WORKSPACE_ID, parentId: ROOM_ID })!.revision },
-      "existing-member")).toMatchObject({ status: "committed" });
-    });
-    expect(await audience(MEMBER_ID)).not.toContain(group);
-  });
-
-  it("names every automation for a member's revocation, and a room's own for a lost room", async () => {
+  it("names every automation for a member's revocation", async () => {
     const personal = await createAndPublish("personal");
     const shared = await createAndPublish("workspace");
-    const owned = await createAndPublish("workstream");
 
-    // The member authored none of these, and can read the shared one and, as
-    // a room participant, the owned one; the walk used to reach only what a
-    // person authored, so their sockets on the other two outlived them.
+    // The member authored neither, and can read the shared one; the walk used
+    // to reach only what a person authored, so their sockets outlived them.
     const revoked = await workspaceStub().revokeSocketAccess({
       reason: "workspace_membership_removed",
       workspaceId: WORKSPACE_ID,
       userId: MEMBER_ID,
       sessionId: null,
     });
-    expect([...revoked.automationIds].sort()).toEqual([personal, shared, owned].sort());
-
-    expect(await workspaceStub().automationIdsOwnedByWorkstream({ workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID }))
-      .toEqual({ automationIds: [owned] });
+    expect([...revoked.automationIds].sort()).toEqual([personal, shared].sort());
   });
 });

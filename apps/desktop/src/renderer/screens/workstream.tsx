@@ -20,7 +20,7 @@ import { layoutKey, readLayout, writeLayout } from '../lib/desktop-layout';
 import { reportTelemetryProductIntent, telemetryVisibility, uuidV7 } from '../lib/telemetry';
 import { holdCreationTraceUntilSendReady, startPerfTrace } from '../lib/perf-trace';
 
-import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
+import { desktopServicesAvailable } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { AppearancePicker, AppearanceSubmenu } from '../components/appearance-picker';
 import { IconPalette } from '@tabler/icons-react';
@@ -41,9 +41,7 @@ import { orderedTranscriptQueryKey } from '../lib/use-workstream-socket';
 import { patchCachedWorkstream, workstreamDetailQueryKey } from '../lib/workstreams-cache';
 import { archiveThread, resolutionFailure, resolveConversation } from '../lib/thread-lifecycle';
 import { ArchiveConversationModal } from '../components/archive-conversation-modal';
-import { SidekickPicker } from '../components/sidekick-picker';
 import { openMemorySource, useMemoryFacts, type MemoryFacts } from '../components/memory-review';
-import { workstreamSidekickRows } from '../components/sidekick-section';
 import { useChannelRail } from '../lib/channel-rails';
 import { type LaunchingSubstream, type SubstreamLaunchProps } from '../components/substream-launch';
 import { ConversationOpeningSkeleton, ConversationSurface, mergeTargetFor, workspaceMemberFromSession, type ConversationHeaderContext, type ScrollToTurnRequest } from './conversation-surface';
@@ -663,7 +661,7 @@ function OpenWorkstreamScreen(): React.JSX.Element {
       throw error;
     }
   };
-  // The Channel's people, Sidekicks and artifacts as the workspace socket
+  // The Channel's people and artifacts as the workspace socket
   // already holds them, for the menus drawn before a snapshot answers.
   const channelRail = useChannelRail(id);
   // The roster App holds for the session, read on its own terms.
@@ -675,13 +673,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
     : undefined;
   const railParticipants = railParticipantList?.every((member) => member !== undefined)
     ? railParticipantList.filter((member) => member !== undefined)
-    : undefined;
-  const railSidekicks = channelRail && channelRail.sidekicks.attached
-    ? workstreamSidekickRows({
-      owned: channelRail.sidekicks.owned,
-      recommended: channelRail.sidekicks.recommended,
-      attached: channelRail.sidekicks.attached,
-    })
     : undefined;
   const railTitle = parent.data?.title ?? row?.title ?? sharedParent?.title ?? undefined;
   const channelAppearance = rowAppearance ?? parent.data?.appearance ?? sharedParent?.appearance;
@@ -924,16 +915,12 @@ function OpenWorkstreamScreen(): React.JSX.Element {
           label="Icon"
           onChange={appearanceChange}
         /> : undefined}
-        addSidekick={(context || channelRail) && <SidekickPicker substreamId="0" workstreamId={id} />}
         breakouts={breakoutMarks}
         memory={api && !conversationScoped ? memoryLevel(threadMemory) : undefined}
         // The update re-runs the import in the embedded browser, which only the Mac app has.
         onImportUpdates={api && desktopServicesAvailable() && importedSourceUpdatable(importedSource.data) ? () => setImportUpdateOpen(true) : undefined}
         onOpenArtifact={context?.openArtifact}
         onOpenBreakout={openBreakout}
-        onOpenSidekick={(sidekickId) => void desktopBridge().openSidekicks(sidekickId)}
-        onRefreshSidekicks={context?.refreshSidekicks}
-        onSidekickMenuOpen={context?.loadSidekickOptions}
         openSubstreamId={openBreakoutId}
         participantsPending={context === null && railParticipants === undefined}
         people={context?.people}
@@ -944,8 +931,6 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         presentUserIds={context?.presentUserIds ?? []}
         renderAge={breakoutAge}
         resourcesPending={detail?.resources === undefined && channelRail?.resources === undefined}
-        sidekickFailure={context?.sidekickFailure}
-        sidekicks={context ? context.sidekicks : railSidekicks}
         workstream={{
           id,
           title,
@@ -998,15 +983,9 @@ function OpenWorkstreamScreen(): React.JSX.Element {
         memory={api ? memoryLevel(breakoutMemory) : undefined}
         onShowInChannel={mainVisible ? () => showInChannel(openBreakoutMark?.originTurnId) : undefined}
         origin={context.origin}
-        addSidekick={<SidekickPicker substreamId={breakoutId} workstreamId={id} />}
-        onOpenSidekick={(sidekickId) => void desktopBridge().openSidekicks(sidekickId)}
-        onRefreshSidekicks={context.refreshSidekicks}
-        onSidekickMenuOpen={context.loadSidekickOptions}
         participants={context.detail.participants}
         people={context.people}
         presentUserIds={context.presentUserIds}
-        sidekickFailure={context.sidekickFailure}
-        sidekicks={context.sidekicks}
         scope={(() => {
           const child = railChildren?.find((candidate) => candidate.substreamId === breakoutId);
           return child && 'scope' in child ? child.scope : undefined;

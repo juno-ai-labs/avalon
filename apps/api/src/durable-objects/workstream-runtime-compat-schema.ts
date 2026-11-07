@@ -4,7 +4,7 @@
  * are not compatibility artifacts at all.
  *
  * Most of this array is views and `INSTEAD OF` triggers over normalized
- * conversation (`SubstreamAgent`) tables, and all of that goes when the layer is retired. Three
+ * conversation (`AgentLoopDO`) tables, and all of that goes when the layer is retired. Three
  * statements do not:
  *
  * - `attachment_tool_receipts` and its index are a real `STRICT` data table

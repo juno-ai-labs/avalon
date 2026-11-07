@@ -35,7 +35,7 @@ beforeEach(async () => {
 
 async function create(scope: "personal" | "workspace" = "workspace") {
   return stub().sidekickCreate({
-    ...address, authorUserId: creator, scope, owningWorkstreamId: null, authorityGeneration: 1,
+    ...address, authorUserId: creator, scope, authorityGeneration: 1,
   });
 }
 

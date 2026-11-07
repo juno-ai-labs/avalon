@@ -7,7 +7,6 @@ import {
   MAXIMUM_FAILURE_AVAILABLE_VALUES,
   MESSAGE_MAX_CHARACTERS,
   asAutomationId,
-  asSpaceId,
   asSubstreamId,
   asWorkspaceId,
   asUserId,
@@ -44,8 +43,6 @@ import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversa
 import { CHANNEL_MESSAGE_SEARCH_SOURCE } from "../durable-objects/channel-message-search-projection";
 import type {
   WorkspaceChannelFeedResult,
-  WorkspaceSidekickChannelPostRequest,
-  WorkspaceSidekickChannelPostResult,
   WorkspaceSpaceChannelPageRequest,
 } from "../durable-objects/workspace-space-protocol";
 import type { AuthContext, Env } from "../env";
@@ -65,8 +62,8 @@ import { createMessageObjectPort } from "../runtime/message-port";
  * input. A Thread or Breakout loop reaches its own conversation and the ones
  * it sits inside (a Breakout's Thread, the Thread's Channels), plus the other
  * Threads and Breakouts in those Channels; a Sidekick's
- * configuration conversation and its runs reach the Sidekick's home and
- * attachments. A new kind of agent is a new scope, not new tools. The model
+ * configuration conversation and its runs reach the Sidekick's own
+ * conversation, its home and attachments. A new kind of agent is a new scope, not new tools. The model
  * never supplies or widens a scope.
  *
  * To the model every one of them is a conversation: a list entry has an id
@@ -153,8 +150,6 @@ export interface ConversationWorkspacePort {
   attachSidekickConversation(input: ConversationToolAttachRequest): Promise<ConversationToolAttachResult>;
   /** A Channel's feed as this person may read it; the Channel screen's own read. */
   listChannelFeed(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceChannelFeedResult>;
-  /** A Sidekick's review announcing a change in the Channel it announces in. */
-  postSidekickChannelMessage(input: WorkspaceSidekickChannelPostRequest): Promise<WorkspaceSidekickChannelPostResult>;
 }
 
 /**
@@ -304,9 +299,13 @@ async function actingAuth(env: Env, input: WorkstreamWorkflowInput): Promise<Aut
 export function conversationSearchGroups(
   conversations: ReadonlyArray<Pick<ConversationToolEntry, "kind" | "parentId" | "substreamId">>,
 ): string[] {
+  // A Sidekick's own conversation is indexed under the Sidekick's group
+  // (`conversationSearchAudience`), not a conversation's.
   return conversations.map((conversation) => conversation.kind === "space"
     ? searchAudienceGroup.space(conversation.parentId)
-    : searchAudienceGroup.conversation(conversation.parentId, conversation.substreamId));
+    : conversation.kind === "sidekick"
+      ? searchAudienceGroup.sidekick(conversation.parentId)
+      : searchAudienceGroup.conversation(conversation.parentId, conversation.substreamId));
 }
 
 /**
@@ -442,22 +441,18 @@ const POST_TARGET_DESCRIPTION = "Where to post: a conversationId from conversati
 const PostTextSchema = z.string().min(1).max(MESSAGE_MAX_CHARACTERS)
   .describe("The message, in full, as the people in that conversation should read it.");
 
+/** What leaving `conversation` out of a post does: it lands in the Sidekick's own conversation. */
+const POST_DEFAULT_SENTENCE = "Leave conversation out to post in this Sidekick's own conversation, where everyone it is shared with reads it.";
+
 /**
- * Whether the Sidekick has a home decides whether `conversation` may be left
- * out: `true` and `false` when the loop knows (a run reads its definition),
- * `null` when it does not (the configuration conversation), where leaving it
- * out works only if conversation_list marks a home.
+ * `conversation` may always be left out: a post that names no conversation
+ * lands in the Sidekick's own conversation, which every Sidekick has. A home,
+ * where one exists, is named like any other conversation.
  */
-export function conversationPostArgumentsSchema(home: boolean | null) {
-  return z.strictObject({
-    conversation: home === false
-      ? ConversationReferenceSchema.describe(POST_TARGET_DESCRIPTION)
-      : ConversationReferenceSchema.optional().describe(home
-        ? `${POST_TARGET_DESCRIPTION} Leave out to post to this Sidekick's home.`
-        : `${POST_TARGET_DESCRIPTION} Leave out to post to this Sidekick's home, when conversation_list marks one.`),
-    text: PostTextSchema,
-  });
-}
+export const ConversationPostArgumentsSchema = z.strictObject({
+  conversation: ConversationReferenceSchema.optional().describe(`${POST_TARGET_DESCRIPTION} ${POST_DEFAULT_SENTENCE}`),
+  text: PostTextSchema,
+});
 
 export const ConversationAttachArgumentsSchema = z.strictObject({
   conversation: ConversationReferenceSchema.describe("The Rally link or id the person gave for a Thread or Breakout, or its exact title. A Channel, which holds threads, cannot be attached."),
@@ -677,20 +672,18 @@ function channelItemMessage(
  *
  * `expandPages` is the host's pagination wrapper, bound to this loop's receipt
  * port: `list` and `read` each get a `_next` companion whose only argument is
- * the page id the previous page returned. `home` is whether the Sidekick has
- * a home, when the loop knows it; see {@link conversationPostArgumentsSchema}.
+ * the page id the previous page returned.
  */
 export function createConversationsPlugin(
   input: WorkstreamWorkflowInput,
   ports: ConversationToolPorts,
   expandPages: (tool: HarnessTool) => HarnessTool[],
-  options: { home: boolean | null } = { home: null },
 ): HarnessPlugin | null {
   const access = conversationToolAccess(input);
   if (!access) return null;
   const { scope, actingUserId } = access;
   const workspaceId = asWorkspaceId(input.workspaceId);
-  const postArguments = conversationPostArgumentsSchema(options.home);
+  const postArguments = ConversationPostArgumentsSchema;
 
   async function resolve(reference: string | null) {
     const resolved = await (await ports.workspace()).resolveConversationToolTarget({
@@ -703,7 +696,7 @@ export function createConversationsPlugin(
   const list: HarnessTool = {
     definition: {
       name: "list",
-      description: "List the Rally conversations you can read or post to, with each one's id and title. Your own conversation comes first and is marked isOwn; the conversations it sits inside are marked isParent; a Sidekick's home is marked isHome and comes first.",
+      description: "List the Rally conversations you can read or post to, with each one's id and title. Your own conversation comes first and is marked isOwn; the conversations it sits inside are marked isParent; a Sidekick's home is marked isHome.",
       capability: "rally.conversation.list",
       mode: "read",
       idempotency: "safe",
@@ -874,7 +867,7 @@ export function createConversationsPlugin(
   const post: HarnessTool = {
     definition: {
       name: "post",
-      description: `Post a message as this Sidekick to a conversation you can reach, with the Sidekick's name as the author.${homeSentence(options.home, " Leave conversation out")}`,
+      description: `Post a message as this Sidekick to a conversation you can reach, with the Sidekick's name as the author. ${POST_DEFAULT_SENTENCE}`,
       capability: "rally.conversation.post",
       mode: "write",
       idempotency: "provider_key",
@@ -886,31 +879,23 @@ export function createConversationsPlugin(
       // Host-derived: a retried receipt is the same key, a new call is a new
       // one. The conversation's append answers a replay with its own message.
       const clientMessageId = `conversation-post:${input.harnessRunId}:${context.effectIntentId}`;
-      const resolved = await resolve(args.conversation ?? null);
+      // Named nothing: the Sidekick's own conversation, whose id is the Sidekick's.
+      const resolved = await resolve(args.conversation ?? (scope.kind === "sidekick" ? scope.automationId : null));
       const target = resolved.conversation;
       const occurredAt = Date.now();
       const run = input.automationRun;
       const automationId = scope.kind === "sidekick" ? scope.automationId : input.parentId;
       if (target.kind === "space") {
-        // A Channel holds messages of its own: the Sidekick's announcement
-        // lands in its feed, from Rally, opening with the Sidekick's name.
-        const posted = await (await ports.workspace()).postSidekickChannelMessage({
-          workspaceId, userId: asUserId(actingUserId), spaceId: asSpaceId(target.parentId),
-          automationId: asAutomationId(automationId), key: clientMessageId, text: args.text,
-        });
-        if (!posted.ok) {
-          throw conversationRefusalError({ ok: false, code: posted.code === "space_not_found" ? "conversation_not_in_scope" : "conversation_access_denied",
-            available: [], resourceId: target.parentId }, args.conversation ?? null);
-        }
-        return {
-          output: { conversationId: target.conversationId, messageId: posted.messageId, replayed: posted.replayed },
-          summary: posted.replayed ? `Already posted to ${target.title || "the Channel"}` : `Posted to ${target.title || "the Channel"}`,
-        };
+        // A Channel's feed takes no Sidekick posts: a Sidekick announces in
+        // its own conversation, where everyone it is shared with reads.
+        throw conversationRefusalError({ ok: false, code: "conversation_not_in_scope",
+          available: [], resourceId: target.parentId }, args.conversation ?? null);
       }
       const externalSource = run ? await forwardedExternalSource(input, ports) : undefined;
       const appended = await ports.appendPost(target, {
         schemaVersion: 1,
         workspaceId,
+        parentKind: target.kind === "sidekick" ? "automation" : "workstream",
         workstreamId: target.parentId,
         substreamId: target.substreamId,
         clientMessageId,
@@ -1051,21 +1036,13 @@ export function createConversationsPlugin(
     searchAliases: ["thread", "channel", "breakout", "messages", "search", "post", "home conversation"],
     description: "List, read, search, and post to the Rally conversations this agent can reach.",
     systemMessage: conversationsSystemMessage({ posts, attaches, run: input.automationRun !== undefined,
-      home: options.home, parents: scope.kind === "conversation", breakout: inBreakout,
+      parents: scope.kind === "conversation", breakout: inBreakout,
       reads: access.tools.includes("read"),
       merges: !access.tools.includes("merge") ? null : inBreakout ? "thread" : "channels" }),
     tools,
     preload: true,
     explicit: true,
   };
-}
-
-/** What leaving `conversation` out of a post does, as a sentence; empty when it cannot be left out. */
-function homeSentence(home: boolean | null, lead: string): string {
-  if (home === false) return "";
-  return home
-    ? `${lead} to post to this Sidekick's home.`
-    : `${lead} to post to this Sidekick's home, when conversation_list marks one.`;
 }
 
 /**
@@ -1099,7 +1076,6 @@ export function conversationsSystemMessage(options: {
   posts: boolean;
   attaches: boolean;
   run: boolean;
-  home: boolean | null;
   /** A Thread or Breakout loop, which can read the conversations it sits inside. */
   parents?: boolean;
   /** A Breakout's own loop, which also sees its Thread's resources. */
@@ -1122,7 +1098,7 @@ export function conversationsSystemMessage(options: {
       ? [BREAKOUT_RESOURCES_INSTRUCTION]
       : []),
     ...(options.posts
-      ? [`Use conversation_post to post to one of them.${homeSentence(options.home, " Leave conversation out")}`,
+      ? [`Use conversation_post to post to one of them. ${POST_DEFAULT_SENTENCE}`,
         options.run ? RUN_POST_INSTRUCTION : "Post once per result. Answer the person in this configuration conversation with a normal reply; use conversation_post when asked to deliver a result to another conversation.",
         "Use conversation_post for this Sidekick's own reports to other conversations so they appear under its name. When delegating delivery, tell the agent to use that tool or return the result to you for posting if it lacks the tool.",
       ]

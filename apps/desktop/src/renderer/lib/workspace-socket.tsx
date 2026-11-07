@@ -8,6 +8,7 @@ import {
   WorkspaceSpaceConversationsEventSchema,
   WorkspaceSpaceSnapshotEventSchema,
   WorkspaceNavigationStateEventSchema,
+  WorkspaceCanvasListEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceWorkstreamRecencyEventSchema,
   WorkspaceFeatureFlagsEventSchema,
@@ -84,6 +85,7 @@ import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
 import { memberPreferencesQueryKey } from './use-member-preferences';
 import { accessRequestsQueryKey, CONVERSATION_ACCESS_RECOVERY_QUERY_KEY, refreshConversationAccessPreviews } from './access-requests';
 import { hydrateWorkspaceDirectory, mirrorWorkspaceDirectory } from './workspace-directory-cache';
+import { hydrateCanvasDirectory, mirrorCanvasDirectory } from './canvas-directory-cache';
 import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
@@ -294,10 +296,6 @@ function invalidateTopic(
     // longer names them — it carries REST details and the broader Sidekick library.
     automations: [
       ['automation'], ['automation-draft'], ['automation-runs'], ['sidekicks-library'],
-      // The workstream's owned and recommended Sidekicks, plus what its
-      // conversation loaded. A room's row never travels in the
-      // pushed sidebar list, so this topic is what tells its rails to re-read.
-      ['attached-sidekicks'], ['workstream-sidekicks'], ['recommended-sidekicks'],
     ],
     sidekick_activity: [],
     notes: [['note']],
@@ -463,7 +461,7 @@ export function WorkspaceSocketProvider({
     if (!ownSocket) return;
     const releaseData = retainQueryData(queryClient, [
       WORKSTREAMS_QUERY_KEY,
-      SIDEBAR_LIST_QUERY_KEYS.automations,
+      SIDEBAR_LIST_QUERY_KEYS.automations, SIDEBAR_LIST_QUERY_KEYS.canvases,
       SPACES_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_READY_QUERY_KEY,
       PERSONAL_ORDER_QUERY_KEY, PINNED_ORDER_QUERY_KEY,
       CLIENT_FEATURE_FLAGS_QUERY_KEY,
@@ -666,6 +664,7 @@ export function WorkspaceSocketProvider({
           sidebar.automations.waterline,
           sidebar.automations.items.map(mapAutomationSummary),
         );
+        if (sidebar.canvases) applyVersionedSidebarList(queryClient, 'canvases', sidebar.canvases.waterline, sidebar.canvases.items);
         if (sidebar.spaces) {
           applyVersionedSpaceSnapshot(queryClient, sidebar.spaces, sidebar.ordering ?? [], sidebar.spacesReady ?? true, sidebar.pinnedOrder, { pins: sidebar.pins, artifactPins: sidebar.artifactPins, channelStats: sidebar.channelStats });
         }
@@ -696,6 +695,7 @@ export function WorkspaceSocketProvider({
         sidebar.automations.waterline,
         sidebar.automations.items.map(mapAutomationSummary),
       );
+      if (sidebar.canvases) applyVersionedSidebarList(queryClient, 'canvases', sidebar.canvases.waterline, sidebar.canvases.items);
       // `spacesReady` is optional on the wire and read as ready when absent:
       // a payload from a server that predates the cutover describes an
       // Organization that was never going to open, not one still opening.
@@ -1335,6 +1335,11 @@ export function WorkspaceSocketProvider({
             scheduleRailPrefetch();
             return;
           }
+          const canvasList = safeParseSocketEvent(WorkspaceCanvasListEventSchema, decoded);
+          if (canvasList.success) {
+            applyVersionedSidebarList(queryClient, 'canvases', canvasList.data.waterline, canvasList.data.items);
+            return;
+          }
           const sidebarList = safeParseSocketEvent(WorkspaceSidebarListEventSchema, decoded);
           if (sidebarList.success) {
             // Through the shared receiver, not straight into the cache: the
@@ -1356,8 +1361,6 @@ export function WorkspaceSocketProvider({
               void queryClient.invalidateQueries({ queryKey: ['automation'] });
               void queryClient.invalidateQueries({ queryKey: ['automation-runs'] });
               void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
-              void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks'] });
-              void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks'] });
               // Relayed as the `automations` topic it amounts to, so the
               // Sidekicks window, which reads these surfaces and not the list,
               // hears it without a socket of its own.
@@ -1664,11 +1667,16 @@ export function WorkspaceSocketProvider({
     const localCacheMirror = localCacheScope === null
       ? null
       : mirrorWorkspaceDirectory(queryClient, localCacheScope, { live: () => directoryLive });
-    if (localCacheScope !== null) void hydrateWorkspaceDirectory(queryClient, localCacheScope, () => !stopped);
+    const canvasCacheMirror = localCacheScope === null ? null : mirrorCanvasDirectory(queryClient, localCacheScope);
+    if (localCacheScope !== null) {
+      void hydrateWorkspaceDirectory(queryClient, localCacheScope, () => !stopped);
+      void hydrateCanvasDirectory(queryClient, localCacheScope, () => !stopped);
+    }
     void connect();
     return () => {
       stopped = true;
       localCacheMirror?.stop();
+      canvasCacheMirror?.stop();
       releaseData();
       listWorkstreamsRef.current = () => Promise.reject(new ApiError(
         'The organization is no longer connected.',

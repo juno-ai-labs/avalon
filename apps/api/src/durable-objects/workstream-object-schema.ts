@@ -26,7 +26,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 81;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 83;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -1094,7 +1094,7 @@ const WORKSTREAM_SUBSTREAM_AGENT_SCHEMA = [
   ) STRICT`,
   `CREATE INDEX IF NOT EXISTS agent_run_dispatches_ready_idx
      ON agent_run_dispatches(state, available_at, created_at, run_id)`,
-  // One SubstreamAgent owns one independently ordered loop. This singleton is
+  // One AgentLoopDO owns one independently ordered loop. This singleton is
   // only the reconnect-safe activity indicator; immutable compaction history
   // remains in compaction_checkpoints.
   `CREATE TABLE IF NOT EXISTS active_agent_compaction (
@@ -3217,7 +3217,7 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     version: 66,
     description: "admit a Space as a conversation's parent kind",
     // A Space is a third kind of conversation parent, and its hidden main
-    // conversation is an ordinary `SubstreamAgent` whose root row says so.
+    // conversation is an ordinary `AgentLoopDO` whose root row says so.
     // SQLite cannot widen a CHECK in place, so the singleton is rebuilt the way
     // version 55 rebuilt it. Version 55's literal is byte-frozen — it is hashed
     // into the `_sql_schema_migrations` receipt of every deployed conversation
@@ -3601,6 +3601,158 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     statements: [
       `ALTER TABLE workstream ADD COLUMN archive_generation INTEGER NOT NULL DEFAULT 0 CHECK (archive_generation >= 0)`,
       `UPDATE workstream SET archive_generation = 1 WHERE archived_at IS NOT NULL`,
+    ],
+  },
+
+  {
+    version: 82,
+    description: "hold each Sidekick run's row in the Sidekick's shared conversation as a projection of its run",
+    // The transcript turn is written once; this row is what it shows now,
+    // joined in when the turn is read. Its source is the Sidekick's
+    // `sidekick_runs` row, so `source_version` is that row's `updated_at`.
+    // Empty in every conversation but a Sidekick's "0".
+    statements: [
+      `CREATE TABLE sidekick_run_rows (
+        run_id TEXT PRIMARY KEY,
+        turn_id TEXT NOT NULL UNIQUE,
+        state TEXT NOT NULL CHECK (state IN ('pending', 'running', 'needs_input', 'completed', 'failed', 'stopped')),
+        step_count INTEGER NOT NULL CHECK (step_count >= 0),
+        reply TEXT,
+        source_version INTEGER NOT NULL CHECK (source_version >= 0),
+        updated_at INTEGER NOT NULL
+      ) STRICT`,
+    ],
+  },
+  {
+    version: 83,
+    description: "admit a Canvas as a conversation's parent kind",
+    // A Canvas's Chat is an ordinary conversation whose root row names the
+    // `canvas` parent kind (docs/canvases.md). The CHECK is widened the way
+    // version 66 widened it for a Space: a new copy of the singleton with the
+    // one constraint widened and the three columns versions 71, 74 and 81
+    // added since, in the order those ALTERs appended them, so the row copies
+    // across column for column. The nine triggers on `workstream` are dropped
+    // by name and recreated verbatim: version 66's five, and the four version
+    // 78's conversation view added.
+    statements: [
+      `CREATE TABLE "_canvas_parent_kind_copy_workstream" AS SELECT * FROM "workstream"`,
+      `DROP TRIGGER "workstream_restricted_content_scope"`,
+      `DROP TRIGGER "authorization_workstream_insert"`,
+      `DROP TRIGGER "authorization_workstream_update"`,
+      `DROP TRIGGER "authorization_workstream_delete"`,
+      `DROP TRIGGER "workstream_search_display_update"`,
+      // Version 78's four conversation-view triggers hang off `workstream`
+      // too, and are recreated below from the same frozen statements.
+      `DROP TRIGGER "conversation_view_header_insert"`,
+      `DROP TRIGGER "conversation_view_header_update"`,
+      `DROP TRIGGER "conversation_view_header_delete"`,
+      `DROP TRIGGER "conversation_view_generation"`,
+      `DROP TABLE "workstream"`,
+      `CREATE TABLE workstream (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    workstream_key TEXT NOT NULL UNIQUE,
+    parent_workspace_key TEXT NOT NULL,
+    parent_do_id TEXT,
+    parent_generation INTEGER NOT NULL DEFAULT 0 CHECK (parent_generation >= 0),
+    region TEXT NOT NULL,
+    authority_mode TEXT NOT NULL CHECK (
+      authority_mode IN ('preparing', 'authoritative', 'quarantined')
+    ),
+    authority_generation INTEGER NOT NULL DEFAULT 0 CHECK (authority_generation >= 0),
+    title TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    preview TEXT NOT NULL DEFAULT '',
+    scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+    exact_state TEXT NOT NULL CHECK (exact_state IN (
+      'scheduled', 'running', 'interrupting', 'preparing_context', 'waiting_capacity',
+      'needs_input', 'completed', 'cancelled', 'failed', 'budget_exhausted',
+      'idle', 'archived', 'deleting', 'restoring'
+    )),
+    state_reason_code TEXT NOT NULL,
+    next_sequence_number INTEGER NOT NULL CHECK (next_sequence_number > 0),
+    next_attention_ordinal INTEGER NOT NULL CHECK (next_attention_ordinal > 0),
+    unread_tracking_start_ordinal INTEGER NOT NULL DEFAULT 0
+      CHECK (unread_tracking_start_ordinal >= 0),
+    authority_epoch INTEGER NOT NULL CHECK (authority_epoch >= 0),
+    scope_epoch INTEGER NOT NULL CHECK (scope_epoch >= 0),
+    source_authorization_floor INTEGER NOT NULL CHECK (source_authorization_floor >= 0),
+    listing_epoch INTEGER NOT NULL CHECK (listing_epoch >= 0),
+    deletion_epoch INTEGER NOT NULL CHECK (deletion_epoch >= 0),
+    run_revision INTEGER NOT NULL CHECK (run_revision >= 0),
+    created_at INTEGER NOT NULL,
+    last_people_activity_at INTEGER NOT NULL,
+    state_changed_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    archived_at INTEGER,
+    origin_type TEXT NOT NULL DEFAULT 'ad_hoc',
+    created_by_user_id TEXT,
+    automation_subscription_id TEXT,
+    automation_run_id TEXT,
+    planned_for INTEGER,
+    email_address TEXT,
+    email_route_status TEXT NOT NULL DEFAULT 'pending',
+    created_from_opportunity_id TEXT,
+    opportunity_version INTEGER,
+    opportunity_display_prompt_hash TEXT,
+    opportunity_execution_prompt_hash TEXT,
+    description_source TEXT NOT NULL DEFAULT 'derived' CHECK (
+      description_source IN ('authored', 'derived')
+    ),
+    system_kind TEXT,
+    title_status TEXT NOT NULL DEFAULT 'settled' CHECK (
+      title_status IN ('naming', 'automatic', 'settled')
+    ),
+    model_override TEXT,
+    updated_at INTEGER NOT NULL
+  , parent_kind TEXT NOT NULL DEFAULT 'workstream'
+         CHECK (parent_kind IN ('workstream', 'automation', 'space', 'canvas')), appearance_json TEXT CHECK (appearance_json IS NULL OR json_valid(appearance_json)),
+    agent_profile TEXT,
+    channel_color_revision INTEGER NOT NULL DEFAULT 0
+         CHECK (channel_color_revision >= 0),
+    archive_generation INTEGER NOT NULL DEFAULT 0 CHECK (archive_generation >= 0)) STRICT`,
+      `INSERT INTO "workstream" SELECT * FROM "_canvas_parent_kind_copy_workstream"`,
+      `DROP TABLE "_canvas_parent_kind_copy_workstream"`,
+      `CREATE TRIGGER workstream_restricted_content_scope
+       BEFORE UPDATE OF scope ON workstream
+       WHEN OLD.scope = 'personal'
+        AND NEW.scope = 'workspace'
+        AND EXISTS (
+          SELECT 1 FROM content_audience_fences AS fence
+           WHERE COALESCE(json_extract(fence.audience_json, '$.scope'), '') != 'workspace'
+        )
+       BEGIN
+         SELECT RAISE(ABORT, 'workstream_audience_restricted_content');
+       END`,
+      `CREATE TRIGGER authorization_workstream_insert
+      AFTER INSERT ON workstream BEGIN
+        INSERT INTO authorization_projection_outbox(id, revision, not_before) VALUES (1, 1, 0)
+        ON CONFLICT(id) DO UPDATE SET revision = revision + 1;
+      END`,
+      `CREATE TRIGGER authorization_workstream_update
+      AFTER UPDATE OF scope ON workstream BEGIN
+        INSERT INTO authorization_projection_outbox(id, revision, not_before) VALUES (1, 1, 0)
+        ON CONFLICT(id) DO UPDATE SET revision = revision + 1;
+      END`,
+      `CREATE TRIGGER authorization_workstream_delete
+      AFTER DELETE ON workstream BEGIN
+        INSERT INTO authorization_projection_outbox(id, revision, not_before) VALUES (1, 1, 0)
+        ON CONFLICT(id) DO UPDATE SET revision = revision + 1;
+      END`,
+      `CREATE TRIGGER workstream_search_display_update
+    AFTER UPDATE OF title, archived_at ON workstream
+    WHEN NEW.title IS NOT OLD.title OR NEW.archived_at IS NOT OLD.archived_at
+    BEGIN
+      INSERT INTO durable_outbox
+        (message_id, channel, destination_kind, destination_id, partition_key,
+         source_version, source_epoch, contract_version, payload_json, payload_ref,
+         payload_hash, state, attempts, not_before, created_at, acked_at)
+      VALUES ('search-conversation', 'search_conversation_v1', 'queue', 'activity', 'search',
+        NEW.updated_at, 0, 1, json_object(), NULL, 'search-conversation', 'pending', 0, 0, NEW.updated_at, NULL)
+      ON CONFLICT(message_id) DO UPDATE SET source_version = excluded.source_version,
+        state = 'pending', not_before = 0;
+    END`,
+      ...CONVERSATION_VIEW_SOURCE_MIGRATION.filter((statement) =>
+        /^CREATE TRIGGER conversation_view_(header_(insert|update|delete)|generation) /u.test(statement)),
     ],
   },
 ];
@@ -4890,7 +5042,7 @@ export function workstreamObjectSchemaImplementationHash(
 /**
  * The migration runner's component key for the workstream object's schema.
  *
- * Exported because `SubstreamAgent` reports under it while this module migrates
+ * Exported because `AgentLoopDO` reports under it while this module migrates
  * under it; a second literal there could drift from this one and file the report
  * against a component the object's own ledger does not use.
  *
@@ -4898,7 +5050,7 @@ export function workstreamObjectSchemaImplementationHash(
  * module, because the class is the only thing an operator reading the tracker
  * can match against the fleet. Derived, not equal: `_do` comes from the two
  * sibling keys whose classes end in `DO` (`workstream_do`, `workspace_do`)
- * rather than from `SubstreamAgent`. The key said `workstream` while this
+ * rather than from `AgentLoopDO`. The key said `workstream` while this
  * history belonged to `WorkstreamRoom` and kept saying it through the class
  * rename, which left the only key derived from nothing still in the codebase
  * sitting next to `workstream_do` — a genuinely different object — under a name

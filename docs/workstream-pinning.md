@@ -1,8 +1,9 @@
 # Pinning
 
-A person pins what they want to hand: a thread, a Channel, a breakout, or an
-artifact Rally generated. Each sidebar section (Threads, Channels, Artifacts)
-has a **Pinned** part above its list,
+A person pins what they want to hand: a thread, a Channel, a breakout, an
+artifact Rally generated, a Canvas or a Sidekick. Each sidebar section
+(Threads, Channels, Artifacts, Canvases, Sidekicks) has a **Pinned** part
+above its list,
 arranged by hand, never sorted, and both the pin and the arrangement live on
 the server, so the same person opening Rally on another machine finds their
 list as they left it.
@@ -407,7 +408,45 @@ recreates it without copying rows. There is no authoritative answer for which
 Space should inherit an Organization-wide pin when a Channel has multiple
 placements, so the migration intentionally clears all existing pins.
 
+## Canvas and Sidekick pins in the client
+
+A Canvas's or a Sidekick's pin is its row's `pinnedPosition`, not an entry in
+the `pins` list, so its section reads its Pinned group from its own list: the
+rows with a position, in position order, above every other row. Dragging an
+unpinned row into the group pins it (`useRowPinDrop`), at the end of the
+group; a row's context menu pins and unpins it. The rows' order within the
+group is not changed from the client yet.
+
 ## Changelog
+
+### 2026-11-07 — A Canvas and a Sidekick can be pinned
+
+**What changed:** WorkspaceDO migration 141 admits `canvas` and `sidekick` in
+`workspace_pins.item_kind`. `setSidebarPin` and `reorderSidebarPins` pin and
+order them in their lists' Pinned groups; each list's rows carry
+`pinnedPosition`. The `pins` list still returns only threads, Channels and
+breakouts.
+
+**Why:** The Canvases and Sidekicks PRD gives each list a Pinned group. A
+released client parses `PinKind` as a closed enum, so a new kind in `pins`
+would fail its whole sidebar.
+
+**Considered and rejected:** Widening `PinKind`: every released desktop would
+drop its sidebar payload.
+
+**Consequences:** A new pinnable kind rides its own list's rows, not `pins`.
+See [`canvases.md`](canvases.md#the-canvas-list).
+
+The client pins a Canvas through `POST /canvases/:id/pin`: from its row's
+context menu, its title menu, or by dragging the row into the Canvases
+section's Pinned group. That drag is `useRowPinDrop`
+(`components/navigation-rows.tsx`), the list-agnostic sibling of `usePinDrop`
+for a list whose pins are a flag on its own rows; it pins at the end of the
+group, since no route exposes `reorderSidebarPins` yet, so the group does not
+offer reordering.
+A Sidekick is pinned the same way through `POST /sidekicks/:id/pin` from the
+Sidekicks section; a Sidekick that needs input is drawn in that section's
+Needs input group, above Pinned, rather than twice.
 
 ### 2026-10-17 — Generated artifacts can be pinned
 

@@ -43,7 +43,13 @@ export class ScopeInvitationService {
     private readonly coverageMatches: (request: z.infer<typeof CreateScopeInvitationsSchema>) => boolean,
     private readonly enqueueDirectory: (grant: ScopeGrant, now: number) => void,
     private readonly readRelationship: (workspaceId: string, userId: string) => Promise<WorkspaceRelationship | null>,
-    private readonly noteRelationship: (relationship: WorkspaceRelationship) => void) {
+    private readonly noteRelationship: (relationship: WorkspaceRelationship) => void,
+    /**
+     * A parent that is not a Channel: a Canvas (`docs/canvases.md`). It has
+     * no participant migration to wait for and no `channels` row to take a
+     * title from, so it answers both itself.
+     */
+    private readonly parent?: { targetsReady(): boolean; title(): string | null }) {
     this.invitations = new ScopeInvitationStorage(storage, parentId);
   }
 
@@ -57,6 +63,7 @@ export class ScopeInvitationService {
   }
 
   private targetsReady(targets: z.infer<typeof CreateScopeInvitationsSchema>["targets"]): boolean {
+    if (this.parent) return this.parent.targetsReady();
     if (targets.some((target) => target.kind === "workstream") && this.storage.sql.exec(
       `SELECT 1 FROM parent_children child LEFT JOIN parent_participant_migrations migration
         ON migration.parent_id=child.parent_id AND migration.substream_id=child.substream_id
@@ -360,7 +367,7 @@ export class ScopeInvitationService {
     try {
       // Inside the guard with the transcript read: a local read that fails is
       // still only a title, and an invitation must not fail for want of one.
-      conversationTitle = substreamId === "0"
+      conversationTitle = this.parent ? this.parent.title() : substreamId === "0"
         ? this.storage.sql.exec<{ title: string | null }>("SELECT title FROM channels WHERE workstream_id = ?", this.parentId)
           .toArray()[0]?.title ?? null
         : this.storage.sql.exec<{ title: string | null }>(

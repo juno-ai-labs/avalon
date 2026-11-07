@@ -1,4 +1,5 @@
 import { AnnotatedMessageContentSchema } from "@rally/contracts";
+import { sidekickRunRowFacts, sidekickRunRowText } from "./sidekick-run-row";
 import { stableUuid } from "../lib/stable-uuid";
 import {
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
@@ -2807,6 +2808,20 @@ export class WorkstreamTranscriptStorage {
     return row ? this.participantTurn(row.turn_id) : null;
   }
 
+  /**
+   * Move a turn's revision, and send it to the room again, in the caller's
+   * transaction: for a turn whose canonical content is unchanged but whose
+   * read joins in state that moved (a Sidekick run's row).
+   */
+  reviseParticipantTurnInTransaction(turnId: string, now: number): void {
+    const revised = this.sql.exec(
+      `UPDATE participant_transcript_turns SET revision = revision + 1, updated_at = ? WHERE turn_id = ? RETURNING turn_id`,
+      now, turnId,
+    ).toArray().length > 0;
+    if (!revised) throw new Error("transcript_turn_not_found");
+    enqueueSemanticRealtimeReference(this.sql, { kind: "transcript_turn", turnId }, now);
+  }
+
   setParticipantTurnAttentionOrdinal(input: {
     turnId: string;
     attentionOrdinal: number;
@@ -3267,8 +3282,17 @@ export class WorkstreamTranscriptStorage {
           AND elicitation_id IN (${ids.map(() => "?").join(", ")})`,
         ...ids,
       ).toArray().map((row) => row.elicitation_id)));
+    // A Sidekick run's row shows the run as it stands, which its projection
+    // row holds; read only when a page holds one.
+    const runRows = sidekickRunRowFacts(this.sql, hydratedBlocks.flatMap((block, index) =>
+      block.type === "text" && block.messageType === "automation_activation" ? [blocks[index]!.turn_id] : []));
     for (const [index, block] of blocks.entries()) {
       const hydrated = hydratedBlocks[index]!;
+      const runRow = hydrated.type === "text" ? runRows.get(block.turn_id) : undefined;
+      if (runRow && hydrated.type === "text" && hydrated.structuredContent) {
+        hydrated.structuredContent = { ...hydrated.structuredContent, run: runRow };
+        hydrated.text = sidekickRunRowText(runRow.state, runRow.reply);
+      }
       if (hydrated.type === "text" && hydrated.messageType === "elicitation"
         && hydrated.structuredContent) {
         const wrapped = "elicitation" in hydrated.structuredContent;

@@ -4,7 +4,7 @@ import { isConfiguredRegion } from "@rally/contracts/regions";
 import { createRemoteJWKSet, jwtVerify, SignJWT, type JWTPayload } from "jose";
 import { newId, nowIso } from "@rally/db";
 import { asUserId, asWorkspaceId, RefreshTokenSchema, IdSchema, WorkspaceSchema, type Region, type Session } from "@rally/contracts";
-import { isDesktopDeepLinkProtocol, SIDELINE_AUTH_CALLBACK_URI } from "@rally/contracts/desktop-deep-link";
+import { isDesktopDeepLinkProtocol } from "@rally/contracts/desktop-deep-link";
 import type { Env, IdentityAuthContext } from "../env";
 import { ApiError } from "../lib/api-error";
 import { browserOrigin, browserReturnUrl } from "../lib/browser-origin";
@@ -188,7 +188,6 @@ export async function verifyAccessToken(env: Env, token: string): Promise<Omit<I
 function allowedReturnUri(env: Env, candidate: string | undefined): string {
   const expected = new URL(env.DESKTOP_DEEP_LINK_URI);
   const value = new URL(candidate ?? env.DESKTOP_DEEP_LINK_URI);
-  if (value.toString() === SIDELINE_AUTH_CALLBACK_URI) return value.toString();
   if (
     !isDesktopDeepLinkProtocol(value.protocol)
     || value.host !== expected.host

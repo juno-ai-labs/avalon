@@ -638,7 +638,7 @@ describe("carrying one revocation to the objects", () => {
     narrowedUserIds?: string[];
     /** What an Organization object that runs the Channel step itself answers with. */
     channels?: Array<{ workstreamId: string; substreamIds: string[] }>;
-    narrowedLeaves?: { substreams: Array<{ userId: string; substreamIds: string[] }>; automationIds: string[] };
+    narrowedLeaves?: { substreams: Array<{ userId: string; substreamIds: string[] }> };
     failAt?: boolean;
   } = {}) {
     const visits: Visit[] = [];
@@ -789,7 +789,7 @@ describe("carrying one revocation to the objects", () => {
 
     // A Space admits no client socket, so there is nothing here to close and
     // the hop never asks. Its hidden main conversation is an ordinary
-    // `SubstreamAgent` that does hold what was opened against it, and only the
+    // `AgentLoopDO` that does hold what was opened against it, and only the
     // Space can name it — addressed under the Space's own id, the way an
     // automation's conversations are addressed under its.
     expect(visits).toEqual([]);
@@ -800,19 +800,16 @@ describe("carrying one revocation to the objects", () => {
     ]);
   });
 
-  it("turns a lost room into one hop per automation the room owns", async () => {
+  it("names no Sidekick for a lost room, since a room owns none", async () => {
     const OWNED = "00000000-0000-7000-8000-0000000000d2";
     const { env, visits, listed, sent } = fanOut({ ownedAutomationIds: [OWNED] });
     await applyAccessRevocation(env, message({ scope: "workstream_automations", workstreamId: WORKSTREAM }));
 
-    // Removing a participant is a write the room makes locally, and nothing
-    // in the room reaches the automations it owns, whose conversations
-    // admitted the person through the room. The workspace names them; each
-    // becomes the ordinary automation hop.
+    // A hop queued before the room scope was retired reaches nothing: the
+    // Organization is not asked, and no automation hop is sent.
     expect(visits).toEqual([]);
-    expect(listed).toHaveLength(1);
-    expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, workstreamId: WORKSTREAM });
-    expect(targetsOf(sent)).toEqual([{ scope: "automation", automationId: OWNED }]);
+    expect(listed).toEqual([]);
+    expect(targetsOf(sent)).toEqual([]);
   });
 
   it("turns a narrowed audience into one ordinary hop per reader still holding a socket", async () => {
@@ -865,10 +862,9 @@ describe("carrying one revocation to the objects", () => {
 
   it("publishes only the leaves of a narrowing when the workspace ran each reader's Channel step", async () => {
     const READER = "00000000-0000-7000-8000-0000000000b1";
-    const OWNED = "00000000-0000-7000-8000-0000000000d2";
     const { env, sent } = fanOut({
       narrowedUserIds: [READER],
-      narrowedLeaves: { substreams: [{ userId: READER, substreamIds: ["0"] }], automationIds: [OWNED] },
+      narrowedLeaves: { substreams: [{ userId: READER, substreamIds: ["0"] }] },
     });
     await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
       kind: "access_revoked",
@@ -882,10 +878,9 @@ describe("carrying one revocation to the objects", () => {
 
     expect(targetsOf(sent)).toEqual([
       { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
-      { scope: "automation", automationId: OWNED },
     ]);
     expect(sent.map((published) => AccessRevocationMessageSchema.parse(published.body).userId))
-      .toEqual([READER, READER]);
+      .toEqual([READER]);
   });
 
   it("publishes nothing for a narrowing nobody was reading through", async () => {
@@ -1055,7 +1050,7 @@ describe("deciding whether one socket belongs to a revocation", () => {
     expect(revocationClosesSocket(sessionGone, { userId: MEMBER, sessionId: "session-a" })).toBe(true);
     // One window signing out must not sign the person out of the others.
     expect(revocationClosesSocket(sessionGone, { userId: MEMBER, sessionId: "session-b" })).toBe(false);
-    // Only SubstreamAgent's schema makes the field optional, which is exactly
+    // Only AgentLoopDO's schema makes the field optional, which is exactly
     // why this rule is shared: written out per role it diverged once already,
     // and `undefined !== "<id>"` exempted the transcript feed from every logout.
     expect(revocationClosesSocket(sessionGone, { userId: MEMBER })).toBe(true);

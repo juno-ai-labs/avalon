@@ -28,7 +28,11 @@ a thread or a breakout opens, or who owns the right panel.
 | `packages/ui/src/components/split-conversation.tsx` | `SplitConversationLayout`, `SplitConversationMode`, `clampBreakoutWidth`. |
 | `apps/desktop/src/renderer/lib/thread-lifecycle.ts` | Shared archive/resolve commands, confirmed archive receipts and thread-page reconciliation, and resolution refusal copy. |
 | `apps/desktop/src/renderer/components/archive-conversation-modal.tsx` | The shared thread and breakout archive confirmation. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Pinned, Channels, Threads, Activity, Artifacts), the account menu under it, the phone row's More tab (`MoreSections`), and the lists with their Pinned sections, sort, and drag to reorder. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the section switcher (Pinned, Channels, Threads, Activity, Artifacts; Canvases and Sidekicks are sections no rail tile selects until cutover), the account menu under it, the phone row's More tab (`MoreSections`), and the lists with their Pinned sections, sort, and drag to reorder. |
+| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx` | `CanvasesSection` and `SidekicksSection`, the two lists the rail switches to at cutover, and the counts their tiles will carry (`useUnreadCanvasCount`, `useSidekickAttentionCount`). |
+| `apps/desktop/src/renderer/components/navigation-rows.tsx` | The row primitives every list draws: `RowLayout`, `SectionHeading`, `PinnedSection`, `useSectionMotion`, and for a list whose pins are a flag on its rows `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
+| `apps/desktop/src/renderer/screens/canvases-home.tsx`, `canvas.tsx` | `/canvases` and `/canvases/:id` ([`canvases.md`](canvases.md#client)). |
+| `apps/desktop/src/renderer/screens/sidekicks-library.tsx`, `automation.tsx` | `/sidekicks` and `/sidekicks/:id`, in the main window on both hosts ([`automation-lifecycle.md`](automation-lifecycle.md)). |
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the section switcher, the account menu's trigger included. |
 | `apps/desktop/src/renderer/screens/channel.tsx` | The Channel screen: its pill and menu, the feed of threads, the composer, and `ChannelStack`, the first two panes of the stack ([`pane-stack.md`](pane-stack.md)). |
 | `apps/desktop/src/renderer/components/channel-composer.tsx` | Starting a thread from a Channel. |
@@ -98,6 +102,21 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   Activity, and **Search organization** last, so it holds its place as the
   person moves between the lists. Pinned and Threads have no section action: a
   thread starts from a Channel's composer.
+
+**Canvases** and **Sidekicks** are two more `SidebarSection` values, the
+sections the rail becomes at cutover (plan step B-1 of the
+[Canvases and Sidekicks plan](PRDs/2026-11-06_canvases-and-sidekicks/plan.md)).
+Until then no rail tile selects them; `setSidebarSection` and the saved
+preference do, which is how they are tested and screenshotted. Canvases is a
+Pinned group, then every Canvas by recent activity, with **New Canvas**
+(`POST /canvases`, then the new Canvas's route) as its section action;
+Sidekicks is **Needs input**, then Pinned, then every Sidekick, with **New
+Sidekick** (`/sidekicks/new`). A guest gets neither New action. Both keep
+**Search organization** last like every list. Their counts are computed into
+the same record the other tiles read, each unread Canvas and each Sidekick that
+needs input or holds something unread, so a tile shows them the moment B-1
+adds it. The `/canvases` and `/sidekicks` screens render in the main window on
+both hosts; the separate Sidekicks window keeps its own entry until B-2.
 
 Every row in the lists is one layout (`RowLayout`): an `IdentityTile`
 (`packages/ui/src/components/identity-tile.tsx`), a name with a time, and a
@@ -628,6 +647,25 @@ A guest's sidebar reads each Breakout's `originTurnId` and each Space's
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-07 — Canvases and Sidekicks as sidebar sections the rail can switch to
+
+**What changed:** `SidebarSection` gains `canvases` and `sidekicks`, whose
+bodies are the Canvases and Sidekicks lists, with New Canvas or New Sidekick
+and Search organization as their actions and their unread counts wired into the
+section badges. No rail tile selects them yet. The Canvases and Sidekicks
+screens render in the main window.
+
+**Why:** The product pivots to Canvases and Sidekicks
+([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)), and its plan lands the
+new surfaces reachable by URL beside the untouched old shell so the cutover
+(B-1) is a switch of which sections the rail lists rather than new work. The
+sections reuse the existing section switcher, row primitives and badge record
+instead of a second sidebar.
+
+**Consequences:** B-1 only has to put the two sections in `SECTIONS` and the
+phone row and drop the old ones. The saved `rally.sidebar-section` may already
+read `canvases` or `sidekicks`, so the preference's allowed list must keep them.
 
 ### 2026-10-21 — Keep artifacts directly discoverable in thread menus
 

@@ -84,6 +84,9 @@ to future occurrences rather than replaying blocked historical work. A continued
 run retains its coordinator while eligible and selects another eligible delegate
 when that person becomes unavailable. The new coordinator is persisted on the
 existing run. Only an empty eligible list refuses with `run_no_eligible_delegate`.
+A run a non-delegate asked for is the exception: it keeps its requester as its
+principal for good and never moves to a delegate (see
+[who a run acts as](#who-a-run-acts-as)).
 Eligibility refreshes at activation and inventory loading. An ongoing background
 attempt reuses that snapshot; model/tool boundaries read the root lifecycle and
 stop generation without rescanning delegates or comparing coordinators. Pause,
@@ -181,7 +184,7 @@ configure work using a consenting delegate's personal connection
 ([`agent-tools.md`](agent-tools.md#2026-10-15--the-connection-check-covers-every-scope)).
 The model generates internal instructions and a user-friendly description. An
 incomplete submission does not replace the accepted revision. Edits preserve a
-person's pause; an archived owning room still refuses publication.
+person's pause.
 Authoring has two paths. An instruction-only Sidekick is a reusable Skill loaded
 into another conversation: its instructions contain the actual knowledge, rules
 or procedure, when to use it, and any needed context, constraints or expected
@@ -350,7 +353,7 @@ Sidekick resolution. Skill enumeration and revalidation do not issue a separate
 membership query on each assistant or tool attempt. Run authority is still
 revalidated at the existing execution boundaries.
 
-New guest runs discover only recommended, workstream-owned or locally loaded
+New guest runs discover only recommended or locally loaded
 sources. That selection is followed by ordinary source/audience checks; it cannot
 make a personal or other-workstream source usable. Already admitted execution
 snapshots retain the existing source revalidation rules, so changing a
@@ -384,103 +387,40 @@ accepted revision; retries retain the admitted bodies while rechecking access.
 Loads in child substreams persist in that child's attachment table too; main
 and sibling attachments stay independent. Removing an attachment affects future executions.
 
-Workstream-owned Sidekicks are inherently Recommended. Participants and agents
-can also attach non-archived workspace Sidekicks through the Channel menu's picker or the
-Sidekicks plugin's attach/detach tools. The Channel's parent owns those explicit
-links, in `WorkspaceDO`'s `parent_sidekicks`.
-Workstream main and child agents receive only list/attach/detach from this
-plugin; drafting stays in the Sidekick's own authoring conversation.
-Management tools require a user execution principal. Workspace-principal runs
-still discover eligible skills but receive no person-authorized management tools.
-Hidden background children use a host-only execution path: their stored user
-principal, active runtime, local participation and parent participation must
-agree. They do not acquire human viewer access. Detachment addresses that
-child's loaded attachments directly, preserving Main and siblings; REST callers
-still pass the ordinary child viewer check. Attachment routes reject automation
-parents with a typed unsupported-parent response.
-Each new execution snapshots eligible recommendations and marks their catalog
-lines `[Recommended]`, encouraging use when relevant without activating bodies.
-Detaching an explicit recommendation also removes the current substream's local
-attachment; sibling attachments survive. Workstream ownership itself cannot be
-detached. Workspace Sidekicks remain ordinarily discoverable after detachment.
-The common recommendation service publishes the existing workspace `automations`
-sync topic after a successful change, including agent-originated changes. Every
-desktop window invalidates its recommendation queries on that topic, so an idle
-sibling view learns about shared changes without waiting for transcript activity.
-Both participant preconditions are checked before the shared delete. The two
-object removals remain idempotent, not a cross-object transaction. Executions
-with no eligible Sidekick sources skip recommendation authority reads entirely.
+No Thread owns a Sidekick, so none is inherently Recommended. Explicit links a
+Channel's parent already holds in `WorkspaceDO`'s `parent_sidekicks` still reach
+each new execution: it snapshots them and marks their catalog lines
+`[Recommended]`, encouraging use when relevant without activating bodies.
+Nothing in a Thread adds or removes one any more: A-5 removed the REST routes
+for a Thread's attached and recommended Sidekicks, the
+`sidekick-recommendation-options` endpoint, `GET /automations/workstream/:id`
+(`listWorkstreamAutomations`), and the Thread loop's
+`list_skill_recommendations`, `recommend_skill` and `unrecommend_skill`.
+Drafting stays in the Sidekick's own authoring conversation. Management tools
+require a user execution principal. Workspace-principal runs still discover
+eligible skills but receive no person-authorized management tools.
 
-Recommendation mutation now checks the canonical workstream management grant,
-separately from Main or child collaboration. Before Main authority migration,
-ordinary members retain the legacy participant rule; after transfer, a projected
-Main participant is insufficient. The parent rechecks at the mutation boundary.
-Conversation-addressed mutation routes return only that conversation's authorized
-source summaries, without reading Main. A guest manager can reuse a source already
-recommended or loaded there, but a guessed unrelated workspace Sidekick ID does
-not grant discovery or source history. Local removal still needs only the local
-conversation permission.
-
-The `sidekick-recommendation-options` conversation endpoint supplies the shared
-UI and agent catalog with eligible workspace sources, explicit attachment state
-and the canonical parent-management decision. Members retain workspace source
-discovery; guests receive only sources already recommended or loaded in the
-selected conversation. Owned sources are not presented as removable explicit
-recommendations. The UI separates local removal, shared recommendation removal,
-and recommending an eligible local source. The agent catalog reports `canAttach`
-from the same decision and only reads owned definitions with parent management.
-
-A Channel's title menu lists **Sidekicks**: the Sidekicks the room owns,
-explicit workspace recommendations and the current substream's loaded
-attachments, folded into one list keyed by Sidekick id. A Channel's Main reads
-them from its rail on the Organization socket (below); a breakout, and a Main
-whose rail has not arrived, read them over REST — the owned list through
-`listWorkstreamAutomations` (`GET /sidekicks/workstream/:id`, which refuses a
-caller who is not a participant). The plus-marked Add Sidekick row opens a menu:
-Attach existing Sidekick selects a non-archived workspace Sidekick, while Create
-new Sidekick opens the existing Sidekick composer.
-A row opens that Sidekick in the library window; Remove lives in its right-click
-menu when the viewer may remove it. Local removal and workstream recommendation
-removal are separate, explicitly labeled actions. Removing a workspace recommendation
-also clears its current local attachment. An owned Sidekick that has never been
-loaded carries no removal action; its recommendation follows ownership.
-The list marks recommendations with a right-aligned circled carambola icon whose
-tooltip explains shared discovery without automatic loading.
-Picker state is keyed by workstream, and an attachment response cancels older
-recommendation reads before updating the selected conversation's cache and
-invalidating sibling recommendation queries. Removal state is
-keyed by conversation, so navigation cannot carry an error into another substream.
-A merged row takes its lifecycle from the owned summary and its availability
-from the attachment, because each list knows one of them. The section keeps its
-heading for a room with none and while the answer is still on its way; rows
-appear only for Sidekicks themselves. A failed read keeps whichever rows did
-arrive and adds a normal **Refresh** row; if none arrived, the heading and
-Refresh row are the recovery path without a warning-only section. Refresh asks
-the socket again for a rail-backed list and retries REST for the rest (the
-attachments while the rail has none; all three for a breakout or with no rail),
-and guests continue to skip the member-only owned directory. Read and action
-failures remain distinct: refused local removal, recommendation, and recommendation
-removal each name the action that failed and stay visible until the next
-Sidekick-management interaction. That interaction clears only a
-settled failure: a removal or attachment still in flight remains observed and
-keeps its controls pending, so reopening management cannot permit a duplicate
-request or discard the eventual result. The lazy management-options query
-belongs only to the picker and never changes the list's state. Those states and
-the picker’s load/attach failures are stable Rally-owned copy; raw API,
+A Thread's title menu lists no Sidekicks. A Channel's title menu lists the
+Channel's default Sidekicks (its `defaultSidekickIds`), named from the Sidekicks
+library and drawn by the shared `SidekickSection` (`packages/ui`); a row opens
+that Sidekick in the library window. Someone who may edit the Channel sees
+**Remove from this channel** in a row's menu and an **Add Sidekick** submenu of
+the library's other Sidekicks. Failures are stable Rally-owned copy; raw API,
 transport and provider messages never become sidebar text.
 
-Main's three lists ride its Channel rail (`channel_rails`,
+A Thread's Main still sends three Sidekick lists on its Channel rail for
+released clients, the owned list always empty; the current desktop draws none of
+them. They ride the rail (`channel_rails`,
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-channels-rail-and-its-waterline)),
-read from the Organization object's own rows: the room's `automation_directory`
-rows, `parent_sidekicks`, and the attachment list Main reports on its
-`directory_common` effect. A Main that has never reported is asked to when its
-Channel is opened; until it reports, its rail omits `attached` and the desktop
-reads that list over REST. A listed Sidekick is named by its title and shown under the
+read from the Organization object's own rows: `parent_sidekicks` and the
+attachment list Main reports on its `directory_common` effect. A Main that has
+never reported is asked to when its Channel is opened; until it reports, its
+rail omits `attached`. A listed Sidekick is named by its title and shown under the
 one audience predicate `HostedSidekick.readSkillSummary` applies
 (`sidekick-audience.ts`, shared by both), with the directory row's
 `run_as_user_id`, which is null until the Sidekick next publishes and leaves the
 author alone until then. The directory cannot see a Sidekick's accepted revision
-or its owning room's archive, so a rail can call available a Sidekick whose REST
+so a rail can call available a Sidekick whose REST
 summary would not; loading it still goes through `readSkillSource`, which
 refuses.
 
@@ -520,17 +460,18 @@ the open composers. Counts have no REST fetch, polling, or per-Sidekick socket.
 | Path | Responsibility |
 | --- | --- |
 | `apps/api/src/durable-objects/sidekick-activity.ts` | Target-scoped running count from accepted Sidekick execution projections and the target's attachment relationships. |
-| `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `setOwningRoomArchived`, `runNow`, `runSeeded`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, `reviewDelivery`, `reviewDelivered`, the parent contract (`onChildCommonProjection` moves the run row and counts its finish), and the schedule, run, review and memory-table alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | `HostedSidekick`: `create`, `submitDefinition`, `apply`, `pause`, `resume`, `remove`, `setAppearance`, `runNow`, `runSeeded`, `admitConversationMessage`, `allowsManager`, `admitExternalEvent`, `admitInboundEmail`, `readRunDefinition`, `readRunState`, `continueRun`, `readDetail`, `listRuns`, `claimExecutionPrincipal`, `reviewDelivery`, `reviewDelivered`, the parent contract (`onChildCommonProjection` moves the run row and counts its finish), and the schedule, run, review and memory-table alarm entries. `WorkspaceDO` answers each as `sidekick*`. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: opens a run's conversation and starts its loop from the `sidekick_run_provision` Queue message the run's alarm entry sends. |
-| `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; and the refusal text the run's transcript records. |
+| `apps/api/src/services/sidekick-run-continuation.ts` | `continueSidekickRun`, the run child's call to `continueRun`; `continuationSource`, who continued the run and where; the refusal text the run's transcript records; `routeSidekickConversationMessage` with `SIDEKICK_MESSAGE_REFUSAL_TEXT`, the shared conversation's call to `admitConversationMessage` and what it says when a message started no run; and `sidekickAllowsManager`, which the shared conversation asks before it records an answer to the wizard. |
+| `apps/api/src/lib/conversation-message-opening.ts` | `conversationMessageOpening`: a shared-conversation message as the opening of the run it started, its sender named as data. |
 | `apps/api/src/services/sidekick-review.ts`, `sidekick-review-notice.ts` | `deliverSidekickReview`: the `sidekick_review` Queue message's consumer, which reads the notice from the Sidekick, admits it into the wizard's conversation and reports back; `sidekickReviewText` and `renderSidekickReviewNotice`, the sentence people read and the Rally-attributed framing the model reads. |
-| `apps/api/src/durable-objects/substream-agent.ts` | `claimPersistentLoopExecution`, which continues a run from a run child's pending input; `refuseSidekickRunInput`, which settles one the Sidekick refused; and `admitSidekickReview`, which admits the review notice into the wizard's conversation and only there. |
+| `apps/api/src/durable-objects/substream-agent.ts` | `claimPersistentLoopExecution`, which continues a run from a run child's pending input and, in the shared conversation, asks who answers a person's input; `refuseSidekickRunInput`, which settles one the Sidekick refused; and `admitSidekickReview`, which admits the review notice into the wizard's conversation and only there. |
 | `apps/api/src/services/workstream-participant-model-message.ts` | `renderRunContinuationNote`, and `externalInputFraming`, which renders outside text in a run child as evidence. |
 | `apps/api/src/durable-objects/automation-do-protocol.ts` | The request schemas the Worker and the Queue consumer send it (`AutomationReviewRequest` addresses one review), the alarm kinds `automation_schedule`, `automation_run` and `sidekick_review`, and the `sidekick_review` Queue message. |
 | `apps/api/src/durable-objects/workstream-external-message-protocol.ts` | `AdmitSidekickReviewInputSchema`, the review's variant of the system-activation union a conversation object admits. |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The request shapes and aggregation helpers every hosted parent shares. |
-| `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by a room's first draft; and `AutomationService`, the Worker-side access every route goes through. It passes who is asking; whether they manage a room's Sidekick is decided where the Sidekick lives. |
-| `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /workstream/:workstreamId`, `GET /:id`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
+| `apps/api/src/services/automation-service.ts` | `createAutomation`, the one way an automation comes into existence with its conversation open, used by `POST /automations` and by an agent's `create_sidekick`; and `AutomationService`, the Worker-side access every route goes through. It passes who is asking; whether they manage the Sidekick is decided where the Sidekick lives. |
+| `apps/api/src/routes/automations.ts` | `GET /`, `POST /`, `GET /:id`, `GET /:id/delegation`, `POST /:id/delegation`, `POST /:id/run`, `POST /:id/accept`, `POST /:id/execution-principal`, `POST /:id/appearance`, `POST /:id/audience`, `POST /:id/pause`, `POST /:id/resume`, `POST /:id/archive`, legacy `DELETE /:id`, `GET /:id/runs`. The conversation itself is reached through `/conversations/:automationId`. |
 | `apps/api/src/services/integrations.ts` | `createAvalonAutomationsPlugin`: the authoring conversation's drafting host, which saves its own Sidekick through domain validation; the history projection's `sidekick_review_due` branch, which admits the notice row as the model's user turn; `readAutomationRunDefinition` and `assertRunAuthorityStillValid`, the two reads a run makes of its parent; the run prompt context built from the definition, which names the home conversation; and the loading of `rally:conversations` ([`conversation-tools.md`](conversation-tools.md)), the one way a run reaches a room. |
 | `apps/api/src/durable-objects/workspace-sidekick-conversation-storage.ts` | The home read, `sidekick_conversation_attachments` (WorkspaceDO migration 86), and the conversation scope a Sidekick or a Channel or Breakout loop reaches. |
 | `packages/agent-harness/src/automation-creator-tools.ts` | The `rally:sidekicks` plugin (`rally_sidekicks` to the model, its tools under the `sidekick_` prefix): the draft schema's tools, `AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`, and the submission pre-check. |
@@ -538,25 +479,29 @@ the open composers. Counts have no REST fetch, polling, or per-Sidekick socket.
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
 | `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `matching` over leaves), the preprocess that still accepts the pre-rename `all` on rows already stored, the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read. |
 | `apps/api/src/services/external-event-evaluator.ts` | The pure predicate evaluator WorkspaceDO matches registrations with. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `listAutomationDirectory`, `listWorkstreamAutomations`, `automationOwner`, `workstreamParticipant`, `applyExternalEventRegistrations`, `matchExternalEventDestinations`, and the owning-room archive fan-out `notifyOwningRoomArchival`. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `listAutomationDirectory`, `workstreamParticipant`, `applyExternalEventRegistrations` and `matchExternalEventDestinations`. |
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `sidekickAdmitExternalEvent`, a run child's effects through the shared effect leg, a `sidekick_run_provision` message to `provisionSidekickRun`, and a `sidekick_review` message to `deliverSidekickReview`, logging a failed delivery's code as `sidekick_review_delivery_retry`. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
 | `apps/api/src/services/sidekick-run-tools.ts` | Wizard-only run history: current-member authorization, own-run admission, canonical transcript pages and exact replay results with explicit availability. |
-| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
+| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"` (or a run's id while `?run=` names one). The profile also says who it is shared with (`audience`), the connections it uses, and the Canvases it writes to; the conversation's heading carries those Canvases as cards that open `/canvases/:id`, and its composer offers a manager Edit Sidekick. |
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
-| `apps/desktop/src/renderer/components/sidekick-section.tsx` | `SidekickSection`, the **Sidekicks** section the Channel menu renders, and `workstreamSidekickRows`, the merge of what the room owns with what its conversation loaded — owned first, one row per Sidekick, `undefined` until both answers are in. |
-| `packages/ui/src/components/conversation-menus.tsx`, `screens/conversation-surface.tsx` | The section's place in the Channel's title menu, below its people; the two queries behind it (`workstream-sidekicks` and `attached-sidekicks`), the participant check that decides whether a row may be detached, and the 403 a non-participant viewer's listing is read as none. |
+| `packages/ui/src/components/sidekick-section.tsx`, `conversation-menus.tsx`, `apps/desktop/src/renderer/screens/channel.tsx` | `SidekickSection`, the **Sidekicks** section of a Channel's title menu, below its people; the Channel screen fills it from its `defaultSidekickIds` and the Sidekicks library, with Add and Remove for someone who may edit the Channel. A Thread's title menu has none. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen. |
-| `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
+| `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksLibraryScreen`, the Sidekicks home; `SidekicksLibraryRoute`, which renders it in the main window on both hosts; `SidekicksWindow`: the separate window's routes, and the one place its Escape-to-close gesture is installed. |
+| `apps/desktop/src/renderer/components/sidekick-run-row.tsx` | A run's row in the shared conversation, collapsed, opening into the run's own conversation. |
+| `apps/desktop/src/renderer/components/sidekick-sidebar-section.tsx` | The Sidekicks sidebar section: Needs input, Pinned, then every Sidekick. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
-| `apps/desktop/src/renderer/components/owning-thread-label.tsx` | `OwningThreadLabel`: a Thread-owned Sidekick's Thread, as its glyph and title on a button that opens it, in the library row and the header's scope badge; the plain word "Thread" when the summary carries no `owningThread`. |
 | `apps/desktop/src/common/open-thread.ts`, `src/main/index.ts`, `src/renderer/lib/platform.ts` | `openThread` on the bridge: main parses the id with `parseThreadId` and emits the same `workstreams/<id>` deep link an in-app link takes, so the main window opens the Thread and comes forward; the browser tab routes to it. |
 
 ### Creation and ownership
 
-The separate Sidekicks window lists all accessible personal, workspace and
-workstream-owned entries, including drafts. `GET /sidekicks` uses
+The Sidekicks home (`/sidekicks`, in the main window on both hosts, and in
+the separate Sidekicks window until plan step B-2 removes it) lists all
+accessible personal and workspace entries, including drafts, as rows with
+their status (Needs input, Draft, Paused or Active), who they are shared with
+and when they next wake, filtered by Everyone, Only you, Organization or
+Paused. `GET /sidekicks` uses
 `WorkspaceDO.listSidekickDirectoryForAuthorizedMember`: the request's session
 authentication already joined the caller's active member row, so the object
 applies only the per-row scope filter and does not read `workspace_members`
@@ -564,12 +509,22 @@ again. Every caller has proved membership before it asks, so there is no
 variant that checks it. The old `/automations` listing remains a compatibility
 adapter. Directory membership never grants access to an owner.
 
-A Thread-owned row carries `owningThread`, the Thread's id, title and chosen
-appearance, so the library names it without a second request. The list reads
-every owning Thread in one `channels` query after the reader rule has run, and
-the detail (`HostedSidekick.detail`) reads its one Thread from the same table.
-Both name the Thread only to a current participant of it
-(`isWorkstreamParticipant`); everyone else gets `null` and sees "Thread".
+No Thread owns a Sidekick. The `workstream` scope is retired: WorkspaceDO
+migration 137 turned every Thread-owned Sidekick into an Organization one
+(`scope = 'workspace'`, its owning room cleared), archived any a room archive
+had paused under the old rule, and dropped the rail trigger that bumped an
+owning room's waterline. `owning_workstream_id`, `owning_substream_id` and
+`owning_room_archived_at` stay on `automation_directory` as dead columns,
+because released CHECKs name them. Nothing writes them, and migration 137 left
+them null. A few legacy readers still look and tolerate null: the search
+audience universe (`search-authorization-universe.ts`), the memory facts'
+home and subject keys (`workspace-memory-facts-storage.ts`), `sidekickHome`
+(`workspace-sidekick-conversation-storage.ts`) and the engineering inspection
+read (`engineering-inspection-bridge.ts`); phase C removes them.
+`AutomationScopeSchema` is `personal | workspace`, and a stored draft or
+transcript row that says `workstream` reads as `workspace`
+(`StoredAutomationScopeSchema`). The summary and detail no longer carry
+`owningWorkstreamId` or `owningThread`.
 
 The window closes on **Escape**, through the shared
 `renderer/lib/window-escape.ts` that Settings also uses, and nominates nothing as
@@ -593,11 +548,11 @@ a filter.
 
 `POST /sidekicks` creates a personal draft and its authoring conversation.
 `/sidekicks/new` replaces itself with the resulting detail route so Back cannot
-create a second draft. Coordinating conversations use `rally_agents` to discover
-and reuse a suitable Sidekick owned by their workstream, or create a minimal one
-there by default, then send setup instructions to its authoring agent. The host
-refuses those instructions from a thread that does not own a thread-owned
-Sidekick ([`agent-communication.md`](agent-communication.md)). Those
+create a second draft. A coordinating conversation uses `rally_agents` to create
+a Sidekick (personal by default, the Organization's when the person asks) and
+send setup instructions to its authoring agent; `sidekicks_list` lists only the
+Sidekick the conversation belongs to, since a Thread owns none
+([`agent-communication.md`](agent-communication.md)). Those
 instructions open the authoring conversation and are shown there as its
 **Opening instructions** row
 ([`plugin-activity-rows.md`](plugin-activity-rows.md)). Drafting
@@ -605,20 +560,17 @@ tools are available only in that authoring conversation. The persisted drafting
 plugin id and canonical tool names stay; the model reads the plugin as
 `rally_sidekicks` and its tools under the `sidekick_` prefix in the authoring
 conversation. In a room the same persisted plugin identity is presented as
-`rally_skill_recommendations`, exposing reusable instructions through
-`list_skill_recommendations`, `recommend_skill` and `unrecommend_skill`. Its list
-carries only available or already recommended organization skills the room
-can recommend; in an authoring conversation the list is that Sidekick's own
-definition. Workstream-owned
-entries are managed in the library and listed in their own room's Channel menu, beside
-that conversation's loaded attachments.
+`rally_sidekick_delegation` and carries only the delegation tools: a Thread no
+longer recommends Sidekicks, and the REST routes for a Thread's recommended and
+attached Sidekicks (`/conversations/:id/substreams/:sid/sidekicks`,
+`…/recommended-sidekicks`, `…/sidekick-recommendation-options`, and the
+`/workstreams/:id/…` forms) and `GET /automations/workstream/:id` are gone.
 
 `createAutomation` reserves the durable owner before bootstrapping its main
 `SubstreamAgent`, preserving the existing automation parent identity and routes.
 The same conversation remains available for subsequent edits. Personal and
 workspace drafts retain their existing ability to adopt an explicitly requested
-personal/workspace scope before publication; a workstream-owned Sidekick remains
-owned by that workstream. Authoring guidance uses the scope already selected
+personal/workspace scope before publication. Authoring guidance uses the scope already selected
 instead of requiring another scope question. The host supplies its Sidekick ID,
 and directory reads provide the current definition before revision. Questions
 from an agent exchange return through ordinary replies, without participant
@@ -627,8 +579,7 @@ elicitation forms.
 ### Conversational publication
 
 The sidebar shows no Sidekicks. The library window is reached from the
-account menu's **Sidekicks** item, and a Channel's own Sidekicks are listed in
-its title menu. A running Sidekick still carries `SIDEKICK_RUNNING_MARKER`, the
+account menu's **Sidekicks** item. A Thread's title menu lists no Sidekicks. A running Sidekick still carries `SIDEKICK_RUNNING_MARKER`, the
 **play** in `success-base` cut out of its hexagon, wherever its glyph is drawn.
 
 ### Drafting in the conversation
@@ -685,11 +636,10 @@ connection views used by the model catalog: Mail + Calendar and Drive + Docs +
 Sheets can bind one credential without sharing tools or trigger descriptors.
 Saved combined IDs remain binding aliases; see [connectors](connectors.md).
 The object's current revision and lifecycle are checked again after asynchronous
-preparation, before committing publication. An archived owning workstream refuses
-publication; an ordinary pause is preserved by editing.
+preparation, before committing publication; an ordinary pause is preserved by editing.
 
 Publication prepares table IDs and receipt hashes asynchronously, then rechecks
-the revision, accepted revision, lifecycle, principal and owning-room fences.
+the revision, accepted revision, lifecycle and principal fences.
 One transaction creates/reopens every declared execution table, updates compatible
 metadata and receipts, replaces schedules, stores bindings and evaluator
 projections, writes the accepted revision and computed `loadable`, and advances
@@ -728,7 +678,7 @@ run it already made. The object must hold an accepted revision
 | Trigger | Entry | Occurrence key | Refusals |
 | --- | --- | --- | --- |
 | **Manual** | `POST /automations/:id/run` with an `idempotency-key` header; `runNow` | `manual:<idempotencyKey>` | `sidekick_not_active` unless `active`; `sidekick_forbidden` unless the caller may manage it |
-| **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`; the next occurrence is computed from now and re-armed |
+| **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`, and unless the row's `next_due_at` has arrived: an entry that runs after a pause and resume, or an apply that kept the schedule, moved it into the future, and admitting it would start the next occurrence early; the next occurrence is computed from now and re-armed |
 | **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `occurrence:<key>` when the connector named the occurrence the event reports, else `external:<workspaceEventId>` | `sidekick_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
 | **Inbound email** | `resend-inbound-email-service.ts` calling `admitInboundEmail` once per delivery | `inbound_email:<resendEmailId>` | see below; the refusal is written to `inbound_email_receipts` |
 
@@ -895,7 +845,9 @@ The run reports its state the way every conversation does: its
 `HostedSidekick.onChildCommonProjection` maps the accepted conversation state
 onto `sidekick_runs.state`, as [continuing a run](#continuing-a-run) describes.
 Nothing a run says leaves the Sidekick: a run produces no sidebar row, no
-activity, and no notification.
+activity, and no notification. Its one appearance outside its own
+conversation is its row in the Sidekick's shared conversation
+([runs in the shared conversation](#runs-in-the-shared-conversation)).
 
 ### Continuing a run
 
@@ -1001,6 +953,224 @@ activations. A Sidekick run child forwards no effects (`forwardsChildEffect`
 is false), so a second completion sends no notification, and the Slack
 `notify_automation_completed` preference has no sender today.
 
+### The shared conversation
+
+Substream `"0"` under a Sidekick is the Sidekick's own conversation: managers
+edit the Sidekick there through the wizard, and everyone who may read the
+Sidekick reads it and asks it for work. It keeps the wizard and run separation
+the
+[Canvases and Sidekicks decision log](PRDs/2026-11-06_canvases-and-sidekicks/prd.md#2026-11-06--the-shared-sidekick-conversation-keeps-the-wizard-and-run-separation)
+records, and a manager marks a wizard edit explicitly
+([2026-11-07](PRDs/2026-11-06_canvases-and-sidekicks/prd.md#2026-11-07--a-manager-marks-a-wizard-edit-explicitly)):
+the conversation's own loop never acts on the Sidekick's definition.
+
+**Who answers a message.** Admission is the ordinary one: a message in a room
+with more than one participant goes through the addressing classifier, and a
+message it keeps for the people there lands with no agent turn. A message
+marked `intent: "edit_sidekick"` (`SidekickMessageIntentSchema`, on
+`create_message`) is addressed to the Sidekick by the mark and skips the
+classifier. Either becomes pending input, and before the conversation's loop
+takes it, `SubstreamAgent.claimPersistentLoopExecution` asks
+`WorkspaceDO.sidekickAdmitConversationMessage`
+(`HostedSidekick.admitConversationMessage`) who answers it, the way a run child
+asks `sidekickContinueRun`:
+
+| Input | Sender | Answer | What happens |
+| --- | --- | --- | --- |
+| For the wizard | Manages the Sidekick (`managerAllows`) | `wizard` | The wizard's turn, marked `sidekickWizard` on its execution context, with `rally:sidekicks`. |
+| For the wizard | Anyone else | `refused` | `sidekick_edit_requires_manager`. |
+| Anything else | Anyone, managers included, who is an eligible delegate | `run` | A run under the Sidekick's definition, admitted the way `runNow` admits one (`manual` trigger, `requestedByUserId` the sender, occurrence key `message:<turnId>`), with the message as its opening (`conversationMessageOpening`). The message lands in `"0"` as said to the room. |
+| Anything else | An active member who is not an eligible delegate | `run` | The same run, acting as the sender under their own access ([who a run acts as](#who-a-run-acts-as)). |
+| Anything else | Anyone else (a guest who is not a delegate) | `refused` | `sidekick_not_active`, `sidekick_not_runnable` (instructions only, the same refusal `runNow` gives) or `run_no_eligible_delegate`. |
+
+Input is for the wizard when its sender marked it, or when it answers
+something the wizard asked: an elicitation answer (`reason:
+"elicitation_answer"`) or a resource authorization the wizard requested
+(`reason: "resource_authorization"`). Every person's input is routed, whatever
+its reason, except a demo seed's, which scripts its own turn. A refusal lands
+the input followed by a `system` row (`sidekick-message-refused:<inputId>`,
+`{kind: "sidekick_message_refused", code, turnId}`) whose text says why.
+Because the decision is made when the loop takes the input, a message in `"0"`
+always queues rather than steering a turn already running. The sender's
+Organization role and mark travel in the input's authorization so
+`managerAllows` can read them.
+
+An elicitation answer is also refused before it is recorded: answering marks
+the question answered, so a refusal at claim time would leave the wizard's
+question closed by someone who may not answer it. `answerElicitation` in `"0"`
+asks `sidekickAllowsManager` before it reserves anything and refuses a
+non-manager with a 403 `sidekick_edit_requires_manager`, leaving the question
+open for a manager.
+
+A message-started run acts only as its sender, and only when the sender is an
+eligible delegate (`coordinator(sender, [sender])`): borrowing another
+delegate's access for someone who is not one is what the decision log forbids.
+Running under a non-delegate's own access is the next step of the plan, not
+this one.
+
+Every turn that activates in `"0"` past the routing is the wizard's, and the
+claim marks its execution context `sidekickWizard: true`. `rally:sidekicks`
+loads its authoring tools in `"0"` only for a turn so marked
+(`services/integrations.ts`); a turn that reached `"0"`'s loop any other way
+gets the delegation tools alone.
+
+**In the client.** The Sidekick screen's composer offers a manager **Edit
+Sidekick** in its actions menu, a checkbox entry (`ComposerMenuAction.checked`)
+that switches the composer into marking every message `intent:
+"edit_sidekick"` until it is switched off; the composer then reads "Describe a
+change to this Sidekick…" and the conversation's heading says **Editing this
+Sidekick**. Off, a manager's message is unmarked and asks the Sidekick for a
+run like anyone else's. A draft opens with the edit on, because it has nothing
+to run yet. Nobody else is offered the entry (`viewerManagesSidekick`: its
+author, the person it runs as, or an Organization owner or administrator for an
+Organization Sidekick), and the server refuses the mark from them all the same.
+
+### Runs in the shared conversation
+
+Every run has one row in the Sidekick's shared conversation (`"0"`): an
+`automation_activation` turn, keyed `sidekick-run:<runId>`, rendered under the
+Sidekick's name, whose structured content carries `runId`, the trigger kind
+and `run: {state, stepCount, reply}`. The row is a projection of the run's
+`sidekick_runs` row, which stays authoritative; expanding it is
+`sidekick_runs_read`'s.
+
+- **Arming.** WorkspaceDO migration 135's triggers on `sidekick_runs` arm one
+  `sidekick_run_row` alarm entry, keyed `<sidekickId>:<runId>`, on every
+  insert and on every change to `state`, `summary` or `step_count`, in the
+  statement that changes the run. No writer can move a run without its row
+  following, and each arm takes a fresh instant so a change during a delivery
+  survives the drain's delete of the entry it ran.
+- **Delivery.** `HostedSidekick.projectRunRow` reads the run as it is when the
+  entry runs, never a copy carried in the entry, and calls
+  `SubstreamAgent.projectSidekickRunRow` on `"0"`. A throw retries on the
+  scheduler's backoff; a refusal is logged `sidekick_run_row_refused`.
+- **In the conversation.** The first projection appends the turn and a
+  `sidekick_run_rows` row (SubstreamAgent migration 82); later ones update that
+  row when they are not older (`source_version` is the run's `updated_at`), move
+  the turn's revision and send it to the room. The transcript joins the row in
+  whenever the turn is read (`sidekick-run-row.ts`), so the turn's text is the
+  reply once there is one and a line saying where the run is until then. The
+  same write replaces the turn's stored text, so a reader of the stored turn
+  alone (`conversation_read`, gap-fill, a conversation read as text) sees the
+  same line. A row wakes no agent.
+- **What it shows.** `state` is the run row's. `stepCount` is the run's tool
+  calls, which the run's conversation now sends in its `directory_common`
+  effect (`stepCount`) and `onChildCommonProjection` stores in
+  `sidekick_runs.step_count`. `reply` is the run's last message once it has
+  stopped working (finished, or waiting on input): a run's conversation now
+  sends its last agent message as its effect's `preview`, which
+  `onChildCommonProjection` already copied onto `summary`, and which the run
+  history and the self-review's `resultSummary` therefore show too.
+- **Replay.** `sidekickReplayRunRows` (a manager's) arms an entry for every run
+  the Sidekick holds, each with a `{"replay":true}` payload that has the
+  conversation apply the projection whatever version it holds, so a row whose
+  version ran ahead of its run is repaired too; a row that is missing is
+  appended, at the end of the conversation. A run is never deleted from
+  `sidekick_runs`, so there is no row whose run is gone to remove.
+
+The client draws the row as a run, not as a message
+(`components/sidekick-run-row.tsx`, chosen in `MessageBlock` by
+`automationActivation.run`): collapsed to "Run · trigger · state · steps"
+with the reply as a two-line preview, expanding to the whole reply and **Open
+run**, which puts `?run=<runId>` on the Sidekick's route; the screen then shows
+that run's own conversation (`parentKind: "automation"`, substream the run id)
+in place of `"0"`, with a way back that replaces the history entry, so Back
+leaves the Sidekick rather than reopening the run. That view is read-only
+(`readOnly`, no composer): replies to the Sidekick go in the shared
+conversation, where they start the next run. Its opening row is the prompt the
+run reads (`conversation-message-opening.ts`, structured kind
+`sidekick_conversation_message`), written for the model, so the client draws it
+as the caption "Started by a message in the conversation."
+
+A Sidekick's row, in the sidebar and on the home, says **Active** while a run is
+under way, where the mockup draws **Working**: a Sidekick summary carries no
+running flag, and the row says only what its fields hold. The home reads the
+list the workspace socket keeps, whose sidebar read is the only one carrying
+`needsInput` and `unread`; `GET /sidekicks` serves only a tree with no
+workspace socket.
+
+Runs that finished before migration 135 have no row, and nothing backfills
+them: appended now, they would land at the bottom of the conversation, out of
+order with what was said around them. A replay is how a person who wants them
+gets them.
+
+### Who a Sidekick is shared with
+
+A Sidekick's audience is `personal` (its author), `workspace` (every member of
+the Organization) or `people` (its author and the people named). The author,
+the person it runs as and anyone named read its conversations whatever their
+access class; Organization scope admits members and never a guest. One function
+decides it (`sidekickAdmits` in `services/authorization-policy.ts`) for the
+conversation parent's `authorizeViewer`, the management and library reads
+(`sidekickReaderAllows`), resource authorization, search audience, memory
+facts and who may email a personal Sidekick. A home Channel or Breakout admits
+nobody. One reader of `scope` still under-admits `people`, deliberately: the
+skill rule (`sidekickAudienceAllows`) lends a personal Sidekick's instructions
+only where everyone present is its author or the person it runs as, because a
+skill is the Sidekick's procedure loaded into someone else's conversation, not a
+read of its own; it is retired with Thread-attached skills in phase C of the
+Canvases and Sidekicks plan.
+
+- **Storage.** `people` is stored as scope `personal` with its list in
+  `sidekick_audience` (WorkspaceDO migration 136), so the released scope CHECK
+  and every reader of `scope` are unchanged. The wire carries it as `audience`
+  beside `scope` on the summary and the detail, and the detail lists
+  `sharedWithUserIds`: a third `scope` value would fail a released client's
+  whole sidebar parse.
+- **Changing it.** A manager's `POST /automations/:id/audience` with
+  `{audience, userIds}` (`HostedSidekick.setAudience`); `userIds` is required
+  exactly for `people`, and everyone named must be an active member or guest
+  (`sidekick_audience_not_member` otherwise). A `people` list that names nobody
+  but the author is refused (`sidekick_audience_people_empty`): it would store
+  as `personal` and read back as that. The other two audiences clear the
+  list, and so does a draft's suggested scope that moves the audience.
+- **Unread.** The shared conversation's own read state (`member_attention`,
+  `acknowledgeRead`, `markUnread`) stays the authority. `"0"`'s `directory_user`
+  effect for each reader is kept in `sidekick_viewer_reads`, and the sidebar row
+  is `unread` when that reader marked it unread or `"0"`'s latest attention
+  ordinal (its `directory_common` projection) is past what they saw. Someone who
+  never opened the conversation has no read state there and reads as unread, as
+  a Channel they have not opened is `unseen`; the author, who wrote the Sidekick
+  in that conversation, does not. Each report always moves the stored version,
+  so a later, older report is dropped, and only a change to what the row shows
+  republishes. A reader's own read republishes the Sidekick list to that
+  reader's sockets alone (`noteViewerReadChanged`), as a Channel's
+  `viewerChanges` does; a move of `"0"`'s latest message or of its waiting on
+  input changes every reader's row and republishes to every socket.
+- **Needs input.** `needsInput` on the sidebar row is the delegation attention
+  or `"0"` waiting on input.
+
+### Who a run acts as
+
+A run its triggers start, or that a delegate asks for, acts as a delegate: its
+coordinator, re-picked from the eligible delegates when that person becomes
+unavailable, and its connector operations may use any delegate's personal
+account and the Organization's connections. A run someone who is not a
+delegate asks for in the shared conversation, a member or a guest on its list,
+acts as that person alone, the PRD's "a shared Sidekick uses delegate access
+only for its own runs":
+
+- `sidekick_runs.requester_user_id` (WorkspaceDO migration 138) records them,
+  and `coordinator_user_id` is them too. Start, provisioning and every
+  continuation keep them (`runPrincipal`) for as long as they are in the
+  Organization, as a member or a guest; no delegate is ever substituted, and
+  once they leave the run has nobody to act as and its account view names
+  nobody.
+- The run's account view, `readExecutionDelegation` with its `runId`, names
+  only the requester (`delegates: [requester]`, `requesterUserId`), so the
+  inventory, the personal-connection owner check and
+  `executeSidekickAccountOperation` see only their own personal accounts and the
+  Organization's connections, as a member's own work does.
+- An operation that would need a delegate's account is refused with
+  `sidekick_requester_account_unavailable` (a `ConnectorError` whose `details.code`
+  and message name it), so the run's reply can say why rather than reporting a
+  generic failure.
+- The Sidekick's shared Terminal files hold what runs under its delegates'
+  access wrote, so a requester's run refuses the Terminal with
+  `sidekick_requester_files_unavailable` rather than reaching them.
+- A guest on the Sidekick's list runs under their own access as a member does;
+  a tool that needs an account they lack refuses by its named code.
+
 ### Scheduled self-review
 
 The wizard is the model that can reason about a run; a run is the model that
@@ -1061,11 +1231,8 @@ under the accepted revision, since the window can reach back past a revision
 and an earlier revision's runs followed a procedure the person already
 changed. It carries no run content: the wizard reads a run with
 `sidekick_runs_read`. It names where a change is announced (`announceTo`,
-as the conversation tools name it): a room's Sidekick's home, an
-Organization Sidekick's General Channel, or its author's Personal Channel
-when General is archived or absent, and a personal Sidekick's author's
-Personal Channel; null when no such conversation exists yet
-(`sidekickAnnouncementSpaceId`). It is admitted through
+as the conversation tools name it): the Sidekick's own shared conversation,
+whose id is the Sidekick's, for every Sidekick. It is admitted through
 `admitSystemActivation`
 (`SubstreamAgent.admitSidekickReview`, only on a Sidekick's substream `0`) as
 a queued `system` row whose text (`sidekickReviewText`) is the one sentence a
@@ -1124,12 +1291,9 @@ another agent relays. When a change was saved
 and the notice names where to announce it, it publishes one message there
 with `conversation_post`, naming that conversation, for the people the
 Sidekick works for: what it now does differently, why, and how to restore
-the earlier version; nothing is posted when nothing changed. A Channel
-target (General or a Personal Channel) lands in the Channel's own feed as a
-message from Rally opening with the Sidekick's name
-(`postSidekickChannelMessage`), which the authoring conversation's scope
-lists, only that Channel, and no run's scope; a Thread or Breakout target is an ordinary post
-([`conversation-tools.md`](conversation-tools.md)). It ends with a report in the authoring conversation for
+the earlier version; nothing is posted when nothing changed. The target is
+the Sidekick's own conversation, an ordinary post there; a Channel's feed takes
+no Sidekick post ([`conversation-tools.md`](conversation-tools.md)). It ends with a report in the authoring conversation for
 the owner, who was not present. A revision it submits is an ordinary
 revision, and the person reverts by asking for the earlier one.
 
@@ -1146,47 +1310,23 @@ the procedure; this document does not restate it.
 [`agent-communication.md`](agent-communication.md#a-run-asking-its-wizard-for-a-change)
 owns the tool and the frame.
 
-### Home conversation and attachments
+### Attached conversations
 
-A room's Sidekick has a **home conversation**: `owning_workstream_id` names the
-Channel and `owning_substream_id` the conversation in it, `"0"` for its Main
-conversation or a Breakout id. Both are on the Sidekick's
-`automation_directory` row. A Sidekick created in a Breakout (with
-`create_sidekick`) takes that Breakout as its home; one
-created by a background agent takes Main, because a background agent's
-conversation is not one anybody reads. The creator must be able to open the
-home: a participant of the Channel for Main, a member of the Breakout
-otherwise. Personal and workspace Sidekicks have no home and keep `"0"`.
-
-The home narrows who counts as the room. `authorizeViewer`, the resource
-authorization owner (`<channel>/<home>` in `authorization-service.ts`) and search
-discovery all read the Breakout's members for a Breakout home and the Channel's
-participants for a Main one. Archiving the home Breakout or its Thread archives
-the Sidekick through `setOwningRoomArchived`, including drafts and manually
-paused Sidekicks. Archiving a Channel archives its exclusive Threads through
-the canonical Thread archive path and therefore archives their owned Sidekicks;
-shared Threads remain active in their other Channels. A workspace Sidekick
-merely attached or recommended in an archived conversation remains available
-elsewhere. Restoring a Channel, Thread or Breakout never restores an archived
-Sidekick; see Lifecycle.
-
-Thread snapshots retain a monotonic archive generation across restores. The
-hosted parent applies each new generation's irreversible Sidekick cascade in
-the projection transaction, so delivering restore before archive cannot lose
-the cascade. Breakout archival commits its Sidekick cascade with the canonical
-child registry change in WorkspaceDO. A legacy `owning_room_archived_at` marker
-also becomes terminal on the next archive or restore notice. Pause and resume
-re-read lifecycle after authorization so an intervening archive stays terminal.
+A Sidekick has no home Thread. Its own conversation (`"0"`, the shared
+conversation) is where it posts by default and where everyone it is shared with
+reads; A-5 of the Canvases and Sidekicks plan retired the home together with the
+`workstream` scope. Archiving a Thread, Breakout or Channel archives no Sidekick,
+and `setOwningRoomArchived` and the archive cascade that called it are gone.
 
 A Sidekick reads and posts through the `rally:conversations` plugin
 ([`conversation-tools.md`](conversation-tools.md)), whose scope for a Sidekick is
-its home plus the conversations attached to it in WorkspaceDO's
-`sidekick_conversation_attachments`. The home is always attached and never a
-row. Only the Sidekick's configuration conversation attaches (the
-`conversation_attach` tool), and only a conversation the attaching person can
-post in, since attaching is the consent to publish there. A run posts with
-`conversation_post`, which defaults to the home; nothing posts a run's result
-for it. That table is not `parent_sidekicks` or a conversation's
+its own conversation plus the conversations attached to it in WorkspaceDO's
+`sidekick_conversation_attachments`. Only the Sidekick's configuration
+conversation attaches (the `conversation_attach` tool), and only a conversation
+the attaching person can post in, since attaching is the consent to publish
+there. A run posts with `conversation_post`, which defaults to the Sidekick's own
+conversation; nothing posts a run's result for it, and a Channel's feed takes no
+Sidekick post. That table is not `parent_sidekicks` or a conversation's
 `sidekick_attachments`: those record that a conversation may load the Sidekick
 as a skill, and loading writes them automatically.
 
@@ -1195,16 +1335,13 @@ as a skill, and loading writes them automatically.
 | Transition | Who | What |
 | --- | --- | --- |
 | `pause` | a manager | `runs` in `pending`, `running`, or `needs_input` become `stopped`; `lifecycle = 'paused'`, `paused_by = 'person'`; schedule, run and review alarm entries cancelled; the workspace's registrations replaced with `[]`; sidebar row enqueued |
-| `resume` | a manager | each schedule's next due instant recomputed from now (a paused automation does not fire what it slept through), `lifecycle = 'active'`, `paused_by` cleared, alarms re-armed (a review request still owed is resent at once, else the review entry is re-armed from the count), the accepted evaluator projection re-registered with a fresh sequence boundary; refused with `sidekick_room_archived` while the owning room is archived |
+| `resume` | a manager | each schedule's next due instant recomputed from now (a paused automation does not fire what it slept through), `lifecycle = 'active'`, `paused_by` cleared, alarms re-armed (a review request still owed is resent at once, else the review entry is re-armed from the count), the accepted evaluator projection re-registered with a fresh sequence boundary |
 | `archive` (`POST /sidekicks/:id/archive`; legacy `DELETE` remains for installed clients) | a manager | open runs stopped, stored `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object, conversation, and run history remain stored but become inaccessible, and `authorizeViewer` answers unauthorized and archived from then on. `deleted` is the compatibility tombstone name, not a claim that retained data was destroyed. There is no unarchive operation or archived-Sidekick browser yet. |
-| `setOwningRoomArchived` | `WorkspaceDO`, from a directory effect that archived or unarchived the owning room | archiving uses the same terminal archive as an explicit Sidekick archive: active, paused and draft Sidekicks become `deleted`, open runs stop, triggers are cleared, and the Sidekick disappears from owned lists and becomes inaccessible. Replayed archive notifications are idempotent. Restoring the room never restores the Sidekick |
 
 Who may manage (`assertManager`): the author or the run-as principal; for a
-`workspace` automation also an owner or admin; for a room's automation only a
-participant of the room, because authorship is not a share in the room's
-automation. Who may view (`assertViewer`, and `authorizeViewer` for the
-conversation): a `workspace` automation by any member, otherwise the author,
-the run-as principal, or a participant of the owning room.
+`workspace` automation also an owner or admin. Who may view (`assertViewer`,
+and `authorizeViewer` for the conversation): see
+[who a Sidekick is shared with](#who-a-sidekick-is-shared-with).
 `claimExecutionPrincipal` is installed-client compatibility for authenticated
 self-consent. Configured bindings, creator preference and human access remain
 independent. A successful claim creates no management entitlement.
@@ -1292,13 +1429,8 @@ color must come from the ring; one outside it is accepted only as the color
 already stored. The RPC field is optional, so a seeded or scripted definition
 leaves the appearance alone.
 
-A Thread- or Breakout-scoped Sidekick starts with its home conversation's
-color in the creation transaction. It reads the current canonical Channel color
-through `WorkspaceSpaceStorage.channelColor`, so a pending recolor job cannot
-leave it wearing the conversation projection's old color. Without an active
-Channel placement, it copies the exact home's stored color or uses the same
-id-derived fallback as the glyph. An invalid stored appearance reports field
-diagnostics without blocking creation or replay.
+A new Sidekick wears no chosen appearance until somebody picks one, and its
+glyph uses the id-derived fallback; it no longer copies a home Thread's color.
 Only the color is copied: the icon remains the Sidekick's own generated mark.
 This is a creation-time default; later home color changes and repeated creation
 requests do not overwrite the Sidekick's appearance. Personal and Organization
@@ -1340,11 +1472,11 @@ Sidekicks still start with `NULL` appearance and use their own id-derived mark.
   posts nothing after a run; the run posts, once per result, when its
   instructions say the room should hear it, and a retried receipt lands once. A
   second delivery path is a duplicate the room reads twice.
-- **The home is always `owning_workstream_id` plus `owning_substream_id`.**
-  Every place that asks who the room is (viewer admission, the authorization
-  owner, search discovery, the archive fan-out) reads both. One that read the
-  Channel alone would hand a Breakout-homed Sidekick, and every post it made,
-  to Channel members outside the Breakout.
+- **No Thread owns a Sidekick.** `owning_workstream_id`, `owning_substream_id`
+  and `owning_room_archived_at` are dead columns, null on every row. The legacy
+  readers listed under [Creation and ownership](#creation-and-ownership)
+  tolerate null until phase C removes them; no new read may decide from them
+  who a Sidekick's audience is, where it posts, or whether it is archived.
 - **A conversation attachment is not a skill attachment.** Only
   `sidekick_conversation_attachments` widens what a Sidekick may read and post
   to, and only an attach from its configuration conversation writes it. Reading
@@ -1378,7 +1510,7 @@ Sidekicks still start with `NULL` appearance and use their own id-derived mark.
 
 This module owns the automation: creation, drafting, revisions, apply,
 lifecycle, schedules, occurrence admission, run provisioning, run state, the
-home conversation and its attachments, and the sidebar row. The conversation
+attached conversations, and the sidebar row. The conversation
 tools that read and post through that scope are
 [`conversation-tools.md`](conversation-tools.md)'s.
 
@@ -1386,8 +1518,7 @@ It depends on the conversation hierarchy for its conversations and its runs
 (`SubstreamAgent` and the effect legs;
 [`workstream-durable-object.md`](workstream-durable-object.md)); on WorkspaceDO,
 which hosts it ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)),
-for the directory row, the registrations and the matcher, the owning-room
-participation answer, and **every workspace-product table it reads**
+for the directory row, the registrations and the matcher, and **every workspace-product table it reads**
 (`connector_connections`, `resources`, `users`' timezones through regional D1
 and the rest through `withWorkspaceRuntimeDatabase`); on the Global
 `workstream_email_routes` registry for its address; on regional D1 for identity
@@ -1509,17 +1640,15 @@ idempotency, scope, participation, durable sync publication and unsupported
 automation parents). Hidden child tool coverage also proves REST refusal,
 stopped-execution refusal and preservation of Main's loaded attachment.
 Run them with `pnpm --filter @rally/api
-test:workers`. Desktop `sidekick-picker.test.tsx`, `sidekick-section.test.tsx`, and
-`workstream-sidekicks.test.tsx` cover selection, merged badges/removal, and switching
-substreams. Harness `skills.test.ts` proves recommendations do not load bodies.
+test:workers`. Harness `skills.test.ts` proves recommendations do not load bodies.
 
 | Suite | Command | Covers |
 | --- | --- | --- |
 | `apps/api/test-workers/hosted-sidekick.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd, with `connector_connections` in WorkspaceDO and deliberately absent from D1: draft, `submitDefinition`, and `apply` binding a workspace connection, reserving the address, and activating; a missing connection refused; a second ready revision re-applied on an active automation; pause stopping the in-flight run and clearing registrations, resume re-arming; delete tombstoning the row and leaving the sidebar; management refused to a member who is neither author nor principal; `runNow` idempotent on its key; `admitExternalEvent` idempotent and refused before the boundary; `admitInboundEmail` answering a retry from its receipt and refusing a stranger; the run provisioned as a child substream whose loop reads its definition by revision, with `runs.state` following the child's state through the effect leg; and the scheduled self-review: ten finishes arming, requesting and delivering a review with the counts and sample, whose row carries the sentence a person reads and whose model turn is asked with the Rally-attributed notice first; the three-day floor, a new revision resetting the count and retiring a pending request, a finish under the previous revision not counting, delivery re-arming from the count, resume resending a request still owed; the accepted revision's runs sampled with failures before stops and other revisions excluded, a lost message resent and then delivered once. |
 | `apps/api/test/sidekick-review-notice.test.ts`, `test/model-protocol-transcript.test.ts` | `pnpm --filter @rally/api test` | The notice's row sentence and model framing against literals, both windows and an empty sample; and the history projection admitting the notice as one user turn under Rally's first line. |
 | `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | Continuing a finished run as its run-as user; refusals while paused; a pause after a continuation's approval fencing its writes; a run's loop acting while its row still reads `pending`, before provisioning reports it running; and background workers beneath authoring or run conversations executing initial and follow-up assignments with inherited authority. |
-| `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | The result tool appending into the owning room's substream `0`, and refused for an archived room and a stale generation. |
-| `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar, a workspace row in everyone's, and a room's row only in `listWorkstreamAutomations`; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read. |
+| `apps/api/test-workers/automation-post-result.test.ts` | `pnpm --filter @rally/api test:workers` | A room's agents reaching a Sidekick: child reservation refused for an archived Sidekick, and the communication tools' refusals. |
+| `apps/api/test-workers/automation-directory.test.ts` | `pnpm --filter @rally/api test:workers` | `create` alone putting a draft row in the author's sidebar and a workspace row in everyone's; and `setAppearance` — driven through the object's stub, the boundary `AutomationService` crosses — merging one field at a time, reaching both directory listings through the real effect legs, and refusing somebody who cannot manage the Sidekick; and `AutomationService.listSidekicks` listing each scope to exactly the members it did before while the object sends D1 no `workspace_members` read. |
 | `apps/desktop/src/renderer/screens/automation.test.tsx` | `pnpm --filter @rally/desktop test` | The profile's appearance saving: an older response losing to a newer Sidekick already in the cache, and its own response applied when nothing newer arrived. |
 | `apps/desktop/src/renderer/components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The play cut out of the hexagon with its own mask, its hover target, and the sentence it reports. |
 | `apps/api/test-workers/automation-acceptance-bindings.test.ts` | `pnpm --filter @rally/api test:workers` | The binding half in isolation: the table absent from D1, a recommended plugin bound from the workspace object's connections, a missing one refused, a disabled row skipped for the live one. |
@@ -1594,6 +1723,11 @@ external conversation bindings table's. Owner migration 4 stores the
 source counter. Versioned registration IDs equal immutable evaluator IDs, so a
 late delivery from a superseded predicate is refused by the owner.
 
+Workspace migration 135 adds `sidekick_runs.step_count` and the two triggers
+that arm a run's row entry; SubstreamAgent migration 82 adds
+`sidekick_run_rows` (run, turn, state, steps, reply, `source_version`), empty
+everywhere but a Sidekick's `"0"`.
+
 ## Regional impact
 
 Every object name is `<region>:<workspaceId>:automation:<automationId>` and the
@@ -1610,12 +1744,10 @@ inline and stay regional.
 ## Security and trust model
 
 Every RPC re-derives authority from the object's own row rather than from the
-caller's claim. The Worker resolves one fact the object cannot see, whether the
-caller is a participant of the owning room, and sends it as
-`participantOfOwningWorkstream`; a failure to resolve it sends `false`, which
-only ever withholds the room's standing. Reads admit the author, the run-as
-principal, any member for a `workspace` automation, and the room's participants
-for a room's; management additionally admits a workspace owner or admin, but
+caller's claim. The actor's `participantOfOwningWorkstream` is still sent by
+older callers and is ignored, since no room owns a Sidekick. Reads admit the
+author, the run-as principal, the people it is shared with, and any member for
+a `workspace` automation; management additionally admits a workspace owner or admin, but
 only for a `workspace` automation.
 
 The conversation's readers are the parent's decision, carried to the
@@ -1743,6 +1875,162 @@ to set it from, where the run's own report already says whether work was routine
 **Consequences:** A review can now revise a Sidekick whose runs all succeeded.
 Prod eval scenario P13 (`scripts/code-mode-evals.mjs`) checks that setup alone
 produces a tool that finishes a large scan in at most two calls.
+
+### 2026-11-07 — A Thread no longer owns a Sidekick
+
+**What changed:** Plan step A-5. WorkspaceDO migration 137 converted every
+Thread-owned Sidekick to the Organization's scope and cleared its home,
+archived any a room archive had paused under the old rule, and dropped the
+rail trigger that bumped an owning room. The scope enum is `personal |
+workspace`, with stored drafts and transcript rows that say `workstream`
+reading as `workspace`. Gone with it: the home color at creation, the Thread
+manager rule, `setOwningRoomArchived` and the archive cascade, the Sidekick
+host's `isChannelParticipant`, `channelColor` and `announcementSpaceId`,
+`automationIdsOwnedByWorkstream`, `automationOwner`, `listWorkstreamAutomations`
+and `GET /automations/workstream/:id`, the rail's owned list (sent empty), the
+REST routes for a Thread's attached and recommended Sidekicks, the Thread
+loop's recommendation tools, and review announcements in a Channel (a review
+announces in `"0"`).
+
+**Why:** The PRD retires Threads and converts their Sidekicks to Organization
+scope rather than personal, so the people who used a Thread's Sidekick keep it.
+
+**Considered and rejected:** Dropping the owning columns, which released
+CHECKs name.
+
+**Consequences:** The owning columns stay as dead columns, null on every row;
+the legacy readers that still look tolerate null and phase C removes them, and
+no new read may decide audience, posting or archival from them. An installed
+desktop still asks for a Thread's attached and recommended Sidekicks and gets a
+404 there until it updates; queued `workstream_automations` revocation hops
+reach nothing; the skill rule (`sidekickAudienceAllows`) and Space Sidekick
+defaults are the Thread-side readers phase C retires. With no home left, every
+run that is not from an inbound email now uses the `self_delivery` output
+surface, whose prompt section says nothing sends the run's final message
+anywhere, while A-4 projects that final message as the run's row in `"0"`; C-5
+rewrites that vocabulary.
+
+### 2026-11-07 — The shared conversation starts runs, and shows them
+
+**What changed:** A message in a Sidekick's conversation (`"0"`) addressed to
+the Sidekick now starts a run under its definition, admitted as a manual run
+with the message as its opening, whoever sent it; the message lands in `"0"` as
+said to the room. Only input for the wizard reaches the wizard: a manager's
+message marked `intent: "edit_sidekick"`, or a manager's answer to what the
+wizard asked. Anything refused lands with a `system` row that names its code.
+Every run also has one row in `"0"`, an `automation_activation` turn carrying
+the run's id, state, step count and reply, kept current from `sidekick_runs`
+by triggers that arm a delivery on every change; a manager's replay rebuilds
+every row. A `conversation_post` that names no conversation now lands in
+`"0"` rather than the Sidekick's home Thread
+([`conversation-tools.md`](conversation-tools.md)). See
+[the shared conversation](#the-shared-conversation) and
+[runs in the shared conversation](#runs-in-the-shared-conversation). A Sidekick
+is shared with a `people` list as well as its author or the Organization, a
+home Thread or Breakout no longer admits anyone, and its sidebar row says what
+the viewer has not read in `"0"` ([who a Sidekick is shared
+with](#who-a-sidekick-is-shared-with)).
+
+**Why:** The Canvases and Sidekicks pivot opens a Sidekick's conversation to
+everyone it is shared with, and its decision log keeps the wizard and run
+separation there: that split is what makes a run auditable and delegatable,
+and a conversation whose loop ran the definition on any message would act with
+delegate access for whoever typed. Before this every message in `"0"` ran the
+wizard with the authoring tools loaded, whoever sent it, and a run wrote
+nothing there, so the people who asked never saw an answer. The first build
+of the routing sent every manager's message to the wizard, so a manager could
+not ask for work there; the 2026-11-07 decision has a manager mark an edit
+instead, because inferring an edit from the text would be a second classifier
+that can misroute. Routing at claim time reuses the decision point a run child
+already has (`sidekickContinueRun`) and the admission `runNow` already has, so
+there is no new trigger kind and no new loop. The row reuses
+`automation_activation`, which every client already renders under the
+Sidekick's name, and is a projection of `sidekick_runs` rather than a second
+record, so the two cannot disagree. Rejected: appending a row per state change,
+which turns one run into a column of status lines; arming the row at each of
+the seven places that write a run, where a writer added later would leave its
+row behind (the cost of the triggers is that the arming is in SQL). A post
+defaults to `"0"` because that is now where the people who asked are reading;
+the home Thread is being retired, and so the audience is the Sidekick's own
+rather than its Thread's. `people` sits beside `scope` on the wire, not in it,
+because released clients parse `scope` as a closed enum. Unread is a projection
+of `"0"`'s own read state, so nothing new decides it. A Sidekick shared with
+someone who has never opened it reads as unread to them, the product owner's
+call, so being shared with is noticed the way joining a Channel is. A reader's
+own read is sent only to that reader: republishing the whole library to every
+socket on every acknowledgement cost a send per socket per read and told
+everyone else nothing.
+
+**Consequences:** Any new kind of human input in `"0"` must say whether it is
+the wizard's; the claim routes it as a run otherwise. Authoring tools in `"0"`
+follow `sidekickWizard`, not the conversation, so a producer that activates a
+turn there outside the claim gets none. A message-started run acts as its sender: as a delegate when they are one,
+otherwise under their own access only. A message in `"0"` can no
+longer steer a running turn. The row is a projection: anything that needs a
+run's truth reads `sidekick_runs`, and a row that drifted is rebuilt by a
+replay, and a replay is the only delivery that overrides a newer version. A
+run's summary is now its last reply rather than empty, so run history and the
+self-review read it too. Runs from before the change have no row until a
+manager's replay appends one, at the end of the conversation. An
+already-installed desktop renders a run row under the generic "Sidekick" label
+rather than its name: `AutomationActivationV1Schema` is a `strictObject`, and
+that client's `safeParse` of content with the new optional `run` key fails and
+falls back to `{}`. Accepted, since the row still renders and the next desktop
+release reads it.
+
+**Who a run acts as (the A-4 decision log item).** A member who is not a
+delegate no longer gets `run_no_eligible_delegate` for a message in `"0"`:
+the run records them as its requester (migration 138), keeps them through
+start, provisioning and every continuation, sees only their own accounts and
+the Organization's connections, and refuses an operation that needs a
+delegate's account with `sidekick_requester_account_unavailable`. Why: the
+decision log's "a shared Sidekick uses delegate access only for its own
+runs": a person must not read through the Sidekick what they cannot read
+themselves, and refusing them outright left everyone it was shared with but
+not delegated by unable to use it. Rejected: borrowing a delegate's access
+for the request, which is exactly what the decision forbids, and re-picking a
+delegate on continuation, which would widen the run halfway through. A guest
+on the Sidekick's list runs under their own access as a member does; this
+change first refused one with `run_no_eligible_delegate`, on the stated ground
+that a guest holds no Organization access to run under, but that named the
+wrong cause and narrowed the PRD: the list gives a guest exactly the access the
+decision log means, and a tool that needs an account they lack refuses by its
+own code. The requester's account view, like `runPrincipal`, names nobody once
+they leave the Organization, and a connector refusal then says so. A
+requester's run gets no Terminal: the Sidekick's shared Terminal files hold
+what delegate-access runs wrote, and its tools could only refuse.
+
+**In the main window (plan step A-13).** The desktop's Sidekick screen first
+marked every message a manager sent as an edit, so it stayed the Sidekick's
+editor until the conversation had its own composer. Now a manager switches
+**Edit Sidekick** on in the composer's menu to mark messages, and off to ask for
+runs; a draft opens with it on. A checkbox entry in the composer menu that
+already exists was chosen over a second composer or a per-message prompt: the
+mark is a mode a manager holds while describing a change, and a toggle is the
+smallest affordance that says it. The run row draws collapsed as a run and
+opens into the run's own conversation through `?run=`, which reuses the one
+conversation surface rather than an inline transcript; that view is read-only,
+because a reply belongs in the shared conversation, where it starts a run. The Sidekicks home and
+each Sidekick render in the main window on both hosts, beside the sidebar; the
+browser no longer gives them the whole tab, and the Mac app no longer hands
+`/sidekicks` to the separate window, which keeps its own entry until B-2. The
+Canvases a Sidekick writes show as cards over the conversation and as a
+**Writes to** list in its profile; a card cannot sit at its run's row, because
+a Canvas's summary does not say which run made it.
+
+**A schedule's occurrence is admitted only once it arrives.** `executeSchedule`
+read the schedule's current `next_due_at` and admitted that occurrence after
+checking only that it had not changed in the transaction. An entry that ran
+after an RPC moved `next_due_at` forward (a pause and resume, or an apply that
+kept the schedule id) while an earlier entry in the same drain pass was
+awaited admitted the next occurrence early. It now refuses an occurrence whose
+`next_due_at` is after now. Rejected: requiring `next_due_at === alarm.dueAt`,
+which needs the entry's instant threaded from the scheduler into the handler
+for the same effect. A future change must keep two things true: every writer
+of `next_due_at` arms the schedule's entry at that instant in the same
+transaction, and the drain's `settle()` deletes an entry only by the instant
+that ran, which is what leaves a refused pass's re-armed entry standing for
+its real time.
 
 ### 2026-11-06 — No saved instruction can turn a data report into a blocker
 

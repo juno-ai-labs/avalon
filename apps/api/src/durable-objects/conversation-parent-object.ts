@@ -11,7 +11,7 @@ import { z } from "zod";
 /**
  * What the conversation parents share, now that every parent is hosted.
  *
- * A `SubstreamAgent` is one transcript and one loop; it reports what changed
+ * An `AgentLoopDO` is one transcript and one loop; it reports what changed
  * (its directory projection, its viewers' projections, an activity event, a
  * notification) to its parent and nothing else. Every parent, a Channel's, a
  * Space's and a Sidekick's, is hosted in the Organization's `WorkspaceDO`

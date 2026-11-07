@@ -76,8 +76,8 @@ describe("the agents plugin", () => {
   const sidekickId = "00000000-0000-4000-8000-000000000001";
   const unused = async (): Promise<never> => { throw new Error("not called"); };
   const service = {
-    sidekicks: async () => ({ sidekicks: [{ sidekickId, name: "Monitor", description: "", scope: "workstream" as const,
-      ownedByThisWorkstream: true, isCurrentSidekick: false, canEdit: true, status: "draft" as const, nextRunAt: null, lastRunAt: null, agentId: `automation/${sidekickId}/0` as never }] }),
+    sidekicks: async () => ({ sidekicks: [{ sidekickId, name: "Monitor", description: "", scope: "workspace" as const,
+      isCurrentSidekick: false, canEdit: true, status: "draft" as const, nextRunAt: null, lastRunAt: null, agentId: `automation/${sidekickId}/0` as never }] }),
     send: async (input) => ({ messageId: sidekickId, next: "agentId" in input ? input.agentId : "" }),
     findSidekick: unused, createSidekick: unused, attachSidekickResource: unused, start: unused, list: unused, stop: unused,
     requestSidekickChange: async (changes) => ({ messageId: sidekickId, next: changes }),
@@ -98,8 +98,7 @@ describe("the agents plugin", () => {
   it("keeps the rule that a thread changes only Sidekicks it may edit", () => {
     // The incident behind this line: a thread rewrote another thread's draft.
     expect(plugin.systemMessage).toContain("Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target.");
-    expect(tool("sidekicks_list").definition.description).toContain("editable Sidekicks owned by this thread");
-    expect(tool("sidekicks_list").definition.description).toContain("the current Sidekick, marked isCurrentSidekick: true");
+    expect(tool("sidekicks_list").definition.description).toContain("the Sidekick this conversation belongs to, marked isCurrentSidekick: true; a thread owns none");
   });
 });
 
