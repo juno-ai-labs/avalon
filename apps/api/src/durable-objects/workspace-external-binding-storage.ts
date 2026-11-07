@@ -102,7 +102,6 @@ interface BindingRow extends Record<string, SqlStorageValue> {
   claim_key: string | null;
   created_at: string;
   updated_at: string;
-  /** Read only where it is selected: `resolve`. */
 }
 
 const COLUMNS = `installation_id, path_json, target_kind, space_id, parent_kind, parent_id,
