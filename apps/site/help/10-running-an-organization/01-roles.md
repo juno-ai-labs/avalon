@@ -40,7 +40,7 @@ and work with Rally as a member does.
 | Read and write in Canvases they can open | Yes | Yes | Yes | Yes |
 | Open Canvases shared with the whole Organization | Yes | Yes | Yes | No |
 | Start and share Canvases | Yes | Yes | Yes | No |
-| Change who can open any Canvas | Yes | Yes | Only their own | No |
+| Change who can open any Canvas | Yes | Yes | Only Canvases they created, or that a Sidekick they manage made | No |
 | Build Sidekicks | Yes | Yes | Yes | No |
 | Talk to Sidekicks shared with them | Yes | Yes | Yes | No |
 | See the members list | Yes | Yes | Yes | No |

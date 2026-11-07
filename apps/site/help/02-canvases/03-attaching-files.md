@@ -103,7 +103,7 @@ open a file at all, it will not state facts from it.
 ## Rally always answers a message with a file
 
 In a Canvas full of people, Rally sometimes stays quiet and lets the humans talk
-(see [People in the room](07-people-in-a-canvas.md)). A message with an
+(see [People in a Canvas](07-people-in-a-canvas.md)). A message with an
 attachment is different. Rally always responds to it, on the reasonable guess
 that you did not attach a contract for decoration.
 

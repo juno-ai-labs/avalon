@@ -32,6 +32,11 @@ Organization. [Who can see what](08-who-can-see-what.md) explains both.
 
 ## Adding and removing people
 
+The Canvas's creator and the Organization's owners and administrators add and
+remove people; for a Canvas a Sidekick made, so do the Sidekick's managers.
+Anyone else in the Canvas sees the list but cannot change it, as
+[Who can see what](08-who-can-see-what.md#who-can-change-the-sharing) explains.
+
 1. Click **Share** at the top right of the Canvas.
 2. Type in **Add someone by name or email**, or pick from the people listed.
 3. Click **Add** beside the person.
@@ -57,7 +62,8 @@ The message explains that the person cannot currently open the Canvas, and that
 if you do not add them, they will not be able to see the mention.
 
 - **Add and mention** (or **Add all and mention**) adds them and sends your
-  message.
+  message. You can only add people if you are allowed to change who can open
+  the Canvas; otherwise ask its creator to add them first.
 - **Cancel** sends nothing, so you can think again.
 
 > [!IMPORTANT]

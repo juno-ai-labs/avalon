@@ -30,7 +30,7 @@ than working the steps out afresh on every run, a Sidekick can be given a
 **custom tool** that does them.
 
 You do not write the tool. Describe the method to the drafting assistant
-("every run, total the refunds per region and compare with last week"), and it
+in an **Edit Sidekick** message ("every run, total the refunds per region and compare with last week"), and it
 can write a small program, test it against your real data in the setup
 conversation, and save it as a named tool with the Sidekick. Every run after
 that has the tool and uses it like any other. The custom tool shows in the

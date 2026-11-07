@@ -76,6 +76,8 @@
 # app were removed. Each retired page, and its Markdown copy, lands on the page
 # that now covers its subject, or on its chapter when nothing does. Exact paths
 # only: every page the manual still has keeps serving.
+/help/working-in-a-channel/llms.txt  /help/canvases/llms.txt  301
+/help/spaces-and-breakouts/llms.txt  /help/canvases/llms.txt  301
 /help/working-in-a-channel/  /help/canvases/  301
 /help/working-in-a-channel  /help/canvases/  301
 /help/working-in-a-channel.md  /help/canvases.md  301
