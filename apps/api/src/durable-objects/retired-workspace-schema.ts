@@ -1116,3 +1116,76 @@ export const IMPORT_RESERVATION_RECLAIM_MIGRATION: readonly string[] = [
                          WHERE receipt.parent_id = child.parent_id AND receipt.substream_id = '0')
       GROUP BY child.parent_id, child.created_by_user_id`,
 ];
+
+// --- The Thread-era drop (plan step C-7) ------------------------------------
+
+/**
+ * Tables no reader or writer reaches since phase C, children before the
+ * tables they reference so no drop has to cascade. Activity, digests,
+ * suggested work, a Channel's own ledgers (messages, defaults, intents,
+ * invitees, colour sync, rail ledger, message search), Thread pins and order,
+ * Thread access and resource links, batch dispatches, the Thread backfill and
+ * the import-reservation reclaim, and a Thread's email receipts.
+ *
+ * What stays, deliberately:
+ * - `channels`, `channel_viewers`, `breakouts`, `breakout_viewers`, `spaces`,
+ *   `space_viewers` and every `parent_*` table: the Thread retirement inventory
+ *   (`threadRetirementInventory`, `deleteRetiredThreadParent`) reads them to
+ *   find the conversation objects `retire_threads` tombstones, and an
+ *   Organization where the operator has not run it yet would otherwise lose
+ *   the only record of which objects to dump and close
+ *   (docs/workspace-retirement.md). Their triggers stay with them.
+ * - `digest_schedules`, emptied: `schedules.digest_schedule_id` still names it
+ *   in a foreign key, and SQLite refuses every insert into `schedules` once
+ *   the parent table is gone, so dropping it would need a rebuild of
+ *   `schedules` for no reader's benefit.
+ *
+ * The triggers on surviving tables that write a dropped table go first: the
+ * Channel rail's on `automation_directory`, `resources`, `parent_sidekicks`,
+ * `channels` and `channel_viewers`, and the Channel colour's on `channels`,
+ * `breakouts` and `spaces`. Left behind, each would fail the write it fires
+ * on with "no such table".
+ *
+ * Thread rows of the shared tables go too: a Thread's or a Channel's memory
+ * digest holders (their objects refuse a retired parent kind, so a digest can
+ * never land), a Sidekick's attachment to a Thread, the retired pin kinds
+ * (the `workspace_pins` CHECK is shipped and still admits them), and a room
+ * binding to a Channel or a Thread (room spawn and link were retired in C-4).
+ * Nothing here fails on a row: every statement is a DROP or a DELETE.
+ */
+export const THREAD_ERA_TABLES_DROP_MIGRATION: readonly string[] = [
+  ...[
+    "channel_rail_sidekick_delete", "channel_rail_sidekick_insert", "channel_rail_sidekick_listed_update",
+    "channel_rail_resource_delete", "channel_rail_resource_insert", "channel_rail_resource_update",
+    "channel_rail_recommendation_delete", "channel_rail_recommendation_insert",
+    "channel_rail_channel_update", "channel_rail_viewer_delete", "channel_rail_viewer_insert", "channel_rail_viewer_update",
+    "channel_color_thread_insert", "channel_color_thread_restore",
+    "channel_color_breakout_insert", "channel_color_breakout_restore", "channel_color_space_change",
+  ].map((trigger) => `DROP TRIGGER IF EXISTS ${trigger}`),
+  ...[
+    "workspace_activity_event_targets", "workspace_activity_events", "workspace_activity_alert_claims",
+    "workspace_activity_alerts", "workspace_activity_push_origin", "workspace_activity_pushes",
+    "workspace_activity_reads", "workspace_activity_seen",
+    "digest_delivery_targets", "digest_deliveries", "digest_schedule_times",
+    "work_opportunity_provenance_roots", "work_opportunity_snapshots", "work_opportunity_user_links",
+    "work_opportunity_user_states", "work_opportunities", "opportunity_batch_events", "opportunity_batch_windows",
+    "opportunity_provenance_edges", "opportunity_provenance_nodes", "suggested_work_ranking_rounds", "suggested_work_sets",
+    "space_bootstrap", "space_channel_memberships", "space_default_publications", "space_default_targets",
+    "space_defaults", "space_intents", "space_invitees", "space_message_operations", "space_messages", "space_reads",
+    "workspace_space_state",
+    "channel_color_sync", "channel_color_sync_state", "channel_message_search_versions", "channel_rail_changes",
+    "channel_sidekick_attachments", "conversation_access_requests", "thread_backfill",
+    "workspace_workstream_pins", "workspace_pinned_order", "workspace_container_order", "workspace_workstream_access",
+    "workspace_workstream_resource_links", "workspace_batch_dispatch_targets", "workspace_batch_dispatches",
+    "import_reservation_reclaim", "workstream_email_receipts",
+  ].map((table) => `DROP TABLE IF EXISTS ${table}`),
+  `DELETE FROM digest_schedules`,
+  `DELETE FROM memory_digest_holder_facts WHERE conversation IN (
+     SELECT conversation FROM memory_digest_holders WHERE parent_kind IN ('workstream', 'space'))`,
+  `DELETE FROM memory_digest_sync WHERE conversation IN (
+     SELECT conversation FROM memory_digest_holders WHERE parent_kind IN ('workstream', 'space'))`,
+  `DELETE FROM memory_digest_holders WHERE parent_kind IN ('workstream', 'space')`,
+  `DELETE FROM sidekick_conversation_attachments WHERE parent_kind = 'workstream'`,
+  `DELETE FROM workspace_pins WHERE item_kind IN ('thread', 'channel', 'breakout', 'artifact')`,
+  `DELETE FROM external_conversation_bindings WHERE target_kind = 'space' OR parent_kind = 'workstream'`,
+];

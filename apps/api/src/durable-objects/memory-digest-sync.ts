@@ -387,24 +387,20 @@ export function releaseMemoryDigestSync(sql: SqlStorage, conversation: string, r
 
 /**
  * Whether the conversation is still live in this object's directory
- * projection: a thread (and, for a Breakout, the Breakout too) not archived, a
- * Channel not archived, a Sidekick not deleted.
+ * projection: a Sidekick not deleted, a Canvas not deleted. A Thread's or a
+ * Channel's conversation is never live: its object refuses a stored
+ * `workstream` or `space` parent with `conversation_parent_kind_retired`, so a
+ * digest pushed to it could never land, and settling it here deletes the
+ * holder row the migration-117 triggers on the Thread tables keep marking.
  */
 function conversationLive(sql: SqlStorage, conversation: MemoryConversation): boolean {
   const exists = (query: string, ...bindings: string[]) => sql.exec(query, ...bindings).toArray().length > 0;
   switch (conversation.parentKind) {
-    case "workstream": {
-      const thread = exists("SELECT 1 FROM channels WHERE workstream_id = ? AND archived_at IS NULL", conversation.parentId);
-      if (!thread || conversation.substreamId === "0") return thread;
-      return exists(
-        "SELECT 1 FROM breakouts WHERE workstream_id = ? AND substream_id = ? AND archived_at IS NULL",
-        conversation.parentId, conversation.substreamId,
-      );
-    }
+    case "workstream":
+    case "space":
+      return false;
     case "automation":
       return exists("SELECT 1 FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'", conversation.parentId);
-    case "space":
-      return exists("SELECT 1 FROM spaces WHERE space_id = ? AND archived_at IS NULL", conversation.parentId);
     case "canvas":
       return exists("SELECT 1 FROM canvas_directory WHERE canvas_id = ?", conversation.parentId);
   }

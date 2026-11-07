@@ -21,6 +21,7 @@ import {
   WORKSPACE_ACTIVITY_READS_MIGRATION,
   WORKSPACE_PEOPLE_RANKING_MIGRATION,
   WORKSPACE_REPLY_ALERT_MIGRATION,
+  THREAD_ERA_TABLES_DROP_MIGRATION,
 } from "./retired-workspace-schema";
 import {
   automationSummary,
@@ -490,7 +491,6 @@ import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
 import {
   PARTICIPANT_MIGRATION_ALARM,
   PARTICIPANT_PROJECTION_ALARM,
-  CURRENT_MEMBER_GRANT_SQL,
 } from "./scope-grant-storage";
 import { SCOPE_INVITATION_DELIVERY_ALARM, SCOPE_INVITATION_INDEX_ALARM } from "./scope-invitation-storage";
 import {
@@ -789,15 +789,10 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   ...AUTHORIZATION_STORAGE_TABLES,
   'search_authorization_push', 'search_authorization_keys', 'search_authorization_dependencies',
   "resource_search_versions",
-  "channel_message_search_versions", // Its triggers, the alarm lane and the Channel message search RPCs.
   "onboarding_journeys",
-  "conversation_access_requests",
   "workstream_notification_intents",
   "workspace_socket_unheard", // The first-frame watch's ledger.
-  "channel_color_sync", "channel_color_sync_state", // Its triggers, the alarm lane and the channel-colour RPCs.
   "conversation_view_headers", "conversation_view_turns",
-  "thread_backfill", // The alarm lane and the thread-backfill RPCs.
-  "import_reservation_reclaim", // Armed by the import reservation, read by its alarm lane.
   // Recorded by `memoryDigest`, marked by triggers and retractions, and read by
   // the alarm lane and the memory-digest-sync RPCs.
   "memory_digest_holders", "memory_digest_holder_facts", "memory_digest_sync", "memory_digest_sync_state",
@@ -4398,6 +4393,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "admit a Canvas to the retirement graph",
   // See RETIREMENT_GRAPH_CANVAS_MIGRATION and docs/workspace-retirement.md.
   statements: RETIREMENT_GRAPH_CANVAS_MIGRATION,
+}, {
+  version: 147,
+  description: "drop the Thread-era tables nothing reads, and the Thread rows of the shared tables",
+  // See THREAD_ERA_TABLES_DROP_MIGRATION and docs/workspace-retirement.md.
+  statements: THREAD_ERA_TABLES_DROP_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -7541,31 +7541,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Whether this person is an active participant of this work stream.
-   *
-   * The one predicate every "does the room let you" decision here is built on,
-   * so the answer cannot drift between the list, the details, and acceptance.
-   */
-  private isWorkstreamParticipant(
-    workstreamId: string,
-    userId: string,
-    options: { includeArchived?: boolean } = {},
-  ): boolean {
-    // Directory participation is display state. Owned-Sidekick checks use
-    // the same current-incarnation Main grants as conversation admission.
-    return this.state.storage.sql.exec(
-      `SELECT 1 FROM parent_grants grant_row
-         JOIN channels directory ON directory.workstream_id = grant_row.parent_id
-         JOIN workspace_member_status relationship ON relationship.user_id = grant_row.user_id
-        WHERE grant_row.parent_id = ? AND grant_row.user_id = ?
-          AND (grant_row.scope_kind = 'workstream' OR (grant_row.scope_kind = 'conversation' AND grant_row.substream_id = '0'))
-          AND ${CURRENT_MEMBER_GRANT_SQL}
-          AND (? = 1 OR directory.archived_at IS NULL)`,
-      workstreamId, userId, options.includeArchived ? 1 : 0,
-    ).toArray().length > 0;
-  }
-
-  /**
    * Replace one destination's evaluators, completely.
    *
    * No coordinate and no hash: the caller is the destination's own authority
@@ -9299,61 +9274,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Summarize member attention from the authoritative workspace directory.
-   * Each work stream contributes at most once even when several reasons apply.
+   * Member attention for the Organization badge and the push badge count.
+   *
+   * It summarized the Thread directory (`channels`, `channel_viewers`), which
+   * no writer has reached since the Thread retirement (plan step C-7): what it
+   * counted was frozen state from conversations nobody can open, so a retired
+   * Thread's unread would hold the badge up forever. A Canvas's and a
+   * Sidekick's unread state is read on their own sidebar rows and is not
+   * summarized here yet, so the answer is "nothing waiting".
    */
   async attention(input: WorkspaceAttentionRequest): Promise<WorkspaceAttentionResult> {
     await this.initialized;
     const request = WorkspaceAttentionRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const row = this.state.storage.sql.exec<{
-      waiting_for_you: number;
-      waiting_priority: number;
-      has_unread_activity: number;
-    }>(
-      `SELECT
-         COALESCE(SUM(CASE
-           WHEN viewer.is_participant = 1 AND (
-             viewer.latest_mention_attention_ordinal > viewer.seen_attention_ordinal
-             OR viewer.unseen = 1
-             OR directory.exact_state = 'needs_input'
-           ) THEN 1 ELSE 0 END), 0) AS waiting_for_you,
-         COALESCE(MAX(CASE
-           WHEN viewer.is_participant = 1
-            AND viewer.latest_mention_attention_ordinal > viewer.seen_attention_ordinal THEN 3
-           WHEN viewer.is_participant = 1 AND directory.exact_state = 'needs_input' THEN 2
-           WHEN viewer.is_participant = 1 AND viewer.unseen = 1 THEN 1
-           ELSE 0 END), 0) AS waiting_priority,
-         COALESCE(MAX(CASE
-           WHEN (directory.scope = 'workspace' OR viewer.is_participant = 1) AND (
-             directory.latest_attention_ordinal > COALESCE(
-               viewer.seen_attention_ordinal,
-               directory.unread_tracking_start_ordinal
-             )
-             OR viewer.manual_unread_from_ordinal IS NOT NULL
-             OR viewer.unseen = 1
-           ) THEN 1 ELSE 0 END), 0) AS has_unread_activity
-       FROM channels directory
-       LEFT JOIN channel_viewers viewer
-         ON viewer.workstream_id = directory.workstream_id
-        AND viewer.user_id = ?
-        AND viewer.authority_generation = directory.authority_generation
-       WHERE directory.archived_at IS NULL
-         AND directory.system_kind IS NULL`,
-      request.userId,
-    ).one();
-    const waitingReason = row.waiting_priority === 3
-      ? "mentioned"
-      : row.waiting_priority === 2
-        ? "needs_input"
-        : row.waiting_priority === 1
-          ? "unseen"
-          : null;
     return WorkspaceAttentionSchema.parse({
-      waitingForYou: row.waiting_for_you,
-      waitingReason,
-      hasUnreadActivity: row.has_unread_activity === 1,
-      // Counted Channel conversations, which are retired (plan step C-2).
+      waitingForYou: 0,
+      waitingReason: null,
+      hasUnreadActivity: false,
       readerAttentionCount: 0,
     });
   }
@@ -10758,23 +10695,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceDirectoryScheduleTargetsRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const rows = this.state.storage.sql.exec<{
-      kind: "wakeup" | "terminal";
-      workstream_id: string;
-      due_at: number;
-    }>(
-      `SELECT 'terminal' AS kind, workstream_id, next_terminal_action_at AS due_at
-         FROM channels
-        WHERE archived_at IS NULL AND next_terminal_action_at IS NOT NULL
-       ORDER BY due_at, workstream_id`,
-    ).toArray();
-    return WorkspaceDirectoryScheduleTargetsResultSchema.parse({
-      items: rows.map((row) => ({
-        kind: row.kind,
-        workstreamId: row.workstream_id,
-        dueAt: iso(row.due_at),
-      })),
-    });
+    // The only targets were a Thread's Terminal deadlines, read from its
+    // `channels` row. Threads are retired (plan step C-7) and their objects
+    // refuse to open, so nothing is due here. A Sidekick child's deadline
+    // (`HostedConversation.childTerminalDeadlines`) was never enumerated by
+    // this read, before or after; whether it should be is an open question
+    // recorded in docs/workspace-retirement.md, not a change made here.
+    return WorkspaceDirectoryScheduleTargetsResultSchema.parse({ items: [] });
   }
 
   async readSearchAuthorizationSnapshots(input: unknown) {
