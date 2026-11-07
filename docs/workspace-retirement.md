@@ -97,7 +97,9 @@ Retirement runs in this order, and the order is the design:
    Canvas, Sidekick, work-stream and Space directories while they still
    answer, writes each parent into `workspace_retirement_graph` under its kind
    (`canvas` from migration 146; a Canvas's Chat is its child `0`),
-   and writes the tombstone. Doing this in one call is what leaves no window in
+   and writes the tombstone. The kinds are `RetirementParentKindSchema` in
+   `@rally/contracts`, wider than the hosted `ConversationParentKindSchema`
+   because the walk still closes Thread and Space objects. Doing this in one call is what leaves no window in
    which a caller writes into a half-closed workspace. Archived Spaces are
    enumerated too: what is being closed is an object, not a product surface, and
    a Space created before 2026-09-26 still has a hidden main conversation to

@@ -162,8 +162,7 @@ crashes or closes. Per Rally's policy, no action asks the person to confirm it.
   receipt under the run lifecycle (`HarnessTool.deadline: "run"`), so a generic
   tool timer cannot turn a committed import into an ambiguous failure. For other
   tools, `TOOL_DEFAULT_TIMEOUT_MS` ends a wait. The person's Cancel stops the run.
-  Import runs also accept a run-wide wall-clock policy; it remains open pending
-  a team-set value (`MAX_SESSION_IMPORT_RUN_MS`). A desktop that quits without
+  A desktop that quits without
   cancelling can therefore still leave its finish pending. Reconnect reoffers
   the recorded action; this is not currently guaranteed to end within a finite time.
 - A dropped socket reconnects after a second and is offered every pending action
