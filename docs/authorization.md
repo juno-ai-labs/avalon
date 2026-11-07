@@ -19,7 +19,7 @@ participants or become a new canonical owner of memberships.
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
 | `services/authorization-projection-service.ts` | Reloads attachment inventories from their owners when jobs execute |
 | `durable-objects/workspace-do.ts` | Legacy snapshot compatibility validation, resource facts, migration fan-out and discovery status |
-| `durable-objects/hosted-parent.ts`, `sidekick-do.ts` | Canonical parent/private-child facts; automation author, executor and owning work stream |
+| `durable-objects/hosted-parent.ts`, `hosted-sidekick.ts` | Canonical parent/private-child facts; a Sidekick's author, executor and the people it is shared with |
 | `authorization-control.ts` | Private operator Service Binding entrypoint |
 
 ## How it works

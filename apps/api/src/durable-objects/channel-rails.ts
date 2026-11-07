@@ -146,12 +146,13 @@ export const AUTOMATION_AUDIENCE_SQL = `(SELECT COUNT(*) FROM sidekick_audience 
  * Unread is the shared conversation's own read state as it last reported it
  * for this viewer (`sidekick_viewer_reads`) against its latest attention
  * ordinal (its `directory_common` projection): a manual unread mark, or a
- * message past what they saw. A viewer who never opened the conversation has
- * no read state there and nothing unread. Needs input is the delegation
- * attention or the conversation waiting on input.
+ * message past what they saw. A viewer who has never opened the conversation
+ * has no read state there and reads as unread, as a Channel they have not
+ * opened is `unseen`; its author, who wrote it in that conversation, does not.
+ * Needs input is the delegation attention or the conversation waiting on input.
  */
 export const AUTOMATION_VIEWER_SQL = `CASE
-     WHEN reads.user_id IS NULL THEN 0
+     WHEN reads.user_id IS NULL THEN CASE WHEN directory.author_user_id = ?1 THEN 0 ELSE 1 END
      WHEN reads.manual_unread_from_ordinal IS NOT NULL THEN 1
      WHEN COALESCE(json_extract(main.effect_json, '$.latestAttentionOrdinal'), 0) > reads.seen_attention_ordinal THEN 1
      ELSE 0 END AS unread,
