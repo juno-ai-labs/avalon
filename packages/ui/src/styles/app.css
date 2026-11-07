@@ -7297,10 +7297,9 @@ button.space-dashboard-icon:focus-visible { outline: 2px solid var(--av-sys-colo
 .sidekick-detail-body { display: grid; grid-template-columns: 340px minmax(0, 1fr); min-height: 0; }
 .sidekick-profile { overflow: auto; scrollbar-gutter: stable; border-right: 1px solid var(--av-sys-color-border-subtle); }
 .sidekick-conversation { min-width: 0; min-height: 0; }
-.sidekick-conversation-heading { padding: 24px 28px 16px; }
+.sidekick-conversation-heading { align-items: center; column-gap: 12px; display: flex; flex-wrap: wrap; padding: 24px 28px 16px; row-gap: 10px; }
 .sidekick-conversation-heading h2 { margin: 0; font-size: 16px; font-weight: 500; }
 .sidekick-conversation-heading p { margin: 6px 0 0; font-size: 13px; color: var(--av-sys-color-text-muted); }
-.sidekick-conversation-heading { align-items: center; column-gap: 12px; display: flex; flex-wrap: wrap; row-gap: 10px; }
 .sidekick-editing-badge { background: var(--av-sys-color-surface-raised-hover); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); font-size: 12px; padding: 3px 10px; }
 .sidekick-run-back { align-items: center; background: none; border: 0; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-flex; font: inherit; font-size: 13px; gap: 2px; padding: 0; }
 .sidekick-canvas-cards { display: flex; flex-basis: 100%; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; }

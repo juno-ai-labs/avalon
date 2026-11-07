@@ -303,9 +303,11 @@ stream would put Canvas drafts in front of every reader of `workstream:` keys
 of those families take Canvas drafts with it.
 
 **Consequences:** The workspace prefix still leads, so leaving an Organization
-clears Canvas drafts with the rest. A popped-out artifact's Copy link reads the
-scope's first part as a thread id; for a Canvas that is `canvas`, and the
-Canvas link form is plan step B-5.
+clears Canvas drafts with the rest. A popped-out artifact window reads the same
+scope to confine its actions (`main/artifact-window-actions.ts`): for a Canvas
+it renames and deletes through `/conversations/<canvasId>/resources/…` and
+refuses pin and link with a reason naming the Canvas, since a Canvas artifact's
+pin and link belong to the Canvas (its link form is plan step B-5).
 
 ### 2026-10-20 — Persist confirmed artifact comments with composer drafts
 

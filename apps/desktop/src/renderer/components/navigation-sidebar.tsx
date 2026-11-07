@@ -65,7 +65,7 @@ import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { CanvasesSection, useUnreadCanvasCount } from './canvas-sidebar-section';
 import { SidekicksSection, useSidekickAttentionCount } from './sidekick-sidebar-section';
 import { useCreateCanvas } from '../lib/canvases';
-import { ghostProps, opensElsewhere, PinnedSection, pinnedPosition, RowLayout, SectionHeading } from './navigation-rows';
+import { ghostProps, opensElsewhere, PinnedSection, pinnedPosition, RowLayout, SectionHeading, useSectionMotion } from './navigation-rows';
 import { RailItem } from './rail-item';
 import { RelativeTime } from './relative-time';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
@@ -272,6 +272,7 @@ export function NavigationSidebar({
   };
   const title = [...SECTIONS, ...PIVOT_SECTIONS].find((candidate) => candidate.id === section)?.label ?? 'Threads';
   const createCanvas = useCreateCanvas();
+  const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
   const navigate = useNavigate();
   // The phone's tab row has room for four sections beside More and Settings;
   // the rest fold into More. A guest's four all fit, so they get no More.
@@ -330,7 +331,7 @@ export function NavigationSidebar({
             {section === 'channels' && <IconButton label="New channel" onClick={() => setCreatingChannel(true)}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
-            {section === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { void createCanvas().catch(() => undefined); }}>
+            {section === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { setCreateCanvasError(null); void createCanvas().catch((cause: unknown) => setCreateCanvasError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))); }}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
             {section === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
@@ -346,6 +347,7 @@ export function NavigationSidebar({
         </header>
         <SidebarScroll className="navigation-panel-scroll" scrollRef={scroll}>
           {pinFailure && <ErrorNotice>{pinFailure}</ErrorNotice>}
+          {section === 'canvases' && createCanvasError && <ErrorNotice occurrence={createCanvasError}>The Canvas could not be made. Try again.</ErrorNotice>}
           {section === 'pinned' && <PinnedPanel guest={guest} scroll={scroll} />}
           {section === 'threads' && <ThreadsSection guest={guest} scroll={scroll} />}
           {section === 'artifacts' && <ArtifactsSection scroll={scroll} />}
@@ -885,7 +887,6 @@ function withLiveThread(
 }
 
 /** A list motion with nothing to watch, for a section drawn inside a tab that runs one over several. */
-const NO_CONTAINER: RefObject<HTMLElement | null> = { current: null };
 
 /**
  * The Pinned tab: what this person pinned, a section per kind, each the same
@@ -904,15 +905,6 @@ function PinnedPanel({ guest, scroll }: { guest: boolean; scroll: RefObject<HTML
   </>;
 }
 
-/**
- * A section's list motion: its own over the scroll box, or, inside the Pinned
- * tab, the tab's shared one. Call after `usePinReveal`.
- */
-function useSectionMotion(scroll: RefObject<HTMLElement | null>, shared: (() => void) | undefined): void {
-  const own = useListMotionPass(shared ? NO_CONTAINER : scroll);
-  const run = shared ?? own;
-  useLayoutEffect(() => run());
-}
 
 /**
  * The Threads tab: what this person pinned, then every thread and breakout

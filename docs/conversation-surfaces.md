@@ -40,7 +40,10 @@ A run's row in that conversation is drawn by `MessageBlock` as a collapsed run
 (`components/sidekick-run-row.tsx`) whenever its `automation_activation`
 content carries `run`; its **Open run** puts `?run=<runId>` on the route, and
 the screen hosts the run's own conversation on this surface in place of
-`"0"`.
+`"0"`, with `readOnly`, which draws the feed without a composer. A run's opening
+row from a shared-conversation message (structured kind
+`sidekick_conversation_message`) is drawn as a one-line caption rather than the
+prompt it carries for the run.
 
 ## Sidekick navigation and attachments
 

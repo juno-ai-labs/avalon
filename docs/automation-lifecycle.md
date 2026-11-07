@@ -1088,7 +1088,20 @@ The client draws the row as a run, not as a message
 with the reply as a two-line preview, expanding to the whole reply and **Open
 run**, which puts `?run=<runId>` on the Sidekick's route; the screen then shows
 that run's own conversation (`parentKind: "automation"`, substream the run id)
-in place of `"0"`, with a way back.
+in place of `"0"`, with a way back that replaces the history entry, so Back
+leaves the Sidekick rather than reopening the run. That view is read-only
+(`readOnly`, no composer): replies to the Sidekick go in the shared
+conversation, where they start the next run. Its opening row is the prompt the
+run reads (`conversation-message-opening.ts`, structured kind
+`sidekick_conversation_message`), written for the model, so the client draws it
+as the caption "Started by a message in the conversation."
+
+A Sidekick's row, in the sidebar and on the home, says **Active** while a run is
+under way, where the mockup draws **Working**: a Sidekick summary carries no
+running flag, and the row says only what its fields hold. The home reads the
+list the workspace socket keeps, whose sidebar read is the only one carrying
+`needsInput` and `unread`; `GET /sidekicks` serves only a tree with no
+workspace socket.
 
 Runs that finished before migration 135 have no row, and nothing backfills
 them: appended now, they would land at the bottom of the conversation, out of
@@ -1983,7 +1996,8 @@ already exists was chosen over a second composer or a per-message prompt: the
 mark is a mode a manager holds while describing a change, and a toggle is the
 smallest affordance that says it. The run row draws collapsed as a run and
 opens into the run's own conversation through `?run=`, which reuses the one
-conversation surface rather than an inline transcript. The Sidekicks home and
+conversation surface rather than an inline transcript; that view is read-only,
+because a reply belongs in the shared conversation, where it starts a run. The Sidekicks home and
 each Sidekick render in the main window on both hosts, beside the sidebar; the
 browser no longer gives them the whole tab, and the Mac app no longer hands
 `/sidekicks` to the separate window, which keeps its own entry until B-2. The
