@@ -90,8 +90,8 @@ substream `0`) and the background agents it starts use `sidekick_authoring`,
 independently defaulting to Sol even when the work-stream flag serves Terra. An explicit conversation model pin still
 wins. The rest
 are the standalone structured-output agents: message addressing uses the
-agent-harness JEV/fallback cascade; work-stream naming, the two halves of suggested work, and the
-work-stream description loop use the bounded structured-inference gateway.
+agent-harness JEV/fallback cascade; the pasted-text title (the
+`workstream_naming` role) uses the bounded structured-inference gateway.
 The memory sweep ([`agent-memory.md`](agent-memory.md)) is a role on the
 primary model. Text search's document embeddings use the same gateway's native
 OpenRouter embeddings path but deliberately have no Flagship role: their fixed
@@ -497,7 +497,7 @@ behave:
 | Flag key | Type | Default | Decides |
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
-| `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
+| `suggested-work-enabled` | boolean | `false` | Still served; it gated the Suggested Work surfaces, which are deleted, so no client reads it |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
@@ -517,9 +517,7 @@ The managed product Booleans are presentation-only. Only
 Electron consumes them to show or hide product surfaces; the API routes and
 underlying product capabilities do not evaluate them. They are rollout
 controls for discovery and visibility, not authorization, entitlements, or
-server-side kill switches. A hidden Suggested Work surface may skip its own
-fetch and impressions because nothing was drawn, but the Suggested Work API
-remains available. The same rule applies to workspace-template,
+server-side kill switches. The same rule applies to workspace-template
 and multiple-workspace operations. Turning the
 multiple-workspaces flag off hides the account-menu affordances; it does not
 collapse memberships or discard stored workspace credentials.
@@ -692,7 +690,7 @@ what they do with the model they are handed:
 
 | For | Read |
 | --- | --- |
-| Why digests need a kill switch, and exactly where it is checked | `digests.md` (retired) |
+
 | The run loop, the route plan's failure policy, the inference ledger | [`agent-harness.md`](agent-harness.md) |
 | The `model_override` column and where it is copied | [`data-model.md`](data-model.md) |
 | The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
@@ -782,10 +780,9 @@ correctly provisioned flag.
 | `apps/api/test/flag-targeting-attributes.test.ts` | The attribute vocabulary, the omitted-not-empty rule, the cache and its negative cases, and — scoped to the fields the rule covers — that no local part or authored text leaves the Worker. |
 | `apps/desktop/src/main/developer-settings-flag.test.ts` | The poll, the last-answer-standing behavior, and that a stored `debugEnabled` grants nothing while the flag is off. |
 | `apps/desktop/src/renderer/screens/workspace-settings.test.tsx`, `apps/desktop/src/renderer/lib/use-debug-enabled.test.tsx` | Live application-setting broadcasts win over older reads, read failures, and mutation replies, so a poll can reveal or withdraw Developer without a relaunch. |
-| `apps/desktop/src/renderer/screens/new-workstream.test.tsx` | The selector's **Debug enabled** gate, that an untouched control sends no override, and that an explicit pin to the flag's own default is still sent. |
+
 | `apps/desktop/src/renderer/components/workstream-composer.test.tsx` | The locked pill inside a conversation: the same gate, the exact id and the claim each of `pinned`'s two states may make, and that it opens no menu. |
-| `apps/desktop/src/renderer/components/substream-launch.test.tsx` | The substream launcher's selector: the same gate, the chosen pin reaching creation, and that it stays on **Default** under a pinned parent rather than inheriting. |
-| `apps/api/test/workstream-row-contracts.test.ts` | That the stored pin is re-validated on read, and that a retired model reads as unpinned rather than failing the response. |
+
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/agent-model-flags.test.ts` — the
@@ -1070,17 +1067,24 @@ hiding the Notifications section.
 
 ## Changelog
 
-### 2026-11-07 — The description and suggestion-draft model roles are retired
+### 2026-11-07 — Thread-era model roles and `live-artifacts-enabled` are retired
 
 **What changed:** `workstream_description` and `suggestion_draft` left
 `AGENT_MODEL_ROLES`, the structured-inference roles, the route defaults and
 Ace's catalog; the Ace deploy retires their Flagship keys.
-`workstream_naming` stays, relabelled in Ace as pasted-text naming.
+`workstream_naming` stays, relabelled in Ace as pasted-text naming. The
+`liveArtifactsEnabled` client field, the `live-artifacts-enabled` managed key,
+its Ace editor entry and its `ensureFlag` provisioning are gone: Ace's deploy
+`retireFlag`s the key, and `useSiteArtifacts` builds the rail's site detail,
+preview pane, Data view and artifact window for every signed-in surface that
+has a bridge to present through.
 
 **Why:** Plan step C-2 of the
 [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)
-deleted both roles' only callers. A key left in Flagship can still be served
-and edited in Ace for nothing.
+deleted both roles' only callers, and a key left in Flagship can still be
+served and edited in Ace for nothing. The PRD makes a live artifact the Canvas
+itself, and a Canvas is opened through exactly the site surfaces, so a flag
+that can hide them would hide the product's primary object.
 
 **Considered and rejected:** Renaming `workstream_naming` to a pasted-text
 role. It is a Flagship key, so the rename is a flag migration with no change
@@ -1089,26 +1093,15 @@ activities stay in the usage contract: a usage event queued before the deploy
 must still parse, or the consumer drops it as invalid and the call goes
 unbilled.
 
-### 2026-11-06 — `live-artifacts-enabled` is retired; site surfaces are always on
-
-**What changed:** The `liveArtifactsEnabled` client field, the
-`live-artifacts-enabled` managed key, its Ace editor entry and its
-`ensureFlag` provisioning are gone. Ace's deploy now `retireFlag`s the key, so
-the first merge-to-main deployment after this deletes it from Flagship.
-`useSiteArtifacts` builds the rail's site detail, preview pane, Data view and
-artifact window for every signed-in surface that has a bridge to present
-through.
-
-**Why:** The Canvases and Sidekicks PRD makes a live artifact the Canvas
-itself, and a Canvas is opened through exactly these surfaces. A flag that
-can hide them would hide the product's primary object, so there is no state
-in which it may be off.
-
 **Consequences:** Do not revive `live-artifacts-enabled` for a new purpose; a
 site-surface rollout control would now be a kill switch for Canvases, which
 is a different decision from a presentation flag. An older desktop build
 still defaults the missing field to `false`, so it hides the site surfaces
 until the updater delivers this build; that is expected, not a bug.
+`suggested-work-enabled` is still served with no reader; retiring it is the
+same `retireFlag` step.
+
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-21 — Route the Sidekick wizard independently on Sol
 

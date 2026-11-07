@@ -154,35 +154,15 @@ interval (one minute) confirm the section disappears and the debugging
 affordances below are stripped without a restart, and that
 `application-settings.json` still records the preference as on. Turn the flag
 back on and confirm the section returns with the toggle still checked, then
-continue. In a workspace that still has a `Digest · <date> · <time>` work
-stream from before the digest stopped running a model, confirm it is absent from the sidebar while the
-preference is off, appears dimmed, gear-marked, and with an empty trailing slot
-once it is on, reaches full opacity on hover and while active, and disappears
-again when the preference is turned off. Open it and confirm the header carries
-a **Private** badge. With two occurrences on the same day, confirm both rows are
-legible and distinguishable rather than ellipsized to the same text — the time
-is the only thing telling them apart, and it is at the end of the title. Confirm
-a second member never sees it in either state, and that opening its URL directly
-as that member is refused. Right-click a work stream, an automation, and a note
-in the sidebar and confirm no menu offers a copy action. Open a work stream's
-resource lightbox and confirm **Details** lists only the work stream's address (if it has
-one), Created by, Created, and Last activity, with the address on one line. Turn
-the preference on and confirm all three menus gain **Copy work stream link** /
-**Copy automation id** / **Copy note id** without reopening the main window,
-that the automation and note actions copy the resource's identifier while the
-work-stream one copies its canonical
-`https://rallywith.ai/app/workspaces/<region>/<workspace-uuid>/workstreams/<workstream-uuid>`
-link, that **Details** gains the origin, automation, harness, and identifier rows
-in the same window, and that the choice survives a restart. Turn it off and
-confirm all three actions and the extra rows disappear again.
+continue. Right-click a Canvas row, a Sidekick row and a note in the sidebar and confirm no menu offers a copy-id action while the preference is off; turn it on and confirm they gain one without reopening the main window, and that the choice survives a restart. Turn it off and confirm the actions disappear again.
 
 7. Open **Application → Appearance** and confirm the only choices are **System**, **Light**, and **Dark** — there is no Theme family row or palette shelf. Choose Light and confirm the main window uses the `#fcfcfc` conversation canvas, `#f7f7f7` sidebar, dark human bubbles, and a light compact composer. Choose Dark and confirm the canvas becomes `#070707`, the sidebar `#111111`, raised controls `#2f2f2f`, and the selected work-stream row `#313131`; the compact composer must remain legible and its voice/send circle must invert. Confirm dropdowns and tooltips invert correctly in both modes. Restart Rally and confirm the chosen appearance is applied before the first frame, with no flash of the other mode. Under System, change the Mac between Light and Dark and confirm every open Rally window follows; after pinning either Light or Dark, changing the Mac must do nothing.
 
-8. Open **Notifications** and scroll to **Daily digest**. Confirm **Start of day** is on at 9:00 AM, **End of day** is off, **Days** reads **Weekdays**, and **Send to** has Email and Personal Channel on (Email alone for a guest). Confirm there is no timezone picker and that **Change** next to **Days** opens Account. Change a time and confirm it saves with no save button, then reopen Settings and confirm the schedule came back from the service unchanged. Change your timezone in **Account** and confirm the digest keeps the same wall-clock time in the new zone. With a workspace Slack installation linked to your own Slack identity, confirm Slack is offered under **Send to**; with no such link, confirm it is not. Open the old `digest` settings deep link and confirm it lands on Notifications. Leave something unread in Activity, let a slot fire, and confirm each chosen destination receives the same list, one section per kind, and that the items are still unread in Activity afterwards. Mark Activity read, let a slot fire, and confirm nothing is sent.
+8. Open **Notifications** and confirm **Notify me about** lists Mentions, New messages, Being added, Sidekick runs and Pinned artifact updates, each with its channels, and no **Daily digest** section. Open the old `digest` settings deep link and confirm it lands on Notifications.
 
 9. Create an invite as an owner/admin and confirm the UI reports **Invitation emailed** only after Resend accepts the request. Verify the message is from `Rally <invites@rallywith.ai>`, contains the correct workspace, role, region, seven-day expiry, and one-time link, then copy the same link from Settings as a fallback.
 
-10. Install a workspace Google Drive connection, open a fresh work stream as another active member, and confirm Drive search plus every granted Docs/Sheets read and write tool is offered without attaching a resource. Confirm another member’s personal Google connection remains unavailable and a workspace automation still receives only its explicitly bound capabilities.
+10. Install a workspace Google Drive connection, open a new Canvas as another active member, and confirm Drive search plus every granted Docs/Sheets read and write tool is offered without attaching a resource. Confirm another member’s personal Google connection remains unavailable and a workspace automation still receives only its explicitly bound capabilities.
 
 11. Open **Connections** with both personal and workspace credentials installed. Confirm they appear in separate **Personal connections** and **Workspace connections** tables, and that either empty table invites you to connect a connector below. Confirm personal owners can refresh their own OAuth connection and members cannot delete workspace credentials. Workspace administrators can open **Manage events** for Ashby, see plain status and the last event, open **Advanced** for technical recovery and **Refresh status** to read saved state, and use the explained **Test** action to attempt supported repair before checking health. Opening the panel must not mutate provider state, and it offers no signing-key rotation guidance to read. Confirm a Granola workspace connection offers no **Manage events** action at all — its page shows status and tools with delete and disconnect only — while its note events keep arriving; changing its Workspace API key means disconnecting and connecting again. Confirm Fireflies offers **Connect for me** and no workspace action at all. Verify Ashby setup asks only for the API key and has no event checkboxes; it explains automatic organization subscriptions. Verify registration status, last delivery, friendly event names, exact-ID reconciliation for an unknown create, API-key replacement, and cleanup recovery; verify management actions are unavailable offline. Confirm refresh and delete each require **Continue** in a dialog before making a request, while **Cancel** leaves the connection untouched; for generic inbound webhook creation or secret replacement, confirm the dialog cannot close before the one-time secret appears. Force deletion to fail and confirm its error is visible inside the dialog. Hover or focus every available **Connect for me** and **Connect for workspace** action, including disabled actions, and confirm the focus target has a name, disabled semantics, and a tooltip explaining that button's personal or workspace scope. Confirm the catalog filter order is **Not connected**, **Connected**, **All**, and that a dual-scope provider remains under **Not connected** when only one installable scope is connected.
 
@@ -203,14 +183,14 @@ Use two disposable accounts with pre-provisioned configured deployments membersh
    directions, and confirm each restores only its own draft. Leave one workspace
    and confirm only that workspace's draft rows disappear.
 
-5. Copy a current work-stream link from A, switch to B, and open it. Confirm Rally
+5. Copy a Canvas link from A, switch to B, and open it. Confirm Rally
    activates A before navigating and the URL names A's region and workspace UUID.
    Repeat with a random workspace UUID and with a workspace the account has left:
    Rally must remain in B, must not navigate, and must show an access failure
    without exposing the target's name or contents.
 
 6. From a linked Slack installation for A, follow **Create automation**,
-   **Manage connections**, a result work-stream link, and a freshly minted
+   **Manage connections**, a Canvas link, and a freshly minted
    **Connect Rally** challenge while B is active. Each must return to A before
    acting. An ID-only link already in history remains active-workspace-relative
    for compatibility and is never emitted by a current surface.
@@ -284,7 +264,7 @@ use a customer dump for this acceptance run.
    renderer window. Confirm `$device_id` is not used as `$anon_distinct_id` and
    that the anonymous history merge uses only the current login epoch.
 
-2. Exercise workspace creation, work-stream creation and a run, and connector
+2. Exercise workspace creation, Canvas creation and a run, and connector
    setup. Confirm the semantic client request and authoritative API outcome share
    `operation_id`, and desktop events use `$session_id`. Reload and repeat an
    accepted upload; confirm `$insert_id` prevents duplicate counts.
@@ -644,12 +624,12 @@ no event for it.
 
 1. As a regular Rally member, open **Connections** and confirm Notion offers **Connect for me**. As an owner or administrator, confirm it also offers **Connect for workspace**; the two actions must remain visibly distinct.
 2. Start **Connect for me**. Confirm authorization uses Notion's official hosted MCP flow, then inspect the resulting row: it is personal, owned by the initiating Rally user, grants `notion.personal.mcp`, stores a DCR client and rotating credential, and creates no `notion_workspace_routes` row.
-3. From that member's fresh ad-hoc work stream, load Notion and compare the exposed names, descriptions, and input schemas with the server's current `tools/list` response. Use a current read tool, then a current mutation tool against disposable content. Confirm both receive a durable receipt without a confirmation prompt regardless of provider annotations, and confirm another Rally member cannot load the personal connection.
+3. From that member's fresh Canvas, load Notion and compare the exposed names, descriptions, and input schemas with the server's current `tools/list` response. Use a current read tool, then a current mutation tool against disposable content. Confirm both receive a durable receipt without a confirmation prompt regardless of provider annotations, and confirm another Rally member cannot load the personal connection.
 4. Expire the personal access token and start two simultaneous MCP operations. Confirm the credential lease redeems the rotating refresh token once, persists the returned pair, and both operations continue. Revoke the grant and confirm the connection becomes `needs_reconnect`.
 5. As a Rally owner or administrator, start **Connect for workspace**, approve it as a Notion user, and select a disposable page plus one data source in the page picker. Confirm the resulting row is workspace-scoped with no owner user even though its encrypted credential metadata records the approving Notion user and installed bot.
-6. From a fresh ad-hoc work stream started by another Rally member, search for and read the selected page without attaching it first, then add a clearly marked comment and edit disposable content. Confirm Notion attributes both mutations to the Rally integration bot rather than to the OAuth approver. Confirm an unselected page remains inaccessible.
+6. From a fresh Canvas started by another Rally member, search for and read the selected page without attaching it first, then add a clearly marked comment and edit disposable content. Confirm Notion attributes both mutations to the Rally integration bot rather than to the OAuth approver. Confirm an unselected page remains inaccessible.
 7. Change the selected page in Notion and confirm the signed webhook becomes one normalized workspace activity with no target user. It must be visible to the workspace opportunity pipeline rather than partitioned to the approver.
-8. Bind the workspace connection explicitly to a workspace automation and confirm its fixed Notion API tools work. Confirm an automation without that binding does not acquire the connection merely because ad-hoc work streams do.
+8. Bind the workspace connection explicitly to a workspace automation and confirm its fixed Notion API tools work. Confirm an automation without that binding does not acquire the connection merely because Canvass do.
 
 Pass evidence: one owner-only personal MCP connection whose tools match the
 live server, one admin-authorized workspace bot connection, member isolation,
@@ -684,7 +664,7 @@ a ticket.
    its **Delete** action, and no **Manage events** window. The steps below that
    involve a workspace connection need one that already exists; there is no
    longer a way to make one.
-2. From a fresh ad-hoc work stream started by a different member, ask about a recent meeting. Confirm the agent discovers and loads the Fireflies plugin, searches, and reads the summary before the transcript. Ask for a long meeting's transcript and confirm it pages to `nextOffset: null` and stops. Ask it to share or rename a meeting and confirm it says that must be done in Fireflies.
+2. From a fresh Canvas started by a different member, ask about a recent meeting. Confirm the agent discovers and loads the Fireflies plugin, searches, and reads the summary before the transcript. Ask for a long meeting's transcript and confirm it pages to `nextOffset: null` and stops. Ask it to share or rename a meeting and confirm it says that must be done in Fireflies.
 3. Against the existing connection's webhook in Fireflies, record a short meeting. Confirm the `meeting.summarized` delivery produces exactly one digestible activity whose hydrated content carries the summary, and that the earlier `meeting.transcribed` delivery produces an operational one rather than a second digestible. Subscribe `meeting.bot_joined` as well, record another meeting, and confirm that delivery is rejected and does not appear as activity. **Rally no longer shows the endpoint URL, the signing secret or the installation's state anywhere in the product** — the window that did is gone with the workspace scope — so the evidence here is the activity written and Fireflies' own delivery History; the installation's own fields are read through the engineering MCP or not at all. `connector-installation-fireflies.test.ts` is what covers the state moving from action required to current on a verifying delivery.
 4. Bind a digest automation to the connection and confirm it digests the summary activity. Bind an automation to `meeting.transcribed` and confirm it fires on the operational event, which never reaches a digest.
 5. Revoke the API key in Fireflies and use a Fireflies tool: the connection flips to `needs_reconnect`. There is no repair for it — the **Manage events** window is not offered for Fireflies, and `POST /connections/:id/installation/api-key` refuses a replacement key with `connector_scope_not_connectable` even when called directly — so confirm the only remaining action on its connection page is **Delete**. A workspace connection survives the closed scope until its key changes, and then it is over: that is the decision, not an oversight.

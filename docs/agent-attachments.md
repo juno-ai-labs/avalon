@@ -758,18 +758,7 @@ attachment reservation, since a pin usually names an already-sent resource.
 
 ## Changelog
 
-### 2026-11-07 — No conversation inherits a Thread's links
-
-**What changed:** `inheritanceContext` loses its `breakout` answer, and
-`conversationResourceLinks` its Channel-Main port and the fingerprint arm that
-folded a Thread's revision into a Breakout's.
-
-**Why:** Plan step C-2 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-the arm answered only for a `workstream` parent, which the conversation object
-refuses to host now, so it was unreachable.
-
-### 2026-11-07 — `publish_resource` lands in a Canvas
+### 2026-11-07 — `publish_resource` lands in a Canvas, and no conversation inherits a Thread's links
 
 **What changed:** A publish from a Canvas's Chat is one of the Canvas's
 artifacts: the bridge tells the Canvas after each publish
@@ -777,17 +766,23 @@ artifacts: the bridge tells the Canvas after each publish
 (`resolveTerminalPublicationHome`): the one its first publish made, or one it
 names with the new optional `canvas` argument, which must be a Canvas the
 Sidekick writes. The run's own conversation is still attached, so it reads
-back what it published.
+back what it published. `inheritanceContext` loses its `breakout` answer, and
+`conversationResourceLinks` its Channel-Main port and the fingerprint arm that
+folded a Thread's revision into a Breakout's.
 
 **Why:** A Sidekick's output is a Canvas (the Canvases and Sidekicks PRD), and
 a Canvas holds every artifact its conversation generates; the publish identity
-`(conversation, path)` did not need to change for either.
+`(conversation, path)` did not need to change for either. The inheritance arm
+answered only for a `workstream` parent, which the conversation object refuses
+to host after plan step C-2, so it was unreachable.
 
 **Considered and rejected:** A separate Canvas publish tool: it would have been
 the same tool with a second identity rule.
 
 **Consequences:** One run makes at most one Canvas of its own. A publish
 outside a Sidekick run that names a `canvas` is refused rather than ignored.
+
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-11-06 — Out-of-scope resources no longer trip the grounding guard
 
