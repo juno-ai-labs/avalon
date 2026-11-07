@@ -14,16 +14,9 @@ import { useListMotionPass } from '../lib/use-list-motion';
 import { useWorkspaceMembers } from '../lib/workspace-members';
 import { CanvasMark } from './canvas-mark';
 import { ErrorNotice } from './primitives';
-import { PinnedSection, pinnedPosition, RowLayout, SectionHeading, useRowPinDrop } from './navigation-rows';
+import { PinnedSection, pinnedPosition, RowLayout, SectionHeading, splitPinned, useRowPinDrop } from './navigation-rows';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
-
-/** Pinned first in the order the viewer pinned them; then the list's own order, most recently active first. */
-export function splitPinned<T extends { pinnedPosition?: number | null | undefined }>(rows: readonly T[]): { pinned: T[]; rest: T[] } {
-  const pinned = rows.filter((row) => row.pinnedPosition != null)
-    .sort((left, right) => (left.pinnedPosition ?? 0) - (right.pinnedPosition ?? 0));
-  return { pinned, rest: rows.filter((row) => row.pinnedPosition == null) };
-}
 
 /** How many Canvases hold something this viewer has not read: the section's badge. */
 export function useUnreadCanvasCount(): number {

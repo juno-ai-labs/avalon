@@ -484,18 +484,24 @@ the open composers. Counts have no REST fetch, polling, or per-Sidekick socket.
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
 | `apps/api/src/services/sidekick-run-tools.ts` | Wizard-only run history: current-member authorization, own-run admission, canonical transcript pages and exact replay results with explicit availability. |
-| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"`. |
+| `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"` (or a run's id while `?run=` names one). The profile also says who it is shared with (`audience`), the connections it uses, and the Canvases it writes to; the conversation's heading carries those Canvases as cards that open `/canvases/:id`, and its composer offers a manager Edit Sidekick. |
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
 | `packages/ui/src/components/sidekick-section.tsx`, `conversation-menus.tsx`, `apps/desktop/src/renderer/screens/channel.tsx` | `SidekickSection`, the **Sidekicks** section of a Channel's title menu, below its people; the Channel screen fills it from its `defaultSidekickIds` and the Sidekicks library, with Add and Remove for someone who may edit the Channel. A Thread's title menu has none. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen. |
-| `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksWindow`: the window's routes, and the one place its Escape-to-close gesture is installed. |
+| `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksLibraryScreen`, the Sidekicks home; `SidekicksLibraryRoute`, which renders it in the main window on both hosts; `SidekicksWindow`: the separate window's routes, and the one place its Escape-to-close gesture is installed. |
+| `apps/desktop/src/renderer/components/sidekick-run-row.tsx` | A run's row in the shared conversation, collapsed, opening into the run's own conversation. |
+| `apps/desktop/src/renderer/components/sidekick-sidebar-section.tsx` | The Sidekicks sidebar section: Needs input, Pinned, then every Sidekick. |
 | `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
 | `apps/desktop/src/common/open-thread.ts`, `src/main/index.ts`, `src/renderer/lib/platform.ts` | `openThread` on the bridge: main parses the id with `parseThreadId` and emits the same `workstreams/<id>` deep link an in-app link takes, so the main window opens the Thread and comes forward; the browser tab routes to it. |
 
 ### Creation and ownership
 
-The separate Sidekicks window lists all accessible personal and workspace
-entries, including drafts. `GET /sidekicks` uses
+The Sidekicks home (`/sidekicks`, in the main window on both hosts, and in
+the separate Sidekicks window until plan step B-2 removes it) lists all
+accessible personal and workspace entries, including drafts, as rows with
+their status (Needs input, Draft, Paused or Active), who they are shared with
+and when they next wake, filtered by Everyone, Only you, Organization or
+Paused. `GET /sidekicks` uses
 `WorkspaceDO.listSidekickDirectoryForAuthorizedMember`: the request's session
 authentication already joined the caller's active member row, so the object
 applies only the per-row scope filter and does not read `workspace_members`
@@ -1008,12 +1014,16 @@ loads its authoring tools in `"0"` only for a turn so marked
 (`services/integrations.ts`); a turn that reached `"0"`'s loop any other way
 gets the delegation tools alone.
 
-The desktop's Sidekick screen marks every message a manager sends there as an
-edit until the shared conversation gets its own composer (plan step A-13), so
-that screen keeps working as the Sidekick's editor; anyone else's message there
-is unmarked and asks the Sidekick for a run. The client's check
-(`viewerManagesSidekick`) cannot see who manages a Thread-scoped Sidekick's
-Thread, so a manager who is only that does not get the mark there.
+**In the client.** The Sidekick screen's composer offers a manager **Edit
+Sidekick** in its actions menu, a checkbox entry (`ComposerMenuAction.checked`)
+that switches the composer into marking every message `intent:
+"edit_sidekick"` until it is switched off; the composer then reads "Describe a
+change to this Sidekick…" and the conversation's heading says **Editing this
+Sidekick**. Off, a manager's message is unmarked and asks the Sidekick for a
+run like anyone else's. A draft opens with the edit on, because it has nothing
+to run yet. Nobody else is offered the entry (`viewerManagesSidekick`: its
+author, the person it runs as, or an Organization owner or administrator for an
+Organization Sidekick), and the server refuses the mark from them all the same.
 
 ### Runs in the shared conversation
 
@@ -1057,6 +1067,14 @@ and `run: {state, stepCount, reply}`. The row is a projection of the run's
   version ran ahead of its run is repaired too; a row that is missing is
   appended, at the end of the conversation. A run is never deleted from
   `sidekick_runs`, so there is no row whose run is gone to remove.
+
+The client draws the row as a run, not as a message
+(`components/sidekick-run-row.tsx`, chosen in `MessageBlock` by
+`automationActivation.run`): collapsed to "Run · trigger · state · steps"
+with the reply as a two-line preview, expanding to the whole reply and **Open
+run**, which puts `?run=<runId>` on the Sidekick's route; the screen then shows
+that run's own conversation (`parentKind: "automation"`, substream the run id)
+in place of `"0"`, with a way back.
 
 Runs that finished before migration 135 have no row, and nothing backfills
 them: appended now, they would land at the bottom of the conversation, out of
@@ -1901,9 +1919,7 @@ everyone else nothing.
 **Consequences:** Any new kind of human input in `"0"` must say whether it is
 the wizard's; the claim routes it as a run otherwise. Authoring tools in `"0"`
 follow `sidekickWizard`, not the conversation, so a producer that activates a
-turn there outside the claim gets none. The desktop's Sidekick screen marks a
-manager's every message as an edit until A-13 gives the conversation its own
-composer. A message-started run acts as its sender: as a delegate when they are one,
+turn there outside the claim gets none. A message-started run acts as its sender: as a delegate when they are one,
 otherwise under their own access only. A message in `"0"` can no
 longer steer a running turn. The row is a projection: anything that needs a
 run's truth reads `sidekick_runs`, and a row that drifted is rebuilt by a
@@ -1938,6 +1954,23 @@ own code. The requester's account view, like `runPrincipal`, names nobody once
 they leave the Organization, and a connector refusal then says so. A
 requester's run gets no Terminal: the Sidekick's shared Terminal files hold
 what delegate-access runs wrote, and its tools could only refuse.
+
+**In the main window (plan step A-13).** The desktop's Sidekick screen first
+marked every message a manager sent as an edit, so it stayed the Sidekick's
+editor until the conversation had its own composer. Now a manager switches
+**Edit Sidekick** on in the composer's menu to mark messages, and off to ask for
+runs; a draft opens with it on. A checkbox entry in the composer menu that
+already exists was chosen over a second composer or a per-message prompt: the
+mark is a mode a manager holds while describing a change, and a toggle is the
+smallest affordance that says it. The run row draws collapsed as a run and
+opens into the run's own conversation through `?run=`, which reuses the one
+conversation surface rather than an inline transcript. The Sidekicks home and
+each Sidekick render in the main window on both hosts, beside the sidebar; the
+browser no longer gives them the whole tab, and the Mac app no longer hands
+`/sidekicks` to the separate window, which keeps its own entry until B-2. The
+Canvases a Sidekick writes show as cards over the conversation and as a
+**Writes to** list in its profile; a card cannot sit at its run's row, because
+a Canvas's summary does not say which run made it.
 
 **A schedule's occurrence is admitted only once it arrives.** `executeSchedule`
 read the schedule's current `next_due_at` and admitted that occurrence after

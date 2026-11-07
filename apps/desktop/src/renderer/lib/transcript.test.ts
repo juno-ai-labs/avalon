@@ -359,9 +359,18 @@ describe('transcript messages', () => {
         automationActivation: {
           automationId: '00000000-0000-7000-8000-0000000000aa',
           automationName: 'Refresh Avalon Open Pull Requests Dashboard',
+          runId: '00000000-0000-7000-8000-0000000000bb',
+          trigger: 'schedule',
         },
       }),
     ]);
+
+    // A run's own row in its Sidekick's shared conversation carries the run as it stands.
+    expect(orderedTranscriptMessages(activationSnapshot({
+      ...parsed, run: { state: 'needs_input', stepCount: 4, reply: 'Which status page gets the update?' },
+    }), 'workstream-one')[0]?.automationActivation?.run).toEqual({
+      state: 'needs_input', stepCount: 4, reply: 'Which status page gets the update?',
+    });
 
     // A row the schema refuses keeps the row rather than the identity: the
     // author slot falls back to the generic label instead of rendering blank.

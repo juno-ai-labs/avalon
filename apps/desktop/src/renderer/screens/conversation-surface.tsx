@@ -1373,6 +1373,10 @@ export interface ConversationSurfaceProps {
    * unmarked message in a Sidekick's conversation to a run.
    */
   messageIntent?: SidekickMessageIntent;
+  /** Entries the host adds to the composer's menu, after the surface's own. */
+  composerMenuActions?: readonly ComposerMenuAction[];
+  /** What the composer says while empty, when the host has something more specific to say. */
+  composerPlaceholder?: string;
   renderSidebar?: (context: ConversationHeaderContext & {
     focusTranscript: () => void;
     openArtifact: (id: string, returnFocus: HTMLElement) => void;
@@ -1421,6 +1425,8 @@ function ConversationSurfaceContent({
   breakoutOrigin,
   parentCrumbs,
   messageIntent,
+  composerMenuActions: hostMenuActions,
+  composerPlaceholder,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
@@ -3783,14 +3789,14 @@ function ConversationSurfaceContent({
           {mergeCardWithDialog && !mergeCardAnchored && <div className="merge-response-card-end">{mergeCardWithDialog}</div>}
           <WorkstreamComposer
             api={api ?? undefined}
-            placeholder={parentKind === 'automation'
+            placeholder={composerPlaceholder ?? (parentKind === 'automation'
               ? 'Ask your Sidekick…'
               : parentKind === 'canvas'
                 ? 'Ask Rally or the people here…'
               // A name still being chosen is not one to address yet.
               : displayedDetail.titleStatus === 'naming' || !displayedDetail.title
                 ? 'Message the thread…'
-                : substreamId === '0' ? `Message ${displayedDetail.title}` : `Reply in ${displayedDetail.title}`}
+                : substreamId === '0' ? `Message ${displayedDetail.title}` : `Reply in ${displayedDetail.title}`)}
             attachments={attachmentDraft.attachments}
             error={sendError
               ?? attachmentDraft.error
@@ -3830,7 +3836,7 @@ function ConversationSurfaceContent({
             workstream={displayedDetail}
             draftKey={workstreamDraftKey(workspaceRegion, workspaceId, displayedDetail.id, substreamId)}
             substreamId={substreamId}
-            {...(composerMenuActions ? { menuActions: composerMenuActions } : {})}
+            {...(composerMenuActions || hostMenuActions ? { menuActions: [...composerMenuActions ?? [], ...hostMenuActions ?? []] } : {})}
           />
         </div>
       </div>

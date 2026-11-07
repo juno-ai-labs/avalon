@@ -25,11 +25,29 @@ states say "Canvas", its ready state invites a request to Rally, and its
 composer reads "Ask Rally or the people here…". The header is the host's
 `renderHeader`: the Canvas's pill, the people in it now and Share.
 
+## A Sidekick's shared conversation
+
+`screens/automation.tsx` hosts a Sidekick's conversation (`"0"`) on this
+surface, and two props let the host shape the composer without a second one:
+`composerMenuActions`, entries appended to the composer's actions menu after
+the surface's own, and `composerPlaceholder`. A `ComposerMenuAction` with
+`checked` is a mode rather than a command: a checkbox entry, ticked while the
+mode is on. The Sidekick screen uses one for a manager's **Edit Sidekick**,
+which sets the surface's `messageIntent` to `edit_sidekick` for every message
+until it is switched off
+([`automation-lifecycle.md`](automation-lifecycle.md#the-shared-conversation)).
+A run's row in that conversation is drawn by `MessageBlock` as a collapsed run
+(`components/sidekick-run-row.tsx`) whenever its `automation_activation`
+content carries `run`; its **Open run** puts `?run=<runId>` on the route, and
+the screen hosts the run's own conversation on this surface in place of
+`"0"`.
+
 ## Sidekick navigation and attachments
 
-The main-window `/sidekicks` adapter opens the dedicated library and returns the
-main window to its workstream route. Opening the account item from an existing
-detail navigates the singleton back to the library. The sidebar recognizes both
+The main-window `/sidekicks` route renders the library in place on both hosts
+(plan step A-13); the Mac app's separate Sidekicks window keeps its own entry
+until it is removed. Opening the account item from an existing
+detail navigates that window's singleton back to the library. The sidebar recognizes both
 legacy automation details and new Sidekick details. Attachment remove buttons
 have their own class so accessibility labels on the row do not apply button-only
 layout. Disabled email triggers hide the displayed address while preserving its
@@ -39,7 +57,7 @@ and availability changes visible without navigation.
 
 ## Sidekick conversations and attachments
 
-Sidekick authoring uses the shared conversation surface in a separate library window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and keeps a **Sidekicks** section below it, including while the list is loading or empty. When present, its rows are this work stream's Sidekicks: the ones it owns and the ones its main conversation has loaded, with access-checked removal of an attachment affecting future executions. `ConversationSurface` owns both queries and hands the merged rows to the sidebar and the inspector rail, so the two rails cannot disagree about what a room has.
+A Sidekick's shared conversation uses this surface in the main window. Generated descriptions summarize instructions; ready submissions save immediately. The center workstream sidebar replaces participant rows with a facepile and keeps a **Sidekicks** section below it, including while the list is loading or empty. When present, its rows are this work stream's Sidekicks: the ones it owns and the ones its main conversation has loaded, with access-checked removal of an attachment affecting future executions. `ConversationSurface` owns both queries and hands the merged rows to the sidebar and the inspector rail, so the two rails cannot disagree about what a room has.
 
 Running Sidekicks share background agents' animated indicator above the input.
 The host supplies independent counts to `WorkstreamComposer`, so both rows can
@@ -849,6 +867,11 @@ selection and message protocol.
 **What changed:** `ConversationSurface` hosts a Canvas's Chat
 (`parentKind: "canvas"`) under a Canvas header, with the Canvas's wording in
 its opening, unavailable and ready states and its composer placeholder.
+A host can add entries to the composer's menu (`composerMenuActions`), one of
+which may be a mode (`ComposerMenuAction.checked`), and set its placeholder;
+a Sidekick's screen uses both for a manager's Edit Sidekick, which marks
+messages `intent: "edit_sidekick"`. A Sidekick run's row draws as a collapsed
+run that opens into the run's own conversation.
 
 **Why:** The Canvases and Sidekicks PRD's decision that an open Canvas reuses
 the conversation layout: the Chat in the main pane, its artifacts in the
@@ -857,7 +880,9 @@ surface with its own composer, annotations and restore.
 
 **Considered and rejected:** A Canvas-specific feed component; everything it
 needed — the composer, annotations as comments, the rail and its restore — is
-what this surface already does for any parent.
+what this surface already does for any parent. For the edit mark, a second
+composer or a per-message prompt: the mark is a mode a manager holds while
+describing a change, and the composer menu already exists to carry it.
 
 **Consequences:** A branch here that means "an ordinary Thread" still tests
 `parentKind === 'workstream'`; a Canvas falls through every Thread-only branch
