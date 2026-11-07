@@ -114,7 +114,6 @@ describe("the health probe under a misconfigured environment", () => {
       ACTIVITY_QUEUE: { send: () => undefined },
       CONNECTOR_POLL_WORKFLOW: { create: () => undefined },
       CONNECTOR_EVENT_WORKFLOW: { create: () => undefined },
-      WORK_OPPORTUNITY_WORKFLOW: { create: () => undefined },
       WORKSTREAM_EMAIL_ADDRESS_KEY: "a".repeat(48),
       WORKSTREAM_EMAIL_DOMAIN: "automation.with-avalon.com",
       AVALON_REGION: "global",
