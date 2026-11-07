@@ -4142,7 +4142,7 @@ describe("agent harness", () => {
     const persist = vi.fn();
     const prepare = vi.fn(async () => undefined);
     const renderAppendix = vi.fn(async () => [
-      "# Authoritative work-stream resource inventory",
+      "# Authoritative conversation resource inventory",
       "Visible resources: 2",
       "- image: 1",
       "- markdown: 1",
@@ -4202,10 +4202,10 @@ describe("agent harness", () => {
       content: expect.stringContaining("Compaction checkpoint"),
     });
     expect(String(requestBodies[2]?.messages[1]?.content)).toContain(
-      "# Authoritative work-stream resource inventory",
+      "# Authoritative conversation resource inventory",
     );
     expect(JSON.stringify(persist.mock.calls[0]?.[0]?.messages)).not.toContain(
-      "Authoritative work-stream resource inventory",
+      "Authoritative conversation resource inventory",
     );
     expect(JSON.stringify(requestBodies[2]?.messages)).not.toContain("Do the work");
     // The summary request is the whole transcript followed by the handoff
@@ -4479,8 +4479,8 @@ describe("agent harness", () => {
     }) as typeof fetch;
     const persist = vi.fn();
     const renderAppendix = vi.fn()
-      .mockResolvedValueOnce("# Authoritative work-stream resource inventory\nVisible resources: 1")
-      .mockResolvedValueOnce("# Authoritative work-stream resource inventory\nVisible resources: 2");
+      .mockResolvedValueOnce("# Authoritative conversation resource inventory\nVisible resources: 1")
+      .mockResolvedValueOnce("# Authoritative conversation resource inventory\nVisible resources: 2");
 
     await expect(runHarness({
       ...runInput(fetcher),

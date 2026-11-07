@@ -30,15 +30,18 @@ Inspect the published site before saving the Sidekick. Save these facts in its
 run instructions:
 
 - **Resource ID:** The published site's Rally resource ID.
-- **Owning thread:** The thread that originally published it.
+- **Canvas:** The id of the Canvas the site is in.
 - **Import destination:** Its directory relative to \`/workspace\`.
 - **Publication path:** That directory relative to \`/workspace/.rally-output\`.
 - **Data format:** File names, record layout, and field names and types.
 
-Use a workstream-scoped Sidekick owned by the original thread. Personal and
-Organization Sidekicks publish in their own conversations; importing files does
-not redirect publication. If the original conversation cannot be used, report
-that requirement instead of creating a replacement site.
+A Sidekick run publishes into a Canvas the Sidekick writes. Save the
+instruction to publish each refresh into the saved Canvas by naming it in
+\`publish_resource\`'s \`canvas\` argument; without it, a run's first publish
+makes a new Canvas. Only a Canvas this Sidekick already writes can be named,
+and importing files does not redirect publication. When the site is in a Canvas
+this Sidekick does not write, report that requirement instead of creating a
+replacement site.
 
 Prefer attaching the site with the setup message using \`attachmentIds\` in
 \`send_message\` or \`reply_to_message\`, even if the Sidekick can already read
@@ -149,7 +152,7 @@ have not, and settle its question before the first file.
    and anything a future revision needs to know that the code does not
    show — the next run to touch this site may know nothing you know
    now. A new request for a new thing gets a **new directory**: "now
-   make a countdown page" in a work stream that already has a poll is a
+   make a countdown page" in a Canvas that already has a poll is a
    second site at a second path, not an edit to the first — only a
    request *about* an existing site is a revision of it.
 
@@ -291,7 +294,7 @@ have not, and settle its question before the first file.
 
 9. **Let failures be loud and legible.** If the handler throws, viewers
    see a plain error page and the failure lands in the site's error log
-   in the work stream — so throw early with a clear message rather than
+   in Rally — so throw early with a clear message rather than
    returning a half-rendered page. Validate your own routes' inputs and
    return real HTTP statuses (\`400\` with a short JSON body beats a
    \`200\` full of undefined).
@@ -531,8 +534,8 @@ shape of \`index.js\`.
    needs a new shape, add a new table and write to both until the old
    one is unused.
 
-4. **Design the data to be read from outside.** The work stream's agent
-   answers questions about this data with read-only SQL against your
+4. **Design the data to be read from outside.** Rally, in the Canvas's
+   Chat, answers questions about this data with read-only SQL against your
    schema ("who hasn't voted?"), and participants see it in the rail's
    data view and exports. Clear table and column names in plain words
    are part of the site's interface, not private internals. Attribution

@@ -264,10 +264,13 @@ describe("the automations plugin", () => {
     expect(systemMessage).toContain("3. Act on the plan");
     expect(systemMessage).toContain("Never add a connector,\nplugin, delivery destination, trigger or capability; never enrol a delegate");
     expect(systemMessage).toContain("never submit\nready=false");
-    // The publication to the people the Sidekick works for, and only on a change.
-    expect(systemMessage).toContain("4. If you saved a change and the notice names where to announce it, post one message there\nwith conversation_post, passing that conversation");
-    expect(systemMessage).toContain("Post\nnothing when nothing changed");
-    expect(systemMessage).toContain("5. End with one short report here for the owner, who was not present");
+    // The review runs in the Sidekick's shared conversation, so its report is
+    // the announcement: a second post there would say the same thing twice.
+    expect(systemMessage).toContain("4. End with one short report here, for the owner, who was not present, and for everyone\nthe Sidekick is shared with");
+    expect(systemMessage).toContain("This report is the announcement, so post nothing with conversation_post.");
+    expect(systemMessage).not.toContain("5. End with");
+    // A run's report in Rally is its final message on its row; a post would double it.
+    expect(systemMessage).toContain("save no\nconversation_post step for it, which would post the same report there a second time.");
   });
 
   it("publishes ready submissions without a separate activation tool", () => {

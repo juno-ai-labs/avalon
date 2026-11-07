@@ -28,7 +28,6 @@ starts ready because resolution needs no drafted words.
 | `packages/agent-harness/src/turn-disposition.ts` | The classifier: the state schema and its bounds, the Choice question as data, `judgeTurnDisposition` (never throws), `TURN_DISPOSITION_CONFIDENCE_THRESHOLD` (0.6, `>`), `suggestionForTurnDisposition`. |
 | `packages/agent-harness/src/prompts/turn-disposition.ts` | The prose mirror of the question for a generative target in the eval; not sent to JEV. |
 | `packages/agent-harness/src/prompts/suggestion-draft.ts` | The two drafter prompts (merge note; Breakout prompt and subject) and their JSON schemas, golden-hashed. |
-| `packages/agent-harness/evals/turn-disposition/` | The corpus eval and the GEPA optimizer; see its README. |
 | `packages/contracts/src/conversation-suggestions.ts` | `ConversationSuggestionSchema`, the kinds and statuses, `SUGGESTION_VISIBLE_WITHIN_NEWEST_TURNS` (3), `suggestionTurnIsVisible`, the dismiss result. |
 | `packages/contracts/src/index.ts` | The snapshot's optional `suggestions` and the `conversation_suggestion_changed` socket event; the `suggestion_draft` model role and its flag key. |
 | `packages/contracts/src/usage.ts` | The metered activities `turn_disposition_classifier` and `suggestion_draft`. |

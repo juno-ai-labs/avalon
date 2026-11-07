@@ -6,18 +6,21 @@ import type { PromptMessage } from "./types";
  * it changes, and which it ends.
  *
  * Everything the model may write is bounded by the placement the host hands
- * it: the subjects a fact may be filed under, the Channels and people it may
- * name, whether the conversation is open to the whole Organization. The host
+ * it: the subjects a fact may be filed under, the people it may name, whether the conversation is open to the whole Organization. The host
  * refuses an operation that steps outside it; the prompt exists so the model
  * rarely tries. `docs/agent-memory.md` owns the lane.
  */
 
 export interface MemorySweepPlacementInput {
-  /** The conversation's own subject: the Thread, the Breakout, or the Sidekick. */
+  /**
+   * The conversation's own subject. `thread` is a Canvas's Chat, the stored
+   * kind a Canvas's facts keep until the subject kinds are rebuilt; the other
+   * room kinds are retired and no longer produced.
+   */
   subject: { kind: "thread" | "breakout" | "sidekick" | "channel"; title: string };
-  /** The Thread above a Breakout, when there is one. */
+  /** A retired room's parent; null for a Canvas or a Sidekick. */
   thread: { title: string } | null;
-  /** The Channels the conversation sits in, with the ids a `channel` fact names. */
+  /** A retired room's containers; empty for a Canvas or a Sidekick. */
   channels: Array<{ id: string; title: string }>;
   /** Whether every member of the Organization may read this conversation. */
   organizationWide: boolean;
@@ -63,7 +66,7 @@ A fact is one or two plain sentences a colleague who never opened this conversat
 
 Return a list of operations, possibly empty.
 
-add — the window establishes something no candidate already says. Give the subject it is about and no wider: thread for this conversation's own work, breakout for a Breakout's own work, channel for something that holds across the Channel named, organization only when the conversation is open to every member and the fact holds for the whole Organization, person only for a person listed in the placement and only about that person, sidekick for a Sidekick's own working knowledge. When two people disagree and the window does not settle it, add one fact at the channel or organization level that states both positions and who holds each, with conflict set to true; do not choose a side.
+add — the window establishes something no candidate already says. Give the subject it is about and no wider: the placement's own subject kind for this conversation's own work (thread when this conversation is a Canvas's Chat, sidekick for a Sidekick's own working knowledge), organization only when the conversation is open to every member and the fact holds for the whole Organization, person only for a person listed in the placement and only about that person. When two people disagree and the window does not settle it, add one fact at the narrowest subject both positions concern that states both positions and who holds each, with conflict set to true; do not choose a side.
 update — a candidate's wording is now wrong or incomplete and the window shows the correction. Rewrite the whole fact in one sentence that stands alone.
 confirm — the window restates or relies on a candidate as still true. Use it instead of adding the same fact twice.
 retract — the window shows a candidate has stopped being true or was wrong, and nothing replaces it.
