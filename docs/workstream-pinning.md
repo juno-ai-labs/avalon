@@ -3,417 +3,191 @@
 A person pins what they want to hand: a Canvas or a Sidekick. Each of the two
 sidebar sections has a **Pinned** group above its list, and the pin lives on
 the server, so the same person opening Rally on another machine finds their
-list as they left it. The client's Thread, Channel, Breakout and artifact pins,
-and the Pinned, Threads, Channels and Artifacts sections that drew them, were
-removed at the 2026-11 cutover; the server's pin list and its routes for those
-kinds stay until phase C removes them, and the sections below that describe
-them describe the server.
+list as they left it. Thread, Channel, Breakout and artifact pins, and the
+Pinned, Threads, Channels and Artifacts sections that drew them, were removed
+at the 2026-11 cutover; the changelog below records them.
 
 A pin is **one person's opinion about one item**. Pinning tells nobody else
 anything, changes nothing about who may read the item, and does not appear on
-anyone else's screen. Read that alongside
-[`data-model.md`](data-model.md#work-streams), where `workstreams.scope` answers
-the different question of who a thread is *for*.
+anyone else's screen. Who may open a Canvas is its audience
+([`canvases.md`](canvases.md)); who may open a Sidekick is its share list
+([`automation-lifecycle.md`](automation-lifecycle.md)).
 
-**`workspace_pins` is the one source of whether something is pinned.** The new
-sidebar's Pinned parts, the `pinned` state on directory rows, the background
-socket pool and telemetry all read it. The older per-Space pins
-(`workspace_workstream_pins`) and their routes stay only for desktops that
-predate the navigation redesign
-([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)), and what those
-routes write is mirrored one way into `workspace_pins`. "Channel" in the
-storage names below (`channels`, `channel_viewers`) is the stored Channel, which
-the product calls a thread.
+**`workspace_pins` is the one source of whether something is pinned.** A
+Canvas's or a Sidekick's pin is a row there, and reaches the client as its
+list row's `pinnedPosition`, so nothing else answers the question.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/durable-objects/workspace-pin-storage.ts` | Migration 97's `workspace_pins` and `WorkspacePinStorage`: the one list and its order. Visibility of the item is the caller's question. |
-| `apps/api/src/routes/navigation.ts` | `GET /navigation/pins`, `PUT /navigation/pins` (reorder one kind), `PUT|DELETE /navigation/pins/:kind/:id`. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The pin RPCs, the visibility check on a pin, the old per-Space `workspace_workstream_pins` with its mirror into `workspace_pins`, and the per-person frame a pin write publishes. |
-| `apps/api/src/routes/workstreams.ts` | The old routes, kept for older desktops: `PUT /workstreams/:id/pin`, `DELETE /workstreams/:id/pin`, `PUT /workstreams/pins`. |
-| `apps/api/src/routes/workspace.ts` | `PUT /workspace/pinned-order`, the old desktop's All order, kept for older desktops. |
-| `packages/contracts/src/navigation.ts` | `Pin`, `PinKind`, `PinList` and the request shapes. |
+| `apps/api/src/durable-objects/workspace-pin-storage.ts` | `workspace_pins` and `WorkspacePinStorage`: one person's pins of one kind and their order. Visibility of the item is the caller's question. |
+| `apps/api/src/durable-objects/canvas-schema.ts` | WorkspaceDO migration 141, which admits `canvas` and `sidekick` in `workspace_pins.item_kind`. |
+| `apps/api/src/durable-objects/workspace-do.ts` | `setSidebarPin` and `reorderSidebarPins`, the visibility check on a pin, and the republish of the pinner's list. |
+| `apps/api/src/routes/canvases.ts`, `apps/api/src/routes/automations.ts` | `POST /canvases/:id/pin` and `POST /automations/:id/pin` (`{pinned}`). |
+| `apps/api/src/routes/workspace.ts` | `PUT /workspace/pinned-order` (`{kind, itemIds}`): one person's order for one list's Pinned group. |
+| `apps/api/src/routes/navigation.ts` | `GET /navigation/artifact-pins`, kept for the detached artifact window and always empty (see [Artifact pins](#artifact-pins)). |
+| `packages/contracts/src/canvases.ts` | `SidebarPinRequestSchema`, `SidebarPinOrderRequestSchema`. |
 | `apps/desktop/src/renderer/components/navigation-rows.tsx` | The Pinned group both sections draw: `PinnedSection`, `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
-| `apps/desktop/src/renderer/components/resource-action-menu.tsx` | A resource card's right-click menu and its `⋯` button, drawing the same actions. |
+| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx` | Each list's Pinned group above its other rows. |
+| `apps/desktop/src/renderer/screens/canvas.tsx` | The Canvas title menu's pin switch. |
 
 ## How it works
 
 ### One pin list per kind
 
-WorkspaceDO migration 97 adds `workspace_pins(user_id, item_kind, item_id,
-parent_id, position, …)`, keyed `(user_id, item_kind, item_id)`, with
-`item_kind` one of `thread`, `channel` (a stored Space) or `breakout` (which
-carries its thread in `parent_id`).
+`workspace_pins(user_id, item_kind, item_id, parent_id, position, …)` is
+keyed `(user_id, item_kind, item_id)`. A Canvas or a Sidekick names no parent.
+The table still admits the retired kinds (`thread`, `channel`, `breakout`,
+`artifact`), whose rows no reader lists.
 
-- **Routes.** `GET /navigation/pins`, `PUT /navigation/pins` (`{kind, ids}`
-  reorder) and `PUT|DELETE /navigation/pins/:kind/:id` (`parentId` in the body
-  for a breakout), for members and guests. A pin is refused as
-  `pin_target_not_found` for anything the person may not list; an unpin is
-  never refused. The old per-person limit
-  (`MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER`) caps all kinds together. Each
-  route answers with the whole list, which replaces what the client holds.
-- **Delivery.** The list rides the connect payload as `pins`. A pin write sends
-  that person's sockets a small per-person frame carrying the new list, never
-  a Space snapshot, so the person's other windows follow and nobody else's
-  socket hears of it.
-- **Readers.** The sidebar's Pinned parts, the `pinned` state on a directory
-  row, the background socket pool (every pinned thread keeps its feed socket
-  warm) and telemetry's `pinned` section all read `workspace_pins`. A second
-  reader of the old table would answer differently for a pin made on the new
-  client.
-- **Copy and mirror.** The migration copied every `workspace_workstream_pins`
-  row in as a thread pin, once per thread: a thread pinned in two Spaces became
-  one pin, placed by All's arranged order (`workspace_pinned_order`) first and
-  by its earliest Space position after that. The old routes keep writing the
-  old table and also write the new one: a pin adds the thread pin, and an unpin
-  removes it once no Space pins the thread any more. A pin made on the new
-  client is not written back, so an older desktop does not see it.
-
-The old tables and routes go once the desktops that call them have aged out.
+- **Pin and unpin.** `POST /canvases/:id/pin` and `POST /automations/:id/pin`
+  take `{pinned}`. A pin is refused as `canvas_not_found` or
+  `sidekick_not_found` for an item the person may not open (a Canvas outside
+  its audience, a Sidekick outside its share list); an unpin is never refused.
+  A pin appends at the end of the person's group.
+- **Order.** `PUT /workspace/pinned-order` takes one kind and its ids, first
+  to last. An id that is not pinned is dropped; a pin the request leaves out
+  keeps its relative order behind the ones it names, so a second window that
+  pinned something a moment ago loses its *position*, never its pin.
+- **Delivery.** A pin write moves that list's waterline and republishes the
+  person's Canvases or Sidekicks list on the workspace socket, so their other
+  windows follow. The Canvas list is a per-reader projection already; the
+  Sidekicks list is republished to that person alone.
+- **Reading.** Each list's query joins `workspace_pins` for the reader and
+  carries `pinnedPosition` on the row: null when unpinned. A pin whose item the
+  person can no longer open is simply not on a row they are sent.
 
 ### In the sidebar
 
-The Canvases and Sidekicks sections each draw a **Pinned** group above their
-list; see [Canvas and Sidekick pins in the client](#canvas-and-sidekick-pins-in-the-client).
-
-### Artifact pins
-
-An artifact is stored in `workspace_pins` as a fourth `item_kind`, `artifact`,
-with the thread it was generated in as its `parent_id`, the way a breakout
-carries its thread (migration 110 rebuilt the table to admit it). It shares the
-table's order rules and the one per-person limit, but not the wire list:
-
-- **Its own list.** `GET /navigation/pins` and the socket's `pins` stay the
-  three kinds. A shipped desktop parses `Pin` strictly, so one unknown kind
-  there would fail its whole list. Artifact pins travel as `artifactPins`
-  (`ArtifactPinSchema`), beside `pins` on the connect payload and on
-  `workspace_navigation_state`, where an older build drops the key it does not
-  know. They have their own routes: `GET|PUT /navigation/artifact-pins` and
-  `PUT|DELETE /navigation/artifact-pins/:id` (`threadId` in the body of a pin).
-- **What a row carries.** Each pin arrives with what its row draws: the
-  resource's title, type, MIME type and last update, and its thread's title,
-  appearance and Channels. The Space snapshot does not carry them, because it
-  goes to every socket in the Organization and an artifact pin does not change
-  with a Space; the connect payload and each write's answer do.
-- **The gate.** A pin is accepted only when the resource is linked to that
-  thread's Main as `generated`, is listed, and the person may open that Main.
-  WorkspaceDO checks this against `workspace_workstream_resource_links`, which
-  is Main's projection; a breakout's own links are not projected there, so a
-  breakout's artifact can be pinned once it is attached to its thread. An
-  unpin is never refused.
-- **Reading.** A pin whose artifact is gone, unlisted or no longer generated
-  in that Main, or whose Main the person can no longer open, is left out of the
-  list, not deleted. It returns if access does, and an unpin tidies it.
-
-**Updates.** A pinned artifact is unread while somebody else has made a
-version of it, since it was pinned, that the person has not seen
-(`artifactUpdateSql`: a republish or a replacement, never the first version,
-a refetch, a rename or a bookkeeping capture). A rename pushes the pinners'
-lists again so the row shows the new title, without making the pin unread. A change the pinner
-made is never news to them: neither their own edit (`author_user_id`) nor a
-revision by a run acting for them (`on_behalf_of_user_id`, which the Terminal
-republish and the image edit record as the person who asked for the run; a
-scheduled or inbound Sidekick run asks for nobody, so its changes stay news). What they have seen is their Activity
-waterline on the subject `artifact:<id>`, moved to the version that was
-current when the artifact was opened in a panel, so the pin's unread state and
-its `artifact_updated` Activity rows settle together. Mark all read covers the
-pins as it covers the rows. A panel behind the browser rail is not on screen,
-and in a gallery only the image shown is seen. A version that arrives
-while the panel is open is not the one on screen and stays unread until the
-artifact is opened again. An unpin takes the artifact's rows out of Activity,
-so it tells the person's windows to read Activity again. The Artifacts button counts the unread pins, and so does
-Pinned. A trigger on `resource_versions` queues every new version of every
-resource in `workspace_resource_version_changes` (migration 114, which renamed
-and widened migration 111's pinned-only `workspace_artifact_updates`). The
-drain after the write keeps the published and replaced versions
-(`isArtifactNewsCause`), sends each pinner their pin list and an Activity
-re-read, and pushes the row
-([`push-notifications.md`](push-notifications.md#activity-rows)); the same
-drain moves open previews ([`websocket-architecture.md`](websocket-architecture.md)). The
-announcement is held to the object's lifetime (`waitUntil`) and is best effort,
-as every Activity push is: the ledger row is gone once drained, so a failed
-member lookup or Queue send loses that push, logged, while the row, the unread
-pin and the digest stand.
-
-On a card, **Pin** and **Unpin** sit behind a `⋯` button that shows while the
-card is hovered or focused, and in its right-click menu: one list of actions
-(`ResourceAction`) drawn by both. A file card reads "Pinned · Markdown"; an
-image or media tile carries a pin in its corner. The **Artifacts** tab lists
-the pins alone for now, and the **Pinned** tab draws them as a third part,
-**Artifacts**. A row opens its thread with the artifact's panel expanded
-(`openThreadResourceState`; the pane stack (retired 2026-11)).
-
-### Older desktops' per-Space pins
-
-A desktop from before the redesign pins a thread in one Space:
-`PUT /workstreams/:id/pin` with a `spaceId` appends a `workspace_workstream_pins`
-row at the end of that Space's list, after checking that the caller can read
-the thread and that it is placed in that Space. Unpinning
-(`DELETE /workstreams/:id/pin?spaceId=...`) removes that placement's row and
-rewrites the survivors as a dense `0..n-1` run. Its **All** filter kept its own
-order in `workspace_pinned_order` (`PUT /workspace/pinned-order`, still
-served), and the snapshot still carries it as `pinnedOrder` for those desktops.
+`splitPinned` draws the rows with a position, in position order, above every
+other row. Dragging an unpinned row into the group pins it (`useRowPinDrop`),
+at the end of the group; a row's context menu pins and unpins it, and so does
+a Canvas's title menu. A Sidekick that needs input is drawn in that section's
+**Needs input** group, above Pinned, rather than twice. A refused pin puts the
+row back and says so above the list (`usePinWrite`). The client does not
+reorder the group yet: both sections pass `reorderable={false}`, so the order
+route has no caller.
 
 ### Ordering
 
-Positions are unique and ascending per person and Space, and `unpin` and `reorderPins`
-rewrite them as a dense `0..n-1` run. `pin` chooses its position inside the
-insert statement, as `MAX(position) + 1`, rather than reading the list and
-binding a number back in — a read-then-write hands the same position to two pins
-made at once, and it also collides with a hole left by a work stream that was
-deleted outright and took its pin with it by cascade. A hole is harmless and
-closes on the next rewrite.
+Positions are unique and ascending per person and kind. `pin` chooses its
+position inside the insert statement, as `MAX(position) + 1`, rather than
+reading the list and binding a number back in — a read-then-write hands the
+same position to two pins made at once. An unpin leaves a hole, which is
+harmless and closes on the next reorder.
 
-`PUT /workstreams/pins` takes a `spaceId` and that Space's **entire arrangement**, not a move of one row:
-a drag produces a complete list, and sending that list is what lets the server
-write positions without inferring them from an index whose meaning depends on a
-list state the client may no longer share.
+### Artifact pins
 
-The reorder is deliberately tolerant. An id the caller names that is no longer
-pinned is dropped; a pin the caller does not name keeps its relative order behind
-the ones it did. A second window that pinned something a moment ago therefore
-loses its *position*, never its pin.
-
-All three endpoints answer with the same shape — the caller's pinned list for
-that Space, in order — so the client replaces only that Space's positions rather
-than reasoning about which row moved.
+An artifact pin named the Thread whose Main generated it and was listed only
+while that Main could be opened. Every Thread is retired, so no stored artifact
+pin can be listed: `GET /navigation/artifact-pins` answers an empty list, which
+the detached artifact window reads as "not pinned". A Canvas's artifact is
+reached by pinning the Canvas.
 
 ### Recent work streams
 
-Unpinned work streams sort by **this viewer's last access**, newest first.
-WorkspaceDO stores integer millisecond timestamps in `workspace_workstream_access`,
-keyed by user and work stream. A validated foreground-presence transition records
-an access; background socket prewarming and shared activity do not. An unvisited
-row uses its creation time until the first visit. The timestamp travels as
-`lastAccessedAt`, independently of shared activity and read markers.
-
-The directory page and cursor use the same timestamp, with work-stream ID as the
-tie-breaker. Foreground visits push one `workspace_workstream_recency` row only to
-that user's subscribed sessions. Reconnect reconstructs the order from SQL.
-Desktop applies access and pin fields under the directory waterline, separately
-from the child-owned common and viewer waterlines, so delayed activity snapshots
-cannot erase a visit. Child REST responses omit access metadata; the API mapper
-preserves that omission so ordinary response merges cannot erase a newer visit.
-An absent access field means an older server and retains activity ordering and
-legacy bulk requests; explicit null means an unvisited row on a supporting server.
-A cursor whose timestamp no longer matches its row restarts at page one, covering
-old activity cursors during upgrade and visits made during a paged walk. Project-contained work streams use the same access order.
-
-The recency headings use access time too. Their bulk commands select
-`recency: "access"`; existing activity-based API callers retain their original
-meaning. Notes retain activity-based grouping, and automations keep their own
-section ordering. Pins remain manually ordered.
+The per-viewer recency that ordered the Threads list
+(`workspace_workstream_access`) went with Threads. The Canvases list is ordered
+by the Canvas's own recent activity, newest first
+([`canvases.md`](canvases.md#in-the-client)); the Sidekicks list by title, A–Z.
+The table stays in storage, unread, with the per-Space pin tables below.
 
 ## Invariants
 
-- **`workspace_pins` is the one answer to "is this pinned".** The sidebar,
-  the title menus, the socket pool and telemetry read it, and
-  nothing else. A reader of `workspace_workstream_pins` would disagree with it
-  for every pin made on the new client, which is never written back.
-- **A pin is one person's.** Nothing in either pin table is readable by, or
-  visible to, anybody but its owner, and a pin write reaches only that
-  person's sockets, as a per-person frame.
-- **Positions are ascending per person and Space and rewritten densely.** A tie makes "what order is
-  this list in" ambiguous, and the sidebar's sort would then depend on
-  row-arrival order. WorkspaceDO's list and pinned-return queries break a tie on
-  `workstream_id` for the same reason: two readers that break it differently
-  disagree, and the disagreement only surfaces when a rewrite silently swaps a
-  pair nobody touched.
-- **A rewrite covers every stored pin, not just the visible ones.** Skipping a
-  pin whose work stream has gone out of sight strands it at a position the
-  visible run is about to reuse.
-- **`channels` is one row per Channel, and every query
-  here may assume it.** That assumption is what lets this module's paging, the
-  pin join, the cursor and the live-state supplement be written without a kind
-  filter. It is deliberate rather than incidental: a Channel's *breakouts* now
-  reach the Organization too, and they are projected into
-  `breakouts` instead of into this table precisely so that
-  none of the queries here has to learn a filter it would eventually forget.
-  Anything that needs a second kind of conversation gets a table, not a column —
-  [`spaces.md`](spaces.md#breakouts-reach-the-organization) holds the reasoning.
-- **A work stream is returned exactly once across a WorkspaceDO directory walk.** Pins are
-  excluded from the paged query and appended to the first page instead. Leaving
-  them in both would return a quiet pin twice — once appended, once on whichever
-  cursor page its access-or-creation timestamp falls in. Pins are the only rows that leave
-  the order: a system work stream is paged like any other when `includeSystem`
-  asks for it, and is appended only when it is also pinned.
-- **The sidebar pages.** It requests one page and follows `nextCursor` when the
-  scroll approaches the bottom, so a rule that only holds on the first page no
-  longer holds where anybody looks. Any future merge into the first page has to
-  keep the row out of the cursor pages, not merely out of the first one.
-- **The cursor contains recency and work-stream ID.** Timestamps tie; using only
-  the access-or-creation timestamp can skip a row when the next page starts below a tie. The
-  cursor is opaque to Electron and must be returned unchanged.
-- **At most 1,000 pin placements belong to one person.** The WorkspaceDO transaction counts
-  every stored pin across Spaces, including one currently hidden by visibility, before
-  accepting a new one. That bounds the pin-derived reorder and response work;
-  the independently complete live-state supplement may make the combined first
-  page larger.
-- **Pinning is gated on readability; unpinning is not.** Removing a pin is never
-  a question about the work stream, and a pin that has gone dark can only be
+- **`workspace_pins` is the one answer to "is this pinned".** The rows'
+  `pinnedPosition` is read from it, and nothing else stores a pin.
+- **A pin is one person's.** Nothing in the table is readable by, or visible
+  to, anybody but its owner, and a pin write republishes only that person's
+  view of the list.
+- **A new pinnable kind rides its own list's rows, not a shared `pins` list.**
+  A released client parsed `PinKind` as a closed enum, so one unknown kind in a
+  shared list would have failed its whole sidebar.
+- **Pinning is gated on readability; unpinning is not.** Removing a pin is
+  never a question about the item, and a pin that has gone dark can only be
   reached by a caller that already knows the id.
-- **`useOpenFirstWorkstream` is the one way a screen leaves for the root
-  route, and every leave replaces.** A screen that navigates to `/` or sets
-  the hash itself pushes an entry the API will refuse on Back, and cannot name
-  the rows the landing must pass over.
-- **No leaving screen patches the directory.** It may evict the work stream it
-  is leaving; which rows the list holds is the socket's, under the directory
-  waterline. A landing that needs a row gone tells the landing, it does not
-  remove the row.
-- **The landing opens a Channel, never a thread.** Opening a thread reads
-  it, so a landing that picked one would spend somebody's unread state on a
-  choice they did not make. Guard: `screens/workstream-landing.test.tsx`.
 
 ## Boundary
 
-This module owns `workspace_pins` and its routes, the old
-`workspace_workstream_pins` with its three endpoints and its mirror, and the
-Pinned parts of the sidebar's Threads and Channels tabs. It owns no part of
-what a thread *is* or who may read it.
-
-It deliberately does not:
-
-- **Broadcast to other users or to a thread's parent.** A pin changes nothing
-  another person can see. WorkspaceDO sends a per-person frame to the owner's
-  own sockets so their other windows converge without polling.
-- **Decide workspace membership.** D1 remains current membership authority;
-  WorkspaceDO applies its local common/viewer directory to decide whether that
-  active member may pin the work stream — see [`data-model.md`](data-model.md#work-streams).
-- **Pin anything but a thread, a Channel or a breakout.** Automations and
-  notes have their own sections and no pin.
+This module owns `workspace_pins`, the pin and order routes, and the Pinned
+group of both sidebar sections. It owns no part of what a Canvas or a Sidekick
+*is* or who may read it, and it does not decide membership: D1 remains
+current membership authority, and WorkspaceDO's audience and share-list checks
+decide whether a member may pin an item.
 
 ## Failure modes and limits
 
-- **A person may have at most 1,000 pinned Channel placements across Spaces.** The same bound applies to a
-  reorder request. The first WorkspaceDO page may contain all pins, at most 250
-  recent unpinned rows, and every visible live-state row; that combined response
-  intentionally has no separate guessed row cap. Pinning the 1,001st row fails
-  with `workstream_pin_limit_reached`; existing pins remain unchanged.
-- **A refused pin or drag reverts.** The section re-renders from what the
-  server holds, which is what the person's other devices are showing, and a
-  line above the open tab says the pin did not save, or that the person has
-  pinned as many items as Rally allows.
-- **A pin whose work stream is gone contributes nothing.** Archived or no longer
-  readable, it is filtered out of every read; the row survives, so a work stream
-  reopened to the workspace comes back in its old place. An archived one does not
-  come back: archiving is one-way from the client, so its pin keeps a stored row
-  — and a slot against the per-person cap — with no visible row to unpin. That
-  became reachable when the sidebar's **Archive work stream** action was wired
-  up; before it, nothing a person could click reached this state.
-- **A drag that ends where it started, or that was cancelled, sends nothing.**
-  Rewriting every position for a drag that went nowhere is a write with no change
-  behind it, and committing one that was backed out of would make Escape the
-  slowest way to reorder rather than the way to stop.
-- **Overlapping moves keep the newer arrangement.** Two `Alt`+arrow moves in
-  quick succession overlap; the local order is cleared only if it is still the
-  one that call set, so the first response cannot snap the list back to an order
-  the reader has already moved past.
+- **No count limit.** The retired per-person cap
+  (`MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER`, 1,000 placements) counted Thread,
+  Channel and Breakout pins and does not apply to these kinds; a Canvas or
+  Sidekick pin is bounded by the items a person can open.
+- **A refused pin or drag reverts.** The group re-renders from what the
+  server holds, which is what the person's other devices are showing.
+- **A pin whose item is gone contributes nothing.** It is not on any row; the
+  stored row survives, so a Canvas a person is let back into comes back in its
+  old place.
 
 ## Testing
 
 | Suite | What it covers |
 | --- | --- |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | Real SQLite-backed WorkspaceDO append/idempotency, per-person and per-Space isolation, the same Channel pinned independently in two Spaces, dense unpin, tolerant reorder, pinned-first listing, and hibernating page delivery. |
-| `apps/api/test/workspace-space-pin-migration.test.ts` | The migration discards every legacy Organization-wide pin and recreates the primary key with `space_id`, so no ambiguous placement is carried forward. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.test.tsx` | Pinned Channels in the person's order above every other Channel, and the line that says why a pin did not save. |
-| `apps/desktop/src/renderer/screens/workstream-landing.test.tsx` | The landing order (saved route, the Channel a screen left, first pinned Channel, General, first A–Z), a passed-over thread not reopened, and the waiting, failed and empty states. |
-| `apps/desktop/src/renderer/lib/workstream-landing.test.tsx` | That leaving replaces the entry and carries the skip list, and that a malformed state reads as no skip. |
+| `apps/desktop/src/renderer/components/canvas-sidebar-section.test.tsx` | The Canvases list's Pinned group above every other row, and a drop into it pinning the row. |
+| `apps/desktop/src/renderer/components/sidekick-sidebar-section.test.tsx` | The Sidekicks list's Needs input and Pinned groups. |
 
 One trap in the desktop tests: jsdom implements no `DataTransfer`, so a drag
 event needs a small stub rather than `new DataTransfer()`.
 
-The legacy API suite runs the checked-in D1 migrations against `node:sqlite` in
-memory. Post-cutover ownership assertions belong in the workerd suite; do not
-replace its real Durable Object SQL transaction with a D1 shim.
-
 ## Data model
 
-`WorkspaceDO.workspace_pins` (migration 97) is keyed `(user_id, item_kind,
-item_id)`, with `parent_id` set exactly when `item_kind = 'breakout'`, and
-ordered by `workspace_pins_order_idx (user_id, item_kind, position, item_id)`.
-It has no foreign key, for the reason `space_invitees` gives; a pin whose item
-is gone is dropped where it is read. The tables below serve older desktops.
-
-`WorkspaceDO.workspace_workstream_pins` is keyed
-`(user_id, space_id, workstream_id)`, references both the Space and Channel
-directory rows with cascade, and carries `position`, `created_at`, and
-`updated_at`. Its order index is `(user_id, space_id, position, workstream_id)`.
-It is deliberately **not** uniquely indexed on `(user_id, space_id, position)`: a reorder
-rewrites every row of the run, and any intermediate state of that rewrite
-collides with itself. Positions are therefore kept unique by how they are
-allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
-
-All's own order lives in the per-person order store, not here:
-`workspace_container_order` rows with `container_kind = 'pinned'`, keyed by the
-workspace id like the Organization's Space order (migration 87 widened that
-table's kind CHECK). The rows name Channels, not pins, and a write keeps only
-Channels the person can list. Whether a Channel is pinned stays this table's
-answer, so an unpinned Channel's row is simply not drawn.
-
-WorkspaceDO migration 66 drops the legacy `(user_id, workstream_id)` table and
-recreates it without copying rows. There is no authoritative answer for which
-Space should inherit an Organization-wide pin when a Channel has multiple
-placements, so the migration intentionally clears all existing pins.
-
-## Canvas and Sidekick pins in the client
-
-A Canvas's or a Sidekick's pin is its row's `pinnedPosition`, not an entry in
-the `pins` list, so its section reads its Pinned group from its own list: the
-rows with a position, in position order, above every other row. Dragging an
-unpinned row into the group pins it (`useRowPinDrop`), at the end of the
-group; a row's context menu pins and unpins it. The rows' order within the
-group is not changed from the client yet.
+`WorkspaceDO.workspace_pins` (migration 97, rebuilt by 110 and 141) is keyed
+`(user_id, item_kind, item_id)`, with `parent_id` set exactly when `item_kind`
+is `breakout` or `artifact`, ordered by `workspace_pins_order_idx (user_id,
+item_kind, position, item_id)` and indexed by item for removal
+(`workspace_pins_item_idx`). It has no foreign key, for the reason
+`space_invitees` gave: a key would make a rebuild of the item table cascade
+here. A pin whose item is gone is dropped where it is read. The older per-Space
+`workspace_workstream_pins` and `workspace_pinned_order` tables, and the Thread
+recency table `workspace_workstream_access`, stay in storage until a migration
+drops them (plan step C-7); nothing reads or writes them.
 
 ## Changelog
 
-### 2026-11-07 — The client's Thread, Channel and artifact pins are removed
-
-**What changed:** The Pinned, Threads, Channels and Artifacts sections, their
-drag to reorder (`usePinnedDrag`, `usePinDrop`), the personal order
-(`personal-order.ts`), the pin hooks (`lib/pins.ts`), the artifact pin actions
-and the title menus' **Pinned in my sidebar** switch are deleted from the
-client, with the landing that opened the first pinned Channel. The Pinned group
-the Canvases and Sidekicks sections draw is what remains, built from
-`navigation-rows.tsx`.
-
-**Why:** Plan step B-3 of the
-[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-the PRD keeps "a Pinned group in each list" and removes the Pinned section, and
-the pinnable kinds other than Canvases and Sidekicks are deleted.
-
-**Consequences:** The server keeps `workspace_pins` rows of the old kinds and
-the routes that write them until phase C; no client reads them.
-
-### 2026-11-07 — A Canvas and a Sidekick can be pinned
+### 2026-11-07 — A Canvas and a Sidekick are what a person pins; Thread, Channel, Breakout and artifact pins are removed
 
 **What changed:** WorkspaceDO migration 141 admits `canvas` and `sidekick` in
 `workspace_pins.item_kind`. `setSidebarPin` and `reorderSidebarPins` pin and
-order them in their lists' Pinned groups; each list's rows carry
-`pinnedPosition`. The `pins` list still returns only threads, Channels and
-breakouts.
+order them in their lists' Pinned groups (`POST /canvases/:id/pin`,
+`POST /automations/:id/pin`, `PUT /workspace/pinned-order`), and each list's
+rows carry `pinnedPosition`. The client pins from a row's context menu, a
+Canvas's title menu, or by dragging the row into its section's Pinned group
+(`useRowPinDrop`, the list-agnostic sibling of the deleted `usePinDrop`), at
+the end of the group; a Sidekick that needs input is drawn in Needs input
+rather than twice. The Pinned, Threads, Channels and Artifacts sections, their
+drag to reorder (`usePinnedDrag`), the personal order (`personal-order.ts`),
+the pin hooks (`lib/pins.ts`), the artifact pin actions, the landing that
+opened the first pinned Channel, the shared `pins` list and its
+`/navigation/pins` routes, and the older per-Space routes are deleted;
+`GET /navigation/artifact-pins` stays for the detached artifact window and
+answers empty.
 
-**Why:** The Canvases and Sidekicks PRD gives each list a Pinned group. A
-released client parses `PinKind` as a closed enum, so a new kind in `pins`
-would fail its whole sidebar.
+**Why:** Plan steps A-8, A-14, B-3 and C-1 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+the PRD keeps "a Pinned group in each list" and removes the Pinned section,
+and the pinnable kinds other than Canvases and Sidekicks are deleted with
+Threads, Channels and Breakouts (decision log, 2026-11-06). An artifact pin was
+listed only while its Thread's Main could be opened, so no stored one can be
+listed now.
 
-**Considered and rejected:** Widening `PinKind`: every released desktop would
-drop its sidebar payload.
+**Considered and rejected:** Widening `PinKind` and carrying the new kinds in
+`pins`: a released client parsed `PinKind` as a closed enum, so every released
+desktop would have dropped its whole sidebar payload.
 
-**Consequences:** A new pinnable kind rides its own list's rows, not `pins`.
-See [`canvases.md`](canvases.md#the-canvas-list).
-
-The client pins a Canvas through `POST /canvases/:id/pin`: from its row's
-context menu, its title menu, or by dragging the row into the Canvases
-section's Pinned group. That drag is `useRowPinDrop`
-(`components/navigation-rows.tsx`), the list-agnostic sibling of `usePinDrop`
-for a list whose pins are a flag on its own rows; it pins at the end of the
-group, since no route exposes `reorderSidebarPins` yet, so the group does not
-offer reordering.
-A Sidekick is pinned the same way through `POST /sidekicks/:id/pin` from the
-Sidekicks section; a Sidekick that needs input is drawn in that section's
-Needs input group, above Pinned, rather than twice.
+**Consequences:** A new pinnable kind rides its own list's rows, not a shared
+list. The retired kinds' rows stay in `workspace_pins`, and the per-Space
+tables in storage, until a data migration drops them (plan step C-7); no
+reader lists them. The client offers no reorder yet, since both sections pass
+`reorderable={false}`; the order route is ready for it. See
+[`canvases.md`](canvases.md#the-canvas-list).
 
 ### 2026-10-17 — Generated artifacts can be pinned
 

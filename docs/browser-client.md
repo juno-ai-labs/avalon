@@ -5,7 +5,7 @@ shell for everyone: Organization members and guests shared into some of its
 conversations, as described in [The shell](#the-shell). A guest gets no setup or
 onboarding. Sign-in, which also claims anything shared with the person's
 address, and canonical conversation links activate the workspace and mount the shell. Local API and
-Chrome journeys cover guest entry, feed, upload/reload, multiple workstreams,
+Chrome journeys cover guest entry, feed, upload/reload, multiple conversations,
 promotion and membership removal. Production mail delivery and deployed stateful
 artifact serving remain release checks; see the guest-sharing completion audit.
 
@@ -295,17 +295,16 @@ is mapped to the same-origin regional upgrade path; ticket secrets stay out of
 URLs. A completed sign-out or session replacement fences a pending native renewal
 so it cannot restore an old bearer.
 
-The shared conversation surface, workstream/automation views, Sidekick picker
-and favicon adapter consume `CollaborationSessionProvider`, not the desktop
+The shared conversation surface, the Canvas and Sidekick views and the favicon
+adapter consume `CollaborationSessionProvider`, not the desktop
 account/setup context. The desktop session provider installs this smaller
 provider around its children, retaining the same API and identity objects.
 Connector authorization cards require an explicit connector-setup capability,
 which supplies pending OAuth state and external navigation. Omitting it hides
 setup cards and avoids their catalog request; existing connector chips and tool
 execution are separate from setup. Sidekick creation likewise requires an explicit
-creation callback; without it the picker retains attachment of existing Sidekicks
-and omits the native creation action. The browser supplies both to a member and
-neither to a guest, whose routes for them refuse.
+creation callback; without it the shell offers no New Sidekick. The browser
+supplies both to a member and neither to a guest, whose routes for them refuse.
 
 Addressed conversation links select their workspace directly without waiting for the workspace list.
 
@@ -326,27 +325,15 @@ runtime suites cover guest mutation and lifecycle authority. The collaboration
 context deliberately does not expose workspace
 creation, account onboarding or desktop credential controls.
 
-The shared contextual sidebar lists Sidekicks available in the selected conversation,
-including workstream recommendations and locally loaded instructions. Its removal
-local action removes only the local attachment and leaves the workstream
-recommendation available. A separately labeled parent action removes the shared
-recommendation; an eligible loaded workspace Sidekick can also be recommended.
-These actions use the canonical conversation-addressed recommendation options,
-not Main's participant list. Owned Sidekicks are excluded from explicit
-recommendation management. Recommendations use the exact substream endpoint and query key, so
-navigating between children does not reuse another child's source visibility.
-A guest's shell offers no Sidekick authoring or setup. Guests use the scoped
-recommendation summaries for eligible owned Sidekicks as well; they do not fetch
-the member-only owned Sidekick authoring directory.
+A guest's shell offers no Sidekick authoring or setup, and does not fetch the
+member-only Sidekick authoring directory.
 
-The conversation header opens the shared email invitation panel. It accepts
-multiple email addresses separated by whitespace, commas, or semicolons, and
-sends through the existing scoped invitation API with operation identity retained
-on retry. The selected conversation is the only target: Main uses conversation
-`0`, never a workstream grant, so other substreams gain no access. Below the form
-it lists who that conversation was shared with and has not signed in yet, as
-Guest rows the sharer can remove. It has no access picker or direct-share
-management.
+A Canvas's Share dialog invites a guest by email through the shared invitation
+panel (`ScopeSharingPanel`). It accepts multiple email addresses separated by
+whitespace, commas, or semicolons, and sends through the existing scoped
+invitation API with operation identity retained on retry. The Canvas's Chat
+(`0`) is the only target. Below the form it lists who the Canvas was shared
+with and has not signed in yet, as Guest rows the sharer can remove.
 The server remains responsible for sharing authorization. No setup or onboarding
 capability is required.
 
@@ -385,7 +372,7 @@ that organization with the same `openWorkspace` a workspace link uses, mints the
 site's single-use access code, and replaces itself with the site's `openUrl`
 plus `?return=`. A 404 means no such site, and a 403 means the site exists but
 this account cannot read it, including a member of the Organization who is not
-in the site's Channel; the page says which, so the person knows whether to fix
+in the audience of the site's Canvas; the page says which, so the person knows whether to fix
 the link or ask for access. A failure that trying again could fix (Rally
 unreachable, a 503) offers Try again. Its decisions live in
 `apps/browser/src/site-open-decisions.ts`, apart from React, and the page is
@@ -463,9 +450,8 @@ is no separate browser permission model or arbitrary forwarding destination.
 
 At phone width the shared sidebar becomes a top bar with a menu button that
 drops the navigation in as a sheet
-([`desktop-shell.md`](desktop-shell.md#at-phone-width)). Archive and
-guest promotion use the shared confirmation modal. Sharing fixes its target to
-the clicked conversation and shows only email input and submission feedback.
+([`desktop-shell.md`](desktop-shell.md#at-phone-width)). Guest promotion uses
+the shared confirmation modal.
 
 ## Invariants
 
@@ -576,7 +562,7 @@ not revoke the earlier session, so anything bound to it, such as a Web Push
 device, stays live until that session ends. The Home Screen app supports iOS
 18 and later, so a Safari tab on an iOS too old for Home Screen Web Push (before
 16.4) is still shown the Home Screen hint. It works only
-online: nothing is cached for it, and invitation and Channel links from email
+online: nothing is cached for it, and invitation and Canvas links from email
 open in Safari, not in the app.
 
 ## Testing
@@ -617,79 +603,48 @@ that starts reading member-only data for everyone shows up there.
 `apps/api/test/auth-router.test.ts` proves `GET /workspace` and the member
 directory answer a guest while the rest of `/workspace` stays refused.
 
-The conversation header exposes rename through the shared conversation
-mutation. A failed rename keeps its draft and shows the API error; success closes
-the dialog and refreshes shared navigation. Guest Main renames use the same
-exact-conversation route as child renames, without requiring full membership.
-
-The shared-navigation response carries both parent and conversation archive state.
-There is no separate lifecycle preflight. An independently archived child under an
-active parent offers Restore substream outside the feed. An archived parent shows
-Archived work stream and explains that its work stream must be restored first;
-it never sends a child restore for Main or for a parent-archived child.
-Archive/restore uses the existing child mutation and refreshes shared navigation.
+The browser shell draws the desktop's Canvas and Sidekick screens, so a
+Canvas's rename, Share dialog and title menu are the desktop's
+([`canvases.md`](canvases.md#in-the-client)); the Thread header's rename,
+archive and restore, and the Thread and Breakout right-click sharing menus,
+went with Threads.
 
 Equivalent session refreshes update the stable RallyApi with `setSession`; they
 must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
-Responsive navigation uses shell state, closes on navigation and supplies the
-shared dismissal scrim. The header uses the shared
-icon button with Tabler `share-2`; its open state stays highlighted. Work-stream
-and substream right-click menus open the same sharing dialog for their own row.
-Substream Archive stays in the right-click menu, away from the header Share control.
 
 ## Changelog
 
-### 2026-11-07 — The browser opens Canvas and Sidekick links, and forwards the Canvas routes
+### 2026-11-07 — The browser opens Canvases and Sidekicks, beside the sidebar, and forwards their routes
 
-**What changed:** `shellLocation` rewrites a Canvas link to `#/canvases/:id`
+**What changed:** The shell mounts the two-section sidebar (Canvases,
+Sidekicks) rather than Channels, Threads and Activity, and a guest's sidebar
+lists what was shared with them there. `#/sidekicks` and each Sidekick render
+beside the sidebar, as they do in the Mac app's main window; only Settings is
+a window surface. `shellLocation` rewrites a Canvas link to `#/canvases/:id`
 (with `?artifact=`) and a Sidekick link to `#/sidekicks/:id`; the Thread,
 Channel and Space branches are gone, and a retired link gets a line on the
 entry screen saying what it named no longer exists. `BROWSER_ROUTE_FAMILIES`
 gains `canvases`, which it lacked, so a browser could not create or open a
 Canvas, and loses `workstreams`, `spaces`, `projects`, `navigation` and
-`work-opportunities`, which nothing in the shell calls now.
+`work-opportunities`. The Thread header's rename, archive and restore, and the
+Thread and Breakout right-click sharing menus, went with Threads.
 
-**Why:** Plan step B-5 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
-the Thread surfaces are deleted, and the Canvas is what a shared link names.
+**Why:** Plan steps A-13, B-1, B-3 and B-5 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+the Thread and Channel screens are deleted, `App.tsx` redirects their old hash
+routes to the Canvases home (so a link rewritten to `#/workstreams/:id` would
+have lost its target), the Canvas is what a shared link names, and the PRD
+moves Sidekicks into the main window ("Sidekicks home"), so a tab giving them
+the whole window would draw a different product from the Mac app.
 
 **Considered and rejected:** Keeping the retired families forwarded "in case".
 Forwarding is the whole of the browser's reach; a family nothing calls is reach
 nobody needs.
 
 **Consequences:** A route family a later step adds to the shell must be added
-to the list in the same change. The links themselves are [`links.md`](links.md)'s.
-
-### 2026-11-07 — Links open Canvases and Sidekicks; the Channel shell is gone
-
-**What changed:** `shellLocation` turns a canonical conversation link into
-`#/canvases/:id`, a Channel link into `#/canvases`, and a Sidekick link into
-`#/sidekicks/:id`, dropping a link's Breakout and artifact. The shell mounts
-the two-section sidebar (Canvases, Sidekicks) rather than Channels, Threads
-and Activity, and a guest's sidebar lists what was shared with them there.
-
-**Why:** The client pivot to Canvases and Sidekicks removed the Thread and
-Channel screens, and `App.tsx` redirects their old hash routes to the Canvases
-home, so a link rewritten to `#/workstreams/:id` would have lost its target.
-
-**Consequences:** An artifact link opens its Canvas on the newest artifact,
-not the one linked, until Canvases get links of their own. The server still
-forwards the `spaces`, `projects` and `work-opportunities` families; retiring
-them is the server half's work.
-
-### 2026-11-07 — Sidekicks are a pane beside the sidebar, not a full-tab surface
-
-**What changed:** Only Settings is a window surface. `#/sidekicks` and each
-Sidekick render beside the sidebar in the browser, as they now do in the Mac
-app's main window.
-
-**Why:** The Canvases and Sidekicks PRD moves Sidekicks into the main window
-([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md), "Sidekicks home"), so a
-browser tab giving them the whole tab would draw a different product from the
-Mac app.
-
-**Consequences:** The Mac app's separate Sidekicks window kept its own entry
-until plan step B-2 removed it; nothing in the browser opens it.
+to the list in the same change. The links themselves are
+[`links.md`](links.md)'s.
 
 ### 2026-11-03 — A protected site's link signs you in and brings you back
 

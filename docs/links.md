@@ -22,7 +22,7 @@ Nothing mints them and nothing reads them; the handoff page and the web app
 recognize their shapes only to say that what they named no longer exists.
 
 Read this before emitting or parsing a link anywhere, and before changing the
-handoff page, the Slack unfurl card or the sweep that keeps old cards current.
+handoff page or the Slack unfurl card.
 
 ## Where the code lives
 
@@ -76,8 +76,8 @@ asks the Organization's object what the parent is (`resolveHostedParent`, one
 RPC): a Canvas's Chat links to the Canvas, a Sidekick's conversation or any of
 its runs links to the Sidekick, and anything else — a Thread, a Breakout, a
 Channel, or an id the Organization holds nothing for — has no link and gets
-`null`. Every notification path is built on it: pushes (mentions, adds and the
-Activity kinds, Needs input and finished runs among them), the mention and
+`null`. Every notification path is built on it: pushes (mentions, adds, Needs
+input and finished runs among them), the mention and
 participant emails, Slack DMs and the
 Slack task controls. A delivery about a conversation with no link is skipped
 with the named reason `conversation_not_linkable` and the parent's kind
@@ -89,9 +89,7 @@ both its Slack and email transports; a push resolves it after the person's
 notification choice has allowed the delivery.
 
 A Canvas share's invitation email links to the Canvas on the web app
-(`BROWSER_APP_ORIGIN`), which hands it to the desktop from there. A share of a
-Thread, still possible server-side until the Thread routes go, links to its
-Organization's shell (`/app/workspaces/<region>/<organization>`).
+(`BROWSER_APP_ORIGIN`), which hands it to the desktop from there.
 
 ### The handoff page
 
@@ -192,20 +190,18 @@ read the channel, so the audience rule is:
 | Anything else — public, private, DM, group DM | The name |
 
 A Canvas or Sidekick card carries nothing a status change would rewrite, so it
-is not recorded in `slack_unfurled_links` and the refresh sweep never touches
-it. A rename shows on a card posted after it.
+is not recorded in `slack_unfurled_links`. A rename shows on a card posted
+after it.
 
 ### Thread cards posted before the pivot
 
-`slack_unfurled_links` still holds the Thread cards posted before Canvases
-replaced Threads, with their status badges, and the five-minute maintenance
-sweep (`refreshSlackWorkstreamUnfurls`) still rewrites them from
-`WorkspaceDO.lookupWorkstreamDirectory` until phase C of the pivot deletes the
-Thread storage. Its rules are unchanged: it selects rows on status drift, an
-edit to the Thread, a 24-hour audience clock or a missing hash; rewrites only
-when the rendered blocks hash differently; leaves a row untouched when the
-audience lookup fails; redacts a card whose channel became externally shared;
-and deletes a row on a terminal Slack reason.
+A Thread card posted before Canvases replaced Threads stays in Slack as it was
+last rendered. The five-minute maintenance sweep that rewrote those cards'
+status badges and redacted a card whose channel became externally shared
+(`refreshSlackWorkstreamUnfurls`) was deleted with the Thread storage it read,
+so nothing rewrites them now; a click opens the handoff page's gone state.
+`slack_unfurled_links` keeps their rows, unread, until a data migration drops
+the table.
 
 ## Invariants
 
@@ -277,10 +273,9 @@ and the path is classified (`/app/:region/:organization/cv/:canvas`,
 - **A Canvas card in Slack keeps the name it was posted with.**
 - **A Canvas link's name is visible to whoever holds the link**, private
   Canvas or not (the 2026-10-07 product call).
-- The Thread-card sweep's bounds are unchanged until it is deleted: links
-  shared in the last 30 days, 5,000 candidates loaded, 100 rewrites per sweep
-  and 20 per Slack workspace (`chat.unfurl` is Tier 3), up to five minutes of
-  staleness.
+- **A Thread card in Slack is frozen.** Its status badge is whatever it showed
+  when the sweep last ran, and a card in a channel that became externally
+  shared afterwards is not redacted.
 
 ## Testing
 
@@ -301,9 +296,10 @@ and the path is classified (`/app/:region/:organization/cv/:canvas`,
 
 ## Data model
 
-`slack_unfurled_links` records which Slack message carries which Thread link
+`slack_unfurled_links` holds which Slack message carried which Thread link
 posted before the pivot, plus `rendered_status`, `rendered_anonymous`,
-`rendered_hash` and `refreshed_at`. No Canvas or Sidekick card is recorded.
+`rendered_hash` and `refreshed_at`. Nothing reads or writes it now, and no
+Canvas or Sidekick card is recorded.
 [`data-model.md`](data-model.md) is authoritative for the columns.
 
 ## Apple universal links
@@ -317,7 +313,7 @@ attribution. See [push](push-notifications.md).
 
 ## Changelog
 
-### 2026-11-07 — Canvases get a link form; the Space, Channel, Breakout and Thread forms go
+### 2026-11-07 — Canvases get a link form; the Space, Channel, Breakout, Thread and iPhone forms go
 
 **What changed:** A Canvas has a canonical link,
 `/app/<region>/<organization>/cv/<canvas>/` (with `a/<artifact>/` onto one of
@@ -331,13 +327,16 @@ and answers a retired link with "This link is to something that no longer
 exists" instead of a 404. Server-minted links come from
 `conversationCanonicalUrl`, which reads the parent's kind; a notification about
 a Thread is skipped, named `conversation_not_linkable`. The Slack unfurl reads
-Canvas and Sidekick links and shows the name only, recording nothing for the
-sweep. The web app rewrites to `#/canvases/:id` and `#/sidekicks/:id`, and the
-iPhone branches went with the iOS client.
+Canvas and Sidekick links and shows the name only, recording nothing; the
+sweep that kept old Thread cards current was deleted with the Thread storage
+it read. The web app rewrites to `#/canvases/:id` and `#/sidekicks/:id`. The
+iPhone entry in the Apple association file and the handoff's iPhone branches
+went with `apps/ios`.
 
 **Why:** The pivot deletes Threads, Breakouts and Channels and their client
-surfaces ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md), plan step
-B-5). A link to one now opens nothing, and a Canvas, the shared thing that
+surfaces, and the iOS client
+([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md), plan steps B-5 and
+B-9). A link to one now opens nothing, and a Canvas, the shared thing that
 replaced them, had no link of its own: its Chat used the Thread forms in the
 interim. Saying a retired link's thing is gone is the honest answer; a 404
 reads as a broken link.
@@ -346,26 +345,19 @@ reads as a broken link.
 "the Canvas with that id". Thread ids and Canvas ids share a namespace but no
 meaning, so an old link would open the unavailable state at best. A Canvas
 path under a Space-like hierarchy (`/s/.../cv/...`): a Canvas belongs to the
-Organization, as a Sidekick does. Recording Canvas cards for the refresh
-sweep: a name-only card has no status to keep current, and the sweep reads the
-Thread directory.
+Organization, as a Sidekick does. Recording Canvas cards for a refresh sweep:
+a name-only card has no status to keep current.
 
 **Consequences:** The desktop's main process says "This link is to something
 that no longer exists" in its deep-link error window for a retired deep link,
 as the site and the web app do, rather than refusing it without a word. The
 web app's Organization shell path, `/app/workspaces/<region>/<organization>`,
 shares a prefix with the retired addressed form and must stay outside
-`isRetiredLinkPath`. A desktop build older than this refuses a Canvas deep link;
-the web app opens it. A Thread mention, add or Activity delivery sends nothing
-from here until phase C deletes the Thread services. The Thread-card sweep keeps
-running over the rows already recorded until then. A Thread share's invitation,
-still possible server-side, links to the Organization's shell.
-
-### 2026-11-06 — The iOS client is deleted
-
-The iPhone entry in the Apple association file and the site handoff's iPhone
-branch existed only for `apps/ios`, which is deleted; both stay in site code
-until a later phase of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md) removes them.
+`isRetiredLinkPath`. A desktop build older than this refuses a Canvas deep
+link; the web app opens it. A Thread card already in Slack is frozen as last
+rendered, and one in a channel that became externally shared afterwards is not
+redacted; `slack_unfurled_links` keeps its rows until a data migration drops
+it.
 
 ### 2026-10-17 — A link can open a thread onto an artifact
 

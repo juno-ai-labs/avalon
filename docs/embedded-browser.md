@@ -45,7 +45,7 @@ zoom factor before placing the active tab's native `WebContentsView`. Closing
 the rail hides the view but keeps its tabs and page
 state. Reopening the rail restores them. Dialogs hide the native view
 while they are open. Menus hide it only when their positioned bounds overlap
-the page, so a thread menu in the left pane leaves the browser visible. The
+the page, so a title-pill menu in the left pane leaves the browser visible. The
 placement observer tracks positioning and sizing styles only within menus and
 their positioned wrappers, so unrelated composer or transcript styles do not
 trigger browser placement.
