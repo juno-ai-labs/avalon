@@ -2,7 +2,7 @@ import { NavigationHistoryProvider } from './navigation-history';
 import { AccessRequestDialog } from './access-request-dialog';
 import { AddMembersDialog } from './add-members-dialog';
 import { useViewerIsWorkspaceAdmin } from '../lib/use-workspace';
-import { useAccessRequests, useDecideAccessRequest } from '../lib/access-requests';
+import { useAccessRequests } from '../lib/access-requests';
 import type { WorkspaceAttention } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
@@ -30,6 +30,7 @@ import { associativeWorkstreamsForSidebar, conversationDirectoryQueryKey } from 
 import { desktopBridge } from '../lib/platform';
 import { useSupportWorkspaces } from '../lib/use-support-workspaces';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
+import { restorableRoute } from '../lib/landing';
 import { uuidV7 } from '../lib/telemetry';
 import type { Workspace, WorkstreamSummary } from '../lib/types';
 import { useRailFillsPane } from '../lib/rail-split';
@@ -37,9 +38,9 @@ import { SIDEBAR_CONTENT_MIN_WIDTH, useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import { activeRealtimeWorkstreamId } from '../lib/workspace-workstream-sockets';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
-import { channelDestination, openWorkstreamId } from '../lib/workstream-landing';
+import { channelDestination } from '../lib/workstream-landing';
+import { openCanvasId } from '../lib/canvases';
 import { heldChannelBreakouts, isWorkstreamChildrenQueryKey, type ChannelBreakoutLists } from '../lib/channel-viewer-state';
 import { AttachmentLightbox } from './attachment-lightbox';
 import type { AttachmentPreview } from './attachments';
@@ -159,7 +160,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   } = useAppSession();
   const { host, guest: guestSession } = useShellCapabilities();
   const accessRequests = useAccessRequests(workspace.id);
-  const decideAccessRequest = useDecideAccessRequest(api ?? null, workspace.id);
   // A request row chosen in the attention menu; the menu bar's arrives as
   // `pendingAccessRequestId` instead. Either opens the one dialog.
   const [openAccessRequestId, setOpenAccessRequestId] = useState<string | null>(null);
@@ -183,13 +183,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const navigate = useNavigate();
   const location = useLocation();
   useEffect(() => {
-    const path = location.pathname;
-    // A Channel, a thread under one, or a thread on its own: what reopens next time.
-    if (!/^\/channels\/[^/]+(\/threads\/[^/]+)?$/.test(path) && !/^\/workstreams\/[^/]+$/.test(path)) return;
-    const breakout = new URLSearchParams(location.search).get('substream');
-    writeLayout(layoutKey(workspace.id, workspace.currentUser.id, 'last-route'),
-      breakout ? `${path}?substream=${encodeURIComponent(breakout)}` : path);
-  }, [location.pathname, location.search, workspace.id, workspace.currentUser.id]);
+    // A Canvas or a Sidekick, or either home: what reopens next time.
+    const path = restorableRoute(location.pathname);
+    if (path) writeLayout(layoutKey(workspace.id, workspace.currentUser.id, 'last-route'), path);
+  }, [location.pathname, workspace.id, workspace.currentUser.id]);
   const queryClient = useQueryClient();
   const railOpen = useUiStore((state) => state.railOpen);
   const railWidth = useUiStore((state) => state.railWidth);
@@ -410,10 +407,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   ].filter(Boolean).join(' ');
   const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
-  const activeWorkstreamId = openWorkstreamId(location.pathname);
-  // A pending Channel may not be in the Organization's directory yet, and
-  // WorkspaceDO records presence naming one it has not listed as no Channel.
-  const foregroundWorkstreamId = activeRealtimeWorkstreamId(activeWorkstreamId, workstreams.data);
+  // A Canvas id is a conversation-parent id, so presence names the open
+  // Canvas the way it named an open Thread (`docs/canvases.md`, Presence).
+  const foregroundWorkstreamId = openCanvasId(location.pathname);
   useEffect(() => {
     setForegroundWorkstreamId(foregroundWorkstreamId);
   }, [foregroundWorkstreamId, setForegroundWorkstreamId]);
@@ -547,12 +543,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         )}
         downloadedUpdate={downloadedUpdate}
         workspace={workspace}
-        attentionItems={attentionItems}
-        attentionComplete={attentionComplete}
-        accessRequests={accessRequests}
-        accessDecisionFailed={decideAccessRequest.isError}
-        onDecideAccessRequest={(request, decision) => decideAccessRequest.mutate({ id: request.id, decision })}
-        onOpenAccessRequest={(request) => setOpenAccessRequestId(request.id)}
       />
         <span aria-live="polite" className="sr-only">
           {switchingWorkspace ? `Opening ${switchingWorkspace.name}…` : ''}
