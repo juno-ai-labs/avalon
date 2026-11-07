@@ -186,12 +186,12 @@ Ace deliberately discards Cloudflare's returned purge reference, so this first
 Queues surface has no delete capability.
 
 `GET /api/models` reads the five managed `agent-model-*` JSON flags, one per
-role in `AGENT_MODEL_ROLES`, in rank order: the main agent run (`workstream`,
-labelled Work-stream agent; the role and its key keep their storage name), the
-delegated inline subagent (`inline_child`), pasted-text naming
-(`workstream_naming`, which titles a block of pasted text as it becomes an
-attachment and keeps its Thread-era key because the key is what Flagship
-stores), the memory sweep (`memory_sweep`), and the Sidekick wizard's
+role in `AGENT_MODEL_ROLES`, in rank order: the main agent run of a Canvas's
+Chat or a Sidekick's conversation (`workstream`, labelled Conversation agent;
+the role and its key keep their storage name), the delegated inline subagent
+(`inline_child`), pasted-text naming (`workstream_naming`, labelled Pasted-text
+naming, which titles a long pasted text so its attachment chip has a name, and
+keeps its Thread-era key because the key is what Flagship stores), the memory sweep (`memory_sweep`), and the Sidekick wizard's
 independent `agent-model-sidekick-authoring` route. The roles that served
 retired surfaces — work-stream description, suggestion draft, suggested-work
 admission and ranking, and conversation import — are not in the catalog, and

@@ -275,7 +275,6 @@ function requireViewerVersionForNotifications(
   }
 }
 
-/** One child's versioned effect, addressed to its parent. */
 /**
  * The parent kind an effect envelope may carry: the hosted Canvas and Sidekick
  * and the retired Thread (`workstream`) and Space. Wider than
@@ -287,6 +286,7 @@ function requireViewerVersionForNotifications(
  */
 export const EffectParentKindSchema = z.enum(["workstream", "automation", "space", "canvas"]);
 
+/** One child's versioned effect, addressed to its parent. */
 export const ConversationEffectEnvelopeSchema = z.strictObject({
   kind: z.literal("conversation_effect"),
   contractVersion: z.literal(1),

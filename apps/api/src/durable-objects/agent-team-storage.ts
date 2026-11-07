@@ -11,11 +11,12 @@ function retiredAgentKind(value: string): string | null {
 
 /**
  * A stored agent id that must be live. A Thread-era row (an agent of a
- * retired Thread or Space) is refused by name rather than as a schema failure.
+ * retired Thread or Space) is refused by name, as a domain result, rather than
+ * as a schema failure.
  */
 function storedAgentId(value: string): AgentId {
   const retired = retiredAgentKind(value);
-  if (retired) throw new Error(`conversation_parent_kind_retired:${retired}`);
+  if (retired) throw new AgentTeamError(`conversation_parent_kind_retired:${retired}`);
   return AgentIdSchema.parse(value);
 }
 
@@ -58,7 +59,8 @@ export interface AgentMessageRoute {
 }
 
 type AgentTeamErrorCode = "agent_ownership_conflict" | "agent_ownership_cycle" | "agent_not_teammate"
-  | "agent_message_identity_conflict" | "agent_message_not_received";
+  | "agent_message_identity_conflict" | "agent_message_not_received"
+  | `conversation_parent_kind_retired:${string}`;
 class AgentTeamError extends Error {
   constructor(readonly code: AgentTeamErrorCode) { super(code); }
 }

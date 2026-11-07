@@ -1023,6 +1023,12 @@ async function consumeEffect(
       message.ack();
       return;
     }
+    // A parent's effect from a retired Thread or Space retries to the
+    // dead-letter queue under the kind's name, as a child's does when its
+    // parent refuses it; the dead-letter queue is the signal.
+    if (envelope.parentKind === "workstream" || envelope.parentKind === "space") {
+      throw new Error(`conversation_parent_kind_retired:${envelope.parentKind}`);
+    }
     if (envelope.effect.kind === "scope_grant_directory") {
       const workspace = await workspaceDirectory(env, envelope.workspaceId);
       await workspace.applyScopeGrantDirectory(envelope);
@@ -1040,10 +1046,11 @@ async function consumeEffect(
       return;
     }
     // An activity row, a mention or an add as a `parent_effect`: only the
-    // Thread host published these, from its `parent_outbox`, and Threads are
-    // retired. A hosted parent records a mention where its conversation's
-    // effect lands (`HostedConversation.applyChildEnvelope`), so a late copy
-    // from a retired Thread is acknowledged and named rather than applied.
+    // Thread host published these, from its `parent_outbox`. A hosted parent
+    // records a mention where its conversation's effect lands
+    // (`HostedConversation.applyChildEnvelope`), so a leftover under a current
+    // parent kind is acknowledged and named rather than applied; a retired
+    // kind's was refused above.
     logInfo(env, "conversation_effect_terminal", { ...fields, outcome: "ignored", reason: "parent_effect_producer_retired" });
     message.ack();
   } catch (error) {

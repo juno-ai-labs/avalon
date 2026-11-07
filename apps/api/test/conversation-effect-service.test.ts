@@ -79,7 +79,7 @@ function message(
     sourceVersion: number;
     requiredProjectionVersion?: number;
     parentId?: string;
-    parentKind?: "canvas" | "automation";
+    parentKind?: "canvas" | "automation" | "workstream" | "space";
   },
 ): ParentEffectEnvelope {
   const requiredProjectionVersion = isPersonNotificationEffect(effect)
@@ -822,6 +822,35 @@ describe("the activity Queue consumer's effect legs", () => {
         "SELECT COUNT(*) AS count FROM workstream_notification_intents",
       ).get()).toEqual({ count: 0 });
     } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
+  it("retries a retired Thread's or Space's parent effect under the kind's name, to dead-letter it", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace();
+    const env = regionalEnv(database, workspace);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      for (const parentKind of ["workstream", "space"] as const) {
+        const envelope = message(mentionEffect(`:${parentKind}`), {
+          messageId: `notification:${parentKind}:${MESSAGE_ID}`, partitionKey: "notification", sourceVersion: 3, parentKind,
+        });
+        const { batch, ack, retry } = queued(envelope);
+        await consumeActivityQueue(batch, env);
+        expect(ack).not.toHaveBeenCalled();
+        expect(retry).toHaveBeenCalledOnce();
+        expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+          event: "conversation_effect_processing_failed", message_id: envelope.messageId,
+          reason: `conversation_parent_kind_retired:${parentKind}`,
+        }));
+      }
+      expect(workspace.database.prepare(
+        "SELECT COUNT(*) AS count FROM workstream_notification_intents",
+      ).get()).toEqual({ count: 0 });
+    } finally {
+      warn.mockRestore();
       database.close();
       workspace.database.close();
     }
