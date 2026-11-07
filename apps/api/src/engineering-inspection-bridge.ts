@@ -28,33 +28,28 @@ import {
   EngineeringD1SqlResultSchema,
   EngineeringSidekickListLookupSchema,
   EngineeringSqlLookupSchema,
-  EngineeringSubstreamTargetLookupSchema,
-  EngineeringSubstreamListLookupSchema,
+  EngineeringConversationTargetLookupSchema,
   EngineeringWorkspaceTargetLookupSchema,
-  EngineeringWorkstreamListLookupSchema,
+  EngineeringCanvasListLookupSchema,
   ListEngineeringWorkspacesInputSchema,
   ListEngineeringWorkspacesResultSchema,
   SearchEngineeringOrganizationsInputSchema,
   SearchEngineeringOrganizationsResultSchema,
   SearchEngineeringUsersInputSchema,
   SearchEngineeringUsersResultSchema,
-  EngineeringSpaceListLookupSchema,
-  SubstreamSqlInspectionInputSchema,
-  SubstreamInspectionInputSchema,
+  ConversationSqlInspectionInputSchema,
+  ConversationInspectionInputSchema,
   WorkspaceInspectionInputSchema,
   WorkspaceSqlInspectionInputSchema,
-  WorkstreamInspectionInputSchema,
   type EngineeringInspectionRpcBinding,
   type EngineeringArtifactListLookup,
   type EngineeringArtifactTargetLookup,
   type EngineeringD1SqlResult,
   type EngineeringSidekickListLookup,
-  type EngineeringSpaceListLookup,
   type EngineeringSqlLookup,
-  type EngineeringSubstreamListLookup,
-  type EngineeringSubstreamTargetLookup,
+  type EngineeringConversationTargetLookup,
   type EngineeringWorkspaceTargetLookup,
-  type EngineeringWorkstreamListLookup,
+  type EngineeringCanvasListLookup,
   type ListEngineeringWorkspacesResult,
   type SearchEngineeringOrganizationsResult,
   type SearchEngineeringUsersResult,
@@ -102,18 +97,13 @@ const WorkspaceInventoryRowSchema = z.strictObject({
   authority_state: z.string().nullable(),
 });
 
-const WorkstreamDirectoryRowSchema = z.strictObject({
-  workstream_id: z.string(),
+const CanvasDirectoryRowSchema = z.strictObject({
+  canvas_id: z.string(),
   title: z.string(),
-  scope: z.string(),
-  exact_state: z.string(),
-  system_kind: z.string().nullable(),
-  last_activity_at: z.number().int().nonnegative(),
-  archived_at: z.number().int().nonnegative().nullable(),
-});
-
-const SubstreamDirectoryRowSchema = z.strictObject({
-  substream_id: z.string(),
+  visibility: z.string(),
+  created_by_user_id: z.string(),
+  created_at: z.number().int().nonnegative(),
+  updated_at: z.number().int().nonnegative(),
 });
 
 const ArtifactRegistryRowSchema = z.strictObject({
@@ -125,14 +115,6 @@ const ArtifactRegistryRowSchema = z.strictObject({
   current_version: z.number().int().positive(),
   hostname_stub: z.string().nullable(),
   updated_at: z.number().int().nonnegative(),
-});
-
-const SpaceDirectoryRowSchema = z.strictObject({
-  space_id: z.string(),
-  title: z.string(),
-  scope: z.string(),
-  system_role: z.string().nullable(),
-  archived_at: z.number().int().nonnegative().nullable(),
 });
 
 const SidekickDirectoryRowSchema = z.strictObject({
@@ -162,29 +144,27 @@ async function workspaceStub(env: Env, workspaceId: string) {
   );
 }
 
-async function resolveInspectionSubstreamRoute(
+/**
+ * A Canvas's or Sidekick's conversation, by the parent's id, in this
+ * workspace. A route becomes active only after the parent's anchor and its
+ * main conversation exist, and a child is reached only once its parent has
+ * registered it, so this check cannot materialize an absent object.
+ */
+async function resolveInspectionConversationRoute(
   env: Env,
-  input: { workspaceId: string; workstreamId: string; substreamId: string },
+  input: { workspaceId: string; conversationId: string; substreamId?: string | undefined },
   expectedGeneration?: number,
 ): Promise<InspectionWorkstreamRoute | null> {
-  const route = await resolveInspectionWorkstreamRoute(
-    env,
-    input.workstreamId,
-    expectedGeneration,
-  );
+  const route = await resolveInspectionWorkstreamRoute(env, input.conversationId, expectedGeneration);
   if (!route || route.workspace_id !== input.workspaceId) return null;
-  if (input.substreamId === "0") {
-    // A route becomes active only after creation/import has initialized the
-    // main substream, so this check cannot materialize a previously absent DO.
-    return route;
-  }
+  if ((input.substreamId ?? "0") === "0") return route;
   const known = await inspectionSubstreamIds(env, route);
-  return known.includes(input.substreamId) ? route : null;
+  return known.includes(input.substreamId!) ? route : null;
 }
 
 /**
  * Every conversation a parent hosted by the Organization object has heard
- * from: a Channel's in the shared parent tables, a moved Sidekick's in its own.
+ * from: a Canvas's in the shared parent tables, a Sidekick's in its own.
  */
 async function inspectionSubstreamIds(env: Env, route: InspectionWorkstreamRoute): Promise<string[]> {
   const workspace = await workspaceStub(env, route.workspace_id);
@@ -257,8 +237,7 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       const request = SendEngineeringMessageInputSchema.parse(input);
       return auditedEngineeringWrite(this.env, EngineeringOperatorSchema.parse(operator), {
         action: "send_message", orgId: request.orgId, representedUserId: request.userId,
-        operationId: request.operationId, threadId: request.threadId,
-        ...(request.breakoutId === undefined ? {} : { breakoutId: request.breakoutId }),
+        operationId: request.operationId, conversationId: request.conversationId,
       }, async () => SendEngineeringMessageResultSchema.parse(await sendEngineeringMessage(this.env, request)),
       (result) => ({ turnId: result.receipt.turn.turnId, deliveryState: result.receipt.deliveryState }));
     });
@@ -462,56 +441,33 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
-  async listWorkstreams(input: unknown): Promise<EngineeringWorkstreamListLookup> {
-    const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listWorkstreams");
+  async listCanvases(input: unknown): Promise<EngineeringCanvasListLookup> {
+    const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listCanvases");
     if (!await resolveInspectionWorkspaceRoute(this.env, request.workspaceId)) {
       return { found: false };
     }
     const workspace = await workspaceStub(this.env, request.workspaceId);
     const result = await workspace.runInspectionSql({
-      sql: `SELECT workstream_id, title, scope, exact_state, system_kind,
-                   last_activity_at, archived_at
-              FROM channels
-             ORDER BY last_activity_at DESC, workstream_id`,
-      bindings: [],
+      sql: `SELECT canvas_id, title, visibility, created_by_user_id, created_at, updated_at
+              FROM canvas_directory
+             WHERE workspace_id = ?
+             ORDER BY updated_at DESC, canvas_id`,
+      bindings: [request.workspaceId],
     });
-    return EngineeringWorkstreamListLookupSchema.parse({
+    return EngineeringCanvasListLookupSchema.parse({
       found: true,
       value: {
         region: this.env.AVALON_REGION,
         workspaceId: request.workspaceId,
-        items: z.array(WorkstreamDirectoryRowSchema).parse(result.rows).map((row) => ({
+        items: z.array(CanvasDirectoryRowSchema).parse(result.rows).map((row) => ({
           workspaceId: request.workspaceId,
-          workstreamId: row.workstream_id,
+          canvasId: row.canvas_id,
           region: this.env.AVALON_REGION,
           title: row.title,
-          scope: row.scope,
-          state: row.exact_state,
-          systemKind: row.system_kind,
-          lastActivityAt: row.last_activity_at,
-          archivedAt: row.archived_at,
-        })),
-      },
-    });
-  }
-
-  async listSubstreams(input: unknown): Promise<EngineeringSubstreamListLookup> {
-    const request = parseRpcInput(WorkstreamInspectionInputSchema, input, "listSubstreams");
-    const route = await resolveInspectionWorkstreamRoute(this.env, request.workstreamId);
-    if (!route) return { found: false };
-    const substreamIds = [...new Set(["0", ...await inspectionSubstreamIds(this.env, route)])].sort();
-    return EngineeringSubstreamListLookupSchema.parse({
-      found: true,
-      value: {
-        region: this.env.AVALON_REGION,
-        workspaceId: route.workspace_id,
-        workstreamId: route.workstream_id,
-        items: z.array(SubstreamDirectoryRowSchema).parse(substreamIds.map((substreamId) => ({ substream_id: substreamId })))
-          .map((row) => ({
-          workspaceId: route.workspace_id,
-          workstreamId: route.workstream_id,
-          substreamId: row.substream_id,
-          region: this.env.AVALON_REGION,
+          visibility: row.visibility,
+          createdByUserId: row.created_by_user_id,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
         })),
       },
     });
@@ -548,45 +504,6 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
           title: row.title,
           nextRunAt: row.next_run_at,
           projectedAt: row.projected_at,
-        })),
-      },
-    });
-  }
-
-  /**
-   * Every Space in a workspace, archived ones included.
-   *
-   * Read from `spaces` the way `listSidekicks` reads
-   * `automation_directory`: the Organization's projection is what says a Space
-   * exists, and an archived Space is a common inspection target even though no
-   * product list shows it.
-   */
-  async listSpaces(input: unknown): Promise<EngineeringSpaceListLookup> {
-    const request = parseRpcInput(WorkspaceInspectionInputSchema, input, "listSpaces");
-    if (!await resolveInspectionWorkspaceRoute(this.env, request.workspaceId)) {
-      return { found: false };
-    }
-    const workspace = await workspaceStub(this.env, request.workspaceId);
-    const result = await workspace.runInspectionSql({
-      sql: `SELECT space_id, title, scope, system_role, archived_at
-              FROM spaces
-             ORDER BY created_at, space_id`,
-      bindings: [],
-    });
-    return EngineeringSpaceListLookupSchema.parse({
-      found: true,
-      value: {
-        region: this.env.AVALON_REGION,
-        workspaceId: request.workspaceId,
-        items: z.array(SpaceDirectoryRowSchema).parse(result.rows).map((row) => ({
-          workspaceId: request.workspaceId,
-          spaceId: row.space_id,
-          region: this.env.AVALON_REGION,
-          name: row.title,
-          scope: row.scope,
-          status: row.archived_at === null ? "active" : "archived",
-          systemRole: row.system_role,
-          archivedAt: row.archived_at,
         })),
       },
     });
@@ -641,17 +558,16 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
-  async resolveSubstream(input: unknown): Promise<EngineeringSubstreamTargetLookup> {
-    const request = parseRpcInput(SubstreamInspectionInputSchema, input, "resolveSubstream");
-    const route = await resolveInspectionSubstreamRoute(this.env, request);
+  async resolveConversation(input: unknown): Promise<EngineeringConversationTargetLookup> {
+    const request = parseRpcInput(ConversationInspectionInputSchema, input, "resolveConversation");
+    const route = await resolveInspectionConversationRoute(this.env, request);
     if (!route) return { found: false };
-    return EngineeringSubstreamTargetLookupSchema.parse({
+    return EngineeringConversationTargetLookupSchema.parse({
       found: true,
       value: {
         region: this.env.AVALON_REGION,
         workspaceId: request.workspaceId,
-        workstreamId: request.workstreamId,
-        substreamId: request.substreamId,
+        conversationId: request.conversationId,
         authorityGeneration: route.authority_generation,
       },
     });
@@ -692,33 +608,27 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
     });
   }
 
-  async runSubstreamSql(input: unknown): Promise<EngineeringSqlLookup> {
-    const request = parseRpcInput(SubstreamSqlInspectionInputSchema, input, "runSubstreamSql");
-    const route = await resolveInspectionSubstreamRoute(
-      this.env,
-      request,
-      request.authorityGeneration,
-    );
+  /** A Canvas's or Sidekick's main conversation object, named by the parent's id. */
+  async runConversationSql(input: unknown): Promise<EngineeringSqlLookup> {
+    const request = parseRpcInput(ConversationSqlInspectionInputSchema, input, "runConversationSql");
+    const route = await resolveInspectionConversationRoute(this.env, request, request.authorityGeneration);
     if (!route) return { found: false };
-    const substream = await durableObjectStubForWorkspace(
+    const conversation = await durableObjectStubForWorkspace(
       this.env,
       this.env.SUBSTREAM_AGENTS,
       request.workspaceId,
-      conversationObjectName(
-        this.env.AVALON_REGION,
-        request.workspaceId,
-        request.workstreamId,
-        asSubstreamId(request.substreamId),
-      ),
+      conversationObjectName(this.env.AVALON_REGION, request.workspaceId, request.conversationId,
+        asSubstreamId(request.substreamId ?? "0")),
     );
     return EngineeringSqlLookupSchema.parse({
       found: true,
       value: {
         region: this.env.AVALON_REGION,
         workspaceId: request.workspaceId,
-        workstreamId: request.workstreamId,
-        substreamId: request.substreamId,
-        result: await substream.runInspectionSql(request.query),
+        // The storage names of a conversation's address: its parent's id and Main.
+        workstreamId: request.conversationId,
+        substreamId: request.substreamId ?? "0",
+        result: await conversation.runInspectionSql(request.query),
       },
     });
   }

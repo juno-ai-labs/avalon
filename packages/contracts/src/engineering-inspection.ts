@@ -11,9 +11,6 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
 } from "./identifiers";
-// The Space id these operator shapes still carry is a plain id until the
-// engineering MCP stops listing Spaces (plan step B-8, step 2).
-const SpaceIdSchema = z.string().uuid();
 import { ReadTranscriptRequestSchema } from "./workstream-transcript";
 
 /** Trusted Access identity supplied by the MCP Worker, never a tool argument. */
@@ -53,8 +50,7 @@ export const SendEngineeringMessageInputSchema = deferredZodSchema(() => z.stric
   runMode: CreateMessageRequestSchema.shape.runMode,
   ...engineeringViewer,
   operationId: IdSchema.describe("A fresh UUID for this message; reuse it after an uncertain outcome."),
-  threadId: WorkstreamIdSchema,
-  breakoutId: SubstreamIdSchema.optional().describe("Omit for the Thread's Main; a Breakout is authorized independently."),
+  conversationId: IdSchema.describe("A Canvas ID (posts to its Chat) or a Sidekick ID (posts to its shared conversation)."),
   recordOnly: z.boolean().optional().describe("true posts for the conversation's readers without starting a Rally run, whatever addressing would decide. false or omitted uses normal addressing."),
 }));
 export type SendEngineeringMessageInput = z.infer<typeof SendEngineeringMessageInputSchema>;
@@ -129,10 +125,15 @@ export const RetireThreadsResultSchema = deferredZodSchema(() => z.strictObject(
 }));
 export type RetireThreadsResult = z.infer<typeof RetireThreadsResultSchema>;
 
+/**
+ * A conversation an operator reads as a user: a Canvas's Chat or a Sidekick's
+ * shared conversation. `kind` is what the operator asked for; the region
+ * refuses an id whose parent is the other kind (`conversation_kind_mismatch`).
+ */
 export const ReadEngineeringConversationInputSchema = deferredZodSchema(() => z.strictObject({
   ...engineeringViewer,
-  threadId: WorkstreamIdSchema,
-  breakoutId: SubstreamIdSchema.optional(),
+  kind: z.enum(["canvas", "sidekick"]),
+  conversationId: IdSchema,
   ...ReadTranscriptRequestSchema.shape,
 }));
 export type ReadEngineeringConversationInput = z.infer<typeof ReadEngineeringConversationInputSchema>;
@@ -176,26 +177,18 @@ export const EngineeringWorkspaceSchema = deferredZodSchema(() => z.strictObject
 }));
 export type EngineeringWorkspace = z.infer<typeof EngineeringWorkspaceSchema>;
 
-export const EngineeringWorkstreamSchema = deferredZodSchema(() => z.strictObject({
+/** One Canvas, read from the Organization's `canvas_directory`. */
+export const EngineeringCanvasSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
+  canvasId: IdSchema,
   region: RegionSchema,
   title: z.string(),
-  scope: z.string(),
-  state: z.string(),
-  systemKind: z.string().nullable(),
-  lastActivityAt: z.number().int().nonnegative(),
-  archivedAt: z.number().int().nonnegative().nullable(),
+  visibility: z.string(),
+  createdByUserId: z.string(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
 }));
-export type EngineeringWorkstream = z.infer<typeof EngineeringWorkstreamSchema>;
-
-export const EngineeringSubstreamSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
-  substreamId: SubstreamIdSchema,
-  region: RegionSchema,
-}));
-export type EngineeringSubstream = z.infer<typeof EngineeringSubstreamSchema>;
+export type EngineeringCanvas = z.infer<typeof EngineeringCanvasSchema>;
 
 /**
  * One Sidekick as its workspace's directory holds it.
@@ -244,24 +237,6 @@ export const EngineeringArtifactSchema = deferredZodSchema(() => z.strictObject(
 }));
 export type EngineeringArtifact = z.infer<typeof EngineeringArtifactSchema>;
 
-/**
- * One Space as its Organization holds it.
- *
- * Reported the way a Sidekick is, including an archived one: the object
- * outlives the row a product surface renders, and an archived Space is a
- * common inspection target.
- */
-export const EngineeringSpaceSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: WorkspaceIdSchema,
-  spaceId: SpaceIdSchema,
-  region: RegionSchema,
-  name: z.string(),
-  scope: z.string(),
-  status: z.string(),
-  systemRole: z.string().nullable(),
-  archivedAt: z.number().int().nonnegative().nullable(),
-}));
-export type EngineeringSpace = z.infer<typeof EngineeringSpaceSchema>;
 
 export const ListEngineeringWorkspacesInputSchema = z.strictObject({});
 export type ListEngineeringWorkspacesInput = z.infer<typeof ListEngineeringWorkspacesInputSchema>;
@@ -357,17 +332,18 @@ export const WorkspaceInspectionInputSchema = deferredZodSchema(() => z.strictOb
 }));
 export type WorkspaceInspectionInput = z.infer<typeof WorkspaceInspectionInputSchema>;
 
-export const WorkstreamInspectionInputSchema = deferredZodSchema(() => z.strictObject({
-  workstreamId: WorkstreamIdSchema,
-}));
-export type WorkstreamInspectionInput = z.infer<typeof WorkstreamInspectionInputSchema>;
-
-export const SubstreamInspectionInputSchema = deferredZodSchema(() => z.strictObject({
+/**
+ * A Canvas's or Sidekick's conversation object, by the parent's id: the
+ * object is named by that id (a `workstream` id in storage) and, unless
+ * `substreamId` names one of its registered children (a Sidekick run's or a
+ * background agent's conversation), is its main conversation, substream 0.
+ */
+export const ConversationInspectionInputSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
-  substreamId: SubstreamIdSchema,
+  conversationId: IdSchema,
+  substreamId: SubstreamIdSchema.optional(),
 }));
-export type SubstreamInspectionInput = z.infer<typeof SubstreamInspectionInputSchema>;
+export type ConversationInspectionInput = z.infer<typeof ConversationInspectionInputSchema>;
 
 export const ArtifactInspectionInputSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: WorkspaceIdSchema,
@@ -384,15 +360,10 @@ export const EngineeringWorkspaceTargetSchema = deferredZodSchema(() => z.strict
 }));
 export type EngineeringWorkspaceTarget = z.infer<typeof EngineeringWorkspaceTargetSchema>;
 
-export const EngineeringWorkstreamTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
-  workstreamId: WorkstreamIdSchema,
+export const EngineeringConversationTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
+  conversationId: IdSchema,
 }).strict());
-export type EngineeringWorkstreamTarget = z.infer<typeof EngineeringWorkstreamTargetSchema>;
-
-export const EngineeringSubstreamTargetSchema = deferredZodSchema(() => EngineeringWorkstreamTargetSchema.unwrap().extend({
-  substreamId: SubstreamIdSchema,
-}).strict());
-export type EngineeringSubstreamTarget = z.infer<typeof EngineeringSubstreamTargetSchema>;
+export type EngineeringConversationTarget = z.infer<typeof EngineeringConversationTargetSchema>;
 
 export const EngineeringArtifactTargetSchema = deferredZodSchema(() => EngineeringWorkspaceTargetSchema.unwrap().extend({
   artifactId: ArtifactIdSchema,
@@ -405,11 +376,11 @@ export const WorkspaceSqlInspectionInputSchema = deferredZodSchema(() => Workspa
 }).strict());
 export type WorkspaceSqlInspectionInput = z.infer<typeof WorkspaceSqlInspectionInputSchema>;
 
-export const SubstreamSqlInspectionInputSchema = deferredZodSchema(() => SubstreamInspectionInputSchema.unwrap().extend({
+export const ConversationSqlInspectionInputSchema = deferredZodSchema(() => ConversationInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
   query: InspectionSqlRequestSchema,
 }).strict());
-export type SubstreamSqlInspectionInput = z.infer<typeof SubstreamSqlInspectionInputSchema>;
+export type ConversationSqlInspectionInput = z.infer<typeof ConversationSqlInspectionInputSchema>;
 
 export const ArtifactSqlInspectionInputSchema = deferredZodSchema(() => ArtifactInspectionInputSchema.unwrap().extend({
   authorityGeneration: AuthorityGenerationSchema,
@@ -424,20 +395,12 @@ function lookupResultSchema<T extends z.ZodType>(value: T) {
   ]);
 }
 
-export const EngineeringWorkstreamListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
+export const EngineeringCanvasListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
-  items: z.array(EngineeringWorkstreamSchema),
+  items: z.array(EngineeringCanvasSchema),
 })));
-export type EngineeringWorkstreamListLookup = z.infer<typeof EngineeringWorkstreamListLookupSchema>;
-
-export const EngineeringSubstreamListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
-  region: RegionSchema,
-  workspaceId: WorkspaceIdSchema,
-  workstreamId: WorkstreamIdSchema,
-  items: z.array(EngineeringSubstreamSchema),
-})));
-export type EngineeringSubstreamListLookup = z.infer<typeof EngineeringSubstreamListLookupSchema>;
+export type EngineeringCanvasListLookup = z.infer<typeof EngineeringCanvasListLookupSchema>;
 
 export const EngineeringSidekickListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
@@ -446,12 +409,6 @@ export const EngineeringSidekickListLookupSchema = deferredZodSchema(() => looku
 })));
 export type EngineeringSidekickListLookup = z.infer<typeof EngineeringSidekickListLookupSchema>;
 
-export const EngineeringSpaceListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
-  region: RegionSchema,
-  workspaceId: WorkspaceIdSchema,
-  items: z.array(EngineeringSpaceSchema),
-})));
-export type EngineeringSpaceListLookup = z.infer<typeof EngineeringSpaceListLookupSchema>;
 
 export const EngineeringArtifactListLookupSchema = deferredZodSchema(() => lookupResultSchema(z.strictObject({
   region: RegionSchema,
@@ -467,11 +424,11 @@ export type EngineeringWorkspaceTargetLookup = z.infer<
   typeof EngineeringWorkspaceTargetLookupSchema
 >;
 
-export const EngineeringSubstreamTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
-  EngineeringSubstreamTargetSchema,
+export const EngineeringConversationTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
+  EngineeringConversationTargetSchema,
 ));
-export type EngineeringSubstreamTargetLookup = z.infer<
-  typeof EngineeringSubstreamTargetLookupSchema
+export type EngineeringConversationTargetLookup = z.infer<
+  typeof EngineeringConversationTargetLookupSchema
 >;
 
 export const EngineeringArtifactTargetLookupSchema = deferredZodSchema(() => lookupResultSchema(
@@ -507,7 +464,6 @@ export const EngineeringSqlLookupSchema = deferredZodSchema(() => lookupResultSc
   substreamId: SubstreamIdSchema.nullable(),
   sidekickId: AutomationIdSchema.optional(),
   artifactId: ArtifactIdSchema.optional(),
-  spaceId: SpaceIdSchema.optional(),
   result: InspectionSqlResultSchema,
 })));
 export type EngineeringSqlLookup = z.infer<typeof EngineeringSqlLookupSchema>;
@@ -548,16 +504,14 @@ export interface EngineeringInspectionRpcBinding {
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;
   searchOrganizations(input: SearchEngineeringOrganizationsInput): Promise<SearchEngineeringOrganizationsResult>;
   searchUsers(input: SearchEngineeringUsersInput): Promise<SearchEngineeringUsersResult>;
-  listWorkstreams(input: WorkspaceInspectionInput): Promise<EngineeringWorkstreamListLookup>;
-  listSubstreams(input: WorkstreamInspectionInput): Promise<EngineeringSubstreamListLookup>;
+  listCanvases(input: WorkspaceInspectionInput): Promise<EngineeringCanvasListLookup>;
   listSidekicks(input: WorkspaceInspectionInput): Promise<EngineeringSidekickListLookup>;
-  listSpaces(input: WorkspaceInspectionInput): Promise<EngineeringSpaceListLookup>;
   listArtifacts(input: WorkspaceInspectionInput): Promise<EngineeringArtifactListLookup>;
   resolveWorkspace(input: WorkspaceInspectionInput): Promise<EngineeringWorkspaceTargetLookup>;
-  resolveSubstream(input: SubstreamInspectionInput): Promise<EngineeringSubstreamTargetLookup>;
+  resolveConversation(input: ConversationInspectionInput): Promise<EngineeringConversationTargetLookup>;
   resolveArtifact(input: ArtifactInspectionInput): Promise<EngineeringArtifactTargetLookup>;
   runWorkspaceSql(input: WorkspaceSqlInspectionInput): Promise<EngineeringSqlLookup>;
-  runSubstreamSql(input: SubstreamSqlInspectionInput): Promise<EngineeringSqlLookup>;
+  runConversationSql(input: ConversationSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runArtifactSql(input: ArtifactSqlInspectionInput): Promise<EngineeringSqlLookup>;
   runD1Sql(input: D1SqlInspectionInput): Promise<EngineeringD1SqlResult>;
 }

@@ -33,10 +33,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     searchUsers: vi.fn<EngineeringInspectionRpcBinding["searchUsers"]>(
       async () => ({ region, items: [] }),
     ),
-    listWorkstreams: vi.fn<EngineeringInspectionRpcBinding["listWorkstreams"]>(
-      async () => ({ found: false }),
-    ),
-    listSubstreams: vi.fn<EngineeringInspectionRpcBinding["listSubstreams"]>(
+    listCanvases: vi.fn<EngineeringInspectionRpcBinding["listCanvases"]>(
       async () => ({ found: false }),
     ),
     listSidekicks: vi.fn<EngineeringInspectionRpcBinding["listSidekicks"]>(
@@ -45,13 +42,10 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     listArtifacts: vi.fn<EngineeringInspectionRpcBinding["listArtifacts"]>(
       async () => ({ found: false }),
     ),
-    listSpaces: vi.fn<EngineeringInspectionRpcBinding["listSpaces"]>(
-      async () => ({ found: false }),
-    ),
     resolveWorkspace: vi.fn<EngineeringInspectionRpcBinding["resolveWorkspace"]>(
       async () => ({ found: false }),
     ),
-    resolveSubstream: vi.fn<EngineeringInspectionRpcBinding["resolveSubstream"]>(
+    resolveConversation: vi.fn<EngineeringInspectionRpcBinding["resolveConversation"]>(
       async () => ({ found: false }),
     ),
     resolveArtifact: vi.fn<EngineeringInspectionRpcBinding["resolveArtifact"]>(
@@ -60,7 +54,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     runWorkspaceSql: vi.fn<EngineeringInspectionRpcBinding["runWorkspaceSql"]>(
       async () => ({ found: false }),
     ),
-    runSubstreamSql: vi.fn<EngineeringInspectionRpcBinding["runSubstreamSql"]>(
+    runConversationSql: vi.fn<EngineeringInspectionRpcBinding["runConversationSql"]>(
       async () => ({ found: false }),
     ),
     runArtifactSql: vi.fn<EngineeringInspectionRpcBinding["runArtifactSql"]>(
@@ -123,25 +117,27 @@ describe("Rally engineering MCP tools", () => {
     });
     expect(response.result).toMatchObject({ serverInfo: {
       name: "Rally engineering",
-      description: "Inspect and administer Rally organizations, Channels, Threads, Breakouts, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and send messages as a selected Rally user.",
+      description: "Inspect and administer Rally organizations, Canvases, Sidekicks and artifacts. Read production databases, inference data and Worker logs; manage feature flags and model routing; create organizations and send messages as a selected Rally user.",
     } });
     const instructions = (response.result as { instructions: string }).instructions;
-    expect(instructions).toContain("Main is substream 0.");
+    expect(instructions).toContain("a Sidekick is an automation");
+    expect(instructions).not.toContain("Thread");
     expect(instructions).toContain("reuse the same operationId and arguments after an uncertain outcome");
     expect(instructions).toContain("Never expose credentials");
   });
 
-  it.each(["read_thread", "read_breakout"])("returns unquoted participant text from %s in the authoritative region", async (name) => {
+  it.each([["read_canvas_chat", "canvas", "canvasId"], ["read_sidekick_conversation", "sidekick", "sidekickId"]] as const)("returns unquoted participant text from %s in the authoritative region", async (name, kind, idKey) => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
     const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
     vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
-    vi.mocked(enterprise.readConversation).mockResolvedValue({ text: "Thread: Releases\n\nMaya: Ready." });
-    const request = { orgId, userId: asUserId("00000000-0000-7000-8000-000000000ef2"),
-      threadId: "00000000-0000-7000-8000-000000000ef4", ...(name === "read_breakout" ? { breakoutId: "00000000-0000-7000-8000-000000000ef5" } : {}) };
-    const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name, arguments: request });
-    expect(response.result).toMatchObject({ content: [{ type: "text", text: "Thread: Releases\n\nMaya: Ready." }] });
-    expect(enterprise.readConversation).toHaveBeenCalledExactlyOnceWith({ ...request, afterSequence: 0 });
+    vi.mocked(enterprise.readConversation).mockResolvedValue({ text: "Canvas: Releases\n\nMaya: Ready." });
+    const viewer = { orgId, userId: asUserId("00000000-0000-7000-8000-000000000ef2") };
+    const conversationId = "00000000-0000-7000-8000-000000000ef4";
+    const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call",
+      { name, arguments: { ...viewer, [idKey]: conversationId } });
+    expect(response.result).toMatchObject({ content: [{ type: "text", text: "Canvas: Releases\n\nMaya: Ready." }] });
+    expect(enterprise.readConversation).toHaveBeenCalledExactlyOnceWith({ ...viewer, kind, conversationId, afterSequence: 0 });
     expect(global.readConversation).not.toHaveBeenCalled();
   });
 
@@ -153,7 +149,7 @@ describe("Rally engineering MCP tools", () => {
     vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
     vi.mocked(enterprise.sendMessage).mockResolvedValue({ receipt: { turn: { turnId: "turn-1", clientMessageId: operationId, createdAt: "2026-10-21T00:00:00.000Z" }, deliveryState: "pending" } });
     const request = { orgId, operationId, userId: asUserId("00000000-0000-7000-8000-000000000ef2"),
-      threadId: asWorkstreamId("00000000-0000-7000-8000-000000000ef4"), text: "Confidential message", runMode: "queue" };
+      conversationId: "00000000-0000-7000-8000-000000000ef4", text: "Confidential message", runMode: "queue" };
     const audit = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
       const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", { name: "send_message", arguments: request });
@@ -257,7 +253,7 @@ describe("Rally engineering MCP tools", () => {
     }
     const response = await rpc(testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }), "tools/call", {
       name: "send_message", arguments: { operationId: "00000000-0000-7000-8000-000000000ef3", orgId,
-        userId: "00000000-0000-7000-8000-000000000ef2", threadId: "00000000-0000-7000-8000-000000000ef4", text: "Plan the release." },
+        userId: "00000000-0000-7000-8000-000000000ef2", conversationId: "00000000-0000-7000-8000-000000000ef4", text: "Plan the release." },
     });
     expect(response.result).toMatchObject({ isError: true, content: [{ type: "text", text: expect.stringContaining("must resolve to one region") }] });
     for (const binding of [global, enterprise]) expect(binding.sendMessage).not.toHaveBeenCalled();
@@ -282,20 +278,18 @@ describe("Rally engineering MCP tools", () => {
       "resume_sidekick",
       "dump_thread_transcripts",
       "retire_threads",
-      "read_thread",
-      "read_breakout",
+      "read_canvas_chat",
+      "read_sidekick_conversation",
       "list_workspaces",
       "list_orgs",
       "search_orgs",
       "list_users",
       "search_users",
-      "list_workstreams",
-      "list_substreams",
+      "list_canvases",
       "list_sidekicks",
-      "list_spaces",
       "list_artifacts",
       "run_workspace_sql",
-      "run_substream_sql",
+      "run_canvas_sql",
       "run_artifact_sql",
       "run_d1_sql",
       "list_feature_flags",
@@ -340,8 +334,8 @@ describe("Rally engineering MCP tools", () => {
     const value = { region: "global" as const, workspaceId, items: [] };
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
-    vi.mocked(global.listWorkstreams).mockResolvedValue({ found: true, value });
-    vi.mocked(enterprise.listWorkstreams).mockResolvedValue({
+    vi.mocked(global.listCanvases).mockResolvedValue({ found: true, value });
+    vi.mocked(enterprise.listCanvases).mockResolvedValue({
       found: true,
       value: { ...value, region: "enterprise" },
     });
@@ -349,7 +343,7 @@ describe("Rally engineering MCP tools", () => {
     const response = await rpc(
       testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
       "tools/call",
-      { name: "list_workstreams", arguments: { workspaceId } },
+      { name: "list_canvases", arguments: { workspaceId } },
     );
     const result = response.result as { isError: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBe(true);
@@ -360,8 +354,8 @@ describe("Rally engineering MCP tools", () => {
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000ec1");
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
-    vi.mocked(global.listWorkstreams).mockResolvedValue({ found: false });
-    vi.mocked(enterprise.listWorkstreams).mockRejectedValue(
+    vi.mocked(global.listCanvases).mockResolvedValue({ found: false });
+    vi.mocked(enterprise.listCanvases).mockRejectedValue(
       new Error("D1_ERROR: no such column: Customer_Email: SQLITE_ERROR"),
     );
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -370,13 +364,13 @@ describe("Rally engineering MCP tools", () => {
       await rpc(
         testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
         "tools/call",
-        { name: "list_workstreams", arguments: { workspaceId } },
+        { name: "list_canvases", arguments: { workspaceId } },
       );
-      vi.mocked(enterprise.listWorkstreams).mockResolvedValue({ found: false });
+      vi.mocked(enterprise.listCanvases).mockResolvedValue({ found: false });
       await rpc(
         testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
         "tools/call",
-        { name: "list_workstreams", arguments: { workspaceId } },
+        { name: "list_canvases", arguments: { workspaceId } },
       );
       const rows = logged.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
         .filter((row) => row.event === "engineering_mcp_tool_failed");
@@ -472,29 +466,27 @@ describe("Rally engineering MCP tools", () => {
     expect(result.content[0]!.text).toContain("exists in multiple Rally regions");
   });
 
-  it("routes bound substream SQL to exactly one regional authority", async () => {
+  it("routes bound Canvas SQL to exactly one regional authority", async () => {
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000eb3");
-    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000eb4");
-    const substreamId = asSubstreamId("0");
+    const conversationId = "00000000-0000-7000-8000-000000000eb4";
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
-    vi.mocked(enterprise.resolveSubstream).mockResolvedValue({
+    vi.mocked(enterprise.resolveConversation).mockResolvedValue({
       found: true,
       value: {
         region: "enterprise",
         workspaceId,
-        workstreamId,
-        substreamId,
+        conversationId,
         authorityGeneration: 7,
       },
     });
-    vi.mocked(enterprise.runSubstreamSql).mockResolvedValue({
+    vi.mocked(enterprise.runConversationSql).mockResolvedValue({
       found: true,
       value: {
         region: "enterprise",
         workspaceId,
-        workstreamId,
-        substreamId,
+        workstreamId: asWorkstreamId(conversationId),
+        substreamId: asSubstreamId("0"),
         result: {
           columns: ["answer"],
           rows: [{ answer: 42 }],
@@ -508,11 +500,10 @@ describe("Rally engineering MCP tools", () => {
       testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
       "tools/call",
       {
-        name: "run_substream_sql",
+        name: "run_canvas_sql",
         arguments: {
           workspaceId,
-          workstreamId,
-          substreamId,
+          conversationId,
           sql: "SELECT ? AS answer",
           bindings: [42],
         },
@@ -523,15 +514,14 @@ describe("Rally engineering MCP tools", () => {
       region: "enterprise",
       result: { rows: [{ answer: 42 }] },
     });
-    expect(enterprise.runSubstreamSql).toHaveBeenCalledWith({
+    expect(enterprise.runConversationSql).toHaveBeenCalledWith({
       workspaceId,
-      workstreamId,
-      substreamId,
+      conversationId,
       authorityGeneration: 7,
       query: { sql: "SELECT ? AS answer", bindings: [42] },
     });
-    expect(global.runSubstreamSql).not.toHaveBeenCalled();
-    expect(enterprise.runSubstreamSql).toHaveBeenCalledTimes(1);
+    expect(global.runConversationSql).not.toHaveBeenCalled();
+    expect(enterprise.runConversationSql).toHaveBeenCalledTimes(1);
   });
 
   it("routes bound artifact SQL to the supervisor in exactly one regional authority", async () => {
@@ -615,27 +605,24 @@ describe("Rally engineering MCP tools", () => {
 
   it("does not execute SQL when both regions resolve the target", async () => {
     const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000eb5");
-    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000eb6");
-    const substreamId = asSubstreamId("0");
+    const conversationId = "00000000-0000-7000-8000-000000000eb6";
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
-    vi.mocked(global.resolveSubstream).mockResolvedValue({
+    vi.mocked(global.resolveConversation).mockResolvedValue({
       found: true,
       value: {
         region: "global",
         workspaceId,
-        workstreamId,
-        substreamId,
+        conversationId,
         authorityGeneration: 7,
       },
     });
-    vi.mocked(enterprise.resolveSubstream).mockResolvedValue({
+    vi.mocked(enterprise.resolveConversation).mockResolvedValue({
       found: true,
       value: {
         region: "enterprise",
         workspaceId,
-        workstreamId,
-        substreamId,
+        conversationId,
         authorityGeneration: 7,
       },
     });
@@ -644,11 +631,10 @@ describe("Rally engineering MCP tools", () => {
       testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise }),
       "tools/call",
       {
-        name: "run_substream_sql",
+        name: "run_canvas_sql",
         arguments: {
           workspaceId,
-          workstreamId,
-          substreamId,
+          conversationId,
           sql: "DELETE FROM fixture",
         },
       },
@@ -656,8 +642,8 @@ describe("Rally engineering MCP tools", () => {
     const result = response.result as { isError: boolean; content: Array<{ text: string }> };
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain("must resolve to one region");
-    expect(global.runSubstreamSql).not.toHaveBeenCalled();
-    expect(enterprise.runSubstreamSql).not.toHaveBeenCalled();
+    expect(global.runConversationSql).not.toHaveBeenCalled();
+    expect(enterprise.runConversationSql).not.toHaveBeenCalled();
   });
 
   it("lists managed flags through Ace", async () => {
