@@ -962,9 +962,12 @@ wrapper, and current_time, for one, returns text lines, not an object.
 The tool returns what the run reports and decides with, compactly: totals and the facts
 to report, not the raw rows it read. It does not stop for one item that fails or does
 not fit the rule: it finishes the rest and lists each such item under exceptions, with
-its identifier, what was wrong and what is known, for the run to handle. It throws only
-when it cannot do the job at all. A program has a time limit; when the work can outgrow
-it, the tool does a bounded share, records where it stopped in the Sidekick's own
+its identifier, what was wrong and what is known, for the run to handle. An item is an
+exception only when code cannot decide it: each read returns every fact the next step
+needs (who sent, not just how many), and a reference set such as an organization's
+members is read once per call, so the tool classifies every item against it itself.
+It throws only when it cannot do the job at all. A program has a time limit; when the
+work can outgrow it, the tool does a bounded share, records where it stopped in the Sidekick's own
 table, and returns what remains, and the instructions call it again until nothing
 remains. Size the share by time, never a fixed count: msLeft() in the program returns
 the milliseconds left before its deadline, and the tool keeps taking groups while
@@ -985,12 +988,9 @@ in this order. Fewer requests per item: look first for a source that answers for
 items in one request (an index, a log or a table that spans them) before reading each
 item where it lives; otherwise one read that covers a group of items where the source
 allows it, rather than one per item; and no read the program already has the answer
-to. Each read returns every fact the next step needs, not only whether there is one
-(who sent, not just how many), and the tool decides in code what code can decide
-against a list it reads once per call, so an item never comes back as an exception
-only for the run to look it up again. More results per request: where a read takes a page size, limit or batch
-size, use the largest the source accepts that does not slow the call or fail. More
-requests at once. And the whole time budget used, never a fixed count or a single page.
+to. More results per request: where a read takes a page size, limit or batch size, use
+the largest the source accepts that does not slow the call or fail. More requests at
+once. And the whole time budget used, never a fixed count or a single page.
 Have the tool return how many items it finished, the requests it made (its tool calls,
 reads and writes), the seconds it took and the errors it met, and take the page size,
 concurrency and group size as inputs while you tune. Run sidekick_tool_test on a
@@ -1030,15 +1030,13 @@ In a self-review, tools change with the procedure, using only plugins already
 recommended. The plan takes each deterministic step the report says a run repeated,
 skipped or got wrong (a dedupe after the reads, a page not followed, date bounds, a
 union, a count) and says whether it moves into the tool or why it stays in the
-instructions; a plan that leaves that unanswered is incomplete. It also takes how much
-each run spent on routine work: model turns, calls to each custom tool, and the items,
-requests and seconds each call reported. A run that called the same tool several times
-to finish, or handled by hand items a tool returned as exceptions, is the case for
-re-tuning the tool as above (requests per item, results per request, requests at once,
-the whole budget) and timing it again; so is a tool that times its share against a
-fixed number instead of msLeft(). A run that spent many
-turns on routine steps is the case for moving them into the tool, and tools the runs
-always call one after another become one. "The instructions already say so" is not a
+instructions; a plan that leaves that unanswered is incomplete. It also uses the
+report's cost figures. A run that spent many turns on routine steps is the case for
+moving them into the tool; one that called a tool several times to finish, or settled
+by hand items the tool returned as exceptions, is the case for re-tuning the tool as
+above and timing it again, as is a tool saved before msLeft() existed that times its
+share against a fixed number. Tools the runs always call one after another become
+one. "The instructions already say so" is not a
 reason a step stays: an instruction the run did not follow is the case for code the
 run calls, unless the run shows the step failed on something outside it (a timed-out
 read) rather than being done by hand or skipped. A tool the runs misused or no longer
