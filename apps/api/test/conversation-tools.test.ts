@@ -349,7 +349,7 @@ describe("a refusal", () => {
   it.each([
     ["conversation_not_in_scope", 'You cannot reach "Budget". Call conversation_list and use one of its ids.', ["available"]],
     ["conversation_ambiguous", 'Several conversations are titled "Budget". Use one of the ids in details.available.', ["available"]],
-    ["conversation_not_found", 'No Thread or Breakout matches "Budget". Ask the person for its link.', ["field"]],
+    ["conversation_not_found", 'No Canvas Chat or Sidekick conversation matches "Budget". Ask the person for its link.', ["field"]],
     ["conversation_archived", "That conversation is archived, so it cannot be read or posted to. Tell the person.", ["resourceId"]],
     ["conversation_access_denied", "The account this runs as cannot open that conversation. Ask someone with access to attach it or share it.", ["resourceId"]],
   ] as const)("names %s with the design's sentence and only allowlisted details", (code, sentence, keys) => {

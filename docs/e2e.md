@@ -74,6 +74,18 @@ credential-less environments. The oracles and the gate are unit-tested in
 failed 34 stop scenarios because `idle` was missing from its terminal set, so
 the pass conditions are treated as code that can rot.
 
+**A dead Worker ends the run.** After any request the Worker answers with a
+5xx or does not answer, the lane asks `/health` once; if the Worker is gone it
+stops starting scenarios and its verdict is "the Worker died during
+<scenario>", rather than running the rest into `fetch failed`. It does not
+retry. On 2026-11-07, 2 of 8 full default runs killed the local workerd
+(`wrangler dev` logged an empty error and "Network connection lost" in its
+proxy worker, and no application error) at the chaos burst: 12 simultaneous
+Canvas creates, then 6 simultaneous run starts, beside two runs streaming 500
+lines and 6 socket commands. Both were the first runs against a freshly
+migrated database; the other six passed 20 of 20. The burst sizes are the
+team's to set; they were not lowered to make the lane pass.
+
 The artifact scenario publishes through the Terminal, so it runs only when
 `/health` reports a model and `GET /workspace/terminal` reports the Terminal
 `supported`; otherwise the lane prints why it skipped it, per scenario and in

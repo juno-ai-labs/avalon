@@ -3831,7 +3831,7 @@ describe("agent harness", () => {
     expect(openRouterFetcher).toHaveBeenCalledTimes(1);
 
     expect(memberSafeHarnessFailureMessage("context_length_exceeded"))
-      .toBe("This conversation is longer than the selected model will accept. Start a new thread to continue, and copy the request ID for support");
+      .toBe("This conversation is longer than the selected model will accept. Start a new Canvas to continue, and copy the request ID for support");
   });
 
   it("names an input the model cannot read rather than blaming Rally", async () => {

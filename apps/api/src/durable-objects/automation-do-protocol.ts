@@ -5,6 +5,7 @@ import {
   AutomationSetEvaluatorRulesInputV1Schema,
   DemoSeedSchema,
   IdSchema,
+  MESSAGE_MAX_CHARACTERS,
   PickedAppearanceSchema,
   SidekickAudienceUpdateSchema,
   SidekickMessageIntentSchema,
@@ -321,7 +322,7 @@ export const SidekickRunRowProjectionSchema = z.strictObject({
   createdAt: z.number().int().nonnegative(),
   state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
   stepCount: z.number().int().nonnegative(),
-  reply: z.string().max(1_000).nullable(),
+  reply: z.string().max(MESSAGE_MAX_CHARACTERS).nullable(),
   version: z.number().int().nonnegative(),
   /**
    * Set by a replay: apply this projection even when the conversation holds a
