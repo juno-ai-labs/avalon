@@ -2,7 +2,6 @@ import { CONVERSATION_VIEW_SOURCE_MIGRATION } from "./conversation-view-projecti
 import { SUBSTREAM_PERSONAL_SYSTEM_PROMPT_MIGRATION } from "./personal-system-prompt";
 import { CONVERSATION_LINK_SEARCH_SCHEMA } from './conversation-link-search';
 import { TOOL_PAGE_SCHEMA, TOOL_PAGE_CONSUMER_INDEX } from './tool-page-storage';
-import { PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA } from "./participant-authority-transfer";
 import { CONVERSATION_DISPLAY_SEARCH_MIGRATION_STATEMENTS, CONVERSATION_SEARCH_AUDIENCE_MIGRATION_STATEMENTS, CONVERSATION_SEARCH_REPROJECTION_MIGRATION_STATEMENTS, TRANSCRIPT_SEARCH_MIGRATION_STATEMENTS } from './search-projection-outbox';
 /**
  * Object-local SQL schema for the existing one-room-per-work-stream namespace.
@@ -25,8 +24,44 @@ import {
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
 
+
+/**
+ * The released participant authority handoff (a Thread Main's roster moving to
+ * its parent's grants). Kept here, statement for statement, because its text
+ * is hashed into every object's migration receipt; the handoff itself is
+ * deleted and a later migration drops these tables and triggers.
+ */
+const PARTICIPANT_AUTHORITY_TRANSFER_SCHEMA = [
+  `CREATE TABLE participant_authority_transfer (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    transfer_id TEXT NOT NULL UNIQUE,
+    phase TEXT NOT NULL CHECK (phase IN ('frozen', 'projection')),
+    snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json)),
+    prepared_at INTEGER NOT NULL,
+    committed_at INTEGER,
+    projection_write INTEGER NOT NULL DEFAULT 0 CHECK (projection_write IN (0,1))
+  ) STRICT`,
+  `CREATE TABLE participant_projection_revisions (
+    user_id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    request_json TEXT NOT NULL CHECK (json_valid(request_json))
+  ) STRICT`,
+  // Gate the actual ledger rather than a particular caller. Raw product SQL,
+  // connector audience reconciliation and identity-port writes share this gate.
+  `CREATE TRIGGER participant_authority_freeze_insert BEFORE INSERT ON participants
+    WHEN EXISTS (SELECT 1 FROM participant_authority_transfer WHERE projection_write=0)
+    BEGIN SELECT RAISE(ABORT, 'participant_authority_transferred'); END`,
+  `CREATE TRIGGER participant_authority_freeze_delete BEFORE DELETE ON participants
+    WHEN EXISTS (SELECT 1 FROM participant_authority_transfer WHERE projection_write=0)
+    BEGIN SELECT RAISE(ABORT, 'participant_authority_transferred'); END`,
+  `CREATE TRIGGER participant_authority_freeze_update
+    BEFORE UPDATE OF user_id, status, participation_reason, added_by_user_id, added_at, removed_at, participant_epoch ON participants
+    WHEN EXISTS (SELECT 1 FROM participant_authority_transfer WHERE projection_write=0)
+    BEGIN SELECT RAISE(ABORT, 'participant_authority_transferred'); END`,
+] as const;
+
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 83;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 84;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -3753,6 +3788,29 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     END`,
       ...CONVERSATION_VIEW_SOURCE_MIGRATION.filter((statement) =>
         /^CREATE TRIGGER conversation_view_(header_(insert|update|delete)|generation) /u.test(statement)),
+    ],
+  },
+  {
+    version: 84,
+    description: "drop the suggestion, participant handoff and session import tables",
+    // Each mechanism is deleted (plan step C-3): conversation suggestions
+    // (version 75), a Thread Main's participant authority handoff (its
+    // freeze triggers and both tables), and session import (version 67).
+    // Nothing references these tables, so each drops on its own. Version
+    // 59's `prepared_conversation_receipts` stays: a live table's foreign
+    // key names it, and its rows still let a failed preparation's held
+    // attachments be released.
+    statements: [
+      `DROP TABLE conversation_suggestions`,
+      `DROP TABLE turn_disposition_judgements`,
+      `DROP TRIGGER participant_authority_freeze_insert`,
+      `DROP TRIGGER participant_authority_freeze_delete`,
+      `DROP TRIGGER participant_authority_freeze_update`,
+      `DROP TABLE participant_authority_transfer`,
+      `DROP TABLE participant_projection_revisions`,
+      `DROP TABLE imported_session_sources`,
+      `DROP TABLE imported_session_messages`,
+      `DROP TABLE imported_session_update_receipts`,
     ],
   },
 ];

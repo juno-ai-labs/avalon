@@ -1911,8 +1911,8 @@ which the prompts' claim that the row is the delivery depends on.
 **Deferred C-5 deletions:** `workstream-name.ts`, `workstream-description.ts`
 and `session-import.ts` went in C-2 with the naming and description services
 (no importer was left; `agent-profiles.ts` stays, `integrations.ts` reads it);
-`suggestion-draft.ts` goes with the suggestion services in C-3; `src/turn-disposition.ts` with the conversation-suggestions observer
-in C-3; `mergeInstruction` and the `merges` option of the conversation
+`suggestion-draft.ts` and `src/turn-disposition.ts` went in C-3 with the
+suggestion services and the conversation-suggestions observer; `mergeInstruction` and the `merges` option of the conversation
 tools are deleted (the Thread merge they described is gone); and the memory subject kinds (`thread`, `channel`,
 `breakout`) with the `memory_facts` rebuild, which renames them to `canvas`.
 Until then the prose here avoids those names and the stored kinds stay.

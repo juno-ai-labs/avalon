@@ -1,4 +1,3 @@
-import { ParticipantAuthorityTransferStorage } from "../src/durable-objects/participant-authority-transfer";
 import "../../../tests/isolated-region";
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { readFileSync } from "node:fs";
@@ -18,7 +17,6 @@ import { createTestSqlStorage } from "./helpers/sql-storage";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
-  seedProjectedParticipants,
   testWorkstreamObjectStore,
 } from "./helpers/durable-authority";
 import { createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
@@ -237,7 +235,6 @@ function roomFor(
       }),
     },
   });
-  seedProjectedParticipants(state.storage);
   const room = new AgentLoopDO(
     state,
     createTestEnv({ DB: sqliteD1(database), AVALON_REGION: region, APP_ENV: "test" }),
@@ -445,11 +442,7 @@ describe("who the work-stream room disconnects", () => {
     const removed = fakeSocket(PARTICIPANT);
     const room = roomFor(database, [removed]);
     const sql = createTestSqlStorage(productDatabase(room));
-    const projections = new ParticipantAuthorityTransferStorage(createCloudflareTestBinding<DurableObjectStorage>({
-      sql, transactionSync: <T,>(body: () => T) => body(),
-    }));
-    const current = projections.projectionForUser(PARTICIPANT)!;
-    projections.applyProjection({ ...current, active: false, revision: current.revision + 1, changedAt: Date.now() });
+    sql.exec("UPDATE participants SET status = 'removed', removed_at = ? WHERE user_id = ?", Date.now(), PARTICIPANT);
 
     const response = await publish(room, { type: "participant_removed", userId: PARTICIPANT });
 

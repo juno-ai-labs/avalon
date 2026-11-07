@@ -5,12 +5,8 @@ import { zodDiagnosticCode, describeZodIssues } from "@rally/contracts/zod-diagn
 import { cleanupCanvaTransactions } from "../services/canva-transaction-cleanup";
 import { parseRpcInput } from "../lib/rpc-input";
 import { ToolPageError } from "./tool-page-storage";
-import { ParticipantAuthorityTransferStorage, ParticipantProjectionSchema, ParticipantTransferRequestSchema,
-  type ParticipantTransferRequest, type ParticipantProjection } from "./participant-authority-transfer";
 
-import { PreparedConversationSchema } from "@rally/contracts";
 import { MergeResourceTokenSchema } from "@rally/contracts";
-import { settledBackfillOutcome } from "../services/suggestion-backfill-service";
 import { AGENT_HANDOFF_TOOL_NAMES, AgentCommunicationService } from "../services/agent-communication-service";
 import { RegionSchema } from "@rally/contracts/regions";
 import { agentIdForAddress, AgentExchangeSchema } from "@rally/contracts";
@@ -36,7 +32,7 @@ import { ConversationParentKindSchema } from "@rally/contracts/conversation-pare
 import { workspaceDOName } from "./names";
 import { initialContextFrames } from "./substream-context-transfer";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { TURN_DISPOSITION_MAX_RECENT_MESSAGES, pendingBindToolBatch, type HarnessToolResult } from "@rally/agent-harness";
+import { pendingBindToolBatch, type HarnessToolResult } from "@rally/agent-harness";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -99,13 +95,8 @@ import {
 } from "../lib/audience-containment";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
-import { clientReadsResolutionSuggestions } from "../lib/client-contract";
 import { uuidV7 } from "../lib/uuid-v7";
-import { ConversationSuggestionStorage, MERGE_JUDGEMENT_KEY_PREFIX, observeTurnDisposition, suggestionForClient, suggestionEventForClient, type SuggestionParent, type SuggestionRow } from "./conversation-suggestions";
-import { createClassifierDiagnosticSink } from "../services/classifier-diagnostics";
-import { createIdentityObjectPort } from "../runtime/identity-port";
 import { AUTHORITY_FENCED_CODE } from "../runtime/object-port-error";
-import { draftSuggestion } from "../services/suggestion-draft-service";
 import {
   HarnessRunMetricsSchema,
   recordHarnessRunObservation,
@@ -181,7 +172,6 @@ import {
 import { conversationObjectName, substreamLoopId } from "./names";
 import { WorkstreamObjectStore } from "./workstream-object-storage";
 import type { SequencedSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
-import { enqueueSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
 import { WorkstreamDesktopActionStorage } from "./workstream-desktop-action-storage";
@@ -190,7 +180,7 @@ import {
   type ToolReceiptOperationRequest,
   ToolReceiptOperationRequestSchema,
 } from "./workstream-tool-receipt-protocol";
-import { mergedIntoMarker, WorkstreamMessageStorage } from "./workstream-message-storage";
+import { WorkstreamMessageStorage } from "./workstream-message-storage";
 import {
   WorkstreamTranscriptStorage,
   UnsettledToolBatchError,
@@ -283,7 +273,6 @@ import {
 } from "./object-retirement";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
-  InitializeWorkstreamObjectInputSchema,
   WorkstreamObjectCreateMessageInputSchema,
   WorkstreamObjectProductService,
   type WorkstreamObjectCreateMessageInput,
@@ -328,7 +317,6 @@ function isPersistedElicitationOutcome(value: unknown): boolean {
 }
 
 const SocketAttachmentSchema = z.object({
-  readsResolutionSuggestions: z.boolean().default(false),
   connectionId: z.string().uuid(),
   workspaceId: WorkspaceIdSchema,
   /** The conversation parent's id, of either kind. */
@@ -503,8 +491,6 @@ function productOperation<Shape extends z.ZodRawShape>(shape: Shape) {
 }
 
 const ProductRequestSchema = z.discriminatedUnion("operation", [
-  productOperation({ operation: z.literal("initialize"),
-    input: InitializeWorkstreamObjectInputSchema }),
   productOperation({ operation: z.literal("get") }),
   productOperation({ operation: z.literal("boot") }),
   productOperation({ operation: z.literal("search_links"),
@@ -518,17 +504,8 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("update"), input: UpdateWorkstreamRequestSchema }),
   productOperation({ operation: z.literal("acknowledge_read"), input: AcknowledgeWorkstreamReadRequestSchema }),
   productOperation({ operation: z.literal("mark_unread") }),
-  // A person dismissing a suggestion: admitted as a read of the conversation,
-  // since it records a choice about a line only readers see and changes
-  // nothing in the transcript. `docs/conversation-suggestions.md`.
-  productOperation({ operation: z.literal("dismiss_suggestion"), suggestionId: IdSchema }),
-  productOperation({ operation: z.literal("resolve_suggestion"), suggestionId: IdSchema }),
   productOperation({ operation: z.literal("create_message"),
     input: WorkstreamObjectCreateMessageInputSchema }),
-  productOperation({ operation: z.literal("import_source_get") }),
-  productOperation({ operation: z.literal("import_source_checkpoint_get") }),
-  productOperation({ operation: z.literal("import_source_update"),
-    operationId: IdSchema, conversation: PreparedConversationSchema }),
   productOperation({ operation: z.literal("add_participant"), userId: IdSchema,
     operationId: IdSchema.optional() }),
   // The appearance write over the product request. A Space admits no feed
@@ -553,7 +530,6 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
  */
 function productRequestFlow(operation: SubstreamProductRequest["operation"]): PerfFlow | null {
   switch (operation) {
-    case "initialize": return "workstream_create";
     case "create_message": return "workstream_message_send";
     case "get": case "boot": return "workstream_open";
     default: return null;
@@ -722,7 +698,7 @@ const KEEP_ALIVE_INTERVAL_MS = 30_000;
 const SEMANTIC_REALTIME_RETRY_MS = 5_000;
 /** `_internal_durable_alarms.kind` for a wake-up an agent run scheduled for itself. */
 const AGENT_TIMER_ALARM_KIND = "agent_timer";
-const MERGE_SUGGESTION_ALARM_KIND = "merge_suggestion";
+const RETIRED_MERGE_SUGGESTION_ALARM_KIND = "merge_suggestion";
 /**
  * Bound on the entries one sync writes.
  *
@@ -1003,16 +979,6 @@ export function harnessErrorFrames(error: unknown): string | null {
 
 const PRODUCT_SESSION_AUTH_MAX_AGE_MS = 300_000;
 
-/**
- * What judging one settled turn came to (`judgeSettledTurn`): the outcome for
- * the log, and the classifier's failure kind when it could not answer, which
- * the backfill reads to retry rather than settle.
- */
-export interface SettledTurnJudgement {
-  outcome: string;
-  failureKind: string | null;
-}
-
 export class AgentLoopDO extends ScheduledDurableObject<Env> {
   private readonly state: DurableObjectState;
   private readonly recentEvents: ServerSocketEvent[] = [];
@@ -1061,9 +1027,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   private loop!: SubstreamLoopStorage;
   private resources!: WorkstreamResourceStorage;
   private identityRows!: WorkstreamIdentityStorage;
-  private suggestions!: ConversationSuggestionStorage;
-  /** Suggestion rows this object is drafting right now; the observer resumes none of them. */
-  private readonly draftsInFlight = new Set<string>();
   private harnessRuns!: WorkstreamHarnessRunStorage;
   private desktopActions!: WorkstreamDesktopActionStorage;
   /**
@@ -1174,7 +1137,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       this.messages = new WorkstreamMessageStorage(state.storage);
       this.resources = new WorkstreamResourceStorage(state.storage);
       this.identityRows = new WorkstreamIdentityStorage(state.storage);
-      this.suggestions = new ConversationSuggestionStorage(state.storage.sql);
       this.harnessRuns = new WorkstreamHarnessRunStorage(state.storage);
       this.desktopActions = new WorkstreamDesktopActionStorage(state.storage);
       await this.objectStore.waitUntilReady();
@@ -1593,119 +1555,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return { outcome };
   }
 
-  /** Internal parent-driven handoff; never expose this RPC as a user route. */
-  async transferParticipantAuthority(input: ParticipantTransferRequest) {
-    await this.storageReady;
-    const request = parseRpcInput(ParticipantTransferRequestSchema,input,"main_participant_transfer");
-    const identity = this.objectStore.identity();
-    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId
-      || identity.parentKind !== "workstream" || this.externalSubstreamId() !== request.substreamId) {
-      return { status: "identity_mismatch" as const };
-    }
-    const root = this.state.storage.sql.exec<{ authority_mode: string; authority_generation: number }>(
-      "SELECT authority_mode, authority_generation FROM workstream WHERE id = 1",
-    ).toArray()[0];
-    if (root?.authority_mode !== "authoritative" || root.authority_generation <= 0) return { status: "not_ready" as const };
-    const store = new ParticipantAuthorityTransferStorage(this.state.storage);
-    const transferId = store.currentTransferId();
-    if (transferId !== null && transferId !== request.transferId) return { status: "conflict" as const };
-    if (request.phase === "prepare") return { status: "prepared" as const, snapshot: store.prepare(request.transferId) };
-    if (transferId === null) return { status: "not_ready" as const };
-    store.commit(request.transferId);
-    return { status: "committed" as const };
-  }
-
-  /** Parent-produced effective access, after the legacy authority handoff. */
-  async applyParticipantProjection(input: {
-    workspaceId: string; parentId: string; substreamId: string; projection: ParticipantProjection;
-  }) {
-    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema,
-      parentId: IdSchema, substreamId: SubstreamIdSchema, projection: ParticipantProjectionSchema }), input, "participant_projection");
-    const { projection, ...address } = request;
-    return (await this.applyParticipantProjections({ ...address, projections: [projection] }))[0]!;
-  }
-
-  /** One RPC and one profile batch for all projections of an admission. */
-  async applyParticipantProjections(input: {
-    workspaceId: string; parentId: string; substreamId: string; projections: ParticipantProjection[];
-  }) {
-    await this.storageReady;
-    const request = parseRpcInput(z.strictObject({ workspaceId: WorkspaceIdSchema,
-      parentId: IdSchema, substreamId: SubstreamIdSchema, projections: z.array(ParticipantProjectionSchema) }), input, "participant_projections");
-    const identity = this.objectStore.identity();
-    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.parentId
-      || identity.parentKind !== "workstream" || this.externalSubstreamId() !== request.substreamId) {
-      return request.projections.map(() => ({ status: "identity_mismatch" as const }));
-    }
-    const store = new ParticipantAuthorityTransferStorage(this.state.storage);
-    // Removals need no names or participant payload. Active projections share
-    // one request-local read across notification effects and realtime frames.
-    const profiles = await this.product.participantProfiles(request.projections.flatMap((projection) =>
-      projection.active && (store.projectionForUser(projection.userId)?.revision ?? 0) < projection.revision
-        ? [projection.userId, projection.addedByUserId ?? projection.userId] : []));
-    const { result: results } = await this.objectStore.commitWithRegionalEffects(() => request.projections.map((projection) => {
-      const prior = this.state.storage.sql.exec<{ status: string }>(
-        "SELECT status FROM participants WHERE user_id=?", projection.userId,
-      ).toArray()[0];
-      const result = store.applyProjection(projection);
-      const changed = result.status === "applied" && (prior?.status === "active") !== projection.active;
-      if (changed) enqueueSemanticRealtimeReference(this.state.storage.sql, {
-        kind: "participant_changed", userId: projection.userId,
-      }, projection.changedAt);
-      return { result, changed, projection };
-    }), (_sql, outcomes) => outcomes.flatMap(({ changed, projection }) => !changed ? [] : this.product.privateChildMembershipEffects({
-      substreamId: request.substreamId, userId: projection.userId,
-      actorUserId: projection.addedByUserId ?? projection.userId,
-      actorName: profiles.get(projection.addedByUserId ?? projection.userId)?.name ?? "A workspace member",
-      recipientName: profiles.get(projection.userId)?.name ?? "a workspace member",
-      active: projection.active, now: projection.changedAt,
-      suppressNotification: projection.reason === "message",
-    })));
-    // Re-read authority after yielding. Old or replayed removals must not
-    // disconnect somebody admitted by a newer projection.
-    const removed = new Set<string>(request.projections.filter((projection) =>
-      store.projectionForUser(projection.userId)?.active === false).map((projection) => projection.userId));
-    let evicted = false;
-    if (removed.size) {
-      this.rememberSocketRevocation();
-      for (const [ticketId, prepared] of [...this.preparedSocketAdmissions]) {
-        if (removed.has(prepared.input.userId)) this.deletePreparedSocketAdmission(ticketId);
-      }
-      for (const socket of this.state.getWebSockets()) {
-        const attachment = this.readAttachment(socket);
-        if (!attachment || !removed.has(attachment.userId)) continue;
-        disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this work stream");
-        evicted = true;
-      }
-    }
-    await this.flushSemanticRealtimeOutboxBestEffort(profiles);
-    if (evicted) await this.broadcastPresence(request.workspaceId, request.parentId);
-    return results.map(({ result }) => result);
-  }
-
-  /**
-   * Whether this conversation's own roster admits the person at the version
-   * their ticket carries. A Canvas's and a Sidekick's parent decides alone,
-   * so theirs always does. A retired Thread's conversation still admits by
-   * its Main's implicit member grant (version 0) and by a participant
-   * authority transfer's projection, and otherwise nobody; plan step C-3
-   * removes this branch with Thread hosting.
-   */
-  private conversationMembershipAllows(userId: string, requiredVersion: number): boolean {
-    if (this.objectStore.identity()?.parentKind !== "workstream") return true;
-    // Zero is issued by parent authorization for implicit workspace-member
-    // access to Main. Explicit guests always carry a positive grant revision.
-    if (requiredVersion === 0 && this.externalSubstreamId() === "0") return true;
-    const transfer = new ParticipantAuthorityTransferStorage(this.state.storage);
-    if (transfer.currentTransferId() !== null) {
-      const projection = transfer.projectionForUser(userId);
-      return projection?.active === true && projection.revision === requiredVersion;
-    }
-    // No roster answers for a Thread now: the import agents' reserved
-    // children went with session import.
-    return false;
-  }
-
   /**
    * Prepare one feed admission while its already-issued ticket is in transit.
    *
@@ -1763,7 +1612,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       || this.objectStore.realtimeAuthorityGeneration() !== preparation.authorityGeneration
       || !this.objectStore.isRealtimeWritable()
       || !this.product.canRead(preparation.userId)
-      || !this.conversationMembershipAllows(preparation.userId, preparation.membershipVersion)
     ) return { outcome: "refused" };
 
     const entry: PreparedSocketAdmission = {
@@ -1925,7 +1773,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       || this.objectStore.realtimeAuthorityGeneration() !== input.authorityGeneration
       || !this.objectStore.isRealtimeWritable()
       || !this.product.canRead(input.userId)
-      || !this.conversationMembershipAllows(input.userId, input.membershipVersion ?? 0)
     ) {
       this.deletePreparedSocketAdmission(identity.ticketId);
       return null;
@@ -2666,20 +2513,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     return responseToRpcResult(await this.acceptRuntimeBootstrap(this.rpcRequest(input)));
   }
 
-  /**
-   * The Breakout a suggestion asked for exists: the open row on its cutoff
-   * turn is taken. Called by the creation service once the child is ready,
-   * not at capture, so a preparation that fails or is abandoned leaves the
-   * chip standing. Idempotent: a retry of the confirmation finds nothing open.
-   */
-  async resolveBreakoutSuggestion(input: { throughTurnId: string; userId: string }): Promise<{ resolved: boolean }> {
-    await this.initialized;
-    const resolved = this.state.storage.transactionSync(() =>
-      this.suggestions.resolveBreakoutAt(input.throughTurnId, input.userId, Date.now()));
-    if (resolved) await this.publishSuggestionChanged(resolved);
-    return { resolved: resolved !== null };
-  }
-
   /** Internal content-only RPC. The Worker has already admitted these candidates through search authz. */
   async readAdmittedSearchContent(input: unknown) {
     await this.storageReady;
@@ -3072,28 +2905,11 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     const preparedMessage = parsedAppendInput
       ? await this.messages.prepareMessage(parsedAppendInput)
       : null;
-    const mergeMarker = parsedAppendInput ? mergedIntoMarker(parsedAppendInput.structuredContentJson) : null;
-    const resolvedSuggestions: SuggestionRow[] = [];
     const value = mutates
       ? await this.product.commitRuntimeMutation(
         () => {
           if (preparedMessage && parsedAppendInput) {
-            const appended = this.messages.appendPreparedMessage(preparedMessage);
-            // The marker says this conversation's result was carried up: an
-            // open merge suggestion on a turn at or before it was taken.
-            if (mergeMarker && appended.outcome === "appended") {
-              // Guarded: a suggestion's resolution must never fail the merge that resolves it.
-              try {
-                resolvedSuggestions.push(...this.suggestions.resolveMergedThrough(appended.sequenceNumber, mergeMarker.mergedByUserId, Date.now()));
-                resolvedSuggestions.push(...this.suggestions.resolveCompleted(mergeMarker.mergedByUserId, Date.now()));
-              } catch (error) {
-                logWarn(this.env, "conversation_suggestion_resolution_failed", {
-                  workstream_id: this.objectStore.identity()?.parentId,
-                  reason: diagnosticErrorCode(error, "conversation_suggestion_resolution_failed"),
-                });
-              }
-            }
-            return appended;
+            return this.messages.appendPreparedMessage(preparedMessage);
           }
           return method.apply(this.messages, parsed.data.args);
         },
@@ -3102,8 +2918,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       : method.apply(this.messages, parsed.data.args);
     if (preparedMessage && isAppendedMessageOutcome(value)) {
       await this.flushSemanticRealtimeOutboxBestEffort();
-      for (const row of resolvedSuggestions) await this.publishSuggestionChanged(row);
-      await this.expireSuggestionsBestEffort();
     }
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
@@ -3482,7 +3296,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         true,
       )
       : method.apply(this.identityRows, parsed.data.args);
-    if (parsed.data.operation === "provision" && this.externalSubstreamId() === "0") await this.product.ensureParticipantAuthority();
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
@@ -3535,9 +3348,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     if (!parsed.success) return jsonResponse({ error: "invalid_product_request" }, 400);
     const flow = traced ? productRequestFlow(parsed.data.operation) : null;
     if (flow === null) return this.runProductRequest(parsed.data, noFlowSpan);
-    const workstreamId = parsed.data.operation === "initialize"
-      ? parsed.data.input.workstreamId
-      : this.objectStore.identity()?.parentId;
+    const workstreamId = this.objectStore.identity()?.parentId;
     return inFlowSpan(this.env, `workstream.room.${parsed.data.operation}`, {
       flow,
       component: "substream_do",
@@ -3637,28 +3448,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     // incremented revision before it can install its result.
     this.invalidatePreparedSocketSnapshots();
     try {
-      if (request.operation === "initialize") {
-        const input = request.input;
-        const result = await span.step("workstream.room.product.initialize", () =>
-          this.product.initialize(current, input));
-        // The dispatch is durable state and must land before anything that can
-        // fail for cosmetic reasons: a refused broadcast used to abort this
-        // handler after the run was committed, leaving a run with no executor,
-        // no alarm, and a member-facing 500 over a work stream that exists.
-        if (result.harnessRunId && result.workflowInput) {
-          const { harnessRunId, workflowInput } = result;
-          await span.step("workstream.room.loop.activate", () =>
-            this.requestExecutionReceiptActivation(harnessRunId, workflowInput));
-          await this.armAlarmDuringRunDrain();
-          this.resumePersistentLoopDrain();
-        }
-        await this.flushSemanticRealtimeOutboxBestEffort();
-        return jsonResponse({
-          workstream: result.workstream,
-          turnId: result.turnId,
-          harnessRunId: result.harnessRunId,
-        });
-      }
       if (request.operation === "search_links") {
         const root = await this.product.authorize(current);
         const links = request.links.map(({ turnId, linkId }) => ({ linkId,
@@ -3755,45 +3544,18 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       if (request.operation === "mark_unread") {
         return jsonResponse(await this.product.markUnread(current));
       }
-      if (request.operation === "resolve_suggestion") {
-        // Resolving was a Thread's; Threads are retired (plan step C-2).
-        await this.product.authorize(current);
-        return jsonResponse({ error: "conversation_resolution_unavailable" }, 409);
-      }
-      if (request.operation === "dismiss_suggestion") {
-        // Archived included: an open row outlives archiving, and its readers keep the feed.
-        await this.product.authorize(current, true);
-        const existing = this.suggestions.byId(request.suggestionId);
-        if (!existing) return jsonResponse({ error: "suggestion_not_found" }, 404);
-        const dismissed = this.state.storage.transactionSync(() =>
-          this.suggestions.dismiss(request.suggestionId, current.userId, Date.now()));
-        if (dismissed) await this.publishSuggestionChanged(dismissed);
-        const row = dismissed ?? existing;
-        return jsonResponse({ suggestionId: row.suggestion_id, status: row.status, replayed: dismissed === null });
-      }
       if (request.operation === "create_message") {
         const { replayed, ...receipt } = await this.admitMessage(sender, request.input, span);
         // Only a merge is told whether it replayed: the receipt is a strict
         // client shape, and the merge service is the one caller that asks.
         return jsonResponse(request.input.merge ? { ...receipt, replayed } : receipt);
       }
-      if (request.operation === "import_source_get") {
-        return jsonResponse({ source: await this.product.importedSessionSource(current) });
-      }
-      if (request.operation === "import_source_checkpoint_get") {
-        return jsonResponse({ messages: await this.product.importedSessionCheckpoint(current) });
-      }
-      if (request.operation === "import_source_update") {
-        const result = await this.product.updateImportedSession(current, request.operationId, request.conversation);
-        await this.flushSemanticRealtimeOutboxBestEffort();
-        return jsonResponse(result);
-      }
       if (request.operation === "set_appearance") {
         await this.product.setAppearance(current, request.operationId, request.patch);
         return jsonResponse({ ok: true });
       }
       if (request.operation === "add_participant") {
-        const participant = await this.product.addParticipant(current, request.userId, request.operationId);
+        const participant = await this.product.addParticipant(current, request.userId);
         await this.publishLocalProductEvent(identity, { type: "participant_added", participant });
         return jsonResponse(participant);
       }
@@ -5888,16 +5650,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
       ? await this.deliverAgentRunResult(input, outcome)
       : null;
-    // A Thread's turn may call for carrying up or breaking out; plan step C-3
-    // removes this with the suggestion operations. Never throws. A Canvas's
-    // and a Sidekick's conversations are titled by the person and by the
-    // Sidekick, so no naming or description pass follows a run.
-    if (input.parentKind === "workstream") {
-      // Last, so it reads the freshest purpose and delays nothing in front of
-      // it: does this turn call for carrying up or breaking out? One JEV
-      // call behind gates that are each cheaper than it; never throws.
-      await this.observeTurnDispositionStep(executionEnv, input, outcome);
-    }
     // The memory sweep admits a Sidekick's own conversation and runs as well
     // as a Thread's, which is why it sits outside the guard above. Two
     // single-row reads on most calls; a claim sends the window to the Queue
@@ -5919,273 +5671,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       }, digestReaderFor(input));
     }
     return canvaCleanupDiagnostic ?? settlementDiagnosticCode;
-  }
-
-  /**
-   * The turn-disposition observer: the design's settlement step, as one call
-   * that cannot fail settlement. Expires suggestions the newest-three rule has
-   * retired, judges the final turn, writes and publishes a row for a confident
-   * positive, then asks the drafter for the words and publishes again. A
-   * retry that finds a `pending` row resumes at the draft without judging.
-   * `docs/conversation-suggestions.md` owns the lifecycle.
-   */
-  private async observeTurnDispositionStep(
-    executionEnv: Env,
-    input: WorkstreamWorkflowInput,
-    outcome: AgentTerminalOutcome,
-  ): Promise<void> {
-    await this.judgeSettledTurn(executionEnv, {
-      workspaceId: input.workspaceId,
-      parentId: input.parentId,
-      substreamId: input.substreamId ?? "0",
-      harnessRunId: input.harnessRunId,
-      finalTurnId: outcome.finalTurnId ?? null,
-      completed: outcome.status === "completed",
-      backgroundAgent: input.backgroundAgent === true,
-      parentReadFailure: "null",
-    });
-  }
-
-  /**
-   * The backfill's one call (docs/thread-backfill.md, `suggestion_backfill`):
-   * the newest settled Rally output or incoming merged result among the newest three messages is judged
-   * exactly as its settlement would have judged it, gates, record, row and
-   * drafter included. A run already judged is skipped by the observer's own
-   * idempotency gate, so running twice costs nothing. The answer is the
-   * observer's outcome, for the backfill's log line.
-   */
-  async backfillTurnDisposition(input: { workspaceId: string; workstreamId: string; substreamId: string }): Promise<SettledTurnJudgement> {
-    await this.initialized;
-    const settled = this.suggestions.newestSettledTurn();
-    if (!settled) return { outcome: "nothing_to_judge", failureKind: null };
-    const background = this.isBackgroundAgent();
-    return this.judgeSettledTurn(this.env, {
-      workspaceId: input.workspaceId,
-      parentId: input.workstreamId,
-      substreamId: input.substreamId,
-      harnessRunId: settled.runId,
-      finalTurnId: settled.turnId,
-      completed: true,
-      backgroundAgent: background,
-      parentReadFailure: "throw",
-    });
-  }
-
-  private isBackgroundAgent(): boolean {
-    return this.state.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM background_agent").one().n > 0;
-  }
-
-  /** The stored alarm retains this result until classification and drafting finish. */
-  private async observeMergedResult(turnId: string): Promise<void> {
-    const identity = this.objectStore.identity();
-    if (!identity || identity.parentKind !== "workstream") return;
-    const judgement = await this.judgeSettledTurn(this.env, {
-      workspaceId: identity.workspaceId,
-      parentId: identity.parentId,
-      substreamId: this.externalSubstreamId(),
-      harnessRunId: `${MERGE_JUDGEMENT_KEY_PREFIX}${turnId}`,
-      finalTurnId: turnId,
-      completed: true,
-      backgroundAgent: this.isBackgroundAgent(),
-      parentReadFailure: "throw",
-    });
-    settledBackfillOutcome(judgement);
-    const row = this.suggestions.byRun(`${MERGE_JUDGEMENT_KEY_PREFIX}${turnId}`);
-    if (row?.status === "open" && row.draft_status === "pending") throw new Error("merge_suggestion_draft_pending");
-    // Classification can finish while canonical publication is deferred. Keep
-    // this intent until the saved suggestion reaches the room too; a replay
-    // reuses its judgement and publishes the latest row without redrafting.
-    if (row) await this.publishSuggestionChanged(row, "required");
-  }
-
-  /**
-   * One settled turn through the observer and, for a confident positive, the
-   * drafter: the settlement step's last act, and the backfill's whole act.
-   * Never throws; the answer names what happened (`skipped:<gate>`,
-   * `judged:<code>`, `resumed`, `failed:<reason>`) and, for a
-   * `classifier_unavailable` judgement, the provider's failure kind.
-   */
-  private async judgeSettledTurn(executionEnv: Env, input: {
-    workspaceId: string;
-    parentId: string;
-    substreamId: string;
-    harnessRunId: string;
-    finalTurnId: string | null;
-    completed: boolean;
-    backgroundAgent: boolean;
-    /**
-     * What a failed parent read means. Settlement reads it best-effort: a
-     * Breakout then skips and a Thread judges with only `start_breakout`,
-     * and the next run judges again. The backfill has no next run, so there
-     * the failure is thrown and the lane retries the row.
-     */
-    parentReadFailure: "null" | "throw";
-  }): Promise<SettledTurnJudgement> {
-    const substreamId = input.substreamId;
-    try {
-      await this.expireSuggestionsBestEffort();
-      const traceId = uuidV7(Date.now());
-      const sink = createClassifierDiagnosticSink(executionEnv, {
-        role: "turn_disposition_classifier",
-        workspaceId: input.workspaceId,
-        workstreamId: input.parentId,
-        traceId,
-        defer: (promise) => this.state.waitUntil(promise),
-      });
-      const identityRow = this.identityRows.identity();
-      const observation = await observeTurnDisposition({
-        env: executionEnv,
-        storage: this.suggestions,
-        workspaceId: input.workspaceId,
-        workstreamId: input.parentId,
-        substreamId,
-        runId: input.harnessRunId,
-        finalTurnId: input.finalTurnId,
-        completed: input.completed,
-        backgroundAgent: input.backgroundAgent,
-        identity: identityRow
-          ? { title: identityRow.title, description: identityRow.description, scope: identityRow.scope,
-              archived_at: identityRow.archived_at, system_kind: identityRow.system_kind }
-          : null,
-        // Resolving was a Thread's, and Threads are retired (plan step C-2).
-        readResolved: () => Promise.resolve(false),
-        readParent: () => this.readSuggestionParent(executionEnv, input.workspaceId, input.parentId, substreamId, input.parentReadFailure),
-        onDiagnostic: sink.record,
-        traceId,
-        now: () => Date.now(),
-        newId: () => uuidV7(Date.now()),
-        commit: (mutate) => this.state.storage.transactionSync(mutate),
-        draftInFlight: (suggestionId) => this.draftsInFlight.has(suggestionId),
-      });
-      logInfo(executionEnv, "turn_disposition_outcome", {
-        workspace_id: input.workspaceId,
-        workstream_id: input.parentId,
-        substream_id: substreamId,
-        harness_run_id: input.harnessRunId,
-        trace_id: traceId,
-        outcome: observation.outcome,
-        ...(observation.outcome === "skipped" ? { gate: observation.gate } : {}),
-        ...(observation.outcome === "judged"
-          ? { code: observation.code, confidence: observation.confidence, model: observation.model,
-              ...(observation.failureKind ? { failure_kind: observation.failureKind } : {}),
-              suggestion_kind: observation.suggestion?.kind ?? null }
-          : {}),
-      });
-      const row = observation.outcome === "judged" ? observation.suggestion
-        : observation.outcome === "resumed" ? observation.suggestion
-        : null;
-      const answer: SettledTurnJudgement = observation.outcome === "skipped" ? { outcome: `skipped:${observation.gate}`, failureKind: null }
-        : observation.outcome === "judged" ? { outcome: `judged:${observation.code}`, failureKind: observation.failureKind }
-        : { outcome: "resumed", failureKind: null };
-      if (!row) return answer;
-      if (observation.outcome === "judged") await this.publishSuggestionChanged(row);
-      await this.draftSuggestionWords(executionEnv, { workspaceId: input.workspaceId, parentId: input.parentId }, substreamId, row);
-      return answer;
-    } catch (error) {
-      const reason = diagnosticErrorCode(error, "turn_disposition_step_failed");
-      logWarn(executionEnv, "turn_disposition_step_failed", {
-        workspace_id: input.workspaceId,
-        workstream_id: input.parentId,
-        substream_id: substreamId,
-        harness_run_id: input.harnessRunId,
-        reason,
-      });
-      return { outcome: `failed:${reason}`, failureKind: null };
-    }
-  }
-
-  /** The two-phase write's second phase: the words, then the row filled or withdrawn, then the event. */
-  private async draftSuggestionWords(
-    executionEnv: Env,
-    input: { workspaceId: string; parentId: string },
-    substreamId: string,
-    row: SuggestionRow,
-  ): Promise<void> {
-    this.draftsInFlight.add(row.suggestion_id);
-    try {
-      await this.draftSuggestionWordsUnguarded(executionEnv, input, substreamId, row);
-    } finally {
-      this.draftsInFlight.delete(row.suggestion_id);
-    }
-  }
-
-  private async draftSuggestionWordsUnguarded(
-    executionEnv: Env,
-    input: { workspaceId: string; parentId: string },
-    substreamId: string,
-    row: SuggestionRow,
-  ): Promise<void> {
-    if (row.kind === "mark_resolved") return;
-    const judged = this.suggestions.turn(row.judged_turn_id);
-    const draft = judged
-      ? await draftSuggestion(executionEnv, {
-        workspaceId: input.workspaceId,
-        workstreamId: input.parentId,
-        substreamId,
-        kind: row.kind,
-        judgedText: judged.content ?? "",
-        purpose: this.identityRows.identity()?.description ?? "",
-        title: this.identityRows.identity()?.title ?? "",
-        parentTitle: row.target_title,
-        recent: this.suggestions.readableBefore(judged.sequence_number, TURN_DISPOSITION_MAX_RECENT_MESSAGES).reverse()
-          .map((turn) => ({ author: turn.author_type === "agent" ? "rally" as const : "person" as const, text: turn.content ?? "" })),
-        defer: (promise) => this.state.waitUntil(promise),
-      })
-      : null;
-    const updated = this.state.storage.transactionSync(() => this.suggestions.setDraft(row.suggestion_id, draft));
-    if (updated) await this.publishSuggestionChanged(updated);
-  }
-
-  /** The parent as the classifier and the chip name it: the Thread above a Breakout, the Channel a Thread would merge into. */
-  private async readSuggestionParent(
-    executionEnv: Env,
-    workspaceId: string,
-    workstreamId: string,
-    substreamId: string,
-    onFailure: "null" | "throw",
-  ): Promise<SuggestionParent | null> {
-    try {
-      if (substreamId !== "0") {
-        const thread = await createIdentityObjectPort(executionEnv, workspaceId, workstreamId, undefined, "0").identity();
-        if (!thread) return null;
-        return { kind: "thread", id: workstreamId, title: thread.title, purpose: thread.description.trim() || undefined };
-      }
-      // A Main's parent was its Channel, which is retired (plan step C-2).
-      return null;
-    } catch (error) {
-      logWarn(executionEnv, "turn_disposition_parent_read_failed", {
-        workspace_id: workspaceId, workstream_id: workstreamId, substream_id: substreamId,
-        reason: diagnosticErrorCode(error, "turn_disposition_parent_read_failed"),
-      });
-      if (onFailure === "throw") throw error;
-      return null;
-    }
-  }
-
-  /** The newest-three rule, recorded: run on each admitted message and each judgement. */
-  private async expireSuggestionsBestEffort(): Promise<void> {
-    try {
-      const expired = this.state.storage.transactionSync(() => this.suggestions.expireBehindNewest(Date.now()));
-      for (const row of expired) await this.publishSuggestionChanged(row);
-    } catch (error) {
-      logWarn(this.env, "conversation_suggestion_expiry_failed", {
-        workstream_id: this.objectStore.identity()?.parentId,
-        reason: diagnosticErrorCode(error, "conversation_suggestion_expiry_failed"),
-      });
-    }
-  }
-
-  private async publishSuggestionChanged(row: SuggestionRow, delivery: "best_effort" | "required" = "best_effort"): Promise<void> {
-    await this.publishAgentRuntimeEvent({ type: "conversation_suggestion_changed", suggestion: suggestionForClient(row) }, delivery)
-      .catch((error: unknown) => {
-        const reason = zodDiagnosticCode(error, "conversation_suggestion") ?? diagnosticErrorCode(error, "conversation_suggestion_publish_failed");
-        logWarn(this.env, "conversation_suggestion_publish_failed", {
-          workstream_id: this.objectStore.identity()?.parentId,
-          suggestion_id: row.suggestion_id,
-          reason,
-        });
-        if (delivery === "required") throw new Error(reason, { cause: error });
-      });
   }
 
   /** Whether a run completed at least one send to another agent. A refused send is not a reply. */
@@ -6684,11 +6169,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     for (const reference of pending) {
       try {
         const event = await this.semanticRealtimeEvent(reference, profiles);
-        // Arm before attempting publication: a failed realtime delivery must
-        // not hold back classification of the already committed merge.
-        if (event.type === "transcript_turn_upserted" && event.turn.blocks.some((block) =>
-          block.type === "text" && block.structuredContent?.["type"] === "conversation_merge",
-        )) await this.scheduleAlarm({ kind: MERGE_SUGGESTION_ALARM_KIND, key: event.turn.turnId, dueAt: Date.parse(event.occurredAt) });
         await this.deliverCommittedRealtimeEvent(event);
         if (!this.objectStore.acknowledgeSemanticRealtime(reference.messageId, reference.sequence)) {
           throw new Error("semantic_realtime_acknowledgement_lost");
@@ -6791,11 +6271,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       socket.close(1011, "Missing connection identity");
       return;
     }
-    if (!this.conversationMembershipAllows(attachment.userId, attachment.membershipVersion)) {
-      socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer read this conversation");
-      return;
-    }
-
     if (parsed.data.type === "subscribe") {
       const authority = await readWorkstreamAuthorityControl(this.env);
       if (!acceptsNewWorkstreamWork(authority) || !this.objectStore.isRealtimeWritable()) {
@@ -7317,7 +6792,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     }
     if (result.inserted) {
       await this.flushSemanticRealtimeOutboxBestEffort();
-      await this.expireSuggestionsBestEffort();
     }
     span.setAttributes({ "rally.message.deduplicated": !result.inserted });
     return { turn: result.turn, deliveryState: result.deliveryState, replayed: !result.inserted };
@@ -7987,7 +7461,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * silent stall.
    */
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<void> {
-    if (alarm.kind === MERGE_SUGGESTION_ALARM_KIND) return this.observeMergedResult(alarm.key);
+    // Suggestions are retired; a merge-result judgement a Thread armed before
+    // then has nothing left to judge.
+    if (alarm.kind === RETIRED_MERGE_SUGGESTION_ALARM_KIND) return;
     if (alarm.kind !== AGENT_TIMER_ALARM_KIND) {
       throw new Error(`substream_unknown_alarm_kind:${alarm.kind}`);
     }
@@ -8476,8 +7952,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         }, 503);
       }
     }
-    if (!auth || !this.product.canRead(identity.data.userId)
-      || !this.conversationMembershipAllows(identity.data.userId, identity.data.membershipVersion ?? 0)) {
+    if (!auth || !this.product.canRead(identity.data.userId)) {
       span.setError("forbidden");
       return jsonResponse({ error: "forbidden" }, 403);
     }
@@ -8500,7 +7975,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     }
 
     const attachment: SocketAttachment = {
-      readsResolutionSuggestions: clientReadsResolutionSuggestions((name) => request.headers.get(name) ?? undefined),
       connectionId: uuidV7(),
       workspaceId: identity.data.workspaceId,
       workstreamId: identity.data.workstreamId,
@@ -8941,7 +8415,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       return false;
     }
     if (plan.type === "replay") {
-      for (const event of plan.events) socket.send(JSON.stringify(suggestionEventForClient(event, this.readAttachment(socket)?.readsResolutionSuggestions ?? false)));
+      for (const event of plan.events) socket.send(JSON.stringify(event));
       return true;
     }
     this.sendResyncRequired(socket, currentSequence, plan.reason);
@@ -9039,7 +8513,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           snapshot.event.transcript.activeTurns.length,
         ),
       });
-      socket.send(JSON.stringify(suggestionEventForClient(snapshot.event, attachment.readsResolutionSuggestions)));
+      socket.send(JSON.stringify(snapshot.event));
       for (const chunk of snapshot.initialContextChunks) socket.send(JSON.stringify(chunk));
       for (const [chunkIndex, inputs] of snapshot.pendingInputChunks.entries()) {
         const frame = JSON.stringify(ServerSocketEventSchema.parse({
@@ -9136,7 +8610,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       activeInferenceDelays: workstream.harnessStatus === "running"
         ? this.objectStore.activeInferenceDelays().filter((delay) => delay.harnessRunId === workstream.latestHarnessRunId)
         : [],
-      suggestions: this.suggestions.open().map(suggestionForClient),
     }) as SocketSnapshotEvent;
     let event = snapshotEvent();
     let encodedBytes = textEncoder.encode(JSON.stringify(event)).byteLength;
@@ -9307,7 +8780,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       const attachment = this.readAttachment(socket);
       if (!attachment?.subscribed) continue;
       try {
-        socket.send(attachment.readsResolutionSuggestions ? payload : JSON.stringify(suggestionEventForClient(event, false)));
+        socket.send(payload);
       } catch {
         // The runtime will deliver close/error separately; one stale socket must
         // not prevent delivery to healthy clients.
