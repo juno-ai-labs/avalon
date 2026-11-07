@@ -1443,7 +1443,6 @@ export class WorkstreamTranscriptStorage {
           delivered.attentionOrdinal,
           now,
         );
-        this.recordAbsorbedSlackOrigin(append.pending, input.executionId, now);
         const turn = this.participantTurn(append.pending.prepared_turn_id);
         if (!turn || turn.attentionOrdinal !== delivered.attentionOrdinal) {
           throw new Error("pending_input_turn_hydration_failed");
@@ -3924,34 +3923,6 @@ export class WorkstreamTranscriptStorage {
    * it, and it lands only after this step's promotions, so a steer past it
    * would be read — by the room and by the model — before it.
    */
-  /**
-   * Remember the Slack message a steer came from, against the run it merged
-   * into. Nothing else starts for that message, so the run that answered it is
-   * the one that settles its status reaction.
-   */
-  private recordAbsorbedSlackOrigin(pending: PendingLoopInputRow, runId: string, now: number): void {
-    const slackOrigin = (JSON.parse(pending.authorization_json) as { slackOrigin?: unknown }).slackOrigin;
-    if (!slackOrigin) return;
-    this.sql.exec(
-      `INSERT INTO run_absorbed_slack_origins (input_id, run_id, slack_origin_json, created_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(input_id) DO NOTHING`,
-      pending.input_id,
-      runId,
-      JSON.stringify(slackOrigin),
-      now,
-    );
-  }
-
-  /** The Slack origins of the steers this run absorbed, in the order it absorbed them. */
-  absorbedSlackOrigins(runId: string): unknown[] {
-    return this.sql.exec<{ slack_origin_json: string }>(
-      `SELECT slack_origin_json FROM run_absorbed_slack_origins
-        WHERE run_id = ? ORDER BY created_at, input_id`,
-      runId,
-    ).toArray().map((row) => JSON.parse(row.slack_origin_json) as unknown);
-  }
-
   private pendingSteersForCommit(): PendingLoopInputRow[] {
     const steers: PendingLoopInputRow[] = [];
     for (const pending of this.visibleSteersAndInputsWithoutRun()) {

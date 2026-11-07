@@ -1370,9 +1370,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * Bring this object up, and nothing else.
    *
    * Awaiting `storageReady` is the whole point: it runs the migrations and the
-   * schema work that make the first real call slow. WorkspaceDO fires this
-   * when a person opens a Channel, so Main's cold start runs before the first
-   * request that needs it. Without side effects, so it stays free to call on
+   * schema work that make the first real call slow, so a caller can start a
+   * conversation's cold start before the first request that needs it.
+   * Without side effects, so it stays free to call on
    * an object nobody has asked for yet.
    */
   async wake(): Promise<{
@@ -7004,6 +7004,35 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * The stored parent kind when it names a retired parent (a Thread's or a
+   * Space's), which this object no longer hosts; null for a hosted one or an
+   * object with no identity yet.
+   */
+  private retiredParentKind(): string | null {
+    const kind = this.objectStore.identityForRetirement()?.parentKind;
+    return kind === undefined || HostedConversationParentKindSchema.safeParse(kind).success ? null : kind;
+  }
+
+  /**
+   * An object whose parent was retired runs nothing on its alarm: every lane
+   * reads the hosted identity, which refuses that kind, so a due wake reason
+   * left in a Thread's object (a memory sweep retry, an outbox row, an agent
+   * timer) would otherwise throw on every pass until `retire_threads` closes
+   * the object. It is logged once per firing and the slot is cleared;
+   * the rows stay for the retirement to discard.
+   */
+  override async alarm(): Promise<void> {
+    await this.storageReady;
+    const retired = this.retiredParentKind();
+    if (retired === null) return super.alarm();
+    logWarn(this.env, "conversation_alarm_skipped", {
+      code: `conversation_parent_kind_retired:${retired}`,
+      substream_id: this.externalSubstreamId(),
+    });
+    await this.ctx.storage.deleteAlarm();
+  }
+
+  /**
    * Hold every due wake reason while this work stream's region is closed.
    *
    * Read only when there is work to hold: a keep-alive wake during a streaming
@@ -7018,7 +7047,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   }
 
   protected override onScheduledAlarmFailure(alarm: ScheduledAlarm, error: unknown, attempt: number): void {
-    const identity = this.objectStore.identity();
+    const identity = this.objectStore.identityForRetirement();
     reportScheduledAlarmAttempt(this.env, (promise) => this.ctx.waitUntil(promise), {
       event: "substream_scheduled_alarm_failed",
       summary: "An agent object's alarm entry keeps throwing; `code` is the handler's error, and `alarm_kind` and `alarm_key` name the entry in the conversation `substream_id` names.",
@@ -7035,7 +7064,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   }
 
   protected override onScheduledAlarmStalled(alarm: ScheduledAlarm, attempt: number): void {
-    const identity = this.objectStore.identity();
+    const identity = this.objectStore.identityForRetirement();
     reportScheduledAlarmAttempt(this.env, (promise) => this.ctx.waitUntil(promise), {
       event: "substream_scheduled_alarm_stalled",
       summary: "An agent object's alarm entry keeps coming back due at the same instant after running: the source row behind `alarm_kind` and `alarm_key`, in the conversation `substream_id` names, is not moving. Find why.",
@@ -7052,7 +7081,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   }
 
   protected override onIdleAlarmHeld(attempt: number, heldUntil: number): void {
-    const identity = this.objectStore.identity();
+    const identity = this.objectStore.identityForRetirement();
     reportScheduledAlarmAttempt(this.env, (promise) => this.ctx.waitUntil(promise), {
       event: "substream_alarm_idle_held",
       summary: "An agent object's alarm keeps asking to run again at once while its passes change nothing: one of its derived wake reasons, in the conversation `substream_id` names, reports work at now that the pass then declines. Find which.",
@@ -7849,6 +7878,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * on when the next timer is due.
    */
   private async armAlarmDuringRunDrain(now: number = Date.now()): Promise<void> {
+    if (this.retiredParentKind() !== null) return;
     await this.armNextAlarm({
       now,
       overdueAt: now + KEEP_ALIVE_INTERVAL_MS,
@@ -7964,6 +7994,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * lease held only while a run is streaming — so it stays derived.
    */
   protected override nextDerivedAlarmCandidates(now: number): readonly number[] {
+    // A retired parent's object has no lane to wake (see `alarm`).
+    if (this.retiredParentKind() !== null) return [];
     const candidates: Array<number | null> = [
       this.objectStore.nextRegionalEffectDueAt(),
       this.objectStore.nextSemanticRealtimeDueAt(),

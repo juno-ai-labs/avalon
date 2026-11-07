@@ -420,18 +420,15 @@ export class WorkstreamIdentityStorage {
     reason: string;
     now: number;
   }): { outcome: ParticipantAdmission } {
-    // A hosted conversation's parent (a Sidekick's or a Canvas's) admits by
-    // its own audience and seats the reader here; a Channel admits by grant.
-    const kind = this.identity()?.parent_kind;
-    if (kind !== "automation" && kind !== "canvas") throw new Error("channel_participant_grant_required");
+    // The hosted parent (a Sidekick or a Canvas) admits by its own audience
+    // and seats the reader here.
     return this.storage.transactionSync(() => ({ outcome: this.seat(input).outcome }));
   }
 
   /**
    * One seating, without a transaction of its own.
    *
-   * Used only for parent-authorized Sidekick and Canvas seating. Channel participation
-   * is written through grants, including trusted connector audiences.
+   * Used only for parent-authorized Sidekick and Canvas seating.
    */
   private seat(input: {
     userId: string;
