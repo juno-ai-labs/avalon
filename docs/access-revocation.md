@@ -113,6 +113,17 @@ The producers are:
   Sidekick any more and nothing publishes that hop now; the consumer keeps the
   target in its schema only so a message already queued at a deploy still
   parses, and acknowledges it without a call.
+- **A Canvas's or a Sidekick's audience narrows.** `WorkspaceDO.canvasSetAudience`
+  and `sidekickSetAudience` ask, before the write and after it, which of the
+  people the Organization object knows may open each affected parent's shared
+  conversation (`conversationReaders`, the conversation's own admission
+  question), and publish for each person the write took away: a `substream`
+  hop per Canvas conversation, or one `automation` hop that names a
+  Sidekick's, with `sessionId: null` and reason
+  `workstream_participant_removed`. A Sidekick's narrowing covers the Canvases
+  it writes too, since those admit its audience. One line,
+  `conversation_audience_narrowed`, names the parent, the people and how many
+  messages did not go out.
 - **A session is revoked.** `AuthService.logout` returns the rows it revoked
   (`RETURNING id, user_id, workspace_id`) and publishes one message per row,
   carrying that session's id. Only the windows that presented that session are
@@ -330,6 +341,17 @@ room would go on seeing an evicted reader listed as present.
 
 ## Known gaps
 
+### A Canvas or Sidekick narrowing has no durable gate either
+
+The narrowing publishes in the request that wrote the audience, with nothing
+durable behind the send: a refused message is counted as `unpublished` on
+`conversation_audience_narrowed` (and logged
+`access_revocation_publish_failed`), and that person keeps their open
+conversation feed until it reconnects, when admission refuses them. Who is
+asked is everyone the Organization object holds as an active relationship;
+every workspace socket, Canvas admission and Sidekick admission records the
+person there, so anyone holding a conversation socket is among them.
+
 ### A narrowing published from the Channel's own scope change has no durable gate
 
 `WorkstreamService.update` reads the Channel before the update and publishes
@@ -481,7 +503,7 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
 | Suite | What it proves |
 | --- | --- |
 | `pnpm --filter @rally/api exec vitest run test/access-revocation.test.ts` | The producers write and publish, the guards refuse, the route refuses a foreign workspace, the consumer's fan-out publishes the right children (one message per automation the workspace names, and one substream hop per child the automation lists), and a failed hop retries while an unreadable one is acknowledged. Runs against the checked-in migrations through `sqlite-d1`. |
-| `pnpm --filter @rally/api test:workers` | `revokeSocketAccess` on real workerd: sockets actually close, a session-scoped revocation closes only the windows that presented it, and each object names its children. `test-workers/queue-dispatch.test.ts` covers the Worker's own queue entry point, which cannot be imported in the Node suite because it pulls in `cloudflare:workers`. |
+| `pnpm --filter @rally/api test:workers` | `revokeSocketAccess` on real workerd: sockets actually close, a session-scoped revocation closes only the windows that presented it, and each object names its children. `test-workers/conversation-audience-revocation.test.ts` narrows a Canvas and an Organization-wide Sidekick with two readers holding real feed sockets, drives the published hops through the real consumer, and reads the removed reader closed with `WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE` and the kept one open. `test-workers/queue-dispatch.test.ts` covers the Worker's own queue entry point, which cannot be imported in the Node suite because it pulls in `cloudflare:workers`. |
 
 Traps:
 
@@ -521,6 +543,34 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-11-07 — Narrowing a Canvas's or a Sidekick's audience closes the feeds it took away
+
+**What changed:** `canvasSetAudience` and `sidekickSetAudience` publish a
+per-person revocation for everyone the change stopped admitting to a parent's
+shared conversation, a `substream` hop per Canvas conversation and an
+`automation` hop per Sidekick (whose narrowing also covers the Canvases it
+writes), logged once as `conversation_audience_narrowed`.
+`HostedSidekick.admitsViewer` reads the person's relationship, so a Sidekick's
+reader is in the Organization's member table like a Canvas's.
+
+**Why:** A narrowing backgrounded presence and closed nothing, so a person taken
+off a Canvas or a Sidekick kept receiving its conversation until they
+reconnected; the conversation object authorized the socket when it connected
+and cannot see the audience move. A Sidekick's admission did not read the
+relationship, so a member who had opened only a Sidekick was invisible to the
+before-and-after comparison.
+
+**Considered and rejected:** Reviving `workstream_audience_narrowed`, which asks
+the room who holds a socket: it needs a new conversation-object method and a
+consumer branch, where the Organization object can already name the people and
+the per-user hops already close their sockets. Asking only the explicit lists
+(participants, `sidekick_audience`): a change from Organization-wide takes
+access from members no list names.
+
+**Consequences:** A new way to change who opens a hosted parent runs through
+`closingNarrowedConversations`. The comparison asks every known active person
+twice per audience change; at a larger Organization that is the number to watch.
 
 ### 2026-11-07 — The four Thread and Channel hops end at the consumer
 
