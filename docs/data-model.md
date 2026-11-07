@@ -631,7 +631,7 @@ SQL joins.
   `direction` is derived from that relationship: `generated` is an `artifact`;
   every other relationship is a `source`. Direction is not stored on the shared
   resource because the same resource may be an artifact here and a source elsewhere.
-  The `origin` relationship records what a work stream was created from — see
+  The `origin` relationship (retired: nothing writes it since Threads went) recorded what a work stream was created from — see
   [work-stream origin attachments](workstream-origin-attachments.md).
 - `elicitation_requests` is operational human-input state tied to a run.
 
