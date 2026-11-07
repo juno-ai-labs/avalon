@@ -5,20 +5,20 @@
 // changed.
 //
 // usage: node scripts/code-mode-evals.mjs --suite code|wizard|final|prod|all
-//        [--models sol,terra] [--only E1,M1] [--concurrency 2] [--timeout 600] [--out round.json]
+//        [--only E1,M1] [--concurrency 2] [--timeout 600] [--out round.json]
 //
-// `code` runs work-stream conversations (Sol is the primary model, Terra is
-// pinned per conversation); `wizard` and `final` author Sidekicks in the wizard
-// and then run them on the primary model. Graders read the transcript and the
-// saved definition, and every expected number is computed for 2026-10-31.
+// `code` asks Rally in a new Canvas's Chat, on the primary model (a Canvas has
+// no per-conversation model pin, so the Terra comparison the earlier rounds ran
+// is gone); `wizard` and `final` author Sidekicks through the wizard in each
+// Sidekick's shared conversation and then run them. Graders read the
+// transcript and the saved definition, and every expected number is computed
+// for 2026-10-31.
 import { writeFileSync } from "node:fs";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, part, i, all) => {
   if (part.startsWith("--")) acc.push([part.slice(2), all[i + 1] && !all[i + 1].startsWith("--") ? all[i + 1] : "true"]);
   return acc;
 }, []));
-// Sol is the primary model locally and not an override the API accepts; Terra is pinned per conversation.
-const MODELS = { sol: null, terra: "openai/gpt-5.6-terra" };
 const baseUrl = process.env.BASE_URL ?? "http://127.0.0.1:8787";
 const healthy = async () => { try { return (await fetch(new URL("/health", baseUrl))).ok; } catch { return false; } };
 const request = async (path, options = {}) => {
@@ -62,18 +62,22 @@ async function waitFor(path, timeoutMs) {
   }
   return detail;
 }
-async function runWorkstream(message, model, timeoutMs) {
-  const created = await request("/workstreams", { method: "POST", headers, body: JSON.stringify({
-    title: `Eval ${Date.now()}`, objective: "Evaluation of program composition.", participantUserIds: [],
-    openingMessage: message, clientMessageId: `eval-${crypto.randomUUID()}`, ...(model ? { modelOverride: model } : {}),
-  }) });
+async function runCanvas(message, timeoutMs) {
+  const id = crypto.randomUUID();
+  const created = await request("/canvases", { method: "POST", headers, body: JSON.stringify({ canvasId: id, title: `Eval ${Date.now()}` }) });
   if (created.response.status !== 201) throw new Error(`create ${created.response.status} ${JSON.stringify(created.body)}`);
-  const id = created.body.workstream.id;
+  const sent = await request(`/conversations/${id}/substreams/0/messages`, { method: "POST", headers, body: JSON.stringify({
+    text: message, clientMessageId: `eval-${crypto.randomUUID()}`,
+  }) });
+  if (sent.response.status !== 201) throw new Error(`send ${sent.response.status} ${JSON.stringify(sent.body)}`);
   return { id, ...summarize(await waitFor(`/conversations/${id}`, timeoutMs)) };
 }
+// A message in a Sidekick's shared conversation starts a run unless it is
+// marked as an edit, which only a manager may send; the wizard answers that.
 async function sendToWizard(sidekickId, message, timeoutMs) {
   const sent = await request(`/conversations/${sidekickId}/substreams/0/messages`, { method: "POST", headers, body: JSON.stringify({
     text: message, clientMessageId: `eval-${crypto.randomUUID()}`, mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
+    intent: "edit_sidekick",
   }) });
   if (sent.response.status !== 201) throw new Error(`send ${sent.response.status} ${JSON.stringify(sent.body)}`);
   return summarize(await waitFor(`/conversations/${sidekickId}`, timeoutMs));
@@ -162,7 +166,7 @@ const WIZARD = [
     gradeWizard: (w, sk) => { const tools = sk.definition?.customTools ?? []; return { pass: sk.lifecycle === "active" && tools.some((t) => Object.keys(t.inputSchema.properties ?? {}).length >= 1), notes: `tools=${tools.map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")}` }; },
     run: true,
     gradeRun: (r) => ({ pass: r.status === "completed" && customCalls(r).some((t) => t.status === "completed") && (has(r.finalText, "2026-11-06", "2026-11-20", "2026-12-04", "2026-12-18") || has(r.finalText, "November 6", "November 20", "December 4", "December 18")), notes: `custom=${customCalls(r).map((t) => `${t.name}:${t.status}`).join(",")} text=${r.finalText.slice(0, 200)}` }) },
-  { id: "WX1", level: "extra", message: "Set up a Sidekick that every morning posts our open Linear issue count to the #eng Slack channel, with the count fetched by a saved tool.",
+  { id: "WX1", level: "extra", message: "Set up a Sidekick that every morning posts our open Linear issue count to #eng in Slack, with the count fetched by a saved tool.",
     gradeWizard: (w, sk) => { const tools = sk.definition?.customTools ?? []; const overConnector = tools.filter((t) => t.requiredPlugins.some((p) => p.startsWith("plugin_"))); return { pass: overConnector.length === 0 && called(w, "tool_test").every((t) => t.status !== "completed" || true), notes: `lifecycle=${sk.lifecycle} tools=${tools.map((t) => `${t.name}[${t.requiredPlugins.join("+")}]`).join(",")} text=${w.finalText.slice(0, 200)}` }; }, run: false },
   { id: "WX2", level: "extra", message: "Set up an on-demand Sidekick that searches the web for the phrase 'Cloudflare Dynamic Workers' and reports the title of the top result. Put the search in a saved tool.",
     gradeWizard: (w, sk) => { const tools = sk.definition?.customTools ?? []; return { pass: sk.lifecycle === "active" && tools.some((t) => t.requiredPlugins.includes("rally_web")), notes: `tools=${tools.map((t) => `${t.name}[${t.requiredPlugins.join("+")}]`).join(",")}` }; },
@@ -221,7 +225,7 @@ const FINAL = [
     followUp: "Add a timezone input to the tool, defaulting to America/Los_Angeles, and have runs pass Asia/Tokyo.",
     gradeWizard: (w, sk) => ({ pass: active(sk) && toolsOf(sk).some((t) => Object.keys(t.inputSchema.properties ?? {}).some((k) => /zone|tz/i.test(k))) && called(w, "tool_test").filter((t) => t.status === "completed").length >= 2, notes: `tools=${toolsOf(sk).map((t) => `${t.name}(${Object.keys(t.inputSchema.properties ?? {}).join(",")})`).join(",")} tests=${called(w, "tool_test").map((t) => t.status).join(",")}` }), run: true,
     gradeRun: (r) => ({ pass: ranCustom(r) && /2026-11-1[01]|November 1[01]/.test(r.finalText) && customCalls(r).some((t) => JSON.stringify(t.input ?? "").includes("Tokyo")), notes: `inputs=${customCalls(r).map((t) => JSON.stringify(t.input)).join(",")} text=${r.finalText.slice(0, 100)}` }) },
-  { id: "F15", level: "15", message: "Set up a Sidekick that every morning posts our open Linear issue count to the #eng Slack channel, with the count fetched by a saved tool.",
+  { id: "F15", level: "15", message: "Set up a Sidekick that every morning posts our open Linear issue count to #eng in Slack, with the count fetched by a saved tool.",
     gradeWizard: (w, sk) => ({ pass: toolsOf(sk).every((t) => !t.requiredPlugins.some((p) => p.startsWith("plugin_"))) && !active(sk) || toolsOf(sk).length === 0, notes: `lifecycle=${sk.lifecycle} tools=${toolsOf(sk).map((t) => `${t.name}[${t.requiredPlugins.join("+")}]`).join(",")} text=${w.finalText.slice(0, 120)}` }), run: false },
   { id: "F16", level: "16", message: "Save a reusable skill, with no triggers, explaining how to write a good commit message for this team: subject under 50 characters, imperative mood, body says why.",
     gradeWizard: (w, sk) => ({ pass: active(sk) && (sk.definition?.triggers ?? []).length === 0 && toolsOf(sk).length === 0, notes: `triggers=${(sk.definition?.triggers ?? []).length} tools=${toolsOf(sk).length} lifecycle=${sk.lifecycle}` }), run: false },
@@ -310,20 +314,19 @@ const PROD = [
     gradeRun: (r) => ({ pass: ranCustom(r) && customCalls(r).length <= 2 && /\b150\b/.test(r.finalText) && !/\b[1-9]\d*\s+(?:\w+\s+)?(?:remain|pending|left|unscanned)/i.test(r.finalText), notes: `custom=${customCalls(r).length} text=${r.finalText.slice(0, 160)}` }) },
 ];
 const only = args.only ? new Set(args.only.split(",")) : null;
-const models = (args.models ?? "sol,terra").split(",");
 const timeoutMs = Number(args.timeout ?? 420) * 1000;
 const concurrency = Number(args.concurrency ?? 3);
 const results = [];
 const jobs = [];
 if (args.suite === "code" || args.suite === "all" || !args.suite) {
-  for (const scenario of CODE) if (!only || only.has(scenario.id)) for (const model of models) jobs.push(async () => {
+  for (const scenario of CODE) if (!only || only.has(scenario.id)) jobs.push(async () => {
     const started = Date.now();
     try {
-      const s = await runWorkstream(scenario.message, MODELS[model], timeoutMs);
+      const s = await runCanvas(scenario.message, timeoutMs);
       const g = scenario.grade(s);
-      results.push({ suite: "code", id: scenario.id, level: scenario.level, model, pass: g.pass, notes: g.notes, status: s.status, seconds: Math.round((Date.now() - started) / 1000), workstreamId: s.id, finalText: s.finalText.slice(0, 600), tools: s.tools });
+      results.push({ suite: "code", id: scenario.id, level: scenario.level, model: s.model ?? "primary", pass: g.pass, notes: g.notes, status: s.status, seconds: Math.round((Date.now() - started) / 1000), canvasId: s.id, finalText: s.finalText.slice(0, 600), tools: s.tools });
     } catch (error) {
-      results.push({ suite: "code", id: scenario.id, level: scenario.level, model, pass: false, notes: `error ${error.message}`, seconds: Math.round((Date.now() - started) / 1000) });
+      results.push({ suite: "code", id: scenario.id, level: scenario.level, model: "primary", pass: false, notes: `error ${error.message}`, seconds: Math.round((Date.now() - started) / 1000) });
     }
   });
 }

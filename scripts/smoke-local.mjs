@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import {
   SOCKET_TICKET_SUBPROTOCOL,
   openSubstreamSocket,
@@ -8,7 +10,15 @@ import {
 const baseUrl = process.env.AVALON_SMOKE_BASE_URL ?? "http://127.0.0.1:8787";
 const otherBaseUrl = process.env.AVALON_SMOKE_OTHER_BASE_URL;
 const expectedWebOrigin = process.env.AVALON_SMOKE_PUBLIC_WEB_ORIGIN ?? "http://127.0.0.1:5174";
-const seedWorkstreamId = "00000000-0000-7000-8000-000000000021";
+const seedProduct = JSON.parse(readFileSync(new URL("../packages/db/seed-product.json", import.meta.url), "utf8"));
+const seedChat = seedProduct.canvases.find((canvas) => canvas.title === "Q4 revenue review");
+const seedChatCanvasId = seedChat.id;
+const seedLaunchPlanId = seedProduct.canvases.find((canvas) => canvas.title === "Launch plan").id;
+const seedSidekickId = seedProduct.automations[0].id;
+// The dev user's own opening message, replayed by its client id below.
+const seedOpening = seedChat.messages.find(
+  (message) => message.client_message_id && message.author_user_id === seedChat.createdByUserId,
+);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -106,23 +116,84 @@ assert(revoked.response.status === 204, "Invitation revocation failed");
 const revokedPreview = await jsonRequest(`/auth/invitations/preview?token=${encodeURIComponent(rotatedToken)}`);
 assert(revokedPreview.response.status === 404, "A revoked invitation remained usable");
 
-const detail = await jsonRequest(`/conversations/${seedWorkstreamId}`, { headers: authHeaders });
-assert(detail.response.ok, "Seeded work-stream detail is unavailable; run pnpm db:seed first");
-assert(detail.body?.resources?.length > 0, "The right-rail resource fixture is missing");
-assert(detail.body?.connections?.length > 0, "The right-rail connection fixture is missing");
+// The seeded Canvases (`packages/db/seed-product.json`, imported by
+// `pnpm db:open-authority`): Launch plan holds the fixture artifact, and Q4
+// revenue review's Chat holds the dev user's opening message and Rally's reply.
+const launchPlan = await jsonRequest(`/canvases/${seedLaunchPlanId}`, { headers: authHeaders });
+assert(launchPlan.response.ok, "The seeded Launch plan Canvas is unavailable; run pnpm db:open-authority first");
+assert(launchPlan.body?.artifacts?.length > 0, "The seeded Canvas artifact fixture is missing");
 
+const chat = await jsonRequest(`/conversations/${seedChatCanvasId}`, { headers: authHeaders });
+assert(chat.response.ok, "The seeded Canvas Chat is unavailable; run pnpm db:open-authority first");
 const transcriptTurns = [
-  ...(detail.body?.transcript?.ranges ?? []).flatMap((range) => range.turns ?? []),
-  ...(detail.body?.transcript?.activeTurns ?? []),
+  ...(chat.body?.transcript?.ranges ?? []).flatMap((range) => range.turns ?? []),
+  ...(chat.body?.transcript?.activeTurns ?? []),
 ];
-assert(transcriptTurns.length >= 5, "The background-task transcript fixture is incomplete");
+assert(transcriptTurns.length >= seedChat.messages.length, "The seeded Canvas Chat transcript is incomplete");
 assert(
-  transcriptTurns.some((turn) => turn.blocks?.some((block) => block.type === "tool")),
-  "Persisted tool events are missing",
+  transcriptTurns.some((turn) => turn.actor === "assistant" && turn.blocks?.some((block) => block.type === "text")),
+  "The seeded Canvas Chat has no reply from Rally",
 );
 
+const sidekickConversation = await jsonRequest(`/conversations/${seedSidekickId}`, { headers: authHeaders });
+assert(sidekickConversation.response.ok, "The seeded Sidekick's shared conversation is unavailable");
+
+// A Canvas this check makes, under an id it minted: a retried create answers
+// the same Canvas, and a message resent to its Chat lands there once.
+const canvasId = crypto.randomUUID();
+const createCanvas = () => jsonRequest("/canvases", {
+  method: "POST",
+  headers: authHeaders,
+  body: JSON.stringify({ canvasId }),
+});
+const created = await createCanvas();
+assert(
+  created.response.status === 201 && created.body?.canvasId === canvasId,
+  `Canvas creation returned ${created.response.status}`,
+);
+const retried = await createCanvas();
+assert(
+  retried.response.status === 201 && retried.body?.canvasId === canvasId,
+  "A retried Canvas create did not answer the same Canvas",
+);
+const smokeMessage = { text: "Reply with exactly the word PONG.", clientMessageId: `smoke-${canvasId}` };
+const sendSmokeMessage = () => jsonRequest(`/conversations/${canvasId}/substreams/0/messages`, {
+  method: "POST",
+  headers: authHeaders,
+  body: JSON.stringify(smokeMessage),
+});
+const sent = await sendSmokeMessage();
+assert(sent.response.status === 201 && sent.body?.turn?.turnId, `Canvas Chat message returned ${sent.response.status}`);
+const resent = await sendSmokeMessage();
+assert(resent.body?.turn?.turnId === sent.body.turn.turnId, "A resent Canvas Chat message landed twice");
+
+// With a model, Rally answers the Chat; without one the check says it did not look.
+const modelConfigured = health.body?.checks?.openRouter?.ok === true
+  && health.body.checks.openRouter.message === "configured";
+let canvasReply = "not checked (no model configured)";
+if (modelConfigured) {
+  const deadline = Date.now() + 90_000;
+  let reply = null;
+  let status = null;
+  while (Date.now() < deadline && reply === null) {
+    const read = await jsonRequest(`/conversations/${canvasId}`, { headers: authHeaders });
+    status = read.body?.latestHarnessRun?.status ?? null;
+    const turns = [
+      ...(read.body?.transcript?.ranges ?? []).flatMap((range) => range.turns ?? []),
+      ...(read.body?.transcript?.activeTurns ?? []),
+    ];
+    reply = turns.filter((turn) => turn.actor === "assistant")
+      .map((turn) => (turn.blocks ?? []).filter((block) => block.type === "text").map((block) => block.text).join(""))
+      .find((text) => text.length > 0) ?? null;
+    if (reply === null && ["failed", "stopped"].includes(status)) break;
+    if (reply === null) await new Promise((resolve) => setTimeout(resolve, 1_500));
+  }
+  assert(reply !== null, `Rally did not reply in the new Canvas's Chat (run ${status ?? "never started"})`);
+  canvasReply = "received";
+}
+
 const ticket = await jsonRequest(
-  `/conversations/${seedWorkstreamId}/substreams/0/socket`,
+  `/conversations/${seedChatCanvasId}/substreams/0/socket`,
   { headers: authHeaders },
 );
 assert(ticket.response.ok && ticket.body?.url && ticket.body?.ticket, "Realtime ticket creation failed");
@@ -139,8 +210,8 @@ const firstSocket = await openSubstreamSocket(handshakeUrl, {
     type: "create_message",
     operationId: crypto.randomUUID(),
     payload: {
-      text: "Investigate ENG-142 and summarize the evidence before proposing a fix.",
-      clientMessageId: "seed-eng-1",
+      text: seedOpening.text_content,
+      clientMessageId: seedOpening.client_message_id,
       mentions: [],
       confirmedParticipantUserIds: [],
       attachmentIds: [],
@@ -154,7 +225,7 @@ assert(
 );
 assert(firstSocket.commandResult?.type === "client_command_succeeded", "Message idempotency replay failed");
 assert(
-  firstSocket.commandResult?.turn?.turnId === "00000000-0000-7000-8000-000000000032",
+  firstSocket.commandResult?.turn?.turnId === seedOpening.id,
   "Message replay created a duplicate",
 );
 assert(
@@ -180,7 +251,10 @@ console.log(JSON.stringify({
   organizationRegion: expectedRegion,
   invitationLifecycle: "ok",
   crossRegionSession: otherBaseUrl ? "rejected" : "not checked",
-  sidebarFixtures: "ok",
+  seededCanvases: "ok",
+  canvasCreateRetry: "same Canvas",
+  canvasChatMessage: "landed once",
+  canvasReply,
   messageIdempotency: "ok",
   firstSocket: "snapshot",
   socketTransport: SOCKET_TICKET_SUBPROTOCOL,

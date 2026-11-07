@@ -35,8 +35,8 @@ once and passes on a rerun.
 | `scripts/*.test.mjs` | `pnpm test:scripts` | `node --test`. The repository's own tooling and the ESLint boundary rules. |
 | `apps/desktop/scripts/*.test.mjs` | `pnpm --filter @rally/desktop test:release` | `node --test`. The release planner and release scripts — **not** covered by `pnpm test:scripts`, whose name suggests otherwise. |
 | `apps/api/scripts/test-crash-symbolicator-container.mjs` | `pnpm --filter @rally/api test:crash-symbolicator-container` | Docker. Builds and exercises the symbolicator image. |
-| `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local` | Configured regional Workers under `wrangler dev`, with the local D1 database. |
-| `scripts/e2e-local.mjs` | `pnpm e2e:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | The full member pipeline over the live local stack — happy, sad, and chaos lanes, with real model calls when `OPENROUTER_API_KEY` is configured. See [`e2e.md`](e2e.md#automated-behavioral-lane). |
+| `scripts/smoke-local.mjs` | `pnpm smoke:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | Configured regional Workers under `wrangler dev`, with the local D1 database: the seeded Canvases and Sidekick, a new Canvas's create retry and Chat message, a reply when a model is configured, and the conversation socket's replay and ticket refusals. |
+| `scripts/e2e-local.mjs` | `pnpm e2e:local` against a running `pnpm dev:api:local`, after `pnpm db:open-authority` | The full member pipeline over the live local stack — happy, sad, and chaos lanes over Canvas Chats, with real model calls when `OPENROUTER_API_KEY` is configured. See [`e2e.md`](e2e.md#automated-behavioral-lane). |
 
 `pnpm test` runs every package's `test` script recursively, and `@rally/api`'s
 runs the Node suite *and then* the workerd suite — so a green `pnpm test`
