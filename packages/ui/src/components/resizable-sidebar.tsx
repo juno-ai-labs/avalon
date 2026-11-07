@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { GripVertical, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { GripVertical } from 'lucide-react';
 import {
   useEffect,
   useId,
@@ -13,12 +13,10 @@ import {
 } from 'react';
 
 import {
-  COLLAPSED_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
-  SIDEBAR_COLLAPSE_DRAG_THRESHOLD,
 } from '../lib/sidebar-geometry';
-import { DragHint, IconButton, Tip } from './primitives';
+import { DragHint } from './primitives';
 
 const EDGE_REVEAL_DISTANCE = 20;
 const KEYBOARD_STEP = 16;
@@ -155,80 +153,27 @@ export function SidebarFooter<Component extends ElementType = 'div'>({
   </Footer>;
 }
 
-/** The shared trailing controls for every hierarchy sidebar. */
-export function SidebarCollapseFooter({
-  className,
-  collapseLabel,
-  compact,
-  constrained = false,
-  constrainedTitle,
-  expandLabel,
-  leading,
-  onToggle,
-  ...props
-}: Omit<ComponentPropsWithoutRef<'div'>, 'children'> & {
-  collapseLabel: string;
-  compact: boolean;
-  constrained?: boolean;
-  constrainedTitle?: string;
-  expandLabel: string;
-  leading?: ReactNode;
-  onToggle: () => void;
-}): React.JSX.Element {
-  const toggle = <IconButton
-    aria-expanded={!compact}
-    className="window-no-drag"
-    disabled={constrained}
-    label={compact ? expandLabel : collapseLabel}
-    onClick={onToggle}
-    showTooltip={!constrained}
-  >
-    {compact ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-  </IconButton>;
-
-  return <SidebarFooter {...props} className={className} leading={leading}>
-    {constrained && constrainedTitle
-      ? <Tip label={constrainedTitle}>
-          <span className="sidebar-collapse-footer-toggle" tabIndex={0}>{toggle}</span>
-        </Tip>
-      : toggle}
-  </SidebarFooter>;
-}
-
 type ResizableSidebarProps = Omit<ComponentPropsWithoutRef<'aside'>, 'children'> & {
   children: ReactNode;
-  /**
-   * False for a sidebar that only resizes: the edge never collapses it, the
-   * keyboard stops at the minimum width, and the hint offers no toggle.
-   */
-  collapsible?: boolean;
-  compact: boolean;
-  constrained?: boolean;
   resizeLabel: string;
   onResize: (width: number) => void;
-  /** Required unless `collapsible` is false. */
-  onToggle?: () => void;
   sidebarRef: RefObject<HTMLElement | null>;
   width: number;
 };
 
 /**
- * The shared shell for the Space, Channel, and Breakout sidebars.
+ * The navigation sidebar's shell: it resizes and never collapses.
  *
- * Owners supply their content and persistence policy. The shell owns the
- * compact/resizing states that drive motion as well as the complete trailing-
- * edge interaction, so a hierarchy level cannot acquire a different grip,
- * hint, gesture, or transition contract by accident.
+ * The owner supplies its content and persistence policy. The shell owns the
+ * resizing state that drives motion and the complete trailing-edge
+ * interaction: the grip, the hint, the drag and the keyboard steps, which stop
+ * at the minimum width.
  */
 export function ResizableSidebar({
   children,
   className,
-  collapsible = true,
-  compact,
-  constrained = false,
   resizeLabel,
   onResize,
-  onToggle,
   sidebarRef,
   width,
   ...props
@@ -277,13 +222,9 @@ export function ResizableSidebar({
     };
   }, [onResize, resizing, sidebarRef]);
 
-  const toggle = (): void => {
-    if (collapsible && !constrained) onToggle?.();
-  };
-
   return <aside
     {...props}
-    className={clsx('resizable-sidebar', className, compact && 'is-compact', resizeActive && 'is-resizing')}
+    className={clsx('resizable-sidebar', className, resizeActive && 'is-resizing')}
     ref={sidebarRef}
   >
     {children}
@@ -291,32 +232,21 @@ export function ResizableSidebar({
     <DragHint
       action="Drag to resize"
       suppressed={resizing}
-      shortcut={constrained || !collapsible ? undefined : compact ? 'Double-click or Enter to expand' : 'Double-click or Enter to collapse'}
     >
       <div
         aria-label={resizeLabel}
         aria-orientation="vertical"
         aria-valuemax={MAX_SIDEBAR_WIDTH}
-        aria-valuemin={collapsible ? COLLAPSED_SIDEBAR_WIDTH : MIN_SIDEBAR_WIDTH}
+        aria-valuemin={MIN_SIDEBAR_WIDTH}
         aria-valuenow={width}
         className={clsx('sidebar-resizer', (pointerNearEdge || resizing) && 'is-near', resizeActive && 'is-resizing')}
         onBlur={() => setKeyResizing(false)}
-        onDoubleClick={toggle}
         onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            toggle();
-            return;
-          }
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
           setKeyResizing(true);
-          if (event.key === 'ArrowLeft' && !compact) {
-            onResize(width > MIN_SIDEBAR_WIDTH || !collapsible
-              ? Math.max(collapsible ? 0 : MIN_SIDEBAR_WIDTH, width - KEYBOARD_STEP)
-              : SIDEBAR_COLLAPSE_DRAG_THRESHOLD - 1);
-          }
-          if (event.key === 'ArrowRight') onResize(compact ? MIN_SIDEBAR_WIDTH : width + KEYBOARD_STEP);
+          if (event.key === 'ArrowLeft') onResize(Math.max(MIN_SIDEBAR_WIDTH, width - KEYBOARD_STEP));
+          if (event.key === 'ArrowRight') onResize(width + KEYBOARD_STEP);
         }}
         onKeyUp={() => setKeyResizing(false)}
         onLostPointerCapture={(event) => {

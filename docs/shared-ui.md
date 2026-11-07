@@ -8,10 +8,9 @@ drawing a second design.
 ## Where the code lives
 
 - `packages/ui/src/components`: the shell pieces ([`desktop-shell.md`](desktop-shell.md):
-  title pills, the thread, Channel and Breakout menus, Breakout chips and
-  ticks, the split layout), navigation frame and rows, resource rows, Sidekick
-  section/picker, account trigger, glyphs, avatars and visual primitives — and
-  a Channel's mark, `space-icon.tsx` (`SpaceIcon`). A measured share is drawn
+  title pills and their menu building blocks), the sidebar row content
+  (`navigation.tsx`, `SidebarNavigationRowContent`), the resizing sidebar,
+  resource rows, glyphs, avatars and visual primitives. A measured share is drawn
   by `Meter` in `primitives.tsx`: a track and a fill, `role="meter"` (or
   `progressbar` for a task moving towards done) with its value attributes, a required label, and a `normal` or `warning` tone, painted
   from the `cmp.meter.*` tokens. The Organization usage line and the onboarding
@@ -125,11 +124,11 @@ The sidebar can omit Main without inventing an accessible Main route. Browser
 participants and resources belong to the selected authorized conversation; desktop
 can continue supplying parent-owned workstream context. Directory appearance comes
 from canonical reads and preserves the existing Main-label boundary.
-Desktop and browser both mount the one non-collapsing `ResizableSidebar`
-(`collapsible={false}`) and compose the plain `SidebarFooter` with an account
-slot ([`desktop-shell.md`](desktop-shell.md)). `SidebarCollapseFooter` and the
-primitive's compact layout have had no host since Sideline, the one host that
-collapsed, was removed. A host that keeps a sidebar's width (and its
+Desktop and browser both mount `ResizableSidebar`, which only resizes, and
+compose the plain `SidebarFooter` with an account slot
+([`desktop-shell.md`](desktop-shell.md)). Its collapse toggle, compact layout
+and `SidebarCollapseFooter` were deleted (2026-11): no host had collapsed it
+since Sideline was removed. A host that keeps a sidebar's width (and its
 collapsed state) across launches does it through `lib/sidebar-preferences.ts`
 under its own local-storage keys. A missing or unreadable width falls back to
 the default, a readable one is clamped to the sidebar's limits, a missing
@@ -271,6 +270,33 @@ surfaces in Electron. The browser host in #825 adds Chrome verification; no seco
 component test runner is needed for the same implementations.
 
 ## Changelog
+
+### 2026-11-07 — The Thread, Channel and Breakout components are deleted
+
+**What changed:** `conversation-menus.tsx` (the thread, Channel and Breakout
+title menus), `breakout-marks.tsx`, `split-conversation.tsx`,
+`merge-message.tsx`, `merge-response-card.tsx`, `conversation-suggestion.tsx`,
+`conversation-card.tsx`, `conversation-identity-tip.tsx`, `space-icon.tsx`,
+`account-trigger.tsx`, `sidekick-section.tsx`, `sidekick-picker.tsx` and
+`sidebar-refresh-row.tsx` are deleted, as are the Channel rows in
+`navigation.tsx` and `ResizableSidebar`'s collapse toggle, compact layout and
+`SidebarCollapseFooter`. `app.css` loses the 231 rules whose selectors name a
+class of the `.channel*`, `.space*`, `.merge*`, `.suggestion*`, `.breakout*`,
+`.activity*`, `.substream*`, `.sideline-*` or `.pinned*` families that no
+source file uses any longer. `workstream-glyph.tsx` keeps its name: it draws
+the Sidekick marks and a rename would touch a dozen importers for no change in
+behaviour.
+
+**Why:** Plan step B-4 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+the client code that used these was deleted in step B-3, and the Canvas and
+Sidekick title pills build their menus from `title-pill.tsx`'s generic
+blocks, not from `conversation-menus.tsx`.
+
+**Consequences:** A rule was removed only when one of its selectors names a
+family class no source uses; a selector list that also named a live class kept
+that selector. A class built from a template string at run time would read as
+unused, so a new family member must be spelled out where it is used.
 
 ### 2026-10-23 — Show Sidekick delegates with immediate creation
 
