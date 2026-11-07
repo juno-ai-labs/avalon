@@ -488,28 +488,26 @@ batch claim. Replaying the invitation after removal cannot restore access, and
 a Breakout-only email share still cannot open Main.
 
 `pnpm --filter @rally/api test:workers test-workers/scope-invitations.test.ts`
-runs real D1, `WorkspaceDO` SQLite, RPCs, alarms and HTTP routing. The fixture
-declares the D1 columns it uses and gives each case a fresh Organization object:
-an earlier case's in-flight delivery alarm must not repopulate the next case
-after `reset()`. It covers a share claimed as it is made for an
-existing account, one held for an address with no account and claimed by a
-real browser one-time-code sign-in with no further step, that someone else's
-claim reaching the same Channel takes nothing, a Global-verified address this
-deployment has not recorded, child-only access, atomic multi-target claiming
-with the share left pending after a rollback, re-claiming after removal and
-revocation, revoked and expired shares, a lookup outage that leaves the sign-in
-intact, a delete racing a new share's row, the old `inv_` token claiming only
-for the right address, sharer replacement, stable
-operation/email receipts, relationship publication, and the link's exact form.
-It also proves the bound the whole feature rests on, against real conversation
-objects with distinct transcripts in Main and in a child: an offer of the child
-quotes the child and never Main, an offer of Main quotes Main and never the
-child, and a system notice in either is not conversation and never leaves. That
-case needs the runtime — the Node fixture resolves every substream id to one
-database, so the same assertions there would pass with the boundary broken.
-It also checks that an `expiresAt` past the `Date` range is refused with the
-field named in the diagnostic, and that a preview failure is logged with the
-port code that says which authority refused.
+runs real D1, `WorkspaceDO` SQLite, RPCs, alarms and HTTP routing against a
+Canvas. The fixture declares the D1 columns it uses and gives each case a fresh
+Organization object. It covers a share held for an address with no account and
+claimed by a real browser one-time-code sign-in with no further step, a share
+claimed as it is made for an existing account (its lookup row then cleared by
+the delivery alarm), a share pending before lookup rows existed indexed by the
+`parent_invitation_index` alarm and then claimed, a revoked share and an
+expired one that no sign-in can claim, a repeated creation answered from its
+receipt with one delivery, a second claim that adds nothing, a revocation's
+lookup-row delete racing a new share's row, a lookup outage that leaves the
+sign-in intact, an address only Global verified, and the claim regional
+discovery makes. workerd runs the object's alarms on its own schedule as well
+as when a case calls `runDurableObjectAlarm`, and a run in flight takes every
+due entry, so `runDurableObjectAlarm` can return before the write it was meant
+to wait for lands: the cases read alarm-written D1 state with `expect.poll`,
+and scope every lookup-row read to their own Organization so an earlier case's
+late alarm is never read as theirs. The Thread-era cases (Breakout-only shares,
+previews of Main and a child, sharer replacement, multi-target rollback) went
+with the Channel host in plan step C-2; `canvas-hosting.test.ts` covers who an
+accepted Canvas share admits.
 `apps/api/test/scope-invitation-email.test.ts` covers the body: the heading and
 each of its fallbacks, a name carrying a newline, the quoted turns, the singular
 and plural earlier-message line, word truncation, the byte ceiling that bounds a
