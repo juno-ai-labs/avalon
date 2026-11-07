@@ -251,11 +251,9 @@ export const ReadTranscriptResultSchema = z.strictObject({
   nextAfterSequence: z.number().int().nonnegative().nullable(),
 });
 
-/** Internal inspection does not seat a viewer or acknowledge the conversation. */
 /**
- * What a Sidekick run spent, read from the run's own object for its first
- * page: its model calls as the provider counted them, and every tool's calls
- * and time, with a program's own requests counted apart.
+ * What a Sidekick run's conversation spent, for its first page: model calls
+ * as the provider counted them, and each tool's calls and time.
  */
 export const SidekickRunUsageSchema = z.strictObject({
   model: z.strictObject({
@@ -275,11 +273,15 @@ export const SidekickRunUsageSchema = z.strictObject({
     fromProgram: z.boolean(),
     calls: z.number().int().nonnegative(),
     failed: z.number().int().nonnegative(),
+    ambiguous: z.number().int().nonnegative(),
     ms: z.number().nullable(),
     maxMs: z.number().nullable(),
   })),
 });
 
+export type SidekickRunUsage = z.infer<typeof SidekickRunUsageSchema>;
+
+/** Internal inspection does not seat a viewer or acknowledge the conversation. */
 export const SidekickRunTranscriptResultSchema = z.strictObject({
   transcriptAvailability: z.enum(["available", "not_provisioned"]),
   turns: z.array(TranscriptTurnSchema),

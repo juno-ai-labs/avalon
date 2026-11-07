@@ -23,6 +23,7 @@
  * vocabulary; the published spelling is the port's caller's business.
  */
 
+import type { SidekickRunUsage } from "@rally/contracts";
 import { boundParameterChunks } from "./bound-parameters";
 import {
   type PreparedConversationTurn,
@@ -441,18 +442,7 @@ function usageCounterAssignments(usageExpression: string): string {
 }
 
 /** A conversation's model calls, as the provider counted them. */
-export interface ModelUsage {
-  calls: number;
-  failedAttempts: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  costUsd: number;
-  firstCallInputTokens: number | null;
-  lastCallInputTokens: number | null;
-  largestCallInputTokens: number | null;
-  ms: number;
-}
+export type ModelUsage = SidekickRunUsage["model"];
 
 export class WorkstreamHarnessRunStorage {
   /**
