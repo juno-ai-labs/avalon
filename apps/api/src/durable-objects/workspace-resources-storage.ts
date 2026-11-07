@@ -188,7 +188,7 @@ export function deleteWorkspaceUploadDraft(
     `DELETE FROM resources
       WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
         AND uploaded_by_user_id = ? AND attachment_status = 'draft'
-        AND NOT EXISTS (SELECT 1 FROM workspace_workstream_resource_links
+        AND NOT EXISTS (SELECT 1 FROM canvas_artifacts
                          WHERE resource_id = resources.id)
         AND NOT EXISTS (SELECT 1 FROM pending_attachment_reservations
                          WHERE resource_id = resources.id)
@@ -563,7 +563,7 @@ export function reapWorkspaceExpiredDraftResources(
            AND stale.attachment_status = 'draft'
            AND stale.created_at < ?
            AND NOT EXISTS (
-             SELECT 1 FROM workspace_workstream_resource_links link
+             SELECT 1 FROM canvas_artifacts link
               WHERE link.resource_id = stale.id
            )
            AND NOT EXISTS (
