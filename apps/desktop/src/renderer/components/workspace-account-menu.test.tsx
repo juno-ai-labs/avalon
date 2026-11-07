@@ -87,7 +87,7 @@ describe('organization account menu', () => {
       getUpdateStatus: async () => status,
       onUpdateStatusChanged: () => () => undefined,
       installDownloadedUpdate,
-      openSidekicks: vi.fn(async () => undefined),
+      openSidekick: vi.fn(async () => undefined),
     };
     try {
       renderMenu({ presentation: 'grok' });

@@ -61,7 +61,7 @@ describe('workspace sync relay IPC', () => {
       requestId: '00000000-0000-7000-8000-000000000002',
       parentId: '00000000-0000-7000-8000-000000000003', substreamId: '0' };
     expect(() => subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.conversationView, subject.fromMain, request))
-      .toThrow('Only the Settings and Sidekicks windows request relayed conversation views');
+      .toThrow('Only the Settings window request relayed conversation views');
     subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.conversationView, subject.fromSidekicks, { ...request, region: 'eu' });
     expect(subject.send).not.toHaveBeenCalled();
     subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.conversationView, subject.fromSidekicks, request);
@@ -85,11 +85,11 @@ describe('workspace sync relay IPC', () => {
     expect(subject.delivered).toEqual([{ type: 'source', revision: 1, source: { region, workspaceId, state: 'connected' } }]);
   });
 
-  it('answers the source to the Settings and Sidekicks windows only', () => {
+  it('answers the source to the Settings window only', () => {
     const subject = harness();
     subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.publish, subject.fromMain, connected);
     expect(() => subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, subject.fromMain))
-      .toThrow('Only the Settings and Sidekicks windows consume the relayed organization sync');
+      .toThrow('Only the Settings window consume the relayed organization sync');
     for (const event of [subject.fromSettings, subject.fromSidekicks]) {
       expect(subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, event))
         .toEqual({ revision: 1, source: { region, workspaceId, state: 'connected' } });
@@ -102,9 +102,9 @@ describe('workspace sync relay IPC', () => {
     expect(() => subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.publish, nobody, connected))
       .toThrow('Only the main Rally window can publish organization sync');
     expect(() => subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, nobody))
-      .toThrow('Only the Settings and Sidekicks windows consume the relayed organization sync');
+      .toThrow('Only the Settings window consume the relayed organization sync');
     expect(() => subject.invoke(WORKSPACE_SYNC_RELAY_IPC_CHANNELS.source, subject.fromSidekicks))
-      .toThrow('Only the Settings and Sidekicks windows consume the relayed organization sync');
+      .toThrow('Only the Settings window consume the relayed organization sync');
   });
 
   it('runs the shared trusted-sender check first', () => {

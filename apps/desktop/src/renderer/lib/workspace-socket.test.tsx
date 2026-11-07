@@ -3590,7 +3590,7 @@ describe('the organization-sync relay between windows', () => {
       { type: 'topics', region, workspaceId, waterline: 8, topics: [...WORKSPACE_SYNC_TOPICS] },
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['member_directory'] },
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['feature_flags'] },
-      // The Sidekicks window reads what the list push refetches, not the list.
+      // A consuming window reads what the list push refetches, not the list.
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['automations'] },
       // The meter travels by value on the socket and by name on the relay.
       { type: 'topics', region, workspaceId, waterline: 9, topics: ['usage'] },

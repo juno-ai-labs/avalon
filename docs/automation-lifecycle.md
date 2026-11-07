@@ -488,16 +488,14 @@ the open composers. Counts have no REST fetch, polling, or per-Sidekick socket.
 | `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette, shared with the work stream's header. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
 | `packages/ui/src/components/sidekick-section.tsx`, `conversation-menus.tsx`, `apps/desktop/src/renderer/screens/channel.tsx` | `SidekickSection`, the **Sidekicks** section of a Channel's title menu, below its people; the Channel screen fills it from its `defaultSidekickIds` and the Sidekicks library, with Add and Remove for someone who may edit the Channel. A Thread's title menu has none. |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen. |
-| `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksLibraryScreen`, the Sidekicks home; `SidekicksLibraryRoute`, which renders it in the main window on both hosts; `SidekicksWindow`: the separate window's routes, and the one place its Escape-to-close gesture is installed. |
+| `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksLibraryScreen`, the Sidekicks home; `SidekicksLibraryRoute`, which renders it in the main window on both hosts. |
 | `apps/desktop/src/renderer/components/sidekick-run-row.tsx` | A run's row in the shared conversation, collapsed, opening into the run's own conversation. |
 | `apps/desktop/src/renderer/components/sidekick-sidebar-section.tsx` | The Sidekicks sidebar section: Needs input, Pinned, then every Sidekick. |
-| `apps/desktop/src/common/sidekicks.ts`, `src/main/index.ts` | `NEW_SIDEKICK_TARGET` and `parseSidekicksWindowTarget`: what a renderer may ask the singleton Sidekicks window to open on — one stored Sidekick, or the composer — parsed in main before it becomes that window's route. |
-| `apps/desktop/src/common/open-thread.ts`, `src/main/index.ts`, `src/renderer/lib/platform.ts` | `openThread` on the bridge: main parses the id with `parseThreadId` and emits the same `workstreams/<id>` deep link an in-app link takes, so the main window opens the Thread and comes forward; the browser tab routes to it. |
+| `apps/desktop/src/common/route-id.ts`, `src/main/index.ts`, `src/renderer/lib/platform.ts` | `openSidekick` on the bridge, for a window with no router of its own (Settings): main parses the id with `parseRouteId` and emits the Sidekick's deep link for the active Organization, so the main window opens `/sidekicks/:id` and comes forward; the browser tab routes to it. |
 
 ### Creation and ownership
 
-The Sidekicks home (`/sidekicks`, in the main window on both hosts, and in
-the separate Sidekicks window until plan step B-2 removes it) lists all
+The Sidekicks home (`/sidekicks`, in the main window on both hosts) lists all
 accessible personal and workspace entries, including drafts, as rows with
 their status (Needs input, Draft, Paused or Active), who they are shared with
 and when they next wake, filtered by Everyone, Only you, Organization or
@@ -1845,6 +1843,32 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-11-07 — The separate Sidekicks window is removed
+
+**What changed:** `createSidekicksWindow`, `system:open-sidekicks`, the preload's
+`openSidekicks`, `common/sidekicks.ts` (`NEW_SIDEKICK_TARGET`,
+`parseSidekicksWindowTarget`), the `?surface=sidekicks` branch and
+`SidekicksWindow` are deleted. Every caller now opens `/sidekicks` or
+`/sidekicks/:id` in the main window: the account menu's Sidekicks item, a
+memory source, a Channel's Sidekick row. Settings, which has no router of its
+own, asks main through `openSidekick(id)` (`system:open-sidekick`), which parses
+the id and emits the Sidekick's deep link for the active Organization. The
+collaboration context's `createSidekick`, which nothing read, is gone.
+
+**Why:** Plan step B-2 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+Sidekicks are one of the main window's two sections (key design decision 1),
+so a second window showing the same screens would be two places to keep in
+step. The deep link was chosen over a new main-to-renderer navigation channel
+because it already brings the main window forward, queues a link that arrives
+before the renderer is ready, and is how a Thread was opened from another
+window.
+
+**Consequences:** Settings remains the only secondary renderer window, so it is
+now the workspace-sync relay's only consumer and `useEscapeClosesWindow`'s only
+installer. Anything that wants to open a Sidekick from outside the main window
+goes through `openSidekick`, which requires an active Organization.
 
 ### 2026-11-07 — A self-review counts cost, not only failure
 

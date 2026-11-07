@@ -164,7 +164,7 @@ export type WorkspaceSocketState = WorkspaceSyncConnectionState;
  * - `publish`: the main window. It holds the socket and tells main what it
  *   hears — its connection state and each topic change — and detaches when
  *   it unmounts with no successor.
- * - `consume`: the Settings and Sidekicks windows. Each holds no socket while main reports any
+ * - `consume`: the Settings window. It holds no socket while main reports any
  *   publisher, and applies what is relayed for its own Organization through
  *   the same receivers a socket would. With no publisher (the main window
  *   closed, crashed, reloading or fallen into the error boundary) it dials its
@@ -1361,8 +1361,8 @@ export function WorkspaceSocketProvider({
               void queryClient.invalidateQueries({ queryKey: ['automation'] });
               void queryClient.invalidateQueries({ queryKey: ['automation-runs'] });
               void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
-              // Relayed as the `automations` topic it amounts to, so the
-              // Sidekicks window, which reads these surfaces and not the list,
+              // Relayed as the `automations` topic it amounts to, so a
+              // consuming window that reads these surfaces and not the list
               // hears it without a socket of its own.
               publishTopics(['automations'], Math.max(lastWaterline, 0));
             }

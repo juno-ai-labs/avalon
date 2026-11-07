@@ -377,7 +377,7 @@ Configure the regional Worker with an Azure OpenAI realtime deployment backed by
 2. Confirm the microphone control appears immediately after the file button. Hover it and verify the tooltip reads **Click or hold to dictate**. Hovering also fetches a transcription ticket ahead of the press: in the Worker log confirm one `GET /realtime/transcription/socket` on the hover and none on a press that follows within 50 seconds, and one on a press that follows later.
 3. Open the adjacent arrow menu, select a non-default audio input, close and reopen the menu, and confirm the selection remains checked and is exposed as the checked radio item to assistive technology. Restart before granting microphone permission and confirm the saved selection is not erased. Confirm the menu contains no recording-mode toggle.
 4. Click the microphone, speak, then click it again. On the press an arc starts turning around the microphone glyph at once, in the button's own ink with nothing on the control red, and the full danger fill replaces it the moment capture is running; while you speak a ring around it follows your level and settles when you stop talking. Keep talking past the field's height: it grows to its limit and then scrolls so the newest words stay in view. Confirm the transcript is appended to the draft without sending the message and incoming deltas do not move keyboard focus away from the Stop control. Repeat by holding the microphone for at least 350 ms and releasing it to stop. With DevTools at the Verbose level, confirm each recording printed one `[perf] dictation_start` line carrying the `inputs`, `capture`, `session` and `backlog` phases and the `captureGraphMs`, `socketTicketMs` and `sessionReadyMs` branch timings.
-5. Deny microphone access and confirm Rally reports a recoverable permission error. Grant access in macOS System Settings, restart dictation, and confirm it succeeds without granting camera or display-capture permission. Repeat from the Sidekicks window composer (New Sidekick): dictation must record there on the same app-wide grant, including after the main window has closed, and must not ask for camera or display capture.
+5. Deny microphone access and confirm Rally reports a recoverable permission error. Grant access in macOS System Settings, restart dictation, and confirm it succeeds without granting camera or display-capture permission. Repeat from a Sidekick's composer (`/sidekicks/:id`): dictation must record there on the same app-wide grant and must not ask for camera or display capture.
 6. Inspect the renderer and Worker traffic. Confirm the desktop connects only to Rally's short-lived transcription socket, the Worker opens Azure's `intent=transcription` socket, and no Azure endpoint, deployment, or API key reaches the renderer or logs.
 7. Reuse a consumed transcription socket URL and confirm it is rejected. Open two active recordings for one user and confirm a third is rejected; after closing one, confirm a fresh ticket can connect.
 8. Delay the ticket response and then the provider session acknowledgement. Confirm the microphone shows recording as soon as local capture starts, speak immediately, and Stop before either response arrives. Then delay the microphone instead (a slow Bluetooth input does it) and confirm the Worker sees the socket upgrade while the control is still armed, before capture has started. Release both responses and confirm the initial audio and final partial frame arrive in order before the commit. The backlog must catch up faster than real time in size-compliant batches. Then stall the renderer during an established recording so several seconds of worklet callbacks queue up. Confirm catch-up delivers every sample in order, Stop sends the final audio before its commit, and the recording stays open through the burst.
@@ -440,26 +440,13 @@ the Automation home page.
    attachment, follow, and **Jump to latest** behavior with a work stream. Confirm
    work-stream-only participant/resource/unread controls and automation-only
    review/template controls do not leak across adapters.
-9. In the Sidekicks window, press `Escape` on the library with nothing focused
-   and confirm the window closes. Reopen it and confirm the keystroke is refused
-   while something nearer wants it: type a filter in **Search Sidekicks** and
-   confirm the first `Escape` clears the filter and leaves the window standing,
-   while the next one closes it; open a Sidekick and confirm `Escape` is taken
-   by the overflow menu, the delete confirmation, and the composer's `@` and `/`
-   lists before it reaches the window, and that a drafted composer holds it while
-   the caret is still in it. With an IME active, confirm the `Escape` that
-   abandons a candidate in the composer leaves both the draft and the window
-   exactly as they were. Then click off the drafted composer, confirm `Escape`
-   closes the window, and confirm the draft is back in the composer when the
-   Sidekick is reopened — that restoration is why nothing here is swept for
-   unsaved text.
-   Finally, stop the regional API, open the Sidekicks window, and confirm
-   `Escape` closes it while it still reads **Opening workspace…** and again on
-   the service-setup error — the states with nothing on screen to click. With
-   the API back, open **Settings**, type an invitation, click off the field, and
-   confirm `Escape` does *not* close it: that is the higher listener having stood
-   down for the screen's own, and it is the regression to watch for whenever
-   either install moves.
+9. Stop the regional API, open **Settings**, and confirm `Escape` closes it
+   while it still reads **Opening workspace…** and again on the service-setup
+   error — the states with nothing on screen to click. With the API back, open
+   **Settings**, type an invitation, click off the field, and confirm `Escape`
+   does *not* close it: that is the higher listener having stood down for the
+   screen's own, and it is the regression to watch for whenever either install
+   moves.
 
 Pass evidence: one stable automation ID, one accepted authority, strict event
 matching with one occurrence per canonical event, private generated runs shown

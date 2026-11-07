@@ -19,7 +19,6 @@ import { desktopBridge } from '../../desktop/src/renderer/lib/platform';
 import { reconcileWebPush } from '../../desktop/src/renderer/lib/web-push';
 import { createQueryClient } from '../../desktop/src/renderer/lib/query-client';
 import { useWindowActivationTracking } from '../../desktop/src/renderer/lib/window-activation';
-import { NEW_SIDEKICK_TARGET } from '../../desktop/src/common/sidekicks';
 import { setShellMounted } from './notification-open';
 import { shellLocation } from './session';
 import { BrowserApiError, browserRequest } from './transport';
@@ -164,8 +163,7 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     },
     clearDeepLinkError: () => undefined,
   }), [api, getAccountOnboarding, identityApi, onRevalidate, pendingConnectorOAuth, queryClient, region, revalidate, session, signOut, updateAccountOnboarding]);
-  const createSidekick = useCallback(() => desktopBridge().openSidekicks(NEW_SIDEKICK_TARGET), []);
-  return <AppSessionValueProvider value={value} connectorSetup={connectorSetup} createSidekick={createSidekick}>
+  return <AppSessionValueProvider value={value} connectorSetup={connectorSetup}>
     <FaviconApiProvider>
       <AccountOnboardingGate><WorkspaceApp /></AccountOnboardingGate>
     </FaviconApiProvider>

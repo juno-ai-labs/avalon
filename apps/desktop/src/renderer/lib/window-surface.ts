@@ -6,11 +6,6 @@ import { useShellCapabilities } from './collaboration-session';
  * tab cannot open a window it may keep, so there it is a route of the main
  * window instead, and the shell gives it the whole tab, as the window would
  * have, rather than a pane beside the sidebar.
- *
- * The Sidekicks library and each Sidekick's screen were here until they moved
- * into the main window (plan step A-13): they are panes beside the sidebar on
- * both hosts now, and the Mac app's separate Sidekicks window keeps its own
- * entry until it is removed.
  */
 export function isWindowSurfaceRoute(pathname: string): boolean {
   return pathname === '/settings';

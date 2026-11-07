@@ -41,7 +41,6 @@ import { PaneVisibility } from '../lib/pane-visibility';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import { useNow } from '../lib/clock';
 import { formatDayLabel } from '../lib/format';
-import { desktopBridge } from '../lib/platform';
 import { CHANNEL_STATS_QUERY_KEY, INACTIVE_SPACES_QUERY_KEY, SPACES_QUERY_KEY, channelFeedQueryKey } from '../lib/sidebar-list-store';
 import { usePinAction, usePinnedIds } from '../lib/pins';
 import { spaceFailureSentence } from '../lib/space-failure-copy';
@@ -1116,7 +1115,7 @@ function ChannelHeader({ members, space, workspace }: {
       memory={api ? { ...memory, onOpenSource: (source) => openMemorySource(source, (to) => void navigate(to)) } : undefined}
       onArchive={editable && !general && !personal ? () => setArchiving('confirm') : undefined}
       onCopyLink={copyLink}
-      onOpenSidekick={(id) => void desktopBridge().openSidekicks(id)}
+      onOpenSidekick={(id) => void navigate(`/sidekicks/${encodeURIComponent(id)}`)}
       onRename={editable ? () => setRenaming(space.name) : undefined}
       people={editable && !personal ? {
         ...peopleRanking,

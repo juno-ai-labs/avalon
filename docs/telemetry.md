@@ -497,8 +497,8 @@ unexpected disappearance and receives the same recovery choice. Concurrent
 unexpected-exit signals share the one dialog already open. Every shared-window
 broadcast excludes destroyed or crashed renderer contents, so raising the native
 dialog—or receiving a concurrent session, settings, theme, or icon change—cannot
-turn the original crash into follow-on frame errors. Secondary Settings and
-Sidekicks windows remain independently closable and reopenable; only the primary
+turn the original crash into follow-on frame errors. The secondary Settings
+window remains independently closable and reopenable; only the primary
 window owns whole-application recovery.
 
 This use of a native dialog is intentionally narrower than the rendered deep-link

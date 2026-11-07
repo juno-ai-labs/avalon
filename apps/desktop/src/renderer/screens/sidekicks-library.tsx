@@ -1,12 +1,9 @@
 import { ChevronRight, Plus } from 'lucide-react';
-import { AutomationScreen } from './automation';
-import { SpeechPlaybackProvider } from '../components/speech-playback';
-import { useEscapeClosesWindow } from '../lib/window-escape';
 import { AutomationGlyph } from '../components/workstream-glyph';
 import { SidebarSearch } from '../components/sidebar-search';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { HashRouter, Link, Navigate, Route, Routes } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
@@ -47,8 +44,7 @@ function sharedWithLabel(item: AutomationSummary): string {
 /**
  * `/sidekicks`: every Sidekick this person can open, as rows saying where it
  * stands, who it is shared with and when it next wakes, with the ownership
- * chips and a search. It renders in the main window on both hosts, and in the
- * separate Sidekicks window until that window is removed (plan step B-2).
+ * chips and a search. It renders in the main window on both hosts.
  */
 export function SidekicksLibraryScreen(): React.JSX.Element {
   const { api } = useAppSession();
@@ -102,47 +98,8 @@ function GuestSidekicksLibrary(): React.JSX.Element {
   </main>;
 }
 
-/**
- * The main window's `/sidekicks`, in place on both hosts: the Mac app no
- * longer hands it to the Sidekicks window, whose own entry still works until
- * that window is removed (plan step B-2).
- */
+/** The main window's `/sidekicks`, on both hosts. */
 export function SidekicksLibraryRoute(): React.JSX.Element {
   const { guest } = useShellCapabilities();
   return guest ? <GuestSidekicksLibrary /> : <SidekicksLibraryScreen />;
-}
-
-/**
- * The Sidekicks window's own routes.
- *
- * Here rather than beside the other surfaces in `App`, because the gesture below
- * only makes sense against these screens and is worth a test that renders them.
- *
- * Nothing is swept for unsaved text. The one writing surface in here is a
- * Sidekick's conversation composer, and its text and attachments are cached on
- * the device and restored on the next visit, so closing the window costs no
- * sentence; a sweep would only leave Escape dead in every Sidekick that holds a
- * draft. The library's search box still holds the keystroke while it has text,
- * where Escape clears the filter first.
- */
-export function SidekicksWindow(): React.JSX.Element {
-  const { api } = useAppSession();
-  // A guest opens the Sidekicks a conversation offers them, one at a time. The
-  // library lists the Organization's and creation makes one there; both routes
-  // refuse a guest, so this window offers neither.
-  const { guest } = useShellCapabilities();
-  useEscapeClosesWindow();
-  return (
-    <SpeechPlaybackProvider api={api!}>
-      <HashRouter useTransitions={false}>
-        <Routes>
-          <Route element={guest ? <GuestSidekicksLibrary /> : <SidekicksLibraryScreen />} path="/sidekicks" />
-          {guest && <Route element={<Navigate replace to="/sidekicks" />} path="/sidekicks/new" />}
-          <Route element={<AutomationScreen />} path="/sidekicks/:id" />
-          <Route element={<AutomationScreen />} path="/automations/:id" />
-          <Route element={<Navigate replace to="/sidekicks" />} path="*" />
-        </Routes>
-      </HashRouter>
-    </SpeechPlaybackProvider>
-  );
 }
