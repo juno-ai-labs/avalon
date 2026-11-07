@@ -800,19 +800,16 @@ describe("carrying one revocation to the objects", () => {
     ]);
   });
 
-  it("turns a lost room into one hop per automation the room owns", async () => {
+  it("names no Sidekick for a lost room, since a room owns none", async () => {
     const OWNED = "00000000-0000-7000-8000-0000000000d2";
     const { env, visits, listed, sent } = fanOut({ ownedAutomationIds: [OWNED] });
     await applyAccessRevocation(env, message({ scope: "workstream_automations", workstreamId: WORKSTREAM }));
 
-    // Removing a participant is a write the room makes locally, and nothing
-    // in the room reaches the automations it owns, whose conversations
-    // admitted the person through the room. The workspace names them; each
-    // becomes the ordinary automation hop.
+    // A hop queued before the room scope was retired reaches nothing: the
+    // Organization is not asked, and no automation hop is sent.
     expect(visits).toEqual([]);
-    expect(listed).toHaveLength(1);
-    expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, workstreamId: WORKSTREAM });
-    expect(targetsOf(sent)).toEqual([{ scope: "automation", automationId: OWNED }]);
+    expect(listed).toEqual([]);
+    expect(targetsOf(sent)).toEqual([]);
   });
 
   it("turns a narrowed audience into one ordinary hop per reader still holding a socket", async () => {

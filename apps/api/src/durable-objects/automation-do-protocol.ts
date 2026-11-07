@@ -8,12 +8,10 @@ import {
   PickedAppearanceSchema,
   SidekickAudienceUpdateSchema,
   SidekickMessageIntentSchema,
-  SubstreamIdSchema,
   UserIdSchema,
   WorkspaceExternalEventSchema,
   WorkspaceIdSchema,
   WorkstreamAppearancePatchSchema,
-  type SubstreamId,
 } from "@rally/contracts";
 import { z } from "zod";
 
@@ -43,28 +41,7 @@ export const AutomationCreateRequestSchema = z.strictObject({
   ...Addressed,
   authorUserId: UserIdSchema,
   scope: AutomationScopeSchema,
-  owningWorkstreamId: IdSchema.nullable(),
-  /**
-   * The home conversation under `owningWorkstreamId`: `"0"` for its Main
-   * conversation, a Breakout id when the Sidekick was set up from a Breakout.
-   */
-  owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   authorityGeneration: z.number().int().positive(),
-}).superRefine((value, context) => {
-  if ((value.scope === "workstream") !== (value.owningWorkstreamId !== null)) {
-    context.addIssue({
-      code: "custom",
-      path: ["owningWorkstreamId"],
-      message: "A room-scoped automation names its room, and no other scope may.",
-    });
-  }
-  if (value.owningWorkstreamId === null && value.owningSubstreamId !== "0") {
-    context.addIssue({
-      code: "custom",
-      path: ["owningSubstreamId"],
-      message: "Only a room-scoped automation has a home Breakout.",
-    });
-  }
 });
 export type AutomationCreateRequest = z.input<typeof AutomationCreateRequestSchema>;
 
@@ -162,13 +139,6 @@ export const AutomationRunSeededRequestSchema = z.strictObject({
   seed: DemoSeedSchema,
 });
 export type AutomationRunSeededRequest = z.infer<typeof AutomationRunSeededRequestSchema>;
-
-export const AutomationOwningRoomArchivedRequestSchema = z.strictObject({
-  ...Addressed,
-  workstreamId: IdSchema,
-  archived: z.boolean(),
-});
-export type AutomationOwningRoomArchivedRequest = z.infer<typeof AutomationOwningRoomArchivedRequestSchema>;
 
 /**
  * What the caller judged a `semantic_activity` trigger's written condition to be.
@@ -398,10 +368,9 @@ export const SidekickBatchSkillReadRequestSchema = SidekickSkillReadRequestSchem
 }).strict();
 export type SidekickBatchSkillReadRequest = z.infer<typeof SidekickBatchSkillReadRequestSchema>;
 
-/** Several Sidekicks' details in one call: by id, every one a Channel owns, or both. */
+/** Several Sidekicks' details in one call, by id. */
 export const SidekickBatchDetailRequestSchema = AutomationActorRequestSchema.omit({ automationId: true }).extend({
   automationIds: z.array(IdSchema).optional(),
-  channelOwnedBy: IdSchema.optional(),
 }).strict();
 export type SidekickBatchDetailRequest = z.infer<typeof SidekickBatchDetailRequestSchema>;
 

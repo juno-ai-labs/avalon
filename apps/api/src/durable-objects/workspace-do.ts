@@ -130,7 +130,6 @@ import {
   WorkstreamIdSchema,
   WorkstreamSchema,
   type AutomationSummary,
-  type WorkstreamAutomationSummary,
   type WorkspaceSidebar,
   type PersonalOrder,
   type SpaceErrorCode,
@@ -205,12 +204,9 @@ import {
   drainChannelRailChanges,
   mainAttachmentsUnreported,
   mainResourceLinksChanged,
-  ownedAutomationSummaries,
-  owningThreads,
   visibleSpaceChannelIdsAfter,
   type AutomationDirectoryRow,
   type InvalidAppearanceReport,
-  type InvalidThreadAppearanceReport,
 } from './channel-rails';
 import { observeSqlWrites } from './sql-write-observer';
 import { enumerateSearchAuthorizationUniverse, type SearchAuthorizationTarget } from './search-authorization-universe';
@@ -237,7 +233,6 @@ import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observabilit
 import {
   AccessRevocationMessageSchema,
   type AccessRevocationMessage,
-  descendantRevocation,
   publishDescendantRevocations,
   revocationClosesSession,
   SocketAccessRevocationSchema,
@@ -670,9 +665,6 @@ import {
   WorkspaceSpaceSeatInviteeRequestSchema,
   WorkspaceSpaceBootstrapStatusSchema,
   WorkspaceSpaceChannelPageRequestSchema,
-  type WorkspaceSidekickChannelPostRequest,
-  WorkspaceSidekickChannelPostRequestSchema,
-  type WorkspaceSidekickChannelPostResult,
   WorkspaceSpaceChannelPageResultSchema,
   WorkspaceSpaceDirectoryResultSchema,
   WorkspaceSpaceConversationPageRequestSchema,
@@ -1287,6 +1279,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   // A hosted Sidekick's own rows: `HostedSidekick` is their only writer.
   "sidekick_revisions", "sidekick_schedules", "sidekick_runs", "sidekick_email_receipts",
   "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_reviews",
+  "sidekick_audience", "sidekick_viewer_reads",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
@@ -4877,6 +4870,23 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record who a Sidekick is shared with, and what each reader of its shared conversation has read",
   // See SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#who-a-sidekick-is-shared-with.
   statements: SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS,
+}, {
+  version: 137,
+  description: "retire the Thread-owned Sidekick scope: every one becomes an Organization Sidekick",
+  // The Canvases and Sidekicks decision: a Thread no longer owns a Sidekick.
+  // The owning columns stay as dead columns (released CHECKs name them), so
+  // the row's home is cleared to satisfy the scope CHECK. A Sidekick a room
+  // archive paused under the old rule is archived, as the current rule would
+  // have left it. See docs/automation-lifecycle.md#creation-and-ownership.
+  statements: [
+    // It bumped only the owning room's rail, and no row has one after this;
+    // dropped first so the conversion below bumps nothing.
+    `DROP TRIGGER IF EXISTS channel_rail_sidekick_owner_update`,
+    `UPDATE automation_directory SET lifecycle = 'deleted', paused_by = NULL
+      WHERE lifecycle = 'paused' AND paused_by = 'room_archive' AND owning_room_archived_at IS NOT NULL`,
+    `UPDATE automation_directory SET scope = 'workspace', owning_workstream_id = NULL, owning_substream_id = '0'
+      WHERE scope = 'workstream'`,
+  ],
 }];
 
 function conversationToolEntry(conversation: {
@@ -6037,8 +6047,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       },
       applyLocalEffects: (envelopes) => this.applyLocalEffects(envelopes),
       noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
-      archiveOwnedSidekicks: (workspaceId, parentId, substreamId, archived, now) =>
-        this.archiveOwnedSidekicks(workspaceId, parentId, substreamId, archived, now),
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
       noteRelationship: (relationship) => this.noteRelationship(relationship),
     };
@@ -6328,29 +6336,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * A grant row in the outbox: applied (a replay of the parent's own
    * transaction, answered by its receipt, or a legacy row carried over at
-   * import) and, for a revoked Channel grant, sent on to the Channel's
-   * Sidekick conversations, which sit outside its participant projection.
-   * The Sidekicks the Channel owns are this object's rows, so their
-   * `automation` hops are published directly.
+   * import). A Channel owns no Sidekick, so a revoked grant has no Sidekick
+   * conversation to send on to.
    */
-  private async deliverRevokedGrant(workspaceId: string, envelope: ParentEffectEnvelope): Promise<void> {
+  private async deliverRevokedGrant(_workspaceId: string, envelope: ParentEffectEnvelope): Promise<void> {
     if (envelope.effect.kind !== "scope_grant_directory") return;
     this.state.storage.transactionSync(() => applyScopeGrantDirectory(this.state.storage, envelope));
-    const { grant } = envelope.effect;
-    if (grant.active || grant.target.kind !== "workstream") return;
-    const automationIds = this.automationIdsOwnedBy(grant.target.parentId);
-    if (automationIds.length === 0) return;
-    const revocation: SocketAccessRevocation = {
-      reason: "workstream_participant_removed", workspaceId: asWorkspaceId(workspaceId),
-      userId: grant.userId, sessionId: null,
-      ...(grant.membershipIncarnation ? { membershipIncarnation: grant.membershipIncarnation } : {}),
-    };
-    try {
-      await publishDescendantRevocations(this.env, automationIds.map((automationId) =>
-        descendantRevocation(revocation, { scope: "automation", automationId })));
-    } catch (error) {
-      throw new Error("scope_grant_sidekick_revocation_publish_failed", { cause: error });
-    }
   }
 
   /** Keep a row no attempt can deliver as `failed`, never due again, and say why. */
@@ -6696,11 +6687,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         this.sidekickReadersMoved.add(userId);
       },
       noteSidekickActivityChanged: (workspaceId) => this.noteSidekickActivityChanged(workspaceId),
-      channelColor: (workstreamId) => this.spaceStorage().channelColor(workstreamId),
-      isChannelParticipant: async (workstreamId, userId) => {
-        await this.readRelationship(this.workspaceId()!, userId);
-        return this.isWorkstreamParticipant(workstreamId, userId);
-      },
       readManagementAccess: async (input) => {
         const access = await this.readManagementAccess(input);
         return { allowed: access.allowed, writable: access.allowed ? access.writable : false };
@@ -6716,22 +6702,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           kind: "sidekick_review", region: this.env.AVALON_REGION, ...message,
         }));
       },
-      announcementSpaceId: (row) => this.sidekickAnnouncementSpaceId(row),
     };
-  }
-
-  /**
-   * The Channel a Sidekick's review announces a change in, for a Sidekick no
-   * room owns: General for an Organization's, or its author's Personal
-   * Channel when General is archived or absent; the author's Personal Channel
-   * for a personal one. A room's Sidekick announces in its home, which the
-   * conversation scope names, so it is null here. Null too before the
-   * Organization's Spaces are open or the Channel exists.
-   */
-  private sidekickAnnouncementSpaceId(row: { scope: string; author_user_id: string }): string | null {
-    if (row.scope === "workstream") return null;
-    const spaces = this.spaceStorage();
-    return (row.scope === "workspace" ? spaces.liveGeneralSpaceId() : null) ?? spaces.personalSpaceId(row.author_user_id);
   }
 
   /** The hosted parent for a Sidekick id; `null` for an id that names no Sidekick. */
@@ -6854,9 +6825,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          UNION ALL
          SELECT sidekick_id, 1, ROW_NUMBER() OVER (ORDER BY attached_at, sidekick_id)
            FROM parent_sidekicks WHERE ?2 IS NOT NULL AND parent_id = ?2
-         UNION ALL
-         SELECT automation_id, 2, ROW_NUMBER() OVER (ORDER BY automation_id)
-           FROM automation_directory WHERE ?2 IS NOT NULL AND owning_workstream_id = ?2 AND lifecycle <> 'deleted'
          UNION ALL
          SELECT automation_id, 3, ROW_NUMBER() OVER (ORDER BY automation_id)
            FROM automation_directory WHERE ?3 = 1 AND workspace_id = ?4 AND lifecycle = 'active' AND loadable = 1
@@ -7141,8 +7109,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** The detail of each selected Sidekick, for an actor who may read every one of them. */
   async sidekickReadDetails(input: SidekickBatchDetailRequest): Promise<AutomationDetail[]> {
     await this.initialized;
-    const { automationIds, channelOwnedBy, ...request } = SidekickBatchDetailRequestSchema.parse(input);
-    const ids = [...new Set([...(automationIds ?? []), ...(channelOwnedBy === undefined ? [] : this.automationIdsOwnedBy(channelOwnedBy))])];
+    const { automationIds, ...request } = SidekickBatchDetailRequestSchema.parse(input);
+    const ids = [...new Set(automationIds ?? [])];
     await this.ensureParentWorkspace(request.workspaceId);
     const host = this.hostedSidekickHost();
     const details: AutomationDetail[] = [];
@@ -7367,7 +7335,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return {
       closedUserIds,
       substreams,
-      automationIds: closedUserIds.length ? this.automationIdsOwnedBy(input.parentId) : [],
+      // A Channel owns no Sidekick, so closing it closes none.
+      automationIds: [],
     };
   }
 
@@ -7866,15 +7835,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     } catch {
       // A closed socket asks again when it reconnects.
     }
-  }
-
-  /** A Thread whose stored appearance no longer parses is named on its Sidekicks without one. */
-  private invalidThreadAppearanceReporter(workspaceId: string): InvalidThreadAppearanceReport {
-    return (workstreamId, code) => logWarn(this.env, "owning_thread_appearance_invalid", {
-      workspace_id: workspaceId,
-      workstream_id: workstreamId,
-      code,
-    });
   }
 
   /** A Sidekick directory row whose stored appearance no longer parses is listed without one. */
@@ -9035,32 +8995,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * the revocation transport reaches inside the object.
    */
   /**
-   * The automations a work stream owns, for the revocation walk.
-   *
-   * A room-owned automation admits the room's participants, and removing one
-   * of them is a write the room makes locally, which no membership revocation
-   * follows. The room's writer publishes a `workstream_automations` hop, and
-   * this is how the consumer turns it into one `automation` hop per owned
-   * automation; unlike `listWorkstreamAutomations` it asks nothing about the
-   * caller, since the consumer is not a participant of anything.
-   */
-  async automationIdsOwnedByWorkstream(input: unknown): Promise<{ automationIds: string[] }> {
-    await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, workstreamId: IdSchema }).parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return { automationIds: this.automationIdsOwnedBy(request.workstreamId) };
-  }
-
-  /** The live Sidekicks a Channel owns, each an `automation` revocation hop. */
-  private automationIdsOwnedBy(workstreamId: string): string[] {
-    return this.state.storage.sql.exec<{ automation_id: string }>(
-      `SELECT automation_id FROM automation_directory
-        WHERE owning_workstream_id = ? AND lifecycle <> 'deleted' ORDER BY automation_id`,
-      workstreamId,
-    ).toArray().map((row) => row.automation_id);
-  }
-
-  /**
    * The `workstream` hop for every hosted Channel a person could hold a socket
    * on, run here in the same call as the workspace hop.
    *
@@ -9377,19 +9311,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return null;
   }
 
-  /** Which room owns an automation, and which of its conversations is home, for a caller resolving participation. */
-  async automationOwner(input: unknown): Promise<{ owningWorkstreamId: string | null; owningSubstreamId: string }> {
-    await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, automationId: IdSchema }).parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const row = this.state.storage.sql.exec<{ owning_workstream_id: string | null; owning_substream_id: string }>(
-      `SELECT owning_workstream_id, owning_substream_id FROM automation_directory
-        WHERE automation_id = ? AND lifecycle <> 'deleted'`,
-      request.automationId,
-    ).toArray()[0];
-    return { owningWorkstreamId: row?.owning_workstream_id ?? null, owningSubstreamId: row?.owning_substream_id ?? "0" };
-  }
-
   // ---------------------------------------------------------------------------
   // The conversation tools' scope: `rally:conversations` asks here, in one call
   // per tool call, which conversations a loop may reach and whether its acting
@@ -9427,21 +9348,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const viewer = await this.spaceReader(workspaceId, userId);
     if (!viewer) return [];
     const spaces = this.spaceStorage();
-    if (scope.kind === "sidekick") {
-      // The one Channel a Sidekick's review announces a change in, listed for
-      // the authoring conversation so the wizard can name it, and for no run:
-      // a run acts on its trigger's content, and a Channel's feed is not its
-      // audience. The feed read and the post admit the person again.
-      if (!scope.authoring) return [];
-      const row = this.state.storage.sql.exec<{ scope: string; author_user_id: string } & Record<string, SqlStorageValue>>(
-        `SELECT scope, author_user_id FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
-        scope.automationId,
-      ).toArray()[0];
-      const spaceId = row ? this.sidekickAnnouncementSpaceId(row) : null;
-      const space = spaceId ? spaces.readable(viewer, spaceId) : false;
-      return space && spaceId ? [conversationToolEntry({ conversationId: spaceId, parentId: spaceId, substreamId: "0",
-        kind: "space", title: space.name, isHome: false, isOwn: false, isParent: false })] : [];
-    }
+    // A Sidekick reaches no Channel: it announces in its own conversation.
+    if (scope.kind === "sidekick") return [];
     return spaces.channelSpaceIds(viewer, scope.parentId).flatMap((spaceId) => {
       const space = spaces.readable(viewer, spaceId);
       return space ? [conversationToolEntry({ conversationId: spaceId, parentId: spaceId, substreamId: "0",
@@ -9717,50 +9625,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         admitted.push(row);
       }
     }
-    // Each Thread-owned row names its Thread to a reader who is in it, in one
-    // read for the whole list. An author who has left the Thread still reads
-    // the Sidekick, and sees "Thread" rather than the name of a room they are
-    // no longer in.
-    const threadIds = admitted.flatMap((row) => row.scope === "workstream" && row.owning_workstream_id !== null
-      && this.isWorkstreamParticipant(row.owning_workstream_id, request.userId) ? [row.owning_workstream_id] : []);
-    const threads = owningThreads(this.state.storage.sql, threadIds, this.invalidThreadAppearanceReporter(request.workspaceId));
     const report = this.invalidAppearanceReporter(request.workspaceId);
-    return {
-      items: admitted.map((row) => automationSummary(row, report,
-        row.owning_workstream_id === null ? null : threads.get(row.owning_workstream_id) ?? null)),
-    };
-  }
-
-  /**
-   * The automations one work stream owns, for that work stream's rail.
-   *
-   * The counterpart to the sidebar's list, which excludes exactly these rows.
-   * A room's automation is managed by the room's participants, so the gate is
-   * participation rather than authorship: the person who created it may be
-   * gone, and the automation is still theirs to pause. Participation, not
-   * listability: a workspace-scoped room is listable to every member, and
-   * gating on that would hand its automations to people who are not in it.
-   */
-  async listWorkstreamAutomations(input: unknown): Promise<{ items: WorkstreamAutomationSummary[] }> {
-    await this.initialized;
-    const request = z.strictObject({
-      workspaceId: WorkspaceIdSchema,
-      workstreamId: IdSchema,
-      userId: UserIdSchema,
-    }).parse(input);
-    this.assertWorkspace(request.workspaceId);
-    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
-      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's Sidekicks");
-    }
-    // An archived room's rail still renders. Its participants may read the
-    // owned list, which omits Sidekicks archived with the room.
-    if (!this.isWorkstreamParticipant(request.workstreamId, request.userId, { includeArchived: true })) {
-      throw new ApiError(403, "sidekick_directory_access_denied", "You cannot list this room's Sidekicks");
-    }
-    return {
-      items: ownedAutomationSummaries(this.state.storage.sql, [request.workstreamId],
-        this.invalidAppearanceReporter(request.workspaceId)).get(request.workstreamId) ?? [],
-    };
+    return { items: admitted.map((row) => automationSummary(row, report)) };
   }
 
   /**
@@ -10730,32 +10596,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * first): the threads this viewer may open, each whole. One they may not open
    * is not on the page at all.
    */
-  /**
-   * A Sidekick's review announcing a change in the Channel it announces in,
-   * as a message from Rally that opens with the Sidekick's name. Only that
-   * Channel, and only for a person who can read it: the wizard's
-   * `conversation_post` reaches here when its target is a Channel.
-   */
-  async postSidekickChannelMessage(input: WorkspaceSidekickChannelPostRequest): Promise<WorkspaceSidekickChannelPostResult> {
-    await this.initialized;
-    const request = parseRpcInput(WorkspaceSidekickChannelPostRequestSchema, input, "post_sidekick_channel_message");
-    this.assertWorkspace(request.workspaceId);
-    const viewer = await this.spaceReader(request.workspaceId, request.userId);
-    if (!viewer) return { ok: false, code: "space_access_denied" };
-    const row = this.state.storage.sql.exec<{ scope: string; author_user_id: string; title: string } & Record<string, SqlStorageValue>>(
-      `SELECT scope, author_user_id, title FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'`,
-      request.automationId,
-    ).toArray()[0];
-    const spaces = this.spaceStorage();
-    if (!row || this.sidekickAnnouncementSpaceId(row) !== request.spaceId) return { ok: false, code: "space_not_found" };
-    if (!spaces.readable(viewer, request.spaceId)) return { ok: false, code: "space_access_denied" };
-    const posted = spaces.postMessage(request.spaceId, {
-      author: { kind: "rally" }, body: `**${row.title}**\n\n${request.text}`, key: request.key,
-    }, Date.now());
-    if (!posted.replayed) this.publishSpaceConversationsChanged({ spaceIds: [request.spaceId] });
-    return { ok: true, messageId: posted.messageId, replayed: posted.replayed };
-  }
-
   async listChannelFeed(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceChannelFeedResult> {
     await this.initialized;
     const request = parseRpcInput(WorkspaceSpaceChannelPageRequestSchema, input, "list_channel_feed");
@@ -14214,8 +14054,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
     }
     this.publishChannelRows(this.collectRailChanges(rows));
-    // A Thread archive archives the Sidekicks it owns during the pass; their
-    // list goes out with nothing awaited after the Channel's row.
     this.publishSidekickList();
     if (topicsWorkspaceId !== null) {
       try {
@@ -14285,12 +14123,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await Promise.all(followUp.watchReconciliations.map((workstreamId) => (
       this.reconcileWorkstreamResourceRegistrations({ workspaceId: followUp.workspaceId, workstreamId })
     )));
-    // Archiving a room is a decision about the room, and the automations it
-    // owns follow it. Each is its own object and is told on its own.
-    if (followUp.archivalChanges.length > 0 || followUp.breakoutArchivalChanges.length > 0) {
-      await this.notifyOwningRoomArchival(followUp.workspaceId, followUp.archivalChanges,
-        followUp.breakoutArchivalChanges);
-    }
     // A `directory_common` effect is the only writer of
     // `next_terminal_action_at`, so a deadline created or moved here would
     // otherwise wait for an unrelated target to reconcile before anything
@@ -14553,96 +14385,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (followUpId !== null) await this.runDirectoryFollowUps([followUpId]);
     if (this.state.storage.sql.exec("SELECT 1 FROM _internal_durable_alarms WHERE kind='sidekick_delegation_sources' LIMIT 1").toArray().length > 0) await this.armNextAlarm();
     return { applied };
-  }
-
-  /** Archive a room's owned Sidekicks in the canonical transition/projection transaction. */
-  private archiveOwnedSidekicks(workspaceId: string, parentId: string, substreamId: string, archived: boolean, now: number): void {
-    const owned = this.state.storage.sql.exec<{ automation_id: string }>(
-      `SELECT automation_id FROM automation_directory
-        WHERE owning_workstream_id = ? AND lifecycle <> 'deleted'
-          AND (? = '0' OR owning_substream_id = ?)
-          AND (? OR owning_room_archived_at IS NOT NULL)
-        ORDER BY automation_id`,
-      parentId, substreamId, substreamId, Number(archived),
-    ).toArray();
-    const host = this.hostedSidekickHost();
-    for (const row of owned) {
-      new HostedSidekick(host, row.automation_id).setOwningRoomArchived({
-        workspaceId: asWorkspaceId(workspaceId), automationId: row.automation_id, workstreamId: parentId, archived,
-      }, now);
-    }
-  }
-
-  /**
-   * Tell each automation a room owns that the room's archive state changed.
-   *
-   * Read from the directory rather than assumed from the effect: a replayed
-   * common effect reaches here too, and the row is what the archive is now.
-   * A Sidekick whose home is a Breakout counts as archived when the Breakout
-   * or its Channel is, so archiving either one tells it; `breakoutKeys` names
-   * the Breakouts (`<channelId>/<breakoutId>`) whose own archive moved.
-   */
-  private async notifyOwningRoomArchival(
-    workspaceId: string,
-    workstreamIds: readonly string[],
-    breakoutKeys: readonly string[] = [],
-    onlyAutomationId: string | null = null,
-  ): Promise<void> {
-    const owned = this.state.storage.sql.exec<{
-      automation_id: string;
-      workstream_id: string;
-      archived_at: number | null;
-      breakout_archived_at: number | null;
-    }>(
-      `SELECT automation.automation_id, directory.workstream_id, directory.archived_at,
-              breakout.archived_at AS breakout_archived_at
-         FROM automation_directory automation
-         JOIN channels directory
-           ON directory.workstream_id = automation.owning_workstream_id
-         LEFT JOIN parent_children breakout
-           ON automation.owning_substream_id <> '0'
-          AND breakout.parent_id = automation.owning_workstream_id
-          AND breakout.substream_id = automation.owning_substream_id
-        WHERE automation.lifecycle <> 'deleted'
-          AND (?3 IS NULL OR automation.automation_id = ?3)
-          AND (automation.owning_workstream_id IN (SELECT value FROM json_each(?1))
-            OR (automation.owning_substream_id <> '0'
-              AND automation.owning_workstream_id || '/' || automation.owning_substream_id
-                IN (SELECT value FROM json_each(?2))))
-        ORDER BY automation.automation_id`,
-      JSON.stringify(workstreamIds),
-      JSON.stringify(breakoutKeys),
-      onlyAutomationId,
-    ).toArray();
-    if (owned.length === 0) return;
-    await this.ensureParentWorkspace(workspaceId);
-    const host = this.hostedSidekickHost();
-    // Each Sidekick's archive, its registrations and its alarm entries
-    // commit in one local transaction per Sidekick, right after the archive
-    // that caused them, so one that fails leaves the others moved.
-    for (const row of owned) {
-      try {
-        const sidekick = new HostedSidekick(host, row.automation_id);
-        const now = Date.now();
-        this.state.storage.transactionSync(() => sidekick.setOwningRoomArchived({
-          workspaceId: asWorkspaceId(workspaceId),
-          automationId: row.automation_id,
-          workstreamId: row.workstream_id,
-          archived: row.archived_at !== null || row.breakout_archived_at !== null,
-        }, now));
-      } catch (error) {
-        logWarn(this.env, "sidekick_owning_room_archival_failed", {
-          workspace_id: workspaceId,
-          automation_id: row.automation_id,
-          workstream_id: row.workstream_id,
-          code: diagnosticErrorCode(error, "sidekick_owning_room_archival_failed"),
-        });
-      }
-    }
-    // The automations list is not published here: the pass that ran this
-    // sends it right after the archived Channel's row, in the same turn, so
-    // a client sees the room and its Sidekicks disappear together.
-    await this.armNextAlarm();
   }
 
   private async reconcileWorkstreamResourceRegistrations(input: {
@@ -17334,8 +17076,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         SELECT parent_id, ? FROM authorization_locations WHERE resource_id = ?`, key, resource.resourceId);
       if (resource.kind === 'memory') this.state.storage.sql.exec(`INSERT OR IGNORE INTO search_authorization_dependencies
         SELECT owner_id, ? FROM memory_scopes WHERE memory_scope_id = ?`, key, resource.scopeId);
-      if (resource.kind === 'conversation') this.state.storage.sql.exec(`INSERT OR IGNORE INTO search_authorization_dependencies
-        SELECT owning_workstream_id, ? FROM automation_directory WHERE automation_id = ? AND owning_workstream_id IS NOT NULL`, key, resource.parentId);
     }
     // No re-arm: nothing written here is a lane of this object's alarm. The
     // pending snapshot's trigger still records a `search_authorization_push`
@@ -17364,11 +17104,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // Indexed prior owners reach removed grants; current locations reach newly attached resources.
       keys = `SELECT cache_key FROM search_authorization_keys WHERE parent_id = ?
         UNION SELECT cache_key FROM search_authorization_dependencies WHERE parent_id = ?
-        UNION SELECT k.cache_key FROM authorization_locations l JOIN search_authorization_keys k ON k.resource_id = l.resource_id WHERE l.parent_id = ?
-        UNION SELECT k.cache_key FROM automation_directory a JOIN search_authorization_keys k ON k.parent_id = a.automation_id WHERE a.owning_workstream_id = ?
-        UNION SELECT k.cache_key FROM automation_directory a JOIN authorization_locations l ON l.parent_id = a.automation_id
-          JOIN search_authorization_keys k ON k.resource_id = l.resource_id WHERE a.owning_workstream_id = ?`;
-      bindings = Array.from({ length: 5 }, () => target.id);
+        UNION SELECT k.cache_key FROM authorization_locations l JOIN search_authorization_keys k ON k.resource_id = l.resource_id WHERE l.parent_id = ?`;
+      bindings = Array.from({ length: 3 }, () => target.id);
     }
     return this.state.storage.sql.exec<{ snapshot_json: string }>(
       `SELECT snapshot_json FROM authorization_snapshots WHERE cache_key IN (${keys})`, ...bindings).toArray()
@@ -18425,12 +18162,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // them, each with what they have not read in its shared conversation.
     return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_count: number; unread: number; needs_input: number }>(
       `SELECT directory.automation_id, directory.loadable, directory.appearance_json, directory.lifecycle,
-              directory.scope, directory.owning_workstream_id, directory.title, directory.description,
+              directory.scope, directory.title, directory.description,
               directory.next_run_at, directory.projected_at, ${AUTOMATION_AUDIENCE_SQL}, ${AUTOMATION_VIEWER_SQL}
          FROM automation_directory directory
          ${AUTOMATION_VIEWER_JOINS}
         WHERE directory.workspace_id = ?2 AND directory.lifecycle <> 'deleted'
-          AND directory.owning_workstream_id IS NULL
           AND (directory.scope = 'workspace' OR directory.author_user_id = ?1 OR directory.run_as_user_id = ?1
             OR EXISTS (SELECT 1 FROM sidekick_audience audience
                         WHERE audience.sidekick_id = directory.automation_id AND audience.user_id = ?1))

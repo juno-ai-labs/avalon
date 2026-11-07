@@ -223,8 +223,6 @@ export interface HostedParentHost {
   applyLocalEffects(envelopes: readonly ParentEffectEnvelope[]): { outbox: ParentEffectEnvelope[] };
   /** Record an activity-only refresh inside the accepted attachment transaction. */
   noteSidekickActivityChanged(workspaceId: string): void;
-  /** Cascade a canonical archive or reconcile a legacy marker in this transaction. */
-  archiveOwnedSidekicks(workspaceId: string, parentId: string, substreamId: string, archived: boolean, now: number): void;
   /** A person's workspace relationship, from the Organization's own table. */
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** Record a relationship this request just read from or wrote to D1. */
@@ -935,13 +933,6 @@ export class HostedParent {
       });
     }
     if (kind === "common") {
-      // Restore snapshots retain every prior archive. Apply the irreversible
-      // cascade once, before publishing the newer projection, even if the
-      // archived snapshot itself arrives later.
-      if (substreamId === "0" && envelope.effect.kind === "directory_common"
-        && (envelope.effect.archiveGeneration ?? 0) > (existing && "archive_generation" in existing ? existing.archive_generation ?? 0 : 0)) {
-        this.host.archiveOwnedSidekicks(envelope.workspaceId, this.parentId, "0", true, now);
-      }
       if (envelope.effect.kind === "directory_common"
         && ((existing && "sidekick_ids" in existing ? existing.sidekick_ids ?? "[]" : "[]")
           !== JSON.stringify(envelope.effect.sidekickAttachmentIds ?? [])
@@ -2794,9 +2785,6 @@ export class HostedParent {
       if (this.metadataRow()?.archived_at != null) throw new Error("workstream_archived");
       if (!this.migratedConversationAccess({ ...request, userId: request.actorUserId },
         request.substreamId, relationship).allowed) throw new Error("private_child_participant_required");
-      // The registry and its owned Sidekicks share this database. Commit the
-      // cascade here so delayed or superseded child projections cannot lose it.
-      this.host.archiveOwnedSidekicks(request.workspaceId, this.parentId, request.substreamId, request.archived, now);
       if ((child.archived_at !== null) === request.archived) {
         return { outcome: "unchanged" as const, archivedAt: child.archived_at };
       }

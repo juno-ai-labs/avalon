@@ -581,7 +581,6 @@ describe("an automation's child", () => {
       automationId: AUTOMATION_ID,
       authorUserId: USER_ID,
       scope: "personal",
-      owningWorkstreamId: null,
       authorityGeneration: 1,
     });
     const run = childStub(AUTOMATION_ID, AUTOMATION_RUN_ID);

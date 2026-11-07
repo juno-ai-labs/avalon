@@ -25,6 +25,9 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
+  ConversationEffectEnvelopeSchema,
+  WorkstreamDirectoryUserEffectSchema,
+  conversationEffectHash,
   type AutomationDraft,
 } from "@rally/contracts";
 
@@ -147,7 +150,7 @@ async function seedRegionalDatabase(): Promise<void> {
 /** An active Organization Sidekick the author manages and the second member does not. */
 async function activeSidekick(scope: "personal" | "workspace" = "workspace"): Promise<void> {
   const created = await createAutomation(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope, owningWorkstreamId: null,
+    workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope,
     automationId: AUTOMATION_ID,
   });
   expect(created).toEqual({ automationId: AUTOMATION_ID, created: true });
@@ -616,24 +619,24 @@ describe("a Sidekick's shared conversation", () => {
       await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
       return { socket, frames };
     }
-    await say(AUTHOR_ID, "Morning! The release went out.", "fanout-0001");
-    // Seated by their own message, as a reader is before they read.
-    await say(MEMBER_ID, "Thanks!", "fanout-0002");
-    await deliverChildEffects(TEST_ENV, conversationStub());
     const author = await open(AUTHOR_ID, SESSION_ID);
     const member = await open(MEMBER_ID, MEMBER_SESSION_ID);
     try {
       author.frames.length = 0;
       member.frames.length = 0;
-      const latest = await runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{ latest: number }>(
-        `SELECT next_attention_ordinal - 1 AS latest FROM workstream WHERE id = 1`).one().latest);
-      const response = await conversationStub().fetch("https://object.test/internal/product", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ operation: "acknowledge_read", parentKind: "automation", auth: auth(MEMBER_ID),
-          input: { readThroughSequenceNumber: latest, observedManualUnreadGeneration: 0 } }),
+      // The member's own read report from the shared conversation, as "0"
+      // sends it: nothing else happens in the conversation meanwhile, so no
+      // other change can move anyone's row.
+      const effect = WorkstreamDirectoryUserEffectSchema.parse({ kind: "directory_user", userId: MEMBER_ID,
+        isParticipant: true, unreadCount: 0, youAreMentioned: false, listable: true, seenAttentionOrdinal: 3 });
+      const envelope = ConversationEffectEnvelopeSchema.parse({
+        kind: "conversation_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
+        parentKind: "automation", parentId: AUTOMATION_ID, substreamId: "0", generation: 1,
+        messageId: `read:${MEMBER_ID}:3`, partitionKey: `${AUTOMATION_ID}:0:user:${MEMBER_ID}`, sourceVersion: 1,
+        requiredProjectionVersion: null, payloadHash: conversationEffectHash(effect), effect,
       });
-      expect(response.status, await response.clone().text()).toBe(200);
-      await deliverChildEffects(TEST_ENV, conversationStub());
+      await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) =>
+        instance.receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [envelope] }));
       const lists = (frames: Array<Record<string, unknown>>) => frames.filter((frame) =>
         frame.type === "workspace_sidebar_list" && frame.list === "automations");
       await expect.poll(() => lists(member.frames).length, { timeout: 5_000 }).toBe(1);

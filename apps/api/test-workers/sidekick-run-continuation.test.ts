@@ -175,7 +175,6 @@ async function activeSidekick(): Promise<void> {
     workspaceId: WORKSPACE_ID,
     authorUserId: AUTHOR_ID,
     scope: "personal",
-    owningWorkstreamId: null,
     automationId: AUTOMATION_ID
   });
   expect(created).toEqual({ automationId: AUTOMATION_ID, created: true });

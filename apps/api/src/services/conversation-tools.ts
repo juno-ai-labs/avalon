@@ -7,7 +7,6 @@ import {
   MAXIMUM_FAILURE_AVAILABLE_VALUES,
   MESSAGE_MAX_CHARACTERS,
   asAutomationId,
-  asSpaceId,
   asSubstreamId,
   asWorkspaceId,
   asUserId,
@@ -44,8 +43,6 @@ import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversa
 import { CHANNEL_MESSAGE_SEARCH_SOURCE } from "../durable-objects/channel-message-search-projection";
 import type {
   WorkspaceChannelFeedResult,
-  WorkspaceSidekickChannelPostRequest,
-  WorkspaceSidekickChannelPostResult,
   WorkspaceSpaceChannelPageRequest,
 } from "../durable-objects/workspace-space-protocol";
 import type { AuthContext, Env } from "../env";
@@ -153,8 +150,6 @@ export interface ConversationWorkspacePort {
   attachSidekickConversation(input: ConversationToolAttachRequest): Promise<ConversationToolAttachResult>;
   /** A Channel's feed as this person may read it; the Channel screen's own read. */
   listChannelFeed(input: WorkspaceSpaceChannelPageRequest): Promise<WorkspaceChannelFeedResult>;
-  /** A Sidekick's review announcing a change in the Channel it announces in. */
-  postSidekickChannelMessage(input: WorkspaceSidekickChannelPostRequest): Promise<WorkspaceSidekickChannelPostResult>;
 }
 
 /**
@@ -891,20 +886,10 @@ export function createConversationsPlugin(
       const run = input.automationRun;
       const automationId = scope.kind === "sidekick" ? scope.automationId : input.parentId;
       if (target.kind === "space") {
-        // A Channel holds messages of its own: the Sidekick's announcement
-        // lands in its feed, from Rally, opening with the Sidekick's name.
-        const posted = await (await ports.workspace()).postSidekickChannelMessage({
-          workspaceId, userId: asUserId(actingUserId), spaceId: asSpaceId(target.parentId),
-          automationId: asAutomationId(automationId), key: clientMessageId, text: args.text,
-        });
-        if (!posted.ok) {
-          throw conversationRefusalError({ ok: false, code: posted.code === "space_not_found" ? "conversation_not_in_scope" : "conversation_access_denied",
-            available: [], resourceId: target.parentId }, args.conversation ?? null);
-        }
-        return {
-          output: { conversationId: target.conversationId, messageId: posted.messageId, replayed: posted.replayed },
-          summary: posted.replayed ? `Already posted to ${target.title || "the Channel"}` : `Posted to ${target.title || "the Channel"}`,
-        };
+        // A Channel's feed takes no Sidekick posts: a Sidekick announces in
+        // its own conversation, where everyone it is shared with reads.
+        throw conversationRefusalError({ ok: false, code: "conversation_not_in_scope",
+          available: [], resourceId: target.parentId }, args.conversation ?? null);
       }
       const externalSource = run ? await forwardedExternalSource(input, ports) : undefined;
       const appended = await ports.appendPost(target, {

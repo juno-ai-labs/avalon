@@ -563,7 +563,6 @@ export async function applyDemoSeedAction(
         workspaceId: session.workspaceId,
         authorUserId: action.actorUserId,
         scope: action.scope,
-        owningWorkstreamId: null,
         automationId: sidekickId,
         // The operator-authored demo plays this creation as its cast member,
         // including creator opt-in, before starting the scripted briefing.

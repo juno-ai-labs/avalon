@@ -103,7 +103,7 @@ beforeEach(async () => {
   await workspace().initializeWorkspace(WORKSPACE, "wnam");
   for (const automationId of [SIDEKICK, OTHER]) {
     await workspace().sidekickCreate({ workspaceId: WORKSPACE, automationId, authorUserId: USER, scope: "personal",
-      owningWorkstreamId: null, owningSubstreamId: asSubstreamId("0"), authorityGeneration: 1 });
+      authorityGeneration: 1 });
     await workspace().sidekickSubmitDefinition({ workspaceId: WORKSPACE, automationId, draft, evaluatorRules: null, submittedByRunId: null });
   }
 });

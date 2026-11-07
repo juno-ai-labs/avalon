@@ -495,7 +495,7 @@ describe("what the workspace object answers about its work streams", () => {
     it("names a live Sidekick and not a deleted one", async () => {
       const row = {
         workspaceId: WORKSPACE_ID, authorUserId: OWNER, scope: "workspace" as const,
-        owningWorkstreamId: null, title: "Weekly digest", description: "",
+        title: "Weekly digest", description: "",
       };
       const live = "00000000-0000-7000-8000-0000000008e1";
       const deleted = "00000000-0000-7000-8000-0000000008e2";

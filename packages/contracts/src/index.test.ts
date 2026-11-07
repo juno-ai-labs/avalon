@@ -488,8 +488,9 @@ describe("boundary contracts", () => {
     expect(parsed.data).not.toHaveProperty("requestedDelivery");
     // A room-scoped draft asking for delivery used to be refused outright. It
     // is admissible now because the request means nothing, not because the
-    // rule was relaxed.
-    expect(parsed.data?.suggestedScope).toBe("workstream");
+    // rule was relaxed; a revision stored with the retired room scope reads
+    // as the Organization scope its Sidekick was converted to.
+    expect(parsed.data?.suggestedScope).toBe("workspace");
   });
 
   it("allows incomplete source fields while an activity draft is not ready", () => {
