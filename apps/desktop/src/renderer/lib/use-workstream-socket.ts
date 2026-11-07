@@ -2,7 +2,7 @@ import { useOptionalWorkspaceSocket } from './workspace-socket';
 import type { Annotation } from '@rally/contracts';
 import { useConversationAdmission } from './conversation-admission';
 import { safeParseSocketEvent } from "@rally/contracts";
-import type { SidekickMessageIntent, WorkstreamAppearancePatch } from '@rally/contracts';
+import type { SidekickMessageIntent } from '@rally/contracts';
 import {
   ServerSocketEventSchema,
   WorkstreamSocketCommandResultSchema,
@@ -20,7 +20,6 @@ import {
   type TranscriptRange,
   type TranscriptRangeResult,
 } from '@rally/contracts';
-import { SubstreamInitialContextSchema, type SubstreamInitialContext } from '@rally/contracts/substream-creation';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { retainQueryData } from './retain-query-data';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -142,7 +141,6 @@ export interface WorkstreamSocketConnection {
   ): Promise<void>;
   reorderPendingInputs(inputIds: string[]): Promise<{ pendingInputs: PendingTranscriptInput[] }>;
   stopHarness(): Promise<void>;
-  setAppearance(appearance: WorkstreamAppearancePatch): Promise<void>;
   retryHarness(): Promise<{ harnessRunId: string }>;
   loadTranscriptRange(input: {
     snapshotId: string;
@@ -801,8 +799,6 @@ export function useWorkstreamSocket(
     (inputIds) => reorderPendingInputsRef.current(inputIds),
     [],
   );
-  const setAppearanceRef = useRef<WorkstreamSocketConnection['setAppearance']>(() => Promise.reject(new Error('The conversation is not connected.')));
-  const setAppearance = useCallback<WorkstreamSocketConnection['setAppearance']>((appearance) => setAppearanceRef.current(appearance), []);
   const stopHarnessRef = useRef<WorkstreamSocketConnection['stopHarness']>(
     () => Promise.reject(new ApiError(
       'The conversation is not ready to stop.',
@@ -866,7 +862,6 @@ export function useWorkstreamSocket(
       reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
         'The conversation is not ready to reorder queued messages.', 409, 'workstream_socket_unavailable',
       ));
-      setAppearanceRef.current = () => Promise.reject(new ApiError('The conversation is not connected.', 409, 'workstream_socket_unavailable'));
       stopHarnessRef.current = () => Promise.reject(new ApiError(
         'The conversation is not ready to stop.', 409, 'workstream_socket_unavailable',
       ));
@@ -1023,12 +1018,6 @@ export function useWorkstreamSocket(
      * first will already carry.
      */
     let snapshotRequestInFlight = false;
-    let initialContextSnapshot: {
-      snapshotId: string;
-      sequence: number;
-      chunkCount: number;
-      chunks: Map<number, string>;
-    } | null = null;
     let pendingInputSnapshot: {
       snapshotId: string;
       sequence: number;
@@ -1205,19 +1194,6 @@ export function useWorkstreamSocket(
       if (result.command !== 'reorder_pending_inputs') throw new Error('substream_command_receipt_mismatch');
       return { pendingInputs: result.pendingInputs };
     };
-    // Keep queued choices bound to this addressed connection, even if the
-    // header unmounts or the direct hook is later reused for another room.
-    let appearanceQueue = Promise.resolve();
-    setAppearanceRef.current = (appearance) => {
-      const command = { type: 'set_workstream_appearance' as const, operationId: uuidV7(), appearance };
-      const result = appearanceQueue.then(async () => {
-        if (closedByEffect) throw new ApiError('The conversation is no longer available.', 409, 'workstream_socket_unavailable');
-        const receipt = await submitSubstreamCommand(command);
-        if (receipt.command !== 'set_workstream_appearance') throw new Error('substream_command_receipt_mismatch');
-      });
-      appearanceQueue = result.catch(() => undefined);
-      return result;
-    };
     stopHarnessRef.current = async (): Promise<void> => {
       const result = await submitSubstreamCommand({ type: 'stop_harness', operationId: uuidV7() });
       if (result.command !== 'stop_harness') throw new Error('substream_command_receipt_mismatch');
@@ -1302,41 +1278,6 @@ export function useWorkstreamSocket(
     requestSnapshotRef.current = requestCanonicalSnapshot;
 
     const applyEvent = (event: ServerSocketEvent): void => {
-      if (event.type === 'initial_context_snapshot_chunk') {
-        const assembly = initialContextSnapshot;
-        if (!assembly || assembly.snapshotId !== event.snapshotId || assembly.sequence !== event.sequence) return;
-        if (assembly.chunkCount !== event.chunkCount || event.chunkIndex >= event.chunkCount
-          || assembly.chunks.has(event.chunkIndex)) {
-          initialContextSnapshot = null;
-          queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
-          setSendReady(false);
-          requestCanonicalSnapshot();
-          return;
-        }
-        assembly.chunks.set(event.chunkIndex, event.json);
-        if (assembly.chunks.size !== assembly.chunkCount) return;
-        try {
-          const json = Array.from(
-            { length: assembly.chunkCount },
-            (_, index) => assembly.chunks.get(index)!,
-          ).join('');
-          const parsedContext = safeParseSocketEvent(SubstreamInitialContextSchema, JSON.parse(json));
-          if (!parsedContext.success) throw parsedContext.error;
-          const context = parsedContext.data;
-          if (context.source.workstreamId !== parentId || context.source.substreamId !== '0') {
-            throw new Error('substream_initial_context_identity_mismatch');
-          }
-          queryClient.setQueryData<SubstreamInitialContext | null>(contextQueryKey, context);
-          initialContextSnapshot = null;
-          setSendReady(canonicalCachesAvailable());
-        } catch {
-          initialContextSnapshot = null;
-          queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
-          setSendReady(false);
-          requestCanonicalSnapshot();
-        }
-        return;
-      }
       if (event.type === 'pending_inputs_snapshot_chunk') {
         const assembly = pendingInputSnapshot;
         if (!assembly
@@ -1386,8 +1327,6 @@ export function useWorkstreamSocket(
         return;
       }
       if (event.type === 'resync_required') {
-        initialContextSnapshot = null;
-        queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
         pendingInputSnapshot = null;
         setSendReady(false);
         // Range replies are correlated to this exact admitted socket and its
@@ -1560,13 +1499,8 @@ export function useWorkstreamSocket(
           chunkCount: event.pendingInputChunkCount,
           chunks: new Map(),
         };
-        const contextChunkCount = event.initialContextChunkCount ?? 0;
-        initialContextSnapshot = contextChunkCount === 0 ? null : {
-          snapshotId: event.transcript.snapshotId, sequence: event.sequence,
-          chunkCount: contextChunkCount, chunks: new Map(),
-        };
-        if (contextChunkCount === 0) queryClient.setQueryData(contextQueryKey, null);
-        else queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
+        // A Canvas's and a Sidekick's conversation inherit no context.
+        queryClient.setQueryData(contextQueryKey, null);
         setActiveCompaction(event.activeCompaction);
         updateInferenceDelays(event.activeInferenceDelays);
         queryClient.setQueryData<number>(
@@ -1574,7 +1508,7 @@ export function useWorkstreamSocket(
           (current) => (current ?? 0) + 1,
         );
         queryClient.setQueryData(workstreamFeedSourceQueryKey(parentId, substreamId), 'socket_snapshot');
-        setSendReady(contextChunkCount === 0);
+        setSendReady(true);
         const detail = mapWorkstreamDetail(event.workstream);
         queryClient.setQueryData(detailQueryKey, detail);
         // Only a reconciliation requested on this still-contiguous socket can
@@ -1882,7 +1816,7 @@ export function useWorkstreamSocket(
     };
 
     const completeOpeningFromCanonicalCaches = (): boolean => {
-      if (!canonicalCachesAvailable() || initialContextSnapshot !== null || pendingInputSnapshot !== null) return false;
+      if (!canonicalCachesAvailable() || pendingInputSnapshot !== null) return false;
       clearOpeningTimer();
       openingCompleted = true;
       hasOpenedCanonically = true;
@@ -1901,11 +1835,7 @@ export function useWorkstreamSocket(
     };
 
     const abandonSnapshotAssembly = (): void => {
-      const incomplete = initialContextSnapshot !== null || pendingInputSnapshot !== null;
-      if (initialContextSnapshot !== null) {
-        queryClient.removeQueries({ queryKey: contextQueryKey, exact: true });
-      }
-      initialContextSnapshot = null;
+      const incomplete = pendingInputSnapshot !== null;
       pendingInputSnapshot = null;
       if (incomplete) {
         // Chunks share the baseline's sequence and are not replayable after it.
@@ -2060,7 +1990,7 @@ export function useWorkstreamSocket(
           // subscription needs a snapshot fallback, with the same time budget.
           if (openingCompleted && transportProbed && socket?.readyState === REALTIME_SOCKET_OPEN
             && !snapshotFallbackRequested && !snapshotRequestInFlight
-            && initialContextSnapshot === null && pendingInputSnapshot === null) {
+            && pendingInputSnapshot === null) {
             snapshotFallbackRequested = true;
             requestCanonicalSnapshot();
             openingTimer = window.setTimeout(openingTimedOut, timeoutMs);
@@ -2279,7 +2209,6 @@ export function useWorkstreamSocket(
               applyEvent(event.data);
               const completedFromFrame = (
                 event.data.type === 'snapshot'
-                || event.data.type === 'initial_context_snapshot_chunk'
                 || event.data.type === 'pending_inputs_snapshot_chunk'
                 || (openingCompleted && event.data.type !== 'error'
                   && resumeState.lastSequence > sequenceBeforeFrame)
@@ -2523,7 +2452,6 @@ export function useWorkstreamSocket(
       reorderPendingInputsRef.current = () => Promise.reject(new ApiError(
         'The conversation is no longer available.', 409, 'workstream_socket_unavailable',
       ));
-      setAppearanceRef.current = () => Promise.reject(new ApiError('The conversation is not connected.', 409, 'workstream_socket_unavailable'));
       stopHarnessRef.current = () => Promise.reject(new ApiError(
         'The conversation is no longer available.', 409, 'workstream_socket_unavailable',
       ));
@@ -2589,7 +2517,6 @@ export function useWorkstreamSocket(
       reorderPendingInputs,
       retryHarness,
       stopHarness,
-      setAppearance,
     }),
     [
       admissionAllowed,
@@ -2606,7 +2533,6 @@ export function useWorkstreamSocket(
       sendReady,
       state,
       stopHarness,
-      setAppearance,
       workspaceSocketState,
     ],
   );

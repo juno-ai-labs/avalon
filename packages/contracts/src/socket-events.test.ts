@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { isUnknownSocketEvent, safeParseSocketEvent } from "./socket-events";
-import { WorkstreamPrivateChildSchema, CHANNEL_RAILS_NAMED_LIMIT, ClientSocketEventSchema, ClientSocketEventTypeSchema, WorkspaceSocketClientEventSchema, WorkspaceSocketClientEventTypeSchema } from "./index";
+import { WorkstreamPrivateChildSchema, ClientSocketEventSchema, ClientSocketEventTypeSchema, WorkspaceSocketClientEventSchema, WorkspaceSocketClientEventTypeSchema } from "./index";
 
 describe("socket event compatibility", () => {
   const schema = z.strictObject({ type: z.literal("known"), rows: z.array(z.strictObject({ count: z.number() })) });
@@ -40,36 +40,6 @@ describe("socket event compatibility", () => {
     expect(WorkspaceSocketClientEventSchema.safeParse(subscribe).success).toBe(true);
     expect(WorkspaceSocketClientEventSchema.safeParse({ ...subscribe, diagnosticAttemptId }).success).toBe(true);
     expect(WorkspaceSocketClientEventSchema.safeParse({ ...subscribe, diagnosticAttemptId: "not-a-uuid" }).success).toBe(false);
-  });
-  it("takes a channel_rails request for named Channels, and still parses the retired Space target", () => {
-    const requestId = "018f22f2-4c22-7abc-8def-0123456789ab";
-    const spaceId = "00000000-0000-4000-8000-000000000001";
-    const workstreamId = "018f22f2-4c22-7abc-8def-0123456789ac";
-    const valid = (event: Record<string, unknown>) =>
-      WorkspaceSocketClientEventSchema.safeParse({ type: "channel_rails", requestId, ...event }).success;
-    expect(valid({ workstreamIds: [workstreamId] })).toBe(true);
-    // Desktops 1.467.0 and 1.468.0 still send it; refusing would disconnect them.
-    expect(valid({ spaceId, after: workstreamId })).toBe(true);
-    // Named Channels: at least one, unique, and no more than the bound.
-    expect(valid({ workstreamIds: [] })).toBe(false);
-    expect(valid({ workstreamIds: [workstreamId, workstreamId] })).toBe(false);
-    const ids = (count: number) => Array.from({ length: count },
-      (_, index) => `018f22f2-4c22-7abc-8def-${String(index).padStart(12, "0")}`);
-    expect(valid({ workstreamIds: ids(CHANNEL_RAILS_NAMED_LIMIT) })).toBe(true);
-    expect(valid({ workstreamIds: ids(CHANNEL_RAILS_NAMED_LIMIT + 1) })).toBe(false);
-  });
-  it("takes a space_channels request for one Space, paged with `after`, saying whether it wants rails", () => {
-    const requestId = "018f22f2-4c22-7abc-8def-0123456789ab";
-    const spaceId = "00000000-0000-4000-8000-000000000001";
-    const workstreamId = "018f22f2-4c22-7abc-8def-0123456789ac";
-    const valid = (event: Record<string, unknown>) =>
-      WorkspaceSocketClientEventSchema.safeParse({ type: "space_channels", requestId, ...event }).success;
-    expect(valid({ spaceId, rails: true })).toBe(true);
-    expect(valid({ spaceId, after: workstreamId, rails: false })).toBe(true);
-    expect(valid({ spaceId })).toBe(false);
-    expect(valid({ rails: true })).toBe(false);
-    // Retired: an unknown type, which a server ignores rather than refuses.
-    expect(WorkspaceSocketClientEventTypeSchema.safeParse("channels_by_space").success).toBe(false);
   });
   it("handles additive fields inside ordinary union members", () => {
     const union = z.strictObject({ row: z.union([z.strictObject({ first: z.string() }), z.strictObject({ second: z.number() })]) });

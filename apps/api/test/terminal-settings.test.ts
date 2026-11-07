@@ -138,7 +138,7 @@ function fixture(role: AuthContext["role"] = "owner") {
         terminalSandboxParents: async () => (database.prepare(
           "SELECT id, title FROM workstreams WHERE workspace_id = ? ORDER BY id",
         ).all(W) as Array<{ id: string; title: string }>)
-          .map((row) => ({ workstreamId: row.id, title: row.title })),
+          .map((row) => ({ parentKind: "canvas" as const, workstreamId: row.id, title: row.title })),
       },
     }),
     // The final-diff preserver stages the diff in R2 before it writes the

@@ -1093,8 +1093,8 @@ describe("provider-wide webhook ingestion", () => {
     expect(vi.mocked(publishWorkspaceSync)).toHaveBeenCalledWith(
       expect.anything(), WORKSPACE_ONE, ["connector_connections", "resources"], { audienceUserIds: [USER_ONE] },
     );
-    // Activity is Organization-wide news; its own rows decide who can read it.
-    expect(vi.mocked(publishWorkspaceSync)).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ONE, ["activity"]);
+    // Activity is retired: the connection's own topics are the only news.
+    expect(vi.mocked(publishWorkspaceSync)).toHaveBeenCalledTimes(1);
   });
 
   it("marks a personal Linear connection for reconnect when access proof loses authorization", async () => {

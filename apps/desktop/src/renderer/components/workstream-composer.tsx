@@ -22,7 +22,6 @@ import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
 import { type SidekickMentionTarget, useSidekickMentions } from '../lib/sidekick-mentions';
 import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
-import { ComposerAgentActivity } from './composer-agent-activity';
 import { STOPPING_LABEL } from './agent-work-timing';
 import type { AttachmentPreview } from './attachments';
 import { ComposerInput, type ComposerMenuAction, type ComposerModelControl } from './composer-input';
@@ -155,8 +154,6 @@ interface WorkstreamComposerProps {
   onRemoveAttachment: (localId: string) => void;
   onRetryAttachment: (localId: string) => void;
   onStop: () => Promise<void>;
-  backgroundAgentCount?: number | null;
-  runningSidekickCount?: number | null;
 }
 
 interface PendingMentionConfirmation {
@@ -213,8 +210,6 @@ export function WorkstreamComposer({
   onRemoveAttachment,
   onRetryAttachment,
   onStop,
-  backgroundAgentCount,
-  runningSidekickCount,
 }: WorkstreamComposerProps): React.JSX.Element {
   const inheritedAnnotationDraft = useAnnotationDraft();
   const annotationDraft = annotationsEnabled ? inheritedAnnotationDraft : null;
@@ -594,10 +589,6 @@ export function WorkstreamComposer({
           ))}
         </div>
       )}
-      <div>
-        <ComposerAgentActivity count={backgroundAgentCount} />
-        <ComposerAgentActivity count={runningSidekickCount} kind="sidekick" />
-      </div>
       <ComposerInput
         api={api}
         ariaLabel={ariaLabel ?? placeholder.replace(/…$/u, '')}
