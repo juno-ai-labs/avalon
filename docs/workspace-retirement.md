@@ -35,6 +35,8 @@ that first needed it ships separately, calling what is here.
 | `packages/contracts/src/workspace-retirement.ts` | The receipt a retirement answers with. |
 | `packages/contracts/src/conversation-parent.ts` | `childrenForRetirement`'s three-way answer. |
 | `apps/ace/src/regional-api.ts`, `apps/ace/src/client/workspaces.tsx` | Ace's relay to the regional route and the workspaces tab that calls it ([`ace.md`](ace.md)). |
+| `apps/api/src/services/thread-retirement-service.ts` | Retiring one Organization's Threads, Breakouts and Channels while the Organization stays open: the transcript dump to R2 and the retirement it unlocks (see [Retiring Threads, Breakouts and Channels](#retiring-threads-breakouts-and-channels)). |
+| `WorkspaceDO.threadRetirementInventory`, `WorkspaceDO.deleteRetiredThreadParent`, `AgentLoopDO.conversationTranscriptText` | What that walk visits, the rows it deletes once a parent's conversations are retired, and the whole transcript of one conversation as room-visible text. |
 
 ### The gate
 
@@ -227,6 +229,99 @@ is refused by role even when it verifies.
 - **Every operator router names the roles it admits.** A role added to the
   credential map reaches no surface until a router names it.
 
+## Retiring Threads, Breakouts and Channels
+
+The pivot to Canvases and Sidekicks
+([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md), plan steps B-7a and B-7)
+deletes every Thread, Breakout and Channel of every Organization, while the
+Organization, its Canvases, its Sidekicks and its resources stay. That is the
+walk above with a narrower graph and without the Organization's own tombstone,
+so it does not reuse `workspace_retirement_graph`: that table's completeness is
+defined by the Organization being retired, which here it never is. Each
+operation is an operator call per Organization, through the engineering MCP
+([`engineering-mcp.md`](engineering-mcp.md#retiring-threads)); nothing runs it
+on a schedule or at deploy.
+
+**What it visits.** `WorkspaceDO.threadRetirementInventory` names every Thread
+(`channels`, plus any `workstream` parent state left without its row) and every
+Channel (`spaces`, plus any `space` parent state), Threads first, and under each
+Main `0` and every child the parent registry, its projections or the Breakout
+directory knows. Main is always named, as `childrenForRetirement` names it,
+because a Space created before 2026-09-26 has a hidden one. A Canvas is a
+`canvas_directory` row and a Sidekick an `automation_directory` row; neither is
+read.
+
+**The dump comes first.** `dump_thread_transcripts` writes each conversation's
+committed transcript to `PAYLOADS` as text, under
+`retired-conversations/<workspaceId>/<parentId>/<substreamId>.txt`, through
+`AgentLoopDO.conversationTranscriptText`: the same `conversationAsText` the
+operator `read_thread` tool formats with, over every committed turn, so tool
+payloads, thinking and internal agent messages are left out. It is the only
+copy once the retirement runs, and it is for operators, not a product surface.
+
+- **The R2 object is the receipt.** A pass skips any key that is already
+  there, so a rerun writes nothing new and an interrupted pass resumes where it
+  stopped. A conversation that moved after its dump keeps the earlier dump; the
+  dump and the retirement are meant to run back to back after the cutover,
+  when no reader is left to post. To dump one again, delete its object first.
+- **An object that never held a conversation is written empty**, with
+  `materialized: "false"` in its metadata, so the retirement's coverage check
+  finds a receipt for it too. The read brings that object into existence, as
+  the retirement would.
+- **A refused conversation is left unwritten** and reported by code:
+  `thread_transcript_identity_mismatch` when the object holds another identity
+  than the name it was reached by, `thread_transcript_parent_kind_refused` when
+  it is a Canvas's or Sidekick's conversation, and otherwise the object's own
+  code or `thread_transcript_dump_failed`. Unwritten means the retirement stays
+  refused until an operator looks.
+- **One invocation holds the whole Organization**, as the workspace walk does:
+  a subrequest ceiling is the failure on a very large one, and the receipts
+  written so far survive it.
+
+**Then the retirement.** `retire_threads` is refused with
+`thread_retirement_dump_incomplete`, before anything is touched, unless every
+conversation in the inventory has its dump. Then, parent by parent, children
+before parents: each conversation object is tombstoned through `retireObject`
+(reason `thread_retirement`, no user), which clears its alarms and closes its
+sockets with `1008` exactly as the workspace walk does, and only once all of
+them confirm does `WorkspaceDO.deleteRetiredThreadParent` delete the parent's
+rows in one transaction:
+
+- every `parent_*` table keyed by `parent_id`, from the code-owned list
+  `HOSTED_PARENT_STATE_TABLES` (`hosted-parent-schema.ts`) intersected with the
+  schema, so a table phase C drops first is skipped rather than failed on, and
+  a new `parent_*` table has to join the list or it is left behind;
+  `parent_participant_migrations` goes first, because while it stands a
+  Breakout's member rows refuse deletion, and foreign keys are deferred to the
+  commit so the order among the rest does not matter. That deferral is load
+  bearing: `parent_invitations` references `parent_invitation_operations` with
+  no ON DELETE, and the list deletes the operations first. Inside
+  `transactionSync` a deferred violation is raised at the commit of the whole
+  event, after the method returns, so it would fail the RPC rather than reach
+  the service's per-parent catch;
+- a Thread's `channels`, `channel_viewers`, `breakouts` and `breakout_viewers`
+  rows, or a Channel's `spaces` and `space_viewers` rows, and with them what
+  cascades from those (pins, resource links, Channel access rows).
+
+What it leaves: the Organization object, untombstoned,
+Canvases, Sidekicks, resources (a link row from a Thread to a resource goes;
+the resource does not), memory, and the rows in other Thread- and
+Channel-keyed tables that phase C drops with their tables (C-7). Nothing is
+published to the workspace socket: stopping its Thread topics is the other half
+of plan step B-7 and is not done here.
+
+- **Resumable without a receipt table.** A parent whose rows are gone is not in
+  the next inventory; one interrupted between its conversations and its rows
+  is, and its conversations keep their first tombstone. A finished
+  Organization reruns as a pass over nothing.
+- **A failed parent is left whole** and reported with the conversation it
+  stopped at and its code (the object's own, or
+  `thread_retirement_node_failed`); the rest of the pass goes on.
+- **A retired conversation answers as a retired workspace's does**: a caller
+  that still names one (a Sidekick's conversation attachment to a Thread, a
+  queued effect) meets `workspace_retired`, which every background caller
+  already treats as terminal.
+
 ## Boundary
 
 This module owns closing a workspace and nothing else. It does not own how a
@@ -318,6 +413,7 @@ included.
 | --- | --- | --- |
 | `apps/api/test-workers/object-retirement.test.ts` | `pnpm --filter @rally/api test:workers` | The gate on real workerd: refusal on every class, a refusal that crosses the RPC boundary with its code, `canReadWorkstream` answering `false`, sockets closed with `1008`, drop-and-acknowledge in the shapes the consumers parse, alarm clearing, a rebuilt retired agent not refilling its alarm index, that all three socket-holding object classes rebuild themselves after eviction and revoke access while retired, and that the gate's function is installed on every callable method. |
 | `apps/api/test-workers/workspace-retirement-graph.test.ts` | `pnpm --filter @rally/api test:workers` | The graph is captured before the tombstone, is idempotent and resumable — including over a parent retired but never receipted — an empty workspace reports closed, an identity mismatch leaves a node failed with a stable code, and the walk closes children before parents. |
+| `apps/api/test-workers/thread-retirement.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/thread-retirement.test.ts` | On real objects: the dump writes every Thread, Breakout and Channel conversation under its key with the room-visible text, never a Canvas's or Sidekick's, writes nothing on a rerun even after a conversation moved, refuses a confirmation that names another Organization, and reports a conversation holding another identity or parent kind by its code, unwritten, which keeps the retirement refused; the retirement is refused before the dump and touches nothing, then retires every Thread, Breakout and Channel conversation and deletes their rows, a pending invitation and its operation included, while the Canvas, the Sidekick and a resource survive, and reruns as a no-op. |
 | `apps/api/test/workspace-operations.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-operations.test.ts` | Against the real migrations: the route admits only the `demos` role, refuses a confirmation naming another workspace, refuses an id this region does not own even when its row is present, writes `abandoned_at` before walking, and answers the contract's receipt. |
 | `apps/api/test/retirement-background-callers.test.ts` | `pnpm --filter @rally/api exec vitest run test/retirement-background-callers.test.ts` | Each background caller acknowledges a refusal: the flag fan-out, the revocation hop, and the digest pass, which also proves the pass finishes and writes its cursor. |
 | `apps/api/test/telemetry-operator-routes.test.ts` | `pnpm --filter @rally/api exec vitest run test/telemetry-operator-routes.test.ts` | The `demos` role is refused at the telemetry router, on every route. |
@@ -423,6 +519,45 @@ telemetry roles.
   workspaces it was built for.
 
 ## Changelog
+
+### 2026-11-07 — Retire an Organization's Threads, Breakouts and Channels, after dumping their transcripts
+
+**What changed:** Plan steps B-7a and B-7. `dump_thread_transcripts`, an
+engineering MCP operator operation, walks one Organization's Threads, Breakouts
+and Channels (`WorkspaceDO.threadRetirementInventory`) and writes each
+conversation's transcript to R2 as text (`AgentLoopDO.conversationTranscriptText`,
+formatted by `conversationAsText`), with the R2 object as its receipt.
+`retire_threads`, refused until those receipts cover every conversation, retires
+each conversation object through `retireObject` and then deletes the parent's
+rows (`WorkspaceDO.deleteRetiredThreadParent`), leaving the Organization open.
+
+**Why:** The PRD's decision log: existing Threads, Breakouts and Channels are
+deleted at cutover, object by object, with no read-only mode, export or
+conversion, because keeping the old product's data reachable means keeping its
+readers deployed; and since that deletion is irreversible, each transcript is
+first dumped to R2 for operators, in the pass the retirement walk already makes.
+
+**Considered and rejected:** A receipt table in `WorkspaceDO` — a migration and
+a second record of a fact the R2 object already is; a key that exists is a
+dump that finished. Reusing the read-as-a-user transcript operation — it
+authorizes a viewer, and an operator dump has none. Reusing
+`workspace_retirement_graph` — its completion is the Organization's own
+tombstone, which this walk never writes.
+
+Deleting the parent rows rather than only tombstoning, as the workspace walk
+does: the Organization stays open and keeps serving its sidebar and its
+directory reads, so a Thread whose row survived would still be listed, opened
+and refused. Reading the `parent_*` tables from the schema alone: dynamic
+table names have to come from a closed code-owned list
+([`durable-object-sqlite.md`](durable-object-sqlite.md)); intersecting the list
+with the schema keeps the tolerance for tables phase C drops.
+
+**Consequences:** A dump is a snapshot: what lands in a conversation after it is
+not in it, and a rerun does not refresh it, so the two run back to back after
+the cutover. Deletion is irreversible; the dump is the only copy. Rows in other
+Thread- and Channel-keyed tables are left for phase C (C-7) to drop with their
+tables, and the workspace socket's Thread topics are not changed here (the
+other half of plan step B-7).
 
 ### 2026-09-19 — The graph admits a third parent kind, and the walk enumerates Spaces and knows which namespace to ask
 
