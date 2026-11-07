@@ -1,5 +1,5 @@
 import { activeRealtimeWorkstreamId, backgroundRealtimeWorkstreamIds } from '../lib/workspace-workstream-sockets';
-import { openWorkstreamId } from '../lib/workstream-landing';
+import { openCanvasId } from '../lib/canvases';
 import { asSpaceId, asSubstreamId, WorkstreamPrivateChildSchema } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import type { SharedNavigationDirectory } from '@rally/contracts/scope-grants';
@@ -37,23 +37,20 @@ function summary(harnessStatus: WorkstreamSummary['harnessStatus'], id = workstr
   };
 }
 
-describe('openWorkstreamId', () => {
-  it('names the thread the route has open, alone or beside its Channel', () => {
-    expect(openWorkstreamId(`/workstreams/${workstreamId}`)).toBe(workstreamId);
-    expect(openWorkstreamId(`/channels/general/threads/${workstreamId}`)).toBe(workstreamId);
-    expect(openWorkstreamId('/channels/general')).toBeNull();
+describe('openCanvasId', () => {
+  it('names the Canvas the route has open', () => {
+    expect(openCanvasId(`/canvases/${workstreamId}`)).toBe(workstreamId);
+    expect(openCanvasId('/canvases')).toBeNull();
   });
 
   it('decodes an escaped segment, and survives a malformed one', () => {
-    expect(openWorkstreamId('/workstreams/a%20b')).toBe('a b');
-    expect(() => openWorkstreamId('/workstreams/%')).not.toThrow();
-    expect(openWorkstreamId('/workstreams/%')).toBe('%');
+    expect(openCanvasId('/canvases/a%20b')).toBe('a b');
+    expect(openCanvasId('/canvases/%')).toBe('%');
   });
 
-  it('has none for the composer, other screens, or a nested route', () => {
-    expect(openWorkstreamId('/workstreams/new')).toBeNull();
-    expect(openWorkstreamId('/automations/abc')).toBeNull();
-    expect(openWorkstreamId(`/workstreams/${workstreamId}/settings`)).toBeNull();
+  it('has none for other screens, or a nested route', () => {
+    expect(openCanvasId('/sidekicks/abc')).toBeNull();
+    expect(openCanvasId(`/canvases/${workstreamId}/settings`)).toBeNull();
   });
 });
 

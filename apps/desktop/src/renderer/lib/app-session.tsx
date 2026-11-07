@@ -14,7 +14,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { AccountOnboarding, OrganizationNameSuggestion, SupportPerson, SupportWorkspace, UpdateAccountOnboarding, WorkspaceDeparture, WorkspaceDepartureOutcome } from '@rally/contracts';
 import type { ClientSession } from '@rally/contracts/client-session';
 import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
-import { PHONE_LAYOUT_MAX_WIDTH } from '@rally/ui/lib/phone-layout';
 import {
   workspaceTargetsEqual,
   type WorkspaceTarget,
@@ -1090,24 +1089,16 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       if (intent.kind === 'activity') {
-        const openActivity = (): void => {
+        // Activity is gone (2026-11 cutover); what it listed is the Canvases
+        // section's unread dots, so a link that names it lands there.
+        const openCanvases = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          const ui = useUiStore.getState();
-          ui.setSidebarSection('activity');
-          // At phone width the sidebar is a sheet; open it so the link lands
-          // somewhere visible. Wider, an open sheet would leave the main pane inert.
-          const phone = window.innerWidth <= PHONE_LAYOUT_MAX_WIDTH;
-          // A changed organization parked the pane on `/opening`; Activity
-          // names no route, so land where the app would. The sidebar resets
-          // the sheet on that navigation, so ask it to open the sheet then.
-          if (window.location.hash === '#/opening') {
-            if (phone) ui.setSheetAfterNavigation(true);
-            navigateAppRoute('/');
-          } else if (phone) ui.setSidebarOpen(true);
+          useUiStore.getState().setSidebarSection('canvases');
+          navigateAppRoute('/canvases');
         };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, openActivity);
-        else if (requireActiveWorkspace('Sign in before opening Activity.')) openActivity();
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, openCanvases);
+        else if (requireActiveWorkspace('Sign in before opening Rally.')) openCanvases();
         return;
       }
       if (intent.kind === 'new-automation') {
