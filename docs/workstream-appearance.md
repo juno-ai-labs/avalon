@@ -274,15 +274,27 @@ including scrolling, and check another connected window and reopening.
 
 ### 2026-11-07 — No client write puts an appearance on a sidebar row
 
-The receipt-time write (`patchCachedWorkstreamAppearance`) and the naming
-pass's (`patchCachedGeneratedIcon`) are deleted with the `['workstreams']` list
-they wrote: the Threads sidebar that read that list went with the Canvases and
+**What changed:** The receipt-time write (`patchCachedWorkstreamAppearance`)
+and the naming pass's (`patchCachedGeneratedIcon`) are deleted with the
+`['workstreams']` list they wrote. An appearance receipt now resolves the
+picker's choice and writes no cache.
+
+**Why:** The Threads sidebar that read that list went with the Canvases and
 Sidekicks pivot ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)), and
 nothing reads it now. A Sidekick's row comes from the workspace socket's
 `automations` list and a Canvas's from `workspace_canvas_list`, both versioned
 by their own waterline, so an appearance reaches them through the projection
-alone. A future row-ahead-of-projection write has to target the list a surface
-actually reads, and still leave the cached detail to the projection.
+alone.
+
+**Considered and rejected:** Retargeting the two writes at the `automations`
+and `canvases` lists. Those lists are replaced whole by a waterlined push, so
+an unversioned patch there would be overwritten by the next push and could be
+put back by an older one; the projection lands within one push anyway.
+
+**Consequences:** A person's own icon or colour choice reaches the sidebar row
+when the projection does, not on the receipt. A future row-ahead-of-projection
+write has to target the list a surface actually reads, respect that list's
+waterline, and still leave the cached detail to the projection.
 
 ### 2026-10-13 — A new thread is born in its Channel's colour
 
