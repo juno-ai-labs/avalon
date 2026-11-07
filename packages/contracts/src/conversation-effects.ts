@@ -6,6 +6,7 @@ import { ConversationParentKindSchema } from "./conversation-parent";
 import { IdSchema, SubstreamIdSchema, WorkspaceIdSchema } from "./identifiers";
 import { ResourceRelationshipTypeSchema } from "./resource-relationships";
 import { HttpUrlSchema } from "./url-schemas";
+import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 
 /**
  * What a conversation tells its parent, and what a parent tells the workspace.
@@ -68,6 +69,12 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
    * Sidekick's shared conversation counts. Sent only by a run's conversation.
    */
   stepCount: z.number().int().nonnegative().optional(),
+  /**
+   * A Sidekick run's last reply in full, up to a message's own ceiling: what
+   * the run's row shows. `preview` keeps the directory's shorter cut for every
+   * other reader. Sent only by a run's conversation.
+   */
+  reply: z.string().max(MESSAGE_MAX_CHARACTERS).optional(),
   attachmentReservationReleases: z.array(z.object({
     inputId: IdSchema,
     resourceId: IdSchema,

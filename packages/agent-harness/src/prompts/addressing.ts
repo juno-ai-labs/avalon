@@ -18,6 +18,9 @@ export interface AddressingPromptInput {
 const MAX_RECENT_MESSAGES = 10;
 const MAX_RECENT_MESSAGE_CHARACTERS = 1_000;
 
+// "collaborative workstream" is the classifier's old wording, kept byte for
+// byte: the addressing eval's baselines and the golden hash were measured on
+// this prompt, and rewording it is a classifier change to re-measure, not copy.
 const SYSTEM_PROMPT = `Classify whether Rally should act on the newest human message in a collaborative workstream.
 
 Outcomes:

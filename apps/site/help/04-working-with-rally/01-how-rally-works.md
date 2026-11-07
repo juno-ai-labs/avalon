@@ -151,8 +151,8 @@ A few things to know:
   [Memory and coming back later](05-memory-and-coming-back-later.md)).
 - Rarely, a conversation is too big for Rally to take in at all.
   You then see a message that begins **This conversation is longer than the
-  selected model will accept. Start a new thread to continue**. Start a
-  new Canvas and tell Rally what it needs to know.
+  selected model will accept. Start a new Canvas to continue**. Start one
+  and tell Rally what it needs to know.
 - Rally does not reach into your other Canvases to fill gaps. Each
   conversation stands on its own.
 

@@ -11,8 +11,9 @@
 // no per-conversation model pin, so the Terra comparison the earlier rounds ran
 // is gone); `wizard` and `final` author Sidekicks through the wizard in each
 // Sidekick's shared conversation and then run them. Graders read the
-// transcript and the saved definition, and every expected number is computed
-// for 2026-10-31.
+// transcript and the saved definition. A scenario that names its dates has its
+// expected numbers worked out for those dates; one that asks about "now"
+// (E1's ISO week) is graded against the week computed when it runs.
 import { writeFileSync } from "node:fs";
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, part, i, all) => {
@@ -97,10 +98,31 @@ const called = (s, name) => s.tools.filter((t) => t.name === name || t.name.ends
 const failedTools = (s) => s.tools.filter((t) => t.status === "failed");
 const programs = (s) => called(s, "code_execute");
 const customCalls = (s) => s.tools.filter((t) => t.name.startsWith("custom_"));
+/** The ISO 8601 week of a calendar date given as year, month (1-12) and day. */
+function isoWeek(year, month, day) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
+  const yearStart = Date.UTC(date.getUTCFullYear(), 0, 1);
+  return Math.ceil(((date.getTime() - yearStart) / 86_400_000 + 1) / 7);
+}
+/**
+ * The ISO weeks "now" can be: today's in UTC and in the Organization's
+ * Pacific time, which differ for a few hours either side of a week boundary.
+ */
+function currentIsoWeeks() {
+  const now = new Date();
+  const pacific = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles", year: "numeric", month: "numeric", day: "numeric",
+  }).formatToParts(now).map((part) => [part.type, part.value]));
+  return [...new Set([
+    isoWeek(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate()),
+    isoWeek(Number(pacific.year), Number(pacific.month), Number(pacific.day)),
+  ])];
+}
 
 const CODE = [
   { id: "E1", level: "easy", message: "What's 23.5% of 48,920, and what ISO week number are we in right now? Give exact numbers.",
-    grade: (s) => ({ pass: s.status === "completed" && has(s.finalText, "11496.2") && has(s.finalText, "44") && failedTools(s).length === 0,
+    grade: (s) => ({ pass: s.status === "completed" && has(s.finalText, "11496.2") && currentIsoWeeks().some((week) => new RegExp(`\\b${week}\\b`).test(s.finalText)) && failedTools(s).length === 0,
       notes: `programs=${programs(s).length} failed=${failedTools(s).length}` }) },
   { id: "E2", level: "easy", message: "What time is it in Tokyo right now?",
     grade: (s) => ({ pass: s.status === "completed" && programs(s).length === 0 && failedTools(s).length === 0, notes: `programs=${programs(s).length} (a single call should be direct)` }) },

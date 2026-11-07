@@ -117,7 +117,7 @@ have not, and settle its question before the first file.
      database, and never publish a page that looks like it saves but
      does not.
    - If the user asks for a **protected, private, members-only, or
-     work-stream-only** site, it must be active even when it would
+     Canvas-only** site, it must be active even when it would
      otherwise be static. Write \`index.js\` and reject every request
      without \`x-rally-viewer-id\` before routing or serving assets.
 

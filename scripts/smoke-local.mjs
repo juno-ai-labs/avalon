@@ -165,7 +165,13 @@ const sendSmokeMessage = () => jsonRequest(`/conversations/${canvasId}/substream
 const sent = await sendSmokeMessage();
 assert(sent.response.status === 201 && sent.body?.turn?.turnId, `Canvas Chat message returned ${sent.response.status}`);
 const resent = await sendSmokeMessage();
-assert(resent.body?.turn?.turnId === sent.body.turn.turnId, "A resent Canvas Chat message landed twice");
+assert(resent.body?.turn?.turnId === sent.body.turn.turnId, "A resent Canvas Chat message answered a different turn");
+const afterResend = await jsonRequest(`/conversations/${canvasId}`, { headers: authHeaders });
+const copies = new Set([
+  ...(afterResend.body?.transcript?.ranges ?? []).flatMap((range) => range.turns ?? []),
+  ...(afterResend.body?.transcript?.activeTurns ?? []),
+].filter((turn) => turn.clientMessageId === smokeMessage.clientMessageId).map((turn) => turn.turnId));
+assert(copies.size === 1, `A resent Canvas Chat message landed ${copies.size} times`);
 
 // With a model, Rally answers the Chat; without one the check says it did not look.
 const modelConfigured = health.body?.checks?.openRouter?.ok === true

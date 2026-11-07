@@ -3,6 +3,7 @@ import {
   IdSchema,
   UserIdSchema,
 } from "./identifiers";
+import { MESSAGE_MAX_CHARACTERS } from "./message-limits";
 
 export const AutomationIdSchema = IdSchema.brand<"AutomationId">();
 export type AutomationId = z.infer<typeof AutomationIdSchema>;
@@ -146,7 +147,7 @@ export const AutomationActivationV1Schema = z.strictObject({
   run: z.strictObject({
     state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
     stepCount: z.number().int().nonnegative(),
-    reply: z.string().max(1_000).nullable(),
+    reply: z.string().max(MESSAGE_MAX_CHARACTERS).nullable(),
   }).optional(),
 });
 export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;
@@ -171,11 +172,10 @@ export const SidekickReviewNoticeV1Schema = z.strictObject({
   since: z.string().datetime({ offset: true }).nullable(),
   until: z.string().datetime({ offset: true }),
   /**
-   * Where the wizard announces a change, as the conversation tools name it:
-   * a room's Sidekick's home (its Thread's Main conversation or a Breakout),
-   * an Organization Sidekick's General Channel (or its author's Personal
-   * Channel when General is archived or absent), or a personal Sidekick's
-   * author's Personal Channel. Null when no such conversation exists yet.
+   * The Sidekick's own shared conversation (`"0"`, whose id is the
+   * Sidekick's), written on every notice. Write-only: the rendered notice no
+   * longer names it, because the review runs in that conversation and its
+   * report is the announcement. Kept so notices already in flight still parse.
    */
   announceTo: z.string().min(1).nullable(),
   /** Runs that finished in the window, by the state they finished in; `needsInput` is runs waiting, not finishes. */
