@@ -308,7 +308,8 @@ const PROD = [
     gradeRun: (r) => ({ pass: ranCustom(r) && /\b\d+\b|new/i.test(r.finalText), notes: `custom=${customCalls(r).map((t) => t.status).join(",")} loads=${called(r, "load_plugin").length} text=${r.finalText.slice(0, 160)}` }) },
   { id: "P13", level: "large repeated scan", message: "Set up a Sidekick that every day at 9am Pacific reports, for the previous Pacific calendar day, which conversations had messages from people and who sent them. Conversations are listed in memory table 'conversations' (conversation_id text, org text) and messages in 'messages' (conversation_id text, sender text, sent_at text ISO). Track which conversations are done in a ledger table, so a run that stops partway resumes where it left off. During setup create the tables and insert 150 conversations across five orgs and 300 messages spread over yesterday and today. Put the scan in a saved tool. Report in the run's own conversation; do not post to another conversation.",
     gradeWizard: (w, sk) => ({ pass: active(sk) && shaped(sk) && budgeted(sk) && tested(w), notes: `${shapeNotes(sk)} budgeted=${budgeted(sk)}` }), run: true,
-    gradeRun: (r) => ({ pass: ranCustom(r) && customCalls(r).length <= 2 && /\b\d+\b/.test(r.finalText), notes: `custom=${customCalls(r).length} text=${r.finalText.slice(0, 160)}` }) },
+    // Finishing is the point: a run that stopped partway passes the call count by doing less.
+    gradeRun: (r) => ({ pass: ranCustom(r) && customCalls(r).length <= 2 && /\b150\b/.test(r.finalText) && !/\b[1-9]\d*\s+(?:\w+\s+)?(?:remain|pending|left|unscanned)/i.test(r.finalText), notes: `custom=${customCalls(r).length} text=${r.finalText.slice(0, 160)}` }) },
 ];
 const only = args.only ? new Set(args.only.split(",")) : null;
 const models = (args.models ?? "sol,terra").split(",");
