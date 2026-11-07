@@ -147,6 +147,21 @@ export const DumpThreadTranscriptsResultSchema = deferredZodSchema(() => z.stric
 }));
 export type DumpThreadTranscriptsResult = z.infer<typeof DumpThreadTranscriptsResultSchema>;
 
+export const RetireThreadsResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  /** Threads and Channels the Organization still held when this pass started; a finished retirement reruns at 0. */
+  parents: z.number().int().nonnegative(),
+  conversations: z.number().int().nonnegative(),
+  /** Closed by this pass: each parent's conversations retired and its rows deleted. */
+  retiredParents: z.number().int().nonnegative(),
+  retiredConversations: z.number().int().nonnegative(),
+  /** Effects the retired conversations still hold and will never publish. */
+  retainedOutbox: z.number().int().nonnegative(),
+  failed: z.array(ThreadRetirementFailureSchema),
+}));
+export type RetireThreadsResult = z.infer<typeof RetireThreadsResultSchema>;
+
 export const ReadEngineeringChannelInputSchema = deferredZodSchema(() => z.strictObject({
   ...engineeringViewer,
   channelId: SpaceIdSchema,
@@ -572,6 +587,7 @@ export interface EngineeringInspectionRpcBinding {
   sendMessage(input: SendEngineeringMessageInput, operator: EngineeringOperator): Promise<SendEngineeringMessageResult>;
   setSidekickPaused(input: SetEngineeringSidekickPausedInput, operator: EngineeringOperator): Promise<SetEngineeringSidekickPausedResult>;
   dumpThreadTranscripts(input: ThreadRetirementOperationInput, operator: EngineeringOperator): Promise<DumpThreadTranscriptsResult>;
+  retireThreads(input: ThreadRetirementOperationInput, operator: EngineeringOperator): Promise<RetireThreadsResult>;
   readChannel(input: ReadEngineeringChannelInput): Promise<EngineeringTextResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;

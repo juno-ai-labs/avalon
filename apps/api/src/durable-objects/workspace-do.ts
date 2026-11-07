@@ -6607,6 +6607,46 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * Delete one Thread's or Channel's rows once every conversation under it is
+   * retired: its directory row and viewer rows (and a Thread's Breakout
+   * directory), and its parent state, every `parent_*` table keyed by
+   * `parent_id` — read from the schema, so a table phase C drops first is not
+   * named here. The foreign keys that cascade from `channels` and `spaces`
+   * (pins, resource links, access rows) go with them; the resources a link
+   * names do not. Idempotent: a second call finds nothing to delete.
+   */
+  async deleteRetiredThreadParent(input: { parentKind: "workstream" | "space"; parentId: string }): Promise<void> {
+    await this.initialized;
+    const sql = this.state.storage.sql;
+    const parentTables = sql.exec<{ name: string }>(
+      `SELECT name FROM sqlite_schema
+        WHERE type = 'table' AND name LIKE 'parent\\_%' ESCAPE '\\'
+          AND EXISTS (SELECT 1 FROM pragma_table_info(sqlite_schema.name) WHERE name = 'parent_id')
+        ORDER BY name`,
+    ).toArray().map((row) => row.name);
+    this.state.storage.transactionSync(() => {
+      // Checked at commit, when every referencing row is gone too, so the
+      // delete order among the parent tables does not matter.
+      sql.exec("PRAGMA defer_foreign_keys = ON");
+      // First: while a participant migration row stands, a Breakout's member
+      // rows refuse deletion (`parent_breakout_members_freeze_delete`).
+      if (parentTables.includes("parent_participant_migrations")) {
+        sql.exec("DELETE FROM parent_participant_migrations WHERE parent_id = ?", input.parentId);
+      }
+      for (const table of parentTables) sql.exec(`DELETE FROM "${table}" WHERE parent_id = ?`, input.parentId);
+      if (input.parentKind === "workstream") {
+        sql.exec("DELETE FROM breakout_viewers WHERE workstream_id = ?", input.parentId);
+        sql.exec("DELETE FROM breakouts WHERE workstream_id = ?", input.parentId);
+        sql.exec("DELETE FROM channel_viewers WHERE workstream_id = ?", input.parentId);
+        sql.exec("DELETE FROM channels WHERE workstream_id = ?", input.parentId);
+      } else {
+        sql.exec("DELETE FROM space_viewers WHERE space_id = ?", input.parentId);
+        sql.exec("DELETE FROM spaces WHERE space_id = ?", input.parentId);
+      }
+    });
+  }
+
+  /**
    * The parent step of a conversation's effects, delivered by the activity
    * Queue consumer. The directory step lands in the same transaction. The
    * people the effects name are learned before it, so the transaction does

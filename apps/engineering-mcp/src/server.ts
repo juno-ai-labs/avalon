@@ -16,6 +16,7 @@ import {
   SetEngineeringSidekickPausedResultSchema,
   ThreadRetirementOperationInputSchema,
   DumpThreadTranscriptsResultSchema,
+  RetireThreadsResultSchema,
   ReadEngineeringChannelInputSchema,
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
@@ -279,6 +280,15 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, (request) => tool(principal, "dump_thread_transcripts", { workspace_id: request.orgId }, async () => {
     const orgId = confirmedOrg(request);
     return DumpThreadTranscriptsResultSchema.parse(await (await organizationBinding(orgId)).dumpThreadTranscripts(request, principal));
+  }));
+
+  server.registerTool("retire_threads", {
+    description: "Irreversibly delete every Thread, Breakout and Channel of orgId: each conversation object is retired and their rows deleted. Canvases, Sidekicks, resources and memory stay. Refused (thread_retirement_dump_incomplete) unless dump_thread_transcripts has written every conversation it would retire. Repeat the call to resume; once done it changes nothing. confirm must equal orgId. Returns counts and failed with a code per Thread or Channel.",
+    inputSchema: ThreadRetirementOperationInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "retire_threads", { workspace_id: request.orgId }, async () => {
+    const orgId = confirmedOrg(request);
+    return RetireThreadsResultSchema.parse(await (await organizationBinding(orgId)).retireThreads(request, principal));
   }));
 
   server.registerTool("read_channel", {
