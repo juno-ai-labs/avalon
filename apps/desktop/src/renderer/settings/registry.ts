@@ -90,10 +90,6 @@ export const settings = {
   debug: defineSetting({ id: 'debug', section: 'application', label: "Debug enabled", kind: 'toggle', description: "Show debugging actions such as copying a Canvas or Sidekick identifier from its right-click menu, and the rows describing how a conversation is wired in its Details.", availability: 'developer', aliases: ["developer","diagnostics"] }),
   about: defineSetting({ id: 'about', section: 'application', label: "About", kind: 'information', description: "Which release of Rally this Mac is running." }),
   version: defineSetting({ id: 'version', section: 'application', label: "Version", kind: 'information', description: "" }),
-  digestStartOfDay: defineSetting({ id: 'digestStartOfDay', section: 'notifications', label: "Start of day", kind: 'custom', description: "What came in overnight and is still unread.", aliases: ['digest', 'summary', 'morning'] }),
-  digestEndOfDay: defineSetting({ id: 'digestEndOfDay', section: 'notifications', label: "End of day", kind: 'custom', description: "What is still unread before you log off.", aliases: ['digest', 'summary', 'evening'] }),
-  digestSendTo: defineSetting({ id: 'digestSendTo', section: 'notifications', label: "Send to", kind: 'custom', description: "Any mix. Each gets the same list.", aliases: ['digest', 'email', 'slack'] }),
-  digestDays: defineSetting({ id: 'digestDays', section: 'notifications', label: "Days", kind: 'custom', description: "Weekdays or every day.", options: ['Weekdays', 'Every day'], aliases: ['digest'] }),
 } satisfies Record<string, SettingDefinition>;
 
 export interface SettingsSearchContext {
