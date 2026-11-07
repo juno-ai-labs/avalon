@@ -1888,7 +1888,11 @@ describe("a hosted Sidekick", () => {
       const before = provider.calls.length;
       const armedBy = Date.now();
       await finishRuns([runIds[runIds.length - 1]!]);
-      await runDurableObjectAlarm(workspaceStub());
+      // Not forced: every finish also arms the run's row entry due now, so the
+      // object's own alarm is already draining, and a forced
+      // `runDurableObjectAlarm` is a second pass on top of it that production
+      // cannot have, which takes the unsettled review entry again and sends it
+      // twice. The poll waits for that drain instead.
       await expect.poll(async () => (await reviewState()).reviews.map((review) => review.delivered_at !== null), { timeout: RUN_SETTLE_TIMEOUT_MS })
         .toEqual([true]);
       // A redelivered projection is answered by its receipt and counts nothing.

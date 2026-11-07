@@ -322,8 +322,10 @@ describe("shared Sidekick delegation admission", () => {
       }] });
       expect(connected.status).toBe(200);
       const wake = await runInDurableObject(stub(), async (_instance, state) => state.storage.getAlarm());
-      // An already fired source wake is also observable in the registered set.
-      if (wake === null) expect(await registrations()).toHaveLength(2);
+      // No alarm is a source wake that already fired, but `getAlarm()` is
+      // also null while that handler is still running, so the registered set
+      // is waited for rather than read once.
+      if (wake === null) await expect.poll(async () => (await registrations()).length).toBe(2);
       else expect(wake).toBeLessThan(parkedAlarm);
       await runDurableObjectAlarm(stub());
     }
@@ -566,12 +568,16 @@ describe("shared Sidekick delegation admission", () => {
     expect(matched.deliveries).toHaveLength(1);
     const delivery = matched.deliveries[0]!;
     expect(await stub().sidekickAdmitExternalEvent({ ...address, registrationId: delivery.registrationId, event: delivery.event, payloadHash: delivery.payloadHash })).toMatchObject({ admitted: true });
-    await runInDurableObject(stub(), (_instance, state) => {
+    await runInDurableObject(stub(), async (_instance, state) => {
       const due = Date.now() - 1;
       state.storage.sql.exec("UPDATE sidekick_schedules SET next_due_at=? WHERE sidekick_id=?", due, automationId);
       state.storage.sql.exec("UPDATE _internal_durable_alarms SET due_at=?,retry_at=0 WHERE kind=? AND alarm_key LIKE ?", due, AUTOMATION_SCHEDULE_ALARM_KIND, `${automationId}:%`);
+      // Armed here rather than forced after: the admitted run's row entry is
+      // due now, so the object's own alarm may already be draining, and a
+      // forced `runDurableObjectAlarm` on top of it is a second pass production
+      // cannot have, which starts the occurrence twice. The poll waits.
+      await state.storage.setAlarm(Date.now());
     });
-    await runDurableObjectAlarm(stub());
     await expect.poll(async () => (await runs()).length).toBe(2);
     expect((await runs()).map((run) => run.coordinator_user_id)).toEqual([creator, creator]);
     if (scope === "workspace") await consent(other, true);
