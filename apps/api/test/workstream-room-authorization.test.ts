@@ -246,40 +246,6 @@ function roomFor(
   return room;
 }
 
-describe("message commands over the AgentLoopDO socket", () => {
-  it("admits a participant write through the identity already attached to the room socket", async () => {
-    const socket = fakeSocket(PARTICIPANT);
-    const operationId = "00000000-0000-7000-8000-0000000000c7";
-    const clientMessageId = "socket-client-message";
-    const room = roomFor(seededDatabase(), [socket]);
-
-    await room.webSocketMessage(socket as unknown as WebSocket, JSON.stringify({
-      type: "create_message",
-      operationId,
-      payload: {
-        text: "Continue",
-        clientMessageId,
-        mentions: [],
-        confirmedParticipantUserIds: [],
-        attachmentIds: [],
-      },
-    }));
-
-    // Admission can be followed by live run-status frames before this await
-    // returns. The command receipt, not the last transport frame, proves it.
-    expect(socket.sent.map((payload) => JSON.parse(payload))).toContainEqual(expect.objectContaining({
-      type: "client_command_succeeded",
-      command: "create_message",
-      clientMessageId,
-      turn: expect.objectContaining({
-        clientMessageId,
-        turnId: expect.any(String),
-      }),
-    }));
-    expect(socket.closes).toEqual([]);
-  });
-});
-
 function publish(room: AgentLoopDO, event: Record<string, unknown>): Promise<Response> {
   return room.fetch(new Request("https://room.internal/internal/events", {
     method: "POST",
@@ -333,16 +299,6 @@ describe("who the work-stream room lets connect", () => {
     const response = await connectAs(roomFor(seededDatabase()), OUTSIDER);
 
     expect(response.status).toBe(403);
-  });
-
-  it("lets that same member in once the work stream is open to the workspace", async () => {
-    const database = seededDatabase();
-    database.exec(`UPDATE workstreams SET scope = 'workspace' WHERE id = '${WORKSTREAM}'`);
-
-    const response = await connectAs(roomFor(database), MEMBER);
-
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "socket_ticket_replayed" });
   });
 
   it("refuses an internal event that cannot pin the room identity", async () => {

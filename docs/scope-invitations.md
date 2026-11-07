@@ -36,7 +36,7 @@ both reads settle, so a quick repeat does not send another invitation email.
 | `apps/api/src/durable-objects/scope-invitation-service.ts` | Current sharing authority, relationship admission, grant activation on claim, and email delivery. |
 | `apps/api/src/durable-objects/hosted-canvas.ts` | A Canvas's shares: the service given its `parent` hook (`targetsReady`, `title`) because a Canvas has no participant migration and no `channels` row, and a grant directory step that adds the claimed guest to the Canvas's participants ([`canvases.md`](canvases.md#guests)). |
 | `apps/api/src/durable-objects/scope-invitation-storage.ts` | Operation receipts, share state, encrypted delivery and claim binding. |
-| `apps/api/src/durable-objects/hosted-parent.ts` | Addressed RPCs and delivery alarm execution. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Addressed RPCs (`createScopeInvitations`, `revokeScopeInvitation`, `claimScopeInvitations`), Canvas-only, and the invitation index and delivery alarms. |
 | `apps/api/src/services/workspace-service.ts` (`listInvitees`), `GET /workspace/invitees` | Pending Organization invitations as every member may see them: address and date, for the people pickers. |
 | `apps/desktop/src/renderer/lib/workspace-invitees.ts` | The invitee query, the member-shaped invitee (`status: 'invited'`), and the directory the `@address` chip resolves against. |
 
@@ -475,7 +475,7 @@ receipt or unavailable identity authority remains an error, never a grant.
 
 ## Testing
 
-`participant-notification.test.ts` drives confirmed guest mentions in personal
+`participant-notification.test.ts` (deleted in plan step C-2) drives confirmed guest mentions in personal
 and Organization-wide Channels, manual guest add/remove/re-add, creation-time
 participant and mention replay, and member/guest Breakout mentions through real
 workerd. It obtains tickets through `ConversationService`, upgrades them through

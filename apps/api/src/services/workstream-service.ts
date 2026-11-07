@@ -1,45 +1,28 @@
-import { conversationSidekickCandidateIds } from "./sidekick-skills";
-import type { ExternalBindingClaim } from "../durable-objects/workspace-external-binding-protocol";
-import { readWorkspaceRelationship } from "./workspace-relationship-service";
-import { ConversationService } from "./conversation-service";
-import { forgetReviewedMemory, readMemoryReview } from "./memory-review-service";
-import type { MemoryReviewScope } from "../durable-objects/workspace-memory-facts-protocol";
-import { publishWorkspaceSync } from "./workspace-realtime-service";
-import type { MemoryForgetResponse, MemoryReview, SidekickAttachment } from "@rally/contracts";
+
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
-import { HarnessFailureCodeSchema, asUserId, asHarnessRunId, asWorkspaceId, asWorkstreamId, asSubstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
+import { HarnessFailureCodeSchema, asHarnessRunId, asWorkspaceId, asWorkstreamId, asSubstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
 import type {
-  AnswerElicitationRequestSchema,
-  CreateMessageRequestSchema,
-  CreateWorkstreamRequestSchema,
   ExecutionPrincipal,
-  Scope,
   SlackOriginContext,
   SlackSearchAuthorization,
   SubstreamId,
-  UpdateWorkstreamRequestSchema,
-  WorkstreamDetail,
   WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
-import type { z } from "zod";
-import type { AuthContext, Env } from "../env";
+
+import type { Env } from "../env";
 import { conversationObjectName } from "../durable-objects/agent-loop-do";
 import { substreamLoopId } from "../durable-objects/names";
 import { ApiError } from "../lib/api-error";
-import { publishAccessRevocation } from "./access-revocation";
+
 import { loopActivationWasRecorded } from "../lib/loop-activation-signal";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
 import { activateWorkstreamLoop, publishWorkstreamEvent } from "./integrations";
-import { logStructuredEvent, logWarn } from "../observability/logger";
+import { logStructuredEvent } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting, conversationModelContext } from "./agent-model-flags";
-import { WorkstreamDirectoryService } from "./workstream-directory-service";
-import {
-  resolveOriginResource,
-  type OriginResourceDescriptor,
-} from "./workstream-origin-resource";
+
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
@@ -50,68 +33,26 @@ import {
   wakeupExecutionPrincipal,
   type WorkstreamWakeupRow,
 } from "./workstream-wakeup-service";
-import { ChannelAccessService, publishChannelNarrowing } from "./channel-access-service";
-import { hostedParentStub } from "./conversation-parent-client";
+
 import { continueSidekickRun } from "./sidekick-run-continuation";
-import { WorkstreamObjectClient } from "./workstream-object-client";
-import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
+
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import {
   AdmitExternalMessageInputSchema,
-  AnswerExternalElicitationInputSchema,
   ExternalMessageAdmissionResultSchema,
   type AdmitExternalMessageInput,
-  type AnswerExternalElicitationInput,
   type ExternalMessageAdmissionResult,
 } from "../durable-objects/workstream-external-message-protocol";
 
 /**
- * `descriptionSource` is the caller's assertion, never inferred from whether
- * `objective` is present. A supplied objective means "the caller had one", which
- * is true of every machine-derived path — a Slack mention slices its prompt into
- * the field, and reading that as authorship would tell the refresh loop to
- * protect exactly the descriptions it exists to fix. Only a caller that knows a
- * person typed the text says so, and the default is the honest one.
+ * What survives of the Thread service once Threads are retired (plan step
+ * C-2): starting a run on any conversation (`launchWorkstreamHarness`), firing
+ * the generic agent timer (`fireWorkstreamWakeup`), admitting a message from
+ * an external binding into a conversation, such as a Slack reply continuing a
+ * Sidekick run (`admitExternalWorkstreamMessage`), and the member-safe failure
+ * a run shows (`memberSafeHarnessError`).
  */
-type ParsedCreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema>;
-type CreateWorkstreamInput = Omit<ParsedCreateWorkstreamInput, "mentions" | "spaceIds"> & {
-  /** Optional at this internal boundary because the schema fills the empty case. */
-  mentions?: ParsedCreateWorkstreamInput["mentions"];
-  /** Optional for the same reason; empty means General, which every connector means. */
-  spaceIds?: ParsedCreateWorkstreamInput["spaceIds"];
-  descriptionSource?: "authored" | "derived";
-  /**
-   * The connector place this work stream is being started from, when there is
-   * one. Not part of `CreateWorkstreamRequestSchema` and deliberately so: a
-   * caller on the wire cannot assert an origin, because an origin is something
-   * an ingress *knows* — the Slack thread it read the mention out of — rather
-   * than something a request may claim about itself.
-   */
-  originResource?: OriginResourceDescriptor;
-  /** Validated request-header correlation injected by the API route. */
-  telemetryOperationId?: string;
-  /**
-   * Who may read it from birth. Same reasoning as `originResource`: a request
-   * on the wire cannot claim it, because it is decided by where the work stream
-   * started — a private connector conversation opens a private work stream
-   * whose room is that conversation's members. Omitted means `personal`, which
-   * is what a work stream nobody has said anything about is; a caller says
-   * `workspace` when it *knows* the audience is wider than the room.
-   */
-  scope?: Scope;
-};
-type UpdateWorkstreamInput = z.infer<typeof UpdateWorkstreamRequestSchema>;
-type CreateMessageInput = z.infer<typeof CreateMessageRequestSchema> & {
-  /** Validated request-header correlation injected by the API route. */
-  telemetryOperationId?: string;
-  /** Server-owned continuation metadata; never accepted from the message API. */
-  forcedHarnessOrigin?: string;
-  parentHarnessRunId?: string;
-  expectedLatestHarnessRunId?: string;
-  expectedToolInvocationId?: string;
-};
-type AnswerElicitationInput = z.infer<typeof AnswerElicitationRequestSchema>;
 
 // Codes that reach the same member surface without being harness failure codes —
 // connector-layer and run-lifecycle outcomes.
@@ -176,23 +117,6 @@ export async function admitExternalWorkstreamMessage(
     const error = body && typeof body === "object" && "error" in body
       ? String(body.error)
       : "external_message_admission_failed";
-    throw new Error(error);
-  }
-  return ExternalMessageAdmissionResultSchema.parse(body);
-}
-
-export async function answerExternalWorkstreamElicitation(
-  env: Env,
-  rawInput: AnswerExternalElicitationInput,
-): Promise<ExternalMessageAdmissionResult> {
-  const input = AnswerExternalElicitationInputSchema.parse(rawInput);
-  const agent = await externalMessageAgent(env, input.workspaceId, input.workstreamId);
-  const response = await agent.answerExternalElicitation(input);
-  const body = rpcResultBody(response);
-  if (response.status < 200 || response.status >= 300) {
-    const error = body && typeof body === "object" && "error" in body
-      ? String(body.error)
-      : "external_elicitation_answer_failed";
     throw new Error(error);
   }
   return ExternalMessageAdmissionResultSchema.parse(body);
@@ -586,347 +510,6 @@ function json<T>(value: unknown, fallback: T): T {
     return fallback;
   }
 }
-
-/** A Thread's Main or one of its Breakouts, as a review scope. */
-function conversationMemoryScope(id: string, substreamId: string): MemoryReviewScope {
-  return { kind: "conversation", conversation: { parentKind: "workstream", parentId: id, substreamId } };
-}
-
-/**
- * The regional face of the work-stream product surface.
- *
- * Every product-state method delegates to the Durable-Object authority: the
- * object client for an existing work stream, the object creation coordinator
- * for a new one. The pre-cutover D1 execution arms were removed once production
- * opened the authority in both regions — a stack that has not run
- * `pnpm db:open-authority` gets a 503 refusal, never legacy code.
- *
- * What legitimately remains on regional D1 here is routing and identity. The
- * cross-workstream directory, viewer state, and pins are WorkspaceDO product
- * state and are reached through {@link WorkstreamDirectoryService}.
- */
-export class WorkstreamService {
-  constructor(
-    private readonly env: Env,
-    private readonly auth: AuthContext,
-    private readonly defer?: (promise: Promise<unknown>) => void,
-  ) {}
-
-  /** The object client for an existing Channel. */
-  private async authoritativeClient(id: string): Promise<WorkstreamObjectClient> {
-    return new WorkstreamObjectClient(this.env, this.auth, id);
-  }
-
-  async create(
-    input: CreateWorkstreamInput,
-    slackOrigin?: SlackOriginContext,
-    slackSearchAuthorization?: SlackSearchAuthorization,
-    /** The external thread this Channel is created for; see `CreateOptions.externalBinding`. */
-    externalBinding?: ExternalBindingClaim,
-  ) {
-    // `input.scope` travels with the rest of the input rather than being read
-    // off and re-stated: the connector ingresses decide it from the conversation
-    // they read the prompt out of, and a public channel's thread seats no
-    // participants — so a create that lost `workspace` on the way through would
-    // hand that channel a work stream none of its members could open.
-    const created = await new WorkstreamObjectCreationService(this.env, this.auth, this.defer).create(input, {
-      executionPrincipal: { type: "user", userId: this.auth.userId },
-      ...(slackOrigin ? { slackOrigin } : {}),
-      ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
-      ...(input.telemetryOperationId ? { telemetryOperationId: input.telemetryOperationId } : {}),
-      ...(externalBinding ? { externalBinding } : {}),
-    });
-    // The origin is a convenience on top of the work stream, never the reason
-    // a create fails: the person's request has already produced a work stream
-    // and a run, and a connection that vanished mid-flight must not turn that
-    // success into an error. Same contract `attachWorkstreamOriginResource`
-    // keeps for the ingress paths.
-    if (input.originResource) {
-      try {
-        const resourceId = await resolveOriginResource(this.env, this.auth.workspaceId, input.originResource);
-        if (resourceId) await new WorkstreamObjectClient(this.env, this.auth, created.workstream.id)
-          .attachResource(resourceId);
-      } catch (error) {
-        logWarn(this.env, "workstream_origin_resource_attach_failed", {
-          workspace_id: this.auth.workspaceId,
-          workstream_id: created.workstream.id,
-          provider: input.originResource.provider,
-          resource_type: input.originResource.resourceType,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-      }
-    }
-    return created;
-  }
-
-  private async requireSidekickParticipant(id: string, substreamId: string): Promise<void> {
-    const participants = await createIdentityObjectPort(this.env, this.auth.workspaceId, id, undefined, substreamId).participants();
-    if (!participants.some((person) => person.user_id === this.auth.userId)) {
-      throw new ApiError(403, "sidekick_attachment_forbidden", "Only participants can change Sidekick attachments");
-    }
-  }
-
-  async sidekickAttachments(id: string, removeId?: string, substreamId = "0"): Promise<{ items: SidekickAttachment[] }> {
-    const conversation = new ConversationService(this.env, this.auth);
-    if (removeId) await conversation.writableClient(id, substreamId);
-    else await conversation.client(id, false, substreamId);
-    if ((await conversation.resolveParent(id)).kind !== "workstream") {
-      throw new ApiError(422, "sidekick_attachment_parent_kind_unsupported", "Sidekick attachments belong to threads");
-    }
-    if (removeId) await this.requireSidekickParticipant(id, substreamId);
-    const agent = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
-      asWorkspaceId(this.auth.workspaceId), conversationObjectName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId), id, asSubstreamId(substreamId)));
-    const ids = await agent.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id, auth:{ sessionId:this.auth.sessionId,userId:this.auth.userId,
-      workspaceId:this.auth.workspaceId,region:this.auth.region,role:this.auth.role,
-      ...(this.auth.principal ? { principal:this.auth.principal } : {}),
-    }, ...(removeId ? { removeId } : {}) });
-    const items = await this.conversationSidekickSummaries(id,substreamId,{ automationIds:ids });
-    await conversation.client(id,false,substreamId);
-    if (removeId) await publishWorkspaceSync(this.env,this.auth.workspaceId,["automations"]);
-    return { items };
-  }
-
-  /**
-   * What Rally remembers about this Thread (`substreamId` `"0"`) or one of its
-   * Breakouts, as this person may see it from inside. `WorkspaceDO` checks the
-   * conversation is open to them in the same read and answers one they may not
-   * open as not found, so there is no separate admission round trip.
-   */
-  getConversationMemory(id: string, substreamId = "0"): Promise<MemoryReview> {
-    return readMemoryReview(this.env, this.auth, conversationMemoryScope(id, substreamId));
-  }
-
-  /** Anyone who may open the conversation removes its own facts; see `mayForget`. */
-  forgetConversationMemory(id: string, factId: string, substreamId = "0"): Promise<MemoryForgetResponse> {
-    return forgetReviewedMemory(this.env, this.auth, conversationMemoryScope(id, substreamId), factId);
-  }
-
-  /**
-   * Rail metadata for the Sidekicks a conversation's audience may see. One
-   * Organization call answers every Sidekick at once, by id or by the Channel
-   * that recommends or owns them, after one read of who the audience is.
-   */
-  private async conversationSidekickSummaries(id: string, substreamId: string,
-    selection: { automationIds?: readonly string[]; channelId?: string; onlyScope?: "workspace" }): Promise<SidekickAttachment[]> {
-    if (selection.channelId === undefined && (selection.automationIds?.length ?? 0) === 0) return [];
-    const port = createIdentityObjectPort(this.env,this.auth.workspaceId,id,undefined,substreamId);
-    const [identity,participants,workspace] = await Promise.all([port.identity(),port.participants(),
-      hostedParentStub(this.env,this.auth.workspaceId)]);
-    if (!identity) throw new ApiError(404,"workstream_not_found","Conversation not found");
-    return workspace.sidekickReadSkillSummaries({ workspaceId:asWorkspaceId(this.auth.workspaceId),
-      ...(selection.automationIds ? { automationIds:[...selection.automationIds] } : {}),
-      ...(selection.channelId ? { channelId:selection.channelId } : {}),
-      ...(selection.onlyScope ? { onlyScope:selection.onlyScope } : {}),
-      principalUserId:asUserId(this.auth.userId),conversationParentId:id,
-      audienceScope:identity.scope === "workspace" ? "workspace" : "personal",
-      audienceUserIds:participants.map((person) => asUserId(person.user_id)),
-    });
-  }
-
-  async recommendedSidekicks(id: string, substreamId = "0"): Promise<{ items: SidekickAttachment[] }> {
-    const conversation = new ConversationService(this.env,this.auth);
-    const parent = await conversation.authorizeViewer(id, substreamId);
-    if (parent.kind !== "workstream") {
-      throw new ApiError(422,"sidekick_attachment_parent_kind_unsupported","Sidekick recommendations belong to threads");
-    }
-    const items = await this.conversationSidekickSummaries(id,substreamId,{ channelId:id });
-    await conversation.client(id,false,substreamId);
-    return { items };
-  }
-
-  /** Call after exact-conversation admission; these IDs do not themselves grant access. */
-  private async conversationSidekickIds(id: string, substreamId: string) {
-    const [workspace, child] = await Promise.all([
-      hostedParentStub(this.env, this.auth.workspaceId),
-      durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, this.auth.workspaceId,
-        conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, id, asSubstreamId(substreamId))),
-    ]);
-    const [recommended, loaded] = await Promise.all([
-      workspace.recommendedSidekickIds({ workspaceId: this.auth.workspaceId, parentId: id }),
-      child.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id }),
-    ]);
-    return conversationSidekickCandidateIds(recommended, loaded);
-  }
-
-
-  async setSidekickRecommendation(id: string, sidekickId: string, attached: boolean, substreamId = "0",
-    /** Host-supplied execution context only; never accepted from a REST request. */
-    backgroundExecution?: Pick<WorkstreamWorkflowInput, "backgroundAgent" | "parentKind" | "workspaceId" | "parentId" | "substreamId" | "executionPrincipal">,
-  ): Promise<{ items: SidekickAttachment[] }> {
-    const visibleSubstreamId = backgroundExecution ? "0" : substreamId;
-    await new ConversationService(this.env, this.auth).writableClient(id, visibleSubstreamId);
-    const room = await hostedParentStub(this.env, this.auth.workspaceId);
-    // Management access is checked once, by `room.setSidekickRecommendation`
-    // below, in the same call that writes the recommendation. Asking the room
-    // first as well cost a second round trip for the same answer.
-    const backgroundAgent = backgroundExecution ? await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS,
-      this.auth.workspaceId, conversationObjectName(this.env.AVALON_REGION, this.auth.workspaceId, id, asSubstreamId(substreamId))) : null;
-    if (backgroundExecution && backgroundAgent) {
-      const runtime = await backgroundAgent.agentRuntimeInfo();
-      const identity = await createIdentityObjectPort(this.env, this.auth.workspaceId, id, undefined, substreamId).identity();
-      if (!backgroundExecution.backgroundAgent || backgroundExecution.parentKind !== "workstream"
-        || backgroundExecution.workspaceId !== this.auth.workspaceId || backgroundExecution.parentId !== id
-        || backgroundExecution.substreamId !== substreamId || substreamId === "0"
-        || backgroundExecution.executionPrincipal.type !== "user" || backgroundExecution.executionPrincipal.userId !== this.auth.userId
-        || !runtime?.background || runtime.status === "stopped" || runtime.executionPrincipal?.type !== "user"
-        || runtime.executionPrincipal.userId !== this.auth.userId || !identity || identity.archived_at !== null) {
-        throw new ApiError(403, "sidekick_attachment_execution_forbidden", "This agent cannot change Sidekick attachments");
-      }
-    }
-    // Check both authorities before the shared delete: a viewer of a child
-    // must not remove the recommendation and then fail its local removal.
-    if (backgroundExecution || (!attached && substreamId !== "0")) await this.requireSidekickParticipant(id, substreamId);
-    if (attached) {
-      const relationship = await readWorkspaceRelationship(this.env.DB, this.auth.workspaceId, this.auth.userId);
-      if (relationship?.accessClass === "guest") {
-        if (!(await this.conversationSidekickIds(id, visibleSubstreamId)).has(sidekickId)) {
-          throw new ApiError(403, "sidekick_attachment_forbidden", "Choose a Sidekick already available in this conversation");
-        }
-      }
-    }
-    // The write checks the Sidekick too: it must exist and belong to the
-    // Organization. Recommendation needs that eligibility, not permission to
-    // read its authoring conversation or run history.
-    try {
-      await room.setSidekickRecommendation({ workspaceId: this.auth.workspaceId, parentId: id, userId: this.auth.userId, sidekickId, attached });
-    } catch (error) {
-      if (error instanceof Error && error.message === "sidekick_not_found") {
-        throw new ApiError(404, "sidekick_not_found", "Sidekick not found");
-      }
-      if (error instanceof Error && error.message === "sidekick_attachment_scope_invalid") {
-        throw new ApiError(422, "sidekick_attachment_scope_invalid", "Choose a workspace Sidekick");
-      }
-      if (error instanceof Error && error.message === "sidekick_attachment_participant_required") {
-        throw new ApiError(403, "sidekick_attachment_forbidden", "Thread management access is required");
-      }
-      if (error instanceof Error && error.message === "sidekick_attachment_workstream_archived") {
-        throw new ApiError(409, "sidekick_attachment_workstream_archived", "The thread is archived");
-      }
-      throw error;
-    }
-    if (!attached) {
-      if (backgroundAgent) await backgroundAgent.sidekickAttachments({ workspaceId: this.auth.workspaceId, workstreamId: id, removeId: sidekickId });
-      else await this.sidekickAttachments(id, sidekickId, substreamId);
-    }
-    // Both REST and agent tools use this service; every open rail needs the
-    // same shared recommendation change, even on an idle sibling substream.
-    // Local removal already publishes its refresh through sidekickAttachments.
-    if (attached || backgroundAgent) await publishWorkspaceSync(this.env, this.auth.workspaceId, ["automations"]);
-    return this.recommendedSidekicks(id, visibleSubstreamId);
-  }
-
-  async get(id: string): Promise<WorkstreamDetail> {
-    return (await this.authoritativeClient(id)).get();
-  }
-
-
-  /**
-   * Change the Channel. Its scope is its own to widen or narrow: a Space grants
-   * no reader, so nothing else has to agree.
-   */
-  async update(id: string, input: UpdateWorkstreamInput) {
-    const client = await this.authoritativeClient(id);
-    if (input.scope === undefined) return client.update(input);
-    // Read before the write: whether this narrows is a question about the
-    // audience the Channel actually had, which only the conversation knows.
-    const before = await client.get();
-    const result = await client.update(input);
-    // The room closes its own sockets for somebody it was told about, and a
-    // narrowing tells it about nobody: the readers it drops are every member
-    // who is not a participant. So the write publishes it, in the same
-    // request, exactly as `removeParticipant` does, and only once the
-    // canonical update took, because until then nothing has narrowed.
-    //
-    // Named rather than thrown: there is nothing durable to retry from, and a
-    // send that does not leave is the open gap recorded in
-    // `docs/access-revocation.md` rather than something half-built here.
-    if (input.scope === "personal" && before.scope === "workspace"
-      && !await publishChannelNarrowing(this.env, asWorkspaceId(this.auth.workspaceId), id)) {
-      logWarn(this.env, "channel_narrowing_publish_unannounced", {
-        workstream_id: id,
-        workspace_id: this.auth.workspaceId,
-      });
-    }
-    return result;
-  }
-
-  /** Main's read state, by hand, from the sidebar, where the row's dot is Main's. */
-  async markUnread(id: string) {
-    return (await this.authoritativeClient(id)).markUnread();
-  }
-
-  async createMessage(
-    id: string,
-    input: CreateMessageInput,
-    slackOrigin?: SlackOriginContext,
-    slackSearchAuthorization?: SlackSearchAuthorization,
-  ) {
-    return (await this.authoritativeClient(id)).createMessage({
-      ...input,
-      ...(slackOrigin ? { slackOrigin } : {}),
-      ...(slackSearchAuthorization ? { slackSearchAuthorization } : {}),
-    });
-  }
-
-  /** Add a reader on the Channel's own account; no Space withdraws one. */
-  async addParticipant(id: string, userId: string) {
-    return (await this.authoritativeClient(id)).addParticipant(userId);
-  }
-
-  /**
-   * Take a reader out of the Channel.
-   *
-   * The `projectEffect` flag this used to take is gone with the rule it
-   * selected: a Project owned its member work streams' audiences and had to
-   * exempt its own fan-out from them. A Space supplies no reader, so a removal
-   * here is simply the Channel losing one.
-   */
-  async removeParticipant(id: string, userId: string): Promise<void> {
-    const accessLost = await new ChannelAccessService(this.env, this.auth)
-      .removeDirectReader(id, userId);
-    // The room closes its own sockets for the person it just removed. The
-    // automations it owns admitted them through the room, and nothing in the
-    // room reaches those objects, so this is where the retraction is
-    // published: whoever writes the fact publishes it, in the same request.
-    if (!accessLost) return;
-    await publishAccessRevocation(this.env, {
-      reason: "workstream_participant_removed",
-      workspaceId: asWorkspaceId(this.auth.workspaceId),
-      userId,
-      sessionId: null,
-      target: { scope: "workstream_automations", workstreamId: id },
-    });
-  }
-
-  async attachResource(id: string, resourceId: string) {
-    return (await this.authoritativeClient(id)).attachResource(resourceId);
-  }
-
-  async detachResource(id: string, resourceId: string): Promise<void> {
-    return (await this.authoritativeClient(id)).detachResource(resourceId);
-  }
-
-  async answerElicitation(
-    id: string,
-    elicitationId: string,
-    input: AnswerElicitationInput,
-    slackOrigin?: SlackOriginContext,
-  ) {
-    return (await this.authoritativeClient(id)).answerElicitation(elicitationId, input, slackOrigin);
-  }
-
-  /** Gate socket credentials on WorkspaceDO's authoritative viewer state. */
-  private async requireVisibleWorkstream(id: string): Promise<void> {
-    if (!await new WorkstreamDirectoryService(this.env, this.auth).visible(id)) {
-      throw new ApiError(404, "workstream_not_found", "Thread not found");
-    }
-  }
-
-}
-
-export const __workstreamServiceTesting = {
-  memberSafeHarnessError,
-};
 
 /**
  * The run failure a member may be shown, or null when there is none.

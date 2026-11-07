@@ -317,7 +317,6 @@ It deliberately does not:
 | --- | --- |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real SQLite-backed WorkspaceDO append/idempotency, per-person and per-Space isolation, the same Channel pinned independently in two Spaces, dense unpin, tolerant reorder, pinned-first listing, and hibernating page delivery. |
 | `apps/api/test/workspace-space-pin-migration.test.ts` | The migration discards every legacy Organization-wide pin and recreates the primary key with `space_id`, so no ambiguous placement is carried forward. |
-| `apps/api/test-workers/channels-threads-navigation.test.ts` | `workspace_pins` on real workerd: a pinned thread the person does not take part in comes back with the first page, a pin of something the person may not list is refused and stores nothing, and migration 97 copies pins from several Spaces into one pin per thread in the arranged order. |
 | `apps/desktop/src/renderer/components/navigation-sidebar.test.tsx` | Pinned Channels in the person's order above every other Channel, and the line that says why a pin did not save. |
 | `apps/desktop/src/renderer/screens/workstream-landing.test.tsx` | The landing order (saved route, the Channel a screen left, first pinned Channel, General, first A–Z), a passed-over thread not reopened, and the waiting, failed and empty states. |
 | `apps/desktop/src/renderer/lib/workstream-landing.test.tsx` | That leaving replaces the entry and carries the skip list, and that a malformed state reads as no skip. |

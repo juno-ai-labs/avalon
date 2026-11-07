@@ -8,6 +8,7 @@
  * can make: a tool on an instruction-only Sidekick.
  */
 
+import { createCanvas } from "../src/services/canvas-service";
 import { env } from "cloudflare:workers";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -25,13 +26,10 @@ import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
 import { createAutomation } from "../src/services/automation-service";
-import {
-  bootstrapWorkstreamRuntimeEnvironment,
-  provisionWorkstreamObject,
-} from "../src/services/workstream-runtime-database";
+
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { hostedParentStub } from "./helpers/hosted-parent";
-import { useOpenRouterDouble } from "./helpers/openrouter-double";
+
+import { memberInputs, useOpenRouterDouble } from "./helpers/openrouter-double";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 import { runSidekickAlarms, sidekickWorkspace } from "./helpers/sidekick";
@@ -82,7 +80,7 @@ const DEFINITION: AutomationDraft = {
 useSelectedModel();
 useHeldEffectQueue();
 const provider = useOpenRouterDouble((call) => {
-  const latest = call.messages.filter((message) => message.role === "user").at(-1);
+  const latest = memberInputs(call).at(-1);
   const current = call.messages.slice(call.messages.lastIndexOf(latest!));
   if (current.some((message) => message.role === "tool")) return { say: "Doubled: 42 days." };
   const tool = call.toolNames.find((name) => name === "custom_day_math");
@@ -135,17 +133,7 @@ async function seedRegionalDatabase(): Promise<void> {
 }
 
 async function seedRoom(): Promise<void> {
-  await hostedParentStub(env, WORKSPACE_ID).reserveChild({
-    workspaceId: WORKSPACE_ID, parentId: ROOM_ID, substreamId: asSubstreamId("0"), kind: "main",
-    createdByUserId: AUTHOR_ID, authorityGeneration: 1,
-    directory: { title: "Doubling room", description: "", scope: "personal", systemKind: null, emailAddress: null, titleStatus: "settled", createdAt: NOW },
-  });
-  await bootstrapWorkstreamRuntimeEnvironment(TEST_ENV, WORKSPACE_ID, ROOM_ID, "workstream");
-  await provisionWorkstreamObject(TEST_ENV, {
-    workspaceId: WORKSPACE_ID, workstreamId: ROOM_ID, title: "Doubling room", objective: "", scope: "personal",
-    createdByUserId: AUTHOR_ID, participantUserIds: [AUTHOR_ID], harnessStatus: "idle", titleStatus: "settled",
-    emailAddress: null, emailRouteStatus: null, systemKind: null, modelOverride: null, now: Date.now(),
-  });
+  await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR_ID, canvasId: ROOM_ID, title: "Doubling room" });
 }
 
 async function seedSidekick(definition: AutomationDraft): Promise<void> {

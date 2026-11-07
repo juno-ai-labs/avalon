@@ -24,7 +24,6 @@ import { modelToolArgumentSchema, type HarnessTool, type HarnessToolContext } fr
 import {
   asSubstreamId,
   asUserId,
-  asWorkstreamId,
   readStructuredFailure,
   canvasCanonicalUrl,
   sidekickCanonicalUrl,
@@ -42,7 +41,6 @@ import {
   ConversationToolError,
   __conversationToolTesting,
   conversationRefusalError,
-  conversationIndexHit,
   conversationSearchGroups,
   conversationToolAccess,
   conversationToolPorts,
@@ -102,22 +100,6 @@ const gtm: ConversationToolEntry = {
   kind: "space", title: "GTM", isHome: false, isOwn: false, isParent: true,
 };
 
-const OTHER_USER_ID = "00000000-0000-4000-8000-000000000008";
-
-/** A thread placed in a Channel, as the feed carries it. */
-function placedThread(id: string, title: string, objective: string, placedAt: string): ChannelFeedPage["items"][number] {
-  return { kind: "thread", placedAt, attentionSequenceNumber: 1, thread: { id, title, objective,
-    createdByUserId: OTHER_USER_ID } as never };
-}
-
-/** A message in a Channel, as the feed carries it; a merge when `from` names its thread. */
-function channelMessage(id: string, body: string, placedAt: string, from?: { title: string; private?: true }) {
-  return { kind: "message" as const, placedAt, message: {
-    id, author: { kind: "member" as const, userId: asUserId(USER_ID) }, body,
-    ...(from ? { merge: { threadId: asWorkstreamId(CHANNEL_ID), title: from.private ? "" : from.title, summary: null, embeds: [],
-      ...(from.private ? { private: true as const } : {}) } } : {}),
-  } } as ChannelFeedPage["items"][number];
-}
 
 function row(sequence: number, overrides: Partial<MessageRow> = {}): MessageRow {
   return {
@@ -542,63 +524,6 @@ describe("a conversation the loop sits inside", () => {
     ]);
   });
 
-  it("reads a Channel as messages: its threads opened by their starters, and merges by who merged them", async () => {
-    const ports = new Ports();
-    ports.scoped = [gtm];
-    ports.feed = [
-      channelMessage("m-2", "We will target growth teams at Series A companies.", "2026-10-19T11:00:00.000Z",
-        { title: "Pitch deck" }),
-      channelMessage("m-1", "Comp bands are set.", "2026-10-18T11:00:00.000Z", { title: "Comp", private: true }),
-      placedThread(CHANNEL_ID, "Pitch deck", "Draft the seed deck", "2026-10-17T11:00:00.000Z"),
-    ];
-    const read = await tools(loop(), ports).get("conversation_read")!.execute({ conversation: SPACE_ID }, context("a"));
-    expect(read.output).toEqual({ conversationId: SPACE_ID, title: "GTM", nextPageId: null, messages: [
-      { messageId: "m-2", author: { kind: "person", name: "Adam" }, sentAt: "2026-10-19T11:00:00.000Z",
-        text: "Merged the result of \"Pitch deck\" here:\n\nWe will target growth teams at Series A companies.",
-        textTruncated: false, externalSource: null },
-      { messageId: "m-1", author: { kind: "person", name: "Adam" }, sentAt: "2026-10-18T11:00:00.000Z",
-        text: "Merged the result of a conversation here:\n\nComp bands are set.", textTruncated: false, externalSource: null },
-      { messageId: CHANNEL_ID, author: { kind: "person", name: "A person" }, sentAt: "2026-10-17T11:00:00.000Z",
-        text: "Started the conversation \"Pitch deck\": Draft the seed deck", textTruncated: false, externalSource: null },
-    ] });
-  });
-
-  it("continues a Channel inside one of its feed pages, then onto the next, without skipping or repeating", async () => {
-    const ports = new Ports();
-    ports.scoped = [gtm];
-    ports.feed = ["m-5", "m-4", "m-3", "m-2", "m-1"].map((id, index) =>
-      channelMessage(id, `said ${id}`, `2026-10-1${9 - index}T00:00:00.000Z`));
-    // The feed answers three, then two; the read asks for two at a time.
-    ports.feedPages = [3, 3, 2];
-    const surface = tools(loop(), ports);
-    const ids = (output: unknown) => (output as { messages: Array<{ messageId: string }> }).messages.map((m) => m.messageId);
-    const first = await surface.get("conversation_read")!.execute({ conversation: SPACE_ID, limit: 2 }, context("a"));
-    expect(ids(first.output)).toEqual(["m-5", "m-4"]);
-    const second = await surface.get("conversation_read_next")!
-      .execute({ pageId: (first.output as { nextPageId: string }).nextPageId }, context("b"));
-    expect(ids(second.output)).toEqual(["m-3"]);
-    const third = await surface.get("conversation_read_next")!
-      .execute({ pageId: (second.output as { nextPageId: string }).nextPageId }, context("c"));
-    expect(ids(third.output)).toEqual(["m-2", "m-1"]);
-    expect((third.output as { nextPageId: string | null }).nextPageId).toBeNull();
-    expect(ports.feedReads).toEqual([null, null, "3"]);
-  });
-
-  it("resumes a Channel after the last item it returned when a merge lands between pages", async () => {
-    const ports = new Ports();
-    ports.scoped = [gtm];
-    ports.feed = ["m-3", "m-2", "m-1"].map((id, index) =>
-      channelMessage(id, `said ${id}`, `2026-10-1${8 - index}T00:00:00.000Z`));
-    const surface = tools(loop(), ports);
-    const ids = (output: unknown) => (output as { messages: Array<{ messageId: string }> }).messages.map((m) => m.messageId);
-    const first = await surface.get("conversation_read")!.execute({ conversation: SPACE_ID, limit: 2 }, context("a"));
-    expect(ids(first.output)).toEqual(["m-3", "m-2"]);
-    // A merge lands at the top, pushing every item down one.
-    ports.feed.unshift(channelMessage("m-new", "merged", "2026-10-19T00:00:00.000Z", { title: "Pitch deck" }));
-    const second = await surface.get("conversation_read_next")!
-      .execute({ pageId: (first.output as { nextPageId: string }).nextPageId }, context("b"));
-    expect(ids(second.output)).toEqual(["m-1"]);
-  });
 });
 
 describe("conversation_search", () => {
@@ -674,22 +599,6 @@ describe("conversation_search", () => {
     }, 2);
     expect(kept.map((match) => match.messageId)).toEqual(["e", "d"]);
     expect(read).toEqual([undefined, "1", "2"]);
-  });
-
-  it("turns a thread's row and a Channel's row into hits, and renders nothing for an archived or display-less row", () => {
-    const row = { id: "r", revision: 1, archived: false, text: "ICP", occurred_at: Date.parse("2026-10-19T11:00:00.000Z") };
-    expect(conversationIndexHit({ ...row, source: "messages", scope_id: CHANNEL_ID, substream_id: BREAKOUT_ID,
-      source_id: `${BREAKOUT_ID}/turn-1` })).toEqual({ parentId: CHANNEL_ID, substreamId: BREAKOUT_ID, messageId: "turn-1",
-      sentAt: "2026-10-19T11:00:00.000Z", text: "ICP" });
-    // A row from before `substream_id` existed names the substream in `source_id`.
-    expect(conversationIndexHit({ ...row, source: "messages", scope_id: CHANNEL_ID, source_id: "0/turn-2" }))
-      .toMatchObject({ substreamId: "0", messageId: "turn-2" });
-    expect(conversationIndexHit({ ...row, source: "channel_messages", scope_id: SPACE_ID, source_id: "m-1" }))
-      .toEqual({ parentId: SPACE_ID, substreamId: "0", messageId: "m-1", sentAt: "2026-10-19T11:00:00.000Z", text: "ICP" });
-    expect(conversationIndexHit({ ...row, archived: true, source: "channel_messages", scope_id: SPACE_ID, source_id: "m-1" }))
-      .toBeNull();
-    expect(conversationIndexHit({ id: "r", revision: 1, source: "channel_messages", scope_id: SPACE_ID, source_id: "m-1" }))
-      .toBeNull();
   });
 
   it("searches only the conversation it names", async () => {

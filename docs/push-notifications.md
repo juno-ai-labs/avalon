@@ -15,8 +15,7 @@ nothing falls back from one channel to another.
 
 - `apps/api/src/services/push-device-service.ts`: regional D1 device/session registry.
 - `apps/api/src/services/push/`: provider authentication and payload rendering; `apns-transport.ts` for Apple, `web-push-transport.ts` for browsers.
-- `apps/api/src/queues/push-delivery-consumer.ts`: intent or Activity row read, existing access check, send by transport, receipt.
-- `apps/api/src/durable-objects/workspace-activity-push.ts`: which Activity rows a directory batch pushes, to whom, and the record that keeps each to one push.
+- `apps/api/src/queues/push-delivery-consumer.ts`: intent read, existing access check, send by transport, receipt; an Activity row message is acknowledged as retired.
 - `packages/contracts/src/push-notifications.ts`: the registration contract and the Web Push service host allowlist (`isWebPushServiceUrl`).
 - `apps/desktop/src/renderer/lib/web-push.ts` and `apps/browser/public/sw.js`: browser subscription and the service worker that shows the notification.
 - `apps/desktop/src/main/push-notifications.ts` and `apps/desktop/native/push-notifications/`: Mac registration and native response/permission callbacks.
@@ -126,6 +125,14 @@ Main-window creation waits for renderer protocol and IPC installation, including
 when a native notification response arrives during asynchronous app startup.
 
 ## Activity rows
+
+> **Retired.** Plan step C-2 deleted the Activity modules this section
+> describes (`workspace-activity-push.ts`, `workspace-activity-feed.ts`,
+> `activity-event-service.ts`, `activity-email-service.ts`). Push delivery now
+> reads notification intents only: a Queue message for an Activity row is
+> logged `activity_item_retired` and acknowledged. The three events that
+> replace the row source (Canvas chat mentions, Needs input, finished runs) are
+> the next change in that step.
 
 **Human replies** (`new_message`) use the existing message activity log and
 current participant viewer rows, without requiring another mention. Their
@@ -416,7 +423,7 @@ signed-Mac delivery.
 `apns-transport.test.ts` cover encoding/signing, Apple responses, and the
 sandbox versus production host. The real
 workerd `push-delivery.test.ts` covers read RPC, receipts, revocation, retry,
-and that `aps.badge` and the Web Push `badge` are the reader's attention count. `workspace-attention.test.ts`
+and that `aps.badge` and the Web Push `badge` are the reader's attention count. `workspace-attention.test.ts` (deleted in plan step C-2)
 covers that count, Breakouts included, against the same directory projection,
 `dock-badge.test.tsx` covers when the Mac sends its local count, and
 `platform.test.ts` covers the browser bridge setting and restoring the app
@@ -428,7 +435,7 @@ its own transport, disabling a dropped browser subscription at once, and an
 APNs credential fault that leaves Web Push sending. The contract test covers the
 host allowlist and key shapes, and `web-push.test.ts` covers registration,
 re-subscribing on a key change, and the permission prompt coming first.
-`activity-push.test.ts` drives Activity rows through `receiveChildEffects` on
+`activity-push.test.ts` (deleted in plan step C-2) drives Activity rows through `receiveChildEffects` on
 real workerd, and the consumer's read-back. The provider itself and macOS alert
 presentation require a signed installed build.
 

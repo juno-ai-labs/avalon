@@ -12,7 +12,6 @@ import type { z } from "zod";
 import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
 import { conversationParentStub } from "../conversation-parent-client";
-import { WorkstreamDirectoryService } from "../workstream-directory-service";
 import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
 import { workspaceDOName } from "../../durable-objects/names";
 import {
@@ -310,17 +309,12 @@ export class TerminalSettingsService {
   }
 
   private async loadActiveSandboxes(): Promise<SandboxRow[]> {
-    const directory: Array<{ workstream_id: string; title: string }> = [];
-    const service = new WorkstreamDirectoryService(this.env, this.auth);
-    let before: string | undefined;
-    do {
-      const page = await service.list(250, before, true);
-      directory.push(...page.items.map((workstream) => ({
-        workstream_id: workstream.id,
-        title: workstream.title,
-      })));
-      before = page.nextCursor ?? undefined;
-    } while (before);
+    // Every Canvas and Sidekick, whose conversations are the ones that can
+    // own a sandbox now that Threads are retired (plan step C-2).
+    const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
+    const directory = (await workspace.terminalSandboxParents({ workspaceId: this.auth.workspaceId }))
+      .map((parent) => ({ workstream_id: parent.workstreamId, title: parent.title }));
     const rows: SandboxRow[] = [];
     const entries = directory;
     for (let offset = 0; offset < entries.length; offset += 20) {

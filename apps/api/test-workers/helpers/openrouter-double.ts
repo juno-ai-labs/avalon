@@ -52,6 +52,17 @@ export interface ProviderCall {
 }
 
 /**
+ * The user messages a person or a peer sent on this turn's transcript, without
+ * the context the host appends after them. A Canvas Chat run ends its input
+ * with a `CANVAS CONTEXT (host-provided)` message, so a handler keyed on the
+ * last user message reads that instead of what was asked.
+ */
+export function memberInputs(call: Pick<ProviderCall, "messages">): ProviderCall["messages"] {
+  return call.messages.filter((message) => message.role === "user"
+    && !(typeof message.content === "string" && message.content.startsWith("CANVAS CONTEXT (host-provided):")));
+}
+
+/**
  * What the handler wants the provider to answer.
  *
  * `say` ends the turn — the loop stops when an assistant message arrives with

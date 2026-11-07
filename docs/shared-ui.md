@@ -209,10 +209,10 @@ accounts and people who asked to join are excluded. Pending Organization
 invitees follow registered Members, with their Invited label. Search exposes
 all matching names and email addresses in that order, without the suggestion cap.
 
-`GET /navigation/people-ranking?channelId=…` returns ordered person ids from
-`workspace-people-ranking.ts`; the activity log (retired)
-owns the scoring and indexed read. Thread ranking uses the route's Channel
-pane context; standalone Threads use Organization ranking alone.
+The server's people ranking (`GET /navigation/people-ranking`,
+`workspace-people-ranking.ts`) is deleted with Threads, and no host supplies a
+ranking read, so the collaborator tiers are empty and the list takes the
+directory fallback: Members alphabetically, then Guests.
 
 The title pill's `onMenuOpen` starts the host's optional ranking read before
 People is selected. People snapshots that order on entering the level: late

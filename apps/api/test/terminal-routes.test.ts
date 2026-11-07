@@ -20,7 +20,6 @@ import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
-  testWorkstreamContract,
   testWorkstreamObjectStore,
   seedWorkstreamObjectParticipant,
 } from "./helpers/durable-authority";
@@ -98,22 +97,7 @@ function fixture(options: { authenticated?: boolean; role?: "owner" | "member" }
           "failTerminalPolicyApplication",
           "commitTerminalPolicyApplication",
         ]),
-        canReadWorkstream: async () => true,
-        listWorkstreams: async () => ({
-          items: [testWorkstreamContract({
-            id: S, workspaceId: W, title: "Terminal route", harnessStatus: "idle",
-          })],
-          stateVersions: [{
-            workstreamId: S,
-            commonEventId: "00000000-0000-7000-8000-0000000000e1",
-            viewerEventId: null,
-            authorityGeneration: 1,
-            commonWaterline: 1,
-            viewerWaterline: 0,
-          }],
-          nextCursor: null,
-          directoryWaterline: 0,
-        }),
+        terminalSandboxParents: async () => [{ workstreamId: S, title: "Terminal route" }],
       },
     }),
   });

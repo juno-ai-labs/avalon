@@ -1,51 +1,15 @@
 import { ScopeGrantSchema } from "@rally/contracts/scope-grants";
 import { runInDurableObject } from "cloudflare:test";
 import { asWorkspaceId, asUserId, asSubstreamId } from "@rally/contracts";
-import type { ListVisiblePrivateChildrenRequest } from "@rally/contracts/conversation-parent";
 import type { Env } from "../../src/env";
-import type { HostedParent } from "../../src/durable-objects/hosted-parent";
 import { workspaceDOName } from "../../src/durable-objects/names";
 
 /**
- * The Organization object that hosts every Channel and Space parent in a
- * workspace. A test that used to address a `WorkstreamDO` or `SpaceDO` stub
- * addresses this one with the same method names.
+ * The Organization object, which hosts every Canvas's and Sidekick's parent
+ * in a workspace (and once hosted every Channel's and Space's).
  */
 export function hostedParentStub(env: Env, workspaceId: string, region: string = "global") {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName(region, asWorkspaceId(workspaceId))));
-}
-
-/** One Channel's shared directory, through the batch RPC production calls. */
-export async function readSharedWorkstream(
-  stub: ReturnType<typeof hostedParentStub>,
-  { parentId, ...request }: Parameters<HostedParent["readSharedWorkstream"]>[0],
-) {
-  return (await stub.readSharedWorkstreams({ ...request, parentIds: [parentId] }))[0] ?? null;
-}
-
-/** One parent's Breakouts a person may open, through the batch RPC production calls. */
-export async function listVisiblePrivateChildren(
-  stub: ReturnType<typeof hostedParentStub>,
-  { parentId, ...request }: ListVisiblePrivateChildrenRequest,
-) {
-  const { parents } = await stub.listVisiblePrivateChildrenForParents({ ...request, parentIds: [parentId] });
-  return { children: parents[0]!.children };
-}
-
-/**
- * Runs `fn` inside the Organization object with the hosted parent for
- * `parentId`, for a test that reads or drives the parent's internals directly.
- * Every parent row is keyed by `parent_id`; filter by it.
- */
-export async function withHostedParent<T>(
-  stub: DurableObjectStub,
-  parentId: string,
-  fn: (parent: HostedParent, state: DurableObjectState) => T | Promise<T>,
-): Promise<T> {
-  return runInDurableObject(stub, async (instance, state) => {
-    const host = instance as unknown as { hostedParent(parentId: string): Promise<HostedParent> };
-    return fn(await host.hostedParent(parentId), state);
-  });
 }
 
 /**
@@ -77,7 +41,7 @@ export async function seedParticipantGrants(
   const members = await env.DB.prepare("SELECT user_id, incarnation FROM workspace_members WHERE workspace_id = ?")
     .bind(workspaceId).all<{ user_id: string; incarnation: string }>();
   const incarnations = new Map(members.results.map((row) => [row.user_id, row.incarnation]));
-  await withHostedParent(hostedParentStub(env, workspaceId), parentId, (_parent, state) => {
+  await runInDurableObject(hostedParentStub(env, workspaceId), (_instance, state) => {
     for (const rawUserId of userIds) {
       const userId = asUserId(rawUserId);
       const incarnation = incarnations.get(userId);

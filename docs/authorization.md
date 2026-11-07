@@ -19,7 +19,7 @@ participants or become a new canonical owner of memberships.
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
 | `services/authorization-projection-service.ts` | Reloads attachment inventories from their owners when jobs execute |
 | `durable-objects/workspace-do.ts` | Legacy snapshot compatibility validation, resource facts, migration fan-out and discovery status |
-| `durable-objects/hosted-parent.ts`, `hosted-sidekick.ts` | Canonical parent/private-child facts; a Sidekick's author, executor and the people it is shared with |
+| `durable-objects/hosted-conversation.ts`, `hosted-sidekick.ts`, `hosted-canvas.ts` | Canonical parent/child facts; a Sidekick's author, executor and the people it is shared with; a Canvas's audience |
 | `authorization-control.ts` | Private operator Service Binding entrypoint |
 
 ## How it works
@@ -85,7 +85,7 @@ Pure policy tests run with `pnpm --filter @rally/api exec vitest run
 test/scope-grant-policy.test.ts`. Storage and populated-schema upgrade tests run
 in real workerd with `pnpm --filter @rally/api test:workers
 test-workers/scope-grant-storage.test.ts`.
-`test-workers/scope-grant-authority.test.ts` additionally drives the real hosted
+`test-workers/scope-grant-authority.test.ts` (deleted in plan step C-2) additionally drives the real hosted
 parent RPC on `WorkspaceDO` with D1 relationships, including child-only sharing, implicit-member denial,
 inheritance and lifecycle/relationship rejection.
 
@@ -394,7 +394,7 @@ not a switch controlling which authorization implementation serves the request.
   placed in (`channelReader`). The one thing a Space
   admits its readers to is a resource linked to it, and only through the
   Space's own audience as it is when the read happens. Guard:
-  `channels-threads-navigation.test.ts` "given a merge into a private Channel,
+  `channels-threads-navigation.test.ts` (deleted in plan step C-2) "given a merge into a private Channel,
   when a member is added to the Channel later".
 - A link records a place, never the people. Copying who could read a resource
   at link time would leave a person added later locked out and a person
@@ -461,7 +461,7 @@ deployment, including permission changes and delayed Queue delivery.
 workspace isolation, aged evidence, future timestamps and explicit incomplete lists.
 `test-workers/authorization-storage.test.ts` uses real SQLite migrations for
 out-of-order inventory delivery, ignored legacy grants and discovery completion.
-`test-workers/conversation-parent-contract.test.ts` exercises stale roster
+`test-workers/conversation-parent-contract.test.ts` (deleted in plan step C-2) exercises stale roster
 projections and private-child search before and after queued backfill without activation.
 `test-workers/resource-read-admission.test.ts` drives attachment and artifact
 HTTP routes over real D1, WorkspaceDO and R2, checking first-load RPC counts,

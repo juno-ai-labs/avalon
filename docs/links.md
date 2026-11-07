@@ -39,7 +39,6 @@ handoff page, the Slack unfurl card or the sweep that keeps old cards current.
 | Site telemetry path classification | `normalizedTelemetryPathname` in `apps/site/src/telemetry.ts` |
 | The web app's rewrite to hash routes | `shellLocation` and `inPlaceHash` in `apps/browser/src/session.ts` |
 | Slack unfurl | `unfurlAvalonLinks` in `apps/api/src/services/slack-agent-service.ts`; `slackUnfurlLinkTargets` and `linkUnfurlBlocks` in `slack-workstream-card.ts` |
-| The sweep that rewrites Thread cards posted before the pivot | `refreshSlackWorkstreamUnfurls` in `apps/api/src/services/slack-unfurl-refresh.ts` |
 | Copy link (Canvas title menu, Sidekick header) | `apps/desktop/src/renderer/lib/copy-link.ts` |
 | Copy link from a detached artifact window | the `link` action in `apps/desktop/src/main/artifact-window-actions.ts` and `main/index.ts` |
 | Open the deep link | `emitDeepLink` and `httpsLinkDeepLink` in `apps/desktop/src/main/`, `apps/desktop/src/renderer/lib/app-session.tsx` |
@@ -296,7 +295,6 @@ and the path is classified (`/app/:region/:organization/cv/:canvas`,
 | `apps/api/test/link-title-route.test.ts` | The title route's path reading and refusals. |
 | `apps/api/test/slack-agent-ingress.test.ts` | Which shared links get a card, and the Canvas card's blocks. |
 | `apps/api/test/mention-email.test.ts`, `participant-email.test.ts`, `slack-notification-service.test.ts` | The Canvas link in each message, and a Thread mention sending nothing. |
-| `apps/api/test/slack-unfurl-refresh.test.ts` | The Thread-card sweep. |
 | `apps/desktop/src/main/push-links.test.ts`, `deep-links.test.ts` | Universal links, the main process's deep-link boundary, and `isRetiredDeepLink`. |
 | `apps/site/test/link-handoff.test.ts` | The handoff page's visible copy for a retired and a Canvas link. |
 | `apps/desktop/src/renderer/lib/browser-entry.test.tsx` | The web app's entry screen shows the retired copy on a Thread path and not on its own Organization shell path. |

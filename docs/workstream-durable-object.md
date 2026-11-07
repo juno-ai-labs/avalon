@@ -114,7 +114,6 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `apps/api/src/services/workspace-runtime-database.ts` | Allowlisted D1-compatible adapter: WorkspaceDO tables use native RPC, underlying control tables use D1, and mixed-authority transactions fail closed. |
 | `apps/api/src/services/sidebar-reads.ts` | The one statement and row mapping per sidebar list, used by WorkspaceDO's batch read and by the REST services that route back into it. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
-| `apps/api/src/durable-objects/hosted-parent.ts` | `HostedParent`: one Channel's or Space's parent authority inside `WorkspaceDO`, scoped by `parent_id`. The child registry, per-child projections and receipts, cross-child aggregation, the parent's metadata row, viewer authorization from scope and participation, the Channel control socket's snapshots, and the effects it publishes into the Organization's tables in its own transaction. `HOSTED_CHANNEL_ROLE` and `HOSTED_SPACE_ROLE` are every way a Space differs from a Channel. Owned by [`hosted-conversation-parents.md`](hosted-conversation-parents.md). |
 | `apps/api/src/durable-objects/conversation-parent-object.ts` | The shared request schemas, aggregation helpers and Queue batching every hosted parent reuses. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts`, `automation-do-protocol.ts` | `HostedSidekick`: a Sidekick's parent inside `WorkspaceDO`, with its definition revisions, schedules, runs and inbound-email receipts; forwards nothing its children say. Owned by [`hosted-conversation-parents.md`](hosted-conversation-parents.md) and [`automation-lifecycle.md`](automation-lifecycle.md). |
 | `packages/contracts/src/conversation-parent.ts` | The parent contract every Worker-side caller is written against: `authorizeViewer`, `authority`, `reserveChild`, `listChildren`, and the parent kind enum. |
@@ -461,8 +460,8 @@ in `WorkspaceDO`'s Space tables ([`spaces.md`](spaces.md)). It has no
 conversation of its own; a Space created before 2026-09-26 still has an idle one
 that nothing reads.
 
-It is hosted exactly like a Channel, under `HOSTED_SPACE_ROLE` rather than
-`HOSTED_CHANNEL_ROLE` (`durable-objects/hosted-parent.ts`): no control socket,
+It was hosted exactly like a Channel, under `HOSTED_SPACE_ROLE` rather than
+`HOSTED_CHANNEL_ROLE` (in the deleted `hosted-parent.ts`): no control socket,
 no grant-directory publication, and only its `directory_common` and
 `directory_user` effects leave it. `WorkspaceDO` tells the two apart by the
 parent's own row, or, before the row exists, by whether the id is a Space the
@@ -1618,7 +1617,7 @@ interleaving with preparation. A large-roster case verifies that hydrating one
 participant does not bind the whole roster into a D1 query. The new message
 never reaches a provider.
 
-`test-workers/conversation-parent-contract.test.ts` upgrades a populated v12 parent
+`test-workers/conversation-parent-contract.test.ts` (deleted in plan step C-2) upgrades a populated v12 parent
 and exercises recommendation RPCs through the shared service. The child-tool
 regression in `test-workers/automation-do.test.ts` proves shared recommendations
 and independent local attachments end to end. Run both with

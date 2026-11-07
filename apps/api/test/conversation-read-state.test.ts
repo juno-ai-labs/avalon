@@ -48,7 +48,7 @@ const auth: AuthContext = {
   role: "member",
 };
 
-type ParentKind = "workstream" | "automation";
+type ParentKind = "canvas" | "automation";
 
 interface Recorded {
   /**
@@ -142,7 +142,7 @@ function environment(recorded: Recorded): Env {
 
 function recorder(
   authorized = true,
-  parentKind: ParentKind = "workstream",
+  parentKind: ParentKind = "canvas",
   archived = false,
 ): Recorded {
   return {

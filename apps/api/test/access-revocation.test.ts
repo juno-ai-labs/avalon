@@ -20,15 +20,12 @@ import { WorkspaceRelationshipChangeMessageSchema } from "../src/services/worksp
 import { AuthService } from "../src/services/auth-service";
 import { RegionalOnboardingService } from "../src/services/platform-onboarding-service";
 import { acceptInvitationForUser, WorkspaceService } from "../src/services/workspace-service";
-import { WorkstreamService } from "../src/services/workstream-service";
-import { ChannelAccessService } from "../src/services/channel-access-service";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-
 
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const OWNER = asUserId("00000000-0000-7000-8000-000000000002");
@@ -199,39 +196,6 @@ describe("removing a member", () => {
     expect(remaining.count).toBe(3);
     // A refusal writes nothing, so nothing is announced either.
     expect(sent).toEqual([]);
-  });
-});
-
-describe("removing a room participant", () => {
-  it("publishes a revocation addressed to the automations the room owns", async () => {
-    const database = seed();
-    const { env, sent } = environment(database);
-    const ROOM = "00000000-0000-7000-8000-0000000000a1";
-    database.exec(`
-      UPDATE workstream_authority_control SET phase = 'maintenance_draining', generation = 1, updated_at = '${NOW}' WHERE id = 1;
-      UPDATE workstream_authority_control SET phase = 'maintenance_importing' WHERE id = 1;
-      UPDATE workstream_authority_control SET phase = 'maintenance_verified' WHERE id = 1;
-      UPDATE workstream_authority_control SET phase = 'durable_object_open', serving_contract_version = 1 WHERE id = 1;
-    `);
-    const removed = vi.spyOn(ChannelAccessService.prototype, "removeDirectReader")
-      .mockResolvedValue(true);
-    const service = new WorkstreamService(env, auth(OWNER, "owner"));
-
-    await service.removeParticipant(ROOM, MEMBER);
-
-    expect(removed).toHaveBeenCalledWith(ROOM, MEMBER);
-    const revocations = sent
-      .map((published) => AccessRevocationMessageSchema.safeParse(published.body))
-      .flatMap((parsed) => parsed.success ? [parsed.data] : []);
-    // The room closed its own sockets; its automations admitted this person
-    // through the room and nothing else would tell them.
-    expect(revocations).toEqual([expect.objectContaining({
-      reason: "workstream_participant_removed",
-      workspaceId: WORKSPACE,
-      userId: MEMBER,
-      sessionId: null,
-      target: { scope: "workstream_automations", workstreamId: ROOM },
-    })]);
   });
 });
 
@@ -735,21 +699,6 @@ describe("carrying one revocation to the objects", () => {
     return sent.map((published) => AccessRevocationMessageSchema.parse(published.body).target);
   }
 
-  it("tells the workspace, then publishes a message for each work stream it names", async () => {
-    const { env, visits, sent } = fanOut({ workstreamIds: [WORKSTREAM] });
-    await applyAccessRevocation(env, message({ scope: "workspace" }));
-
-    expect(visits).toHaveLength(1);
-    // The object is told who lost access, not how the revocation was addressed.
-    expect(visits[0]?.revocation).toEqual({
-      reason: "workspace_membership_removed",
-      workspaceId: WORKSPACE,
-      userId: MEMBER,
-      sessionId: null,
-    });
-    expect(targetsOf(sent)).toEqual([{ scope: "workstream", workstreamId: WORKSTREAM }]);
-  });
-
   it("publishes a message for every automation the workspace names", async () => {
     const AUTOMATION = "00000000-0000-7000-8000-0000000000d1";
     const { env, sent } = fanOut({ workstreamIds: [WORKSTREAM], automationIds: [AUTOMATION] });
@@ -782,122 +731,6 @@ describe("carrying one revocation to the objects", () => {
     ]);
   });
 
-  it("publishes a message for every conversation a Space names, and closes none of its own", async () => {
-    const SPACE = "00000000-0000-7000-8000-0000000000f1";
-    const { env, visits, listed, sent } = fanOut({ automationChildren: ["0"] });
-    await applyAccessRevocation(env, message({ scope: "space", spaceId: SPACE }));
-
-    // A Space admits no client socket, so there is nothing here to close and
-    // the hop never asks. Its hidden main conversation is an ordinary
-    // `AgentLoopDO` that does hold what was opened against it, and only the
-    // Space can name it — addressed under the Space's own id, the way an
-    // automation's conversations are addressed under its.
-    expect(visits).toEqual([]);
-    expect(listed).toHaveLength(1);
-    expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, parentId: SPACE });
-    expect(targetsOf(sent)).toEqual([
-      { scope: "substream", workstreamId: SPACE, substreamId: "0" },
-    ]);
-  });
-
-  it("names no Sidekick for a lost room, since a room owns none", async () => {
-    const OWNED = "00000000-0000-7000-8000-0000000000d2";
-    const { env, visits, listed, sent } = fanOut({ ownedAutomationIds: [OWNED] });
-    await applyAccessRevocation(env, message({ scope: "workstream_automations", workstreamId: WORKSTREAM }));
-
-    // A hop queued before the room scope was retired reaches nothing: the
-    // Organization is not asked, and no automation hop is sent.
-    expect(visits).toEqual([]);
-    expect(listed).toEqual([]);
-    expect(targetsOf(sent)).toEqual([]);
-  });
-
-  it("turns a narrowed audience into one ordinary hop per reader still holding a socket", async () => {
-    const READER = "00000000-0000-7000-8000-0000000000b1";
-    const { env, visits, listed, sent } = fanOut({ narrowedUserIds: [READER] });
-    await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
-      kind: "access_revoked",
-      reason: "workstream_participant_removed",
-      workspaceId: WORKSPACE,
-      userId: null,
-      sessionId: null,
-      target: { scope: "workstream_audience_narrowed", workstreamId: WORKSTREAM },
-      occurredAt: NOW,
-    }));
-
-    // The hop arrives naming nobody, because a narrowing takes access from
-    // every member who is not a participant. Only the room can say which of
-    // them is holding a socket, so it decides and answers with the names; from
-    // there each one is the ordinary per-user revocation, which is what
-    // reaches the substreams and the automations the room owns.
-    expect(visits).toEqual([]);
-    expect(listed).toHaveLength(1);
-    expect(listed[0]?.request).toEqual({ workspaceId: WORKSPACE, parentId: WORKSTREAM });
-    expect(targetsOf(sent)).toEqual([
-      { scope: "workstream", workstreamId: WORKSTREAM },
-      { scope: "workstream_automations", workstreamId: WORKSTREAM },
-    ]);
-    expect(sent.map((published) => AccessRevocationMessageSchema.parse(published.body).userId))
-      .toEqual([READER, READER]);
-  });
-
-  it("publishes a Channel's conversations directly when the workspace ran its hop, and a hop for the rest", async () => {
-    const IMPORTING = "00000000-0000-7000-8000-0000000000a2";
-    const { env, visits, sent } = fanOut({
-      workstreamIds: [WORKSTREAM, IMPORTING],
-      channels: [{ workstreamId: WORKSTREAM, substreamIds: ["0", SUBSTREAM] }],
-    });
-    await applyAccessRevocation(env, message({ scope: "workspace" }));
-
-    // The Organization object closed the Channel's control sockets and named
-    // its conversations in the same call, so no `workstream` hop goes out for
-    // it. A Channel it did not run (its legacy import is pending) keeps one.
-    expect(visits).toHaveLength(1);
-    expect(targetsOf(sent)).toEqual([
-      { scope: "workstream", workstreamId: IMPORTING },
-      { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
-      { scope: "substream", workstreamId: WORKSTREAM, substreamId: SUBSTREAM },
-    ]);
-  });
-
-  it("publishes only the leaves of a narrowing when the workspace ran each reader's Channel step", async () => {
-    const READER = "00000000-0000-7000-8000-0000000000b1";
-    const { env, sent } = fanOut({
-      narrowedUserIds: [READER],
-      narrowedLeaves: { substreams: [{ userId: READER, substreamIds: ["0"] }] },
-    });
-    await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
-      kind: "access_revoked",
-      reason: "workstream_participant_removed",
-      workspaceId: WORKSPACE,
-      userId: null,
-      sessionId: null,
-      target: { scope: "workstream_audience_narrowed", workstreamId: WORKSTREAM },
-      occurredAt: NOW,
-    }));
-
-    expect(targetsOf(sent)).toEqual([
-      { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
-    ]);
-    expect(sent.map((published) => AccessRevocationMessageSchema.parse(published.body).userId))
-      .toEqual([READER]);
-  });
-
-  it("publishes nothing for a narrowing nobody was reading through", async () => {
-    const { env, sent } = fanOut();
-    await applyAccessRevocation(env, AccessRevocationMessageSchema.parse({
-      kind: "access_revoked",
-      reason: "workstream_participant_removed",
-      workspaceId: WORKSPACE,
-      userId: null,
-      sessionId: null,
-      target: { scope: "workstream_audience_narrowed", workstreamId: WORKSTREAM },
-      occurredAt: NOW,
-    }));
-
-    expect(sent).toEqual([]);
-  });
-
   it("refuses a message that names a user and a narrowing, or neither", async () => {
     // The two are mutually exclusive by construction: a per-user hop that lost
     // its user would close every socket it found, and a narrowing carrying one
@@ -922,19 +755,6 @@ describe("carrying one revocation to the objects", () => {
     await applyAccessRevocation(env, message({ scope: "automation", automationId: AUTOMATION }));
 
     expect(sent).toEqual([]);
-  });
-
-  it("publishes a message for every substream a work stream names", async () => {
-    const { env, visits, sent } = fanOut({ substreamIds: ["0", SUBSTREAM] });
-    await applyAccessRevocation(env, message({ scope: "workstream", workstreamId: WORKSTREAM }));
-
-    // The Organization object is asked about this Channel's parent, not the
-    // Organization's own sockets.
-    expect(visits.map((visit) => visit.parentId)).toEqual([WORKSTREAM]);
-    expect(targetsOf(sent)).toEqual([
-      { scope: "substream", workstreamId: WORKSTREAM, substreamId: "0" },
-      { scope: "substream", workstreamId: WORKSTREAM, substreamId: SUBSTREAM },
-    ]);
   });
 
   it("stops at a leaf", async () => {

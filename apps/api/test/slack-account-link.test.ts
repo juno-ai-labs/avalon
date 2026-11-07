@@ -37,7 +37,6 @@ describe("Slack account linking", () => {
     const service = new SlackAgentService(environment(database, {
       WORKSPACE_DOS: testWorkspaceObjectBinding(instance, [
         ...SLACK_WORKSPACE_OBJECT_METHODS,
-        "recentWorkstreamDirectory",
         "listAutomationDirectory",
       ]),
     }));
@@ -310,7 +309,6 @@ describe("Slack account linking", () => {
     const service = new SlackAgentService(environment(database, {
       WORKSPACE_DOS: testWorkspaceObjectBinding(instance, [
         ...SLACK_WORKSPACE_OBJECT_METHODS,
-        "recentWorkstreamDirectory",
         "listAutomationDirectory",
       ]),
     }));

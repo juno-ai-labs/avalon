@@ -214,7 +214,7 @@ Juno Labs each end a live session on the next request (and a revoke publishes
 its socket revocation). It also opens and ends a support session in a browser
 cookie's Organization slot, and records an audit row for a write made from
 the session and carries the staff member in its workspace socket ticket.
-`apps/api/test-workers/unseen-workstream-state.test.ts` proves in workerd that
+`apps/api/test-workers/unseen-workstream-state.test.ts` (deleted in plan step C-2) proves in workerd that
 a support session's HTTP reads and socket do not mark a Channel opened or
 read, that a socket write command is audited, and that the socket is not a
 viewer; `durable-object-runtime.test.ts` proves its workspace socket records no
@@ -227,7 +227,7 @@ covers how a stored support credential is told apart.
 WorkspaceDO migrations and proves direction, self-pairs, idempotent setup, and
 revocation in workerd. `apps/api/test/demo-operations.test.ts` covers the
 producer's ordered pairs.
-`apps/api/test-workers/workspace-reach-changed.test.ts` proves on real sockets
+`apps/api/test-workers/workspace-reach-changed.test.ts` (deleted in plan step C-2) proves on real sockets
 that a relationship change, and a Channel or Breakout join or leave, reaches the
 person and their operator, and nobody else. Run:
 
