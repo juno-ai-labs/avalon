@@ -1217,6 +1217,8 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
+import { CANVAS_SCHEMA_STATEMENTS } from "./canvas-schema";
+import { HostedCanvas, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
@@ -1280,6 +1282,8 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "sidekick_revisions", "sidekick_schedules", "sidekick_runs", "sidekick_email_receipts",
   "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_reviews",
   "sidekick_audience", "sidekick_viewer_reads",
+  // A hosted Canvas's own rows: `HostedCanvas` is their only writer.
+  "canvas_directory", "canvas_participants", "canvas_artifacts",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
@@ -4864,10 +4868,15 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // have left it. See docs/automation-lifecycle.md#creation-and-ownership.
   statements: [
     // It bumped only the owning room's rail, and no row has one after this;
-    // dropped first so the conversion below bumps nothing.
+    // dropped first so clearing the home bumps no owning room. The conversion
+    // still bumps the rails of the rooms that recommend or attach a converted
+    // Sidekick, through `channel_rail_sidekick_listed_update`.
     `DROP TRIGGER IF EXISTS channel_rail_sidekick_owner_update`,
+    // The old rule read a room archive's marker as terminal whatever the
+    // lifecycle, so a draft or active row that carries it is archived too
+    // rather than becoming a live Organization Sidekick.
     `UPDATE automation_directory SET lifecycle = 'deleted', paused_by = NULL
-      WHERE lifecycle = 'paused' AND paused_by = 'room_archive' AND owning_room_archived_at IS NOT NULL`,
+      WHERE owning_room_archived_at IS NOT NULL AND lifecycle <> 'deleted'`,
     `UPDATE automation_directory SET scope = 'workspace', owning_workstream_id = NULL, owning_substream_id = '0'
       WHERE scope = 'workstream'`,
   ],
@@ -4876,6 +4885,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record who started a Sidekick run under their own access",
   // See SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS and docs/automation-lifecycle.md#who-a-run-acts-as.
   statements: SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS,
+}, {
+  version: 139,
+  description: "record each Canvas: its directory row, who besides its creator may open it, and the artifacts it generated",
+  // See CANVAS_SCHEMA_STATEMENTS and docs/canvases.md#data-model.
+  statements: CANVAS_SCHEMA_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -6415,13 +6429,15 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return true;
     }
     if (alarm.kind === SCOPE_INVITATION_INDEX_ALARM) {
-      await (await this.hostedParent(alarm.key)).indexPendingInvitations();
+      const canvas = await this.canvasParent(alarm.key);
+      await (canvas ?? await this.hostedParent(alarm.key)).indexPendingInvitations();
       return true;
     }
     if (alarm.kind === SCOPE_INVITATION_DELIVERY_ALARM) {
       const [parentId, invitationId] = alarm.key.split(":");
       if (!parentId || !invitationId) throw new Error("parent_invitation_delivery_key_invalid");
-      await (await this.hostedParent(parentId)).deliverInvitation(invitationId);
+      const canvas = await this.canvasParent(parentId);
+      await (canvas ?? await this.hostedParent(parentId)).deliverInvitation(invitationId);
       return true;
     }
     return false;
@@ -6613,6 +6629,83 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const host = this.hostedSidekickHost();
     for (const target of targets) new HostedSidekick(host, target.automation_id).scheduleSourceReconciliation();
     return targets.length > 0;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hosted Canvases. `HostedCanvas` is a Canvas's parent; these lend it this
+  // object's storage and relationships. See docs/canvases.md.
+  // ---------------------------------------------------------------------------
+
+  /** Set by a hosted Canvas write that moved a directory row; the Canvas list is published after it. */
+  private canvasDirectoryMoved = false;
+
+  /** Whether an id names a Canvas: its directory row. Asked before the Channel fallback. */
+  private isCanvasParent(parentId: string): boolean {
+    return this.state.storage.sql.exec(
+      `SELECT 1 FROM canvas_directory WHERE canvas_id = ? LIMIT 1`, parentId,
+    ).toArray().length > 0;
+  }
+
+  private hostedCanvasHost(): HostedCanvasHost {
+    return {
+      env: this.env,
+      storage: this.state.storage,
+      readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
+      noteRelationship: (relationship) => this.noteRelationship(relationship),
+      noteCanvasDirectoryChanged: () => {
+        this.state.storage.sql.exec(
+          `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'canvases'`,
+        );
+        this.canvasDirectoryMoved = true;
+      },
+    };
+  }
+
+  /** The hosted parent for a Canvas id; `null` for an id that names no Canvas. */
+  private async canvasParent(parentId: string, workspaceId?: string): Promise<HostedCanvas | null> {
+    await this.initialized;
+    if (!this.isCanvasParent(parentId)) return null;
+    if (workspaceId !== undefined) await this.ensureParentWorkspace(workspaceId);
+    return new HostedCanvas(this.hostedCanvasHost(), parentId);
+  }
+
+  /** A Canvas for a method that may also create it. */
+  private async hostedCanvas(canvasId: string, workspaceId: string): Promise<HostedCanvas> {
+    await this.initialized;
+    await this.ensureParentWorkspace(workspaceId);
+    return new HostedCanvas(this.hostedCanvasHost(), canvasId);
+  }
+
+  /** Run a hosted Canvas write, then publish what it moved and arm what it scheduled. */
+  private async canvasWrite<T>(run: () => Promise<T> | T): Promise<T> {
+    try {
+      return await run();
+    } finally {
+      this.publishCanvasList();
+      await this.afterParentWrite();
+    }
+  }
+
+  /** Create a Canvas's directory row; see `HostedCanvas.create`. */
+  async canvasCreate(input: Parameters<HostedCanvas["create"]>[0]) {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    return this.canvasWrite(() => canvas.create(input));
+  }
+
+  /** A Canvas as one reader sees it; see `HostedCanvas.detail`. */
+  async canvasDetail(input: Parameters<HostedCanvas["detail"]>[0]) {
+    return (await this.hostedCanvas(input.canvasId, input.workspaceId)).detail(input);
+  }
+
+  /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */
+  async canvasSetAudience(input: Parameters<HostedCanvas["setAudience"]>[0]) {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    return this.canvasWrite(() => canvas.setAudience(input));
+  }
+
+  /** Publish the Canvas list after a write that moved it; filled in by the sidebar's Canvas rows. */
+  private publishCanvasList(): void {
+    this.canvasDirectoryMoved = false;
   }
 
   /**
@@ -7134,14 +7227,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async createScopeInvitations(input: Parameters<HostedParent["createScopeInvitations"]>[0]) {
+    const canvas = await this.canvasParent(input.parentId, input.workspaceId);
+    if (canvas) return this.canvasWrite(() => canvas.createInvitations(input));
     return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).createScopeInvitations(input));
   }
 
+  /** A sign-in's claim of the shares addressed to it, for a Canvas as for a Channel. */
   async claimScopeInvitations(input: Parameters<HostedParent["claimScopeInvitations"]>[0]) {
+    const canvas = await this.canvasParent(input.parentId, input.workspaceId);
+    if (canvas) return this.canvasWrite(() => canvas.claimInvitations(input));
     return this.parentWrite(async () => (await this.channelParent(input.parentId, input.workspaceId)).claimScopeInvitations(input));
   }
 
   async revokeScopeInvitation(input: Parameters<HostedParent["revokeScopeInvitation"]>[0]) {
+    const canvas = await this.canvasParent(input.parentId, input.workspaceId);
+    if (canvas) return this.canvasWrite(() => canvas.revokeInvitation(input));
     return (await this.channelParent(input.parentId, input.workspaceId)).revokeScopeInvitation(input);
   }
 
