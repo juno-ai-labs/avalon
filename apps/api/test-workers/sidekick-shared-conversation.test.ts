@@ -377,4 +377,22 @@ describe("a Sidekick's shared conversation", () => {
     expect(await workspaceStub().sidekickReplayRunRows({ ...addressed(), actor: actor() })).toEqual({ armed: 1 });
     expect(await rowReaches(started.runId, "completed")).toMatchObject({ turns: 1, run: { reply: "Done." } });
   });
+  it("lands a run's conversation_post that names no conversation in the Sidekick's own conversation, waking nobody", async () => {
+    await activeSidekick();
+    const report = "Release 4.2 is out; the importer is the headline.";
+    script = [{ callTool: { name: "conversation_post", arguments: { text: report } } }, { say: "Posted." }];
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "post-own-0001" });
+    await runSidekickAlarms(TEST_ENV, WORKSPACE_ID);
+    await runSettled(started.runId);
+    const posts = await runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{
+      content: string; structured_content_json: string;
+    }>(`SELECT content, structured_content_json FROM canonical_conversation_turn_details
+        WHERE client_message_id LIKE 'conversation-post:%'`).toArray());
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.content).toBe(report);
+    expect(JSON.parse(posts[0]!.structured_content_json)).toMatchObject({
+      type: "automation_activation", automationId: AUTOMATION_ID, runId: started.runId, trigger: { kind: "manual" },
+    });
+    expect(await wizardExecutions()).toEqual([]);
+  });
 });
