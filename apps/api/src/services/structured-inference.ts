@@ -5,7 +5,7 @@ import {
   type ModelMessage,
   type StructuredModelDiagnostic,
 } from "@rally/agent-harness";
-import { AgentModelRoutingSchema, type AgentModelRouting } from "@rally/contracts";
+import { type AgentModelRouting } from "@rally/contracts";
 import type { Env } from "../env";
 import { createDeadline } from "../lib/deadline";
 import { runtimeDeferral, type WorkDeferral } from "../lib/defer";
@@ -44,12 +44,10 @@ type StructuredInferenceRole = Extract<
   | "memory_sweep"
 >;
 
-type StructuredInferenceSource = StructuredInferenceRole | "substream_context_summary";
+type StructuredInferenceSource = StructuredInferenceRole;
 
 function structuredInferenceFeature(source: StructuredInferenceSource): string {
-  return source === "substream_context_summary"
-    ? "substream-context-summary-policy"
-    : AGENT_MODEL_FLAG_KEYS[source];
+  return AGENT_MODEL_FLAG_KEYS[source];
 }
 
 export async function runEmbeddingInference(
@@ -192,7 +190,8 @@ export async function runStructuredInference<T>(
     defer?: WorkDeferral;
     /** What this call is metered as. See docs/usage-metering.md. */
     activity: MeteredActivity;
-  } & ({ role: StructuredInferenceRole } | { role: "substream_context_summary"; routing: AgentModelRouting }),
+    role: StructuredInferenceRole;
+  },
 ): Promise<{
   result: T;
   model: string;
@@ -201,9 +200,7 @@ export async function runStructuredInference<T>(
   inputTokens: number | null;
   outputTokens: number | null;
 }> {
-  const routing = input.routing
-    ? AgentModelRoutingSchema.parse(input.routing)
-    : await resolveAgentModelRouting(env, input.role as StructuredInferenceRole, input.context);
+  const routing = await resolveAgentModelRouting(env, input.role, input.context);
   const feature = structuredInferenceFeature(input.role);
   const substreamId = input.context.workstreamId
     ? input.context.substreamId ?? "0"

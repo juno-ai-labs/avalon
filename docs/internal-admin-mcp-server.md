@@ -221,15 +221,9 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | --- | --- | --- |
 | `list_workspaces` | None | Lists workspace identity records across configured deployments. |
 | `create_org` | `operationId`, `creatorUserId`, `region`, `name`, `userIds` | Creates an Organization with the creator as owner and the existing regional users as members, directly, without invitations. |
-| `create_channel` | `operationId`, `creatorUserId`, `orgId`, `name`, `participantUserIds` | Creates an Organization-wide Channel (stored Space) and seats the creator and participants under ordinary app permissions. |
-| `create_thread` | `operationId`, `creatorUserId`, `orgId`, `channelId`, `prompt` | Starts a Thread in that Channel as the selected user under ordinary app permissions, including the opening prompt and normal agent run. Private-Channel rules apply. |
 | `send_message` | `operationId`, `userId`, `orgId`, `threadId`, `text`; optional `breakoutId` and composer fields | Uses normal message admission, retries, addressing and execution as that user. |
-| `read_channel` | `userId`, `orgId`, `channelId`; optional `cursor` | Returns the visible Channel feed as plain text, including Thread cards. |
 | `read_thread` | `userId`, `orgId`, `threadId`; optional `afterSequence`, `throughSequence`, `limit` | Returns participant prose in 20-turn pages by default; follow the continuation fence. |
 | `read_breakout` | The Thread-read inputs plus `breakoutId` | Reads the exact child under its own access checks. |
-| `list_channels` | `userId`, `orgId` | Lists the active Channels visible to this person in app order; each item `id` is a `channelId`. |
-| `list_threads` | `userId`, `orgId`, `channelId`; optional `cursor` | Lists all visible, unarchived Threads, including settled/read ones. Each `id` is a `threadId`; follow `nextCursor`. |
-| `list_breakouts` | `userId`, `orgId`, `channelId`; optional `cursor` | Lists all visible, unarchived Breakouts across the Channel's Threads. Use `id` as `breakoutId` and `breakoutOf.workstreamId` as `threadId`. |
 | `list_orgs` | Optional `orderBy`, `direction`, `limit`, `page` | Lists every Organization across regions, newest first unless ordered otherwise, abandoned ones included, with plan, creation time, active member count, and last seen. |
 | `search_orgs` | Optional `query`, `plan`, `abandoned`, `createdAfter`, `createdBefore`, plus the ordering and paging inputs | Same rows as `list_orgs`, narrowed by every filter given; abandoned Organizations are left out unless `abandoned` is `include` or `only`. |
 | `list_users` | Optional `orderBy`, `direction`, `limit`, `page` | Lists every user across regions, newest first unless ordered otherwise, each with every Organization they belong to: role, guest or member, status, and last seen. |
@@ -240,7 +234,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `pause_sidekick`, `resume_sidekick` | `orgId`, `userId`, `sidekickId` | Pauses or resumes the Sidekick as that user, through the app's own Pause and Resume path. The user must be allowed to manage it; its author always is. Returns the resulting lifecycle. |
 | `dump_thread_transcripts` | `orgId`, `confirm` (the `orgId` again) | **Destructive standing**, as `run_workspace_sql` (annotated a non-destructive write: it only adds to R2, but it opens every conversation object). Writes every Thread, Breakout and Channel conversation of the Organization to R2 as text under `retired-conversations/<orgId>/<parentId>/<substreamId>.txt`, skipping any already written; Canvases and Sidekicks are never dumped. Reports dumped, skipped and failed counts. Run it, and see nothing failed, before `retire_threads`. |
 | `retire_threads` | `orgId`, `confirm` (the `orgId` again) | **Destructive.** Irreversibly deletes every Thread, Breakout and Channel of the Organization: retires each conversation object and deletes their rows. Canvases, Sidekicks, resources and memory stay. Refused until `dump_thread_transcripts` has written every conversation. Repeat to resume; a finished Organization reports zeros. |
-| `list_spaces` | `workspaceId` | Lists the Organization's Channels (stored Spaces), archived ones included. Use a returned `spaceId` as `channelId` for `create_thread`. |
+| `list_spaces` | `workspaceId` | Lists the Organization's Channels (stored Spaces), archived ones included. |
 | `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Channel's or Space's parent state in the `parent_*` tables. |
 | `run_substream_sql` | `workspaceId`, `workstreamId`, `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in SubstreamAgent. |

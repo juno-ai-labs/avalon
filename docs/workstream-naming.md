@@ -27,7 +27,6 @@ conversation, not parent work-stream metadata. Members retain `renameWorkstream`
 | `apps/api/src/durable-objects/workstream-identity-storage.ts` | `rename` — the one write that advances the status, sets the title, and offers the icon. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | The first pass's caller on the desktop create path, and the routed environment it is given. |
 | `apps/api/src/services/slack-workspace-workstream-service.ts` | The first pass's caller for a work stream summoned from Slack. |
-| `apps/api/src/services/substream-creation-service.ts` | The first pass's caller for a private substream, addressed at the child. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The second pass's caller, at the end of a run (`settleAgentRun`), addressed at the conversation that ran. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workstream-object-product.ts` | Where the grace is applied to a read: `directoryWorkstream` for a sidebar row, `summary` for the work stream itself. |
 | `apps/desktop/src/renderer/lib/naming-skeleton.ts` | `useNamingSkeleton` — the same rule applied to what the client already holds. Every renderer surface that shows a skeleton reads it from here. |
@@ -56,7 +55,7 @@ child's own room — because each of those defaults to the main conversation, an
 a default taken here renames the work stream somebody is not looking at. The
 child's rename reaches the parent's registry, and from there every sidebar,
 through the ordinary common projection rather than a second write.
-[`substream-creation.md`](substream-creation.md) owns how that child is created;
+`substream-creation.md` (retired) owns how that child is created;
 this document owns what happens to its title afterwards.
 
 The icon is stored for a child as it is for a work stream: the same call

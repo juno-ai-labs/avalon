@@ -965,7 +965,7 @@ The other rejected option was letting creation's summary come from the live
 model. It is the smaller diff, and it costs the pack its two most important
 properties: what the presenter reads is approved copy, and preparing the same
 pack twice produces the same demo.
-[`substream-creation.md`](substream-creation.md#2026-09-09--the-starting-contexts-prose-is-an-injectable-gateway)
+`substream-creation.md` (retired)
 holds why the seam is a gateway rather than a new context strategy.
 
 ### 2026-09-09 — A demo opens on a Sidekick that has already run
