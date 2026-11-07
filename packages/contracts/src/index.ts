@@ -474,16 +474,6 @@ export const ClientFeatureFlagsSchema = z.object({
   suggestedWorkEnabled: z.boolean().default(false),
   /** Whether Electron offers workspace switching and plural workspace setup. */
   multipleWorkspacesEnabled: z.boolean().default(false),
-  /**
-   * Whether live-artifact surfaces are shown in Electron for this person.
-   *
-   * Presentation only, and that distinction is load-bearing: it gates the
-   * rail's site detail, the preview pane, the Data view, and the artifact
-   * window. Nothing that protects an artifact's data is scoped by it —
-   * authorization is structural, so a URL somebody already holds keeps working
-   * through its session checks whether or not this is on.
-   */
-  liveArtifactsEnabled: z.boolean().default(false),
   pushNotificationsEnabled: z.boolean().default(false),
 });
 
@@ -492,7 +482,6 @@ export const ProductFeatureFlagKeySchema = z.enum([
   "suggested-work-enabled",
   "multiple-workspaces-enabled",
   "push-notifications-enabled",
-  "live-artifacts-enabled",
 ]);
 export const ProductFeatureFlagFanoutMessageSchema = z.strictObject({
   kind: z.literal("product_feature_flag_changed"),
