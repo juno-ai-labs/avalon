@@ -1892,7 +1892,9 @@ and `session-import.ts` went in C-2 with the naming and description services
 suggestion services and the conversation-suggestions observer; `mergeInstruction` and the `merges` option of the conversation
 tools are deleted (the Thread merge they described is gone); and the memory subject kinds (`thread`, `channel`,
 `breakout`) with the `memory_facts` rebuild, which renames them to `canvas`.
-Until then the prose here avoids those names and the stored kinds stay.
+Until then the prose here avoids those names and the stored kinds stay. C-3 also deleted `opening-message.ts` and its
+evaluation with a Thread's and a Breakout's first-message admission; a
+Canvas's or a Sidekick's first message is addressed like any other.
 
 **Why:** After the cutover every run is a Canvas Chat, a Sidekick's wizard or a
 Sidekick run, and the prompt still told the model it was in a Thread under a
