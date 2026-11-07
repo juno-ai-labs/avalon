@@ -33,7 +33,7 @@ import {
 import { uuidV7 } from "../lib/uuid-v7";
 import { ToolPageError, ToolPageStorage, type PageClaim, type PageIssueSchema, type PageClaimSchema } from "./tool-page-storage";
 import type { z } from "zod";
-import type { ToolExecutionAccount, ToolExecutionAccountRecord } from "@rally/contracts";
+import type { SidekickRunUsage, ToolExecutionAccount, ToolExecutionAccountRecord } from "@rally/contracts";
 import {
   TOOL_ACCOUNT_CHECKPOINT, readToolExecutionAccount,
   ExecutionAccountReadSchema, RecordExecutionAccountSchema, parseExecutionAccountRequest,
@@ -194,14 +194,7 @@ export interface ToolReceiptRecord {
 }
 
 /** One tool's calls in a conversation; `ms` sums the calls that both started and settled. */
-export interface ToolUsage {
-  toolName: string;
-  fromProgram: boolean;
-  calls: number;
-  failed: number;
-  ms: number | null;
-  maxMs: number | null;
-}
+export type ToolUsage = SidekickRunUsage["tools"][number];
 
 /** One resource version a replayable attachment read depended on. */
 export interface AttachmentDependency {
@@ -838,20 +831,19 @@ export class WorkstreamToolReceiptStorage {
   }
 
   /**
-   * Every tool this conversation called, with how many calls, how many did not
-   * complete, and their time. A call a program made (`<id>:call:<n>`) is
-   * counted apart from a call the model made, so a saved tool's own requests
-   * read as its cost rather than as model turns.
+   * Every tool this conversation called: calls, definite failures, writes left
+   * ambiguous, and time. A call a program made (`<id>:call:<n>`) is counted
+   * apart from one the model made; the program's own call's time includes it.
    */
   toolUsage(): ToolUsage[] {
-    return this.sql.exec<{ tool_name: string; nested: number; calls: number; failed: number;
+    return this.sql.exec<{ tool_name: string; nested: number; calls: number; failed: number; ambiguous: number;
       ms: number | null; max_ms: number | null } & Record<string, SqlStorageValue>>(
       `SELECT tool_name, tool_call_id LIKE '%:call:%' AS nested, count(*) AS calls,
-              sum(status <> 'completed') AS failed,
+              sum(status = 'failed') AS failed, sum(status = 'ambiguous') AS ambiguous,
               sum(settled_at - started_at) AS ms, max(settled_at - started_at) AS max_ms
          FROM tool_effects GROUP BY tool_name, nested ORDER BY ms DESC, tool_name`,
     ).toArray().map((row) => ({ toolName: row.tool_name, fromProgram: row.nested === 1, calls: row.calls,
-      failed: row.failed, ms: row.ms, maxMs: row.max_ms }));
+      failed: row.failed, ambiguous: row.ambiguous, ms: row.ms, maxMs: row.max_ms }));
   }
 
   receiptsForRun(input: { runId: string; capabilities: readonly string[] }): ToolReceiptRecord[] {

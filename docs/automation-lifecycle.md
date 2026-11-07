@@ -229,15 +229,16 @@ participant transcript (including output links, attachments and feedback recorde
 there), and matching tool arguments/results/errors across its activations, each
 with its duration (`ms`, from the receipt's start and settlement). The first page
 also carries the run's `usage`, read from the run's own object. Its `model` part
-comes from `inference_attempts`, the provider's own counts on each attempt:
-calls (successful attempts) and failed attempts, input, output and cached
-tokens, cost, time, and the first, last and largest call's input tokens. Its
-`tools` part gives each tool's calls, failures and milliseconds, with a
-program's own requests (`<id>:call:<n>`) counted apart from the model's. A fixed
-`note` beside it says that every model call sends the whole conversation, so a
-call's input is everything before it and a run's total input grows roughly with
-the square of its calls: a transcript shows each turn's new message, and a
-reader that weighs only those undercounts the cost of a turn.
+comes from `inference_attempts`, the provider's counts per attempt: calls (one
+per accepted response, compactions included), failed attempts, input, output
+and cached tokens, cost, time, and the first, last and largest call's input.
+Its `tools` part gives each tool's calls, definite failures, ambiguous writes
+and milliseconds, with a program's own requests (`<id>:call:<n>`) counted apart;
+the program's own call's time already includes theirs. Both cover the run's
+whole conversation, so tool calls from later chat in it are counted too. A
+fixed `note` beside it says every model call sends the whole conversation: a
+transcript shows each turn's new message, and a reader that weighs only those
+undercounts the cost of a turn.
 Exact results use the existing R2 replay reader. Resource receipts are first
 reauthorized against the inspecting principal, selected run's attachment scope,
 and recorded derivative dependencies; denied results omit input, summary and
@@ -1727,36 +1728,27 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 ### 2026-11-07 — A run's first page says what it spent
 
-**What changed:** `sidekick_runs_read` returns each tool call's duration (`ms`,
-from its receipt's start and settlement) and, on a run's first page, a `usage`
-summary read from the run's own object. It gives model calls with their tokens,
-cost and time, the first and last call's input tokens, and each tool's calls,
-failures and milliseconds, with a program's own requests counted apart from the
-model's. A note beside it says each call re-sends the whole conversation. The
-reader guidance and the self-review's reader assignment point at these figures.
+**What changed:** `sidekick_runs_read` adds each tool call's `ms` and a `usage`
+summary with a context-growth note on a run's first page (above).
 
 **Why:** The self-review now treats routine cost as evidence, but the reader had
-only the transcript: it could count turns by hand across every page (965 for
-Daily Active's run of 2026-11-05), the receipts' start and settlement times it
-loaded were dropped, and nothing showed tokens. A transcript also misleads about
-cost, because it shows each turn's new message while every call sends the whole
-array. Daily Active's run of 2026-11-06 made 195 calls whose input grew from
-30,652 to 333,822 tokens, 42.8 million in all, for $17.20; no message in it
+only the transcript: 965 turns to count by hand for Daily Active's run of
+2026-11-05, no tool times, and no tokens. A transcript also hides the cost of a
+turn: Daily Active's run of 2026-11-06 made 195 calls whose input grew from
+30,652 to 333,822 tokens, 42.8 million in all, for $17.20, and no message in it
 looked large.
 
-**Considered and rejected:** Cost from the usage ledger: it has no index by run,
-and `inference_attempts` already holds each call's tokens and cost in the run's
-own object. Counting assistant turns: exact for calls (Bind reserves one turn
-per provider response, and that run's 965 turns match its 965 ledger calls), but
-it carries no tokens. A per-call token series: the first, last and largest call
-show the growth at a fraction of the size.
+**Considered and rejected:** The usage ledger: it has no index by run, and
+`inference_attempts` holds the same costs in the run's own object (the
+2026-11-05 run sums to $197.09, what it was billed). Counting assistant turns:
+it carries no tokens and misses retries. A per-call token series: the first,
+last and largest call show the growth at a fraction of the size. Fencing the
+tool counts to the run's own activations: receipts carry no transcript
+sequence, and chat after a Sidekick run is rare.
 
-**Consequences:** The summary covers the whole run, so it can change while a run
-is still going; a review reads finished runs, and a moved summary is refused as
-changed evidence like any other. A context compaction's call is in
-`inference_attempts` too, so `calls` can exceed the assistant turns by the number
-of compactions; the 2026-11-05 run has 966 calls and 965 turns, and its summed
-cost, $197.09, matches what the run was billed.
+**Consequences:** `usage` is in the first page's content hash, so a receipt or
+attempt that settles between fragments of that page is refused as changed
+evidence, even when its turns did not move.
 
 ### 2026-11-07 — A self-review counts cost, not only failure
 
