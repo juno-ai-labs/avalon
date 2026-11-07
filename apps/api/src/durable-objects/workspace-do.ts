@@ -6814,6 +6814,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return canvasesWrittenBy(this.state.storage.sql, input.sidekickId, input.actor);
   }
 
+  /**
+   * What Rally is told about the Canvas whose Chat it answers in: its title
+   * and its artifacts at their current versions. A host read for a run the
+   * conversation already admitted, so it names no viewer; `null` for an id
+   * that is no Canvas.
+   */
+  async canvasContext(input: { workspaceId: string; canvasId: string }) {
+    const canvas = await this.canvasParent(input.canvasId, input.workspaceId);
+    const row = canvas?.row();
+    if (!canvas || !row || row.workspace_id !== input.workspaceId) return null;
+    return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.artifacts() };
+  }
+
   /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */
   async canvasSetAudience(input: Parameters<HostedCanvas["setAudience"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
