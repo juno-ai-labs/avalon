@@ -5,7 +5,7 @@ maker: OpenAI
 order: 4
 title: "Rally vs ChatGPT: when the work needs more humans"
 description: "ChatGPT is a superb personal assistant. Rally puts your whole team and AI in the same conversation"
-updated: 2026-10-01
+updated: 2026-11-07
 kind: "OpenAI's AI assistant."
 edge: "Your team and AI in the same conversation."
 ---

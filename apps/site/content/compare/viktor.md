@@ -5,7 +5,7 @@ maker: Viktor
 order: 3
 title: "Rally vs Viktor (2026): an AI hire in Slack or a room to work in"
 description: "Viktor is an AI employee in Slack and Teams, paid in credits. Rally is a shared place where your team and one AI work together, priced per organization."
-updated: 2026-10-01
+updated: 2026-11-07
 kind: "An AI employee you @mention in Slack or Microsoft Teams."
 edge: "Rally knows how to be polite and not pester you constantly."
 ---

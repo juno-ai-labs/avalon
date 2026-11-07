@@ -5,7 +5,7 @@ maker: Salesforce
 order: 8
 title: "Rally vs Slack (2026): keep the chat, add a room for the work"
 description: "Slack is where your team talks, with Slackbot as a personal AI agent. Rally is where your team and one AI do the work together, and it works from Slack."
-updated: 2026-10-01
+updated: 2026-11-07
 kind: "Team chat with other humans."
 edge: "No more need to copy-paste AI prompts with each other, everyone works together."
 ---
