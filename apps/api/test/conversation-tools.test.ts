@@ -284,11 +284,11 @@ describe("the conversations plugin", () => {
 
   it("gives permission reporting guidance to the run's conversation plugin", () => {
     expect(createConversationsPlugin(runLoop(), new Ports(), expand)!.systemMessage)
-      .toContain("use conversation_post to tell the owning conversation what is blocked");
+      .toContain("say in your final message what is blocked and how someone can fix it");
   });
 
-  it("tells a run that its final message stays in the run, and nobody else", () => {
-    const instruction = "Your final message stays in this run; when the instructions say a conversation should hear something, post it with conversation_post, once, in full, after the work is done.";
+  it("tells a run that its final message is its row's reply, and not to post it again", () => {
+    const instruction = "Your final message is this run's reply on its row in this Sidekick's own conversation, where everyone it is shared with reads it, so never post that reply there again. When the instructions say another conversation should hear something, post it with conversation_post, once, in full, after the work is done.";
     expect(createConversationsPlugin(runLoop(), new Ports(), expand)!.systemMessage)
       .toContain(instruction);
     expect(createConversationsPlugin(configLoop(), new Ports(), expand)!.systemMessage).not.toContain(instruction);

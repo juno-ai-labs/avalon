@@ -46,7 +46,7 @@ export function renderPromptSkillCatalog(input: RenderPromptSkillCatalogInput): 
   );
 
   const sections: string[] = [];
-  if (recommended.size) sections.push("Recommended skills were selected for this thread. Prefer them when relevant; call load_skill to use their instructions.");
+  if (recommended.size) sections.push("Recommended skills were selected for this conversation. Prefer them when relevant; call load_skill to use their instructions.");
   if (active.length) {
     sections.push(`Currently active:\n${active.map((skill) => skillLine(skill, false, recommended.has(skill.ref))).join("\n")}`);
   }

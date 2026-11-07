@@ -15,13 +15,6 @@
     "eval:addressing:providers": "tsx evals/addressing/benchmark-providers.ts",
     "eval:addressing:report": "tsx evals/addressing/build-combination-report.ts",
     "eval:addressing:judge": "tsx evals/addressing/judge.ts",
-    "eval:turn-disposition": "tsx evals/turn-disposition/run.ts",
-    "eval:turn-disposition:build": "tsx evals/turn-disposition/build-cases.ts",
-    "eval:turn-disposition:view": "tsx evals/turn-disposition/label-view.ts",
-    "eval:turn-disposition:judge-labels": "tsx evals/turn-disposition/labels-from-report.ts",
-    "eval:turn-disposition:merge-labels": "tsx evals/turn-disposition/merge-labels.ts",
-    "eval:turn-disposition:slices": "tsx evals/turn-disposition/report-slices.ts",
-    "eval:turn-disposition:gepa": "tsx evals/turn-disposition/gepa.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },

@@ -62,7 +62,7 @@ Relevant attachments retain exact resource IDs, derivative versions, consulted
 ranges, conclusions, and unresolved needs. It forbids reproducing the complete
 catalog because the host supplies that part authoritatively.
 On successive compactions it also identifies any earlier
-`# Authoritative work-stream resource inventory` appendix as generated state
+`# Authoritative conversation resource inventory` appendix as generated state
 that must not be copied or summarized; Rally replaces it after the new summary.
 
 The summariser's system message is rendered without the run's
@@ -81,7 +81,7 @@ spend before the result is used; ordinary work-stream runs no longer supply one.
 
 The live transcript becomes exactly two messages: the system message it already
 had, and a user-role message whose text is a fixed preamble, the unchanged LLM
-summary, then `# Authoritative work-stream resource inventory`. The appendix is
+summary, then `# Authoritative conversation resource inventory`. The appendix is
 pure host-rendered data: an `asOf` time, total visible resources, total message
 attachments, and non-empty `image`, `markdown`, `pdf`, `document`, `spreadsheet`,
 `presentation`, `text`, and `other` groups in that order. It names every allowed

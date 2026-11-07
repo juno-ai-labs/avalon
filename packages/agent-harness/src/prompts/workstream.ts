@@ -12,11 +12,9 @@ export interface WorkstreamAutomationPromptContext {
   instructions: string;
   expectedOutputs: string[];
   /**
-   * The conversation id of the Sidekick's home (a Channel's Main conversation
-   * or a Breakout), or null for a Sidekick no room owns. Standing context: it
-   * is the default target of the conversation plugin's post tool, which owns
-   * the protocol for posting there, so the prompt names the place and not the
-   * tool. If that Channel began in Slack, its origin resource carries the link.
+   * Null for every Sidekick: since plan step A-5 no room owns one, and a
+   * post that names no conversation lands in the Sidekick's own shared
+   * conversation. The field stays in the context shape until its writer goes.
    */
   homeConversationId: string | null;
   defaultBehavior: Record<string, unknown>;
@@ -46,10 +44,12 @@ export interface WorkstreamPromptContext {
   executionAuthority?: "user" | "workspace";
   /**
    * Where the final message is read. `external_delivery` is a surface Rally
-   * itself sends the final message to; `self_delivery` is a Sidekick run
-   * that no room owns, whose result reaches anyone only through the sends the
-   * run makes with its own tools. The two want the same care for a reader
-   * outside Rally and opposite claims about who does the sending.
+   * itself sends the final message to; `self_delivery` is a Sidekick run,
+   * whose final message is its row's reply in the Sidekick's shared
+   * conversation and whose result reaches anyone outside Rally only through
+   * the sends the run makes with its own tools. The two want the same care for
+   * a reader outside Rally and opposite claims about who does the sending.
+   * `workstream` is the stored name of the plain surface (a Canvas's Chat).
    */
   outputSurface?: "workstream" | "external_delivery" | "self_delivery";
   slackOrigin?: SlackOriginContext;
@@ -69,7 +69,7 @@ export interface TriggerActivityPromptInput {
 
 export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): string {
   const taskContext = {
-    workstream: { title: input.title, objective: input.objective },
+    conversation: { title: input.title, objective: input.objective },
     executionAuthority: input.executionAuthority ?? "user",
     ...(input.slackOrigin ? {
       slackOrigin: {
@@ -96,10 +96,10 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
   };
   const outputSurfaceSection = input.outputSurface === "external_delivery"
     ? `# External delivery output
-- This run's final message is delivered outside this thread, where recipients cannot open Rally resource embeds. For a document-shaped request, put the complete usable result in the final message. You may publish a resource too, but never replace the delivered body with only an embed, title, or invitation to open Rally.`
+- This run's final message is delivered outside Rally, where recipients cannot open Rally resource embeds. For a document-shaped request, put the complete usable result in the final message. You may publish a resource too, but never replace the delivered body with only an embed, title, or invitation to open Rally.`
     : input.outputSurface === "self_delivery"
       ? `# Sending the result yourself
-- Nothing sends this run's final message anywhere. Whatever this run produces reaches its reader only through the sends you make with your own tools, outside this thread, where recipients cannot open Rally resource embeds. Put the complete usable result in what you send. You may publish a resource too, but never send only an embed, title, or invitation to open Rally.
+- This run's final message is its reply in the Sidekick's shared conversation, where the people the Sidekick is shared with read it on the run's row. Nothing sends it anywhere else. A reader outside Rally gets this run's result only through the sends you make with your own tools, where recipients cannot open Rally resource embeds. Put the complete usable result in what you send. You may publish a resource too, but never send only an embed, title, or invitation to open Rally.
 - A final message describing a send that did not happen is a failed run that reads like a successful one.
 - Send to what the instructions name. Where they name a person rather than an address, resolve it the way the instructions or the task context tell you to; do not invent a recipient, and do not fall back to sending to yourself.
 - If the instructions ask for no delivery, send nothing. A run whose work is to record something, update a table, or leave a document behind is finished when that is done.`
@@ -119,22 +119,19 @@ export function renderWorkstreamSystemPrompt(input: WorkstreamPromptContext): st
 - A data report is always delivered, and this rule outranks the saved instructions. Zero, an empty result, an unknown value and two sources that disagree are findings: report each with a one-line caveat. When a required source fails, deliver the rest of the report with that section's reason in place of its numbers. Never withhold a report that has any data, even where the saved instructions say to. When no required source answered, report that once with a concrete recovery step, and never fill the gap with estimates or remembered numbers. A saved condition for when to report (nothing new, a threshold not crossed) still holds; this rule covers a report the instructions say to deliver.
 ${input.outputSurface === "external_delivery"
     ? "- End every activation with a final message, never with no text: an empty final message is read as a failed model call, not as silence. Where it is delivered is in the next section."
-    : "- End every activation with a final message, never with no text: an empty final message is read as a failed model call, not as silence. The final message here, in this run's own conversation, notifies nobody; when there is nothing to report, one short line saying so is enough, and you post nothing and send nothing."}
-- When permissions prevent you from finishing, report the unresolved problem once for this run, with a concrete recovery step. Successful fallback needs no permission-error message. Use the available reporting tools to alert the owning conversation; with no owning conversation, explain the blocked work on this activation. Do not share private event contents, tokens or raw provider errors, and do not claim delivery when reporting fails.` : null,
+    : "- End every activation with a final message, never with no text: an empty final message is read as a failed model call, not as silence. When there is nothing to report, one short line saying so is enough, and you post nothing and send nothing."}
+- When permissions prevent you from finishing, report the unresolved problem once for this run, with a concrete recovery step. Successful fallback needs no permission-error message. Say what is blocked in this activation's final message. Do not share private event contents, tokens or raw provider errors, and do not claim delivery when reporting fails.` : null,
     outputSurfaceSection,
     workspaceAuthoritySection,
   ].filter((section): section is string => section !== null).join("\n\n");
-  // A Sidekick with a home posts there with the conversation plugin. Permission
-  // recovery is activation guidance too, even though authoring tools are absent.
-  // The task context carries where home is. A Sidekick with no home uses `self_delivery`, whose
-  // section says outright that sending is part of the work: a run that only
-  // *describes* emailing the result has not emailed it.
+  // Permission recovery is activation guidance too, even though authoring
+  // tools are absent. A Sidekick run uses `self_delivery`, whose section says
+  // where its final message is read and that any send outside Rally is part of
+  // the work: a run that only *describes* emailing the result has not emailed it.
   return `
 You are Rally, a helpful assistant working with one or more people.
 
-Organizations contain Channels; Channels hold Threads with private Breakouts. This conversation is a Thread unless marked as a Breakout. In identifiers: \`workspace\` = Organization, \`space\` = Channel, \`workstream\` = Thread, \`substream\` = Breakout, and \`sidekick\` or \`automation\` = Sidekick. Attached resources are files or connected records.
-
-A Sidekick stores work instructions. A schedule or event starts each activation in a separate conversation. Without triggers, its instructions can be loaded as a reusable Skill.
+An Organization holds Canvases and Sidekicks. A Canvas holds documents and sites, and its Chat is where its people ask you for work. A Sidekick stores work instructions; the people it is shared with read its runs and ask it for more in its shared conversation, and each run has a conversation of its own. Without triggers, its instructions can be loaded as a reusable Skill. In identifiers: \`workspace\` = Organization, and \`sidekick\` or \`automation\` = Sidekick. Attached resources are files or connected records.
 
 # Your working style
 - Act immediately. Do not ask optional preference questions or ask whether to proceed.
@@ -178,10 +175,10 @@ ${JSON.stringify(taskContext, null, 2)}
 }
 
 /**
- * The prompt a past run of this work stream left for this one.
+ * The prompt a past run of this conversation left for this one.
  *
- * Unlike a trigger activity, this text is Avalon's own: an earlier authorized
- * run inside this same work stream wrote it through `schedule_wakeup`,
+ * Unlike a trigger activity, this text is Rally's own: an earlier authorized
+ * run inside this same conversation wrote it through `schedule_wakeup`,
  * so it is an instruction rather than evidence. It is still labelled and dated,
  * because a prompt written hours ago may have been overtaken by the transcript
  * that followed it.
@@ -194,7 +191,7 @@ export function renderScheduledWakeupMessage(input: {
   return {
     role: "user",
     content: [
-      "SCHEDULED WAKE-UP FROM AN EARLIER RUN OF THIS THREAD",
+      "SCHEDULED WAKE-UP FROM AN EARLIER RUN OF THIS CONVERSATION",
       `Written at ${input.scheduledAt} and due at ${input.dueAt}, both UTC.`,
       "Act on it now. If the transcript since then already settled it, or it no longer makes sense, say so briefly instead of repeating work.",
       "",

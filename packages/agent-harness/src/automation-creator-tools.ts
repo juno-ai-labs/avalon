@@ -821,19 +821,21 @@ For triggered work, each run has its own conversation and cannot see this setup
 discussion. Save a detailed, self-contained procedure using the instructions field's checklist, so
 runs can execute without repeating discovery. Separate setup facts from data each
 run must refresh. Include success checks, when to do nothing, and recovery steps.
-A run that has nothing to report ends with one short line in its own run conversation,
-which notifies nobody; never instruct a run to end with no text.
-Name every result destination and the action that delivers it: a run must be told
-to send to an inbox, channel, DM or document.
-For the Sidekick's own reports and updates in Rally, save conversation_post as the
-delivery action so the message appears under the Sidekick's name.
+A run's final message is its reply on the run's row in this Sidekick's shared
+conversation, where everyone the Sidekick is shared with reads it under the
+Sidekick's name. That is how a report in Rally is delivered: save no
+conversation_post step for it, which would post the same report there a second time.
+A run that has nothing to report ends with one short line;
+never instruct a run to end with no text.
+Name every other result destination and the action that delivers it: a run must be
+told to send to an inbox, a Slack conversation, a DM or a document.
 
 The wizard, runs and background agents share one Terminal sandbox; other Sidekicks
-and the requesting Thread have separate sandboxes. Eligible delegates can use
+and the conversation that asked for this one have separate sandboxes. Eligible delegates can use
 these shared files; changing coordinator or withdrawing delegation does not erase completed
 imports or files. Shell commands retain one selected repository connection and do not retry
 across accounts. Files can be lost, so save resource IDs, file recovery steps and shared-table access instructions.
-Terminal publications belong to the run's conversation.
+A run's Terminal publications go into a Canvas this Sidekick writes.
 
 Runs can overlap; Terminal locks only one tool call at a time. For runs updating
 the same files or publication, load tracking-seen-or-done-items and save its
@@ -886,13 +888,11 @@ message. Never add a validation step that can turn a report into a blocker: a da
 Sidekick posts its numbers with their caveats, and a review that makes it stricter has
 made it quieter, not better. When runs held a report back behind such a check, remove
 it; when a person asked for it, keep it as a caveat the report names.
-4. If you saved a change and the notice names where to announce it, post one message there
-with conversation_post, passing that conversation: what the Sidekick now does differently,
-why, and that asking in its Sidekick conversation restores the earlier version. Post
-nothing when nothing changed.
-5. End with one short report here for the owner, who was not present: what changed and
-why, or why nothing did, and that asking here restores the earlier revision. Do not repeat
-the runs the plan already named.
+4. End with one short report here, for the owner, who was not present, and for everyone
+the Sidekick is shared with, who read this conversation: what the Sidekick now does
+differently and why, or why nothing changed, and that asking here restores the earlier
+revision. This report is the announcement, so post nothing with conversation_post. Do not
+repeat the runs the plan already named.
 
 # Change request from a run
 An agent message whose text begins with the line "${SIDEKICK_CHANGE_REQUEST_HEADER}"
