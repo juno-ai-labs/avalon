@@ -6,6 +6,7 @@ import {
   DemoSeedSchema,
   IdSchema,
   PickedAppearanceSchema,
+  SidekickAudienceUpdateSchema,
   SidekickMessageIntentSchema,
   SubstreamIdSchema,
   UserIdSchema,
@@ -129,6 +130,14 @@ export const AutomationSetAppearanceRequestSchema = z.strictObject({
   appearance: WorkstreamAppearancePatchSchema,
 });
 export type AutomationSetAppearanceRequest = z.infer<typeof AutomationSetAppearanceRequestSchema>;
+
+/** A manager's choice of who a Sidekick is shared with (`SidekickAudienceUpdateSchema`). */
+export const AutomationSetAudienceRequestSchema = z.strictObject({
+  ...Addressed,
+  actor: AutomationActorSchema,
+  update: SidekickAudienceUpdateSchema,
+});
+export type AutomationSetAudienceRequest = z.input<typeof AutomationSetAudienceRequestSchema>;
 
 export const AutomationRunNowRequestSchema = z.strictObject({
   ...Addressed,

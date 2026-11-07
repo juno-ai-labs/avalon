@@ -1,7 +1,7 @@
 import type { SqlStorageValue } from "@cloudflare/workers-types";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 
-import { owningChannelAdmitsMember, sidekickAdmitsMember } from "../services/authorization-policy";
+import { sidekickAdmits } from "../services/authorization-policy";
 import {
   currentMemoryRevision,
   markMemoryDigestHoldersFor,
@@ -444,43 +444,18 @@ function openableByPerson(sql: SqlStorage, person: ResolvedPerson, sources: Read
   }
   if (sidekicks.length > 0) {
     const member = admitsOrganizationWide(person.accessClass);
-    const rows = sidekickRows(sql, sidekicks);
-    // A Channel-owned Sidekick is read through its home: a Thread home needs
-    // this member to be its participant (`owningChannelAdmitsMember`), a
-    // Breakout home needs the Breakout open to them. Asked once for every home.
-    const breakoutHomes = new Set<string>();
-    const threadHomes: string[] = [];
-    for (const row of rows) {
-      const home = homeSourceOf(row);
-      if (row.scope !== "workstream" || home === null) continue;
-      if (home.includes("/")) breakoutHomes.add(home); else threadHomes.push(home);
-    }
-    const openBreakoutHomes = breakoutHomes.size > 0 ? openableByPerson(sql, person, breakoutHomes) : new Set<string>();
-    const participantThreadHomes = new Set<string>();
-    if (threadHomes.length > 0 && member) {
-      for (const row of sql.exec<{ workstream_id: string }>(
-        `SELECT directory.workstream_id FROM channels directory
-           JOIN channel_viewers viewer
-             ON viewer.workstream_id = directory.workstream_id
-            AND viewer.user_id = ?1
-            AND viewer.authority_generation = directory.authority_generation
-          WHERE ${inJsonList("directory.workstream_id", "?2")} AND directory.archived_at IS NULL
-            AND viewer.is_participant = 1`,
-        person.userId, JSON.stringify(threadHomes),
-      ).toArray()) participantThreadHomes.add(row.workstream_id);
-    }
-    for (const row of rows) {
-      const home = homeSourceOf(row);
-      const readable = member && sidekickAdmitsMember({
+    const shared = new Set(sql.exec<{ sidekick_id: string }>(
+      `SELECT sidekick_id FROM sidekick_audience WHERE user_id = ?1 AND ${inJsonList("sidekick_id", "?2")}`,
+      person.userId, JSON.stringify(sidekicks),
+    ).toArray().map((row) => row.sidekick_id));
+    // Whoever the Sidekick is shared with, the rule its canonical reads apply.
+    for (const row of sidekickRows(sql, sidekicks)) {
+      if (sidekickAdmits({
         scope: row.scope,
         author: row.author_user_id === person.userId,
         executor: row.run_as_user_id === person.userId,
-      });
-      const throughHome = row.scope === "workstream" && home !== null
-        && (home.includes("/")
-          ? openBreakoutHomes.has(home)
-          : member && owningChannelAdmitsMember({ archived: false, participant: participantThreadHomes.has(home) }));
-      if (readable || throughHome) open.add(`sidekick:${row.automation_id}`);
+        shared: shared.has(row.automation_id),
+      }, member)) open.add(`sidekick:${row.automation_id}`);
     }
   }
   return open;

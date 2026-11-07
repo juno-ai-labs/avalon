@@ -122,9 +122,11 @@ RPC across multiple substreams. Each response carries exact grant decisions for 
 Canonical checks reload facts. Main and Breakout scopes are independent: a
 Breakout member need not read Main, and reading Main does not admit a restricted
 Breakout.
-An automation supplies its own scope, author, executor and child registry; an
-owning work stream's canonical roster supplies inherited access. Archived work
-streams remain readable. Deleted automations are absent.
+An automation supplies its own scope, author, executor, `people` list
+membership and child registry, and `sidekickAdmits` decides from those alone:
+its author, its executor and the people it is shared with read it, and a member
+also reads an Organization-scoped one. An owning work stream no longer supplies
+any access. Archived work streams remain readable. Deleted automations are absent.
 
 Guest membership comes from an explicitly carried request observation, or is
 read from `workspace_members.access_class`. Guests cannot use a legacy conversation scope/roster or
@@ -173,11 +175,9 @@ metadata snapshot is retained.
 Search previews retain their independent source-version comparison after storage;
 that comparison does not reauthorize. This contract does not relax mutations,
 socket admission or the existing artifact viewer-session revocation mechanism.
-Resources attached to workstream-owned Sidekick conversations reuse that
-Sidekick's viewer admission, which for a guest follows the Sidekick's home: the
-owning workstream's management grant for a home in its Main conversation, and
-the home Breakout's own grant for a Breakout home, which a workstream grant
-does not reach.
+Resources attached to a Sidekick's conversations reuse that Sidekick's
+audience: a guest reads them only from its `people` list, never through a
+grant on a home Channel or Breakout.
 Guest admission observations are shared only within the current authorization
 batch, like other owner observations. Skill visibility alone does not expose a
 Sidekick's resources; existing member authorization remains on its original path.
@@ -551,6 +551,25 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-11-07 — A Sidekick's audience is its own
+
+**What changed:** A Sidekick's conversations and the resources in them are
+read by whoever the Sidekick is shared with (`sidekickAdmits`): its author, the
+person it runs as, anyone on its new `people` list (`sidekick_audience`), and
+for an Organization-scoped one every member. The owner rule that also admitted
+the participants of a Sidekick's owning Thread or Breakout
+(`<owningWorkstreamId>/<owningSubstreamId>`), and the guest path through that
+home's grants, are removed, here and in search audience and memory facts.
+
+**Why:** The Canvases and Sidekicks pivot retires Threads, and a Sidekick's
+shared conversation is read by the people it is shared with (plan step A-4).
+An audience inherited from a Thread would outlive the Thread it came from.
+
+**Consequences:** A Thread-scoped Sidekick reads as personal until its
+conversion to Organization scope (plan step A-5). A guest reaches a Sidekick
+only by being named on its list. The rule is one function; a reader that
+decides Sidekick access some other way is a defect.
 
 ### 2026-10-21 — Admit attachment and artifact reads once per request
 

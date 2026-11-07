@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { asSubstreamId, asUserId, asWorkspaceId } from '@rally/contracts';
-import { AccessContext, decisionHasValidEvidence, evaluateReadPolicy,
+import { AccessContext, decisionHasValidEvidence, evaluateReadPolicy, sidekickAdmits,
   type ReadPolicy, type AuthorizationResource } from '../src/services/authorization-policy';
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000001');
@@ -53,5 +53,21 @@ describe('authorization read policy', () => {
     });
     const result = await context.readableScopes([resource]);
     expect(result).toMatchObject({ complete: false, items: [], decisions: [{ status: 'unavailable' }] });
+  });
+});
+
+describe('who reads a Sidekick', () => {
+  const sidekick = { scope: 'personal', author: false, executor: false, shared: false };
+  it('admits the people a Sidekick is shared with, a guest among them', () => {
+    expect(sidekickAdmits({ ...sidekick, shared: true }, false)).toBe(true);
+    expect(sidekickAdmits(sidekick, true)).toBe(false);
+  });
+  it('admits any member, and no guest, through Organization scope', () => {
+    expect(sidekickAdmits({ ...sidekick, scope: 'workspace' }, true)).toBe(true);
+    expect(sidekickAdmits({ ...sidekick, scope: 'workspace' }, false)).toBe(false);
+  });
+  it('admits its author and the person it runs as', () => {
+    expect(sidekickAdmits({ ...sidekick, author: true }, false)).toBe(true);
+    expect(sidekickAdmits({ ...sidekick, executor: true }, true)).toBe(true);
   });
 });

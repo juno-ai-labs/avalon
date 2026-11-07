@@ -216,7 +216,7 @@ import {
 } from "./automation-do-protocol";
 import { sidekickRunRowText } from "./sidekick-run-row";
 import {
-  insertCanonicalTranscriptPayload,
+  insertPreparedCanonicalTranscriptFact,
   prepareCanonicalTranscriptFact,
   type PreparedCanonicalTranscriptFact,
 } from "./ordered-transcript-sqlite/canonical-payload-store";
@@ -2402,18 +2402,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ).toArray().length > 0;
       if (!changed) return { outcome: "unchanged" as const, code: "sidekick_run_row_unchanged" };
       if (content && content.turnId === current.turn_id) {
-        // Content-addressed, so the new text is a new payload the turn's root
-        // fact points at; the old one is dropped once nothing points at it.
-        insertCanonicalTranscriptPayload(this.ctx.storage.sql, content.prepared, now);
-        this.ctx.storage.sql.exec(
-          `UPDATE transcript_facts SET payload_id = ? WHERE fact_id = ? AND payload_id = ?`,
-          content.prepared.payloadId, content.factId, content.payloadId,
-        );
-        this.ctx.storage.sql.exec(
-          `DELETE FROM transcript_payloads WHERE payload_id = ?
-             AND NOT EXISTS (SELECT 1 FROM transcript_facts WHERE payload_id = ?)`,
-          content.payloadId, content.payloadId,
-        );
+        // Through the fact write path, whose upsert repoints the root fact at
+        // the new content-addressed payload; the payload it held before, read
+        // here inside the write, is dropped once nothing points at it.
+        const previous = this.ctx.storage.sql.exec<{ payload_id: string }>(
+          `SELECT payload_id FROM transcript_facts WHERE fact_id = ?`, content.prepared.material.factId,
+        ).toArray()[0]?.payload_id;
+        insertPreparedCanonicalTranscriptFact(this.ctx.storage.sql, content.prepared, now);
+        if (previous !== undefined && previous !== content.prepared.payloadId) {
+          this.ctx.storage.sql.exec(
+            `DELETE FROM transcript_payloads WHERE payload_id = ?
+               AND NOT EXISTS (SELECT 1 FROM transcript_facts WHERE payload_id = ?)`,
+            previous, previous,
+          );
+        }
       }
       this.transcript.reviseParticipantTurnInTransaction(current.turn_id, now);
       return { outcome: "updated" as const, code: "sidekick_run_row_updated" };
@@ -2427,10 +2429,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * differs; prepared outside the write because hashing is asynchronous.
    */
   private async sidekickRunRowContent(turnId: string, text: string): Promise<{
-    turnId: string; factId: string; payloadId: string; prepared: PreparedCanonicalTranscriptFact;
+    turnId: string; prepared: PreparedCanonicalTranscriptFact;
   } | null> {
-    const stored = this.ctx.storage.sql.exec<{ fact_id: string; payload_id: string; audience: "shared" | "participant" | "model"; payload_json: string }>(
-      `SELECT fact.fact_id, payload.payload_id, payload.audience, payload.payload_json
+    const stored = this.ctx.storage.sql.exec<{
+      fact_id: string; fact_kind: string; audience: "shared" | "participant" | "model"; payload_json: string;
+      origin_kind: string; source_kind: string | null; source_id: string | null; source_revision: number | null;
+      run_id: string | null; tool_call_id: string | null;
+    }>(
+      `SELECT fact.fact_id, fact.fact_kind, payload.audience, payload.payload_json, fact.origin_kind,
+              fact.source_kind, fact.source_id, fact.source_revision, fact.run_id, fact.tool_call_id
          FROM participant_transcript_turns turn
          JOIN transcript_facts fact ON fact.fact_id = turn.root_fact_id
          JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
@@ -2440,12 +2447,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const payload = JSON.parse(stored.payload_json) as Record<string, unknown>;
     if (payload.content === text) return null;
     const prepared = await prepareCanonicalTranscriptFact({
-      factId: stored.fact_id, factKind: "sidekick_run_row", audience: stored.audience,
+      factId: stored.fact_id, factKind: stored.fact_kind, audience: stored.audience,
       payload: { ...payload, content: text },
-      origin: { originKind: "canonical", sourceKind: null, sourceId: null, sourceRevision: null },
-      runId: null, turnId, toolCallId: null,
+      origin: {
+        originKind: stored.origin_kind, sourceKind: stored.source_kind,
+        sourceId: stored.source_id, sourceRevision: stored.source_revision,
+      } as Parameters<typeof prepareCanonicalTranscriptFact>[0]["origin"],
+      runId: stored.run_id, turnId, toolCallId: stored.tool_call_id,
     });
-    return { turnId, factId: stored.fact_id, payloadId: stored.payload_id, prepared };
+    return { turnId, prepared };
   }
 
   /** Internal runtime metadata, never a transcript or a participant-facing inspection API. */

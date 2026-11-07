@@ -12,6 +12,7 @@ import {
   type AutomationSummary,
   type DemoSeed,
   type WorkstreamAppearancePatch,
+  type SidekickAudienceUpdate,
   type WorkstreamAutomationSummary,
 } from "@rally/contracts";
 
@@ -200,6 +201,12 @@ export class AutomationService {
   ): Promise<AutomationDetail> {
     const workspace = await this.workspace();
     return workspace.sidekickSetAppearance({ ...await this.actorRequest(automationId), appearance });
+  }
+
+  /** Choose who the Sidekick is shared with, and return the Sidekick that results. */
+  async setAudience(automationId: string, update: SidekickAudienceUpdate): Promise<AutomationDetail> {
+    const workspace = await this.workspace();
+    return workspace.sidekickSetAudience({ ...await this.actorRequest(automationId), update });
   }
 
   async pause(automationId: string): Promise<void> {
