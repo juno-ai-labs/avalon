@@ -1083,12 +1083,14 @@ Memory treats the review as agent-derived.
 first, posting nowhere else: it hands the listed runs to one background
 agent, whose reader walks them without a run id and which sends one
 report that also names each deterministic step a run repeated, skipped or got
-wrong, says in one line that it is waiting, and when the reply wakes it,
+wrong and what each run's routine work cost (model turns, calls to each saved
+tool, and the items, requests and seconds each call reported), says in one line that it is waiting, and when the reply wakes it,
 it reads the Sidekick's posts and replies in its home itself. It then
 plans, in one message before any write: what
 the runs showed, run by run; whether anything justifies a change (a
 procedure problem seen in the runs, a deterministic step the runs repeated,
-skipped or got wrong among them, never a platform failure); and if so
+skipped or got wrong among them, or routine work that cost more turns or tool
+calls than the work needs, never a platform failure); and if so
 exactly what it will change and nothing else, which where a program runtime
 exists says of each such step whether it becomes a saved tool or why it
 stays in the instructions. An instruction a run did not follow is not covered
@@ -1711,6 +1713,36 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-11-07 — A self-review counts cost, not only failure
+
+**What changed:** The self-review's reader reports what each run's routine work
+cost: model turns, calls to each saved tool, and the items, requests and seconds
+each call reported. Routine work that cost more turns or tool calls than the work
+needs now justifies a change. Where a program runtime exists, a tool call that
+finished fewer items than its measured settings, returned exceptions code could
+have settled, or timed its share against a fixed number is the case for
+re-tuning the tool and timing it again; a tuned tool that still needs several
+calls for a large job stays as it is, so a review does not rewrite it each time. The
+custom-tools guide adds what re-tuning looks for: a source that answers for many
+items in one request, and reads that return every fact the next step needs.
+
+**Why:** Daily Active Rally Organizations made 966 model calls in one run. Moving
+its scan into a saved tool cut that, but the tool still took one page per call,
+four reads at a time, and one count per conversation that sent every active
+conversation back as an exception for a second pass. Each fix came from a person
+asking for it step by step: no run was wrong, so the review's list of what
+justifies a change (a procedure problem, a deterministic step done wrong, never
+a platform failure) never reached it. A review that sees only failure leaves a
+Sidekick as costly as it first was.
+
+**Considered and rejected:** Tuning each Sidekick by hand: it does not reach the
+next one. A turn or call threshold that triggers a change: a number with nothing
+to set it from, where the run's own report already says whether work was routine.
+
+**Consequences:** A review can now revise a Sidekick whose runs all succeeded.
+Prod eval scenario P13 (`scripts/code-mode-evals.mjs`) checks that setup alone
+produces a tool that finishes a large scan in at most two calls.
 
 ### 2026-11-06 — No saved instruction can turn a data report into a blocker
 
