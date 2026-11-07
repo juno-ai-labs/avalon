@@ -28,7 +28,7 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { RETIREMENT_REFUSAL_CODE } from "../src/durable-objects/object-retirement";
 import { retireWorkspaceGraph } from "../src/services/workspace-retirement-service";
-import { workspaceDOName } from "../src/durable-objects/names";
+import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { Env } from "../src/env";
 
@@ -359,6 +359,28 @@ describe("workspace retirement graph", () => {
     expect(receipt.complete).toBe(true);
     expect(receipt.remaining).toBe(0);
     expect(receipt.parents).toBe(4);
+  });
+
+
+  it("closes a Canvas's Chat with the Organization", async () => {
+    const workspaceId = freshWorkspaceId();
+    const stub = workspaceStub(workspaceId);
+    await seedDirectory(stub, workspaceId);
+    const canvasId = "00000000-0000-7000-8000-00000000e501";
+    await stub.canvasCreate({ workspaceId, canvasId, title: "Plan", createdByUserId: ACTOR_ID, authorityGeneration: 1 });
+    const chat = TEST_ENV.SUBSTREAM_AGENTS.get(TEST_ENV.SUBSTREAM_AGENTS.idFromName(
+      conversationObjectName(TEST_ENV.AVALON_REGION, workspaceId, canvasId, "0")));
+
+    const receipt = await retireWorkspaceGraph(TEST_ENV, { workspaceId, retiredAt: Date.now(), operationId: OPERATION_ID,
+      actorUserId: null, reason: "operator_retirement" });
+
+    expect(receipt.failed).toEqual([]);
+    expect(receipt.complete).toBe(true);
+    expect((await stub.workspaceRetirementProgress()).nodes)
+      .toContainEqual({ parentKind: "canvas", parentId: canvasId, retired: true });
+    // The Chat's own object holds the tombstone, so nothing reaches it again.
+    expect(await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ reason: string }>(
+      "SELECT reason FROM object_retirement WHERE id = 1").toArray())).toEqual([{ reason: "operator_retirement" }]);
   });
 
 });

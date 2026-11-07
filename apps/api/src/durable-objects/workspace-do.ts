@@ -57,15 +57,9 @@ import type {
 
 /**
  * One object the retirement walk has to close before this workspace can report
- * complete.
- *
- * Typed as the full conversation-parent vocabulary while
- * `workspace_retirement_graph`'s own CHECK still admits only two of the three:
- * a Space is enumerated into this graph by the WorkspaceDO migration that
- * introduces the Space directory, and the CHECK widens in that same migration.
- * Widening the type first is what lets the walk's third arm — the one that
- * addresses `SPACE_DOS` — be written and reviewed beside the other two rather
- * than arriving as an untyped afterthought with the migration.
+ * complete: a Canvas, a Sidekick, or a Thread or Channel still awaiting the
+ * Thread retirement operation. `workspace_retirement_graph`'s CHECK admits all
+ * four kinds from migration 146.
  */
 interface RetirementGraphNode {
   parentKind: ConversationParentKind;
@@ -754,7 +748,7 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS } from "./canvas-schema";
+import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
@@ -4399,6 +4393,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "admit a Sidekick run's needs-input and finished notices among the notification intents",
   // See NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION and docs/push-notifications.md.
   statements: NOTIFICATION_INTENTS_RUN_KINDS_MIGRATION,
+}, {
+  version: 146,
+  description: "admit a Canvas to the retirement graph",
+  // See RETIREMENT_GRAPH_CANVAS_MIGRATION and docs/workspace-retirement.md.
+  statements: RETIREMENT_GRAPH_CANVAS_MIGRATION,
 }];
 
 function conversationToolEntry(conversation: {
@@ -11833,6 +11832,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
              (parent_kind, parent_id, recorded_at, retired_at)
            VALUES ('workstream', ?, ?, NULL)`,
           row.workstream_id,
+          now,
+        );
+      }
+      // A Canvas's Chat is its own conversation object, closed with its Canvas.
+      for (const { canvas_id: canvasId } of sql.exec<{ canvas_id: string }>("SELECT canvas_id FROM canvas_directory").toArray()) {
+        sql.exec(
+          `INSERT OR IGNORE INTO workspace_retirement_graph
+             (parent_kind, parent_id, recorded_at, retired_at)
+           VALUES ('canvas', ?, ?, NULL)`,
+          canvasId,
           now,
         );
       }
