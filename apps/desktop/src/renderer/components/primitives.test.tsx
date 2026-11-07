@@ -558,10 +558,10 @@ describe('AvatarStack', () => {
 
     fireEvent.pointerMove(collaboratorItem, { pointerType: 'mouse' });
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      'Ari Collaborator is viewing this thread.',
+      'Ari Collaborator is here now.',
     );
     expect(container.querySelector('.avatar-stack')).toHaveAccessibleName(
-      'Current User; Ari Collaborator is viewing this thread.; Casey Observer',
+      'Current User; Ari Collaborator is here now.; Casey Observer',
     );
     const ping = collaboratorItem.querySelector('.avatar-presence-ping');
     const collaboratorAvatar = collaboratorItem.querySelector('.avatar');
@@ -647,7 +647,7 @@ describe('AvatarStack', () => {
     if (!item) throw new Error('avatar stack item missing');
     fireEvent.pointerMove(item, { pointerType: 'mouse' });
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      'Ari Collaborator is viewing this thread.',
+      'Ari Collaborator is here now.',
     );
   });
 

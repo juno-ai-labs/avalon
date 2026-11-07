@@ -381,15 +381,15 @@ export function StatusDot({
 const socketStateCopy: Record<SocketState, { label: string; description: string }> = {
   idle: {
     label: 'Live updates are loading',
-    description: 'Live updates are waiting for this thread to load.',
+    description: 'Live updates are waiting for this conversation to load.',
   },
   connecting: {
     label: 'Connecting to live updates',
-    description: 'Rally is connecting to live thread updates.',
+    description: 'Rally is connecting to live updates.',
   },
   connected: {
     label: 'Live updates connected',
-    description: 'Live thread updates are connected.',
+    description: 'Live updates are connected.',
   },
   reconnecting: {
     label: 'Reconnecting live updates',
@@ -493,7 +493,7 @@ export function AvatarStack({
   const present = new Set(presentUserIds);
   const named = members.map((member) => (
     present.has(member.id) && member.id !== currentUserId
-      ? `${member.name} is viewing this thread.`
+      ? `${member.name} is here now.`
       : member.name
   ));
   if (overflow > 0) named.push(`and ${overflow} more`);
@@ -506,7 +506,7 @@ export function AvatarStack({
       {visible.map((member) => {
         const showingPresence = present.has(member.id) && member.id !== currentUserId;
         const tooltip = showingPresence
-          ? `${member.name} is viewing this thread.`
+          ? `${member.name} is here now.`
           : member.name;
         const presenceColor = (presentations.get(member.id) ?? member.presentation)?.color;
         const item = (

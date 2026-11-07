@@ -21,10 +21,10 @@ describe('detached artifact commands', () => {
     });
   });
   it('refuses caller-selected resources and mutations outside Main', () => {
-    expect(() => artifactWindowActionRequest({ ...preview, editable: false }, { type: 'rename', title: 'Other' })).toThrow('editable thread context');
+    expect(() => artifactWindowActionRequest({ ...preview, editable: false }, { type: 'rename', title: 'Other' })).toThrow('cannot be edited here');
     expect(() => artifactWindowActionRequest(preview, { type: 'archive', resourceId: 'other' })).toThrow();
-    expect(() => artifactWindowActionRequest({ ...preview, annotationScope: '00000000-0000-4000-8000-000000000002:private' }, { type: 'archive' })).toThrow('editable thread context');
-    expect(() => artifactWindowActionRequest({ ...preview, annotationScope: undefined }, { type: 'pin', pinned: false })).toThrow('editable thread context');
+    expect(() => artifactWindowActionRequest({ ...preview, annotationScope: '00000000-0000-4000-8000-000000000002:private' }, { type: 'archive' })).toThrow('cannot be edited here');
+    expect(() => artifactWindowActionRequest({ ...preview, annotationScope: undefined }, { type: 'pin', pinned: false })).toThrow('cannot be edited here');
   });
   it("renames and deletes a Canvas artifact through the Canvas's conversation, and refuses pin and link with a reason", () => {
     const canvas = { ...preview, annotationScope: 'canvas:00000000-0000-4000-8000-0000000000c1' };
@@ -37,7 +37,7 @@ describe('detached artifact commands', () => {
     });
     expect(() => artifactWindowActionRequest(canvas, { type: 'pin', pinned: true })).toThrow('A Canvas artifact cannot be pinned from its own window; use the Canvas');
     expect(() => artifactWindowActionRequest(canvas, { type: 'link' })).toThrow('A Canvas artifact cannot be linked from its own window; use the Canvas');
-    expect(() => artifactWindowActionRequest({ ...canvas, annotationScope: 'canvas:not-an-id' }, { type: 'archive' })).toThrow('editable thread context');
+    expect(() => artifactWindowActionRequest({ ...canvas, annotationScope: 'canvas:not-an-id' }, { type: 'archive' })).toThrow('cannot be edited here');
   });
   it('confines historical page previews to the registered artifact', () => {
     expect(artifactWindowActionRequest(preview,{type:'site-preview',version:3,pagePath:'/pricing?q=team'})).toMatchObject({path:'/resources/00000000-0000-4000-8000-000000000001/versions/3/site-preview?path=%2Fpricing%3Fq%3Dteam',method:'GET',binary:true});
