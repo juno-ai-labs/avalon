@@ -76,6 +76,9 @@ export const NOTIFICATION_KIND_FOR_PUSH: Record<PushNotificationData["kind"], No
   run_finished: "runFinished",
   merged: "merges",
   artifact_updated: "artifactUpdates",
+  // A run waiting on input is the other half of "Sidekick runs" in Settings:
+  // one choice covers both, rather than a second row for one notice.
+  needs_input: "runFinished",
 };
 
 /** `changes` over `base`, switch by switch; a switch `changes` does not name keeps its value. */

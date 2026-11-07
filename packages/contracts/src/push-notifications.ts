@@ -94,9 +94,27 @@ export const PushDeliveryMessageSchema = z.union([
 export type PushDeliveryMessage = z.infer<typeof PushDeliveryMessageSchema>;
 export const PushNotificationDataSchema = z.object({
   v: z.literal(1),
-  kind: z.enum(["mention", "new_message", "participant_added", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated"]),
+  kind: z.enum(["mention", "new_message", "participant_added", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated", "needs_input"]),
   url: HttpsUrlSchema,
   workspaceId: z.string(),
   region: RegionSchema,
 });
 export type PushNotificationData = z.infer<typeof PushNotificationDataSchema>;
+
+/**
+ * What a Sidekick run's notification intent stores: the run, the Sidekick's
+ * name and the run's reply when the run reached the state the notice is
+ * about. `needs_input` is a run waiting on a person; `run_finished` is a run
+ * that completed, failed or stopped. The push renders from these alone, so a
+ * later rename or a newer reply does not rewrite a notice already queued.
+ */
+export const SidekickRunNotificationSchema = z.strictObject({
+  kind: z.enum(["needs_input", "run_finished"]),
+  sidekickId: z.string().min(1),
+  runId: z.string().min(1),
+  sidekickName: z.string().max(300),
+  state: z.enum(["needs_input", "completed", "failed", "stopped"]),
+  reply: z.string().nullable(),
+  occurredAt: z.number().int().nonnegative(),
+});
+export type SidekickRunNotification = z.infer<typeof SidekickRunNotificationSchema>;

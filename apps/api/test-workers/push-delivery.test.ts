@@ -241,3 +241,61 @@ it('keeps mention alerts distinct from each other in the same conversation', asy
     .toEqual([workstreamId, workstreamId, workstreamId, workstreamId]);
 });
 
+
+/** The person's relationship as the Organization object holds it, which is what decides what they may open. */
+async function seedRelationship(role: 'admin' | 'member') {
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`INSERT INTO workspace_member_status (user_id, relationship_json, removed_incarnation, active, sequence, updated_at)
+      VALUES (?, ?, NULL, 1, 1, 0) ON CONFLICT (user_id) DO UPDATE SET relationship_json = excluded.relationship_json, active = 1`,
+      userId, JSON.stringify({ workspaceId, userId, accessClass: 'member', role, status: 'active', incarnation: 'i1', revision: 1 }));
+  });
+}
+
+it('tells an administrator mentioned in a Canvas only its creator otherwise opens', async () => {
+  await seedRelationship('admin');
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`UPDATE canvas_directory SET created_by_user_id = ?, visibility = 'creator' WHERE canvas_id = ?`, actorId, workstreamId);
+  });
+  const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
+  expect(await deliverPush(pushEnv(), message(), send)).toBe(true);
+  expect(payloads(send).map((payload) => JSON.parse(payload.apns).aps.alert.title))
+    .toEqual(['Author mentioned you in Planning', 'Author mentioned you in Planning']);
+});
+
+it('pushes a Sidekick run that needs input or finished, linked to the Sidekick, under the Sidekick runs choice', async () => {
+  const sidekickId = '00000000-0000-7000-8000-00000000f105';
+  const runId = '00000000-0000-7000-8000-00000000f106';
+  await seedRelationship('member');
+  await runInDurableObject(workspace(), (_instance, state) => {
+    state.storage.sql.exec(`INSERT INTO automation_directory
+        (automation_id, workspace_id, author_user_id, source_version, payload_hash, lifecycle, scope, owning_workstream_id, title, description, projected_at, authority_generation, region)
+      VALUES (?, ?, ?, 1, 'hash', 'active', 'workspace', NULL, 'Deploy watcher', '', 1, 1, 'global')`, sidekickId, workspaceId, actorId);
+    for (const [kind, runState, reply] of [['needs_input', 'needs_input', 'Which **environment**?'], ['run_finished', 'failed', 'The deploy failed.']] as const) {
+      const notice = { kind, sidekickId, runId, sidekickName: 'Deploy watcher', state: runState, reply, occurredAt: 1 };
+      state.storage.sql.exec(`INSERT INTO workstream_notification_intents
+        (intent_id, workspace_id, workstream_id, recipient_user_id, source_message_id, source_generation,
+         source_version, required_directory_version, notification_kind, payload_json, payload_hash, state, attempts, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 1, 1, 1, ?, ?, 'hash', 'delivered', 0, ?, ?)`,
+        `${kind}:one`, workspaceId, sidekickId, userId, `sidekick_run:${runId}:${kind}:1`, kind, JSON.stringify(notice),
+        new Date().toISOString(), new Date().toISOString());
+    }
+  });
+  const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: 'sent' }));
+  expect(await deliverPush(pushEnv(), message('needs_input:one'), send)).toBe(true);
+  expect(await deliverPush(pushEnv(), message('run_finished:one'), send)).toBe(true);
+  expect(payloads(send).filter((_payload, index) => index % 2 === 0).map((payload) => {
+    const apns = JSON.parse(payload.apns) as { aps: { alert: { title: string; body: string } }; rally: { kind: string; url: string } };
+    return { title: apns.aps.alert.title, body: apns.aps.alert.body, kind: apns.rally.kind, url: apns.rally.url };
+  })).toEqual([
+    { title: 'Deploy watcher needs your input', body: 'Which environment?', kind: 'needs_input', url: 'https://app.test/app/global/1111117Hxt1fAWDjNRoE/sk/1111117Hxt1fAWDjNRoJ/' },
+    { title: 'Deploy watcher failed', body: 'The deploy failed.', kind: 'run_finished', url: 'https://app.test/app/global/1111117Hxt1fAWDjNRoE/sk/1111117Hxt1fAWDjNRoJ/' },
+  ]);
+
+  // One choice covers both notices: off, neither is sent.
+  await workspace().saveMemberPreferences({ workspaceId, userId, preferences: { showAgentWork: true, push: { runFinished: false } } });
+  send.mockClear();
+  await runInDurableObject(workspace(), (_instance, state) => { state.storage.sql.exec(`UPDATE workstream_notification_intents SET intent_id = intent_id || ':again'`); });
+  expect(await deliverPush(pushEnv(), message('needs_input:one:again'), send)).toBe(true);
+  expect(await deliverPush(pushEnv(), message('run_finished:one:again'), send)).toBe(true);
+  expect(send).not.toHaveBeenCalled();
+});
