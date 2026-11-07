@@ -157,6 +157,31 @@ export const MEMORY_DIGEST_SYNC_MIGRATION: readonly string[] = [
   ...Object.values(MEMORY_DIGEST_SYNC_TRIGGERS).flat(),
 ];
 
+const MEMORY_DIGEST_TRIGGER_STATEMENTS = Object.values(MEMORY_DIGEST_SYNC_TRIGGERS).flat();
+
+/**
+ * WorkspaceDO migration 143: a holder may be a Canvas's Chat. The CHECK on
+ * `parent_kind` cannot widen in place, so the table is copied. Every trigger
+ * above reads the table by name in its body, and SQLite refuses to rename a
+ * table into place while a trigger names one that does not exist, so the
+ * triggers are dropped first and put back with the same text afterwards.
+ */
+export const MEMORY_DIGEST_HOLDERS_ADMIT_CANVAS_MIGRATION: readonly string[] = [
+  ...MEMORY_DIGEST_TRIGGER_STATEMENTS.map((statement) =>
+    `DROP TRIGGER IF EXISTS ${/^CREATE TRIGGER (\S+)/u.exec(statement)![1]}`),
+  `CREATE TABLE memory_digest_holders_v143 (
+    conversation TEXT PRIMARY KEY,
+    parent_kind TEXT NOT NULL CHECK (parent_kind IN ('workstream', 'automation', 'space', 'canvas')),
+    parent_id TEXT NOT NULL,
+    substream_id TEXT NOT NULL,
+    refreshed_at INTEGER NOT NULL
+  ) STRICT`,
+  "INSERT INTO memory_digest_holders_v143 SELECT * FROM memory_digest_holders",
+  "DROP TABLE memory_digest_holders",
+  "ALTER TABLE memory_digest_holders_v143 RENAME TO memory_digest_holders",
+  ...MEMORY_DIGEST_TRIGGER_STATEMENTS,
+];
+
 /** Advance `memory_revision` inside the caller's transaction and answer the new value. */
 export function nextMemoryRevision(sql: SqlStorage): number {
   return sql.exec<{ revision: number }>(

@@ -631,6 +631,19 @@ authority. `retracted_by` records who forgot a fact.
 
 ## Changelog
 
+### 2026-11-07 — A Canvas's Chat can hold a memory digest copy
+
+**What changed:** WorkspaceDO migration 143 rebuilds `memory_digest_holders`
+with `parent_kind` admitting `canvas`. Its triggers read the table by name, so
+the migration drops them, copies the table, and puts them back with the same
+text.
+
+**Why:** Every run in a Canvas's Chat refreshes its digest copy, and the
+holder's CHECK (migration 117) predates Canvases, so the write failed inside
+`refreshMemoryDigestCopy`, which logged and moved on: no Canvas Chat ever got
+a digest copy. The shipped migration cannot be edited, so the CHECK widens in
+a new one.
+
 ### 2026-11-07 — A Canvas's Chat has its own memory source
 
 **What changed:** A conversation whose parent is a Canvas is memory source

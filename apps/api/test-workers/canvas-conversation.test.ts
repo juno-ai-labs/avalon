@@ -480,7 +480,7 @@ describe("a Canvas's artifacts", () => {
 });
 
 describe("Rally in a Canvas's Chat", () => {
-  it("answers with the Canvas's current artifacts as context and the resource tools a Thread's Main has", async () => {
+  it("answers with the Canvas's current artifacts as context and the resource tools a Thread's Main has, and holds a memory digest copy", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
     const resourceId = crypto.randomUUID();
     await runInDurableObject(workspace(), (_instance, state) => {
@@ -506,6 +506,11 @@ describe("Rally in a Canvas's Chat", () => {
       canvasId, title: "Launch plan", artifacts: [{ resourceId, title: "plan.md", kind: "file", version: 1 }],
     });
     expect(call.toolNames).toEqual(expect.arrayContaining(["list_resources", "read_resource"]));
+    // The run read its memory digest, so the Organization records the Chat as
+    // a holder of a copy; a `canvas` holder is admitted (WorkspaceDO migration 143).
+    await expect.poll(() => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
+      "SELECT parent_kind, parent_id, substream_id FROM memory_digest_holders WHERE parent_id = ?", canvasId,
+    ).toArray()), { timeout: 15_000 }).toEqual([{ parent_kind: "canvas", parent_id: canvasId, substream_id: "0" }]);
   });
 });
 
