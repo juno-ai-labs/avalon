@@ -32,7 +32,7 @@ Sidekick does, and who may do it, is
 | `apps/api/src/durable-objects/hosted-canvas.ts`, `canvas-schema.ts` | `HostedCanvas`: one Canvas's parent, and its `canvas_directory` and audience tables. |
 | `apps/api/src/durable-objects/hosted-sidekick-schema.ts` | `WorkspaceDO` migrations 91, 132, 135 and 136: the definition columns on `automation_directory` and the `sidekick_*` tables. |
 | `apps/api/src/durable-objects/sidekick-directory-sql.ts` | The sidebar's Sidekick audience and viewer SQL and the stored-appearance parse. |
-| `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 72, kept because the migration list spreads it. Its `parent_*` tables hold retired Channel and Space rows until plan step C-7 drops them. |
+| `apps/api/src/durable-objects/hosted-parent-schema.ts` | `WorkspaceDO` migration 72, kept because the migration list spreads it. Its `parent_*` tables hold retired Channel and Space rows, which the Thread retirement's inventory reads; migration 147 left them for that reason. |
 | `apps/api/src/durable-objects/scope-grant-storage.ts`, `scope-invitation-storage.ts`, `scope-invitation-service.ts` | The grant and invitation repositories a Canvas share uses, scoped by `parent_id`. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The RPC facade: every conversation-parent method answers here, through `hostedConversationParent`, which resolves a Sidekick or a Canvas. |
 | `apps/api/src/services/sidekick-run-provisioning.ts` | `provisionSidekickRun`: the Queue consumer step that opens a run's conversation and starts its loop, off the Organization's alarm. |
@@ -141,7 +141,7 @@ Who reads a Sidekick is its own audience (`sidekickReaderAllows`): its author,
 the person it runs as, the people on its `people` list (`sidekick_audience`,
 WorkspaceDO migration 136) and, for an Organization one, every member; a
 guest only from the list. WorkspaceDO migration 137 converted every
-Channel-scoped Sidekick to the Organization's. The library listing takes the
+Thread-owned Sidekick to the Organization's. The library listing takes the
 caller's access class and role from its authentication rather than reading them
 again. The sidebar's Sidekick audience and viewer SQL is
 `sidekick-directory-sql.ts`.
@@ -242,118 +242,87 @@ state: the `parent_*` tables, the directory batch and its in-transaction
 apply, the local outbox, the Channel rail and its `railWaterline`, the Channel
 control socket, and the per-viewer Channel row on the workspace socket. Plan
 step C-2 deleted it with the Thread, Channel, Space, Breakout and Activity
-modules ([`data-model.md`](data-model.md#changelog) lists them). The tables it
-wrote stay until plan step C-7's drop migration; the migration statements of
-deleted modules moved byte for byte to `retired-workspace-schema.ts`. The
+modules ([`data-model.md`](data-model.md#changelog) lists them). WorkspaceDO
+migration 147 dropped the Thread-era tables nothing reads; the `parent_*`,
+`channels`, `breakouts` and `spaces` rows stay until the operator has run
+`retire_threads` in every Organization, since its inventory reads them. The
+migration statements of deleted modules moved byte for byte to
+`retired-workspace-schema.ts`. The
 changelog below records why each of its mechanisms was shaped as it was; the
 generation fences and the claim/send/accept publisher survive in the resource
 version ledger.
 
 ## Changelog
 
-### 2026-11-07 — The Channel and Space host is deleted; an unhosted id gets a named answer
-
-**What changed:** `HostedParent` and every RPC, alarm lane, socket route and
-socket command that served a Channel, a Space or a Thread are deleted from
-`WorkspaceDO` (plan step C-2). The conversation-parent contract now resolves
-only a Sidekick or a Canvas: an id it does not host reads as not existing and
-not authorized, has no children, refuses a reservation with
-`conversation_parent_not_found`, and refuses a child effect naming a
-`workstream` or `space` parent with `conversation_parent_kind_retired:<kind>`.
-Sharing (invitations, grants, their alarms) is Canvas-only. The post-write
-drain that `sql-write-observer.ts` schedules now covers only the resource
-version ledger, since the rails it also drained are gone.
-
-**Why:** After the client cutover nothing opens a Channel, Space or Thread, and
-B-7 retired their conversations. Keeping `HostedParent` dormant would have kept
-the second hosting implementation every change to the first had to reason
-about.
-
-**Considered and rejected:** Answering a retired kind's child effect with
-success and dropping it. A Thread conversation still reporting after B-7 is a
-retirement bug, and a quiet acknowledgement would hide it; the dead-letter
-queue is the monitoring this team has.
-
-**Consequences:** Plan step C-7 drops the `parent_*`, `channels`, `breakouts`
-and `spaces` rows. Until then nothing reads them. A new hosted kind is added to
-`hostedConversationParent`; there is no fallback to fall through to.
-
-### 2026-11-07 — One hosting primitive for a Sidekick and a Canvas
+### 2026-11-07 — One hosting primitive for a Sidekick and a Canvas; the Channel and Space host is deleted
 
 **What changed:** The conversation-parent contract a Sidekick answered —
 authority, the viewer check, children, the children's effects and receipts,
 and each reader's read of `"0"` — moved into `HostedConversation`
 (`hosted-conversation.ts`), which `HostedSidekick` and the new `HostedCanvas`
 extend. Its four tables (`sidekick_children`, `sidekick_child_projections`,
-`sidekick_child_receipts`, `sidekick_viewer_reads`) now hold either kind of
-parent, keyed by the parent id in the column still called `sidekick_id`.
-`WorkspaceDO.hostedConversationParent` resolves a Sidekick or a Canvas before
-the Channel fallback, and `hostedConversationAuthorizationFacts` answers
-authorization for either in one call.
+`sidekick_child_receipts`, `sidekick_viewer_reads`) hold either kind of
+parent, keyed by the parent id in the column still called `sidekick_id`, and
+`hostedConversationAuthorizationFacts` answers authorization for either in one
+call. A Sidekick writes a row per run into its shared conversation and keeps
+it current: triggers on `sidekick_runs` arm a `sidekick_run_row` entry on
+every change, and the entry's handler calls `projectSidekickRunRow` on `"0"`
+with the run as it stands. A Sidekick has its own audience, so
+`authorizeViewer` no longer asks a home Channel or Breakout, and it keeps each
+reader's read of `"0"` (`sidekick_viewer_reads`, from `"0"`'s `directory_user`
+effects). Migration 137 made every Thread-owned Sidekick an Organization one,
+and the Sidekick parent stopped reading `channels` and `breakouts`.
+
+Then `HostedParent` and every RPC, alarm lane, socket route and socket command
+that served a Channel, a Space or a Thread were deleted from `WorkspaceDO`
+(plan step C-2), with the Channel control socket that released desktops (and,
+before `apps/ios` was deleted, the iOS client's child directory) held open.
+The contract resolves only a Sidekick or a Canvas: an id it does not host
+reads as not existing and not authorized, has no children, refuses a
+reservation with `conversation_parent_not_found`, and refuses a child effect
+naming a `workstream` or `space` parent with
+`conversation_parent_kind_retired:<kind>`. Sharing (invitations, grants, their
+alarms) is Canvas-only. The post-write drain that `sql-write-observer.ts`
+schedules covers only the resource version ledger, since the rails it also
+drained are gone.
 
 **Why:** A Canvas is a shared conversation with children and readers, exactly
 what a Sidekick's parent already hosted (the Canvases and Sidekicks decision
 "one hosting primitive in WorkspaceDO for Canvases and Sidekicks"). Cloning
 `HostedSidekick` would have meant two copies of the receipt, projection and
-read-state logic.
+read-state logic. The decision log has runs appear as rows in the Sidekick's
+shared conversation, carrying their reply; the parent already holds the
+authoritative run row and hears every run change, so it is the one place a
+projection can be kept from drifting, and arming in the table's own triggers
+means a run writer added later cannot forget it. An audience borrowed from a
+Thread would have outlived the Thread. After the client cutover nothing opens
+a Channel, Space or Thread, and keeping `HostedParent` dormant would have kept
+the second hosting implementation every change to the first had to reason
+about.
 
-**Considered and rejected:** A third `HostedParent` role: Channel code scans the
-`parent_*` tables across every parent. New `canvas_*` child tables: the
+**Considered and rejected:** A third `HostedParent` role: Channel code scanned
+the `parent_*` tables across every parent. New `canvas_*` child tables: the
 existing ones are keyed by parent id, and every reader that scans them across
-parents joins its own directory.
+parents joins its own directory. Answering a retired kind's child effect with
+success and dropping it: a Thread conversation still reporting after its
+retirement is a retirement bug, and a quiet acknowledgement would hide it; the
+dead-letter queue is the monitoring this team has.
 
 **Consequences:** A new hosted kind implements `identity`, `assertParent`,
 `admitsViewer`, `onViewerReadChanged` and `onChildProjection`, and is added to
-`hostedConversationParent`. A statement on the four tables names the parent
-id, whatever its kind.
+`hostedConversationParent`; there is no fallback to fall through to. A
+statement on the four tables names the parent id, whatever its kind. The only
+parent-to-own-conversation write here is an alarm-driven RPC, not an outbox
+row: the write is idempotent and versioned by the run's `updated_at`, so the
+alarm's retry is all the delivery guarantee it needs, and a change that moves
+it onto the Queue must keep the handler reading the run at delivery time. The
+owning columns on `automation_directory` stay as dead columns, since released
+CHECKs name them. WorkspaceDO migration 147 dropped the Thread-era tables but
+kept the `parent_*`, `channels`, `breakouts` and `spaces` rows, which the
+Thread retirement's inventory reads, until the operator has run
+`retire_threads` in every Organization.
 
-### 2026-11-06 — The iOS client is deleted
-
-The Channel control socket was kept partly for the iOS client's child directory;
-with `apps/ios` deleted, only released desktops hold it open, and the socket is
-removed in a later phase of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
-
-### 2026-11-06 — A Sidekick projects each run into its own shared conversation
-
-**What changed:** `HostedSidekick` writes a row per run into its shared
-conversation (`"0"`) and keeps it current: triggers on `sidekick_runs` arm a
-`sidekick_run_row` entry on every change, and the entry's handler calls
-`projectSidekickRunRow` on `"0"` with the run as it stands.
-
-**Why:** The Canvases and Sidekicks decision log has runs appear as rows in
-the Sidekick's shared conversation, carrying their reply. A run was a sibling
-of `"0"` and wrote nothing there. The parent already holds the authoritative
-run row and already hears every run change, so it is the one place a
-projection can be kept from drifting; arming in the table's own triggers
-means a run writer added later cannot forget it.
-
-**Consequences:** The only parent-to-own-conversation write in this module is
-an alarm-driven RPC, not an outbox row: the write is idempotent and versioned
-by the run's `updated_at`, so the alarm's retry is all the delivery guarantee
-it needs. A change that moves this onto the Queue must keep the handler
-reading the run at delivery time, never carrying a copy.
-
-The same change gives a Sidekick its own audience, so `authorizeViewer` no
-longer asks a home Channel or Breakout (`homeAdmits`, `sidekickGrantViewer`
-and the host's `channelViewer` are gone): Threads are being retired, and an
-audience borrowed from one would outlive it. It also keeps each reader's read
-state of `"0"` (`sidekick_viewer_reads`, from `"0"`'s `directory_user`
-effects), which the Sidekick parent ignored before, so the sidebar row can
-say what that reader has not read.
-
-Then the `workstream` scope went (plan step A-5, the PRD's decision that a
-Thread no longer owns a Sidekick): migration 137 made every Channel-scoped
-Sidekick an Organization one, and the Sidekick parent stops reading
-`channels` and `breakouts` for a home color, `isChannelParticipant`,
-`channelColor` and `announcementSpaceId` leave its host, and a Thread or
-Breakout archive no longer cascades into `setOwningRoomArchived`. The owning
-columns stay as dead columns, since released CHECKs name them.
-
-### 2026-11-06 — The iOS client is deleted
-
-The Channel control socket was kept partly for the iOS client's child directory;
-with `apps/ios` deleted, only released desktops hold it open, and the socket is
-removed in a later phase of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
+Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 
 ### 2026-10-23 — Read historical directory projections without retaining obsolete fields
 
