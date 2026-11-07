@@ -877,11 +877,12 @@ describe("Durable Objects in the Workers runtime", () => {
     ));
     await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
     // A Canvas every member opens, made by the first viewer.
-    await runInDurableObject(workspace, (_instance, state) => {
-      state.storage.sql.exec(`INSERT INTO canvas_directory
-          (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, visibility, authority_generation)
-        VALUES (?, ?, 'Foreground presence', ?, 0, 0, 'workspace', 1)`, WORKSTREAM_ID, WORKSPACE_ID, USER_ID);
-    });
+    await workspace.canvasCreate({ workspaceId: WORKSPACE_ID, canvasId: WORKSTREAM_ID, title: "Foreground presence",
+      createdByUserId: USER_ID, authorityGeneration: 1 });
+    const audience = (update: { visibility: "creator" | "participants" | "workspace"; userIds: string[] }) =>
+      workspace.canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: WORKSTREAM_ID,
+        actor: { userId: USER_ID, actorRole: "member" }, update });
+    await audience({ visibility: "workspace", userIds: [] });
 
     const first = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-00000000040c");
     const second = await openWorkspaceSocket(workspace, "00000000-0000-7000-8000-00000000040d", otherSessionId, otherUserId);
@@ -912,9 +913,16 @@ describe("Durable Objects in the Workers runtime", () => {
       // Narrowing the Canvas to its creator removes the other viewer. The
       // creator gets a canonical empty set while the removed socket stays
       // connected but backgrounded.
+      // Sharing it with that viewer by name keeps them in it.
+      await audience({ visibility: "participants", userIds: [otherUserId] });
+      await runInDurableObject(workspace, (_instance, state) => {
+        const kept = state.getWebSockets()
+          .map((socket) => socket.deserializeAttachment() as Record<string, unknown>)
+          .find((candidate) => candidate.userId === otherUserId);
+        expect(kept).toMatchObject({ applicationState: "foreground", foregroundWorkstreamId: WORKSTREAM_ID });
+      });
       const afterNarrowing = nextMessageOfType(first, "workspace_presence");
-      await workspace.canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: WORKSTREAM_ID,
-        actor: { userId: USER_ID, actorRole: "member" }, update: { visibility: "creator", userIds: [] } });
+      await audience({ visibility: "creator", userIds: [] });
       expect(await afterNarrowing).toMatchObject({ workstreamId: WORKSTREAM_ID, userIds: [] });
       expect(second.readyState).toBe(WebSocket.OPEN);
       await runInDurableObject(workspace, (_instance, state) => {
@@ -926,8 +934,7 @@ describe("Durable Objects in the Workers runtime", () => {
 
       // Opening it again alone does not put them back: they are present again
       // only once their window says so.
-      await workspace.canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: WORKSTREAM_ID,
-        actor: { userId: USER_ID, actorRole: "member" }, update: { visibility: "workspace", userIds: [] } });
+      await audience({ visibility: "workspace", userIds: [] });
       await runInDurableObject(workspace, (_instance, state) => {
         const restored = state.getWebSockets()
           .map((socket) => socket.deserializeAttachment() as Record<string, unknown>)
