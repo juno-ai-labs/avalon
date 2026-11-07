@@ -497,7 +497,6 @@ behave:
 | --- | --- | --- | --- |
 | `developer-settings` | boolean | `false` | Whether Application → Developer exists on this device |
 | `suggested-work-enabled` | boolean | `false` | Whether Electron shows Suggested Work surfaces |
-| `live-artifacts-enabled` | boolean | `false` | Whether Electron shows live-artifact surfaces — the rail's site detail and preview pane, the Data view, and the artifact window. Presentation only: an artifact's authorization is structural, so a URL somebody already holds keeps working through its session checks whether or not this is on. See [`live-web-artifacts.md`](live-web-artifacts.md) |
 | `multiple-workspaces-enabled` | boolean | `false` | Whether Electron shows workspace switching, invitations, creation, and background attention |
 
 `GET /feature-flags` serves them all as one object — `{ "developerSettings":
@@ -565,7 +564,7 @@ a value.
 
 #### The desktop half
 
-The four managed product Booleans arrive on the private
+The three managed product Booleans arrive on the private
 WorkspaceDO subscribe response and on `workspace_feature_flags` events. They
 replace the renderer's one `['feature-flags']` cache as a complete object; a
 partial event cannot leave a mixed generation behind. Reconnect always
@@ -819,8 +818,7 @@ identical. Staging a rollout per region does not need a second app either:
 
 Ace automatically ensures all eight `agent-model-*` JSON flags plus
 `meeting-recording-enabled`, `suggested-work-enabled`,
-`multiple-workspaces-enabled`,
-`live-artifacts-enabled`, and `push-notifications-enabled` exist on every
+`multiple-workspaces-enabled`, and `push-notifications-enabled` exist on every
 merge-to-main deployment. It seeds model flags from the checked-in Worker
 defaults and does not overwrite an existing definition. Every product flag
 defaults off except `push-notifications-enabled`, which defaults **on** for
@@ -1071,6 +1069,27 @@ both intent enqueue and delivery. Turning it off stops queued sends as well as
 hiding the Notifications section.
 
 ## Changelog
+
+### 2026-11-06 — `live-artifacts-enabled` is retired; site surfaces are always on
+
+**What changed:** The `liveArtifactsEnabled` client field, the
+`live-artifacts-enabled` managed key, its Ace editor entry and its
+`ensureFlag` provisioning are gone. Ace's deploy now `retireFlag`s the key, so
+the first merge-to-main deployment after this deletes it from Flagship.
+`useSiteArtifacts` builds the rail's site detail, preview pane, Data view and
+artifact window for every signed-in surface that has a bridge to present
+through.
+
+**Why:** The Canvases and Sidekicks PRD makes a live artifact the Canvas
+itself, and a Canvas is opened through exactly these surfaces. A flag that
+can hide them would hide the product's primary object, so there is no state
+in which it may be off.
+
+**Consequences:** Do not revive `live-artifacts-enabled` for a new purpose; a
+site-surface rollout control would now be a kill switch for Canvases, which
+is a different decision from a presentation flag. An older desktop build
+still defaults the missing field to `false`, so it hides the site surfaces
+until the updater delivers this build; that is expected, not a bug.
 
 ### 2026-10-21 — Route the Sidekick wizard independently on Sol
 
