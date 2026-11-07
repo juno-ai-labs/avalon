@@ -3,6 +3,7 @@
  * on the test itself, so the setup agent reads it where it acts rather than
  * recalling one sentence of a long guide.
  */
+import { programCalls } from "./check";
 
 export interface ProgramTestEvidence {
   /** The saved tool's code. */
@@ -19,6 +20,6 @@ export interface ProgramTestEvidence {
  */
 export function programTestWarnings(evidence: ProgramTestEvidence): string[] {
   const clockReads = evidence.calls.filter((call) => call.tool.endsWith(".current_time")).length;
-  if (clockReads <= 1 || /\bmsLeft\s*\(/.test(evidence.code)) return [];
+  if (clockReads <= 1 || programCalls(evidence.code, "msLeft")) return [];
   return [`The program read current_time ${clockReads} times and never calls msLeft(). If those reads time its share, use msLeft() instead: it costs no call and follows the real deadline. current_time stays right for working out which dates the work covers.`];
 }

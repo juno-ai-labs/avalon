@@ -199,6 +199,26 @@ function clockOrRandom(node: AnyNode): string | null {
 }
 
 /**
+ * Whether a program body calls a function by its bare name, read from the
+ * parse tree, so a name in a comment or a string is not a call and
+ * `name?.()` or `name /* note *\/ ()` is. A body that does not parse calls
+ * nothing.
+ */
+export function programCalls(code: string, name: string): boolean {
+  let tree: Program;
+  try {
+    tree = parse(wrapProgram(code), { ecmaVersion: 2023, sourceType: "module" });
+  } catch {
+    return false;
+  }
+  let found = false;
+  walk(tree, (node) => {
+    if (!found && node.type === "CallExpression" && identifierName(node.callee) === name) found = true;
+  });
+  return found;
+}
+
+/**
  * Check a program body before it runs. Returns the issues in source order;
  * an empty array is a program the isolate may load. A body that does not
  * parse yields one `syntax_error` and nothing else, since there is no tree
