@@ -93,11 +93,8 @@ scanned, checked 2026-10-03). Readers there deduplicate by `event_id`.
 
 `usage_events_sidekick_occurred` (`sidekick_id, occurred_at`, partial on
 Sidekick rows) serves a Sidekick's cost over a window and one run's (the same
-read narrowed by `substream_id`). Without it, the Organization index reads every
-event the Organization logged in the window to find one Sidekick's. No product
-path reads it yet; it serves operator reads through the engineering MCP's
-`run_d1_sql`, and a self-review that needs a run's cost reads it from the run's
-own `inference_attempts` instead.
+read narrowed by `substream_id`), for operator reads through the engineering
+MCP's `run_d1_sql`.
 
 `readOrganizationUsage` reads the workspace row and the rollups from seven days
 before the current period's start (a week that straddles the boundary) to now,
@@ -316,10 +313,12 @@ workspace.
 **What changed:** Migration `0002_usage_events_sidekick.sql` adds a partial
 index on `usage_events(sidekick_id, occurred_at)` for Sidekick rows.
 
-**Why:** Finding which Sidekicks cost the most, and what one run cost, read one
-Organization's whole window through `usage_events_workspace_occurred`: 266,973
-rows to group one Sidekick's runs over three days. Those reads come back
-whenever a Sidekick's cost is in question.
+**Why:** A Sidekick's cost, or one run's, has no index of its own. Grouping one
+Sidekick's runs over three days by `sidekick_id` scanned the whole ledger
+(266,973 rows on 2026-11-07); scoped by Organization through
+`usage_events_workspace_occurred` it still reads every event that Organization
+logged in the window (17,474 for Juno Labs over those three days) to find about
+1,300. Those reads come back whenever a Sidekick's cost is in question.
 
 **Considered and rejected:** An index on `substream_id` alone: it serves one run
 but not a Sidekick over time, and a run's rows sit inside its Sidekick's.
