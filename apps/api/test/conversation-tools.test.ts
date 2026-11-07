@@ -764,6 +764,11 @@ describe("conversation_search", () => {
     ]);
   });
 
+  it("asks the index for a Sidekick's own conversation under the group its turns are indexed with", () => {
+    const sidekick = { kind: "sidekick" as const, parentId: SIDEKICK_ID, substreamId: "0" as never };
+    expect(conversationSearchGroups([sidekick])).toEqual([`sidekick:${SIDEKICK_ID}`]);
+  });
+
   it("keeps the newest matches across every candidate page, whatever page they are on", async () => {
     const hit = (messageId: string, day: number) => ({ parentId: SPACE_ID, substreamId: "0", messageId,
       sentAt: `2026-10-${String(day).padStart(2, "0")}T00:00:00.000Z`, text: "ICP" });

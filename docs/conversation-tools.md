@@ -56,8 +56,10 @@ A Sidekick's own conversation is its shared conversation, substream `"0"`
 under the Sidekick (`kind: "sidekick"` to the host). Its `conversationId` is
 the Sidekick's id, it is always first in a Sidekick scope, and it is admitted by
 the Sidekick (`HostedSidekick.authorizeViewer`), never by a Channel's
-`readableSubstreams`. It is read, searched and posted to like any other
-conversation. A run's conversation is never in scope.
+`readableSubstreams`. It is read and posted to like any other conversation.
+Search asks the index for the Sidekick's group (`sidekick:<id>`), which is the
+group its turns are indexed under, and which its runs' conversations share;
+only hits in `"0"` are kept. A run's conversation is never in scope.
 
 Scope discovery and list admission stay within WorkspaceDO, without
 per-conversation cross-object calls.
@@ -370,6 +372,8 @@ want the Thread must name it. The `home` option of `createConversationsPlugin`
 and `conversationsSystemMessage` is gone, and so is the "conversation cannot be
 left out" refusal path for a post (`conversation_home_missing` remains for the
 Terminal publication home, which still resolves `reference: null` to the home).
+`conversation_search` over the own conversation asks for the Sidekick's search
+group, not a conversation's, because that is the group its turns carry.
 
 ### 2026-10-29 — A Sidekick's scope lists the Channel its review announces in, and `post` reaches it
 

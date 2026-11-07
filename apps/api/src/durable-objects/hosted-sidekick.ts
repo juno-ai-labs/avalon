@@ -430,6 +430,9 @@ function iso(timestamp: number | null): string | null {
   return timestamp === null ? null : new Date(timestamp).toISOString();
 }
 
+/** The payload a replay arms a run-row entry with; see `replayRunRows`. */
+const SIDEKICK_RUN_ROW_REPLAY_PAYLOAD = JSON.stringify({ replay: true });
+
 function forbidden(): ApiError {
   return new ApiError(403, "sidekick_forbidden", "You cannot manage this Sidekick");
 }
@@ -1946,7 +1949,7 @@ export class HostedSidekick {
    * repeated delivery converges on the next one, and `replayRunRows` rebuilds
    * every row from the table. A throw retries on the scheduler's backoff.
    */
-  private async projectRunRow(runId: string): Promise<void> {
+  private async projectRunRow(runId: string, replay: boolean): Promise<void> {
     const row = first(this.sql.exec<{
       workspace_id: string; region: string | null; title: string; trigger_json: string; state: RunState;
       summary: string | null; step_count: number; created_at: number; updated_at: number;
@@ -1958,8 +1961,9 @@ export class HostedSidekick {
       this.sidekickId, runId,
     ));
     if (!row) return;
+    const workspaceId = asWorkspaceId(row.workspace_id);
     const projection: SidekickRunRowProjection = {
-      workspaceId: asWorkspaceId(row.workspace_id),
+      workspaceId,
       automationId: this.sidekickId,
       runId,
       automationName: row.title || "New Sidekick",
@@ -1972,16 +1976,23 @@ export class HostedSidekick {
       // is whatever it said most recently, which is progress, not a reply.
       reply: row.state === "pending" || row.state === "running" ? null : row.summary,
       version: row.updated_at,
+      replay,
     };
-    const conversation = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, projection.workspaceId,
-      conversationObjectName(row.region ?? this.env.AVALON_REGION, projection.workspaceId, this.sidekickId, asSubstreamId("0")));
+    const conversation = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
+      conversationObjectName(row.region ?? this.env.AVALON_REGION, workspaceId, this.sidekickId, asSubstreamId("0")));
     const written = await conversation.projectSidekickRunRow(projection);
     if (written.outcome === "refused") {
       logWarn(this.env, "sidekick_run_row_refused", { ...this.logFields(), run_id: runId, code: written.code });
     }
   }
 
-  /** Rebuild every run's row in the shared conversation from `sidekick_runs`, newest last. */
+  /**
+   * Rebuild every run's row in the shared conversation from `sidekick_runs`,
+   * newest last. Each entry is armed as a replay, which the conversation
+   * applies whatever version it holds. A run is never deleted from
+   * `sidekick_runs`, so there is no row whose run is gone to remove; a trigger
+   * that re-arms an entry before it runs replaces it with an ordinary one.
+   */
   async replayRunRows(input: AutomationActorRequest): Promise<{ armed: number }> {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "replay_run_rows");
     await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
@@ -1990,7 +2001,10 @@ export class HostedSidekick {
       `SELECT run_id FROM sidekick_runs WHERE sidekick_id = ? ORDER BY created_at, run_id`, this.sidekickId,
     ).toArray();
     for (const run of runs) {
-      this.host.alarms.schedule({ kind: SIDEKICK_RUN_ROW_ALARM_KIND, key: sidekickAlarmKey(this.sidekickId, run.run_id), dueAt: now }, now);
+      this.host.alarms.schedule({
+        kind: SIDEKICK_RUN_ROW_ALARM_KIND, key: sidekickAlarmKey(this.sidekickId, run.run_id), dueAt: now,
+        payload: SIDEKICK_RUN_ROW_REPLAY_PAYLOAD,
+      }, now);
     }
     return { armed: runs.length };
   }
@@ -2275,7 +2289,8 @@ export class HostedSidekick {
     }
     if (alarm.kind === AUTOMATION_RUN_ALARM_KIND) return this.startRun(innerKey, alarm.attempt);
     if (alarm.kind === SIDEKICK_RUN_ROW_ALARM_KIND) {
-      await this.projectRunRow(innerKey);
+      // A trigger's arm carries no payload; a replay's forces the write.
+      await this.projectRunRow(innerKey, alarm.payload === SIDEKICK_RUN_ROW_REPLAY_PAYLOAD);
       return { progressed: true };
     }
     if (alarm.kind === SIDEKICK_REVIEW_ALARM_KIND) return this.startReview();

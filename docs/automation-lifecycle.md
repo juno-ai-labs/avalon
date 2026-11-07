@@ -1108,7 +1108,9 @@ and `run: {state, stepCount, reply}`. The row is a projection of the run's
   the turn's revision and send it to the room. The transcript joins the row in
   whenever the turn is read (`sidekick-run-row.ts`), so the turn's text is the
   reply once there is one and a line saying where the run is until then. The
-  canonical turn is never rewritten, and a row wakes no agent.
+  same write replaces the turn's stored text, so a reader of the stored turn
+  alone (`conversation_read`, gap-fill, a conversation read as text) sees the
+  same line. A row wakes no agent.
 - **What it shows.** `state` is the run row's. `stepCount` is the run's tool
   calls, which the run's conversation now sends in its `directory_common`
   effect (`stepCount`) and `onChildCommonProjection` stores in
@@ -1118,8 +1120,11 @@ and `run: {state, stepCount, reply}`. The row is a projection of the run's
   `onChildCommonProjection` already copied onto `summary`, and which the run
   history and the self-review's `resultSummary` therefore show too.
 - **Replay.** `sidekickReplayRunRows` (a manager's) arms an entry for every run
-  the Sidekick holds, which rebuilds each row from `sidekick_runs`; a row that
-  is missing is appended, at the end of the conversation.
+  the Sidekick holds, each with a `{"replay":true}` payload that has the
+  conversation apply the projection whatever version it holds, so a row whose
+  version ran ahead of its run is repaired too; a row that is missing is
+  appended, at the end of the conversation. A run is never deleted from
+  `sidekick_runs`, so there is no row whose run is gone to remove.
 
 Runs that finished before migration 135 have no row, and nothing backfills
 them: appended now, they would land at the bottom of the conversation, out of
@@ -1857,7 +1862,10 @@ message marked `intent: "edit_sidekick"`, or a manager's answer to what the
 wizard asked. Anything refused lands with a `system` row that names its code.
 Every run also has one row in `"0"`, an `automation_activation` turn carrying
 the run's id, state, step count and reply, kept current from `sidekick_runs`
-by triggers that arm a delivery on every change. See
+by triggers that arm a delivery on every change; a manager's replay rebuilds
+every row. A `conversation_post` that names no conversation now lands in
+`"0"` rather than the Sidekick's home Thread
+([`conversation-tools.md`](conversation-tools.md)). See
 [the shared conversation](#the-shared-conversation) and
 [runs in the shared conversation](#runs-in-the-shared-conversation).
 
@@ -1879,7 +1887,9 @@ Sidekick's name, and is a projection of `sidekick_runs` rather than a second
 record, so the two cannot disagree. Rejected: appending a row per state change,
 which turns one run into a column of status lines; arming the row at each of
 the seven places that write a run, where a writer added later would leave its
-row behind (the cost of the triggers is that the arming is in SQL).
+row behind (the cost of the triggers is that the arming is in SQL). A post
+defaults to `"0"` because that is now where the people who asked are reading;
+the home Thread is being retired.
 
 **Consequences:** Any new kind of human input in `"0"` must say whether it is
 the wizard's; the claim routes it as a run otherwise. Authoring tools in `"0"`
@@ -1890,8 +1900,14 @@ composer. A message-started run runs only as an eligible delegate who sent it,
 until runs can act under the requester's own access. A message in `"0"` can no
 longer steer a running turn. The row is a projection: anything that needs a
 run's truth reads `sidekick_runs`, and a row that drifted is rebuilt by a
-replay. A run's summary is now its last reply rather than empty, so run history
-and the self-review read it too. Runs from before the change have no row.
+replay, and a replay is the only delivery that overrides a newer version. A
+run's summary is now its last reply rather than empty, so run history and the
+self-review read it too. Runs from before the change have no row. An
+already-installed desktop renders a run row under the generic "Sidekick" label
+rather than its name: `AutomationActivationV1Schema` is a `strictObject`, and
+that client's `safeParse` of content with the new optional `run` key fails and
+falls back to `{}`. Accepted, since the row still renders and the next desktop
+release reads it.
 
 ### 2026-11-07 — The review plan asks whether a tool could have settled its exceptions
 
