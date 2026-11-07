@@ -759,7 +759,7 @@ describe('Oopsie footer dictation submission', () => {
     >
       <MessageActions telemetry={{ messageId: 'turn-1' }} text="Answer" />
     </MessageIssueProvider></Tooltip.Provider>);
-    fireEvent.click(screen.getByRole('button', { name: 'Oopsie' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Oopsie: report a problem with this message' }));
     const send = screen.getByRole('button', { name: 'Send' });
     expect(send).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
