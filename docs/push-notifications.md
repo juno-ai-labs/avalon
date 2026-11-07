@@ -1,10 +1,12 @@
 # Push notifications
 
-Rally pushes three things to signed-in Macs through APNs, and to signed-in
-browser tabs through Web Push: a mention in a Canvas's Chat (and being added
-to one), a Sidekick run that needs input, and a Sidekick run that finished
-([below](#a-sidekick-run-that-needs-input-or-finished)). Each rides the
-workspace notification intent. Each device registers with one transport and
+Rally pushes to signed-in Macs through APNs, and to signed-in browser tabs
+through Web Push, whatever lands on the workspace notification intent: a
+mention or an add, and a Sidekick run that needs input or finished
+([below](#a-sidekick-run-that-needs-input-or-finished)). The run notices are
+recorded today; a mention or add in a Canvas's Chat is not, because the
+conversation's effect stops at its parent
+([known gap](workstream-durable-object.md#directory-effects-and-notifications)). Each device registers with one transport and
 is sent only that transport's payload. Push is enabled for everyone from launch through
 `push-notifications-enabled`. A mention and an add also go by email or Slack
 when the person chose that for them
@@ -126,8 +128,9 @@ when a native notification response arrives during asynchronous app startup.
 
 Push delivery reads notification intents only. A Queue message for a retired
 Activity row is logged `activity_item_retired` and acknowledged (its id logged
-as `activity_item_id`). The three events are a Canvas Chat mention or add (the
-intent above) and a Sidekick run's two notices, below.
+as `activity_item_id`). The events are a mention or add (the intent above,
+which nothing records for a Canvas's Chat today) and a Sidekick run's two
+notices, below.
 
 ### A Sidekick run that needs input or finished
 

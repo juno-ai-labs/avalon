@@ -3,8 +3,8 @@
 Rally runs two migrated Durable Object classes across two regional Workers,
 `SubstreamAgent` and `WorkspaceDO`, and each object applies its own SQLite
 migration history in its constructor. The legacy `WorkstreamDO`, `SpaceDO` and
-`SidekickDO` were tracked here too until each class was deleted; Channel, Space
-and Sidekick parents now live in `WorkspaceDO`
+`SidekickDO` were tracked here too until each class was deleted; Canvas and
+Sidekick parents live in `WorkspaceDO`
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). Nothing in
 Cloudflare's account model can answer the question that follows from that:
 **which objects are on which schema version, and which of them are broken?** A
