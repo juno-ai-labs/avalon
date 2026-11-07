@@ -47,6 +47,7 @@ import { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import {
   conversationObjectName,
+  workspaceDOName,
 } from "../src/durable-objects/names";
 import type { Env } from "../src/env";
 import { hostedParentStub } from "./helpers/hosted-parent";
@@ -71,6 +72,8 @@ function freshWorkstreamId() {
 }
 const ACTOR_ID = asUserId("00000000-0000-7000-8000-00000000de02");
 const OPERATION_ID = "00000000-0000-7000-8000-00000000de03";
+/** Its own workspace, for the one test that evicts the Organization object. */
+const EVICTION_WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-00000000dea0");
 
 /**
  * A Channel's parent, and the object that closes it. The parent is hosted by
@@ -396,6 +399,84 @@ describe("object retirement", () => {
       expect(rows[0]?.n).toBe(0);
       void instance;
     });
+  });
+
+  it("drops and acknowledges each queue receiver on a retired WorkspaceDO in the shape its consumer parses", async () => {
+    // The receivers the activity consumer calls side by side. A third, the
+    // Sidekick directory receiver, was found refusing in production — one
+    // message retried until it dead-lettered — and nothing asserted the shapes
+    // these two answer, so a wrong shape would have been a `strictObject` parse
+    // failure in the consumer: the same loop, one layer up.
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-00000000deb0");
+    const stub = TEST_ENV.WORKSPACE_DOS.get(
+      TEST_ENV.WORKSPACE_DOS.idFromName(workspaceDOName(TEST_ENV.AVALON_REGION, workspaceId)),
+    ) as DurableObjectStub<WorkspaceDO>;
+    await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+
+    const envelope = { messageId: "00000000-0000-7000-8000-00000000de06", payloadHash: "fnv1a64:0000000000000001" };
+    const children = await stub.receiveChildEffects({ substreamId: "1", envelopes: [envelope] } as never);
+    expect(children).toEqual({ accepted: [{ messageId: "00000000-0000-7000-8000-00000000de06", payloadHash: "fnv1a64:0000000000000001" }] });
+    const regional = await stub.applyWorkstreamRegionalEffect({ workspaceId } as never);
+    expect(regional).toEqual({ replayed: true, notificationIntentId: null });
+  });
+
+  it("rebuilds every gated class after eviction, and revokes access on it", async () => {
+    // One test across both gated object classes on purpose. The two failures this
+    // covers were both *category* failures — a method on the construction path
+    // that nobody classified, and a permitted entry point reaching a private
+    // helper nobody listed — and both were found one class at a time. Neither
+    // is visible from a single class, because each class reaches its own
+    // helpers, and `AgentLoopDO` recovers its runtime *after* the construction
+    // window closes, which is the case a construction-only fix does not reach.
+    const retiredAt = Date.now();
+    const canvasId = freshWorkstreamId();
+    const revocation = {
+      workspaceId: EVICTION_WORKSPACE_ID,
+      userId: ACTOR_ID,
+      sessionId: null,
+      reason: "workspace_membership_removed",
+    } as const;
+    const workspaceStub = TEST_ENV.WORKSPACE_DOS.get(
+      TEST_ENV.WORKSPACE_DOS.idFromName(workspaceDOName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID)),
+    ) as DurableObjectStub<WorkspaceDO>;
+    const agentStub = TEST_ENV.SUBSTREAM_AGENTS.get(
+      TEST_ENV.SUBSTREAM_AGENTS.idFromName(
+        conversationObjectName(TEST_ENV.AVALON_REGION, EVICTION_WORKSPACE_ID, canvasId, "0"),
+      ),
+    ) as DurableObjectStub<AgentLoopDO>;
+    const targets = [
+      { name: "WorkspaceDO", stub: workspaceStub, revoke: () => workspaceStub.revokeSocketAccess(revocation) },
+      { name: "AgentLoopDO", stub: agentStub, revoke: () => agentStub.revokeSocketAccess(revocation) },
+    ] as const;
+
+    const failures: string[] = [];
+    for (const { name, stub, revoke } of targets) {
+      await stub.retireObject({ retiredAt, operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+
+      // Access revocation is permitted on every gated class because retirement
+      // has to be able to close what a dead workspace still holds open. Each of
+      // these reads its own identity through a private helper first, so this is
+      // the assertion that the permit carries the whole call rather than one
+      // name.
+      try {
+        await revoke();
+      } catch (error) {
+        failures.push(`${name}.revokeSocketAccess: ${(error as Error).message}`);
+      }
+
+      // And the object has to survive being rebuilt from storage with the
+      // tombstone already in it, which is the only state production ever has it
+      // in after the demo goes idle.
+      await evictDurableObject(stub as never);
+      try {
+        const state = await stub.objectRetirementState();
+        if (state.retiredAt !== retiredAt) failures.push(`${name}: tombstone moved`);
+      } catch (error) {
+        failures.push(`${name}.objectRetirementState after eviction: ${(error as Error).message}`);
+      }
+    }
+
+    expect(failures).toEqual([]);
   });
 
   it("fences every callable method on every gated class, and classifies the ones retirement itself needs", () => {

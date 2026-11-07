@@ -125,9 +125,6 @@ import {
   asWorkspaceId,
   automationTriggersAdmitResourceType,
   IdSchema,
-  type ArtifactPin,
-  type ChannelStats,
-  type Pin,
   UserIdSchema,
   SubstreamIdSchema,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
@@ -136,7 +133,6 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
   WorkspaceAttentionSchema,
-  WorkspaceNavigationStateEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceCanvasListEventSchema,
   WorkspaceSidebarSchema,
@@ -5395,7 +5391,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */
   async canvasSetAudience(input: Parameters<HostedCanvas["setAudience"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
-    return this.canvasWrite(() => canvas.setAudience(input));
+    const detail = await this.canvasWrite(() => canvas.setAudience(input));
+    // Someone the Canvas no longer admits stops being shown in it, and the
+    // people still in it are told who is left.
+    this.broadcastPresence();
+    return detail;
   }
 
   /**
@@ -8111,45 +8111,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Tell one person's other windows what a write of their own changed: the
-   * pin list, or one Channel's read state. Only what changed is sent, so a
-   * read or a pin never rebuilds the Space snapshot.
-   */
-  private publishNavigationState(
-    userId: string,
-    state: { pins?: Pin[]; artifactPins?: ArtifactPin[]; channelStats?: ChannelStats[] },
-  ): void {
-    const message = JSON.stringify(WorkspaceNavigationStateEventSchema.parse({
-      type: "workspace_navigation_state",
-      occurredAt: new Date().toISOString(),
-      ...state,
-    }));
-    for (const socket of this.state.getWebSockets()) {
-      const attachment = readAttachment(socket);
-      if (!attachment?.subscribed || attachment.userId !== userId) continue;
-      try {
-        socket.send(message);
-      } catch {
-        // Reconnect receives the same state in the subscribe payload.
-      }
-    }
-  }
-
-  /**
-   * Send one person's windows their artifact pins as they stand, read under
-   * the relationship one of their sockets was admitted with. Nobody connected
-   * is nobody to tell: the connect payload carries the list.
-   */
-
-  /**
    * Tell each socket which of these resources have a new head, so a preview
-   * open on one moves to it. A socket hears only the resources linked to a
-   * thread whose Main its person may open, the gate an artifact pin reads
-   * under (only a thread's directory projection writes those links), or
-   * shared with a Channel its person reads, the gate the resource read check
-   * applies to a merge's embeds (docs/authorization.md). Not on
-   * the waterline and never replayed: a client that was away reads each head
-   * when it next opens the conversation.
+   * open on one moves to it. A socket hears only the artifacts of a Canvas its
+   * person may open (`canvas_artifacts`, written by the publish that attached
+   * each one). Not on the waterline and never replayed: a client that was
+   * away reads each head when it next opens the Canvas.
    *
    * The heads are built from bounded columns (`readResourceHeads`), so the
    * event is assembled rather than parsed again for every person.
@@ -8159,12 +8125,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private publishResourceVersions(heads: readonly ResourceHead[]): void {
     if (heads.length === 0) return;
     const linkedTo = new Map<string, string[]>();
-    for (const row of this.state.storage.sql.exec<{ resource_id: string; workstream_id: string }>(
-      `SELECT resource_id, workstream_id FROM workspace_workstream_resource_links
+    for (const row of this.state.storage.sql.exec<{ resource_id: string; canvas_id: string }>(
+      `SELECT resource_id, canvas_id FROM canvas_artifacts
         WHERE resource_id IN (SELECT value FROM json_each(?))`,
       JSON.stringify(heads.map((head) => head.resourceId)),
     )) {
-      linkedTo.set(row.resource_id, [...linkedTo.get(row.resource_id) ?? [], row.workstream_id]);
+      linkedTo.set(row.resource_id, [...linkedTo.get(row.resource_id) ?? [], row.canvas_id]);
     }
     if (linkedTo.size === 0) return;
     const occurredAt = new Date().toISOString();
@@ -8177,14 +8143,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (payload === undefined) {
         const viewer = viewerOf(attachment);
         const opened = new Map<string, boolean>();
-        // A resource is linked to the Canvas or Sidekick whose conversation
-        // made it; the viewer is sent its head when they may open that.
-        const opens = (parentId: string): boolean => {
-          let open = opened.get(parentId);
+        // An artifact belongs to the Canvas whose conversation made it; the
+        // viewer is sent its head when they may open that Canvas.
+        const opens = (canvasId: string): boolean => {
+          let open = opened.get(canvasId);
           if (open === undefined) {
-            open = this.canvasVisible(viewer, parentId) === true
-              || (viewer.accessClass === "member" && this.sidekickListed(attachment.workspaceId, viewer.userId, parentId));
-            opened.set(parentId, open);
+            open = this.canvasVisible(viewer, canvasId) === true;
+            opened.set(canvasId, open);
           }
           return open;
         };

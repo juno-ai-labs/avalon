@@ -289,7 +289,7 @@ marks holders in `memory_digest_sync` with a revision:
   `memory_digest_holder_facts` to the fact's sources: the person can no longer
   open it, so its facts leave their own copies in every other conversation and
   every copy whose audience includes them. Joining marks only that Canvas's
-  holders, because a wider audience hides nothing.
+  holders, because a wider audience hides nothing;
 - the Thread, Breakout and Channel triggers of migration 117 (`channels`,
   `breakouts`, `spaces` and their `*_viewers`) still sit on their tables,
   which nothing writes, until plan step C-7 drops them.
