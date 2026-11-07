@@ -64,7 +64,7 @@ Sections always start open. A smaller heading belongs to the section above it,
 so it folds along with it rather than on its own. Folding only changes what you
 see: copying and reading aloud always use the whole answer.
 
-Folding works in the Thread's conversation only. Documents open in side panels,
+Folding works in the conversation only. What Rally made, in the panel on the right,
 and answers you save as an image or PDF, always show everything.
 
 ## Where did that come from?
@@ -76,7 +76,7 @@ Rally marks the sources it relied on, so you can check its work with one click.
   something like **example.com · Opens in your browser**. Click to open it.
 - Footnote pills. A numbered pill opens a small pop-up that links to a file
   or a web page.
-- File chips. A phrase can link straight to a file in the Thread. Click it
+- File chips. A phrase can link straight to a file in the Canvas. Click it
   to open the file.
 - File cards. When Rally announces something new it made, such as a
   document, spreadsheet, image or site, it shows a card on its own line with an
@@ -105,9 +105,6 @@ it:
 | **Speak** | Reads the answer aloud. The button changes to **Stop speaking**. |
 | **Image** | Saves the answer as a picture. |
 | **PDF** | Saves the answer as a PDF. |
-| **↳ New breakout** | Starts a private side conversation that branches off from this message. |
-
-Your own messages offer only **New breakout**.
 
 The actions stay hidden while Rally is still writing. **Image** and **PDF** are
 in the Mac app only, not in the web browser version. What they produce, and
@@ -115,9 +112,6 @@ how to share it, is in
 [Saving and sharing what Rally wrote](../06-things-rally-makes/05-saving-and-exporting.md).
 If a save fails, the button says **Image failed** or **PDF failed**.
 
-**New breakout** appears only in a Thread's main conversation, not inside a
-Breakout or a Sidekick's conversation. Breakouts are explained in
-[Breakouts](../03-spaces-and-breakouts/03-breakouts.md).
 
 ## The right-click menu
 
@@ -137,10 +131,7 @@ Right-click any message, yours, a teammate's or Rally's, for:
 **Speak** is hidden while a message is still being written.
 
 Right-click a cited file or a file attached to a message and you may get a menu
-with actions for that file instead. Inside a Breakout, for example,
-right-clicking a file card Rally made there offers **Attach to thread**, which
-makes it part of the main Thread. It is greyed out if the file is already
-there.
+with actions for that file instead.
 
 ## Reading aloud
 
@@ -152,6 +143,4 @@ Only one message plays at a time: start another and the first stops. There is
 one voice and no setting to change it. If speaking fails, the button quietly
 goes back to **Speak**, so try again.
 
-On iPhone, tap the speaker icon under a message.
-
-Next: the people you share a Thread with, in [People in the room](05-people-in-the-room.md).
+Next: point at exactly what you mean, in [Comments](06-comments.md).

@@ -3,14 +3,14 @@ title: The message box
 description: Write to Rally and your teammates, with mentions, lists, slash commands and your voice.
 ---
 
-Everything you say in a Thread starts in the message box at the bottom of the
+Everything you say in a Canvas starts in the message box at the bottom of the
 window. It is where you ask Rally for work, answer its questions and talk to the
 people in the room. It looks like an ordinary chat box, and it mostly behaves
 like one, with a few extras.
 
 ## Writing and sending
 
-Open a Thread and click the box that says **Message the thread…**. Type your
+Open a Canvas and click the box that says **Ask Rally or the people here…**. Type your
 message and press <kbd>Return</kbd> to send it.
 
 - <kbd>Shift</kbd> <kbd>Return</kbd> starts a new line without sending.
@@ -19,11 +19,11 @@ message and press <kbd>Return</kbd> to send it.
   conversation off the screen.
 - The send button is the up arrow on the right. It is always there, and it is
   greyed out when there is nothing to send, while a file is still uploading, or
-  while the Thread is still connecting.
+  while the Canvas is still connecting.
 
-The wording in the box changes with the place you are in. A brand-new Breakout
-says **What should this breakout work on?** and a Sidekick's own conversation
-says **Ask your Sidekick…**. It is the same box underneath.
+The wording in the box changes with the place you are in. A Sidekick's
+conversation names the Sidekick, as in **Message Incident triage and the team…**.
+It is the same box underneath.
 
 > [!NOTE]
 > <kbd>Return</kbd> deliberately does nothing in three cases: when the box is
@@ -37,14 +37,14 @@ Up to 100,000 characters, which is roughly a novella. If you paste in more,
 Rally refuses to send and shows **This message is over 100,000 characters,
 please shorten it.** under the box. Your text stays in the box, so you can trim
 it and try again, or attach the long material as a file instead (see
-[Attaching files](02-attaching-files.md)).
+[Attaching files](03-attaching-files.md)).
 
 ## Your draft waits for you
 
-If you are halfway through a message and switch to another Thread, close the
+If you are halfway through a message and switch to another Canvas, close the
 window or quit Rally, the draft is still there when you come back. That includes
-the text, the files you attached and the people you mentioned. Each Thread and
-each Breakout keeps its own draft.
+the text, the files you attached and the people you mentioned. Each Canvas and
+each Sidekick conversation keeps its own draft.
 
 Some things to know about drafts:
 
@@ -71,20 +71,20 @@ the conversation appear under **Participants**.
 Press <kbd>Esc</kbd> to close the list without picking anyone.
 
 Mention a teammate when you want them to notice a message. Mention **@Rally**
-when you want to be sure Rally answers. In a busy Thread, Rally decides for
+when you want to be sure Rally answers. In a busy Canvas, Rally decides for
 itself which messages are meant for it, and
-[People in the room](05-people-in-the-room.md#does-rally-answer-every-message)
+[People in a Canvas](07-people-in-a-canvas.md#does-rally-answer-every-message)
 explains how.
 
 Things that catch people out:
 
-- People under **Org members** or **Guests** are not in this Thread yet.
-  If you mention them in a private Thread, Rally asks
-  whether to add them first. [People in the room](05-people-in-the-room.md) has
+- People under **Org members** or **Guests** cannot open this Canvas yet.
+  If you mention them, Rally asks
+  whether to add them first. [People in a Canvas](07-people-in-a-canvas.md) has
   the details.
 - Only people and Rally can be mentioned here. Your connected tools and your
-  Sidekicks are not in the list. Sidekicks join a Thread another way, covered in
-  [Sidekicks in a Thread](../07-sidekicks/06-sidekicks-in-channels.md).
+  Sidekicks are not in the list. You talk to a Sidekick in its own conversation, covered in
+  [Talking to a Sidekick](../03-sidekicks/03-the-shared-conversation.md).
 - If you edit the middle of an **@Name** after picking it, it turns back into
   plain text and no longer points at that person. Delete it and mention them
   again.
@@ -157,7 +157,7 @@ Things to know about dictation:
   and try again.** Open **System Settings → Privacy & Security → Microphone** and
   turn Rally on.
 - If Rally heard nothing, it says so and sends nothing.
-- In a Thread there is no microphone picker. Rally uses the microphone you chose
+- In a Canvas there is no microphone picker. Rally uses the microphone you chose
   last, or your Mac's default. If that one has been unplugged, you see **The
   selected microphone is unavailable.**
 - The microphone is available only once Rally is signed in and connected.
@@ -165,12 +165,9 @@ Things to know about dictation:
   sessions are already active**. Wait a moment and try again.
 - Rally does not save your recording. Only the words end up in the message.
 
-On iPhone, dictation works a little differently. See
-[Rally on your iPhone](../08-rally-everywhere/06-rally-on-iphone.md).
-
 ## More keys
 
 This page covers the keys you use in the message box. Every other shortcut is
 listed in [Keyboard shortcuts](../09-settings-and-shortcuts/05-keyboard-shortcuts.md).
 
-Next, you will give Rally something to read: [Attaching files](02-attaching-files.md).
+Next, you will give Rally something to read: [Attaching files](03-attaching-files.md).

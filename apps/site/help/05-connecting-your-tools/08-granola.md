@@ -14,7 +14,7 @@ With Granola connected, Rally can:
 - read a meeting's transcript
 - ask Granola questions across your meetings, such as "when did we last talk about pricing?"
 
-With the Organization connection, a new note arriving in Granola can also start a Sidekick. See [Triggers and schedules](../07-sidekicks/03-triggers-and-schedules.md).
+With the Organization connection, a new note arriving in Granola can also start a Sidekick. See [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md).
 
 ## Connecting for yourself
 
@@ -43,7 +43,7 @@ Then, in Rally:
 A workspace key can read public notes in your Granola workspace, and notes in Granola spaces where API access is turned on. It cannot read anyone's other private notes.
 
 > [!IMPORTANT]
-> Rally stores the key encrypted and never shows it again. Paste it only into the **Workspace API key** box, never into a Thread or an email. To use a different key, delete the Organization connection and connect again with the new one.
+> Rally stores the key encrypted and never shows it again. Paste it only into the **Workspace API key** box, never into a Canvas or an email. To use a different key, delete the Organization connection and connect again with the new one.
 
 If setup was interrupted and Rally could not tell whether a connection already exists, the dialog offers **Find existing installation**. Use that rather than starting setup again.
 

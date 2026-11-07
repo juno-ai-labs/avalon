@@ -116,7 +116,7 @@ function structuredData(page: HelpPage): string {
         'url': `${SITE_ORIGIN}${page.url}`,
         'inLanguage': 'en',
         'isPartOf': { '@type': 'WebSite', 'name': 'Rally Help Center', 'url': `${SITE_ORIGIN}/help/` },
-        'about': { '@type': 'SoftwareApplication', 'name': 'Rally', 'operatingSystem': 'macOS, iOS', 'applicationCategory': 'BusinessApplication' },
+        'about': { '@type': 'SoftwareApplication', 'name': 'Rally', 'operatingSystem': 'macOS', 'applicationCategory': 'BusinessApplication' },
         'publisher': { '@type': 'Organization', 'name': 'Juno AI Labs', 'url': SITE_ORIGIN },
         'encoding': { '@type': 'MediaObject', 'encodingFormat': 'text/markdown', 'contentUrl': `${SITE_ORIGIN}${page.markdownUrl}` },
       },

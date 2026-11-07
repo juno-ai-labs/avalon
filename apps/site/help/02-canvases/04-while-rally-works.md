@@ -14,8 +14,8 @@ after step, until it has an answer for you. A simple question might be a run of
 a few seconds. A research report across your Gmail, Linear and the web might be
 a run of half an hour.
 
-You do not have to watch. Switch to another Thread or go to a meeting. The run carries on without you, and the Thread's status dot tells you
-when it is done (see [Status dots](06-status-dots-and-badges.md)).
+You do not have to watch. Switch to another Canvas or go to a meeting. The run carries on without you, and the Canvas's row in the sidebar tells you
+when it is done (see [Status dots](10-status-dots-and-badges.md)).
 
 ## Following along
 
@@ -83,7 +83,7 @@ Some other things to know:
   the stop wins.
 - If stopping fails, you see **The run couldn’t be stopped.** Try again.
 - The "stopping" and "stopped" lines are only shown to people who were in the
-  Thread at the time.
+  Canvas at the time.
 
 ## Helpers working in the background
 
@@ -92,8 +92,8 @@ side by side. When it does, a line above the message box counts them, such as
 **2 background agents running**, and rows in the conversation say when one
 starts, finishes or fails. The line disappears when the count drops to zero.
 
-The count is for helpers started from the conversation you are looking at, so a
-Breakout counts its own helpers, not the whole Thread's. Helpers are explained
+The count is for helpers started from the conversation you are looking at.
+Helpers are explained
 properly in [Helpers, other conversations and receipts](../04-working-with-rally/06-helpers-and-receipts.md).
 
 ## When Rally asks you a question
@@ -182,12 +182,12 @@ way, so a failure you see has usually been tried twice. And once Rally has shown
 you part of an answer, or done something in another tool, it will not quietly
 start that step again behind your back.
 
-An ordinary run in a Thread has no time limit. Its only ceiling is 1,000 model
+An ordinary run in a Canvas has no time limit. Its only ceiling is 1,000 model
 turns (roughly, 1,000 rounds of "think, then act"), which few requests come near.
 
-## Opening a Thread, and catching up
+## Opening a Canvas, and catching up
 
-Rally opens a Thread straight away from a copy kept on your Mac, then connects
+Rally opens a Canvas straight away from a copy kept on your Mac, then connects
 to the live conversation. Until it is connected, a card says **Sending is
 available once Rally connects**. You can type and attach files in the meantime.
 Sending waits until the connection is live.
@@ -196,10 +196,10 @@ Scroll up and Rally fetches older messages as you go, with **Loading earlier
 messages…** at the top. If you are offline it says **Waiting to reconnect…**,
 and if loading fails, **Retry loading earlier messages** tries again.
 
-When you come back to a Thread with new messages, an **Unread messages** line
+When you come back to a Canvas with new messages, an **Unread messages** line
 marks where you left off. Everything below it is new.
 
 Once in a long while a message is too big to show at all, and you see **This message is
 too large to display.** in its place.
 
-Next: [Reading Rally's answers](04-reading-rallys-answers.md).
+Next: [Reading Rally's answers](05-reading-rallys-answers.md).

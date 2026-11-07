@@ -16,14 +16,14 @@ its mark there too, unless you tell it not to.
 
 Click the Rally mark and you get:
 
-- **Your recent Threads**, up to ten, grouped under date headings such as
-  **Today** and **Yesterday**. Click one to open it in Rally. Long names are shortened to
-  fit, and a Thread Rally has not finished naming yet shows as **Untitled
-  thread**.
+- **Needs input**: the Sidekicks waiting for you, each with its question.
+  Click one to open it in Rally.
+- The Canvases with something new for you. Click one to open it. Long names
+  are shortened to fit.
 - **Open Rally**, which brings the main window forward.
 - **Quit Rally**, which quits it properly.
 
-If you have no recent Threads, the menu says **No recent threads**. If you are
+If nothing is waiting for you, the menu says so. If you are
 signed out, it says **Sign in to Rally**. The list refreshes when you click the
 icon, so it is always current.
 
@@ -38,10 +38,10 @@ The switch is **Show Rally in the menu bar**, in **Settings → Application**
 under **Appearance**. It is on by default.
 
 > [!NOTE]
-> The description under the switch mentions starting a new meeting or note, a
-> new automation and Rally's suggestions from the menu bar. Today the menu holds
-> your recent Threads, **Open Rally** and **Quit Rally**, and nothing more.
-> ("Automation" is also the old name for a Sidekick.)
+> The description under the switch may mention a new automation or Rally's
+> suggestions. Today the menu holds what is waiting for you, **Open Rally** and
+> **Quit Rally**, and nothing more. ("Automation" is the old name for a
+> Sidekick.)
 
 If the switch is on but the mark has not appeared, Settings says "Rally could not
 add itself to the menu bar. Turn this off and on to try again, or restart Rally."
@@ -95,18 +95,15 @@ display, and Rally remembers where you left it, including which display.
 
 | Window | How to open it |
 | --- | --- |
-| The main window | It is the one you are reading Threads in. |
-| **Settings** | <kbd>⌘</kbd> <kbd>,</kbd>, or the account menu → **Settings**. See [The Settings window](01-the-settings-window.md). |
-| **Rally Sidekicks** | The account menu → **Sidekicks**. See [The Sidekicks window](../07-sidekicks/04-the-sidekicks-window.md). |
-| **Import Thread** | When you bring in a conversation from elsewhere. See [Bring in a conversation from Claude or ChatGPT](../02-working-in-a-channel/08-import-from-claude-or-chatgpt.md). |
+| The main window | It is the one with your Canvases and Sidekicks in it. Settings opens here too. |
 | An artifact in its own window | **Open in a new window** in an artifact's header. See [Opening, docking and downloading](../06-things-rally-makes/02-opening-and-downloading.md). |
 
 Pop-out artifact windows are especially handy on a second monitor: keep a
 document open on one screen while you discuss it on the other. Ones you leave
 open come back after you quit and reopen Rally.
 
-In the Settings and Sidekicks windows, <kbd>Esc</kbd> closes the window, as long
-as no dialog is open and you are not in the middle of typing something.
+In Settings, <kbd>Esc</kbd> closes it, as long as no dialog is open and you are
+not in the middle of typing something.
 
 ## The menus at the top of the screen
 
@@ -127,4 +124,4 @@ the website, so **Help → Rally website** is one way back to it.
 
 > [!TIP]
 > **View** is where to zoom. If text in Rally is too small to read comfortably,
-> zooming in makes everything larger, not only one Thread.
+> zooming in makes everything larger, not only one Canvas.

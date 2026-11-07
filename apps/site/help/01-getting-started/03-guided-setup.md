@@ -45,4 +45,4 @@ If you are not ready to invite anyone, click **Invite later**. (Once you have se
 
 ## When setup is done
 
-Rally takes you into your new Organization. Finishing setup does not create a Thread for you or set Rally to work on anything; it waits for you. Before you type anything, take [a tour of the window](04-a-tour-of-the-window.md) so you know where everything is.
+Rally takes you into your new Organization. Finishing setup does not create a Canvas for you or set Rally to work on anything; it waits for you. Before you type anything, take [a tour of the window](04-a-tour-of-the-window.md) so you know where everything is.

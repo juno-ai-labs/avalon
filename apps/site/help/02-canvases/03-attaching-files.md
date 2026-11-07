@@ -5,7 +5,7 @@ description: Give Rally a PDF, a spreadsheet, a screenshot or a whole folder of 
 
 Describing a spreadsheet to Rally is slow, and you will get a column wrong.
 Attach the spreadsheet instead. Rally reads what you attach, and so does everyone
-else in the Thread.
+else in the Canvas.
 
 ## Four ways to attach
 
@@ -14,13 +14,13 @@ else in the Thread.
    choose several files at once.
 2. **The `/attach` command.** Type `/attach` into an empty box and press
    <kbd>Return</kbd>. The file picker opens. (More on slash commands in
-   [The message box](01-the-message-box.md#slash-commands).)
+   [The message box](02-the-message-box.md#slash-commands).)
 3. **Drag and drop.** Drag files from Finder onto the message box, onto the
    conversation, or onto the panel on the right. The area lights up while a file
    is over it. Selecting a pile of files in a folder and dragging them all at
    once works too.
 4. **Paste.** Copy a file or an image and press <kbd>⌘</kbd> <kbd>V</kbd>. You do
-   not have to click into the box first. Pasting works anywhere in the Thread
+   not have to click into the box first. Pasting works anywhere in the Canvas
    as long as you are not typing in some other field or dialog.
 
 ## The tiles above the box
@@ -35,8 +35,8 @@ Each file you add shows as a small tile above the message box.
 
 You cannot send while a file is still uploading. Wait for the ring to finish,
 then press <kbd>Return</kbd> as usual. Attachments are part of your draft, so
-they come back with it if you leave the Thread and return later (see
-[The message box](01-the-message-box.md#your-draft-waits-for-you)).
+they come back with it if you leave the Canvas and return later (see
+[The message box](02-the-message-box.md#your-draft-waits-for-you)).
 
 ### Pasted screenshots get a sensible name
 
@@ -102,8 +102,8 @@ open a file at all, it will not state facts from it.
 
 ## Rally always answers a message with a file
 
-In a Thread full of people, Rally sometimes stays quiet and lets the humans talk
-(see [People in the room](05-people-in-the-room.md)). A message with an
+In a Canvas full of people, Rally sometimes stays quiet and lets the humans talk
+(see [People in a Canvas](07-people-in-a-canvas.md)). A message with an
 attachment is different. Rally always responds to it, on the reasonable guess
 that you did not attach a contract for decoration.
 
@@ -114,11 +114,11 @@ that you did not attach a contract for decoration.
 - "What's wrong in this screenshot? The button should be blue."
 - "Compare these two PDFs and tell me what changed."
 
-## Files that stay with the Thread
+## Files that stay with the Canvas
 
 An attachment belongs to the message you sent it with. If you want a file to be
-part of the Thread itself, where Rally and your teammates can always find it,
+part of the Canvas itself, where Rally and your teammates can always find it,
 add it as a resource. That is covered in
 [Resources: things you bring in](../06-things-rally-makes/04-resources.md).
 
-Next: what happens after you press send, in [While Rally works](03-while-rally-works.md).
+Next: what happens after you press send, in [While Rally works](04-while-rally-works.md).
