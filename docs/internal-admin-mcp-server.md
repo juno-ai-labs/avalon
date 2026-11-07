@@ -239,6 +239,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `list_sidekicks` | `workspaceId` | Reads the authoritative WorkspaceDO Sidekick directory, in every lifecycle including deleted. |
 | `pause_sidekick`, `resume_sidekick` | `orgId`, `userId`, `sidekickId` | Pauses or resumes the Sidekick as that user, through the app's own Pause and Resume path. The user must be allowed to manage it; its author always is. Returns the resulting lifecycle. |
 | `retire_org` | `orgId` | Retires the Organization permanently through Ace's retirement door. There is no undo. If the receipt says `complete: false`, call again to resume. |
+| `dump_thread_transcripts` | `orgId`, `confirm` (the `orgId` again) | Writes every Thread, Breakout and Channel conversation of the Organization to R2 as text under `retired-conversations/<orgId>/<parentId>/<substreamId>.txt`, skipping any already written; Canvases and Sidekicks are never dumped. Reports dumped, skipped and failed counts. Run it, and see nothing failed, before `retire_threads`. |
 | `list_spaces` | `workspaceId` | Lists the Organization's Channels (stored Spaces), archived ones included. Use a returned `spaceId` as `channelId` for `create_thread`. |
 | `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Channel's or Space's parent state in the `parent_*` tables. |
