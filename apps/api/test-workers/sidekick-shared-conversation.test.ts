@@ -198,12 +198,13 @@ interface RunRow extends Record<string, SqlStorageValue> {
   occurrence_key: string;
   trigger_json: string;
   coordinator_user_id: string | null;
+  requester_user_id: string | null;
   opening_json: string | null;
 }
 
 async function sidekickRuns(): Promise<RunRow[]> {
   return runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<RunRow>(
-    `SELECT run_id, occurrence_key, trigger_json, coordinator_user_id, opening_json FROM sidekick_runs
+    `SELECT run_id, occurrence_key, trigger_json, coordinator_user_id, requester_user_id, opening_json FROM sidekick_runs
       WHERE sidekick_id = ? ORDER BY created_at, run_id`, AUTOMATION_ID,
   ).toArray());
 }
@@ -373,7 +374,9 @@ describe("a Sidekick's shared conversation", () => {
     await expect.poll(() => landed(turnId), { timeout: SETTLE_TIMEOUT_MS }).toBe(true);
     expect(await wizardExecutions()).toEqual([]);
     const runs = await sidekickRuns();
-    expect(runs).toEqual([expect.objectContaining({ occurrence_key: `message:${turnId}`, coordinator_user_id: AUTHOR_ID })]);
+    // A delegate's own message runs as that delegate, with delegate access.
+    expect(runs).toEqual([expect.objectContaining({ occurrence_key: `message:${turnId}`, coordinator_user_id: AUTHOR_ID,
+      requester_user_id: null })]);
     expect(JSON.parse(runs[0]!.trigger_json)).toEqual({ kind: "manual", requestedByUserId: AUTHOR_ID });
   });
 
@@ -450,15 +453,26 @@ describe("a Sidekick's shared conversation", () => {
     expect(await sidekickRuns()).toEqual([]);
   });
 
-  it("starts no run, and says why, for a member who has not allowed the Sidekick to act for them", async () => {
+  it("runs a non-delegate member's message under their own access, and keeps them as the run's principal", async () => {
     await activeSidekick();
     const turnId = await say(MEMBER_ID, "Summarize the release for me.", "member-without-delegation");
-    await expect.poll(() => systemNotes("sidekick-message-refused:"), { timeout: SETTLE_TIMEOUT_MS })
-      .toEqual([{ code: "run_no_eligible_delegate", turnId }]);
-    expect(await landed(turnId)).toBe(true);
-    expect(await sidekickRuns()).toEqual([]);
-    expect(await wizardExecutions()).toEqual([]);
+    await expect.poll(() => landed(turnId), { timeout: SETTLE_TIMEOUT_MS }).toBe(true);
+    expect(await systemNotes("sidekick-message-refused:")).toEqual([]);
+    const [run] = await sidekickRuns();
+    expect(run).toMatchObject({ occurrence_key: `message:${turnId}`, coordinator_user_id: MEMBER_ID, requester_user_id: MEMBER_ID });
+    // Its account view names only the member, though the author is a delegate.
+    expect(await workspaceStub().sidekickReadExecutionDelegation({ ...addressed(), runId: run!.run_id }))
+      .toMatchObject({ delegates: [{ userId: MEMBER_ID }], requesterUserId: MEMBER_ID });
+    expect((await workspaceStub().sidekickReadExecutionDelegation(addressed())).delegates.map((grant) => grant.userId))
+      .toEqual([AUTHOR_ID]);
+    // Provisioned as the member, and continued as the member, never as a delegate.
+    expect(await workspaceStub().sidekickRunProvisioning({ ...addressed(), runId: run!.run_id }))
+      .toMatchObject({ runAsUserId: MEMBER_ID });
+    expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([run!.run_id]);
+    expect(await workspaceStub().sidekickContinueRun({ ...addressed(), runId: run!.run_id }))
+      .toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: MEMBER_ID } });
   });
+
   it("writes a run's row into the shared conversation and carries its reply when the run finishes", async () => {
     await activeSidekick();
     // One tool call, so the row's step count has something to count.
