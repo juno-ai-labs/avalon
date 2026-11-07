@@ -136,6 +136,23 @@ describe("the WorkspaceDO home-conversation migration", () => {
       `SELECT parent_id, substream_id, attached_by_user_id FROM sidekick_conversation_attachments`,
     ).all()).toEqual([{ parent_id: OTHER_CHANNEL, substream_id: "0", attached_by_user_id: AUTHOR }]);
   });
+
+  it("files a Canvas's Chat attachment under the canvas kind, and scopes it as one", () => {
+    const database = migratedWorkspace();
+    const sql = createTestSqlStorage(database);
+    seedSidekick(database);
+    // Migration 140 admits the canvas kind in the attachment CHECK.
+    applyWorkspace(database, 140, HOME_COLUMN_VERSION);
+    const canvasId = "00000000-0000-7000-8000-0000000000f1";
+    attachSidekickConversation(sql, {
+      automationId: SIDEKICK, address: { parentKind: "canvas", parentId: canvasId, substreamId: "0" }, userId: AUTHOR, now: 1,
+    });
+    expect(database.prepare(`SELECT parent_kind, parent_id FROM sidekick_conversation_attachments`).all())
+      .toEqual([{ parent_kind: "canvas", parent_id: canvasId }]);
+    // No Thread directory describes a Canvas, so it is never offered as a Thread.
+    expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }, AUTHOR)
+      .some((conversation) => conversation.parentId === canvasId)).toBe(false);
+  });
 });
 
 describe("a conversation scope", () => {

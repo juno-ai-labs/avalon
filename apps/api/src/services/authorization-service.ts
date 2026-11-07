@@ -9,12 +9,6 @@ import { ApiError } from '../lib/api-error';
 import { logWarn } from '../observability/logger';
 import type { HostedCanvas } from '../durable-objects/hosted-canvas';
 import type { HostedSidekick } from '../durable-objects/hosted-sidekick';
-
-/** A Sidekick's or a Canvas's authorization facts, tagged by kind. */
-type HostedConversationFacts =
-  | ({ kind: 'automation' } & Extract<ReturnType<HostedSidekick['readAuthorizationFacts']>, { exists: true }>)
-  | ({ kind: 'canvas' } & Extract<Awaited<ReturnType<HostedCanvas['readAuthorizationFacts']>>, { exists: true }>)
-  | { kind: null | 'automation' | 'canvas'; exists: false; validatedAt: number };
 import type { WorkspaceDO } from '../durable-objects/workspace-do';
 import type { WorkstreamResourceStorage } from '../durable-objects/workstream-resource-storage';
 import {
@@ -22,6 +16,12 @@ import {
   type AuthorizationDecision, type AuthorizationEvidence, type AuthorizationResource,
   type AuthorizationSubject, type ReadPolicy,
 } from './authorization-policy';
+
+/** A Sidekick's or a Canvas's authorization facts, tagged by kind. */
+type HostedConversationFacts =
+  | ({ kind: 'automation' } & Extract<ReturnType<HostedSidekick['readAuthorizationFacts']>, { exists: true }>)
+  | ({ kind: 'canvas' } & Extract<Awaited<ReturnType<HostedCanvas['readAuthorizationFacts']>>, { exists: true }>)
+  | { kind: null | 'automation' | 'canvas'; exists: false; validatedAt: number };
 
 const unavailable = (): AuthorizationDecision => ({ status: 'unavailable', reason: 'authority_unavailable', retryable: true });
 
@@ -253,8 +253,7 @@ class AuthorizationBatch {
     // Who it is shared with decides, for a guest as for a member: a guest
     // reads it only from a list.
     const admitted = facts.kind === 'canvas'
-      ? canvasAdmits({ ...facts, writerAudience: this.guest ? facts.writerAudience.guest : facts.writerAudience.member },
-        !this.guest, facts.administrator)
+      ? canvasAdmits(facts, !this.guest, facts.administrator)
       : sidekickAdmits(facts, !this.guest);
     return evaluateReadPolicy(fact(admitted, 'not_participant', evidence), Date.now());
   }

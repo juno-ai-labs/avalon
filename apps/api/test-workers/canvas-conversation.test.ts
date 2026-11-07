@@ -109,6 +109,23 @@ describe("a Canvas's Chat", () => {
     expect(await opens(GUEST, canvasId)).toBe(true);
   });
 
+  it("refuses an Organization-wide Chat to a suspended member and to somebody with no membership", async () => {
+    const SUSPENDED = asUserId("00000000-0000-7000-8000-0000000cb005");
+    const STRANGER = asUserId("00000000-0000-7000-8000-0000000cb006");
+    await env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, access_class, last_seen_at)
+      VALUES (?, ?, 'suspended', 'member', 'member', ?)`).bind(WORKSPACE_ID, SUSPENDED, NOW).run();
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "workspace", userIds: [] } });
+    expect(await opens(MEMBER, canvasId)).toBe(true);
+    // Each still holds a session that names them a member; only the
+    // relationship the Organization object reads says they are not one.
+    for (const userId of [SUSPENDED, STRANGER]) {
+      await expect(new ConversationService(TEST_ENV, auth(userId)).authorizeViewer(canvasId))
+        .rejects.toMatchObject({ code: "conversation_not_found" });
+    }
+  });
+
   it("issues a socket ticket naming the canvas kind", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     const issued = await new ConversationService(TEST_ENV, auth(CREATOR)).socketTicket(canvasId);
