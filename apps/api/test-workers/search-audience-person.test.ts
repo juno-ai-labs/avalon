@@ -112,6 +112,30 @@ describe("search audience: the person side", () => {
     expect(await groups(SUSPENDED)).toEqual([]);
   });
 
+  it("gives a Canvas's Chat to whoever opens the Canvas, and to nobody else", async () => {
+    await seedOrganization();
+    const privateCanvas = "00000000-0000-7000-8000-00000000f001";
+    const openCanvas = "00000000-0000-7000-8000-00000000f002";
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const canvas = (id: string, creator: string, visibility: string) => state.storage.sql.exec(
+        `INSERT OR IGNORE INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at,
+           visibility, authority_generation) VALUES (?, ?, 'Canvas', ?, 1, 1, ?, 1)`, id, WORKSPACE_ID, creator, visibility);
+      canvas(privateCanvas, PARTICIPANT, "participants");
+      canvas(openCanvas, MEMBER, "workspace");
+      state.storage.sql.exec(`INSERT OR IGNORE INTO canvas_participants (canvas_id, user_id, source, added_at)
+        VALUES (?, ?, 'added', 1)`, privateCanvas, BREAKOUT_MEMBER);
+    });
+    const [privateChat, openChat] = await searchAudienceGroupIds([
+      searchAudienceGroup.conversation(privateCanvas, "0"), searchAudienceGroup.conversation(openCanvas, "0")]);
+    // Its creator and a participant read the private Canvas; another member does not.
+    expect(await groups(PARTICIPANT)).toEqual(expect.arrayContaining([privateChat, openChat]));
+    expect(await groups(BREAKOUT_MEMBER)).toEqual(expect.arrayContaining([privateChat, openChat]));
+    expect(await groups(MEMBER)).toContain(openChat);
+    expect(await groups(MEMBER)).not.toContain(privateChat);
+    // A guest is not admitted by Organization visibility.
+    expect(await groups(GUEST)).not.toContain(openChat);
+  });
+
   it("learns who a Sidekick runs as from its directory row", async () => {
     await seedOrganization();
     const automationId = "00000000-0000-7000-8000-00000000d005";
