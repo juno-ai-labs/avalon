@@ -31,16 +31,16 @@ docs/                      Product, architecture, security, setup, runbooks
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item, main-owned telemetry/crash handling, and raw Node transport for work-stream socket swarms. |
+| `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item, main-owned telemetry/crash handling, and raw Node transport for the open conversation's feed socket. |
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
-| `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. Keeps a local cache of the directory and each opened conversation so a space, a stream, and a substream paint before their socket answers; [`local-cache.md`](local-cache.md) owns it. |
+| `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. Keeps a local cache of the directory and each opened conversation so the Canvases and Sidekicks lists and an open conversation paint before their socket answers; [`local-cache.md`](local-cache.md) owns it. |
 | `apps/browser` | Lite browser host, static SPA email sign-in and same-origin regional API forwarding. Shared collaboration uses standalone visible conversation sockets. Owned by [`browser-client.md`](browser-client.md). |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
 | `apps/api/src/index.ts`, `apps/api/src/worker-events.ts` | The regional API's statically imported HTTP/event graph and platform exports. Heavy stateless providers run in the typed document, Terminal, and Global telemetry-delivery service Workers owned by [`api-worker-deployment.md`](api-worker-deployment.md). |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
-| `apps/api/src/durable-objects` | `WorkspaceDO`, which also hosts the Sidekick and Canvas conversation parents on one `HostedConversation` primitive (`hosted-conversation.ts`, `hosted-sidekick.ts`, `hosted-canvas.ts`; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md)), `SubstreamAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, the retirement gate (`object-retirement.ts`) that wraps every method of the workspace-owned classes, and their SQL-only migration/storage layers. |
-| `apps/api/src/workflows`, `apps/api/src/queues` | Generic/non-workstream orchestration, legacy work-stream drain, and idempotent regional consumers. |
+| `apps/api/src/durable-objects` | `WorkspaceDO`, which also hosts the Sidekick and Canvas conversation parents on one `HostedConversation` primitive (`hosted-conversation.ts`, `hosted-sidekick.ts`, `hosted-canvas.ts`; see [`hosted-conversation-parents.md`](hosted-conversation-parents.md)), `AgentLoopDO`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, the retirement gate (`object-retirement.ts`) that wraps every method of the workspace-owned classes, and their SQL-only migration/storage layers. |
+| `apps/api/src/workflows`, `apps/api/src/queues` | Generic orchestration and idempotent regional consumers. |
 | `apps/api/src/env.ts` | `assertEnvContract` — the one place the Worker environment is parsed. |
 | `apps/api/src/lib/rpc-contracts.ts` | The parsers every RPC bridge argument passes through. |
 | `apps/migration-tracker` | The private operator Worker behind `migrations.internal.rallywith.ai`: the Durable Object migration inventory, its hourly account sweep, the forced-migration fan-out onto each region's command queue, and the Cloudflare Access boundary in front of all of it. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
@@ -84,8 +84,8 @@ docs/                      Product, architecture, security, setup, runbooks
    authenticated regional upload; the renderer can only invoke registered
    semantic calls. Main additionally publishes application foreground changes
    over that bridge. A renderer combines them with its own window focus and
-   active work-stream route before reporting ephemeral presence to WorkspaceDO;
-   pooled work-stream sockets are never treated as attention.
+   open Canvas before reporting ephemeral presence to WorkspaceDO; an open
+   feed socket is never treated as attention.
 3. **`apps/api`** is a Hono application deployed as three statically imported
    Cloudflare Worker graphs in each of configured deployments: the regional API plus
    private document-processing and Terminal-provider services reached through
@@ -108,16 +108,15 @@ docs/                      Product, architecture, security, setup, runbooks
 Authority follows the data boundary. Regional D1 is the thin identity/routing
 plane: workspace/member/user identity, opaque connector/object routes,
 migration controls, and bounded operational audit/telemetry. WorkspaceDO owns
-workspace connector/product state, Terminal policy, digests and shared
-schedules, the content-free automation directory and the external-event
-registrations, resources/notes/memory/R2 references, external delivery,
-activity, discovery, and cross-work-stream query state, and each automation's
-own product state, as a hosted Sidekick that is also the parent of the
-automation's conversation and its runs. `SubstreamAgent` SQLite owns substream
-product state and the full conversation agent loop. Channel and Space parents
-keep their aggregate metadata and outbox as `parent_*` rows in `WorkspaceDO`,
-and a Sidekick its own as `sidekick_*` rows. Large activity
-payloads, uploads, and snapshots live in R2.
+workspace connector/product state, Terminal policy, shared schedules, the
+content-free automation directory and the external-event registrations,
+resources/notes/memory/R2 references, external delivery, the Canvas
+directory and each viewer's lists, and each Sidekick's own product state, as
+a hosted Sidekick that is also the parent of its conversation and its runs.
+`AgentLoopDO` SQLite owns substream product state and the full conversation
+agent loop. A Canvas and a Sidekick keep their parent state as
+`canvas_*`/`sidekick_*` rows in `WorkspaceDO`. Large payloads, uploads, and
+snapshots live in R2.
 
 ### Region boundary
 
@@ -181,98 +180,71 @@ without a second Google sign-in.
 - Every API operation resolves a session, workspace, role, execution principal,
   connection scope, and requested capability server-side.
 
-### Work streams and live updates
+### Conversations and live updates
 
 `WorkspaceDO` is the low-volume control plane for workspace sync/command
-admission, Channel and Space parent state and metadata, authoritative directory
-queries, and regional effects.
-Each authenticated Electron renderer maintains one native Chromium WorkspaceDO
-socket for the active workspace. It also owns a main-process Node socket pair —
-one Channel control connection (also served by `WorkspaceDO`) and one substream
-`0` feed — for the active
-work stream, every pin, the five most recently active unpinned rows, every
-visible live-state row, and recently viewed retained rows. Those feed
-subscriptions opt out of legacy socket-derived presence; WorkspaceDO's explicit
-foreground signal is authoritative. Transcript reads, streaming checkpoints,
-and loop execution route directly to the selected `SubstreamAgent` data plane.
-Parents therefore never become the throughput ceiling for their children.
+admission, Canvas and Sidekick parent state, the lists each viewer sees, and
+regional effects. Each authenticated Electron renderer maintains one native
+Chromium WorkspaceDO socket for the active workspace, and a main-process Node
+broker dials the substream `0` feed of the conversation on screen (a Canvas's
+Chat or a Sidekick's conversation, or a run's). WorkspaceDO's explicit
+foreground signal is the only presence. Transcript reads, streaming
+checkpoints, and loop execution route directly to the selected `AgentLoopDO`
+data plane, so parents never become the throughput ceiling for their children.
 
-An authoritative child mutation that changes workspace/user surfaces writes a
+An authoritative child mutation that changes what a parent lists writes a
 versioned effect to the child's local outbox in the same SQLite transaction.
-The child sends it over the activity Queue to `WorkspaceDO.receiveChildEffects`.
-For a Channel or Space parent, `WorkspaceDO` deduplicates the source,
-recomputes the aggregate, appends a common or per-viewer state row with a
-monotonic waterline and UUIDv7 identity to that parent's `parent_outbox`, and
-pushes the new metadata to the Channel's control sockets. It then applies the
-directory rows to itself in the same invocation: it rejects stale or duplicate
-per-key waterlines, persists the current row with the same UUIDv7 for the
-affected common or viewer field, and publishes it on the workspace socket.
-Activity-log and mention-delivery rows leave on the alarm as `parent_effect`
-messages on the activity Queue. A Sidekick parent keeps the older shape: its
-own outbox, an alarm, and the Queue to reach `WorkspaceDO`
-([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). D1 resolves current membership and
-profile identity; WorkspaceDO resolves Slack/email destinations and mention
-delivery's causally required viewer version so Queue
-reordering cannot outrun a removal. The
-object therefore owns the fact that a mention or state change occurred without
-acquiring workspace credentials, placing product text in Queue storage, or
-turning a failed network call into a lost sidebar update.
+The child sends it over the activity Queue to `WorkspaceDO.receiveChildEffects`,
+where the Canvas or Sidekick (`HostedConversation`) records the receipt, the
+child's projection and each reader's read of `"0"` in one transaction, and
+republishes the list rows that moved on the workspace socket. A person
+notification (a mention, somebody added) goes to
+`WorkspaceDO.applyWorkstreamRegionalEffect`, which records its intent. D1
+resolves current membership and profile identity; WorkspaceDO resolves the
+destination and checks the recipient against the parent's own reader rule, so
+Queue reordering cannot outrun a removal. The object therefore owns the fact
+that a mention or state change occurred without acquiring workspace
+credentials, placing product text in Queue storage, or turning a failed network
+call into a lost list update.
 
-All three object roles accept Cloudflare hibernating sockets with purpose-scoped,
+Both object roles accept Cloudflare hibernating sockets with purpose-scoped,
 single-use tickets and serialized connection attachments. The ticket establishes
 the intended object/audience; admission and later commands still resolve current
-regional session, membership, and object-local visibility. An already connected
-reader is closed only when a retraction reaches its object over the
+regional session, membership, and the parent's viewer decision. An already
+connected reader is closed only when a retraction reaches its object over the
 [access-revocation queue](access-revocation.md), and a policy close (`1008`)
-tells Electron to stop retrying; each role then marks, reconciles, or removes
-its surface according to that role's product contract. Nothing revalidates a
-listening socket on a timer, which is what keeps an authorization query off
-every token frame. The complete role-specific protocol lives in
+tells Electron to stop retrying. Nothing revalidates a listening socket on a
+timer, which is what keeps an authorization query off every token frame. The
+complete role-specific protocol lives in
 [`realtime-sockets.md`](realtime-sockets.md), and the rule for deciding whether
 a given payload travels on one of these sockets or over REST is
 [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
 
 The socket responsibilities are deliberately not interchangeable:
 
-- `WorkspaceDO` accepts idempotent user commands, including new work-stream and
-  message creation, serves cursor-paged authoritative work-stream lists, and
-  publishes current work-stream rows plus waterlined workspace-topic invalidations.
-- Each Channel row `WorkspaceDO` sends a viewer is a complete, independently
-  waterlined common/viewer snapshot, plus that viewer's breakouts and running
-  background agents; it carries neither transcript parts nor model tokens. The
-  Channel control socket that used to carry the extra fields is retired and
-  served only for older clients.
-- `SubstreamAgent` is a read-only direct conversation feed plus correlated
-  transcript-page download. Its object-local SQL owns canonical parts, tool
-  calls/results, active compaction, and the accumulated output checkpoint.
+- `WorkspaceDO` publishes each viewer's Canvas and Sidekick lists (with
+  unread, Needs input, presence and pins) at their own waterlines, plus
+  waterlined workspace-topic invalidations, and takes `set_presence`. It
+  carries neither transcript parts nor model tokens.
+- `AgentLoopDO` is the direct conversation feed plus correlated
+  transcript-page download and the conversation's commands. Its object-local
+  SQL owns canonical parts, tool calls/results, active compaction, and the
+  accumulated output checkpoint.
 
-Electron's header/detail/sidebar use one shared work-stream cache and one
-per-work-stream ledger keyed by authority generation plus separate common and
-viewer waterlines. The workspace socket's Channel rows serve the open work
-stream, inactive rows and global sidebar/discovery surfaces alike. A row that
-arrives again, or late, is field-wise ignored unless its corresponding
-waterline is newer. UUIDv7 makes the same event searchable and
-millisecond-time-sortable across republishes, but
-does not replace authority-local waterlines for causal correctness.
+A list row that arrives again, or late, is ignored unless its list's waterline
+is newer. UUIDv7 makes the same event searchable and millisecond-time-sortable
+across republishes, but does not replace authority-local waterlines for causal
+correctness.
 
-A hosted parent's directory effects are applied by `WorkspaceDO` to itself
-**straight after the write that produced them**, with no Queue hop. WorkspaceDO
-then re-runs the directory query once per subscribed socket and pushes
-`workspace_workstream_state` to each viewer separately, so audience is decided
-per person and per frame: a viewer who may not read the work stream receives
-the same frame carrying `workstream: null`, a versioned tombstone, rather than
-nothing or the row. The `parent_outbox` row stays until it is applied, so a
-failed apply is retried by the alarm.
-
-The SubstreamAgent message receipt is private and outside the published room
+The AgentLoopDO message receipt is private and outside the published room
 sequence. If a connection drops before that receipt, Electron reconnects and
 resends the stable client message/operation ID; object-local message identity
 makes the retry idempotent. The socket is a mutation grant only for the exact
-workspace/work-stream/substream/user/session/role tuple serialized at admission.
+workspace/parent/substream/user/session/role tuple serialized at admission.
 The revocation walk closes it when that grant ends, and the message transaction
 still enforces object-local participation.
 
-SubstreamAgent sequences replayable events and keeps a bounded in-memory replay
+AgentLoopDO sequences replayable events and keeps a bounded in-memory replay
 window. Its SQLite transaction commits accumulated text and Bind cursor before a
 batched stream frame is eligible for publication. Initial subscriptions and
 subscriptions whose replay history was lost receive a full canonical snapshot,
@@ -283,21 +255,18 @@ directory-cadence writes. If the replay gap cannot be proved complete, the agent
 serves that snapshot on the admitted socket rather than asking Electron to
 disconnect and fetch the same authority over HTTP.
 
-SubstreamAgent `sequence` orders replayable feed events. Model streaming has a second
+AgentLoopDO `sequence` orders replayable feed events. Model streaming has a second
 cursor domain: stable `turnId`, retry `epoch`, and per-epoch `streamSeq`; `reset`
 replaces only the active turn's partial text from an abandoned route, preserving
 completed text from earlier tool turns. Deltas are batched without crossing
 turn/epoch boundaries, and reset frames are emitted alone. The desktop retains
-feed and stream cursors across socket and route handoffs, keeps background
-subscribers only for listed running work streams, drops duplicate or stale
-frames, and reconciles to the agent's final local-SQL transcript page plus the
-matching terminal metadata waterline. WorkspaceDO directory queries refresh
-regional lists but never override canonical child transcript content.
+feed and stream cursors across socket and route handoffs, drops duplicate or
+stale frames, and reconciles to the agent's final local-SQL transcript page.
 
 That reconciliation runs over the socket, not REST. A viewer that needs
 canonical state sends `request_snapshot` and the room answers with the same
 sequenced `snapshot` frame an initial subscription receives: one frame carrying
-the work stream, the newest transcript page, both cursors, and the active-stream
+the conversation, the newest transcript page, both cursors, and the active-stream
 checkpoints, assembled at one sequence. The room holds the asking socket out of
 broadcasts while it assembles, exactly as it does for an initial subscribe, then
 replays anything published in that window. Because the answer is ordered against
@@ -309,23 +278,16 @@ window, the agent retains the old attachment cursor and uses
 fallback. A socket cursor ahead of the durable sequence likewise uses
 `sequence_ahead`, because a lower-sequence snapshot would be rejected.
 
-The desktop applies each complete Channel control snapshot through one shared
-common/viewer waterline ledger behind the open detail and sidebar caches, so the
-header and status dot cannot disagree across a delayed Queue copy. WorkspaceDO
-directory pages/events are the path for work streams without a live child
-socket. A lower generation/key waterline never rolls either cache backward, and
-no list response becomes transcript authority.
-
 Cloudflare's WebSocket auto-response answers exact text `ping` frames with `pong`
-without waking a hibernated object. The SubstreamAgent feed jitters its heartbeat
-across 45–55 seconds; the workspace socket (and the retired Channel control
-socket) use a fixed 50-second interval. Every role closes after 15 seconds without `pong`,
-reconnects with equal-jitter exponential backoff capped at 30 seconds, pauses
-while offline, and resumes from its own topic waterline, metadata waterlines,
-feed sequence/stream cursor, or active-output checkpoint.
+without waking a hibernated object. The AgentLoopDO feed jitters its heartbeat
+across 45–55 seconds; the workspace socket uses a fixed 50-second interval.
+Every role closes after 15 seconds without `pong`, reconnects with equal-jitter
+exponential backoff capped at 30 seconds, pauses while offline, and resumes
+from its own topic waterline, list waterlines, feed sequence/stream cursor, or
+active-output checkpoint.
 
 Viewing is presence only. Participant persistence occurs only through explicit
-addition or an authored work-stream action.
+addition, a parent's admission, or an authored message.
 
 How a socket is admitted in the first place — the ticket, its transport, and which
 rejections come from the edge — is [`realtime-sockets.md`](realtime-sockets.md).
@@ -333,17 +295,17 @@ rejections come from the edge — is [`realtime-sockets.md`](realtime-sockets.md
 ### Agent harness
 
 A lightweight structured classifier decides whether a human message is
-`agent_action`, `human_only`, `both`, or `uncertain`. After cutover, eligible
-work-stream messages admit one complete Bind loop into their `SubstreamAgent`.
+`agent_action`, `human_only`, `both`, or `uncertain`. Eligible messages admit
+one complete Bind loop into their `AgentLoopDO`.
 The durable child dispatch row, attempt lease, receipts, and checkpoints recover
 2–30 minute loops and rare two-hour-plus coding sessions across eviction. Generic
-Cloudflare Workflows remain available for non-workstream loops and legacy drain.
+Cloudflare Workflows remain available for other orchestration.
 
-Supported regional work-stream runtimes may discover the deferred Terminal
+Supported regional conversation runtimes may discover the deferred Terminal
 plugin. Loading it changes only Bind's prompt/tool surface; the first file,
 command, resource, or repository tool call lazily crosses the regional API into
 one private Daytona sandbox for that conversation, which the background agents
-it starts share. The owning `SubstreamAgent` is the
+it starts share. The owning `AgentLoopDO` is the
 authority for generation, mutation leases, tasks, retention, resource links,
 and GitHub publication receipts; WorkspaceDO owns workspace egress policy,
 connector authority, and resource metadata. The provider supplies isolation and process/
@@ -360,7 +322,7 @@ Each durable agent attempt holds a renewable SQL lease; run-scope, plugin-activa
 tool receipt-plan/completion, checkpoint, and terminal commits are fenced by
 attempt and lease ownership. The run freezes its principal, eligible
 connections/capabilities, trigger policy, routing/prompt versions, tool-surface
-hash, and limits. The host revalidates principal and work-stream state, an
+hash, and limits. The host revalidates principal and conversation state, an
 automation run's live state in its parent (`WorkspaceDO.sidekickReadRunState`),
 trigger evidence, connection
 ownership/grants, and whether a person has disabled the connection, at admission,
@@ -372,7 +334,7 @@ compare-and-swap reaped, and completion commits only after the final agent messa
 is durable.
 
 Each run creates a fresh Bind registry. Stable always-active plugins separate
-discovery, time, scoped prose memory, scoped structured tables, work-stream
+discovery, time, scoped prose memory, scoped structured tables, conversation
 operations, and automation drafting; the run registers only the bundles
 applicable to that agent. Each eligible installed connection becomes a
 credential-scoped Bind plugin built from static adapter metadata and narrowed to
@@ -383,7 +345,7 @@ execution. The loop overlaps safe reads, serializes writes, records execution pl
 and results, replays completed receipts, and stops rather than repeating an
 ambiguous external write.
 
-Run limits are caller-specific. Root ordinary work-stream runs enforce a
+Run limits are caller-specific. Root ordinary conversation runs enforce a
 1,000-turn cap but no aggregate tool-call, model-cost, or task-scale
 wall-time ceiling. Their Durable Object execution owners combine a 30-second
 alarm keep-alive with durable dispatch and lease recovery rather than relying
@@ -414,14 +376,14 @@ phase is a model-run summary. The Terminal adapter emits both the structured log
 and non-blocking aggregate point; neither is canonical sandbox state.
 
 Agent memory is a store of facts in WorkspaceDO that a background sweep writes
-after a Thread, Breakout or Sidekick conversation settles, each filed under a
-subject (the Organization, a Channel, a Thread, a Breakout, a person, a
-Sidekick) and carrying the conversations it was learned from; who may read a
-fact is decided at read time from those sources and the directory WorkspaceDO
-already keeps, never from a scope the model names. A run recalls, remembers
-and forgets through three tools; WorkspaceDO FTS5 answers recall.
+after a Canvas's Chat or a Sidekick conversation settles, each filed under a
+subject (the Organization, a Canvas, a person, a Sidekick) and carrying the
+conversations it was learned from; who may read a fact is decided at read time
+from those sources and the Canvas and Sidekick audiences WorkspaceDO already
+keeps, never from a scope the model names. A run recalls, remembers and
+forgets through three tools; WorkspaceDO FTS5 answers recall.
 [`agent-memory.md`](agent-memory.md) owns it. Typed durable tables stay scoped
-to a work stream, a user, the workspace, or a Sidekick in the same store.
+to a user, the workspace, or a Sidekick in the same store.
 
 [`agent-harness.md`](agent-harness.md) owns the harness in detail, and
 [`context-compaction.md`](context-compaction.md) owns what a run remembers once
@@ -430,10 +392,10 @@ its window fills.
 ### Automations and scheduling
 
 An automation is a hosted Sidekick and one conversation. It is a conversation
-parent hosted in `WorkspaceDO` beside the Channel and Space parents: its
-substream `0` is the
-chat where the automation is drafted, created, and edited, and every run is a
-child substream under it. Its rows hold the definition revisions, the
+parent hosted in `WorkspaceDO` beside the Canvases: its substream `0` is the
+shared conversation where everyone it is shared with asks it for runs and a
+manager edits it through the wizard, and every run is a child substream under
+it with a row in `0`. Its rows hold the definition revisions, the
 lifecycle, the schedules, the runs, and the inbound-email receipts; a run reads
 its definition from the parent by revision and reports its state through the
 same effect pipeline every conversation uses.
@@ -446,31 +408,23 @@ its uniqueness constraints are authoritative under repeated alarms. It starts
 generic workflow instances rather than deploying per-automation code.
 
 The alarm's target kinds are due `schedules`, due `resource_watches`, per-task
-maintenance sweeps, and Terminal sandbox deadlines. A `schedules` row names
-exactly one of a connector connection or a digest schedule; an automation arms
-its own object's alarm. A Durable Object holds one alarm at a time, so each
+maintenance sweeps, Terminal sandbox deadlines, and each Sidekick's schedule,
+run, review and run-row entries. A `schedules` row names a connector
+connection's poll. A Durable Object holds one alarm at a time, so each
 target is a row in the object's `_internal_durable_alarms` list, the alarm is
 armed for the earliest of them, and every target due at that instant drains in
 one wake, each behind its own exponential-backoff gate, so a broken connector
-poll cannot stop a digest. Workspaces never contend: each has its own object
-and its own alarm. [`durable-object-alarms.md`](durable-object-alarms.md)
-covers the mechanism, which WorkspaceDO and SubstreamAgent share.
+poll cannot stop a Sidekick's schedule. Workspaces never contend: each has its
+own object and its own alarm. [`durable-object-alarms.md`](durable-object-alarms.md)
+covers the mechanism, which WorkspaceDO and AgentLoopDO share.
 
-A person's scheduled digest is one `schedules` row per delivery time, because a
-single RRULE multiplies `BYHOUR` by `BYMINUTE` and so cannot carry an arbitrary
-list of times. When one fires, the workspace reads what is still unread in the
-person's Activity tab, renders it as one section per kind, claims the occurrence
-with that text, and sends it by email, to the person's Personal Channel, or through
-any connector declaring a personal delivery surface. No model runs. Nothing unread
-means nothing is sent. See `digests.md` (retired).
-
-A work stream can schedule its own wake-up through `schedule_wakeup`,
+A conversation can schedule its own wake-up through `schedule_wakeup`,
 giving a relative duration or an exact ISO-8601 instant plus the prompt to act on.
-Its own SubstreamAgent owns that timer: the wake-up becomes an entry in that
+Its own AgentLoopDO owns that timer: the wake-up becomes an entry in that
 object's alarm list, so every wake-up due at one instant fires in one alarm.
 When it fires, the agent claims the row, re-checks the execution principal that
 scheduled it against current membership, writes a system row into the transcript,
-and starts an ordinary work-stream run whose trigger is the stored prompt.
+and starts an ordinary run whose trigger is the stored prompt.
 
 ### Connectors and ingestion
 
@@ -508,7 +462,7 @@ Normalized events are committed to their one owning WorkspaceDO before a
 Workflow processes them; the regional Queue carries a bounded normalized event
 plus its workspace route/hash, while R2 holds large/raw provider bytes. Provider
 objects discovered from events are upserted as
-WorkspaceDO resources; attaching one to a work stream does not copy provider content, and
+WorkspaceDO resources; attaching one to a conversation does not copy provider content, and
 hydration remains capability-checked through its originating connection.
 Deterministic trigger/watch checks
 precede any LLM classification.
@@ -516,14 +470,13 @@ precede any LLM classification.
 - **Authority follows the declared storage boundary.** Regional D1 owns
   membership/identity, opaque ingress/object routing, migration, and operational
   audit/telemetry. `WorkspaceDO` owns workspace-scoped connector, Terminal
-  policy, digest/schedule, the content-free automation directory and the
-  external-event registrations, resource/note/memory/R2-reference,
-  activity/discovery, directory, and external-delivery state, and each hosted
-  Sidekick's product state, the parent of its conversation and its runs. After a work-stream generation opens, each
-  `SubstreamAgent` owns its substream product state, the model-free Channel and
-  Space parents own aggregate metadata/outbox as `parent_*` rows in
-  `WorkspaceDO`, a Sidekick its own as `sidekick_*` rows, and legacy D1
-  product and pin tables do not exist. R2 holds large payloads; the authority that names each
+  policy, schedule, the content-free automation directory and the
+  external-event registrations, resource/note/memory/R2-reference, Canvas
+  directory, and external-delivery state, and each hosted Sidekick's product
+  state, the parent of its conversation and its runs. Each `AgentLoopDO` owns
+  its substream product state, a Canvas and a Sidekick keep their parent state
+  as `canvas_*`/`sidekick_*` rows in `WorkspaceDO`, and legacy D1 product and
+  pin tables do not exist. R2 holds large payloads; the authority that names each
   workspace reference stays in the owning WorkspaceDO database.
 
 - **Every boundary a value crosses is parsed at runtime, not asserted by a type
@@ -610,7 +563,8 @@ document, and it does not absorb one when it grows:
 | Socket admission and the ticket | [`realtime-sockets.md`](realtime-sockets.md) |
 | The connector registry and manifest model | [`connectors.md`](connectors.md) |
 | Model routing flags | [`feature-flags.md`](feature-flags.md) |
-| The activity log and scheduled digests | `digests.md` (retired) |
+| A Canvas, its audience and its artifacts | [`canvases.md`](canvases.md) |
+| A Sidekick, its shared conversation and its runs | [`automation-lifecycle.md`](automation-lifecycle.md) |
 | The macOS status item | [`menu-bar.md`](menu-bar.md) |
 | Regional product telemetry and crash reporting | [`telemetry.md`](telemetry.md) |
 | Hosted resources, secrets, deployment, incidents | [`runbook.md`](runbook.md) |
@@ -622,7 +576,7 @@ it.
 
 ## Failure modes and limits
 
-- **A SubstreamAgent feed that cannot prove its replay gap is complete is
+- **A AgentLoopDO feed that cannot prove its replay gap is complete is
   snapshotted, not guessed.** If hibernation discarded the in-memory window or
   the gap is incomplete, the agent sends canonical state on the same socket and
   then closes the subscription race with one in-memory catch-up. Snapshot
@@ -631,12 +585,12 @@ it.
   sequence is different: the agent sends
   `resync_required` with reason `sequence_ahead`, and the client refreshes over
   HTTP because its ordinary cursor guard would reject a lower-sequence snapshot.
-- **The SubstreamAgent replay cache is bounded to 256 events or 512 KB**, and is memory-only by
+- **The AgentLoopDO replay cache is bounded to 256 events or 512 KB**, and is memory-only by
   design. The active-stream checkpoint is a separate logical value whose text is
   segmented across bounded Durable Object values and updated once per batched
   delta; it is not an event log and cannot replay
   non-stream mutations.
-- **Publishing to a SubstreamAgent feed is best-effort** and swallows its own failures. The one
+- **Publishing to a AgentLoopDO feed is best-effort** and swallows its own failures. The one
   exception is a retraction: `publishWorkstreamEvent` reports whether the room
   accepted it.
 - **A revocation closes the socket with `1008` and the desktop stops retrying** —
@@ -702,14 +656,28 @@ and raw dumps remain in a dedicated regional bucket behind audited opaque-ID
 access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
-### 2026-11-06 — The native iOS client is deleted
+## Changelog
+
+### 2026-11-07 — The product is Canvases and Sidekicks; the native iOS client is deleted
 
 **What changed:** `apps/ios` and `ios-client.md` are gone; the deployment
-surfaces are the Electron desktop and the browser SPA. **Why:** the Canvases and
-Sidekicks pivot deletes iOS rather than carrying a prototype client forward
-([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)). Server mechanisms kept
-only for iOS, such as `platform: "ios"` push registration, are removed in a
-later phase.
+surfaces are the Electron desktop and the browser SPA. The Channel, Space,
+Thread and Breakout parents, their control socket and the cross-Thread
+directory are deleted: `WorkspaceDO` hosts a Canvas or a Sidekick over one
+`AgentLoopDO` per conversation, and the workspace socket carries each viewer's
+Canvas and Sidekick lists.
+
+**Why:** The Canvases and Sidekicks pivot
+([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)) makes those the two
+sections of the product, and deletes iOS rather than carrying a prototype
+client forward.
+
+
+**Consequences:** `platform: "ios"` push registration stays in the contracts
+(`push-notifications.ts`) with no client sending it. The owning documents for
+the hosting and the conversation object are
+[`hosted-conversation-parents.md`](hosted-conversation-parents.md) and
+[`workstream-durable-object.md`](workstream-durable-object.md).
 
 ### 2026-09-17 — A lite browser host reuses regional identity
 
