@@ -1036,9 +1036,16 @@ and `run: {state, stepCount, reply}`. The row is a projection of the run's
   effect (`stepCount`) and `onChildCommonProjection` stores in
   `sidekick_runs.step_count`. `reply` is the run's last message once it has
   stopped working (finished, or waiting on input): a run's conversation now
-  sends its last agent message as its effect's `preview`, which
-  `onChildCommonProjection` already copied onto `summary`, and which the run
-  history and the self-review's `resultSummary` therefore show too.
+  sends its last agent message twice in its effect: as `preview`, cut at
+  1,000 UTF-16 units like every conversation's directory preview, and as
+  `reply`, whole up to `MESSAGE_MAX_CHARACTERS` (a message's own ceiling).
+  `onChildCommonProjection` copies `reply` onto `summary` (`preview` for an
+  effect from before `reply` existed), so the row, the run history and the
+  self-review's `resultSummary` carry the whole reply: since a run's report in
+  Rally is its final message, a row cut at the preview's length would show a
+  long data report's first 1,000 characters and nothing else. A desktop
+  released before this parses a row whose reply is longer than 1,000 as the
+  generic Sidekick row.
 - **Replay.** `sidekickReplayRunRows` (a manager's) arms an entry for every run
   the Sidekick holds, each with a `{"replay":true}` payload that has the
   conversation apply the projection whatever version it holds, so a row whose
@@ -1832,7 +1839,11 @@ announcement. `renderSidekickReviewNotice` drops its "Where to announce a
 change" line; the notice keeps `announceTo`. The run instructions in the
 wizard's guide and `RUN_POST_INSTRUCTION` say a run's final message is the
 reply on its row in the shared conversation, so a report in Rally needs no
-`conversation_post` step.
+`conversation_post` step. For that to hold, the row now carries the reply
+whole: a run's `directory_common` effect sends `reply` up to
+`MESSAGE_MAX_CHARACTERS` beside the 1,000-unit `preview`, and the run row,
+`SidekickRunRowProjectionSchema` and `automationActivation.run.reply` take
+that ceiling.
 
 **Why:** The review runs in `"0"` and `announceTo` is `"0"`, so a review that
 saved a change posted twice there: the announcement, then the report. Runs had
@@ -1842,7 +1853,8 @@ report in Rally. Rejected: keeping the line and telling the wizard to skip a
 post when the target is its own conversation, which asks the model to compare
 an id it is never shown.
 
-**Consequences:** `announceTo` is unread by the model; removing it from
+**Consequences:** The preview's 1,000 cut stays for every other reader of a
+conversation's directory row; only a run's row reads `reply`. `announceTo` is unread by the model; removing it from
 `SidekickReviewNoticeV1Schema` waits for its writer in `hosted-sidekick.ts` to
 go. A Sidekick whose saved instructions predate this still names
 `conversation_post` for its report until a review or a manager revises it.

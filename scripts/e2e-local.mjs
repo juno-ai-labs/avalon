@@ -163,12 +163,22 @@ async function main() {
   const artifactGate = artifactGateDecision(modelConfigured, terminal?.availability);
   if (!artifactGate.run) console.log(`Artifact scenario skipped: ${artifactGate.reason}.`);
 
+  // Set by any request the Worker answered with a 5xx or did not answer at
+  // all; the scenario loop then asks /health once whether the Worker is alive.
+  let serverFailureSeen = false;
   const api = async (method, path, body) => {
-    const response = await fetch(new URL(path, BASE_URL), {
-      method,
-      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+    let response;
+    try {
+      response = await fetch(new URL(path, BASE_URL), {
+        method,
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (error) {
+      serverFailureSeen = true;
+      throw error;
+    }
+    if (response.status >= 500) serverFailureSeen = true;
     return { status: response.status, body: await response.json().catch(() => null) };
   };
   const uid = () => crypto.randomUUID();
@@ -443,8 +453,13 @@ async function main() {
   const results = [];
   let cursor = 0;
   const startedAt = Date.now();
+  // A Worker that died turns every later scenario into "fetch failed", which
+  // hides the one that killed it. One /health probe after a 5xx or a refused
+  // connection decides; a dead Worker ends the run with that as the verdict.
+  let workerDiedDuring = null;
+  const workerAlive = () => fetch(new URL("/health", BASE_URL)).then((r) => r.ok).catch(() => false);
   await Promise.all(Array.from({ length: concurrency }, async () => {
-    while (cursor < plan.length) {
+    while (cursor < plan.length && workerDiedDuring === null) {
       const mine = cursor;
       cursor += 1;
       const [kind, index] = plan[mine];
@@ -459,9 +474,18 @@ async function main() {
         const reason = String(error instanceof Error ? error.message : error).slice(0, 300);
         results.push({ kind, ok: false, ms: Date.now() - scenarioStart, error: reason });
         process.stdout.write(`✗ ${kind}: ${reason.slice(0, 160)}\n`);
+        if (/fetch failed|Realtime/u.test(reason)) serverFailureSeen = true;
+      }
+      if (serverFailureSeen && workerDiedDuring === null) {
+        serverFailureSeen = false;
+        if (!(await workerAlive())) workerDiedDuring = kind;
       }
     }
   }));
+  if (workerDiedDuring !== null) {
+    console.log(`\nThe Worker died during ${workerDiedDuring}; ${plan.length - cursor} scenarios were not run. `
+      + "Read the Worker's own log for why; the results below stop there.");
+  }
 
   const failures = results.filter((r) => !r.ok);
   const byKind = {};
@@ -479,5 +503,6 @@ async function main() {
   console.log(`total=${results.length} ok=${results.length - failures.length} fail=${failures.length} wall=${Math.round((Date.now() - startedAt) / 1000)}s model=${modelConfigured ? "live" : "absent"} artifacts=${artifactGate.run ? "checked" : `skipped (${artifactGate.reason})`}`);
   if (REPORT_PATH) writeFileSync(REPORT_PATH, JSON.stringify({ results, failures }, null, 1));
   for (const failure of failures.slice(0, 20)) console.log(` - ${failure.kind}: ${failure.error}`);
-  process.exit(failures.length > 0 ? 1 : 0);
+  if (workerDiedDuring !== null) console.log(`verdict: the Worker died during ${workerDiedDuring}`);
+  process.exit(failures.length > 0 || workerDiedDuring !== null ? 1 : 0);
 }

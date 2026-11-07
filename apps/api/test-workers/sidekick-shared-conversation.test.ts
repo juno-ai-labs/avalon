@@ -522,6 +522,22 @@ describe("a Sidekick's shared conversation", () => {
     expect(await wizardExecutions()).toEqual([]);
   });
 
+  it("carries a reply longer than the directory preview whole onto the run's row", async () => {
+    await activeSidekick();
+    // A data report past the 1,000-character directory preview: the row is
+    // where the Sidekick's people read it, so it must not be cut there.
+    const report = `Weekly report. ${"Signups rose in every region this week. ".repeat(60)}End of report.`;
+    script = [{ say: report }];
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "row-run-long" });
+    expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
+    await runSettled(started.runId);
+    await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
+    const finished = await rowReaches(started.runId, "completed");
+    expect(report.length).toBeGreaterThan(2_000);
+    expect(finished.run?.reply).toBe(report);
+    expect(await storedRowContent(started.runId)).toBe(report);
+  });
+
   it("drops a projection older than the row it holds", async () => {
     await activeSidekick();
     script = [{ say: "Shipped." }];
