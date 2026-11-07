@@ -45,7 +45,7 @@ context or tools so another run can distinguish its claim from yours.
 
 Choose the narrowest authorized scope that all relevant runs share. Set
 \`scopeKind: "sidekick"\` for activations of the same installed Sidekick,
-\`workstream\` for runs in one thread, \`user\` for workflows shared by one
+\`workstream\` for runs in one conversation, \`user\` for workflows shared by one
 person, or \`workspace\` for workflows shared across the organization. Scope
 selection does not grant access; use only kinds the run is authorized to use.
 

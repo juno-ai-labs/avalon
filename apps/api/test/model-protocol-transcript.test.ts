@@ -522,7 +522,6 @@ describe("durable UI-to-model transcript projection", () => {
       "Notice from Rally, not from a person or an agent: a scheduled self-review of this Sidekick is due.",
       text,
       "Every count and run above is from definition revision 2, between creation and 2026-10-26T10:00:00.000Z.",
-      "Where to announce a change, as the conversation to post to: 00000000-0000-7000-8000-0000000000bb.",
       "Read exactly these runs, by id, and no others:",
       "- failed or stopped: 00000000-0000-7000-8000-0000000000f0",
       "- waiting for input: none",

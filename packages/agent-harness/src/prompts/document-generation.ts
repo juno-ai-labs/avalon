@@ -31,7 +31,7 @@ export const DOCUMENT_GENERATION_POLICY = `
 
 A request whose natural output is a document — a PRD, contract, job description, blog, post, article, press release, plan, spec, brief, report, proposal, memo, or comparable — should be written using tools from the terminal plugin rather than inline in the chat. A conversational answer stays in chat regardless of length; follow the user's intent, not the response length.
 
-Write it as a GitHub-flavored Markdown file in the terminal sandbox. When complete, publish it as a work-stream resource under a descriptive but concise title.
+Write it as a GitHub-flavored Markdown file in the terminal sandbox. When complete, publish it as a Rally resource under a descriptive but concise title.
 
 In the chat, announce it with the embed form on its own line — \`![Title](resource://<resource-id>)\` — and invite changes in a sentence or two. Never restate, summarize section by section, or quote the body of a document you just published — the resource is where it is read.
 

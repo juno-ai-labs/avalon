@@ -291,7 +291,7 @@ describe("the memory digest copy", () => {
     const copy = await createSchedulingObjectPort(env, WORKSPACE_ID, OPEN_THREAD).memoryDigestCopy(`user:${OWNER_ID}`);
 
     const digest = renderMemoryDigestSection(copy ?? [], NOW);
-    expect(digest).toContain(`About the Thread "Launch":\n- The launch thread meets on Tuesdays. [${threadFactId}]`);
+    expect(digest).toContain(`About the Canvas "Launch":\n- The launch thread meets on Tuesdays. [${threadFactId}]`);
     expect(digest).toContain(`About the person:\n- Owner prefers release notes as bullets. [${personFactId}]`);
 
     const section = principalSystemSectionFor(runInput(OWNER_ID, OWNER_RUN), {

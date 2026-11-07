@@ -95,10 +95,10 @@ describe("the agents plugin", () => {
       .resolves.toMatchObject({ output: { next: `automation/${sidekickId}/0` } });
   });
 
-  it("keeps the rule that a thread changes only Sidekicks it may edit", () => {
-    // The incident behind this line: a thread rewrote another thread's draft.
+  it("keeps the rule that a conversation changes only Sidekicks it may edit", () => {
+    // The incident behind this line: one conversation rewrote another's Sidekick draft.
     expect(plugin.systemMessage).toContain("Use find_sidekick only when the person explicitly names an existing Sidekick to edit; never silently replace a named target.");
-    expect(tool("sidekicks_list").definition.description).toContain("the Sidekick this conversation belongs to, marked isCurrentSidekick: true; a thread owns none");
+    expect(tool("sidekicks_list").definition.description).toContain("the Sidekick this conversation belongs to, marked isCurrentSidekick: true; a Canvas's Chat belongs to none");
   });
 });
 

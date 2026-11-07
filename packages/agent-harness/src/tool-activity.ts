@@ -40,9 +40,9 @@ const CONNECTOR_CONNECTION_CARD_PROSE: ToolProse = {
 // `rally:sidekick-result` is gone; `conversation_post` replaced it. Its rows
 // already in transcripts keep their wording until those rows are removed.
 const SIDEKICK_POST_RESULT_PROSE: ToolProse = {
-  started: "Posting the result to the work stream",
-  settled: "Posted the result to the work stream",
-  failed: "Could not post the result to the work stream",
+  started: "Posting the result to the conversation",
+  settled: "Posted the result to the conversation",
+  failed: "Could not post the result to the conversation",
 };
 
 /** `rally:conversations`, whose wire names carry the `conversation_` prefix. */
