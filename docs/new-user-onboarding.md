@@ -132,7 +132,9 @@ introduction and resume their workspace journey when account details arrive. Wor
 progress also loads without replacing the app with a loading screen; only known
 unfinished setup or a journey failure interrupts the workspace. While either
 lookup is pending, nested conversation-admission providers keep warmed feeds
-speculative and message sending disabled. Completion releases admission without
+speculative, message sending disabled, and the landing's `last-route` restore
+held on an opening state ([`desktop-shell.md`](desktop-shell.md#the-landing-and-the-routes)).
+Completion releases admission without
 reconnecting; an unfinished result replaces the workspace without first marking
 its conversations opened.
 Background refetch failures keep cached onboarding state. Unsent invitation
