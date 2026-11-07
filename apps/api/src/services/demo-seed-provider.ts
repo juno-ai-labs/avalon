@@ -17,7 +17,6 @@
 import type { DemoSeed, DemoSeedTurn } from "@rally/contracts";
 import { isAzureBoundModel } from "@rally/agent-harness";
 
-
 /**
  * The endpoint a streamed OpenRouter turn goes to. The seed never answers an
  * Azure turn (`demoSeedModelRoute` keeps the run off Azure), so Azure's Chat
