@@ -11154,11 +11154,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * Everything is read from this object's own tables. A conversation is
    * decided by its parent's own `readableSubstreams`, the rule its canonical
    * reads apply; a Sidekick and a connection by the predicates canonical
-   * authorization shares (`sidekickAdmits`,
-   * `connectionAdmits`). One narrowing is search's own, from the PRD: a guest
-   * never holds a workspace connection. Archived Channels and
-   * Spaces are skipped: member search never returns an archived row. A person
-   * who is not an active member of the Organization holds no groups.
+   * authorization shares (`sidekickAdmits`, `connectionAdmits`), and a
+   * Canvas's Chat by `canvasReaderAllows`, the rule opening the Canvas
+   * applies. One narrowing is search's own, from the PRD: a guest never holds
+   * a workspace connection. A person who is not an active member of the
+   * Organization holds no groups.
    */
   async readSearchAudience(input: unknown): Promise<string[]> {
     await this.initialized;
@@ -11183,6 +11183,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         executor: sidekick.run_as_user_id === request.userId, shared: sidekick.shared === 1 }, member);
       if (readable) groups.push(searchAudienceGroup.sidekick(sidekick.automation_id));
     }
+    // A Canvas's Chat is its conversation `0`, read by whoever opens the Canvas.
+    const actorRole = member ? relationship.role ?? "member" : null;
+    for (const canvas of sql.exec<CanvasRow>(`SELECT * FROM canvas_directory`).toArray()) {
+      if (canvasReaderAllows(canvas, { userId: request.userId, actorRole }, sql)) {
+        groups.push(searchAudienceGroup.conversation(canvas.canvas_id, "0"));
+      }
+    }
     // A guest never gets a workspace connection (the PRD's decision 7); every
     // other reader is who `authorizationConnectionFacts` allows.
     for (const connection of sql.exec<{ id: string; scope: string; owner_user_id: string | null; status: string }>(
@@ -11206,10 +11213,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = z.strictObject({ workspaceId: WorkspaceIdSchema, target: SearchAuthorizationTargetSchema }).parse(input);
     this.assertWorkspace(request.workspaceId);
     const members = await this.env.DB.prepare(
-      `SELECT user_id FROM workspace_members WHERE workspace_id = ? AND status = 'active'`,
-    ).bind(request.workspaceId).all<{ user_id: string }>();
+      `SELECT user_id, role FROM workspace_members WHERE workspace_id = ? AND status = 'active'`,
+    ).bind(request.workspaceId).all<{ user_id: string; role: string | null }>();
     return enumerateSearchAuthorizationUniverse(this.state.storage.sql, request.workspaceId,
-      members.results.map((row) => row.user_id), request.target);
+      members.results.map((row) => row.user_id),
+      members.results.filter((row) => row.role === "owner" || row.role === "admin").map((row) => row.user_id),
+      request.target);
   }
 
   async authorizationResourceFacts(input: {

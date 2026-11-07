@@ -16,9 +16,8 @@ describe('search audience groups', () => {
     expect(await searchAudienceGroupId('conversation:channel/1')).not.toBe(id);
   });
 
-  it('names a conversation by its Channel substream, or by its Sidekick', () => {
-    expect(conversationSearchAudience({ parentKind: 'workstream', parentId: 'channel', substreamId: '4' })).toEqual(['conversation:channel/4']);
-    expect(conversationSearchAudience({ parentKind: 'space', parentId: 'space', substreamId: '0' })).toEqual(['conversation:space/0']);
+  it("names a conversation by its Canvas's Chat, or by its Sidekick", () => {
+    expect(conversationSearchAudience({ parentKind: 'canvas', parentId: 'canvas', substreamId: '0' })).toEqual(['conversation:canvas/0']);
     expect(conversationSearchAudience({ parentKind: 'automation', parentId: 'sidekick', substreamId: '9' })).toEqual(['sidekick:sidekick']);
   });
 
@@ -35,10 +34,10 @@ describe('search audience groups', () => {
     // A draft upload is its uploader's, whatever locations exist.
     expect(resourceSearchAudience(workspaceId, { ...row, attachment_status: 'draft' }, [channel])).toEqual(['user:uploader']);
     expect(resourceSearchAudience(workspaceId, { ...row, connection_id: 'c1' }, [channel])).toEqual(['connection:c1']);
-    // A Channel a merge shared it with admits that Channel's readers.
+    // A Canvas that holds it admits the Canvas's Chat readers.
     expect(resourceSearchAudience(workspaceId, { ...row, provider: 'avalon_generated' },
-      [{ parentId: 'space-1', substreamId: '0', parentKind: 'space' }]))
-      .toEqual(['user:uploader', 'space:space-1']);
+      [{ parentId: 'canvas-1', substreamId: '0', parentKind: 'canvas' }]))
+      .toEqual(['user:uploader', 'conversation:canvas-1/0']);
     // Nobody placed: nobody admitted, never everyone.
     expect(resourceSearchAudience(workspaceId, { ...row, uploaded_by_user_id: null }, [])).toEqual([]);
   });

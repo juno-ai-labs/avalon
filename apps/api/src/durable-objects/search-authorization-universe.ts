@@ -5,9 +5,10 @@ import type { AuthorizationResource, AuthorizationSubject } from '../services/au
  * The subjects and resources a search projection target reaches, read from
  * the WorkspaceDO's own directories. This is discovery for registration,
  * never a grant: every pair still gets its canonical decision through
- * `project()`. It over-approximates on purpose (a room's participants for a
- * private child they may not be in), because a registered denial costs one
- * key and a missing grant costs a search result.
+ * `project()`. It over-approximates on purpose (a writer Sidekick's whole
+ * audience for a Canvas it writes, every administrator for every Canvas),
+ * because a registered denial costs one key and a missing grant costs a
+ * search result.
  */
 export type SearchAuthorizationTarget =
   | { kind: 'parent'; id: string } | { kind: 'resource'; id: string }
@@ -15,14 +16,19 @@ export type SearchAuthorizationTarget =
 
 export interface SearchAuthorizationPair { subject: AuthorizationSubject; resources: AuthorizationResource[] }
 
-interface DirectoryRow extends Record<string, SqlStorageValue> { workstream_id: string; scope: string; archived_at: number | null }
+interface CanvasRow extends Record<string, SqlStorageValue> {
+  canvas_id: string; visibility: string; created_by_user_id: string; writer_sidekick_id: string | null;
+}
 interface AutomationRow extends Record<string, SqlStorageValue> {
-  automation_id: string; scope: string; author_user_id: string; owning_workstream_id: string | null;
-  owning_substream_id: string; lifecycle: string;
+  automation_id: string; scope: string; author_user_id: string; run_as_user_id: string | null; lifecycle: string;
 }
 
+/**
+ * `members` is every active member; `administrators` the owners and
+ * administrators among them, who open every Canvas.
+ */
 export function enumerateSearchAuthorizationUniverse(sql: SqlStorage, workspaceId: string, members: readonly string[],
-  target: SearchAuthorizationTarget): SearchAuthorizationPair[] {
+  administrators: readonly string[], target: SearchAuthorizationTarget): SearchAuthorizationPair[] {
   const workspace = asWorkspaceId(workspaceId);
   const active = new Set(members);
   const subject = (userId: string): AuthorizationSubject => ({ workspaceId: workspace, userId: asUserId(userId), delegation: null });
@@ -31,35 +37,35 @@ export function enumerateSearchAuthorizationUniverse(sql: SqlStorage, workspaceI
   const resource = (resourceId: string): AuthorizationResource => ({ kind: 'resource', workspaceId: workspace, resourceId });
   const connection = (connectionId: string): AuthorizationResource => ({ kind: 'connection', workspaceId: workspace, connectionId });
 
-  const directory = (parentId: string) => sql.exec<DirectoryRow>(
-    'SELECT workstream_id, scope, archived_at FROM channels WHERE workstream_id = ?', parentId).toArray()[0];
+  const canvas = (parentId: string) => sql.exec<CanvasRow>(
+    'SELECT canvas_id, visibility, created_by_user_id, writer_sidekick_id FROM canvas_directory WHERE canvas_id = ?',
+    parentId).toArray()[0];
   const automation = (parentId: string) => sql.exec<AutomationRow>(
-    'SELECT automation_id, scope, author_user_id, owning_workstream_id, owning_substream_id, lifecycle FROM automation_directory WHERE automation_id = ?', parentId).toArray()[0];
-  const participants = (parentId: string) => sql.exec<{ user_id: string }>(
-    'SELECT user_id FROM channel_viewers WHERE workstream_id = ? AND is_participant = 1', parentId).toArray()
-    .map((row) => row.user_id).filter((userId) => active.has(userId));
-  const breakoutMembers = (parentId: string, substreamId: string) => sql.exec<{ user_id: string }>(
-    'SELECT user_id FROM breakout_viewers WHERE workstream_id = ? AND substream_id = ? AND is_participant = 1',
-    parentId, substreamId).toArray().map((row) => row.user_id).filter((userId) => active.has(userId));
+    'SELECT automation_id, scope, author_user_id, run_as_user_id, lifecycle FROM automation_directory WHERE automation_id = ?', parentId).toArray()[0];
+  const canvasParticipants = (canvasId: string) => sql.exec<{ user_id: string }>(
+    'SELECT user_id FROM canvas_participants WHERE canvas_id = ?', canvasId).toArray().map((row) => row.user_id);
   /** Who could read a parent, before its canonical owner decides. Unknown parents reach nobody. */
   const parentSubjects = (parentId: string): string[] => {
-    const room = directory(parentId);
-    if (room) return room.scope === 'workspace' ? [...active] : participants(parentId);
+    const board = canvas(parentId);
+    if (board) {
+      if (board.visibility === 'workspace') return [...active];
+      return [...new Set([board.created_by_user_id, ...canvasParticipants(parentId), ...administrators,
+        ...(board.writer_sidekick_id ? parentSubjects(board.writer_sidekick_id) : [])])].filter((userId) => active.has(userId));
+    }
     const auto = automation(parentId);
     if (!auto || auto.lifecycle === 'deleted') return [];
     if (auto.scope === 'workspace') return [...active];
-    // A Breakout home narrows the room to the Breakout's own members.
-    const inherited = auto.scope !== 'workstream' || !auto.owning_workstream_id ? []
-      : auto.owning_substream_id === '0' ? parentSubjects(auto.owning_workstream_id)
-        : breakoutMembers(auto.owning_workstream_id, auto.owning_substream_id);
-    return [...new Set([auto.author_user_id, ...inherited].filter((userId) => active.has(userId)))];
+    // Its author, who it runs as, and who it is shared with: `sidekickAdmits`.
+    const shared = sql.exec<{ user_id: string }>('SELECT user_id FROM sidekick_audience WHERE sidekick_id = ?', parentId)
+      .toArray().map((row) => row.user_id);
+    return [...new Set([auto.author_user_id, ...(auto.run_as_user_id ? [auto.run_as_user_id] : []), ...shared])].filter((userId) => active.has(userId));
   };
   /** Every conversation the WorkspaceDO knows under a parent: the main feed and the delivered or registered children. */
   const parentConversations = (parentId: string): AuthorizationResource[] => {
     const children = sql.exec<{ substream_id: string }>(`SELECT substream_id FROM authorization_inventories WHERE parent_id = ?
       UNION SELECT substream_id FROM authorization_backfill_children WHERE parent_id = ?`, parentId, parentId).toArray()
       .map((row) => row.substream_id);
-    const substreams = new Set(directory(parentId) ? ['0', ...children] : children);
+    const substreams = new Set(canvas(parentId) ? ['0', ...children] : children);
     return [...substreams].map((substreamId) => conversation(parentId, substreamId));
   };
   /** Attachment-admitted resources located under a parent; connector resources are admitted by their connection instead. */
@@ -87,11 +93,11 @@ export function enumerateSearchAuthorizationUniverse(sql: SqlStorage, workspaceI
     case 'member': {
       if (!active.has(target.id)) return [];
       const resources: AuthorizationResource[] = [];
-      for (const room of sql.exec<DirectoryRow>('SELECT workstream_id, scope, archived_at FROM channels WHERE archived_at IS NULL').toArray()) {
-        if (room.scope !== 'workspace' && !participants(room.workstream_id).includes(target.id)) continue;
-        resources.push(...parentConversations(room.workstream_id), ...parentResources(room.workstream_id));
+      for (const board of sql.exec<{ canvas_id: string }>('SELECT canvas_id FROM canvas_directory').toArray()) {
+        if (!parentSubjects(board.canvas_id).includes(target.id)) continue;
+        resources.push(...parentConversations(board.canvas_id), ...parentResources(board.canvas_id));
       }
-      for (const auto of sql.exec<AutomationRow>("SELECT automation_id, scope, author_user_id, owning_workstream_id, owning_substream_id, lifecycle FROM automation_directory WHERE lifecycle <> 'deleted'").toArray()) {
+      for (const auto of sql.exec<AutomationRow>("SELECT automation_id, scope, author_user_id, run_as_user_id, lifecycle FROM automation_directory WHERE lifecycle <> 'deleted'").toArray()) {
         if (!parentSubjects(auto.automation_id).includes(target.id)) continue;
         resources.push(...parentConversations(auto.automation_id), ...parentResources(auto.automation_id));
       }
