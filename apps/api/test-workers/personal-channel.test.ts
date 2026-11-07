@@ -296,15 +296,6 @@ describe("seatOrganizationMember", () => {
   });
 });
 
-describe("linkTitle", () => {
-  it("names General but never a Personal Channel", async () => {
-    await expect(workspace().linkTitle({ workspaceId: WORKSPACE_ID, target: { kind: "space", spaceId: GENERAL } }))
-      .resolves.toEqual({ title: "General" });
-    await expect(workspace().linkTitle({ workspaceId: WORKSPACE_ID, target: { kind: "space", spaceId: OWNER_PERSONAL } }))
-      .resolves.toEqual({ title: null });
-  });
-});
-
 describe("reading General", () => {
   it("answers General and writes nothing", async () => {
     const bootstrap = () => runInDurableObject(workspace(), (_instance, state) => (

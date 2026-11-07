@@ -1,6 +1,6 @@
 /*
  * Every browser page whose job is to hand off to the desktop app: the sign-in
- * return, shared Channel/Breakout/Space/Sidekick links, `/open`, and
+ * return, shared Canvas and Sidekick links, `/open`, and
  * organization invitations. The person is on their way into the app, so these
  * pages copy the desktop sign-in screen rather than the marketing site: the
  * values below mirror the renderer's `.signin-*` rules in

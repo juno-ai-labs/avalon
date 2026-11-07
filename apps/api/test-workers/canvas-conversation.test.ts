@@ -13,6 +13,7 @@ import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:tes
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { uuidToBase58 } from "@rally/contracts/uuid-base58";
 
 import { canvasSidebarRows } from "../src/durable-objects/hosted-canvas";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
@@ -21,6 +22,7 @@ import type { AuthContext, Env } from "../src/env";
 import { createAccessContext } from "../src/services/authorization-service";
 import { projectAuthorization } from "../src/services/authorization-projection-service";
 import { CanvasService, createCanvas } from "../src/services/canvas-service";
+import { conversationCanonicalUrl } from "../src/services/conversation-link-service";
 import { createAutomation } from "../src/services/automation-service";
 import { canvasArtifactNoter, resolveTerminalPublicationHome } from "../src/services/terminal/authority";
 import { createTerminalPortFactory } from "../src/services/terminal/object-port";
@@ -476,6 +478,32 @@ describe("a Canvas's artifacts", () => {
     const { canvasId: elsewhere } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     await expect(resolveTerminalPublicationHome(TEST_ENV, run, { canvas: elsewhere }))
       .rejects.toMatchObject({ code: "canvas_not_written_by_sidekick" });
+  });
+});
+
+describe("a link to a conversation", () => {
+  it("names the Canvas for its Chat and the Sidekick for its conversation, and nothing for a Thread", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    const sidekickId = crypto.randomUUID();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    const organization = uuidToBase58(WORKSPACE_ID);
+    const link = (parentId: string, artifactId?: string) => conversationCanonicalUrl(TEST_ENV, {
+      region: "global", workspaceId: WORKSPACE_ID, parentId, ...(artifactId ? { artifactId } : {}) });
+    await expect(link(canvasId)).resolves.toBe(`https://app.test/app/global/${organization}/cv/${uuidToBase58(canvasId)}/`);
+    const artifactId = crypto.randomUUID();
+    await expect(link(canvasId, artifactId)).resolves
+      .toBe(`https://app.test/app/global/${organization}/cv/${uuidToBase58(canvasId)}/a/${uuidToBase58(artifactId)}/`);
+    await expect(link(sidekickId)).resolves.toBe(`https://app.test/app/global/${organization}/sk/${uuidToBase58(sidekickId)}/`);
+    // An id the Organization holds no Canvas or Sidekick for: a Thread's, or nothing's.
+    await expect(link(crypto.randomUUID())).resolves.toBeNull();
+  });
+
+  it("lets the handoff page name the Canvas, from its current title", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    await expect(workspace().linkTitle({ workspaceId: WORKSPACE_ID, target: { kind: "canvas", canvasId } }))
+      .resolves.toEqual({ title: "Launch plan" });
+    await expect(workspace().linkTitle({ workspaceId: WORKSPACE_ID, target: { kind: "canvas", canvasId: crypto.randomUUID() } }))
+      .resolves.toEqual({ title: null });
   });
 });
 

@@ -11,7 +11,7 @@ import { SidekickDetailLayout } from '../components/sidekick-detail-layout';
 import { AutomationHeader, type AutomationHeaderAction } from '../components/automation-header';
 import { Button, EmptyState, OpeningState } from '../components/primitives';
 import { useCollaborationSession } from '../lib/collaboration-session';
-import { copySidekickLink } from '../lib/copy-sidekick-link';
+import { copyLink } from '../lib/copy-link';
 import { ConversationSurface } from './conversation-surface';
 import { SidekickDelegation, useSidekickDelegates } from '../components/sidekick-delegation';
 
@@ -201,7 +201,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
       onArchive={() => act.mutateAsync('archive').then(() => undefined)}
       onCopyLink={async () => {
         if (!session?.workspace) throw new Error('No active organization');
-        await copySidekickLink({ region: session.workspace.region, workspaceId: session.workspace.id }, id);
+        await copyLink({ kind: 'sidekick', region: session.workspace.region, workspaceId: session.workspace.id, sidekickId: id });
       }}
       onPause={() => act.mutate('pause')}
       onResume={() => act.mutate('resume')}

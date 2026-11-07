@@ -5,7 +5,7 @@ import { ConnectorError } from "@rally/connectors";
 import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
-import { slackChannelIsExternallyShared, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
+import { linkUnfurlBlocks, slackChannelIsExternallyShared, slackUnfurlLinkTargets, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
 import {
   createCloudflareTestBinding,
   createTestDurableObjectId,
@@ -802,49 +802,34 @@ describe("App Home task rows", () => {
   });
 });
 
-describe("recording shared work-stream links for refresh", () => {
-  const workstreamId = "019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
-  const summary = {
-    title: "Quarterly planning",
-    harnessStatus: "running",
-    lastActivityAt: "2026-08-10T12:00:00.000Z",
-  };
+describe("which shared links get a card", () => {
+  const scope = { webBaseUrls: ["https://rallywith.ai", "https://with-avalon.com"], region: "global", workspaceId: "00000000-0000-7000-8000-000000000001" };
+  const canvas = "https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/";
+  const sidekick = "https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7TY/";
 
-  it("records a link with the exact URL Slack reported", () => {
-    const url = `https://with-avalon.com/app/workstreams/${workstreamId}`;
-
-    expect(__slackAgentTesting.recordableUnfurlLinks(
-      logEnv,
-      new Map([[url, workstreamId]]),
-      new Map([[workstreamId, summary]]),
-    )).toEqual([{ url, workstreamId, summary }]);
+  it("reads this Organization's Canvas and Sidekick links on either site domain, by the URL Slack reported", () => {
+    expect(slackUnfurlLinkTargets([{ url: canvas }, { url: sidekick }], scope)).toEqual(new Map([
+      [canvas, { kind: "canvas", region: "global", workspaceId: "00000000-0000-7000-8000-000000000001", canvasId: "00000000-0000-7000-8000-000000000002" }],
+      [sidekick, { kind: "sidekick", region: "global", workspaceId: "00000000-0000-7000-8000-000000000001", sidekickId: "00000000-0000-7000-8000-000000000003" }],
+    ]));
   });
 
-  it("skips an over-long link rather than storing a key that can never match", () => {
-    // Reachable through the legacy handoff form, which tolerates extra
-    // fragment parameters. Truncating to fit the column would store a URL that
-    // no longer matches the message's link, so every later refresh would look
-    // successful while the posted card stayed stale.
-    const overLong = `https://with-avalon.com/open#target=${encodeURIComponent(
-      `avalon://workstreams/${workstreamId}`,
-    )}&x=${"a".repeat(2_100)}`;
-    expect(overLong.length).toBeGreaterThan(2_000);
-
-    expect(__slackAgentTesting.recordableUnfurlLinks(
-      logEnv,
-      new Map([[overLong, workstreamId]]),
-      new Map([[workstreamId, summary]]),
-    )).toEqual([]);
+  it("leaves another Organization's, a retired Thread's and a look-alike host's links to Slack", () => {
+    expect(slackUnfurlLinkTargets([
+      { url: "https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Te/cv/1111117Hxt1fAWDjN7TX/" },
+      { url: "https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY" },
+      { url: "https://with-avalon.com/app/workstreams/019fec70-fba0-7b0e-9f7a-3dd1ef56520f" },
+      { url: "https://evil.example/app/global/1111117Hxt1fAWDjN7TW/cv/1111117Hxt1fAWDjN7TX/" },
+      { url: 42 },
+    ], scope).size).toBe(0);
   });
 
-  it("records nothing for a link whose card showed no summary", () => {
-    const url = `https://with-avalon.com/app/workstreams/${workstreamId}`;
-
-    expect(__slackAgentTesting.recordableUnfurlLinks(
-      logEnv,
-      new Map([[url, workstreamId]]),
-      new Map(),
-    )).toEqual([]);
+  it("names the Canvas on its card, linked to the URL Slack reported, and nothing more", () => {
+    expect(linkUnfurlBlocks("Q4 board deck", canvas)).toEqual([
+      { type: "section", text: { type: "mrkdwn", text: `*<${canvas}|Q4 board deck>*` } },
+      { type: "actions", elements: [{ type: "button", text: { type: "plain_text", text: "Open in Rally" }, url: canvas, action_id: "rally_open_unfurl" }] },
+    ]);
+    expect(JSON.stringify(linkUnfurlBlocks(null, canvas))).not.toContain("Q4 board deck");
   });
 });
 

@@ -125,15 +125,11 @@ type WorkspaceTarget,
 type WorkspaceTargetRegion
 } from "./workspace-target";
 export {
-LEGACY_WORKSTREAM_LINK_ORIGINS,LEGACY_WORKSTREAM_LINK_PATH_PREFIX,WORKSTREAM_LINK_PATH_PREFIX,
-isWorkstreamId,
-parseWorkstreamLink,parseWorkstreamLinkPath,
-parseSidekickLinkPathTarget,parseSpaceLinkPathTarget,parseWorkstreamLinkPathTarget,parseWorkstreamLinkTarget,sidekickCanonicalUrl,sidekickDeepLink,spaceCanonicalUrl,spaceDeepLink,workstreamCanonicalUrl,
-workstreamDeepLink,
-workstreamDeepLinkFromParsedTarget,
-type ParsedWorkstreamLinkTarget,type SidekickLinkTarget,type SpaceLinkTarget,
-type WorkstreamLinkTarget
-} from "./workstream-links";
+LEGACY_LINK_ORIGINS,LINK_PATH_PREFIX,
+canvasCanonicalUrl,canvasDeepLink,isRetiredLinkPath,linkCanonicalUrl,linkDeepLink,
+parseLinkPathTarget,parseLinkTarget,sidekickCanonicalUrl,sidekickDeepLink,
+type CanvasLinkTarget,type LinkTarget,type SidekickLinkTarget
+} from "./links";
 export { uuidFromBase58, uuidToBase58 } from "./uuid-base58";
 
 export const TimestampSchema = z.string().datetime({ offset: true });

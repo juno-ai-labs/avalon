@@ -2125,7 +2125,7 @@ export const TELEMETRY_EVENTS = {
     authoritativeSource: "site",
     identityScopes: ["anonymous-epoch"],
     properties: deferredZodSchema(() => z.strictObject({
-      handoffType: z.enum(["auth", "invite", "workstream", "slack", "settings", "automation", "activity", "unknown"]),
+      handoffType: z.enum(["auth", "invite", "canvas", "sidekick", "workstream", "slack", "settings", "automation", "activity", "unknown"]),
       method: z.enum(["presented", "automatic", "manual", "browser"]),
       validity: z.enum(["valid", "invalid"]),
     })),

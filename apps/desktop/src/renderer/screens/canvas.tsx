@@ -1,6 +1,6 @@
 import type { CanvasDetail } from '@rally/contracts';
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
+import { IconLink, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -9,6 +9,7 @@ import { CanvasMark } from '../components/canvas-mark';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import { AvatarStack, Button, EmptyState, ErrorNotice } from '../components/primitives';
 import { canvasDetailQueryKey, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { copyLink } from '../lib/copy-link';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { layoutKey, readArtifactPanel } from '../lib/desktop-layout';
 import { openResourceRequest, openResourceState } from '../lib/navigation-routes';
@@ -44,9 +45,24 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const { membersById } = useCanvasNameSources(api);
   const [sharing, setSharing] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
-  useOpenNewestArtifact(id, canvas.data, session?.workspace?.id, session?.user.id, location.state, (resourceId) => {
+  const [linkError, setLinkError] = useState<Error | null>(null);
+  // A link that opens the Canvas onto one artifact arrives here as
+  // `?artifact=` (the browser host's form of the link's `/a/` segment); it
+  // becomes the route state the rail opens from, as a desktop deep link's does.
+  const linkedArtifact = new URLSearchParams(location.search).get('artifact');
+  useEffect(() => {
+    if (linkedArtifact) void navigate(location.pathname, { replace: true, state: openResourceState(id, linkedArtifact) });
+  }, [id, linkedArtifact, location.pathname, navigate]);
+  useOpenNewestArtifact(id, canvas.data, session?.workspace?.id, session?.user.id, linkedArtifact ? openResourceState(id, linkedArtifact) : location.state, (resourceId) => {
     void navigate(`${location.pathname}${location.search}`, { replace: true, state: openResourceState(id, resourceId) });
   });
+  const workspace = session?.workspace;
+  const copyCanvasLink = (): void => {
+    if (!workspace) return;
+    setLinkError(null);
+    copyLink({ kind: 'canvas', region: workspace.region, workspaceId: workspace.id, canvasId: id })
+      .catch((cause: unknown) => setLinkError(cause instanceof Error ? cause : new Error('The link could not be copied.')));
+  };
   const title = canvas.data?.title ?? row?.title ?? '';
   const pinned = row ? row.pinnedPosition !== null : false;
   const togglePin = (): void => {
@@ -73,10 +89,14 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       <TitleMenuItem disabled={!canvas.data} icon={<IconUsers aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => setSharing(true)}>
         Share…
       </TitleMenuItem>
+      <TitleMenuItem disabled={!workspace} icon={<IconLink aria-hidden="true" size={16} stroke={1.8} />} onSelect={copyCanvasLink}>
+        Copy link
+      </TitleMenuItem>
     </>,
   });
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
+    {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
     <ConversationSurface
       parentId={id}
       parentKind="canvas"

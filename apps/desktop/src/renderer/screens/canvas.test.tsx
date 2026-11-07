@@ -7,6 +7,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
+import type * as Platform from '../lib/platform';
 import { openResourceRequest } from '../lib/navigation-routes';
 import type { ConversationSurfaceProps } from './conversation-surface';
 import { CanvasScreen } from './canvas';
@@ -27,6 +28,12 @@ vi.mock('../lib/collaboration-session', () => ({
   }),
   useOptionalCollaborationSession: () => null,
   useShellCapabilities: () => ({ host: 'desktop', guest: false }),
+}));
+
+const copyText = vi.hoisted(() => vi.fn());
+vi.mock('../lib/platform', async (importOriginal) => ({
+  ...await importOriginal<typeof Platform>(),
+  desktopBridge: () => ({ copyText, getRuntimeConfig: async () => ({ webBaseUrl: 'https://rallywith.ai' }) }),
 }));
 
 // The conversation is its own surface with its own sockets; this file is about
@@ -53,9 +60,9 @@ function detail(overrides: Partial<CanvasDetail> = {}): CanvasDetail {
   } as CanvasDetail;
 }
 
-function renderCanvas(): void {
+function renderCanvas(entry = `/canvases/${CANVAS}`): void {
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <Tooltip.Provider><MemoryRouter initialEntries={[`/canvases/${CANVAS}`]}>
+    <Tooltip.Provider><MemoryRouter initialEntries={[entry]}>
       <Routes><Route element={<CanvasScreen />} path="/canvases/:id" /></Routes>
     </MemoryRouter></Tooltip.Provider>
   </QueryClientProvider>);
@@ -65,6 +72,7 @@ const lastSurface = () => surfaces.at(-1)!;
 
 beforeEach(() => {
   surfaces.length = 0;
+  copyText.mockReset().mockResolvedValue(undefined);
   window.localStorage.clear();
   getCanvas.mockReset().mockResolvedValue(detail());
   setCanvasPinned.mockReset().mockResolvedValue(undefined);
@@ -104,6 +112,21 @@ describe('CanvasScreen', () => {
     renderCanvas();
     await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
     expect(surfaces.every((surface) => surface.requested === null)).toBe(true);
+  });
+
+  it('opens the artifact a link names rather than the newest', async () => {
+    renderCanvas(`/canvases/${CANVAS}?artifact=00000000-0000-7000-8000-0000000000b1`);
+    await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b1'));
+    await waitFor(() => expect(getCanvas).toHaveBeenCalled());
+    expect(surfaces.some((surface) => surface.requested === '00000000-0000-7000-8000-0000000000b2')).toBe(false);
+  });
+
+  it("copies the Canvas's own link from its menu", async () => {
+    renderCanvas();
+    const trigger = await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith('https://rallywith.ai/app/global/1111117Hxt1fAWDjN7Xe/cv/1111117Hxt1fAWDjN7Wp/'));
   });
 
   it('pins the Canvas from its menu', async () => {

@@ -1,6 +1,8 @@
-# Canonical and legacy /app/ resource URLs share one static handoff page. The
-# rewrite preserves the original URL so the page can parse its resource path.
-/app/*  /app/workstreams/  200
+# Every /app/ link shares one static handoff page: a Canvas or Sidekick link
+# opens from it, and a Space, Channel, Breakout or Thread link minted before
+# Canvases replaced them lands on it and says what it named is gone, rather
+# than a 404. The rewrite keeps the original URL so the page can read its path.
+/app/*  /app/open/  200
 
 # Legal documents now live together under one Trust Center hierarchy. Preserve
 # public links that predate the consolidation, including their trailing-slash
