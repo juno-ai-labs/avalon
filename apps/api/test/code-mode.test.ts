@@ -23,6 +23,7 @@ import {
   checkProgram,
   customToolFailure,
   finishProgram,
+  programTestWarnings,
   wrapProgram,
   type CodeModeHost,
   type RecordedCall,
@@ -529,5 +530,26 @@ describe("checkProgram", () => {
       ["write_with_clock_or_random", 3, expect.stringContaining("new Date() in a program that writes")],
     ]);
     expect(check("const t = tools.rally_tables;\nt.insert_rows({});\nreturn tools['rally_tables'].insert_rows({});")).toEqual([]);
+  });
+});
+
+describe("programTestWarnings", () => {
+  const clock = { tool: "rally_core.current_time" };
+  const read = { tool: "plugin_rally.run_sql" };
+
+  it("warns a program that reads current_time more than once and never calls msLeft()", () => {
+    expect(programTestWarnings({ code: "const now = await tools.rally_core.current_time({});", calls: [clock, read, clock] }))
+      .toEqual([expect.stringContaining("read current_time 2 times and never calls msLeft()")]);
+    // One read works out the dates; msLeft() already times the share.
+    expect(programTestWarnings({ code: "x", calls: [clock, read] })).toEqual([]);
+    expect(programTestWarnings({ code: "while (msLeft() > 5000) {}", calls: [clock, clock] })).toEqual([]);
+    expect(programTestWarnings({ code: "if (msLeft?.() > 5000) {}", calls: [clock, clock] })).toEqual([]);
+    expect(programTestWarnings({ code: "const left = msLeft /* remaining */ ();", calls: [clock, clock] })).toEqual([]);
+  });
+
+  it("does not take msLeft() in a comment or a string for a call", () => {
+    for (const code of ["// TODO: use msLeft()\nreturn 1;", "return 'call msLeft() next';"]) {
+      expect(programTestWarnings({ code, calls: [clock, clock] })).toEqual([expect.stringContaining("never calls msLeft()")]);
+    }
   });
 });
