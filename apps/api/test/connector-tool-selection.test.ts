@@ -445,7 +445,7 @@ function workflowInput(): WorkstreamWorkflowInput {
   return {
     region: "global",
     workspaceId: WORKSPACE_ID,
-    parentKind: "workstream",
+    parentKind: "canvas",
     parentId: WORKSTREAM_ID,
     loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
     harnessRunId: HARNESS_RUN_ID,
@@ -718,7 +718,7 @@ describe("connector tools selected for harness runs", () => {
       ]));
     expect(selected.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
       ?.tools.map((tool) => tool.definition.name)).toEqual([
-        "sidekick_my_delegations_list", "sidekick_delegates_list", "sidekick_set_delegation"]);
+        "my_delegations_list", "delegates_list", "set_delegation"]);
     expect(selected.tools.some((tool) => tool.definition.name === "run_subagent")).toBe(false);
   });
 
@@ -732,7 +732,7 @@ describe("connector tools selected for harness runs", () => {
       automationDelegation: { runId: "00000000-0000-7000-8000-00000000d001", stopGeneration: 0 } });
     expect(room.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks")
       ?.tools.map((tool) => tool.definition.name)).toEqual([
-        "sidekick_my_delegations_list", "sidekick_delegates_list", "sidekick_set_delegation"]);
+        "my_delegations_list", "delegates_list", "set_delegation"]);
     // The wizard's background agent reads runs for it; a run's delegation worker does not.
     const sidekicks = child.plugins.find((plugin) => plugin.canonicalId === "rally:sidekicks");
     expect(sidekicks?.tools.map((tool) => tool.definition.name))

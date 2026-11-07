@@ -6,47 +6,38 @@ import { createTestEnv } from "./helpers/cloudflare-test";
 
 const input = WorkstreamWorkflowInputSchema.parse({
   region: "global", workspaceId: "00000000-0000-7000-8000-00000000dd00",
-  parentKind: "workstream", parentId: "00000000-0000-7000-8000-00000000dd01", substreamId: "0",
+  parentKind: "automation", parentId: "00000000-0000-7000-8000-00000000dd01", substreamId: "0",
   loopId: "delegation-tool-test", harnessRunId: "00000000-0000-7000-8000-00000000dd02",
   triggerMessageId: "00000000-0000-7000-8000-00000000dd03", activityId: null,
   executionPrincipal: { type: "user", userId: "00000000-0000-7000-8000-00000000dd04" }, reason: "user_message",
 });
 
-function plugin(authoring: boolean, autonomous = false) {
+// Only a Sidekick's authoring conversation builds this plugin: the Thread
+// presentation (`rally_sidekick_delegation`) left with Threads in 2316993, and
+// a Canvas chat's delegation tools are covered in connector-tool-selection.test.ts.
+function plugin(autonomous = false) {
   return __integrationTesting.createAvalonAutomationsPlugin(createTestEnv({}),
-    { ...input, parentKind: authoring ? "automation" : "workstream", ...(autonomous ? { triggerMessageId: null, backgroundAgent: true } : {}) }, new Set(), (tool) => [tool]);
+    { ...input, ...(autonomous ? { triggerMessageId: null, backgroundAgent: true } : {}) }, new Set(), (tool) => [tool]);
 }
 
 describe("Sidekick delegation plugin presentations", () => {
-  it("gives a room only the delegation subset, and authoring the same tools with stable wire names", () => {
-    const room = plugin(false);
-    const authoring = plugin(true);
-    const delegation = ["my_delegations_list", "delegates_list", "set_delegation"];
-    // A room no longer recommends Sidekicks; it keeps managing delegation.
-    expect(room.modelId).toBe("rally_sidekick_delegation");
-    expect(room.shortWireName).toBe("");
-    expect(room.tools.map((tool) => tool.definition.name)).toEqual(delegation.map((name) => `sidekick_${name}`));
+  it("gives authoring the delegation tools with stable wire names", () => {
+    const authoring = plugin();
     expect(authoring.modelId).toBe("rally_sidekicks");
     expect(authoring.shortWireName).toBe("sidekick");
-    expect(authoring.tools.slice(-3).map((tool) => tool.definition.name)).toEqual(delegation);
-    expect(room.systemMessage).toContain("sidekick_my_delegations_list");
-    expect(room.systemMessage).toContain("sidekick_delegates_list");
-    expect(room.systemMessage).toContain("sidekick_set_delegation");
-    expect(room.systemMessage).toContain("separate sidekicks_list and create_sidekick");
+    expect(authoring.tools.slice(-3).map((tool) => tool.definition.name))
+      .toEqual(["my_delegations_list", "delegates_list", "set_delegation"]);
     expect(authoring.systemMessage).toContain("This is available during autonomous work too");
     expect(authoring.systemMessage).toContain("sidekick_set_delegation");
     expect(authoring.systemMessage).toContain("sidekick_delegates_list");
-    expect(room.searchAliases).toContain("delegation");
   });
 
   it("exposes delegation tools during autonomous work", () => {
-    for (const authoring of [true, false]) {
-      expect(plugin(authoring, true).tools.some((tool) => tool.definition.capability.startsWith("rally.sidekick.delegation."))).toBe(true);
-    }
+    expect(plugin(true).tools.some((tool) => tool.definition.capability.startsWith("rally.sidekick.delegation."))).toBe(true);
   });
 
   it("advertises and enforces identical strict schemas with an explicit target user", () => {
-    const mutation = plugin(false).tools.find((tool) => tool.definition.name === "sidekick_set_delegation")!;
+    const mutation = plugin().tools.find((tool) => tool.definition.name === "set_delegation")!;
     expect(mutation.definition.mode).toBe("write");
     expect(mutation.definition.idempotency).toBe("record_before_execute");
     expect(mutation.serial).toBe(true);
