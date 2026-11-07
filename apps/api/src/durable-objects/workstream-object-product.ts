@@ -4,10 +4,9 @@ import { AnnotationsSchema, SidekickMessageIntentSchema, validateAnnotationAttac
 import { ResourceService } from "../services/resource-service";
 import { mergeEmbedsOf, resolveShareableResources } from "../services/resource-share-rules";
 import { AGENT_MESSAGE_CONTENT_KIND } from "@rally/contracts";
-import { WorkstreamAppearanceSchema, WorkstreamAppearancePatchSchema, type MergeEmbed, type WorkstreamAppearancePatch } from "@rally/contracts";
+import { WorkstreamAppearanceSchema, type MergeEmbed } from "@rally/contracts";
 import { renderAgentMessage } from "../services/agent-message-content";
 import { renderSidekickReviewNotice } from "../services/sidekick-review-notice";
-import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
   AnswerElicitationRequestSchema,
@@ -104,7 +103,7 @@ import { substreamLoopId, workspaceDOName } from "./names";
 import { workstreamImportHash } from "./workstream-import-hash";
 import { WorkspaceReserveDraftAttachmentsResultSchema } from "./workspace-draft-attachment-protocol";
 import { WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "@rally/contracts/conversation-effects";
-import type { RegionalEffectCommand, WorkstreamObjectStore } from "./workstream-object-storage";
+import type { HostedConversationParentKind, RegionalEffectCommand, WorkstreamObjectStore } from "./workstream-object-storage";
 import {
   LOOP_EXECUTION_LEASE_MS,
   SubstreamLoopStorage,
@@ -1032,7 +1031,7 @@ export class WorkstreamObjectProductService {
 
   bootstrapRuntimeAuthority(input: {
     workspaceId: WorkspaceId;
-    parentKind: ConversationParentKind;
+    parentKind: HostedConversationParentKind;
     parentId: string;
     generation: number;
   }): void {
@@ -1203,8 +1202,7 @@ export class WorkstreamObjectProductService {
 
   canRead(userId: string): boolean {
     const root = this.root();
-    return this.objectStore.identity()?.parentKind === "workstream" && this.externalSubstreamId() !== "0"
-      ? this.isParticipant(userId) : participantVisible(root, this.isParticipant(userId));
+    return participantVisible(root, this.isParticipant(userId));
   }
 
   activeParticipantIds(): string[] {
@@ -4958,51 +4956,6 @@ export class WorkstreamObjectProductService {
     inputIds: readonly string[],
   ): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
     return this.reorderPendingInputsWithAuthority(auth, operationId, inputIds, true);
-  }
-
-  async setAppearanceForAdmittedSocket(auth: AuthContext, operationId: string, raw: WorkstreamAppearancePatch): Promise<void> {
-    this.locallyAuthorizedRoot(auth);
-    if (this.objectStore.identity()?.parentKind !== "workstream") throw new ApiError(403, "main_conversation_required", "Change the thread appearance from Main");
-    return this.applyAppearance(auth, operationId, raw);
-  }
-
-  /**
-   * The same appearance write, reached over the product request rather than an
-   * admitted feed socket.
-   *
-   * A Space has no socket to admit — its role refuses the upgrade — and its
-   * icon and colour are the same stored appearance a Channel's are. So the
-   * write is one implementation with two doors, rather than a second appearance
-   * writer whose payload hash and effect would have to be kept in step with
-   * this one.
-   */
-  async setAppearance(auth: AuthContext, operationId: string, raw: WorkstreamAppearancePatch): Promise<void> {
-    await this.authorize(auth);
-    const parentKind = this.objectStore.identity()?.parentKind;
-    if (parentKind !== "workstream" && parentKind !== "space") {
-      throw new ApiError(403, "main_conversation_required", "Change the appearance from Main");
-    }
-    return this.applyAppearance(auth, operationId, raw);
-  }
-
-  private async applyAppearance(auth: AuthContext, operationId: string, raw: WorkstreamAppearancePatch): Promise<void> {
-    const parsed = WorkstreamAppearancePatchSchema.parse(raw);
-    // A thread's or a Breakout's colour is its Channel's, and only the server
-    // writes it (`recolor`, `channel-color-sync.ts`). A Space keeps its own.
-    const patch: WorkstreamAppearancePatch = this.objectStore.identity()?.parentKind !== "workstream" ? parsed
-      : parsed.icon === undefined ? {} : { icon: parsed.icon };
-    const requestHash = workstreamImportHash({ command: "set_workstream_appearance", patch });
-    let changed = false;
-    await this.objectStore.commitWithRegionalEffects((sql) => {
-      if (this.socketCommandReceipt(sql, auth, operationId, requestHash) !== "new") return;
-      const root = this.root();
-      const current = root.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(root.appearance_json)) : { icon: null, color: null };
-      const appearance = WorkstreamAppearanceSchema.parse({ ...current, ...patch });
-      const now = Date.now();
-      sql.exec(`UPDATE workstream SET appearance_json = ?, updated_at = ? WHERE id = 1`, JSON.stringify(appearance), now);
-      this.recordSocketCommandReceipt(sql, auth, operationId, "set_workstream_appearance", requestHash, workstreamImportHash(appearance), now);
-      changed = true;
-    }, () => changed ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }] : []);
   }
 
   async reorderPendingInputsForAdmittedSocket(

@@ -1,4 +1,5 @@
 import type { ConversationParentKind } from "@rally/contracts/conversation-parent";
+import { hostedConversationParentKind } from "../durable-objects/workstream-object-storage";
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import { conversationObjectName } from "../durable-objects/names";
@@ -55,7 +56,7 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
   );
   const response = await stub.bootstrapRuntime({
     workspaceId: asWorkspaceId(workspaceId),
-    parentKind,
+    parentKind: hostedConversationParentKind(parentKind),
     parentId,
     generation: authority.generation,
   });
@@ -160,7 +161,7 @@ export async function bootstrapConversationChildRuntime(
   );
   const response = await stub.bootstrapRuntime({
     workspaceId: asWorkspaceId(workspaceId),
-    parentKind,
+    parentKind: hostedConversationParentKind(parentKind),
     parentId,
     substreamId,
     generation: authority.generation,

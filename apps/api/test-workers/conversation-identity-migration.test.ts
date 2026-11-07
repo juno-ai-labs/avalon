@@ -30,7 +30,7 @@ const AUTOMATION_ID = asAutomationId("00000000-0000-7000-8000-000000000bc1");
 const RUN_ID = asSubstreamId("00000000-0000-7000-8000-000000000bc2");
 
 describe("a conversation object's parent kind", () => {
-  it("reads as a work stream's on a root written before the column existed, with its parent id unchanged", async () => {
+  it("migrates a root written before the column existed to a work stream's, which opens refused by name", async () => {
     // The probe object applies no schema of its own, so the history can be
     // stopped at version 38 and the root seeded the way that version wrote it.
     const stub = env.MIGRATION_PROBE_DO!.getByName("conversation-identity-v38");
@@ -64,12 +64,10 @@ describe("a conversation object's parent kind", () => {
 
       // Constructing the store is what a real object does first: it applies
       // the rest of the history, version 39 included.
+      // Every such root is a Thread's, retired in plan step B-7, so the
+      // product read refuses it by name rather than serving a dead parent.
       const store = new WorkstreamObjectStore(state.storage, "worker-current", "global");
-      expect(store.identity()).toEqual({
-        workspaceId: WORKSPACE_ID,
-        parentKind: "workstream",
-        parentId: "workstream-before-39",
-      });
+      expect(() => store.identity()).toThrow("conversation_parent_kind_retired:workstream");
       expect(state.storage.sql.exec<{ parent_kind: string; workstream_key: string }>(
         `SELECT parent_kind, workstream_key FROM workstream WHERE id = 1`,
       ).one()).toEqual({ parent_kind: "workstream", workstream_key: "workstream-before-39" });
@@ -100,7 +98,7 @@ describe("a conversation object's parent kind", () => {
 
     const refused = await stub.bootstrapRuntime({
       workspaceId: WORKSPACE_ID,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: AUTOMATION_ID,
       substreamId: RUN_ID,
       generation: 1,

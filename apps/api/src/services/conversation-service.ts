@@ -1,4 +1,5 @@
 import { newId } from "@rally/db";
+import { hostedConversationParentKind } from "../durable-objects/workstream-object-storage";
 import { asSubstreamId, asWorkspaceId } from "@rally/contracts";
 import type {
   ConversationParentAuthorizeViewerRequest,
@@ -272,7 +273,7 @@ export class ConversationService {
         );
         const prepared = await stub.prepareSocketAdmission({
           workspaceId: this.auth.workspaceId,
-          parentKind: input.parent.kind,
+          parentKind: hostedConversationParentKind(input.parent.kind),
           workstreamId: input.parent.id,
           substreamId: asSubstreamId("0"),
           userId: this.auth.userId,
