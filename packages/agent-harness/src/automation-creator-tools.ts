@@ -1032,11 +1032,11 @@ skipped or got wrong (a dedupe after the reads, a page not followed, date bounds
 union, a count) and says whether it moves into the tool or why it stays in the
 instructions; a plan that leaves that unanswered is incomplete. It also uses the
 report's cost figures. A run that spent many turns on routine steps is the case for
-moving them into the tool; one that called a tool several times to finish, or settled
-by hand items the tool returned as exceptions, is the case for re-tuning the tool as
-above and timing it again, as is a tool saved before msLeft() existed that times its
-share against a fixed number. Tools the runs always call one after another become
-one. "The instructions already say so" is not a
+moving them into the tool; one whose tool call finished fewer items than the measured
+settings in its instructions, returned exceptions code could have settled, or timed its
+share against a fixed number instead of msLeft() is the case for re-tuning the tool as
+above and timing it again. A tuned tool that still needs several calls for a large job
+stays as it is. Tools the runs always call one after another become one. "The instructions already say so" is not a
 reason a step stays: an instruction the run did not follow is the case for code the
 run calls, unless the run shows the step failed on something outside it (a timed-out
 read) rather than being done by hand or skipped. A tool the runs misused or no longer

@@ -1719,9 +1719,11 @@ instructions. See [Google connector guidance](connectors.md#google).
 **What changed:** The self-review's reader reports what each run's routine work
 cost: model turns, calls to each saved tool, and the items, requests and seconds
 each call reported. Routine work that cost more turns or tool calls than the work
-needs now justifies a change. Where a program runtime exists, a run that called a
-tool several times to finish, or settled by hand items the tool returned as
-exceptions, is the case for re-tuning the tool and timing it again. The
+needs now justifies a change. Where a program runtime exists, a tool call that
+finished fewer items than its measured settings, returned exceptions code could
+have settled, or timed its share against a fixed number is the case for
+re-tuning the tool and timing it again; a tuned tool that still needs several
+calls for a large job stays as it is, so a review does not rewrite it each time. The
 custom-tools guide adds what re-tuning looks for: a source that answers for many
 items in one request, and reads that return every fact the next step needs.
 
