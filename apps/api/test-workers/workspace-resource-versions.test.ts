@@ -11,7 +11,7 @@
  * write hook that drains the ledger runs as it does in production.
  */
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { reset } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -85,20 +85,26 @@ async function establishWorkspace(): Promise<void> {
 
 /**
  * A Canvas created by the owner, with the artifacts its conversation
- * generated, as the publish that attaches each one records them
- * (`HostedCanvas.noteArtifact`).
+ * generated, through the RPCs production uses: the create, the audience
+ * change, and the note a publish makes (`services/terminal/authority.ts`).
+ * The note is the seam this suite guards: it is what `publishResourceVersions`
+ * reads.
  */
+const created = new Set<string>();
 async function canvas(canvasId: string, title: string, visibility: "creator" | "workspace", resourceIds: readonly string[]): Promise<void> {
-  await runInDurableObject(workspace(), (_instance, state) => {
-    state.storage.sql.exec(`INSERT INTO canvas_directory
-        (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, visibility, authority_generation)
-      VALUES (?, ?, ?, ?, 0, 0, ?, 1)
-      ON CONFLICT (canvas_id) DO NOTHING`, canvasId, WORKSPACE_ID, title, OWNER, visibility);
-    for (const resourceId of resourceIds) {
-      state.storage.sql.exec(`INSERT OR IGNORE INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, 0)`,
-        canvasId, resourceId);
+  if (!created.has(canvasId)) {
+    created.add(canvasId);
+    await workspace().canvasCreate({ workspaceId: WORKSPACE_ID, canvasId, title, createdByUserId: OWNER, authorityGeneration: 1 });
+    if (visibility === "workspace") {
+      await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: OWNER, actorRole: "member" },
+        update: { visibility: "workspace", userIds: [] } });
     }
-  });
+  }
+  for (const resourceId of resourceIds) {
+    const { noted } = await workspace().canvasNoteArtifact({ workspaceId: WORKSPACE_ID, canvasId, resourceId,
+      editor: { kind: "rally", id: null } });
+    expect(noted).toBe(true);
+  }
 }
 
 async function runSql(sql: string, params: Array<string | number | null>): Promise<void> {
@@ -169,6 +175,7 @@ async function connect(userId: UserId): Promise<{ heads: ResourceHead[][] }> {
 beforeEach(async () => {
   await reset();
   sequence = 0;
+  created.clear();
   await establishWorkspace();
   await storeResource(REPORT, "Launch report");
   await storeResource(COMP_TABLE, "Comp table");

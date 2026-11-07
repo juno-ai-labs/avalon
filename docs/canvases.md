@@ -122,7 +122,9 @@ not exist.
 the visibility. Everyone named must be in the Organization, as a member or a
 guest (`assertAudienceInOrganization`, the check a Sidekick's audience uses;
 `canvas_audience_not_member`); a `participants` Canvas names someone other than
-its creator (`canvas_audience_participants_empty`).
+its creator (`canvas_audience_participants_empty`). Narrowing the audience
+backgrounds the presence of anyone it no longer admits and re-sends presence to
+the people still in the Canvas, before the one Canvas list the write sends.
 
 ### Guests
 
@@ -276,9 +278,9 @@ reorder must be decided before drag-to-reorder lands in the client.
 
 A Canvas id is a conversation-parent id, so `set_presence` already carries it
 as `foregroundWorkstreamId`, and `workspace_presence` fans out per
-conversation. The presence path admits a Canvas the viewer may open where it
-admits a listed Channel (`directoryVisible`, `mainOpenable`), so the face pile
-inside a Canvas is everyone in it now; foregrounding one wakes its Chat, as a
+conversation. The presence path admits a Canvas the viewer may open
+(`canvasVisible`, which asks `canvasReaderAllows`), so the face pile inside a
+Canvas is everyone in it now; foregrounding one wakes its Chat, as a
 Channel's Main is woken. A change to who is in any Canvas advances the
 `canvases` waterline and republishes the Canvas list, whose rows carry
 `presentUserIds`; a push at the same waterline would be dropped by the
@@ -454,6 +456,21 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 142: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because `workspace_workstream_resource_links`' foreign key names a Thread's directory row, which a Canvas has none of. Indexed by resource. |
 
 ## Changelog
+
+### 2026-11-07 — Narrowing a Canvas takes its removed viewers out of its presence
+
+**What changed:** `canvasSetAudience` re-checks presence inside its write, so
+someone the Canvas no longer admits stops showing in its face pile and their
+socket is backgrounded; restoring the audience does not put them back until
+their window says so. A new artifact version is announced to a Canvas's
+readers from `canvas_artifacts`, and the upload-draft delete and sweep count a
+draft noted on a Canvas as linked.
+
+**Why:** After plan step C-2 presence was re-checked only on socket changes and
+revocations, so a person removed from a Canvas stayed listed in it; and the
+resource-link table these reads used was written only by the retired Thread
+projection, so a Canvas artifact's new version reached nobody. The restored
+runtime suites showed both.
 
 ### 2026-11-07 — A Canvas has its own link
 

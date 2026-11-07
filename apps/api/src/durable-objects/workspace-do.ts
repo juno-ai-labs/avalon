@@ -123,7 +123,6 @@ import {
   asSubstreamId,
   asUserId,
   asWorkspaceId,
-  automationTriggersAdmitResourceType,
   IdSchema,
   UserIdSchema,
   SubstreamIdSchema,
@@ -187,7 +186,6 @@ import type { ParentEffectEnvelope } from "@rally/contracts/conversation-effects
 import type { AuthContext, Env } from "../env";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { ApiError } from "../lib/api-error";
-import { connectorRegistryForEnv } from "../lib/connector-registry";
 import {
   assertDurableObjectJurisdiction,
   isWorkspacePlacementAffinityForRegion,
@@ -316,16 +314,12 @@ import {
   WorkspaceLinkTitleRequestSchema,
   WorkspaceDirectoryNotificationRequestSchema,
   WorkspaceDirectoryNotificationStateSchema,
-  WorkspaceDirectoryResourceAccessRequestSchema,
-  WorkspaceDirectoryResourceAccessResultSchema,
   WorkspaceDirectoryScheduleTargetsRequestSchema,
   WorkspaceDirectoryScheduleTargetsResultSchema,
   WorkspaceRegionalEffectApplyRequestSchema,
   WorkspaceRegionalEffectApplyResultSchema,
   type WorkspaceAttentionRequest,
   type WorkspaceAttentionResult,
-  type WorkspaceDirectoryResourceAccessRequest,
-  type WorkspaceDirectoryResourceAccessResult,
   type WorkspaceDirectoryNotificationRequest,
   type WorkspaceDirectoryNotificationState,
   type WorkspaceDirectoryScheduleTargetsRequest,
@@ -5391,11 +5385,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */
   async canvasSetAudience(input: Parameters<HostedCanvas["setAudience"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
-    const detail = await this.canvasWrite(() => canvas.setAudience(input));
-    // Someone the Canvas no longer admits stops being shown in it, and the
-    // people still in it are told who is left.
-    this.broadcastPresence();
-    return detail;
+    return this.canvasWrite(async () => {
+      const detail = await canvas.setAudience(input);
+      // Someone the Canvas no longer admits stops being shown in it, and the
+      // people still in it are told who is left, before the one Canvas list
+      // the write sends.
+      this.broadcastPresence();
+      return detail;
+    });
   }
 
   /**
@@ -9231,76 +9228,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { applied };
   }
 
-  private async reconcileWorkstreamResourceRegistrations(input: {
-    workspaceId: string;
-    workstreamId: string;
-  }): Promise<void> {
-    const linkedResources = this.state.storage.sql.exec<{
-      resource_id: string;
-      watch_enabled: number;
-      connection_id: string | null;
-      resource_type: string | null;
-    }>(`SELECT link.resource_id, link.watch_enabled, resource.connection_id, resource.resource_type
-          FROM workspace_workstream_resource_links link
-          LEFT JOIN resources resource ON resource.id = link.resource_id
-         WHERE link.workstream_id = ?
-         ORDER BY link.resource_id`, input.workstreamId).toArray();
-    const linkedById = new Map(linkedResources.map((resource) => [resource.resource_id, resource]));
-    const destinationResourceIds = new Set([
-      ...linkedById.keys(),
-      ...this.state.storage.sql.exec<{ destination_resource_id: string }>(
-        `SELECT DISTINCT destination_resource_id
-           FROM workspace_external_event_registrations
-          WHERE destination_kind = 'workstream_resource_update'
-            AND workstream_id = ? AND destination_resource_id IS NOT NULL`,
-        input.workstreamId,
-      ).toArray().map((row) => row.destination_resource_id),
-    ]);
-    if (destinationResourceIds.size === 0) return;
-    const connections = this.state.storage.sql.exec<{
-      id: string;
-      connector_type: string;
-      status: string;
-    }>(`SELECT id, connector_type, status FROM connector_connections WHERE workspace_id = ?`, input.workspaceId)
-      .toArray();
-    const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
-    const manifests = new Map(connectorRegistryForEnv(this.env).list().map((manifest) => [manifest.type, manifest]));
-
-    for (const resourceId of destinationResourceIds) {
-      const resource = linkedById.get(resourceId);
-      const connection = resource?.connection_id ? connectionsById.get(resource.connection_id) : undefined;
-      const manifest = connection ? manifests.get(connection.connector_type) : undefined;
-      const descriptors = resource?.watch_enabled === 1
-        && resource.resource_type
-        && (connection?.status === "healthy" || connection?.status === "active")
-        && manifest?.supportsWatches
-        ? manifest.activityTriggers.filter(
-            (descriptor) => automationTriggersAdmitResourceType([descriptor], resource.resource_type!),
-          )
-        : [];
-      await this.applyExternalEventRegistrations({
-        schemaVersion: 1,
-        workspaceId: input.workspaceId,
-        destination: {
-          kind: "workstream_resource_update",
-          workstreamId: input.workstreamId,
-          substreamId: "0",
-          resourceId,
-        },
-        evaluators: descriptors.map((descriptor) => ({
-          evaluatorId: uuidV7(),
-          source: {
-            connectorType: connection!.connector_type,
-            connectionId: connection!.id,
-            eventType: descriptor.eventType,
-            resourceId,
-          },
-          when: { kind: "always" },
-        })),
-      });
-    }
-  }
-
   /**
    * Apply one Channel or Space parent's activity/mention effect and its replay receipt in a
    * single transaction. The caller resolves current D1 identity (actor, target
@@ -10978,42 +10905,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         kind: row.kind,
         workstreamId: row.workstream_id,
         dueAt: iso(row.due_at),
-      })),
-    });
-  }
-
-  async resourceAccess(
-    input: WorkspaceDirectoryResourceAccessRequest,
-  ): Promise<WorkspaceDirectoryResourceAccessResult> {
-    await this.initialized;
-    const request = WorkspaceDirectoryResourceAccessRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const rows = this.state.storage.sql.exec<{
-      workstream_id: string;
-      scope: "personal" | "workspace";
-      created_by_user_id: string | null;
-      is_participant: number;
-    }>(
-      `SELECT directory.workstream_id, directory.scope, directory.created_by_user_id,
-              COALESCE(viewer.is_participant, 0) AS is_participant
-         FROM workspace_workstream_resource_links link
-         JOIN channels directory
-           ON directory.workstream_id = link.workstream_id
-         LEFT JOIN channel_viewers viewer
-           ON viewer.workstream_id = directory.workstream_id
-          AND viewer.user_id = ?
-          AND viewer.authority_generation = directory.authority_generation
-        WHERE link.resource_id = ? AND directory.archived_at IS NULL
-        ORDER BY directory.workstream_id`,
-      request.userId,
-      request.resourceId,
-    ).toArray();
-    return WorkspaceDirectoryResourceAccessResultSchema.parse({
-      items: rows.map((row) => ({
-        workstreamId: row.workstream_id,
-        scope: row.scope,
-        createdByUserId: row.created_by_user_id,
-        isParticipant: row.is_participant === 1,
       })),
     });
   }

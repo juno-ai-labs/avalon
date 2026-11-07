@@ -81,9 +81,9 @@ async function intentContent(env: Env, workspace: WorkspaceStub, message: PushDe
   };
 }
 
-/** What a finished run's push says it did. */
-const FINISHED_VERB: Record<Exclude<SidekickRunNotification["state"], "needs_input">, string> = {
-  completed: "finished", failed: "failed", stopped: "stopped",
+/** What a run's push says about the state it reached. */
+const RUN_STATE_WORDS: Record<SidekickRunNotification["state"], string> = {
+  needs_input: "needs your input", completed: "finished", failed: "failed", stopped: "stopped",
 };
 
 /**
@@ -105,7 +105,7 @@ async function runNoticeContent(env: Env, workspace: WorkspaceStub, row: Workspa
     outcome: "ready",
     deliveryKey: row.intentId,
     kind: row.notificationKind,
-    title: notice.kind === "needs_input" ? `${notice.sidekickName} needs your input` : `${notice.sidekickName} ${notice.state === "needs_input" ? "needs your input" : FINISHED_VERB[notice.state]}`,
+    title: `${notice.sidekickName} ${RUN_STATE_WORDS[notice.state]}`,
     body: rewriteMessageAsPlainText(notice.reply ?? "", { sources: "none" }),
     workstreamId: row.workstreamId,
     substreamId: notice.runId,
