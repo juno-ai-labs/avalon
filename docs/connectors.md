@@ -1703,7 +1703,15 @@ has the history.
 object, so that link would read the event, not a second description.
 
 **Consequences:** An adapter no longer has an origin obligation, and the
-manifest check on a described `resourceType` went with it.
+manifest check on a described `resourceType` went with it. In the same step the
+pre-WorkspaceDO D1 branches of `persistNormalizedActivity` and of the Granola
+and generic webhook ingresses were deleted: every deployment binds
+`WORKSPACE_DOS`, so they could only run in a test, and each still produced the
+ID-only `ActivityQueueMessage` the consumer acks as
+`legacy_message_after_cutover`. That tombstone stays for a message already in
+flight. The provider-wide webhook service keeps its legacy branch, and so its
+ID-only producer, until its Node suite (`test/provider-webhooks.test.ts`, which
+drives only that branch over a fake D1) is moved onto WorkspaceDO.
 
 ### 2026-10-22 — Report shortened Sheets cell text
 

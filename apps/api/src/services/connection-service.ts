@@ -3597,100 +3597,23 @@ export class ConnectionService {
       ...activity,
       rawContentHash: activity.rawContentHash ?? envelope.bodyHash,
     }));
-    if (this.env.WORKSPACE_DOS) {
-      const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
-        await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
-          workspaceId: connection.workspace_id,
-          receiptId: newId(),
-          connectionId: connection.id,
-          signatureHash: envelope.receiptKey ?? envelope.deliveryId,
-          receivedAt,
-          expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
-        }),
-      );
-      const [persisted, ...rest] = await Promise.all(
-        activities.map((activity) => persistNormalizedActivity(this.env, activity, "granola")),
-      );
-      return {
-        duplicate: receipt.outcome === "duplicate" || persisted!.duplicate,
-        activityId: persisted!.activityId,
-        ...(rest.length > 0 ? { derivedActivityIds: rest.map((entry) => entry.activityId) } : {}),
-      };
-    }
-    const receiptId = newId();
-    const activityIds = activities.map(() => newId());
-    const results = await this.env.DB.batch([
-      this.env.DB.prepare(
-        `INSERT INTO webhook_receipts (id, connection_id, signature_hash, received_at, expires_at)
-         VALUES (?, ?, ?, ?, ?) ON CONFLICT(connection_id, signature_hash) DO NOTHING`,
-      ).bind(
-        receiptId,
-        connection.id,
-        envelope.receiptKey ?? envelope.deliveryId,
-        receivedAt,
-        new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
-      ),
-      ...activities.map((activity, index) => this.env.DB.prepare(
-        `INSERT INTO activities
-         (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
-          provider, provider_event_id, event_type, resource_type, provider_resource_id,
-          actor_json, subject_json, occurred_at, received_at, title, summary, text_snippet,
-          payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
-          target_user_ids_json, external_people_json,
-          processing_status, metadata_json)
-         VALUES (?, ?, ?, 'workspace', NULL, 'granola', ?, ?, 'granola_note', ?,
-                 '{}', ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-         ON CONFLICT DO NOTHING`,
-      ).bind(
-        activityIds[index],
-        connection.workspace_id,
-        connection.id,
-        activity.providerEventId,
-        activity.eventType,
-        activity.providerResourceId,
-        JSON.stringify(activity.subject),
-        activity.occurredAt,
-        receivedAt,
-        activity.title,
-        payloadKey,
-        JSON.stringify(activity.visibility),
-        JSON.stringify(activity.entityKeys),
-        activity.dedupeKey,
-        activity.rawContentHash,
-        JSON.stringify(activity.targetUserIds),
-        JSON.stringify(activity.externalPeople ?? []),
-        JSON.stringify(activity.metadata),
-      )),
-    ]);
-    const canonicalIds: string[] = [];
-    for (const [index, activity] of activities.entries()) {
-      const inserted = Number(results[index + 1]?.meta.changes ?? 0) > 0;
-      const canonical = inserted
-        ? { id: activityIds[index]! }
-        : await this.env.DB.prepare(
-            `SELECT id FROM activities
-             WHERE connection_id = ? AND provider_event_id = ? AND event_type = ?
-             ORDER BY received_at DESC LIMIT 1`,
-          ).bind(connection.id, activity.providerEventId, activity.eventType).first<{ id: string }>();
-      if (!canonical) throw new ApiError(500, "webhook_activity_write_failed", "The Granola activity could not be stored");
-      canonicalIds.push(canonical.id);
-    }
-    const insertedActivity = Number(results[1]?.meta.changes ?? 0) > 0;
-    // Re-enqueue the canonical rows on retries as crash-window recovery. If a
-    // previous request committed D1 but failed before queue delivery, Granola's
-    // retry must still make the durable activities visible to the consumer.
-    for (const activityId of canonicalIds) {
-      await this.env.ACTIVITY_QUEUE.send({
-        region: this.env.AVALON_REGION,
+    const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
+      await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
         workspaceId: connection.workspace_id,
-        activityId,
-        attempt: 0,
-      });
-    }
+        receiptId: newId(),
+        connectionId: connection.id,
+        signatureHash: envelope.receiptKey ?? envelope.deliveryId,
+        receivedAt,
+        expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
+      }),
+    );
+    const [persisted, ...rest] = await Promise.all(
+      activities.map((activity) => persistNormalizedActivity(this.env, activity, "granola")),
+    );
     return {
-      duplicate: Number(results[0]?.meta.changes ?? 0) === 0 || !insertedActivity,
-      activityId: canonicalIds[0]!,
-      ...(canonicalIds.length > 1 ? { derivedActivityIds: canonicalIds.slice(1) } : {}),
+      duplicate: receipt.outcome === "duplicate" || persisted!.duplicate,
+      activityId: persisted!.activityId,
+      ...(rest.length > 0 ? { derivedActivityIds: rest.map((entry) => entry.activityId) } : {}),
     };
   }
 
@@ -3750,125 +3673,31 @@ export class ConnectionService {
         throw new ApiError(422, "invalid_target_user", "Every webhook target must be an active member of this workspace");
       }
     }
-    if (this.env.WORKSPACE_DOS) {
-      await this.env.PAYLOADS.put(payloadKey, rawBody, {
-        httpMetadata: { contentType: "application/json" },
-      });
-      const receivedAt = nowIso();
-      // The claim sweeps this connection's expired receipts in the same object
-      // transaction, which is what the separate DELETE ahead of the insert
-      // used to do in its own round trip.
-      const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
-        await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
-          workspaceId: connection.workspace_id,
-          receiptId,
-          connectionId,
-          signatureHash: envelope.receiptKey ?? envelope.deliveryId,
-          receivedAt,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
-        }),
-      );
-      const derived = await this.deriveWebhookActivities({
-        provider: "generic_webhook", connection, context, adapter: this.registry().get("generic_webhook"), source, normalized, envelope,
-      });
-      const persisted = await persistNormalizedActivity(this.env, normalized, "generic_webhook");
-      for (const activity of derived.activities) await persistNormalizedActivity(this.env, activity, "generic_webhook");
-      return {
-        duplicate: receipt.outcome === "duplicate" || persisted.duplicate,
-        activityId: persisted.activityId,
-      };
-    }
-    await this.env.DB.prepare(
-      `DELETE FROM webhook_receipts
-       WHERE id IN (
-         SELECT id FROM webhook_receipts
-         WHERE connection_id = ? AND expires_at <= ?
-         ORDER BY expires_at ASC LIMIT 100
-       )`,
-    ).bind(connectionId, nowIso()).run();
-    const existingReceipt = await this.env.DB.prepare(
-      `SELECT id FROM webhook_receipts
-       WHERE connection_id = ? AND signature_hash = ? AND expires_at > ?
-       LIMIT 1`,
-    ).bind(connectionId, envelope.receiptKey ?? envelope.deliveryId, nowIso()).first<{ id: string }>();
-    if (existingReceipt) {
-      const existing = await this.resolveCanonicalWebhookActivity(connectionId, normalized);
-      if (existing) {
-        if (existing.processing_status === "pending" || existing.processing_status === "failed") {
-          await this.env.ACTIVITY_QUEUE.send({
-            region: this.env.AVALON_REGION,
-            workspaceId: connection.workspace_id,
-            activityId: existing.id,
-            attempt: 0,
-          });
-        }
-        return { duplicate: true, activityId: existing.id };
-      }
-    }
-    await this.env.PAYLOADS.put(payloadKey, rawBody, { httpMetadata: { contentType: "application/json" } });
-    const activityId = newId();
+    await this.env.PAYLOADS.put(payloadKey, rawBody, {
+      httpMetadata: { contentType: "application/json" },
+    });
     const receivedAt = nowIso();
-    const results = await this.env.DB.batch([
-      this.env.DB.prepare(
-        `INSERT INTO webhook_receipts (id, connection_id, signature_hash, received_at, expires_at)
-         VALUES (?, ?, ?, ?, ?) ON CONFLICT(connection_id, signature_hash) DO NOTHING`,
-      ).bind(receiptId, connectionId, envelope.receiptKey ?? envelope.deliveryId, receivedAt, new Date(Date.now() + 24 * 60 * 60_000).toISOString()),
-      this.env.DB.prepare(
-        `INSERT INTO activities
-         (id, workspace_id, connection_id, connection_scope, connection_owner_user_id,
-          provider, provider_event_id, event_type, resource_type, provider_resource_id,
-          actor_json, subject_json, occurred_at, received_at, title, summary, text_snippet,
-          payload_ref, visibility_json, entity_keys_json, dedupe_key, raw_content_hash,
-          target_user_ids_json, external_people_json,
-          processing_status, metadata_json)
-         VALUES (?, ?, ?, ?, ?, 'generic_webhook', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
-         ON CONFLICT DO NOTHING`,
-      ).bind(
-        activityId,
-        connection.workspace_id,
-        connection.id,
-        connection.scope,
-        connection.owner_user_id,
-        normalized.providerEventId,
-        normalized.eventType,
-        normalized.resourceType,
-        normalized.providerResourceId,
-        JSON.stringify(normalized.actor),
-        JSON.stringify(normalized.subject),
-        normalized.occurredAt,
-        receivedAt,
-        normalized.title,
-        normalized.summary,
-        normalized.textSnippet,
-        payloadKey,
-        JSON.stringify(normalized.visibility),
-        JSON.stringify(normalized.entityKeys),
-        normalized.dedupeKey,
-        normalized.rawContentHash,
-        JSON.stringify(normalized.targetUserIds),
-        JSON.stringify(normalized.externalPeople ?? []),
-        JSON.stringify(normalized.metadata),
-      ),
-    ]);
-    const insertedActivity = Number(results[1]?.meta.changes ?? 0) > 0;
-    let canonical: { id: string; processing_status: string } | null = insertedActivity
-      ? { id: activityId, processing_status: "pending" }
-      : null;
-    if (!canonical) {
-      canonical = await this.resolveCanonicalWebhookActivity(connectionId, normalized);
-    }
-    if (!canonical) throw new ApiError(500, "webhook_activity_write_failed", "The webhook activity could not be stored");
-    if (insertedActivity || canonical.processing_status === "pending" || canonical.processing_status === "failed") {
-      await this.env.ACTIVITY_QUEUE.send({
-        region: this.env.AVALON_REGION,
+    // The claim sweeps this connection's expired receipts in the same object
+    // transaction, which is what the separate DELETE ahead of the insert
+    // used to do in its own round trip.
+    const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
+      await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
         workspaceId: connection.workspace_id,
-        activityId: canonical.id,
-        attempt: 0,
-      });
-    }
+        receiptId,
+        connectionId,
+        signatureHash: envelope.receiptKey ?? envelope.deliveryId,
+        receivedAt,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
+      }),
+    );
+    const derived = await this.deriveWebhookActivities({
+      provider: "generic_webhook", connection, context, adapter: this.registry().get("generic_webhook"), source, normalized, envelope,
+    });
+    const persisted = await persistNormalizedActivity(this.env, normalized, "generic_webhook");
+    for (const activity of derived.activities) await persistNormalizedActivity(this.env, activity, "generic_webhook");
     return {
-      duplicate: Number(results[0]?.meta.changes ?? 0) === 0 || !insertedActivity,
-      activityId: canonical.id,
+      duplicate: receipt.outcome === "duplicate" || persisted.duplicate,
+      activityId: persisted.activityId,
     };
   }
 
@@ -3890,42 +3719,6 @@ export class ConnectionService {
       scope === "personal" ? auth.userId : "",
       idempotencyKey,
     ).first<StoredConnection>();
-  }
-
-  private async resolveCanonicalWebhookActivity(
-    connectionId: string,
-    normalized: {
-      dedupeKey: string;
-      providerEventId: string;
-      eventType: string;
-      rawContentHash: string | null;
-    },
-  ): Promise<{ id: string; processing_status: string } | null> {
-    type ExistingActivity = {
-      id: string;
-      raw_content_hash: string | null;
-      processing_status: string;
-    };
-    const [byDedupe, byProviderEvent] = await Promise.all([
-      this.env.DB.prepare(
-        `SELECT id, raw_content_hash, processing_status FROM activities
-         WHERE connection_id = ? AND dedupe_key = ? LIMIT 1`,
-      ).bind(connectionId, normalized.dedupeKey).first<ExistingActivity>(),
-      this.env.DB.prepare(
-        `SELECT id, raw_content_hash, processing_status FROM activities
-         WHERE connection_id = ? AND provider_event_id = ? AND event_type = ? LIMIT 1`,
-      ).bind(connectionId, normalized.providerEventId, normalized.eventType).first<ExistingActivity>(),
-    ]);
-    if (byDedupe && byProviderEvent && byDedupe.id !== byProviderEvent.id) {
-      throw new ApiError(409, "webhook_dedupe_collision", "The webhook dedupe key and provider event identity refer to different activities");
-    }
-    const existing = byDedupe ?? byProviderEvent;
-    if (existing && existing.raw_content_hash !== normalized.rawContentHash) {
-      throw new ApiError(409, "webhook_identity_reused", "The webhook reused an activity identity with different content");
-    }
-    return existing
-      ? { id: existing.id, processing_status: existing.processing_status }
-      : null;
   }
 
   private async webhookConnectionResult(connection: StoredConnection, signingSecret?: string) {
