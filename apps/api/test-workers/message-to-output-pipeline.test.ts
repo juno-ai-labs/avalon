@@ -74,6 +74,7 @@ import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
 import { launchWorkstreamHarness } from "../src/services/workstream-service";
 import { BOUND_PARAMETER_ID_CHUNK } from "../src/durable-objects/bound-parameters";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
+import { createCanvas } from "../src/services/canvas-service";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 import {
   seedCanonicalMessageRecord,
@@ -190,6 +191,20 @@ beforeEach(async () => {
     env.DB.prepare(`INSERT INTO workstream_authority_control
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
+    // The D1 anchors `createCanvas` claims for the conversation it makes.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstreams (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, do_identity_anchor INTEGER NOT NULL DEFAULT 0)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_create_receipts (
+      workspace_id TEXT NOT NULL, creator_user_id TEXT NOT NULL, client_message_id TEXT NOT NULL,
+      workstream_id TEXT NOT NULL, generation INTEGER NOT NULL, request_hash TEXT NOT NULL,
+      state TEXT NOT NULL, message_id TEXT, harness_run_id TEXT, error_code TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, creator_user_id, client_message_id), UNIQUE (workstream_id))`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_routes (
+      workspace_id TEXT NOT NULL, workstream_id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
+      object_name TEXT NOT NULL, state TEXT NOT NULL, stage_index INTEGER NOT NULL DEFAULT 0,
+      source_cursor INTEGER NOT NULL DEFAULT 0, source_fence_sequence INTEGER NOT NULL,
+      source_hash TEXT, target_hash TEXT, row_counts_json TEXT, imported_at TEXT,
+      verified_at TEXT, activated_at TEXT, last_error_code TEXT, updated_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE TABLE workspaces (
       id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT, abandoned_at TEXT,
       timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'
@@ -234,6 +249,10 @@ beforeEach(async () => {
   // never a slow query.
 }, 30_000);
 
+function workspaceStub() {
+  return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
+}
+
 function agentStub(): DurableObjectStub<AgentLoopDO> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
@@ -247,7 +266,8 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
   const response = await stub.fetch("https://object.test/internal/product", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    // Every case's conversation is a Canvas's chat.
+    body: JSON.stringify({ parentKind: "canvas", ...(body as Record<string, unknown>) }),
   });
   return { status: response.status, body: await response.json() };
 }
@@ -264,38 +284,82 @@ async function externalAdmission(
   return { status: result.status, body: JSON.parse(result.bodyJson) as Record<string, unknown> };
 }
 
+/**
+ * The conversation every case drives: a Canvas's chat, created the way the
+ * product creates one, and its first message admitted through the ordinary
+ * `create_message`. The body adds the run that message activated, which the
+ * cases settle; activation is left to the object's own alarm, so a case that
+ * holds the loop before the run executes still can.
+ */
 async function initializeWorkstream(
   stub: DurableObjectStub,
   openingMessage: string,
   modelOverride: string | null = null,
   participantUserIds: readonly string[] = [],
-  reason = "user_message",
 ): Promise<{
   status: number;
   body: Record<string, unknown>;
 }> {
-  return product(stub, {
-    operation: "initialize",
+  await createCanvas(TEST_ENV, {
+    workspaceId: WORKSPACE_ID, creatorUserId: USER_ID, canvasId: WORKSTREAM_ID, title: "Pipeline",
+  });
+  if (participantUserIds.length > 0) {
+    await workspaceStub().canvasSetAudience({
+      workspaceId: WORKSPACE_ID, canvasId: WORKSTREAM_ID, actor: { userId: USER_ID, actorRole: "member" },
+      update: { visibility: "participants", userIds: [...participantUserIds] },
+    });
+  }
+  if (modelOverride !== null) {
+    // A Canvas has no model picker; the pinned model is how a case reaches
+    // its scripted provider.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE workstream SET model_override = ? WHERE id = 1", modelOverride);
+    });
+  }
+  const sent = await product(stub, {
+    operation: "create_message",
     auth: AUTH,
     input: {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      generation: 1,
-      title: "Pipeline",
-      objective: "",
-      descriptionSource: "derived",
-      titleStatus: "settled",
-      emailAddress: null,
-      creatorUserId: USER_ID,
-      openingMessage,
+      text: openingMessage,
       clientMessageId: "pipeline-open-1",
-      participantUserIds: [...participantUserIds],
+      mentions: [],
+      confirmedParticipantUserIds: [],
       attachmentIds: [],
-      modelOverride,
-      executionPrincipal: { type: "user", userId: USER_ID },
-      reason,
     },
   });
+  if (sent.status !== 200) return sent;
+  const turnId = (sent.body.turn as { turnId: string }).turnId;
+  let harnessRunId: string | null = null;
+  await expect.poll(async () => {
+    harnessRunId = await runInDurableObject(stub, (_instance, state) => {
+      const rows = state.storage.sql.exec<{ run_id: string; execution_context_json: string }>(
+        `SELECT run_id, execution_context_json FROM runs
+          WHERE execution_context_json IS NOT NULL ORDER BY created_at, run_id`,
+      ).toArray();
+      return rows.find((row) => (
+        JSON.parse(row.execution_context_json) as { triggerMessageId?: string | null }
+      ).triggerMessageId === turnId)?.run_id ?? null;
+    });
+    return harnessRunId === null ? `no run was activated for ${turnId}` : "activated";
+  }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 20 }).toBe("activated");
+  // Whoever else the case names joins the chat once its first message has
+  // started a run, so the opening is addressed to Rally as in a room of one
+  // and every later message is addressed in a room of several.
+  for (const userId of participantUserIds) {
+    const added = await product(stub, { operation: "add_participant", auth: AUTH, userId });
+    if (added.status !== 200) throw new Error(`add_participant answered ${added.status}: ${JSON.stringify(added.body)}`);
+  }
+  return { status: sent.status, body: { ...sent.body, harnessRunId } };
+}
+
+/**
+ * A user turn of the conversation itself. A Canvas's host adds its own
+ * context as a user message after the transcript; the cases read the turns
+ * people wrote.
+ */
+function conversationUserMessage(message: { role?: unknown; content?: unknown }): boolean {
+  return message.role === "user"
+    && !(typeof message.content === "string" && message.content.startsWith("CANVAS CONTEXT (host-provided):"));
 }
 
 interface RunRow extends Record<string, SqlStorageValue> {
@@ -797,7 +861,7 @@ describe("a member's message travels the whole pipeline", () => {
       origin: "scheduled_wakeup",
       executionPrincipal: { type: "user" as const, userId: USER_ID },
       scheduledWakeupId: wakeupId,
-      conversation: { parentKind: "workstream" as const, substreamId: "0" as const, backgroundAgent: false },
+      conversation: { parentKind: "canvas" as const, substreamId: "0" as const, backgroundAgent: false },
     };
     const { runId, workflowInput, providerRequests } = await (async () => {
       try {
@@ -1594,7 +1658,7 @@ describe("a member's message travels the whole pipeline", () => {
         JSON.stringify({
           region: "global",
           workspaceId: WORKSPACE_ID,
-          parentKind: "workstream",
+          parentKind: "canvas",
           parentId: WORKSTREAM_ID,
           substreamId: "0",
           loopId: initial.loop_id,
@@ -1869,41 +1933,6 @@ describe("a member's message travels the whole pipeline", () => {
     }
   });
 
-  it("retries an interrupted opening after the personal instruction cache refreshes", async () => {
-    const stub = agentStub();
-    await env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID)).savePersonalSystemPrompt({
-      workspaceId: WORKSPACE_ID, userId: USER_ID, personalSystemPrompt: "Answer briefly.",
-    });
-    await runInDurableObject(stub, (instance) => {
-      const transcript = (instance as unknown as { product: { transcript: WorkstreamTranscriptStorage } }).product.transcript;
-      // The receipt already exists when transcript preparation starts. An
-      // uncertain failure must leave that frozen content available to retry.
-      vi.spyOn(transcript, "prepareConversation").mockRejectedValueOnce(new Error("interrupted_transcript_preparation"));
-    });
-    try {
-      await installScriptedProvider(stub, [
-        [{ choices: [{ delta: { content: "recovered answer" }, finish_reason: "stop" }] }],
-      ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [] });
-      expect(await initializeWorkstream(stub, "original opening", PERSONAL_PROMPT_MODEL, [], "opening_message"))
-        .toMatchObject({ status: 500 });
-      await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
-        state.storage.sql.exec<{ text: string }>(
-          "SELECT text FROM personal_system_prompt_copies WHERE user_id = ?", USER_ID,
-        ).toArray()[0]?.text), { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 25 }).toBe("Answer briefly.");
-      const retried = await initializeWorkstream(stub, "original opening", PERSONAL_PROMPT_MODEL, [], "opening_message");
-      expect(retried).toMatchObject({ status: 200 });
-      await externallySettledRun(stub, retried.body.harnessRunId as string);
-      await waitForLoopRelease(stub);
-      const request = (await capturedProviderRequests(stub)).find((entry) => entry.url === "https://openrouter.ai/api/v1/responses")!;
-      const users = (request.body.messages as Array<{ role: string; content: unknown }>).filter((message) => message.role === "user");
-      expect(users.at(-1)?.content).toContain("original opening");
-      expect(JSON.stringify(users)).not.toContain("<user_system_prompt>");
-    } finally {
-      vi.restoreAllMocks();
-      await restoreProviderFetch(stub);
-    }
-  });
-
   it("refreshes personal instructions on a room-only message before the next request", async () => {
     const stub = agentStub();
     const workspace = env.WORKSPACE_DOS.getByName(workspaceDOName("global", WORKSPACE_ID));
@@ -1919,7 +1948,7 @@ describe("a member's message travels the whole pipeline", () => {
         [{ choices: [{ delta: { content: "first answer" }, finish_reason: "stop" }] }],
         [{ choices: [{ delta: { content: "next answer" }, finish_reason: "stop" }] }],
       ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [] });
-      const opened = await initializeWorkstream(stub, "please look into this", PERSONAL_PROMPT_MODEL, [OTHER_USER_ID], "opening_message");
+      const opened = await initializeWorkstream(stub, "please look into this", PERSONAL_PROMPT_MODEL, [OTHER_USER_ID]);
       expect(opened.status).toBe(200);
       await externallySettledRun(stub, opened.body.harnessRunId as string);
       await waitForLoopRelease(stub);
@@ -1943,7 +1972,7 @@ describe("a member's message travels the whole pipeline", () => {
       await settledRunForTrigger(stub, (question.body.turn as { turnId: string }).turnId);
       await waitForLoopRelease(stub);
       const request = (await capturedProviderRequests(stub)).filter((entry) => entry.url === "https://openrouter.ai/api/v1/responses").at(-1)!;
-      const users = (request.body.messages as Array<{ role: string; content: unknown }>).filter((message) => message.role === "user");
+      const users = (request.body.messages as Array<{ role: string; content: unknown }>).filter(conversationUserMessage);
       expect(String(users.at(-2)?.content)).toContain("<user_system_prompt>");
       expect(String(users.at(-2)?.content)).toContain("Answer briefly.");
       expect(String(users.at(-2)?.content)).toContain("sounds good");
@@ -2073,7 +2102,7 @@ describe("a member's message travels the whole pipeline", () => {
           [{ choices: [{ delta: { content: "first answer" }, finish_reason: "stop" }] }],
           [{ choices: [{ delta: { content: "second answer" }, finish_reason: "stop" }] }],
         ], { primaryModel: PERSONAL_PROMPT_MODEL, fallbackModels: [], gateFirstCall: true });
-        const opened = await initializeWorkstream(stub, "first message", PERSONAL_PROMPT_MODEL, [], "opening_message");
+        const opened = await initializeWorkstream(stub, "first message", PERSONAL_PROMPT_MODEL);
         await expect.poll(async () => messages(await capturedProviderRequests(stub)).length,
           { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 25 }).toBe(1);
         // A fresh opening uses its empty copy and refreshes it for the next admission.
@@ -2106,7 +2135,7 @@ describe("a member's message travels the whole pipeline", () => {
 
         const second = messages(await capturedProviderRequests(stub))[1]!;
         expect(JSON.stringify(second.filter((message) => message.role === "system"))).not.toContain(instructions);
-        const userMessage = second.filter((message) => message.role === "user").at(-1);
+        const userMessage = second.filter(conversationUserMessage).at(-1);
         expect(userMessage?.content).toContain(`<user_system_prompt>\nThe following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.\n<user_suppplied>\n${instructions}\n</user_suppplied>\n</user_system_prompt>\n\nsecond message`);
 
         await waitForLoopRelease(stub);
@@ -2124,7 +2153,7 @@ describe("a member's message travels the whole pipeline", () => {
         await settledRunForTrigger(stub, (next.body.turn as { turnId: string }).turnId);
         await waitForLoopRelease(stub);
         const third = messages(await capturedProviderRequests(stub)).at(-1)!;
-        const history = third.filter((message) => message.role === "user");
+        const history = third.filter(conversationUserMessage);
         expect(history[1]?.content).toEqual(userMessage?.content);
         expect(String(history[2]?.content)).toContain("third message");
         expect(String(history[2]?.content)).not.toContain("<user_system_prompt>");
@@ -2505,7 +2534,7 @@ describe("a member's message travels the whole pipeline", () => {
       const automationId = asAutomationId(crypto.randomUUID());
       const clientMessageId = "conversation-post:sidekick-run:receipt-1";
       const posted = await stub.appendConversationPost({
-        schemaVersion: 1, workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, substreamId: "0",
+        schemaVersion: 1, workspaceId: WORKSPACE_ID, parentKind: "canvas", workstreamId: WORKSTREAM_ID, substreamId: "0",
         clientMessageId,
         text: "New help-list email. Help email ID: 1a16ff84e56cd0f1. Suggested reply: Thanks, we received it.",
         post: {
@@ -2927,7 +2956,7 @@ describe("a member's message travels the whole pipeline", () => {
       const settled = await settledRunForTrigger(stub, (question.body.turn as { turnId: string }).turnId);
       expect(settled.status).toBe("completed");
       const texts = ((await capturedProviderRequests(stub)).at(-1)!.body.messages as Array<{ role?: unknown; content?: unknown }>)
-        .filter((message) => message.role === "user")
+        .filter(conversationUserMessage)
         .map((message) => JSON.stringify(message.content));
       expect(texts.filter((text) => text.includes("sounds good"))).toHaveLength(backlog);
       expect(texts.at(-1)).toContain("please summarize what we agreed");

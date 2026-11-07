@@ -910,17 +910,20 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(await firstAfterWake).toMatchObject({ workstreamId: WORKSTREAM_ID, userIds: [otherUserId] });
       expect(await secondAfterWake).toMatchObject({ workstreamId: WORKSTREAM_ID, userIds: [USER_ID] });
 
-      // Narrowing the Canvas to its creator removes the other viewer. The
-      // creator gets a canonical empty set while the removed socket stays
-      // connected but backgrounded.
-      // Sharing it with that viewer by name keeps them in it.
+      // Sharing it with that viewer by name keeps them in it. The write sends
+      // presence; it is awaited here so it cannot answer the listener below.
+      const afterSharing = nextMessageOfType(first, "workspace_presence");
       await audience({ visibility: "participants", userIds: [otherUserId] });
+      expect(await afterSharing).toMatchObject({ workstreamId: WORKSTREAM_ID, userIds: [otherUserId] });
       await runInDurableObject(workspace, (_instance, state) => {
         const kept = state.getWebSockets()
           .map((socket) => socket.deserializeAttachment() as Record<string, unknown>)
           .find((candidate) => candidate.userId === otherUserId);
         expect(kept).toMatchObject({ applicationState: "foreground", foregroundWorkstreamId: WORKSTREAM_ID });
       });
+      // Narrowing the Canvas to its creator removes the other viewer. The
+      // creator gets a canonical empty set while the removed socket stays
+      // connected but backgrounded.
       const afterNarrowing = nextMessageOfType(first, "workspace_presence");
       await audience({ visibility: "creator", userIds: [] });
       expect(await afterNarrowing).toMatchObject({ workstreamId: WORKSTREAM_ID, userIds: [] });
