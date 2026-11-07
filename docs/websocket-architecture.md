@@ -73,7 +73,7 @@ broadcast and replay delivery for older enum decoders; see
 | `apps/desktop/src/main/network-recovery.ts`, `network-recovery-ipc.ts`, `common/network-recovery.ts`, and `renderer/lib/network-recovery.ts` | One Chromium-session connection reset after repeated ticket timeouts, generation-fenced observations and the cross-window request barrier. |
 | `apps/api/src/routes/socket.ts` | Receives public WebSocket upgrades and sends each accepted request through the correct regional Durable Object namespace. |
 | `apps/api/src/services/socket-service.ts` | Issues and verifies purpose-specific socket tickets and constructs the clean upgrade subrequest. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API and publishes the Canvases and Sidekicks lists on it. (The Channel-row description in this document's server sections is pending the server-docs pass.) |
+| `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API and publishes the Canvases and Sidekicks lists on it. |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | `AgentLoopDO` (the class `SubstreamAgent` was renamed to): accepts the substream feed socket, sends the canonical snapshot, and publishes ordered transcript/runtime events. |
 
 ## Sidekick library synchronization
@@ -969,7 +969,9 @@ The relay's consumer list is one window; a second secondary window that reads
 workspace state joins it the way Sidekicks did. `/parent-socket`,
 `WorkstreamControlSocketService` and `GET /workstreams/:id/control-socket`,
 kept partly for iOS and for desktops released before the workspace-socket
-breakout list, went with the Thread host in C-2.
+breakout list, went with the Thread host in C-2. The server sections' Channel-row
+description (who the workspace socket tells, `channelLosses`) still describes
+the Thread era and is left for the server-docs pass.
 
 ### 2026-10-21 — Push exact-target Sidekick counts to open composers
 
