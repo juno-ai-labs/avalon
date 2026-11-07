@@ -71,6 +71,7 @@ export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
 import { ConversationParentKindSchema } from "./conversation-parent";
+import { CanvasSidebarListSchema } from "./canvases";
 import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
 export * from "./artifacts";
@@ -1855,6 +1856,8 @@ export const AutomationSummarySchema = z.object({
   unread: z.boolean().optional(),
   /** The Sidekick waits on someone: its delegation needs attention, or its shared conversation needs input. */
   needsInput: z.boolean().optional(),
+  /** Its place in this viewer's Pinned group of Sidekicks; null when not pinned. Sidebar rows only; absent elsewhere. */
+  pinnedPosition: z.number().int().nonnegative().nullable().optional(),
 });
 
 /**
@@ -2977,6 +2980,12 @@ export const WorkspaceSidebarSchema = z.strictObject({
   artifactPins: ArtifactPinListSchema.optional(),
   /** Each listed Channel's thread count and last activity, for the Channels tab. */
   channelStats: z.array(ChannelStatsSchema).optional(),
+  /**
+   * This viewer's Canvases (`docs/canvases.md#the-canvas-list`). Optional, so a
+   * client reading a payload from a server that predates Canvases draws none;
+   * a released client ignores the key.
+   */
+  canvases: CanvasSidebarListSchema.optional(),
   /**
    * False while the Organization has not finished creating General and placing
    * every Channel in it.

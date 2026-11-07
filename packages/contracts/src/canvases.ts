@@ -85,3 +85,45 @@ export const CanvasDetailSchema = CanvasSummarySchema.extend({
   canManage: z.boolean(),
 });
 export type CanvasDetail = z.infer<typeof CanvasDetailSchema>;
+
+/**
+ * One Canvas's row in a viewer's sidebar: its summary, what its newest
+ * artifact is, whether it holds something this viewer has not read (its
+ * Chat's read state, or an artifact version made since they last read it),
+ * who is in it now, where the viewer pinned it, and whether it is in their
+ * list only because someone shared it with them. The home page's groups are
+ * these fields: live now (`presentUserIds`), from Sidekicks
+ * (`writerSidekickId`), shared with me (`sharedWithMe`), made by me
+ * (`createdByUserId`).
+ */
+export const CanvasSidebarRowSchema = CanvasSummarySchema.extend({
+  artifactKind: CanvasArtifactKindSchema.nullable(),
+  unread: z.boolean(),
+  presentUserIds: z.array(UserIdSchema),
+  /** Its place in the viewer's Pinned group; null when it is not pinned. */
+  pinnedPosition: z.number().int().nonnegative().nullable(),
+  sharedWithMe: z.boolean(),
+});
+export type CanvasSidebarRow = z.infer<typeof CanvasSidebarRowSchema>;
+
+/** The Canvas list as one viewer sees it, at the list's waterline, most recently active first. */
+export const CanvasSidebarListSchema = z.strictObject({
+  waterline: z.number().int().nonnegative(),
+  items: z.array(CanvasSidebarRowSchema).max(250),
+});
+export type CanvasSidebarList = z.infer<typeof CanvasSidebarListSchema>;
+
+/**
+ * The workspace socket's push of a viewer's Canvas list after something in it
+ * moved. Its own event type rather than a third member of
+ * `WorkspaceSidebarListEventSchema`, because a released client fails a
+ * discriminator value it does not know but ignores an event type it does not
+ * know (`isUnknownSocketEvent`).
+ */
+export const WorkspaceCanvasListEventSchema = z.strictObject({
+  type: z.literal("workspace_canvas_list"),
+  occurredAt: TimestampSchema,
+  waterline: z.number().int().positive(),
+  items: z.array(CanvasSidebarRowSchema).max(250),
+});
+export type WorkspaceCanvasListEvent = z.infer<typeof WorkspaceCanvasListEventSchema>;

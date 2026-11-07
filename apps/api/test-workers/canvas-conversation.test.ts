@@ -143,3 +143,93 @@ describe("a Canvas's Chat", () => {
     expect(await decide(MEMBER)).toBe("denied");
   });
 });
+
+/** A workspace socket for this person, subscribed; every frame it receives is kept. */
+async function connect(userId: string): Promise<{ socket: WebSocket; frames: Array<Record<string, unknown>> }> {
+  const response = await workspace().fetch("https://workspace.test/socket", {
+    headers: {
+      Upgrade: "websocket",
+      "x-rally-workspace-id": WORKSPACE_ID,
+      "x-rally-placement-affinity": "wnam",
+      "x-rally-user-id": userId,
+      "x-rally-session-id": `session-${userId}`,
+      "x-rally-socket-ticket-id": crypto.randomUUID(),
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+    },
+  });
+  if (response.status !== 101 || !response.webSocket) throw new Error(`workspace socket rejected: ${response.status}`);
+  const socket = response.webSocket;
+  socket.accept();
+  const frames: Array<Record<string, unknown>> = [];
+  const subscribed = new Promise<void>((resolve) => {
+    socket.addEventListener("message", (event) => {
+      if (String(event.data) === "pong") return;
+      const frame = JSON.parse(String(event.data)) as Record<string, unknown>;
+      frames.push(frame);
+      if (frame.type === "workspace_sync") resolve();
+    });
+  });
+  socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+  await subscribed;
+  return { socket, frames };
+}
+
+type Row = { id: string; unread: boolean; sharedWithMe: boolean; presentUserIds: string[]; pinnedPosition: number | null };
+
+/** The Canvas rows a socket was last told: the newest list push, else its subscribe payload. */
+function canvasRows(frames: Array<Record<string, unknown>>): Row[] {
+  const pushes = frames.filter((frame) => frame.type === "workspace_canvas_list");
+  if (pushes.length > 0) return pushes.at(-1)!.items as Row[];
+  const sync = frames.find((frame) => frame.type === "workspace_sync") as { sidebar?: { canvases?: { items: Row[] } } };
+  return sync.sidebar?.canvases?.items ?? [];
+}
+
+describe("the Canvas list", () => {
+  it("lists a Canvas to whoever may open it, unread to a participant who has not opened it", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    const creator = await connect(CREATOR);
+    const before = await connect(MEMBER);
+    expect(canvasRows(creator.frames)).toMatchObject([{ id: canvasId, unread: false, sharedWithMe: false }]);
+    expect(canvasRows(before.frames)).toEqual([]);
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "participants", userIds: [MEMBER] } });
+    // The change is pushed to every socket, each with its own rows.
+    await expect.poll(() => canvasRows(before.frames)).toMatchObject([{ id: canvasId, unread: true, sharedWithMe: true }]);
+    for (const { socket } of [creator, before]) socket.close(1000, "done");
+  });
+
+  it("shows who is in a Canvas now on its row, and pins it for one viewer", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "participants", userIds: [MEMBER] } });
+    const creator = await connect(CREATOR);
+    const member = await connect(MEMBER);
+    member.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: canvasId }));
+    await expect.poll(() => canvasRows(creator.frames)[0]?.presentUserIds).toEqual([MEMBER]);
+    // The face pile in the Canvas itself, on the same presence path a Channel's uses.
+    creator.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: canvasId }));
+    await expect.poll(() => creator.frames.filter((frame) => frame.type === "workspace_presence").at(-1))
+      .toMatchObject({ workstreamId: canvasId, userIds: [MEMBER] });
+    expect(await workspace().setSidebarPin({ workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member",
+      kind: "canvas", itemId: canvasId, pinned: true })).toEqual({ ok: true });
+    await expect.poll(() => canvasRows(member.frames)[0]?.pinnedPosition).toBe(0);
+    expect(canvasRows(creator.frames)[0]?.pinnedPosition).toBeNull();
+    for (const { socket } of [creator, member]) socket.close(1000, "done");
+  });
+
+  it("refuses to pin, and keeps out of presence, a Canvas the viewer may not open", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
+    const creator = await connect(CREATOR);
+    const outsider = await connect(MEMBER);
+    outsider.socket.send(JSON.stringify({ type: "set_presence", revision: 1, applicationState: "foreground", foregroundWorkstreamId: canvasId }));
+    await new Promise<void>((resolve) => {
+      outsider.socket.addEventListener("message", (event) => { if (String(event.data) === "pong") resolve(); });
+      outsider.socket.send("ping");
+    });
+    expect(canvasRows(creator.frames)[0]?.presentUserIds).toEqual([]);
+    expect(await workspace().setSidebarPin({ workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member",
+      kind: "canvas", itemId: canvasId, pinned: true })).toEqual({ ok: false });
+    for (const { socket } of [creator, outsider]) socket.close(1000, "done");
+  });
+});
+

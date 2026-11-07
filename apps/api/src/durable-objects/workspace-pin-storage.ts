@@ -171,10 +171,13 @@ export const WORKSPACE_ARTIFACT_UPDATES_MIGRATION: readonly string[] = [
 ];
 
 /**
- * Every kind the table stores. `artifact` is not a `PinKind`: it travels in a
- * list of its own (`ArtifactPinSchema` says why), so `list` never returns it.
+ * Every kind the table stores. `artifact`, `canvas` and `sidekick` are not a
+ * `PinKind`: each travels in a list of its own (`ArtifactPinSchema` says why;
+ * a Canvas's and a Sidekick's ride their own sidebar rows as
+ * `pinnedPosition`), so `list` never returns them, and a released client that
+ * parses `PinKind` as a closed enum is never sent one.
  */
-export type StoredPinKind = PinKind | "artifact";
+export type StoredPinKind = PinKind | "artifact" | "canvas" | "sidekick";
 
 /** One stored artifact pin: the resource and the thread it was generated in. */
 export interface StoredArtifactPin {
@@ -207,7 +210,7 @@ export class WorkspacePinStorage {
     if (!this.ready()) return [];
     return this.storage.sql.exec<PinRow>(
       `SELECT item_kind, item_id, parent_id FROM workspace_pins
-        WHERE user_id = ? AND item_kind != 'artifact' ORDER BY item_kind, position, item_id`,
+        WHERE user_id = ? AND item_kind IN ('thread', 'channel', 'breakout') ORDER BY item_kind, position, item_id`,
       userId,
     ).toArray().map((row) => ({
       kind: row.item_kind,

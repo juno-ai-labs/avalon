@@ -133,6 +133,53 @@ shares and grants (`listScopeInvitations`, `scopeSharingOptions`,
 `listManagedScopeGrants`, `mutateScopeGrant`) is not yet, and still answers
 `scope_not_found`.
 
+### The Canvas list
+
+The workspace socket carries each viewer's Canvas list: `canvases` on the
+subscribe payload's sidebar, and a `workspace_canvas_list` push whenever a
+Canvas's row, its participants, a Chat's latest message or who is in a Canvas
+moves (to every socket, each read for its own viewer), or one person's read of
+a Chat or their pins move (to that person's sockets alone). It is its own
+event type rather than a third `workspace_sidebar_list` member because a
+released client fails a discriminator value it does not know and ignores an
+event type it does not know; the sidebar key is optional for the same reason.
+Both carry the `canvases` waterline (`workspace_sidebar_list_state`), which the
+desktop compares in the same ledger as the Sidekick list
+(`applyVersionedSidebarList`).
+
+A row (`canvasSidebarRows`) is the summary plus: `unread`, the Chat's read
+state as `sidekick_viewer_reads` projects it against the Chat's latest
+attention ordinal (a Canvas never opened is unread to anyone but its creator);
+`presentUserIds`, the people whose foreground socket has the Canvas open now;
+`pinnedPosition`; `sharedWithMe`, set for a participant who did not make it;
+and `artifactKind`, the newest artifact's kind. The home page's groups are
+these fields: live now, from Sidekicks (`writerSidekickId`), shared with me,
+made by me. The list holds every Canvas the viewer may open as its creator, a
+participant, a member of an Organization-wide one or someone its writer
+Sidekick is shared with, most recently active first, at most 250, the bound
+the Sidekick list already has; an owner's or administrator's list does not add
+every private Canvas they could open.
+
+A Canvas or a Sidekick is pinned in its list's Pinned group with
+`setSidebarPin` and ordered with `reorderSidebarPins`, in `workspace_pins`
+(WorkspaceDO migration 141 admits the `canvas` and `sidekick` kinds). Neither
+kind is sent in the `pins` list, whose `PinKind` released clients parse as a
+closed enum; each rides its own rows as `pinnedPosition`. A pin must be of
+something the viewer may open.
+
+### Presence
+
+A Canvas id is a conversation-parent id, so `set_presence` already carries it
+as `foregroundWorkstreamId`, and `workspace_presence` fans out per
+conversation. The presence path admits a Canvas the viewer may open where it
+admits a listed Channel (`directoryVisible`, `mainOpenable`), so the face pile
+inside a Canvas is everyone in it now; foregrounding one wakes its Chat, as a
+Channel's Main is woken. A change to who is in any Canvas republishes the
+Canvas list, whose rows carry `presentUserIds`. Presence decides from the
+socket's access class, not the person's role, so an owner or administrator who
+opens a private Canvas they are not otherwise in does not appear in its face
+pile.
+
 ## Invariants
 
 - **A Canvas is admitted by `canvasAdmits` and nothing else, and it is the
@@ -190,6 +237,13 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   conversation route: who it admits, the `canvas` ticket, the Chat's effects in
   the Canvas's hosted-conversation rows, and an artifact attached to the Chat
   admitted to exactly whoever opens the Canvas.
+- `apps/api/test-workers/canvas-conversation.test.ts` also opens real
+  workspace sockets: the list lists a Canvas to whoever may open it and unread
+  to a participant who has not opened it; a member's `set_presence` reaches the
+  creator's row and face pile; a pin moves only its owner's row; a Canvas the
+  viewer may not open is neither pinned nor present.
+- `apps/desktop/src/renderer/lib/sidebar-list-store.test.ts` — the Canvas list
+  orders by its own waterline.
 - `apps/api/test/workstream-object-schema.test.ts` — conversation migration 83
   carries a populated v82 root, every column and all nine triggers across the
   rebuild.
@@ -203,6 +257,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts`, `sidekick_viewer_reads` | `(sidekick_id, …)`, the column holding the Canvas id | The hosted conversation's children, their projections and receipts, and each reader's read of the Chat. |
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
 | `sidekick_conversation_attachments` | `(automation_id, parent_kind, …)` | Migration 140 widens `parent_kind` to admit `canvas`. |
+| `workspace_pins` | `(user_id, item_kind, item_id)` | Migration 141 admits `canvas` and `sidekick`, with no parent. |
 
 ## Changelog
 
@@ -215,7 +270,8 @@ through the Channel share primitive keyed by the Canvas id, and administrators
 admitted to every Canvas. Its Chat is an ordinary conversation object on the
 one hosting primitive a Sidekick also uses, `HostedConversation`, and its
 artifacts are admitted to whoever opens it. `audienceAdmits` is the one rule
-under both `canvasAdmits` and `sidekickAdmits`.
+under both `canvasAdmits` and `sidekickAdmits`. Each viewer's Canvas list,
+with unread, presence and pins, rides the workspace socket.
 
 **Why:** The Canvases and Sidekicks decisions: a Canvas is identified by its
 conversation and starts empty, so it can generate many artifacts; it has its

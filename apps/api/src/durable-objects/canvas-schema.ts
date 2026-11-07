@@ -79,3 +79,34 @@ export const SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS: readonly string[] = [
   `DROP TABLE sidekick_conversation_attachments`,
   `ALTER TABLE sidekick_conversation_attachments_v140 RENAME TO sidekick_conversation_attachments`,
 ];
+
+/**
+ * WorkspaceDO migration 141: a person pins a Canvas or a Sidekick in its
+ * list's Pinned group, in the same `workspace_pins` table and order the other
+ * pins use. Neither names a parent, so the CHECK that only a breakout and an
+ * artifact carry one holds. A CHECK cannot widen in place; nothing references
+ * the table by foreign key and no trigger hangs off it, so it is copied, as
+ * migration 110 copied it.
+ */
+export const CANVAS_SIDEKICK_PINS_STATEMENTS: readonly string[] = [
+  `CREATE TABLE workspace_pins_v141 (
+    user_id TEXT NOT NULL,
+    item_kind TEXT NOT NULL CHECK (item_kind IN ('thread', 'channel', 'breakout', 'artifact', 'canvas', 'sidekick')),
+    item_id TEXT NOT NULL,
+    parent_id TEXT,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    CHECK ((item_kind IN ('breakout', 'artifact')) = (parent_id IS NOT NULL)),
+    PRIMARY KEY (user_id, item_kind, item_id)
+  ) STRICT`,
+  `INSERT INTO workspace_pins_v141
+     (user_id, item_kind, item_id, parent_id, position, created_at, updated_at)
+   SELECT user_id, item_kind, item_id, parent_id, position, created_at, updated_at
+     FROM workspace_pins`,
+  `DROP TABLE workspace_pins`,
+  `ALTER TABLE workspace_pins_v141 RENAME TO workspace_pins`,
+  `CREATE INDEX workspace_pins_order_idx
+    ON workspace_pins(user_id, item_kind, position, item_id)`,
+  `CREATE INDEX workspace_pins_item_idx ON workspace_pins(item_kind, item_id)`,
+];
