@@ -8,7 +8,7 @@
  * Everything here is driven through the Organization object's `sidekick*` RPC
  * surface and the alarm entries it arms, against the real WorkspaceDO, the
  * real regional D1 it reads members and email routes from, and a real run
- * child (a `SubstreamAgent`) whose loop reads its definition back from this
+ * child (an `AgentLoopDO`) whose loop reads its definition back from this
  * object by revision. The one thing replaced is the model: the OpenRouter
  * double answers every turn, so the run reaches inference and ends, and what
  * it was asked is readable in the double's calls.
@@ -49,7 +49,7 @@ import {
   SIDEKICK_REVIEW_RUN_FLOOR,
   type HostedSidekickHost,
 } from "../src/durable-objects/hosted-sidekick";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import {
   AUTOMATION_RUN_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
@@ -1501,7 +1501,7 @@ describe("a hosted Sidekick", () => {
         resourceId, WORKSPACE_ID, resourceId, NOW, NOW,
       );
     });
-    const links = (stub: DurableObjectStub<SubstreamAgent>) => runInDurableObject(stub, (_instance, state) =>
+    const links = (stub: DurableObjectStub<AgentLoopDO>) => runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ resource_id: string }>(`SELECT resource_id FROM workstream_resource_links`).toArray()
         .map((row) => row.resource_id));
 

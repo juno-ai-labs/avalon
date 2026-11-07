@@ -14,7 +14,7 @@ import { admitConnectorAudience } from "../src/services/connector-workstream-aud
  * the whole thing still "works" in a mock, then tells somebody about a work
  * stream their sidebar cannot show them.
  *
- * This drives the real SubstreamAgent product boundary against real Durable
+ * This drives the real AgentLoopDO product boundary against real Durable
  * Object SQLite, so `parent_projection_keys`, the payload hashes, and the outbox rows
  * are the production ones rather than a description of them. Existing-room
  * cases use its system-provision port; create-only cases stop before run activation.
@@ -36,7 +36,7 @@ import {
 
 import type { AuthContext, Env } from "../src/env";
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import type { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
@@ -173,7 +173,7 @@ beforeEach(async () => {
   // never a slow query.
 }, 30_000);
 
-function agentStub(workstreamId = WORKSTREAM_ID, substreamId = "0"): DurableObjectStub<SubstreamAgent> {
+function agentStub(workstreamId = WORKSTREAM_ID, substreamId = "0"): DurableObjectStub<AgentLoopDO> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", WORKSPACE_ID, workstreamId, asSubstreamId(substreamId)),
   ));
@@ -221,7 +221,7 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
 }
 
 async function openWorkstream(
-  stub: DurableObjectStub<SubstreamAgent>,
+  stub: DurableObjectStub<AgentLoopDO>,
   options: {
     workstreamId?: string;
     title?: string;
@@ -245,7 +245,7 @@ async function openWorkstream(
   const workstreamId = options.workstreamId ?? WORKSTREAM_ID;
   await parkEffectQueue(stub);
   // These cases assert creation's committed transcript and regional effects,
-  // all of which `initialize` owns. The SubstreamAgent endpoint's next step is
+  // all of which `initialize` owns. The AgentLoopDO endpoint's next step is
   // only an execution-receipt wake. Calling the product service directly keeps
   // that unrelated model run admitted and inert, so a later `reset()` never
   // races an alarm that this file did not need to start.
@@ -279,7 +279,7 @@ async function openWorkstream(
 
 /** Establish the system-provisioned existing-room baseline without admitting a run. */
 async function provisionWorkstream(
-  stub: DurableObjectStub<SubstreamAgent>,
+  stub: DurableObjectStub<AgentLoopDO>,
   workstreamId = WORKSTREAM_ID,
   options: { title?: string; scope?: "personal" | "workspace"; substreamId?: string; parentKind?: "workstream" | "automation" } = {},
 ): Promise<void> {
@@ -316,7 +316,7 @@ async function provisionWorkstream(
 
 /** A settled parent identity for an elicitation, with no execution to wake. */
 async function seedCompletedRun(
-  stub: DurableObjectStub<SubstreamAgent>,
+  stub: DurableObjectStub<AgentLoopDO>,
   runId: string,
 ): Promise<void> {
   await runInDurableObject(stub, (_instance, state) => {
@@ -1618,7 +1618,7 @@ describe("mentioning a nonparticipant on an existing conversation", () => {
 
 /** A Channel with one open text question from a settled run, ready to answer. */
 async function openQuestion(): Promise<{
-  stub: DurableObjectStub<SubstreamAgent>;
+  stub: DurableObjectStub<AgentLoopDO>;
   runId: string;
   elicitationId: string;
 }> {

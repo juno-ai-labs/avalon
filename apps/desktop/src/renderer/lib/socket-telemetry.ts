@@ -33,7 +33,7 @@ export function reportWorkstreamSocketStarted(
  *
  * Three hooks run near-identical connect/backoff loops against three different
  * Durable Objects — the workspace directory, the WorkstreamDO control channel,
- * and the SubstreamAgent feed — and the question being asked spans all three:
+ * and the AgentLoopDO feed — and the question being asked spans all three:
  * which of them drops, why, and how many attempts a client spends getting back.
  * That only reads as one measurement if the three report the same vocabulary,
  * so the vocabulary lives here rather than three times over.

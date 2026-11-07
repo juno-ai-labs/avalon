@@ -7,7 +7,7 @@ import { unreadState } from "./unread-state";
  * The columns are the ones a thread (`channels` / `channel_viewers`) and a
  * breakout (`breakouts` / `breakout_viewers`) already carry, with the same
  * names and the same meaning, so a Channel can later move onto its own
- * SubstreamAgent and write them through directory effects without a second
+ * AgentLoopDO and write them through directory effects without a second
  * vocabulary. What advances the waterline is a thread being placed in the
  * Channel, and nothing else: each activation of a membership takes the next
  * ordinal and stamps it on the membership, which is what a feed row reports as

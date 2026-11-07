@@ -42,7 +42,7 @@ describe("DurableObjectMigrationReportSchema", () => {
     reportId: "0192f3a0-1c4d-7000-8000-0000000000b1",
     objectId: "a".repeat(64),
     objectName: `enterprise:${WORKSPACE}:${WORKSTREAM}`,
-    className: "SubstreamAgent",
+    className: "AgentLoopDO",
     component: "substream_agent_do",
     region: "enterprise",
     appEnv: "production",

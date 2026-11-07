@@ -2,7 +2,7 @@
 import { ensureAuditSchema } from "./audit-fixture";
 
 /**
- * Fixtures for driving a `SubstreamAgent` through its real entry points.
+ * Fixtures for driving an `AgentLoopDO` through its real entry points.
  *
  * The object's own tables are the seam these tests work against: an object with
  * no `workstream` row has no identity, and an execution receipt cannot be admitted

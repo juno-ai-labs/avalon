@@ -27,7 +27,7 @@ import {
   type ScheduledAlarmRun,
 } from "../src/durable-objects/scheduled-alarms";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
@@ -1362,7 +1362,7 @@ describe("an agent's own wake-ups", () => {
     ));
     breakoutAlarmForCleanup = breakout;
     for (const [stub, substreamId] of [[main, undefined], [breakout, breakoutId]] as const) {
-      await runInDurableObject(stub, async (instance: SubstreamAgent, state) => {
+      await runInDurableObject(stub, async (instance: AgentLoopDO, state) => {
         await instance.bootstrapRuntime({
           workspaceId: WORKSPACE_ID,
           parentKind: "workstream" as const, parentId: WORKSTREAM_ID,
@@ -1390,7 +1390,7 @@ describe("an agent's own wake-ups", () => {
         Date.now() - 120_000,
       );
     });
-    await runInDurableObject(breakout, async (instance: SubstreamAgent, state) => {
+    await runInDurableObject(breakout, async (instance: AgentLoopDO, state) => {
       await instance.refreshTimerAlarm({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, substreamId: breakoutId });
       // Park in the same invocation that arms it: an overdue native alarm can
       // otherwise beat the manual trigger and leave that trigger with no alarm.

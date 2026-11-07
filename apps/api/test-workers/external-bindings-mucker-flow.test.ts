@@ -9,7 +9,7 @@
  *
  * Everything but the two providers is real: the Sidekick, its run child and
  * persistent loop, the Organization's WorkspaceDO with its bindings and Slack
- * ingress jobs, the Breakout's SubstreamAgent, and `SlackAgentService` itself.
+ * ingress jobs, the Breakout's AgentLoopDO, and `SlackAgentService` itself.
  * The model is the OpenRouter double; Slack's Web API is a double layered over
  * it that answers `auth.test`, `chat.postMessage` and `users.info`. The Slack event is
  * handed to the service the way the signed HTTP route hands it over, and its

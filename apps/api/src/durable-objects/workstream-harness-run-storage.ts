@@ -339,7 +339,7 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
 }
 
 /**
- * Give a replacement SubstreamAgent the attempts its predecessor owned.
+ * Give a replacement AgentLoopDO the attempts its predecessor owned.
  *
  * Cloudflare may stop an object while an external await is in flight. The
  * await may still return, but the next storage operation is rejected because
@@ -1799,7 +1799,7 @@ export class WorkstreamHarnessRunStorage {
   // This pass is the only recovery for an executor that died without
   // terminalizing at all, and nothing schedules it: `reapStaleHarnessRuns` is
   // called from one place, immediately before a new attempt is claimed
-  // (`substream-agent.ts`). A work stream nobody
+  // (`agent-loop-do.ts`). A work stream nobody
   // sends another message to therefore keeps such a run `running` and its tool
   // card spinning indefinitely. Closing that needs the object to wake on its
   // own expired lease, which is a wake reason and belongs to

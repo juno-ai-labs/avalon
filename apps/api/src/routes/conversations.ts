@@ -280,7 +280,7 @@ conversationRoutes.patch("/:parentId/substreams/:substreamId", zValidator("param
  * Move this person's read waterline in one conversation.
  *
  * Substream-addressed because read state is substream-owned: every
- * `SubstreamAgent` keeps its own attention ordinals and its own
+ * `AgentLoopDO` keeps its own attention ordinals and its own
  * `member_attention` row, and a child's ordinals are deliberately not
  * comparable to Main's. Addressing the work stream instead, which is what
  * `PATCH /workstreams/:id/read-state` did, could only ever advance Main, so a

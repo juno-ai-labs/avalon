@@ -13,8 +13,8 @@ import { describe, expect, it, vi } from "vitest";
 import { conversationObjectName } from "../src/durable-objects/names";
 import {
   substreamSelfObjectName,
-  type SubstreamAgent,
-} from "../src/durable-objects/substream-agent";
+  type AgentLoopDO,
+} from "../src/durable-objects/agent-loop-do";
 import type { Env } from "../src/env";
 import {
   durableObjectStubForRegion,
@@ -84,7 +84,7 @@ function affinityDatabase(): D1Database {
  * a namespace stub that happens to answer the same way.
  */
 function testAgent(published: unknown[]) {
-  return createTestDurableObjectInstance<SubstreamAgent>({
+  return createTestDurableObjectInstance<AgentLoopDO>({
     publishEvent: async (input: unknown) => {
       published.push(input);
       return { status: 202, body: "{}" };
@@ -93,7 +93,7 @@ function testAgent(published: unknown[]) {
 }
 
 function selfEnv(
-  instance: SubstreamAgent,
+  instance: AgentLoopDO,
   namespace: Env["SUBSTREAM_AGENTS"],
   name: string | null,
   /**
@@ -274,7 +274,7 @@ describe("a local workspace SQL executor carried on the environment", () => {
   });
 });
 
-describe("the name a SubstreamAgent answers to", () => {
+describe("the name an AgentLoopDO answers to", () => {
   const identity = {
     workspaceId: asWorkspaceId(WORKSPACE),
     parentKind: "workstream" as const,

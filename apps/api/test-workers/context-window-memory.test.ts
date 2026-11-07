@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import { conversationObjectName } from "../src/durable-objects/names";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 
 const KEY = "openrouter:context-windows:v1";
 
@@ -23,7 +23,7 @@ it("reads the window snapshot once while resident and reloads it after eviction"
     fetchedAtMs: Date.now(),
     windows: { "test/model": tokens },
   });
-  const read = () => runInDurableObject(stub, (instance: SubstreamAgent) =>
+  const read = () => runInDurableObject(stub, (instance: AgentLoopDO) =>
     (instance as unknown as { contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>> })
       .contextWindowTokensByModel());
   try {
@@ -47,7 +47,7 @@ it("retries a missing snapshot on the next run instead of retaining the fallback
     asSubstreamId("00000000-0000-7000-8000-00000000c714"),
   ));
   const original = await env.INFERENCE_PRICING_CACHE.get(KEY);
-  const read = () => runInDurableObject(stub, (instance: SubstreamAgent) =>
+  const read = () => runInDurableObject(stub, (instance: AgentLoopDO) =>
     (instance as unknown as { contextWindowTokensByModel(): Promise<Readonly<Record<string, number>>> })
       .contextWindowTokensByModel());
   try {

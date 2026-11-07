@@ -395,7 +395,7 @@ export function createTerminalResourceBridge(
   publicationSubstreamId = "0",
 ): TerminalResourceBridge {
   // The layered runtime database routes resource rows to WorkspaceDO and
-  // tool/link rows to SubstreamAgent. Keep every statement single-authority;
+  // tool/link rows to AgentLoopDO. Keep every statement single-authority;
   // no query may join across those object-local databases.
   const workspace = env.DB;
   const attachResource = inObjectResourceAttacher

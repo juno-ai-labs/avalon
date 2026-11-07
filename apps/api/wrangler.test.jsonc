@@ -74,7 +74,7 @@
   ],
   "durable_objects": {
     "bindings": [
-      { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
+      { "name": "SUBSTREAM_AGENTS", "class_name": "AgentLoopDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" },
       { "name": "MIGRATION_PROBE_DO", "class_name": "MigrationProbeDO" }
@@ -84,7 +84,7 @@
     {
       "tag": "v1",
       "new_sqlite_classes": [
-        "SubstreamAgent",
+        "AgentLoopDO",
         "WorkspaceDO",
         "ArtifactHostDO",
         "MigrationProbeDO"

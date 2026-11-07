@@ -2135,7 +2135,7 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   version: 3,
   description: "drop the two workspace tables no code reads or writes",
   statements: [
-    // As in the SubstreamAgent's migration 11, version 1 still creates these
+    // As in the AgentLoopDO's migration 11, version 1 still creates these
     // and must: its statements are hashed into every deployed object's
     // `_sql_schema_migrations` receipt. `WORKSPACE_FENCED_TABLES` still names
     // `external_delivery_attempts` for the same reason — it feeds v1's

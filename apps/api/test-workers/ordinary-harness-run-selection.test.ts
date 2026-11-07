@@ -23,7 +23,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { asWorkstreamId, type WorkstreamId } from "@rally/contracts";
 
 import { conversationObjectName, workspaceDOName } from "../src/durable-objects/names";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import {
   USER_ID,
   WORKSPACE_ID,
@@ -97,7 +97,7 @@ let unique = 0;
  * The *name* stays canonical — the object re-derives it and refuses a request
  * whose identity does not match — so the id it is derived from is what varies.
  */
-function agent(): { stub: DurableObjectStub<SubstreamAgent>; workstreamId: WorkstreamId } {
+function agent(): { stub: DurableObjectStub<AgentLoopDO>; workstreamId: WorkstreamId } {
   unique += 1;
   const workstreamId = asWorkstreamId(
     `00000000-0000-7000-8000-${String(unique).padStart(9, "0")}9a0`,
@@ -139,7 +139,7 @@ function seedRun(
 
 /** Bootstrap, seat the reader, and give the object the title its contract requires. */
 async function openWorkstream(
-  stub: DurableObjectStub<SubstreamAgent>,
+  stub: DurableObjectStub<AgentLoopDO>,
   workstreamId: WorkstreamId,
 ): Promise<void> {
   expect((await stub.bootstrapRuntime({
@@ -166,7 +166,7 @@ async function openWorkstream(
   });
 }
 
-async function latestRunId(stub: DurableObjectStub<SubstreamAgent>): Promise<string | null> {
+async function latestRunId(stub: DurableObjectStub<AgentLoopDO>): Promise<string | null> {
   const detail = await stub.handleProductRequest({ operation: "get", auth });
   expect(detail.status).toBe(200);
   return (JSON.parse(detail.bodyJson) as { latestHarnessRunId: string | null })

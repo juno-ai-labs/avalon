@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * Behavioural coverage for the v35 persistent SubstreamAgent loop.
+ * Behavioural coverage for the v35 persistent AgentLoopDO loop.
  *
  * The retired dispatch table is deliberately absent. A subordinate `runs`
  * receipt with immutable execution context is the durable activation, while

@@ -208,7 +208,7 @@ async function fixture(input?: {
     AVALON_REGION: "global",
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: payloadPut }),
     // Backup uploads attach their resource through the object's RPC surface;
-    // the stub records the link the way the SubstreamAgent's product does.
+    // the stub records the link the way the AgentLoopDO's product does.
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
       extra: {
         attachRuntimeResource: vi.fn((request: WorkstreamRuntimeResourceAttachment) => {
