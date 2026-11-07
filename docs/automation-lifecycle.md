@@ -417,7 +417,7 @@ records where a running signal would come from.
 | `packages/contracts/src/index.ts` | `AutomationDraftSchema`, `AutomationRunDefinitionV1Schema` (the `readRunDefinition` answer), `AutomationSummarySchema`, `WorkstreamAutomationSummarySchema`, `AutomationRunSchema`, `AutomationDetailSchema`. |
 | `packages/contracts/src/automation-evaluators.ts` | The strict external-event evaluator grammar (`always`, or `matching` over leaves), the preprocess that still accepts the pre-rename `all` on rows already stored, the delivery message the matcher emits, and `automationBindableResourceTypes` — the one answer to which resources a rule may name, which search, both validators and the `resourceId` normalizer all read. |
 | `apps/api/src/services/external-event-evaluator.ts` | The pure predicate evaluator WorkspaceDO matches registrations with. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `listAutomationDirectory`, `applyExternalEventRegistrations` and `matchExternalEventDestinations`. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Migration 31: `automation_directory` and `workspace_external_event_registrations`; `listAutomationDirectory`, a hosted Sidekick's registration writes (`writeSidekickRegistrations`, `replaceExternalEventRegistrationRows`) and `matchExternalEventDestinations`. |
 | `apps/api/src/queues/activity-consumer.ts` | Delivers a matched event to `sidekickAdmitExternalEvent`, a run child's effects through the shared effect leg, a `sidekick_run_provision` message to `provisionSidekickRun`, and a `sidekick_review` message to `deliverSidekickReview`, logging a failed delivery's code as `sidekick_review_delivery_retry`. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | `ingestAutomation`: resolves the sender, stores the message, and calls `admitInboundEmail` once. |
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
@@ -613,8 +613,9 @@ same named occurrence. An automation's registration needs predicates because
 it selects event families, content, people, and provider fields. The
 registration table still admits a `workstream_resource_update` destination (a
 Thread's watched resource, which sent no evaluator); nothing registers one
-since Threads were retired, and `applyExternalEventRegistrations` has no
-writer left.
+since Threads were retired. A Sidekick's own transaction is the only writer of
+registrations; the projection RPC (`applyExternalEventRegistrations`) and its
+generation fence were deleted in plan step B-8.
 
 **A `semantic_activity` trigger's `condition` is tested after the predicate, not
 by it.** The predicate above is the only runtime matcher and takes no semantic
@@ -1868,7 +1869,11 @@ renderer window, so it is the workspace-sync relay's only consumer; anything
 opening a Sidekick from outside the main window goes through `openSidekick`,
 which requires an active Organization. Every writer of `next_due_at` must arm
 the schedule's entry at that instant in the same transaction, and the drain's
-`settle()` deletes an entry only by the instant that ran.
+`settle()` deletes an entry only by the instant that ran. A Sidekick's own
+transaction is the only writer of its connector registrations: the projection
+RPC `applyExternalEventRegistrations`, which nothing called once Sidekicks
+moved into WorkspaceDO, is deleted with its generation fence, and a Slack
+source's join is keyed on the revision whose registrations named it.
 
 Design: `docs/PRDs/2026-11-06_canvases-and-sidekicks/prd.md`.
 

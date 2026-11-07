@@ -5,6 +5,7 @@ import { asUserId, asWorkspaceId, WorkspaceExternalEventMatchResultSchema } from
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { writeSidekickRegistrations } from "./helpers/sidekick";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
 /**
@@ -85,12 +86,7 @@ type Evaluator = {
 };
 
 async function register(automationId: string, evaluators: Evaluator[]): Promise<void> {
-  await workspace().applyExternalEventRegistrations({
-    schemaVersion: 1,
-    workspaceId: WORKSPACE_ID,
-    destination: { kind: "automation", automationId },
-    evaluators,
-  });
+  await writeSidekickRegistrations(env, WORKSPACE_ID, automationId, evaluators);
 }
 
 function rule(
@@ -101,7 +97,9 @@ function rule(
   when: unknown,
 ): Evaluator {
   return {
-    evaluatorId: `${automationId.slice(0, -2)}${String(ordinal).padStart(2, "0")}`.replace(/.{2}$/u, `a${ordinal}`),
+    // Unique across automations, as a published evaluator's id is: a hosted
+    // Sidekick's registration row is keyed by it.
+    evaluatorId: `${automationId.slice(0, -3)}${automationId.slice(-1)}a${ordinal}`,
     source: { connectorType: connector, connectionId: CONNECTIONS[connector].id, eventType },
     when,
   };
@@ -400,22 +398,5 @@ describe("external event rules across connectors", () => {
     expect(await destinationsFor(realCount)).toEqual([AUTOMATIONS.unlabelled]);
     expect(await destinationsFor(topLevel)).toEqual([AUTOMATIONS.unlabelled]);
     expect(await destinationsFor(inThread)).toEqual([]);
-  });
-
-  it("names the offending field when a malformed projection is rejected across the RPC boundary", async () => {
-    // What the caller is left holding is the whole point. `replaceRegistrations`
-    // calls this over a Durable Object RPC hop, and the serializer reduces a
-    // `ZodError` to a bare `Error` — no `issues`, no derived message, not even
-    // the name — so a `sidekick_publication` alarm retrying against a malformed
-    // projection logged the bare word `ZodError` and nothing else. Only the
-    // message text crosses, so the paths have to be in it.
-    const rejection = await register(AUTOMATIONS.unlabelled, [
-      { ...rule(AUTOMATIONS.unlabelled, 1, "linear", "linear.issue.created", { kind: "always" }), source: { connectorType: "linear", connectionId: 7 } },
-    ] as unknown as Evaluator[]).then(() => null, (error: unknown) => error);
-
-    expect(rejection).toBeInstanceOf(Error);
-    const message = (rejection as Error).message;
-    expect(message).toContain("external_event_registration_projection_invalid");
-    expect(message).toContain("evaluators.0.source");
   });
 });

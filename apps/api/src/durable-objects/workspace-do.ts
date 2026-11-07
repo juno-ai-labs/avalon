@@ -615,35 +615,11 @@ import {
   WorkspaceSlackContextRequestSchema,
   WorkspaceSlackContextStoreRequestSchema,
   WorkspaceSlackFeedbackRequestSchema,
-  WorkspaceSlackSessionAssignRequestSchema,
-  WorkspaceSlackSessionByIdRequestSchema,
-  WorkspaceSlackSessionByThreadRequestSchema,
-  WorkspaceSlackSessionByWorkstreamRequestSchema,
-  WorkspaceSlackSessionCreateRequestSchema,
-  WorkspaceSlackSessionDeliveryKeyRequestSchema,
-  WorkspaceSlackSessionExistsRequestSchema,
-  WorkspaceSlackSessionReactionAnchorRequestSchema,
-  WorkspaceSlackSessionReactionRequestSchema,
-  WorkspaceSlackSessionStreamRequestSchema,
   type WorkspaceSlackContextRequest,
   type WorkspaceSlackContextResult,
   type WorkspaceSlackContextStoreRequest,
   type WorkspaceSlackFeedbackRequest,
   type WorkspaceSlackFeedbackResult,
-  type WorkspaceSlackSessionAssignRequest,
-  type WorkspaceSlackSessionAssignResult,
-  type WorkspaceSlackSessionByIdRequest,
-  type WorkspaceSlackSessionByThreadRequest,
-  type WorkspaceSlackSessionByWorkstreamRequest,
-  type WorkspaceSlackSessionCreateRequest,
-  type WorkspaceSlackSessionDeliveryKeyRequest,
-  type WorkspaceSlackSessionExistsRequest,
-  type WorkspaceSlackSessionExistsResult,
-  type WorkspaceSlackSessionReactionAnchorRequest,
-  type WorkspaceSlackSessionReactionRequest,
-  type WorkspaceSlackSessionReactionResult,
-  type WorkspaceSlackSessionResult,
-  type WorkspaceSlackSessionStreamRequest,
 } from "./workspace-slack-protocol";
 import {
   claimWorkspaceSlackIngressJob,
@@ -659,19 +635,9 @@ import {
   sweepWorkspaceSlackIngress,
   workspaceSlackPendingPrompt,
   workspaceSlackThreadRoutable,
-  assignWorkspaceSlackSessions,
-  createWorkspaceSlackSession,
   recordWorkspaceSlackFeedback,
-  setWorkspaceSlackSessionDeliveryKey,
-  setWorkspaceSlackSessionStream,
-  anchorWorkspaceSlackSessionReaction,
-  settleWorkspaceSlackSessionReaction,
   storeWorkspaceSlackContext,
   workspaceSlackContext,
-  workspaceSlackSessionById,
-  workspaceSlackSessionByThread,
-  workspaceSlackSessionByWorkstream,
-  workspaceSlackSessionExists,
 } from "./workspace-slack-storage";
 import {
   ExternalBindingActivateResultSchema,
@@ -5739,8 +5705,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Replace a hosted Sidekick's connector registrations inside the caller's
    * transaction, and return the event sequence they take effect after. No
-   * generation fence: the Sidekick's own transaction orders its writes, and
-   * the legacy fence row is removed so the legacy RPC path cannot reuse it.
+   * generation fence: the Sidekick's own transaction orders its writes.
+   * `external_registration_generations` held the retired projection RPC's
+   * fence and is no longer read or written.
    */
   private writeSidekickRegistrations(automationId: string, evaluators: readonly unknown[]): number {
     const workspaceId = this.workspaceId();
@@ -5751,7 +5718,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       schemaVersion: 1, workspaceId, destination: { kind: "automation", automationId }, sourceGeneration: 1, evaluators,
     });
     const destinationKey = `automation:${automationId}`;
-    this.state.storage.sql.exec(`DELETE FROM external_registration_generations WHERE destination_key = ?`, destinationKey);
     return this.replaceExternalEventRegistrationRows(request, destinationKey, Date.now()).effectiveAfterEventSequence;
   }
 
@@ -7510,62 +7476,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Replace one destination's evaluators, completely.
-   *
-   * No coordinate and no hash: the caller is the destination's own authority
-   * and this is whatever it says now. A repeat with the same set removes and
-   * re-inserts the same rows, which is equivalent, and the cutoff sequence
-   * means an event admitted before the call is never matched by a rule that
-   * did not exist when it arrived.
-   */
-  async applyExternalEventRegistrations(input: unknown): Promise<{
-    effectiveAfterEventSequence: number;
-  }> {
-    await this.initialized;
-    const request = parseRpcInput(
-      ExternalEventRegistrationProjectionV1Schema,
-      input,
-      "external_event_registration_projection",
-    );
-    this.assertWorkspace(request.workspaceId);
-    const result = this.state.storage.transactionSync(() => {
-      const destinationKind = request.destination.kind;
-      const destinationKey = destinationKind === "automation"
-        ? `automation:${request.destination.automationId}`
-        : `workstream:${request.destination.workstreamId}:${request.destination.substreamId}:${request.destination.resourceId}`;
-      const previous = this.state.storage.sql.exec<{ source_generation: number; effective_after_event_sequence: number }>(
-        `SELECT source_generation, effective_after_event_sequence FROM external_registration_generations WHERE destination_key = ?`, destinationKey,
-      ).toArray()[0];
-      if (previous && (request.sourceGeneration === undefined || request.sourceGeneration <= previous.source_generation)) {
-        return { effectiveAfterEventSequence: previous.effective_after_event_sequence, applied: false };
-      }
-      const replaced = this.replaceExternalEventRegistrationRows(request, destinationKey, Date.now());
-      if (request.sourceGeneration !== undefined) this.state.storage.sql.exec(
-        `INSERT INTO external_registration_generations VALUES (?, ?, ?)
-         ON CONFLICT(destination_key) DO UPDATE SET source_generation = excluded.source_generation, effective_after_event_sequence = excluded.effective_after_event_sequence`,
-        destinationKey, request.sourceGeneration, replaced.effectiveAfterEventSequence,
-      );
-      return replaced;
-    });
-    await this.refreshScheduleKinds(request.workspaceId, ["schedule"]);
-    // A stale projection changed nothing, so it has nothing to join.
-    if (result.applied && request.destination.kind === "automation") {
-      await this.joinSlackSourceConversations(
-        request.workspaceId,
-        request.destination.automationId,
-        request.sourceGeneration,
-        request.evaluators,
-      );
-    }
-    return { effectiveAfterEventSequence: result.effectiveAfterEventSequence };
-  }
-
-  /**
    * Replace one destination's registration rows, inside the caller's
    * transaction, and return the event sequence they take effect after: an
    * event admitted before the call is never matched by a rule that did not
-   * exist when it arrived. The legacy RPC and a hosted Sidekick's own
-   * transaction both write through here.
+   * exist when it arrived. A hosted Sidekick's own transaction writes through
+   * here.
    */
   private replaceExternalEventRegistrationRows(
     request: z.infer<typeof ExternalEventRegistrationProjectionV1Schema>,
@@ -7610,7 +7525,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            connection_id = excluded.connection_id, connector_type = excluded.connector_type,
            event_type = excluded.event_type, resource_id = excluded.resource_id, evaluator_json = excluded.evaluator_json,
            updated_at = excluded.updated_at`,
-        request.sourceGeneration === undefined && evaluator.source.connectorType !== "canva" ? uuidV7() : evaluator.evaluatorId,
+        // A hosted Sidekick's writes always carry a source generation, so each
+        // row keeps its evaluator's id, which is what an admitted event names.
+        evaluator.evaluatorId,
         destinationKey,
         request.workspaceId,
         cutoff,
@@ -7665,13 +7582,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private async joinSlackSourceConversations(
     workspaceId: string,
     automationId: string,
-    sourceGeneration: number | undefined,
+    revision: number,
     evaluators: readonly { source: { connectorType: string; connectionId: string }; when: unknown }[],
   ): Promise<void> {
     let jobs: Awaited<ReturnType<typeof enqueueSlackSourceJoins>>;
     try {
       jobs = await enqueueSlackSourceJoins(this.state.storage, {
-        workspaceId, automationId, sourceGeneration, evaluators, appId: this.env.SLACK_APP_ID ?? null,
+        workspaceId, automationId, revision, evaluators, appId: this.env.SLACK_APP_ID ?? null,
       });
     } catch (error) {
       logWarn(this.env, "slack_sidekick_source_join_enqueue_failed", {
@@ -10076,122 +9993,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * The Slack agent-session lifecycle.
+   * The App Home context Rally keeps for one Slack user on one connection.
    *
-   * None of `slack_agent_sessions`, `slack_agent_contexts`, or
-   * `slack_agent_feedback` is an alarm source — no schedule target derives a
-   * due time from them — so these mutations deliberately do **not** call
-   * `refreshScheduleAfterSlackWrite`. That is the one thing to re-check before
-   * adding a method here: a table that gains an alarm target needs the refresh
-   * back, and its absence is a decision rather than an omission.
+   * Neither `slack_agent_contexts` nor `slack_agent_feedback` is an alarm
+   * source, so these mutations deliberately do **not** call
+   * `refreshScheduleAfterSlackWrite`: a table that gains an alarm target
+   * needs the refresh back.
    */
-  async slackSessionById(
-    input: WorkspaceSlackSessionByIdRequest,
-  ): Promise<WorkspaceSlackSessionResult> {
-    await this.initialized;
-    const request = WorkspaceSlackSessionByIdRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceSlackSessionById(this.state.storage, request);
-  }
-
-  /** The session a Slack thread already has, if this thread is one Rally runs. */
-  async slackSessionByThread(
-    input: WorkspaceSlackSessionByThreadRequest,
-  ): Promise<WorkspaceSlackSessionResult> {
-    await this.initialized;
-    const request = WorkspaceSlackSessionByThreadRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceSlackSessionByThread(this.state.storage, request);
-  }
-
-  /** The session behind a work stream, for delivering that run's outcome. */
-  async slackSessionByWorkstream(
-    input: WorkspaceSlackSessionByWorkstreamRequest,
-  ): Promise<WorkspaceSlackSessionResult> {
-    await this.initialized;
-    const request = WorkspaceSlackSessionByWorkstreamRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceSlackSessionByWorkstream(this.state.storage, request);
-  }
-
-  /** The interaction preflight: has this work stream already been seated here? */
-  async slackSessionExists(
-    input: WorkspaceSlackSessionExistsRequest,
-  ): Promise<WorkspaceSlackSessionExistsResult> {
-    await this.initialized;
-    const request = WorkspaceSlackSessionExistsRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return workspaceSlackSessionExists(this.state.storage, request);
-  }
-
-  /** Store a new thread's session and answer with the row that was stored. */
-  async createSlackSession(
-    input: WorkspaceSlackSessionCreateRequest,
-  ): Promise<WorkspaceSlackSessionResult> {
-    await this.initialized;
-    const request = WorkspaceSlackSessionCreateRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return createWorkspaceSlackSession(this.state.storage, request);
-  }
-
-  /** Seat a member across this Slack user's workspace-scoped sessions. */
-  async assignSlackSessions(
-    input: WorkspaceSlackSessionAssignRequest,
-  ): Promise<WorkspaceSlackSessionAssignResult> {
-    await this.initialized;
-    const request = WorkspaceSlackSessionAssignRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return assignWorkspaceSlackSessions(this.state.storage, request);
-  }
-
-  /** Stamp the delivery key a run's outcome was delivered under. */
-  async setSlackSessionDeliveryKey(
-    input: WorkspaceSlackSessionDeliveryKeyRequest,
-  ): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceSlackSessionDeliveryKeyRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    setWorkspaceSlackSessionDeliveryKey(this.state.storage, request);
-  }
-
-  /** Clear a response-stream pointer left by a pre-saved-turn-only deployment. */
-  async setSlackSessionStream(
-    input: WorkspaceSlackSessionStreamRequest,
-  ): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceSlackSessionStreamRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    setWorkspaceSlackSessionStream(this.state.storage, request);
-  }
-
-  /**
-   * Settle the status reaction against the anchor the caller acted on and the
-   * emoji it removed.
-   *
-   * Answers `raced` when another transition moved `reaction_current`, or a
-   * follow-up moved the anchor, while the caller was talking to Slack. The
-   * decision comes from the `RETURNING` witness, not a row count.
-   */
-  async settleSlackSessionReaction(
-    input: WorkspaceSlackSessionReactionRequest,
-  ): Promise<WorkspaceSlackSessionReactionResult> {
-    await this.initialized;
-    const request = WorkspaceSlackSessionReactionRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    return settleWorkspaceSlackSessionReaction(this.state.storage, request);
-  }
-
-  /** Point the status reaction at the newest prompt's message. */
-  async anchorSlackSessionReaction(
-    input: WorkspaceSlackSessionReactionAnchorRequest,
-  ): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceSlackSessionReactionAnchorRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    anchorWorkspaceSlackSessionReaction(this.state.storage, request);
-  }
-
-  /** The App Home context Rally keeps for one Slack user on one connection. */
   async slackAppContext(
     input: WorkspaceSlackContextRequest,
   ): Promise<WorkspaceSlackContextResult> {

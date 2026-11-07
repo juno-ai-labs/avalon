@@ -19,6 +19,7 @@ import { asUserId, asWorkspaceId } from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { writeSidekickDirectoryRow, writeSidekickRegistrations } from "./helpers/sidekick";
 
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ea0");
@@ -206,20 +207,18 @@ describe("connector resources", () => {
       connectionId: CONNECTION, provider: "canva", providerResourceId: "design", resourceType: "canva_design",
       title: "Design", canonicalUrl: null, at: AT });
     const evaluatorId = nextId();
-    const destination = { kind: "automation", automationId: nextId() };
-    const project = (sourceGeneration: number, active: boolean) => workspace().applyExternalEventRegistrations({
-      schemaVersion: 1, workspaceId: WORKSPACE_ID, destination, sourceGeneration,
-      evaluators: active ? [{ evaluatorId, source: { connectorType: "canva", connectionId: CONNECTION,
-        eventType: "design.revised", resourceId }, when: { kind: "always" } }] : [],
-    });
-    await project(1, true);
+    const automationId = nextId();
+    await writeSidekickDirectoryRow(env, { automationId, workspaceId: WORKSPACE_ID, authorUserId: UPLOADER,
+      lifecycle: "active", scope: "personal", title: "Design watcher", description: "" });
+    const project = (active: boolean) => writeSidekickRegistrations(env, WORKSPACE_ID, automationId,
+      active ? [{ evaluatorId, source: { connectorType: "canva", connectionId: CONNECTION,
+        eventType: "design.revised", resourceId }, when: { kind: "always" } }] : []);
+    await project(true);
     const schedule = () => runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec(
       "SELECT enabled, interval_seconds FROM schedules WHERE id = ?", evaluatorId,
     ).one());
     expect(await schedule()).toEqual({ enabled: 1, interval_seconds: 600 });
-    await project(2, false);
-    expect(await schedule()).toEqual({ enabled: 0, interval_seconds: 600 });
-    await project(1, true);
+    await project(false);
     expect(await schedule()).toEqual({ enabled: 0, interval_seconds: 600 });
   });
   it("persists and replaces protected access separately from ordinary resource metadata", async () => {

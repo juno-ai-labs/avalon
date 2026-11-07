@@ -677,10 +677,10 @@ column catalog; what follows is only what WorkspaceDO still holds.
   `workstream_resource_update` kind a Thread's watched resource registered has
   no writer since Threads were retired), indexed on `(connection, event type, resource, state)` for
   candidate selection and on `(destination kind, destination key, state)` for
-  replacement. A destination's set is replaced whole by
-  `applyExternalEventRegistrations`, ordered by the destination generation in
-  `external_registration_generations`;
-  `effective_after_event_sequence` is the cutoff, so an event admitted before
+  replacement. A Sidekick's set is replaced whole inside its own transaction
+  (`writeSidekickRegistrations`), which orders its writes; the
+  `external_registration_generations` fence the retired projection RPC kept is
+  no longer read or written. `effective_after_event_sequence` is the cutoff, so an event admitted before
   the call is never matched by a rule that did not exist when it arrived.
   Removed rows are reaped after a day.
 - There is no delivery ledger. `matchExternalEventDestinations` returns one
