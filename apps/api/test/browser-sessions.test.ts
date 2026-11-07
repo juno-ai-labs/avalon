@@ -153,12 +153,12 @@ it("forwards the member shell's route families and still refuses token minting a
   const browser = new Hono<HonoAppEnv>();
   browser.route("/browser",createBrowserRoutes((forwarded,c) => api.fetch(forwarded,c.env)));
   browser.onError(errorHandler);
-  for (const family of ["spaces","navigation","projects","onboarding/account","onboarding/organization-suggestion","work-opportunities","digest","push-devices","workspaces"]) {
+  for (const family of ["canvases","sidekicks","onboarding/account","onboarding/organization-suggestion","push-devices","workspaces"]) {
     const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/${family}/probe`,{ headers:{ cookie:entry.cookie } },bindings());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ path:`/${family}/probe`,workspaceId });
   }
-  for (const family of ["auth","internal","ingest","access","slack","dev"]) {
+  for (const family of ["auth","internal","ingest","access","slack","dev","spaces","workstreams","projects","navigation","work-opportunities","digest"]) {
     const response = await browser.request(`${apiOrigin}/browser/api/${workspaceId}/${family}/probe`,{ headers:{ cookie:entry.cookie } },bindings());
     expect(response.status).toBe(404);
   }

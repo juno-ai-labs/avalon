@@ -3,14 +3,9 @@ import { zValidator } from "../middleware/validation";
 import { IdSchema } from "@rally/contracts";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
-import {
-  SocketService,
-  WorkspaceSocketService,
-  WorkstreamControlSocketService,
-} from "../services/socket-service";
+import { SocketService, WorkspaceSocketService } from "../services/socket-service";
 import { RealtimeTranscriptionService } from "../services/realtime-transcription-service";
 
-const params = z.object({ id: IdSchema });
 const conversationParams = z.object({
   parentId: IdSchema,
   substreamId: z.union([z.literal("0"), IdSchema]),
@@ -43,16 +38,6 @@ socketRoutes.get(
       c.req.raw,
     );
   },
-);
-socketRoutes.get(
-  "/workstreams/:id",
-  zValidator("param", params),
-  zValidator("query", query),
-  async (c) => new WorkstreamControlSocketService(c.env).upgrade(
-    c.req.valid("param").id,
-    c.req.valid("query").ticket,
-    c.req.raw,
-  ),
 );
 socketRoutes.get("/transcription", zValidator("query", query), async (c) => {
   const defer = (promise: Promise<void>): void => {

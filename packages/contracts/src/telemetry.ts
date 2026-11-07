@@ -455,7 +455,7 @@ export const TELEMETRY_EVENTS = {
     category: "essential",
     identityScopes: ["platform-user", "workspace-user"],
     properties: deferredZodSchema(() => z.strictObject({
-      operation: z.enum(["onboarding_bootstrap", "workspace_create", "workspace_activate", "workstream_create", "run_start"]),
+      operation: z.enum(["onboarding_bootstrap", "workspace_create", "workspace_activate", "workstream_create", "canvas_create", "run_start"]),
       result: resultClass,
       duration: durationBucket,
     })),

@@ -9,7 +9,7 @@ import {
   telemetryOperationId,
 } from '../telemetry/api-emitter';
 
-type Operation = 'workspace_create' | 'workspace_activate' | 'workstream_create';
+type Operation = 'workspace_create' | 'workspace_activate' | 'canvas_create';
 type Result = 'success' | 'validation_error' | 'conflict' | 'denied' | 'unavailable' | 'failed';
 type Duration = 'lt_100ms' | '100ms_1s' | '1s_5s' | '5s_30s' | 'gte_30s';
 
@@ -21,7 +21,7 @@ export interface ApiOperationProjection extends Record<string, unknown> {
 }
 
 const allowlist = new Map<string, Operation>([
-  ['POST /workstreams', 'workstream_create'],
+  ['POST /canvases', 'canvas_create'],
 ]);
 
 export function apiOperationTelemetry(options: {
