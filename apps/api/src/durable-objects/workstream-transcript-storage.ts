@@ -1,12 +1,7 @@
-import { AnnotatedMessageContentSchema } from "@rally/contracts";
 import { sidekickRunRowFacts, sidekickRunRowText } from "./sidekick-run-row";
-import { stableUuid } from "../lib/stable-uuid";
 import {
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
-  automationActivationName,
-  PreparedConversationSchema,
   ImportedMessageProvenanceSchema,
-  type PreparedConversation,
   ExternalActorSchema,
   PendingTranscriptInputSchema,
   type ExternalActor,
@@ -21,14 +16,6 @@ import {
 } from "@rally/contracts";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { personMentionMarkdownRanges } from "@rally/contracts/citations";
-import {
-  SubstreamContextCaptureSchema,
-  SubstreamContextMessageSchema,
-  SubstreamInitialContextSchema,
-  type SubstreamAddress,
-  type SubstreamContextCapture,
-  type SubstreamInitialContext,
-} from "@rally/contracts/substream-creation";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
   applyBindLoopTransition,
@@ -551,115 +538,6 @@ export class WorkstreamTranscriptStorage {
     } & Record<string, SqlStorageValue>>(
       `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
     ).one().next_transcript_sequence) - 1;
-  }
-
-  /** Freeze participant text before inference. Replays never re-read a moving feed. */
-  captureSubstreamContext(input: {
-    operationId: string;
-    source: SubstreamAddress;
-    throughTurnId: string | null;
-  }): SubstreamContextCapture {
-    if (input.source.substreamId !== "0") throw new Error("substream_source_must_be_main");
-    const request = canonicalTranscriptJson(input);
-    return this.storage.transactionSync(() => {
-      const prior = this.sql.exec<{ request_json: string; capture_json: string }>(
-        `SELECT request_json, capture_json FROM substream_context_captures WHERE operation_id = ?`,
-        input.operationId,
-      ).toArray()[0];
-      if (prior) {
-        if (prior.request_json !== request) throw new Error("substream_capture_operation_conflict");
-        return SubstreamContextCaptureSchema.parse(JSON.parse(prior.capture_json));
-      }
-      const sourceRevision = this.transcriptThrough();
-      const requestedTurn = input.throughTurnId === null ? null : this.participantTurn(input.throughTurnId);
-      if (input.throughTurnId !== null && !requestedTurn) throw new Error("substream_source_turn_not_found");
-      const upper = requestedTurn?.transcriptSequence ?? sourceRevision;
-      // Read individual turns rather than expanding an unbounded IN binding list.
-      // SQLite's platform parameter ceiling must not become a history-size cap.
-      const rows = this.sql.exec<{ transcript_sequence: number }>(
-        `SELECT transcript_sequence FROM participant_transcript_turns
-         WHERE transcript_sequence <= ? ORDER BY transcript_sequence`, upper,
-      ).toArray();
-      const messages: SubstreamContextCapture["messages"] = [];
-      for (const row of rows) {
-        const turn = this.turnsInRange(row.transcript_sequence, row.transcript_sequence + 1)[0];
-        if (!turn || turn.entryKind !== "conversation") continue;
-        // Stop at the first unfinished turn: a fork is a completed prefix, not
-        // an arbitrary sampling of whatever happened to finish first.
-        if (turn.blocks.some((block) => (block.type === "text" && block.streaming)
-          || (block.type === "tool" && (block.status === "planned" || block.status === "started")))) break;
-        if (turn.activityId && this.sql.exec<{ lifecycle_state: string }>(
-          `SELECT lifecycle_state FROM transcript_activities WHERE activity_id = ?`, turn.activityId,
-        ).toArray()[0]?.lifecycle_state === "active") break;
-        // Only what was said, matching what the launch pane draws: ordinary
-        // text, or a Sidekick's result on an otherwise excluded system turn.
-        const sidekick = turn.actor === "system";
-        const said = turn.blocks.flatMap((block) => block.type === "text"
-          && (block.messageType ?? "text") === (sidekick ? "automation_activation" : "text") ? [block] : []);
-        const blocks = said.map((block) => ({
-          text: block.text, mentions: block.mentions ?? [], attachments: block.attachments ?? [], ...(AnnotatedMessageContentSchema.safeParse(block.structuredContent).success?{structuredContent:AnnotatedMessageContentSchema.parse(block.structuredContent)}:{}),
-        }));
-        if (blocks.length === 0) continue;
-        messages.push(SubstreamContextMessageSchema.parse({
-          turnId: turn.turnId,
-          transcriptSequence: turn.transcriptSequence,
-          actor: sidekick ? "sidekick" : turn.actor,
-          authorUserId: turn.actor === "human" ? turn.authorUserId : null,
-          authorLabel: turn.actor === "human" ? turn.authorSnapshot?.displayName ?? turn.authorUserId
-            : turn.actor === "external" ? turn.externalActor?.displayName ?? "External participant"
-            : sidekick ? automationActivationName(said[0]?.structuredContent) : "Rally",
-          createdAt: turn.createdAtUtc,
-          blocks,
-        }));
-      }
-      if (requestedTurn && messages.at(-1)?.turnId !== requestedTurn.turnId) {
-        throw new Error("substream_source_turn_not_completed");
-      }
-      const last = messages.at(-1);
-      const capture = SubstreamContextCaptureSchema.parse({
-        source: input.source,
-        throughTurnId: last?.turnId ?? null,
-        throughSequence: last?.transcriptSequence ?? 0,
-        sourceRevision,
-        messages,
-      });
-      this.sql.exec(
-        `INSERT INTO substream_context_captures (operation_id, request_json, capture_json, created_at)
-         VALUES (?, ?, ?, ?)`, input.operationId, request, canonicalTranscriptJson(capture), Date.now(),
-      );
-      return capture;
-    });
-  }
-
-  /** Separate from live turns/inputs: installation cannot schedule or execute anything. */
-  installInitialContext(input: { operationId: string; context: SubstreamInitialContext }): void {
-    const context = SubstreamInitialContextSchema.parse(input.context);
-    const canonical = canonicalTranscriptJson(context);
-    this.storage.transactionSync(() => {
-      const prior = this.sql.exec<{ operation_id: string; context_json: string }>(
-        `SELECT operation_id, context_json FROM substream_initial_context WHERE id = 1`,
-      ).toArray()[0];
-      if (prior) {
-        if (prior.operation_id !== input.operationId || prior.context_json !== canonical) {
-          throw new Error("substream_initial_context_conflict");
-        }
-        return;
-      }
-      if (this.transcriptThrough() !== 0 || this.pendingTranscriptInputs().length > 0) {
-        throw new Error("substream_context_target_not_empty");
-      }
-      this.sql.exec(
-        `INSERT INTO substream_initial_context (id, operation_id, context_json, created_at)
-         VALUES (1, ?, ?, ?)`, input.operationId, canonical, Date.now(),
-      );
-    });
-  }
-
-  initialContext(): SubstreamInitialContext | null {
-    const row = this.sql.exec<{ context_json: string }>(
-      `SELECT context_json FROM substream_initial_context WHERE id = 1`,
-    ).toArray()[0];
-    return row ? SubstreamInitialContextSchema.parse(JSON.parse(row.context_json)) : null;
   }
 
   async commitBindTransition(
@@ -1908,29 +1786,6 @@ export class WorkstreamTranscriptStorage {
   async appendParticipantMessage(input: ParticipantMessageInput): Promise<number> {
     const prepared = await this.prepareParticipantMessage(input);
     return this.storage.transactionSync(() => this.appendPreparedParticipantMessage(prepared));
-  }
-
-  /** Prepare facts for any new conversation. The caller owns identity and its publication fence. */
-  async prepareConversation(input: {
-    conversation: PreparedConversation;
-    firstTurnId: string;
-    clientMessageId: string;
-    human: { userId: string; snapshot: { displayName: string; avatarUrl: string | null } };
-    now: number;
-  }): Promise<PreparedParticipantMessage[]> {
-    const conversation = PreparedConversationSchema.parse(input.conversation);
-    return Promise.all(conversation.messages.map(async (message, index) => this.prepareParticipantMessage({
-      turnId: index === 0 ? input.firstTurnId : await stableUuid(["prepared-turn", input.firstTurnId, index]),
-      actor: message.role === "user" ? "human" : "assistant",
-      authorUserId: message.role === "user" ? input.human.userId : null,
-      authorSnapshot: message.role === "user" ? input.human.snapshot : null,
-      ...(index === 0 ? { clientMessageId: input.clientMessageId } : {}),
-      messageType: "text", text: message.text,
-      structuredContentJson: message.structuredContent == null ? null : JSON.stringify(message.structuredContent),
-      externalActorJson: null, producedByRunId: null,
-      messageSequenceNumber: index + 1, attentionOrdinal: index + 1,
-      createdAtUtc: new Date(input.now).toISOString(),
-    })));
   }
 
   async prepareParticipantMessage(input: ParticipantMessageInput): Promise<PreparedParticipantMessage> {

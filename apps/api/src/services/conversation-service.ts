@@ -177,7 +177,6 @@ export class ConversationService {
     substreamId = "0",
     afterSequence?: number,
     speculative = false,
-    readsResolutionSuggestions = false,
   ) {
     const [parent, authority] = await Promise.all([
       this.authorizeViewer(parentId, substreamId),
@@ -204,7 +203,6 @@ export class ConversationService {
       speculative,
       {
         issuedAt,
-        readsResolutionSuggestions,
         admission: {
           authorityGeneration: authority.generation,
           role: this.auth.role,

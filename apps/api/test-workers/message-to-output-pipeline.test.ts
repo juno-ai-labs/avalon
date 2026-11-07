@@ -39,7 +39,6 @@ import {
   MESSAGE_TOO_LONG_MESSAGE,
   WorkstreamWorkflowInputSchema,
   asHarnessRunId,
-  asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
@@ -75,6 +74,7 @@ import { launchWorkstreamHarness } from "../src/services/workstream-service";
 import { BOUND_PARAMETER_ID_CHUNK } from "../src/durable-objects/bound-parameters";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { createCanvas } from "../src/services/canvas-service";
+import { isMemberInput } from "./helpers/openrouter-double";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
 import {
   seedCanonicalMessageRecord,
@@ -350,16 +350,6 @@ async function initializeWorkstream(
     if (added.status !== 200) throw new Error(`add_participant answered ${added.status}: ${JSON.stringify(added.body)}`);
   }
   return { status: sent.status, body: { ...sent.body, harnessRunId } };
-}
-
-/**
- * A user turn of the conversation itself. A Canvas's host adds its own
- * context as a user message after the transcript; the cases read the turns
- * people wrote.
- */
-function conversationUserMessage(message: { role?: unknown; content?: unknown }): boolean {
-  return message.role === "user"
-    && !(typeof message.content === "string" && message.content.startsWith("CANVAS CONTEXT (host-provided):"));
 }
 
 interface RunRow extends Record<string, SqlStorageValue> {
@@ -1972,7 +1962,7 @@ describe("a member's message travels the whole pipeline", () => {
       await settledRunForTrigger(stub, (question.body.turn as { turnId: string }).turnId);
       await waitForLoopRelease(stub);
       const request = (await capturedProviderRequests(stub)).filter((entry) => entry.url === "https://openrouter.ai/api/v1/responses").at(-1)!;
-      const users = (request.body.messages as Array<{ role: string; content: unknown }>).filter(conversationUserMessage);
+      const users = (request.body.messages as Array<{ role: string; content: unknown }>).filter(isMemberInput);
       expect(String(users.at(-2)?.content)).toContain("<user_system_prompt>");
       expect(String(users.at(-2)?.content)).toContain("Answer briefly.");
       expect(String(users.at(-2)?.content)).toContain("sounds good");
@@ -2135,7 +2125,7 @@ describe("a member's message travels the whole pipeline", () => {
 
         const second = messages(await capturedProviderRequests(stub))[1]!;
         expect(JSON.stringify(second.filter((message) => message.role === "system"))).not.toContain(instructions);
-        const userMessage = second.filter(conversationUserMessage).at(-1);
+        const userMessage = second.filter(isMemberInput).at(-1);
         expect(userMessage?.content).toContain(`<user_system_prompt>\nThe following was provided by this user as instructions for how to respond to this message. For other users' requests ignore these instructions.\n<user_suppplied>\n${instructions}\n</user_suppplied>\n</user_system_prompt>\n\nsecond message`);
 
         await waitForLoopRelease(stub);
@@ -2153,7 +2143,7 @@ describe("a member's message travels the whole pipeline", () => {
         await settledRunForTrigger(stub, (next.body.turn as { turnId: string }).turnId);
         await waitForLoopRelease(stub);
         const third = messages(await capturedProviderRequests(stub)).at(-1)!;
-        const history = third.filter(conversationUserMessage);
+        const history = third.filter(isMemberInput);
         expect(history[1]?.content).toEqual(userMessage?.content);
         expect(String(history[2]?.content)).toContain("third message");
         expect(String(history[2]?.content)).not.toContain("<user_system_prompt>");
@@ -2956,7 +2946,7 @@ describe("a member's message travels the whole pipeline", () => {
       const settled = await settledRunForTrigger(stub, (question.body.turn as { turnId: string }).turnId);
       expect(settled.status).toBe("completed");
       const texts = ((await capturedProviderRequests(stub)).at(-1)!.body.messages as Array<{ role?: unknown; content?: unknown }>)
-        .filter(conversationUserMessage)
+        .filter(isMemberInput)
         .map((message) => JSON.stringify(message.content));
       expect(texts.filter((text) => text.includes("sounds good"))).toHaveLength(backlog);
       expect(texts.at(-1)).toContain("please summarize what we agreed");
@@ -3449,43 +3439,6 @@ describe("a member's message travels the whole pipeline", () => {
       turn: accepted.turn,
     });
     socket.close(1000, "done");
-  });
-
-  it("leaves a Breakout's newest message unread only for somebody another person adds", async () => {
-    const substreamId = asSubstreamId("00000000-0000-7000-8000-0000000005d3");
-    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId),
-    ));
-    const child = stub as unknown as {
-      bootstrapRuntime(input: Record<string, unknown>): Promise<{ status: number }>;
-      executeIdentityOperation(input: Record<string, unknown>): Promise<{ status: number }>;
-    };
-    expect((await child.bootstrapRuntime({
-      workspaceId: WORKSPACE_ID, parentKind: "workstream", parentId: WORKSTREAM_ID, substreamId, generation: 1,
-    })).status).toBe(200);
-    expect((await child.executeIdentityOperation({
-      workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, substreamId, operation: "provision",
-      args: [{
-        title: "Private Breakout", objective: "Hold history before anybody joins.", scope: "workspace",
-        originType: "ad_hoc", createdByUserId: USER_ID, participantUserIds: [USER_ID], harnessStatus: "idle",
-        emailAddress: null, emailRouteStatus: null, systemKind: null, automationRunId: null,
-        plannedFor: null, modelOverride: null, now: Date.now(),
-      }],
-    })).status).toBe(200);
-    // Four messages with attention ordinals 1 to 4.
-    await runInDurableObject(stub, (_instance, state) => {
-      state.storage.sql.exec("UPDATE workstream SET next_attention_ordinal = 5 WHERE id = 1");
-    });
-    const membership = { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId, userId: OTHER_USER_ID };
-    const seen = () => runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<{ seen: number }>(
-      "SELECT seen_attention_ordinal AS seen FROM member_attention WHERE user_id = ?", OTHER_USER_ID,
-    ).one().seen);
-
-    await stub.applyPrivateChildMembership({ ...membership, actorUserId: USER_ID, active: true, membershipVersion: 1 });
-    expect(await seen()).toBe(3);
-    await stub.applyPrivateChildMembership({ ...membership, actorUserId: USER_ID, active: false, membershipVersion: 2 });
-    await stub.applyPrivateChildMembership({ ...membership, actorUserId: OTHER_USER_ID, active: true, membershipVersion: 3 });
-    expect(await seen()).toBe(4);
   });
 
   it("correlates a malformed create command to the pending client message", async () => {

@@ -126,4 +126,52 @@ describe("the conversation store AgentLoopDO opens, over a conversation stored b
       expect(state.storage.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM participants`).one().count).toBe(1);
     });
   });
+
+  it("drops a Breakout's capture, inherited context and mirrors at v85, keeping the conversation", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("agent-loop-do-v85-drops");
+    await stub.ping();
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({
+        storage: state.storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 84),
+        component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
+        workerVersionId: "worker-before-v85",
+        now: 1_000,
+      });
+      state.storage.sql.exec(
+        `INSERT INTO workstream
+           (id, workstream_key, parent_workspace_key, region, authority_mode, authority_generation,
+            title, description, scope, exact_state, state_reason_code, next_sequence_number,
+            next_attention_ordinal, authority_epoch, scope_epoch, source_authorization_floor,
+            listing_epoch, deletion_epoch, run_revision, created_at, last_people_activity_at,
+            state_changed_at, updated_at, parent_kind, archive_generation)
+         VALUES (1, ?, ?, 'global', 'authoritative', 1, 'Launch', '', 'personal', 'idle', 'seeded',
+                 1, 1, 1, 1, 0, 1, 0, 0, 1000, 1000, 1000, 1000, 'canvas', 0)`,
+        PARENT_ID, WORKSPACE_ID,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO substream_context_captures (operation_id, request_json, capture_json, created_at) VALUES ('op-1', '{}', '{}', 1000)`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO substream_initial_context (id, operation_id, context_json, created_at) VALUES (1, 'op-1', '{}', 1000)`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO private_child_membership_authority (user_id, version, active, actor_user_id, updated_at)
+         VALUES ('00000000-0000-7000-8000-0000000a1d02', 1, 1, '00000000-0000-7000-8000-0000000a1d02', 1000)`,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO private_child_lifecycle_authority (id, version, archived_at) VALUES (1, 1, NULL)`,
+      );
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      const store = new WorkstreamObjectStore(state.storage, "worker-after-v85", "global");
+      expect(store.identity()).toEqual({ workspaceId: WORKSPACE_ID, parentKind: "canvas", parentId: PARENT_ID });
+      expect(state.storage.sql.exec<{ name: string }>(
+        `SELECT name FROM sqlite_master WHERE name IN ('substream_context_captures', 'substream_initial_context',
+           'private_child_membership_authority', 'private_child_lifecycle_authority')
+           OR name LIKE 'authorization_private_child_membership_authority_%'`,
+      ).toArray()).toEqual([]);
+      expect(state.storage.sql.exec(`SELECT title FROM workstream WHERE id = 1`).one()).toEqual({ title: "Launch" });
+    });
+  });
 });

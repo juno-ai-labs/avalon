@@ -443,8 +443,9 @@ parent id whatever its kind, because every reader of the route (loop activation,
 socket admission, the notification generation fence) keys on
 `(workspace_id, workstream_id)` and D1 migrations are immutable, so the column
 keeps its name and means "conversation parent id". Then the parent records the
-child: work-stream creation reserves `"0"` (`kind: "main"`) in `WorkspaceDO`,
-with its directory row, before `initialize`; a Sidekick's `create` registers `"0"` itself,
+child: a Canvas's create (`createCanvas`) records the Canvas in `WorkspaceDO`
+and then provisions `"0"` (`provisionWorkstreamObject`), whose first message is
+an ordinary `create_message`; a Sidekick's `create` registers `"0"` itself,
 and a run is registered as `kind: "child"` by the alarm entry that hands it to
 provisioning. A
 substream id that reaches a socket route without a registration is not
@@ -1377,15 +1378,11 @@ that person as a participant (`ConversationParentObject.isParticipant`); once
 the child has reported, its per-user projection is the only answer. Runtime
 state transitions never use that shortcut.
 
-Creation replays are repair operations, and they repair the directory only.
-`reserveChild` is idempotent on the child, and `projection_keys` suppresses an
-already-delivered identical snapshot, so a retried create closes a missing
-directory gap without producing sidebar churn. If the authoritative child
-transaction committed but building or delivering its first aggregate failed,
-repeating `initialize` rebuilds the `common` and `user:<id>` effects and nothing
-else: the participant activity event and notification a first pass would have
-emitted are deliberately not re-enqueued, because a notification is versioned on
-a projection key it only reads and would be refused under a new payload hash.
+Creation replays are repair operations. `reserveChild` is idempotent on the
+child, a Canvas's second create answers with the Canvas its first made, and
+provisioning an already provisioned conversation is `already_provisioned`;
+`projection_keys` suppresses an already-delivered identical snapshot, so a
+retried create closes a missing directory gap without producing sidebar churn.
 
 Mention intent delivery rechecks current D1 membership and WorkspaceDO-owned
 destination state and waits for the required viewer-directory version. Child
@@ -1583,7 +1580,6 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | A synchronous transaction callback returns a Promise | The callback finishes before the Promise continuation, so SQLite can commit an incomplete state transition and later writes can escape the transaction. Prepare all yielding work first; the commit callback performs only synchronous SQLite and revalidates its fences. |
 | The Queue refuses a send | The batch is deferred five seconds in the source outbox and the alarm tries again; user transcript commits are not rolled back. |
 | A parent or WorkspaceDO throws on a delivery | The consumer retries the message with exponential backoff (5 s doubling to 300 s); after the Queue's retry budget it dead-letters. The sender holds nothing, so an empty outbox and a non-empty dead-letter queue together are the signal. |
-| Crash between `initialize`'s root commit and its effect commit | The work stream exists and the retry replays it, but the invited participants' activity event and notification are lost permanently — the replay re-enqueues directory effects only, and a hand-add of somebody already active is a no-op, so nothing recovers them. Deliberate: the alternative wedges the create. |
 | A socket command throws something that is not an `ApiError` | The person gets one flat `substream_command_failed`, so `substream_socket_command_failed` is the only account of the cause. A validation failure is logged as `reason: "schema_validation_failed"` with `validation_issues` (`path`/`code` pairs only) rather than as the `ZodError`'s multi-line JSON message, a non-validation `reason` is a `diagnosticErrorCode` rather than a runtime message, and every entry carries `stack` — the same key this file's other `harnessErrorFrames` sites use — naming the call site when the throw was an `Error` with frames, and `null` when it was not. |
 | D1 unavailable during a user command | Command fails closed before mutation because current session/membership cannot be established. |
 | Model/tool wait exceeds the attempt lease | Heartbeats extend an owned attempt; after genuine abandonment a new executor waits for expiry and replays through receipts. |
@@ -1816,7 +1812,6 @@ live state reopens a finished run (see
 | `runs`, `run_scopes`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Subordinate execution receipts, frozen authority/context, and provider attempts. A run records restart context and loop provenance but is never the loop identity. |
 | `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. Each elicitation retains the stable Bind tool slot that its eventual answer must close. A `code_execute` program's nested calls are rows at `<program toolCallId>:call:<index>`; crash repair of an interrupted program names the completed ones in the ambiguity it records ([`code-mode.md`](code-mode.md)). |
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output keyed by an explicit transient `stream_id`, active compaction phase, and the room sequence. Canonical output identity remains the turn's `turn_id`; `active_agent_compaction` is a singleton operational checkpoint and immutable summary history remains below. |
-| `conversation_suggestions`, `turn_disposition_judgements` | One suggestion per judged turn (merge up, or start a Breakout) with its lifecycle, draft and resolution, and every turn-disposition decision per run; conversation-object schema v75. Owned by [`conversation-suggestions.md`](conversation-suggestions.md). |
 | `transcript_compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints reference immutable model-only facts per principal/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
 | `workstream_resource_links`, `resource_inventory_revision` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `inbound_email`, or `context`) and the authorization revision every relationship change advances. `generated` derives artifact direction; every other value derives source direction. |
@@ -1968,7 +1963,13 @@ conversation suggestions with the turn-disposition observer, the drafter, the
 merge-result alarm and the per-client socket filtering. Migration 84 drops
 `conversation_suggestions`, `turn_disposition_judgements`, the handoff's two
 tables and three freeze triggers on `participants`, and the three
-`imported_session_*` tables. `prepared_conversation_receipts` stays as a dead
+`imported_session_*` tables. A Breakout's lifecycle went too: its context
+capture and inherited context (`captureSubstreamContext`,
+`installInitialContext`, `initialContext`, the model-prompt rendering and the
+socket's `initial_context_snapshot_chunk` frames, which nothing else produced),
+and the private-child roster and archive mirrors (`applyPrivateChildMembership`,
+`applyPrivateChildLifecycle`); migration 85 drops their four tables, and with
+the membership mirror its three authorization triggers. `prepared_conversation_receipts` stays as a dead
 table: `pending_attachment_reservation_recovery`'s foreign key names it, and
 dropping it would rebuild a live table to remove a reference nothing writes.
 
