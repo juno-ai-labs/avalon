@@ -512,9 +512,11 @@ export class WorkstreamTranscriptStorage {
          FROM workstream LEFT JOIN substream_agent_identity AS identity ON identity.id = 1
         WHERE workstream.id = 1`,
     ).toArray()[0];
+    // An object with no root row has no parent to frame for: a request.
+    if (!conversation) return "request";
     return externalInputFraming({
-      parentKind: conversation?.parent_kind ?? "workstream",
-      substreamId: conversation?.external_substream_id ?? "0",
+      parentKind: conversation.parent_kind,
+      substreamId: conversation.external_substream_id ?? "0",
     });
   }
 

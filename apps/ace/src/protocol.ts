@@ -72,26 +72,18 @@ export const MANAGED_MODELS = [
     description: 'Runs a bounded read-only child task delegated by a work-stream agent and returns the result to its parent.',
     defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
   },
+
   {
     rank: 3,
-    rankReason: 'Frequent · terminal runs',
-    role: 'workstream_description',
-    key: 'agent-model-workstream-description',
-    label: 'Work-stream description',
-    description: 'Re-evaluates the derived one-line description after terminal runs and rewrites it only when the work stream changed purpose.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
-  },
-  {
-    rank: 4,
-    rankReason: 'Frequent · new work streams',
+    rankReason: 'Frequent · each paste that becomes an attachment',
     role: 'workstream_naming',
     key: 'agent-model-workstream-naming',
-    label: 'Work-stream naming',
-    description: 'Creates the short work-stream title from the opening request while the creator waits.',
+    label: 'Pasted-text naming',
+    description: 'Titles a block of pasted text as it becomes an attachment, while the person who pasted waits. The role keeps its Thread-era name because it is a Flagship key.',
     defaultRouting: { model: 'openai/gpt-5.6-terra', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
-    rank: 5,
+    rank: 4,
     rankReason: 'Background · candidate creation',
     role: 'work_opportunity_admission',
     key: 'agent-model-work-opportunity-admission',
@@ -100,7 +92,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
-    rank: 6,
+    rank: 5,
     rankReason: 'Background · per-person ordering',
     role: 'work_opportunity_ranking',
     key: 'agent-model-work-opportunity-ranking',
@@ -109,7 +101,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
-    rank: 7,
+    rank: 6,
     rankReason: 'On demand · conversation imports',
     role: 'session_import',
     key: 'agent-model-session-import',
@@ -117,17 +109,9 @@ export const MANAGED_MODELS = [
     description: 'Drives the person\'s desktop browser (page script, page outline, screenshots, input) to read a ChatGPT or Claude conversation and its files into a new Channel. Must accept images.',
     defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
   },
+
   {
-    rank: 8,
-    rankReason: 'Occasional · one call per confident suggestion',
-    role: 'suggestion_draft',
-    key: 'agent-model-suggestion-draft',
-    label: 'Suggestion draft',
-    description: 'Writes the words a conversation suggestion carries after the classifier has judged a settled turn worth carrying up or breaking out: a merge note for the parent readers, or a Breakout opening prompt and subject. Runs only on a confident positive, after the chip is shown.',
-    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.8-flash'] },
-  },
-  {
-    rank: 9,
+    rank: 7,
     rankReason: 'Background · one call per rested conversation window',
     role: 'memory_sweep',
     key: 'agent-model-memory-sweep',
@@ -136,7 +120,7 @@ export const MANAGED_MODELS = [
     defaultRouting: { model: 'openai/gpt-6.1-sol', fallbackModels: ['google/gemini-3.8-flash'] },
   },
   {
-    rank: 10,
+    rank: 8,
     rankReason: 'On demand · Sidekick setup and editing',
     role: 'sidekick_authoring',
     key: 'agent-model-sidekick-authoring',

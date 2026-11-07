@@ -314,7 +314,7 @@ export class TerminalSettingsService {
     const workspace = await durableObjectStubForWorkspace(this.env, this.env.WORKSPACE_DOS, this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)));
     const directory = (await workspace.terminalSandboxParents({ workspaceId: this.auth.workspaceId }))
-      .map((parent) => ({ workstream_id: parent.workstreamId, title: parent.title }));
+      .map((parent) => ({ parent_kind: parent.parentKind, workstream_id: parent.workstreamId, title: parent.title }));
     const rows: SandboxRow[] = [];
     const entries = directory;
     for (let offset = 0; offset < entries.length; offset += 20) {
@@ -331,7 +331,7 @@ export class TerminalSettingsService {
         // claim, which re-runs readiness against the new revision.
         const { items } = await (await conversationParentStub(this.env, {
           workspaceId: this.auth.workspaceId,
-          parentKind: "workstream",
+          parentKind: entry.parent_kind,
           parentId: entry.workstream_id,
         })).childTerminalDeadlines({ workspaceId: this.auth.workspaceId, parentId: entry.workstream_id });
         const substreamIds = ["0", ...items.map((item) => item.substreamId).filter((id) => id !== "0")];

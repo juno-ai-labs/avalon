@@ -1506,17 +1506,10 @@ export function testHarnessRunPortFactory(database: DatabaseSync): (
 
 /**
  * One conversation's resource links over its object database, as every
- * visibility read takes them. `channel` is the Channel's Main object, asked
- * only when `database` is a Breakout's.
+ * visibility read takes them.
  */
-export function testConversationResourceLinks(
-  database: DatabaseSync,
-  channel?: DatabaseSync,
-): ConversationResourceLinks {
-  return conversationResourceLinks(testResourcePort(database), () => {
-    if (!channel) throw new Error("This conversation inherited links from a Channel the test did not provide");
-    return testResourcePort(channel);
-  });
+export function testConversationResourceLinks(database: DatabaseSync): ConversationResourceLinks {
+  return conversationResourceLinks(testResourcePort(database));
 }
 
 /** The same port as a factory, for a caller that takes one. */

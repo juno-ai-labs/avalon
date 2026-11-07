@@ -445,7 +445,7 @@ describe("Sidekick resource reads by ID", () => {
     // Someone outside the Organization.
     await expect(resolveSiteForViewer(TEST_ENV, OUTSIDER_ID, stub)).rejects.toMatchObject({ status: 403, code: "site_access_denied" });
     await expect(resolveSiteForViewer(TEST_ENV, AUTHOR_ID, "no-such-site-anywhere-here")).rejects.toMatchObject({ status: 404, code: "site_not_found" });
-    // A member of the Organization who is not in the site's Channel is told
+    // A member of the Organization who cannot read the site's Canvas is told
     // the site exists, not that it is missing.
     await workspace().applyMemberStatus({ workspaceId: WORKSPACE_ID, sequence: 2, removed: false, relationship: {
       workspaceId: WORKSPACE_ID, userId: OUTSIDER_ID, accessClass: "member", role: "member", status: "active",

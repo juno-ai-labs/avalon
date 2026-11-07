@@ -66,7 +66,6 @@ export function conversationResourceLinksFrom(
   const userId = access?.principal.type === "user" ? access.principal.userId : null;
   return conversationResourceLinks(
     resourcePort(workspaceId, workstreamId, substreamId),
-    () => resourcePort(workspaceId, workstreamId, "0"),
     access && userId ? async (context) => {
       const workspace = await durableObjectStubForWorkspace(access.env, access.env.WORKSPACE_DOS,
         asWorkspaceId(workspaceId), workspaceDOName(access.env.AVALON_REGION, asWorkspaceId(workspaceId)));
@@ -78,14 +77,13 @@ export function conversationResourceLinksFrom(
         key: conversation.conversationId,
         resources: conversationResourceLinks(
           resourcePort(workspaceId, conversation.parentId, conversation.substreamId),
-          () => resourcePort(workspaceId, conversation.parentId, "0"),
-          undefined, { kind: conversation.substreamId === "0" ? "none" : "breakout" },
+          undefined, { kind: "none" },
         ),
       }));
       if (context.substreamId !== "0") sources.unshift({
         key: `${context.sidekickId}/0`,
         resources: conversationResourceLinks(resourcePort(workspaceId, context.sidekickId, "0"),
-          () => resourcePort(workspaceId, context.sidekickId, "0"), undefined, { kind: "none" }),
+          undefined, { kind: "none" }),
       });
       return sources;
     } : undefined,
