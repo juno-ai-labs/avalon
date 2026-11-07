@@ -2291,7 +2291,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       || identity.parentKind !== request.parentKind
       || identity.parentId !== request.workstreamId
       || this.externalSubstreamId() !== request.substreamId
-      || (request.parentKind === "automation" && request.substreamId !== "0")) {
+      // A Sidekick's and a Canvas's posts land only in the shared conversation.
+      || (request.parentKind !== "workstream" && request.substreamId !== "0")) {
       return { outcome: "refused", code: "workstream_destination_mismatch", messageId: null };
     }
     const existing = this.messages.messageByClientId({ clientMessageId: request.clientMessageId });
@@ -6120,7 +6121,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // as a Thread's, which is why it sits outside the guard above. Two
     // single-row reads on most calls; a claim sends the window to the Queue
     // rather than calling the model here. Never throws.
-    if (input.parentKind === "workstream" || input.parentKind === "automation") {
+    if (input.parentKind === "workstream" || input.parentKind === "automation" || input.parentKind === "canvas") {
       await attemptMemorySweep(executionEnv, {
         workspaceId: input.workspaceId,
         parentKind: input.parentKind,

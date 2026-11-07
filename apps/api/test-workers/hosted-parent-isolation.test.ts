@@ -239,7 +239,7 @@ describe("the revocation walk's Channel step, run inside the Organization object
 
     const result = await organization().revokeNarrowedAudienceAccess({ workspaceId, parentId: channelA });
 
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       closedUserIds: [shared],
       substreams: [{ userId: shared, substreamIds: ["0", breakoutA] }],
     });

@@ -1,4 +1,5 @@
 import { sidekickProjectionRunning } from "./sidekick-activity";
+import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
 import { conversationObjectName } from "./names";
 import {
@@ -56,29 +57,7 @@ import {
 } from "@rally/contracts";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 import { zodDiagnosticCode, describeZodIssues, codeShaped } from "@rally/contracts/zod-diagnostics";
-import type { ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
-import {
-  ConversationParentAuthorityRequestSchema,
-  ConversationParentAuthorityResultSchema,
-  ConversationParentAuthorizeViewerRequestSchema,
-  ConversationParentAuthorizeViewerResultSchema,
-  ConversationParentListChildrenRequestSchema,
-  ConversationParentListChildrenResultSchema,
-  ConversationParentReserveChildRequestSchema,
-  ConversationParentReserveChildResultSchema,
-  ConversationParentTerminalDeadlinesRequestSchema,
-  ConversationParentTerminalDeadlinesResultSchema,
-  type ConversationParentAuthorityRequest,
-  type ConversationParentAuthorityResult,
-  type ConversationParentAuthorizeViewerRequest,
-  type ConversationParentAuthorizeViewerResult,
-  type ConversationParentListChildrenRequest,
-  type ConversationParentListChildrenResult,
-  type ConversationParentReserveChildRequest,
-  type ConversationParentReserveChildResult,
-  type ConversationParentTerminalDeadlinesRequest,
-  type ConversationParentTerminalDeadlinesResult,
-} from "@rally/contracts/conversation-parent";
+import type { ConversationParentAuthorizeViewerRequest } from "@rally/contracts/conversation-parent";
 
 import type { Env } from "../env";
 import { ApiError, asApiError } from "../lib/api-error";
@@ -143,7 +122,7 @@ import {
   type SidekickRunContinuation,
   type SidekickSkillReadRequest,
 } from "./automation-do-protocol";
-import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
+import type { DirectoryCommonEffect } from "./conversation-parent-object";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
 import { conversationIdOf } from "./workspace-sidekick-conversation-storage";
@@ -240,8 +219,6 @@ const RUN_STATE_FROM_CONVERSATION_STATE: Record<string, RunState | null> = {
   restoring: null,
 };
 const TERMINAL_RUN_STATES = new Set<RunState>(["completed", "failed", "stopped"]);
-// The same replay window `SidekickDO` kept: a fence, not history.
-const CHILD_EFFECT_RECEIPT_RETENTION_MS = 180 * 24 * 60 * 60_000;
 
 export type RunState = "pending" | "running" | "needs_input" | "completed" | "failed" | "stopped";
 export type Lifecycle = "draft" | "active" | "paused" | "deleted";
@@ -463,16 +440,25 @@ export function sidekickReaderAllows(
   }, actor.actorRole != null);
 }
 
+/**
+ * Who manages a Sidekick: its author, the person it runs as, and for an
+ * Organization one its owners and administrators. Also who manages the
+ * audience of a Canvas the Sidekick writes.
+ */
+export function sidekickManagerAllows(
+  row: { scope: string; author_user_id: string; run_as_user_id: string | null },
+  actor: { userId: string; actorRole?: "owner" | "admin" | "member" | null | undefined },
+): boolean {
+  return row.author_user_id === actor.userId || row.run_as_user_id === actor.userId
+    || (row.scope === "workspace" && (actor.actorRole === "owner" || actor.actorRole === "admin"));
+}
+
 /** Whether this person is on a Sidekick's `people` list. */
 export function sidekickSharedWith(sql: SqlStorage, sidekickId: string, userId: string): boolean {
   return sql.exec(`SELECT 1 FROM sidekick_audience WHERE sidekick_id = ? AND user_id = ? LIMIT 1`, sidekickId, userId)
     .toArray().length > 0;
 }
 
-/** An agent's child reservation: the reservation request without what the parent supplies itself. */
-const AgentChildReservationSchema = ConversationParentReserveChildRequestSchema.omit({
-  authorityGeneration: true, directory: true, kind: true,
-});
 
 /** What a skill read says about its audience: the request without the Sidekick it names. */
 type SidekickAudienceRequest = Omit<SidekickSkillReadRequest, "workspaceId" | "automationId">;
@@ -523,25 +509,16 @@ export function skillSource(
   });
 }
 
-export class HostedSidekick {
-  constructor(
-    private readonly host: HostedSidekickHost,
-    readonly sidekickId: string,
-  ) {}
-
-  private get env(): Env {
-    return this.host.env;
+export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
+  constructor(host: HostedSidekickHost, sidekickId: string) {
+    super(host, sidekickId, "automation");
   }
 
-  private get storage(): DurableObjectStorage {
-    return this.host.storage;
+  get sidekickId(): string {
+    return this.parentId;
   }
 
-  private get sql(): SqlStorage {
-    return this.host.storage.sql;
-  }
-
-  private logFields(): Record<string, unknown> {
+  protected override logFields(): Record<string, unknown> {
     const row = this.row();
     return { workspace_id: row?.workspace_id ?? null, automation_id: this.sidekickId, parent_kind: "automation" };
   }
@@ -1096,11 +1073,8 @@ export class HostedSidekick {
     if (request.update.audience === "people" && userIds.length === 0) {
       throw new ApiError(422, "sidekick_audience_people_empty", "Name someone other than the author to share a Sidekick with");
     }
-    const relationships = await Promise.all(userIds.map((userId) => this.host.readRelationship(row.workspace_id, userId)));
-    const absent = userIds.filter((_userId, index) => relationships[index]?.status !== "active");
-    if (absent.length > 0) {
-      throw new ApiError(422, "sidekick_audience_not_member", "Everyone a Sidekick is shared with must be in the Organization");
-    }
+    await assertAudienceInOrganization((workspaceId, userId) => this.host.readRelationship(workspaceId, userId), row.workspace_id,
+      userIds, () => new ApiError(422, "sidekick_audience_not_member", "Everyone a Sidekick is shared with must be in the Organization"));
     const now = Date.now();
     this.storage.transactionSync(() => {
       this.sql.exec(`DELETE FROM sidekick_audience WHERE sidekick_id = ?`, this.sidekickId);
@@ -1670,36 +1644,6 @@ export class HostedSidekick {
   // The conversation-parent contract.
   // ---------------------------------------------------------------------------
 
-  /**
-   * The conversation-parent viewer check: whoever the Sidekick is shared with
-   * (`sidekickReaderAllows`). A guest is admitted only from its `people`
-   * list, whichever path asks.
-   */
-  async authorizeViewer(input: ConversationParentAuthorizeViewerRequest): Promise<ConversationParentAuthorizeViewerResult> {
-    const request = parseRpcInput(ConversationParentAuthorizeViewerRequestSchema, input, "authorize_viewer");
-    const row = this.row();
-    if (!row || row.lifecycle === "deleted") {
-      return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: true });
-    }
-    this.assertIdentity(row, request.workspaceId, request.parentId);
-    // The caller admitted the person to the Organization; a guest asks with
-    // `requireGrantAuthority`, so only that path withholds Organization scope.
-    const authorized = sidekickReaderAllows(row, {
-      userId: request.userId, actorRole: request.requireGrantAuthority ? null : "member",
-    }, this.sql);
-    return ConversationParentAuthorizeViewerResultSchema.parse({ authorized, archived: false });
-  }
-
-  authorizationDiscoveryChildren(input: ConversationParentAuthorityRequest): { substreamIds: string[] } {
-    const request = parseRpcInput(ConversationParentAuthorityRequestSchema, input, "authorization_discovery_children");
-    const row = this.row();
-    if (!row || row.lifecycle === "deleted") return { substreamIds: [] };
-    this.assertIdentity(row, request.workspaceId, request.parentId);
-    // A registered, unprovisioned child is unresolved authority, not evidence
-    // that its content can be discarded.
-    return { substreamIds: this.childRegistry().map((child) => child.substreamId) };
-  }
-
   /** No participant admission and no projection-dependent permission decision. */
   readAuthorizationFacts(input: ConversationAuthorizationRequest) {
     const request = parseRpcInput(ConversationAuthorizationRequestSchema, input, "read_authorization_facts");
@@ -1716,208 +1660,54 @@ export class HostedSidekick {
     };
   }
 
-  authority(input: ConversationParentAuthorityRequest): ConversationParentAuthorityResult {
-    const request = parseRpcInput(ConversationParentAuthorityRequestSchema, input, "authority");
+  /** The Sidekick's row, as the hosted conversation contract reads it. */
+  protected identity(): HostedConversationIdentity | null {
     const row = this.row();
-    if (!row) return ConversationParentAuthorityResultSchema.parse({ exists: false, authorityGeneration: 0, archived: false });
-    this.assertIdentity(row, request.workspaceId, request.parentId);
-    return ConversationParentAuthorityResultSchema.parse({
-      exists: true,
-      authorityGeneration: row.authority_generation,
-      archived: row.lifecycle === "deleted",
-    });
+    return row ? { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: row.lifecycle === "deleted" } : null;
   }
 
-  /** Reserve against current parent authority without a caller-side preflight call. */
-  reserveAgentChild(input: Omit<ConversationParentReserveChildRequest, "authorityGeneration" | "directory" | "kind">): ConversationParentReserveChildResult {
-    const request = parseRpcInput(AgentChildReservationSchema, input, "reserve_agent_child");
-    const row = this.row();
-    if (!row || row.lifecycle === "deleted") throw new Error("workstream_archived");
-    this.assertIdentity(row, request.workspaceId, request.parentId);
-    this.registerChild(request.substreamId, "child", request.createdByUserId, Date.now());
-    return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration: row.authority_generation });
-  }
-
-  reserveChild(input: ConversationParentReserveChildRequest): ConversationParentReserveChildResult {
-    const request = parseRpcInput(ConversationParentReserveChildRequestSchema, input, "reserve_child");
-    const row = this.assertSidekick(request.workspaceId, request.parentId);
-    if (request.kind === "child" && row.lifecycle === "deleted") {
-      throw new Error("workstream_archived");
-    }
-    this.registerChild(request.substreamId, request.kind, request.createdByUserId, Date.now());
-    return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration: row.authority_generation });
-  }
-
-  /** The children whose own projection names a terminal action, soonest first. */
-  childTerminalDeadlines(input: ConversationParentTerminalDeadlinesRequest): ConversationParentTerminalDeadlinesResult {
-    const request = ConversationParentTerminalDeadlinesRequestSchema.parse(input);
-    this.assertSidekick(request.workspaceId, request.parentId);
-    return ConversationParentTerminalDeadlinesResultSchema.parse({
-      items: this.sql.exec<{ substream_id: string; next_terminal_action_at: string }>(
-        `SELECT substream_id, json_extract(effect_json, '$.nextTerminalActionAt') AS next_terminal_action_at
-           FROM sidekick_child_projections
-          WHERE sidekick_id = ? AND json_extract(effect_json, '$.kind') = 'directory_common'
-            AND json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
-          ORDER BY next_terminal_action_at, substream_id`,
-        this.sidekickId,
-      ).toArray().map((row) => ({ substreamId: row.substream_id, nextTerminalActionAt: row.next_terminal_action_at })),
-    });
-  }
-
-  listChildren(input: ConversationParentListChildrenRequest): ConversationParentListChildrenResult {
-    const request = ConversationParentListChildrenRequestSchema.parse(input);
-    this.assertSidekick(request.workspaceId, request.parentId);
-    return ConversationParentListChildrenResultSchema.parse({ children: this.childRegistry() });
-  }
-
-  /** The children the retirement walk closes; `missing` when no row exists. */
-  childrenForRetirement(): { status: "missing" } | { status: "ok"; children: ReturnType<HostedSidekick["childRegistry"]> } {
-    return this.row() ? { status: "ok", children: this.childRegistry() } : { status: "missing" };
+  protected assertParent(workspaceId: string, parentId: string): HostedConversationIdentity {
+    const row = this.assertSidekick(workspaceId, parentId);
+    return { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: row.lifecycle === "deleted" };
   }
 
   /**
-   * Apply one batch of a run's or the authoring conversation's effects. Each
-   * envelope is its own transaction; nothing leaves this object, and a
-   * redelivery is answered by its receipt.
+   * Whoever the Sidekick is shared with (`sidekickReaderAllows`). A guest is
+   * admitted only from its `people` list, whichever path asks: the caller
+   * admitted the person to the Organization, and a guest asks with
+   * `requireGrantAuthority`, so only that path withholds Organization scope.
    */
-  receiveChildEffects(input: ReceiveChildEffectsRequest): { messageId: string; payloadHash: string }[] {
-    const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
-    // The Sidekick's identity does not change inside a batch, so it is read
-    // once; each envelope is still its own transaction.
-    const row = this.row();
-    if (!row) throw new Error("sidekick_missing");
-    const accepted: { messageId: string; payloadHash: string }[] = [];
-    for (const envelope of request.envelopes) {
-      if (envelope.region !== this.env.AVALON_REGION) throw new Error("conversation_effect_region_mismatch");
-      if (envelope.substreamId !== request.substreamId) throw new Error("conversation_effect_substream_mismatch");
-      if (envelope.parentKind !== "automation") throw new Error("sidekick_effect_parent_kind_mismatch");
-      if (row.workspace_id !== envelope.workspaceId || row.automation_id !== envelope.parentId) {
-        throw new Error("sidekick_effect_identity_mismatch");
-      }
-      this.applyChildEnvelope(request.substreamId, envelope);
-      accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
-    }
-    // The receipt is a replay fence, not history: past retention a
-    // redelivery converges on the projection's version. Once per batch.
-    const now = Date.now();
-    this.sql.exec(
-      `DELETE FROM sidekick_child_receipts
-        WHERE (sidekick_id, substream_id, message_id) IN (
-          SELECT sidekick_id, substream_id, message_id FROM sidekick_child_receipts
-           WHERE received_at < ? ORDER BY received_at LIMIT 100
-        )`,
-      now - CHILD_EFFECT_RECEIPT_RETENTION_MS,
-    );
-    return accepted;
+  protected admitsViewer(request: ConversationParentAuthorizeViewerRequest): boolean {
+    const row = this.row()!;
+    return sidekickReaderAllows(row, {
+      userId: request.userId, actorRole: request.requireGrantAuthority ? null : "member",
+    }, this.sql);
   }
 
-  private applyChildEnvelope(substreamId: string, envelope: ConversationEffectEnvelope): void {
-    this.storage.transactionSync(() => {
-      const now = Date.now();
-      // The receipt first: its insert is the witness that this envelope is
-      // new, and a redelivery reads the hash it was first accepted with.
-      const fresh = this.sql.exec(
-        `INSERT INTO sidekick_child_receipts(sidekick_id, substream_id, message_id, payload_hash, received_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(sidekick_id, substream_id, message_id) DO NOTHING
-         RETURNING message_id`,
-        this.sidekickId, substreamId, envelope.messageId, envelope.payloadHash, now,
-      ).toArray().length === 1;
-      if (!fresh) {
-        const receipt = first(this.sql.exec<{ payload_hash: string }>(
-          `SELECT payload_hash FROM sidekick_child_receipts WHERE sidekick_id = ? AND substream_id = ? AND message_id = ?`,
-          this.sidekickId, substreamId, envelope.messageId,
-        ));
-        if (receipt?.payload_hash !== envelope.payloadHash) throw new Error("substream_effect_idempotency_conflict");
-        return;
-      }
-      if (envelope.effect.kind === "directory_common" && this.acceptChildProjection(substreamId, envelope, now)) {
-        this.onChildCommonProjection(substreamId, envelope.effect, now);
-      }
-      if (envelope.effect.kind === "directory_user" && substreamId === "0") {
-        this.acceptViewerRead(envelope.effect, envelope.sourceVersion, now);
-      }
-    });
+  protected onViewerReadChanged(userId: string): void {
+    this.host.noteViewerReadChanged(userId);
   }
 
   /**
-   * Keep what one person has read of the shared conversation, its own
-   * `directory_user` report of `member_attention`, so the sidebar row can say
-   * whether they have something unread; the newest report wins. A change
-   * republishes the Sidekick list to that reader alone.
+   * What a child's newer projection moves: the sidebar row for the shared
+   * conversation's latest message (for anyone who has read it) and for
+   * whether it waits on input, the running count, and a run's own row.
    */
-  private acceptViewerRead(effect: Extract<ConversationEffectEnvelope["effect"], { kind: "directory_user" }>,
-    sourceVersion: number, now: number): void {
-    const seen = effect.seenAttentionOrdinal ?? 0;
-    const manual = effect.manualUnreadFromOrdinal ?? null;
-    const existing = first(this.sql.exec<{ source_version: number; seen_attention_ordinal: number; manual_unread_from_ordinal: number | null }>(
-      `SELECT source_version, seen_attention_ordinal, manual_unread_from_ordinal FROM sidekick_viewer_reads
-        WHERE sidekick_id = ? AND user_id = ?`, this.sidekickId, effect.userId,
-    ));
-    if (existing && existing.source_version > sourceVersion) return;
-    // The version always moves, so a later report older than this one is
-    // dropped even when this one changed nothing the row shows.
-    this.sql.exec(
-      `INSERT INTO sidekick_viewer_reads
-         (sidekick_id, user_id, source_version, seen_attention_ordinal, manual_unread_from_ordinal, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(sidekick_id, user_id) DO UPDATE SET source_version = excluded.source_version,
-         seen_attention_ordinal = excluded.seen_attention_ordinal,
-         manual_unread_from_ordinal = excluded.manual_unread_from_ordinal, updated_at = excluded.updated_at`,
-      this.sidekickId, effect.userId, sourceVersion, seen, manual, now,
-    );
-    if (!existing || existing.seen_attention_ordinal !== seen || existing.manual_unread_from_ordinal !== manual) {
-      this.host.noteViewerReadChanged(effect.userId);
-    }
-  }
-
-  /** Keep a child's newest common projection; `false` for one that is not newer. */
-  private acceptChildProjection(substreamId: string, envelope: ConversationEffectEnvelope, now: number): boolean {
-    const existing = first(this.sql.exec<{
-      source_version: number; payload_hash: string; state: string; archived_at: string | null; background_agent: number | null;
-      latest_attention_ordinal: number | null;
-    }>(
-      `SELECT source_version, payload_hash, json_extract(effect_json, '$.state') AS state,
-         json_extract(effect_json, '$.latestAttentionOrdinal') AS latest_attention_ordinal,
-         json_extract(effect_json, '$.archivedAt') AS archived_at,
-         json_extract(effect_json, '$.backgroundAgent') AS background_agent FROM sidekick_child_projections WHERE sidekick_id = ? AND substream_id = ?`,
-      this.sidekickId, substreamId,
-    ));
-    if (existing && existing.source_version > envelope.sourceVersion) return false;
-    if (existing?.source_version === envelope.sourceVersion) {
-      if (existing.payload_hash === envelope.payloadHash) return false;
-      // The child is the authority for its own projection and restarts its
-      // counter when a maintenance import rebuilds it, so the newer bytes win.
-      logWarn(this.env, "substream_projection_version_reused", {
-        ...this.logFields(), substream_id: substreamId, source_version: envelope.sourceVersion,
-      });
-    }
-    this.sql.exec(
-      `INSERT INTO sidekick_child_projections(sidekick_id, substream_id, source_version, payload_hash, effect_json, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(sidekick_id, substream_id) DO UPDATE SET source_version = excluded.source_version,
-         payload_hash = excluded.payload_hash, effect_json = excluded.effect_json, updated_at = excluded.updated_at`,
-      this.sidekickId, substreamId, envelope.sourceVersion, envelope.payloadHash, JSON.stringify(envelope.effect), now,
-    );
-    if (envelope.effect.kind === "directory_common" && substreamId === "0") {
-      // What the sidebar row says about the shared conversation moves with its
-      // latest message, for anyone who has read it, and with whether it waits
-      // on input.
-      const unreadMoved = (existing?.latest_attention_ordinal ?? null) !== (envelope.effect.latestAttentionOrdinal ?? null)
-        && this.sql.exec(`SELECT 1 FROM sidekick_viewer_reads WHERE sidekick_id = ? LIMIT 1`, this.sidekickId).toArray().length > 0;
-      if (unreadMoved || (existing?.state === "needs_input") !== (envelope.effect.state === "needs_input")) {
+  protected onChildProjection(substreamId: string, effect: DirectoryCommonEffect,
+    prior: PriorChildProjection | null, now: number): void {
+    if (substreamId === "0") {
+      const unreadMoved = (prior?.latestAttentionOrdinal ?? null) !== (effect.latestAttentionOrdinal ?? null) && this.hasReaders();
+      if (unreadMoved || (prior?.state === "needs_input") !== (effect.state === "needs_input")) {
         this.host.noteDirectoryChanged(this.sidekickId, false, now);
       }
     }
-    if (envelope.effect.kind === "directory_common") {
-      const wasRunning = existing ? sidekickProjectionRunning({
-        state: existing.state, archivedAt: existing.archived_at, backgroundAgent: existing.background_agent === 1,
-      }) : false;
-      if (wasRunning !== sidekickProjectionRunning(envelope.effect)) {
-        this.host.noteSidekickActivityChanged(envelope.workspaceId);
-      }
+    const wasRunning = prior ? sidekickProjectionRunning({
+      state: prior.state, archivedAt: prior.archivedAt, backgroundAgent: prior.backgroundAgent,
+    }) : false;
+    if (wasRunning !== sidekickProjectionRunning(effect)) {
+      this.host.noteSidekickActivityChanged(this.row()!.workspace_id);
     }
-    return true;
+    this.onChildCommonProjection(substreamId, effect, now);
   }
 
   /**
@@ -3066,35 +2856,13 @@ export class HostedSidekick {
     ))?.state ?? null;
   }
 
-  /** Record a child; `false` when it was already there. */
-  private registerChild(substreamId: string, kind: "main" | "child", createdByUserId: string | null, now: number): boolean {
-    return this.sql.exec<{ substream_id: string }>(
-      `INSERT OR IGNORE INTO sidekick_children(sidekick_id, substream_id, kind, created_by_user_id, created_at)
-       VALUES (?, ?, ?, ?, ?) RETURNING substream_id`,
-      this.sidekickId, substreamId, kind, createdByUserId, now,
-    ).toArray().length === 1;
-  }
-
-  /** Every child this Sidekick knows, the authoring conversation first; `"0"` always. */
-  childRegistry(): { substreamId: string; kind: "main" | "child"; createdAt: number }[] {
-    const rows = this.sql.exec<{ substream_id: string; kind: "main" | "child"; created_at: number }>(
-      `SELECT substream_id, kind, created_at FROM sidekick_children WHERE sidekick_id = ?
-        ORDER BY CASE WHEN substream_id = '0' THEN 0 ELSE 1 END, created_at, substream_id`,
-      this.sidekickId,
-    ).toArray();
-    const children = rows.map((row) => ({ substreamId: row.substream_id, kind: row.kind, createdAt: row.created_at }));
-    if (!children.some((child) => child.substreamId === "0")) children.unshift({ substreamId: "0", kind: "main", createdAt: 0 });
-    return children;
-  }
-
   /** Who may change a Sidekick (`sidekickManager`). */
   private async assertManager(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
     if (!await this.managerAllows(row, actor)) throw forbidden();
   }
 
   private async managerAllows(row: HostedSidekickRow, actor: AutomationActor): Promise<boolean> {
-    return row.author_user_id === actor.userId || row.run_as_user_id === actor.userId
-      || (row.scope === "workspace" && (actor.actorRole === "owner" || actor.actorRole === "admin"));
+    return sidekickManagerAllows(row, actor);
   }
 
   /** The management API's read check (`sidekickReader`). */

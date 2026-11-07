@@ -1973,8 +1973,29 @@ themselves, and refusing them outright left everyone it was shared with but
 not delegated by unable to use it. Rejected: borrowing a delegate's access
 for the request, which is exactly what the decision forbids, and re-picking a
 delegate on continuation, which would widen the run halfway through. A guest
-who is not a delegate is still refused, since a guest holds no Organization
-access to run under.
+on the Sidekick's list runs under their own access as a member does; this
+change first refused one with `run_no_eligible_delegate`, on the stated ground
+that a guest holds no Organization access to run under, but that named the
+wrong cause and narrowed the PRD: the list gives a guest exactly the access the
+decision log means, and a tool that needs an account they lack refuses by its
+own code. The requester's account view, like `runPrincipal`, names nobody once
+they leave the Organization, and a connector refusal then says so. A
+requester's run gets no Terminal: the Sidekick's shared Terminal files hold
+what delegate-access runs wrote, and its tools could only refuse.
+
+**A schedule's occurrence is admitted only once it arrives.** `executeSchedule`
+read the schedule's current `next_due_at` and admitted that occurrence after
+checking only that it had not changed in the transaction. An entry that ran
+after an RPC moved `next_due_at` forward (a pause and resume, or an apply that
+kept the schedule id) while an earlier entry in the same drain pass was
+awaited admitted the next occurrence early. It now refuses an occurrence whose
+`next_due_at` is after now. Rejected: requiring `next_due_at === alarm.dueAt`,
+which needs the entry's instant threaded from the scheduler into the handler
+for the same effect. A future change must keep two things true: every writer
+of `next_due_at` arms the schedule's entry at that instant in the same
+transaction, and the drain's `settle()` deletes an entry only by the instant
+that ran, which is what leaves a refused pass's re-armed entry standing for
+its real time.
 
 **The `workstream` scope (plan step A-5).** A Thread no longer owns a
 Sidekick. WorkspaceDO migration 137 converted every Thread-owned Sidekick to

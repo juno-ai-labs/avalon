@@ -54,39 +54,53 @@ export const AuthorizationDecisionSchema = z.discriminatedUnion('status', [
 export type AuthorizationDecision = z.infer<typeof AuthorizationDecisionSchema>;
 
 /**
+ * The one audience rule a shared conversation applies: anyone it names reads
+ * it, whatever their access class, and a member also reads one open to the
+ * whole Organization. A guest is admitted only by name. `sidekickAdmits` and
+ * `canvasAdmits` are this rule over their own facts.
+ */
+export function audienceAdmits(audience: { named: boolean; organizationWide: boolean }, member: boolean): boolean {
+  return audience.named || (member && audience.organizationWide);
+}
+
+/**
  * Who reads a Sidekick's conversations: the people it is shared with. Its
  * author, the person it runs as and anyone on its `people` list read it
  * whatever their access class; a member also reads it through Organization
- * scope. The
- * one copy of this rule; canonical reads, the library and search all apply it.
+ * scope. Canonical reads, the library and search all apply it.
  */
 export function sidekickAdmits(
   sidekick: { scope: string; author: boolean; executor: boolean; shared: boolean },
   member: boolean,
 ): boolean {
-  if (sidekick.shared || sidekick.author || sidekick.executor) return true;
-  return member && sidekick.scope === 'workspace';
+  return audienceAdmits({
+    named: sidekick.shared || sidekick.author || sidekick.executor, organizationWide: sidekick.scope === 'workspace',
+  }, member);
 }
 
 /**
  * Who opens a Canvas, its Chat and the artifacts it generated: its creator,
- * anyone on its participant list, anyone its writer Sidekick is shared with,
- * and for an Organization-wide Canvas every member. A guest is admitted only
- * from the list or the Sidekick's own list, never by Organization visibility.
- * The one copy of this rule; `docs/canvases.md#who-can-open-a-canvas`.
+ * anyone on its participant list, anyone its writer Sidekick is shared with
+ * (read live from the Sidekick), every member when it is open to the
+ * Organization, and the Organization's owners and administrators, who manage
+ * every Canvas and so must be able to open it.
+ * `docs/canvases.md#who-can-open-a-canvas`.
  */
 export function canvasAdmits(
   canvas: { visibility: string; creator: boolean; participant: boolean; writerAudience: boolean },
   member: boolean,
+  administrator = false,
 ): boolean {
-  if (canvas.creator || canvas.participant || canvas.writerAudience) return true;
-  return member && canvas.visibility === 'workspace';
+  return administrator || audienceAdmits({
+    named: canvas.creator || canvas.participant || canvas.writerAudience, organizationWide: canvas.visibility === 'workspace',
+  }, member);
 }
 
 /**
  * Who changes who can open a Canvas: its creator, the Organization's owners
  * and administrators, and for a Canvas a Sidekick writes that Sidekick's
- * managers. Everyone else it admits reads and takes part.
+ * managers (`sidekickManagerAllows`). Everyone else it admits reads and takes
+ * part.
  */
 export function canvasManages(
   canvas: { creator: boolean; writerManager: boolean },

@@ -3,9 +3,10 @@
 /**
  * A Canvas's directory row and who may open it, on the real Organization
  * object: a new Canvas opens to its creator alone; a participant, a member of
- * an Organization-wide Canvas, and a guest invited by email can open it; a
- * member who is none of those, and a guest outside its list, cannot; and only
- * its creator and the Organization's administrators change who can.
+ * an Organization-wide Canvas, a guest invited by email, and an owner or
+ * administrator can open it; a member who is none of those, and a guest
+ * outside its list, cannot; and only its creator and the Organization's
+ * administrators change who can.
  */
 
 import { env } from "cloudflare:workers";
@@ -96,9 +97,8 @@ describe("who can open a Canvas", () => {
   });
 
   it("opens an Organization-wide Canvas to every member and to no guest outside its list", async () => {
-    // An administrator manages a Canvas they did not make once they can open it.
-    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(CREATOR),
-      update: { visibility: "participants", userIds: [ADMIN] } });
+    // An administrator manages, and so opens, a private Canvas they did not make.
+    expect(await opens({ userId: ADMIN, actorRole: "admin" })).toBe(true);
     await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID,
       actor: { userId: ADMIN, actorRole: "admin" }, update: { visibility: "workspace", userIds: [] } });
     expect(await opens(member(OTHER))).toBe(true);

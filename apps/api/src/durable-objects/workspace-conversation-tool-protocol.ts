@@ -42,10 +42,10 @@ export const ConversationPostRequestSchema = z.strictObject({
   workspaceId: z.string().min(1),
   /**
    * Whose conversation `workstreamId` names: a Thread's (the default, which
-   * every post sent before this field existed meant) or a Sidekick's own
-   * shared conversation. A Canvas's joins this enum.
+   * every post sent before this field existed meant), a Sidekick's own shared
+   * conversation, or a Canvas's Chat.
    */
-  parentKind: z.enum(["workstream", "automation"]).default("workstream"),
+  parentKind: z.enum(["workstream", "automation", "canvas"]).default("workstream"),
   workstreamId: z.string().min(1),
   substreamId: z.union([z.literal("0"), z.string().min(1)]),
   clientMessageId: z.string().min(1).max(300),

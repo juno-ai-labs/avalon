@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { asSpaceId, asSubstreamId, asUserId, asWorkspaceId, asWorkstreamId } from '@rally/contracts';
 import { CreateMessageIssueSchema } from '@rally/contracts/message-issues';
 import issueMigration from '../../../packages/db/message-issue-migrations/0001_message_issues.sql?raw';
+import canvasIssueMigration from '../../../packages/db/message-issue-migrations/0002_message_issues_canvas.sql?raw';
 import type { AuthContext, Env } from '../src/env';
 import { MessageIssueService } from '../src/services/message-issue-service';
 import { conversationObjectName, workspaceDOName } from '../src/durable-objects/names';
@@ -46,7 +47,9 @@ beforeEach(async () => {
   creatorAuth.workspaceId = WORKSPACE_ID;
   otherAuth.workspaceId = WORKSPACE_ID;
   await reset();
-  await env.MESSAGE_ISSUES_DB.exec(issueMigration.replace(/--[^\n]*\n/g, "").replace(/\s*\n\s*/g, " "));
+  for (const migration of [issueMigration, canvasIssueMigration]) {
+    await env.MESSAGE_ISSUES_DB.exec(migration.replace(/--[^\n]*\n/g, "").replace(/\s*\n\s*/g, " "));
+  }
   await seedWorkspaceControlPlane(env.DB, {
     workspaceId: WORKSPACE_ID,
     userId: CREATOR_ID,

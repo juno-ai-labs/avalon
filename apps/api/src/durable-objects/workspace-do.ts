@@ -1217,7 +1217,7 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { CANVAS_SCHEMA_STATEMENTS } from "./canvas-schema";
+import { CANVAS_SCHEMA_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS } from "./canvas-schema";
 import { HostedCanvas, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
@@ -1283,7 +1283,7 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "sidekick_children", "sidekick_child_projections", "sidekick_child_receipts", "sidekick_reviews",
   "sidekick_audience", "sidekick_viewer_reads",
   // A hosted Canvas's own rows: `HostedCanvas` is their only writer.
-  "canvas_directory", "canvas_participants", "canvas_artifacts",
+  "canvas_directory", "canvas_participants",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
@@ -4906,6 +4906,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record each Canvas: its directory row, who besides its creator may open it, and the artifacts it generated",
   // See CANVAS_SCHEMA_STATEMENTS and docs/canvases.md#data-model.
   statements: CANVAS_SCHEMA_STATEMENTS,
+}, {
+  version: 140,
+  description: "admit a Canvas's Chat among the conversations a Sidekick is attached to",
+  // See SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS and docs/canvases.md#data-model.
+  statements: SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -6473,17 +6478,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     parentId: string;
     viewer?: Omit<Parameters<HostedParent["authorizeViewer"]>[0], "workspaceId" | "parentId">;
   }): Promise<{
-    kind: "workstream" | "space" | "automation" | null;
+    kind: "workstream" | "space" | "automation" | "canvas" | null;
     authority: Awaited<ReturnType<HostedParent["authority"]>>;
     viewer?: Awaited<ReturnType<HostedParent["authorizeViewer"]>>;
   }> {
     const request = z.object({ workspaceId: WorkspaceIdSchema, parentId: IdSchema }).parse(input);
-    const sidekick = await this.sidekickParent(request.parentId, request.workspaceId);
-    if (sidekick) {
-      const authority = sidekick.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
-      if (!input.viewer || !authority.exists) return { kind: authority.exists ? "automation" : null, authority };
-      const viewer = await sidekick.authorizeViewer({ ...input.viewer, workspaceId: request.workspaceId, parentId: request.parentId });
-      return { kind: "automation", authority, viewer };
+    const hosted = await this.hostedConversationParent(request.parentId, request.workspaceId);
+    if (hosted) {
+      const authority = hosted.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
+      if (!input.viewer || !authority.exists) return { kind: authority.exists ? hosted.parentKind : null, authority };
+      const viewer = await hosted.authorizeViewer({ ...input.viewer, workspaceId: request.workspaceId, parentId: request.parentId });
+      return { kind: hosted.parentKind, authority, viewer };
     }
     const parent = await this.hostedParent(request.parentId, request.workspaceId);
     const authority = await parent.authority({ workspaceId: request.workspaceId, parentId: request.parentId });
@@ -6496,20 +6501,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async authority(input: Parameters<HostedParent["authority"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.authority(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.authority(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).authority(input);
   }
 
   async authorizeViewer(input: Parameters<HostedParent["authorizeViewer"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.authorizeViewer(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.authorizeViewer(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).authorizeViewer(input);
   }
 
   async reserveChild(input: Parameters<HostedParent["reserveChild"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.reserveChild(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.reserveChild(input);
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveChild(input));
   }
 
@@ -6530,8 +6535,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async reserveAgentChild(input: Parameters<HostedParent["reserveAgentChild"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.reserveAgentChild(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.reserveAgentChild(input);
     return this.parentWrite(async () => (await this.hostedParent(input.parentId, input.workspaceId)).reserveAgentChild(input));
   }
 
@@ -6545,14 +6550,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async listChildren(input: Parameters<HostedParent["listChildren"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.listChildren(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.listChildren(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).listChildren(input);
   }
 
   async childTerminalDeadlines(input: Parameters<HostedParent["childTerminalDeadlines"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) return sidekick.childTerminalDeadlines(input);
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) return hosted.childTerminalDeadlines(input);
     return (await this.hostedParent(input.parentId, input.workspaceId)).childTerminalDeadlines(input);
   }
 
@@ -6563,9 +6568,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * than waking every closed one again.
    */
   async childrenForRetirement(input: { workspaceId: string; parentId: string }) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) {
-      const listing = sidekick.childrenForRetirement();
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) {
+      const listing = hosted.childrenForRetirement();
       return listing.status === "ok"
         ? { ...listing, children: this.unretiredChildren(input.parentId, listing.children) }
         : listing;
@@ -6601,6 +6606,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return this.sidekickCall(envelope.parentId, envelope.workspaceId,
         (sidekick) => ({ accepted: sidekick.receiveChildEffects(request) }));
     }
+    if (envelope.parentKind === "canvas") {
+      const canvas = await this.hostedCanvas(envelope.parentId, envelope.workspaceId);
+      return this.canvasWrite(() => ({ accepted: canvas.receiveChildEffects(request) }));
+    }
     if (envelope.parentKind !== "workstream" && envelope.parentKind !== "space") {
       throw new Error("conversation_effect_parent_kind_unhosted");
     }
@@ -6625,9 +6634,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async listAuthorizationChildren(input: Parameters<HostedParent["listAuthorizationChildren"]>[0]) {
-    const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
-    if (sidekick) {
-      return sidekick.authorizationDiscoveryChildren({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.parentId });
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted) {
+      return hosted.authorizationDiscoveryChildren({ workspaceId: asWorkspaceId(input.workspaceId), parentId: input.parentId });
     }
     return (await this.hostedParent(input.parentId, input.workspaceId)).listAuthorizationChildren(input);
   }
@@ -6641,6 +6650,22 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const sidekick = await this.sidekickParent(input.parentId, input.workspaceId);
     if (!sidekick) return { exists: false as const, validatedAt: Date.now() };
     return sidekick.readAuthorizationFacts(input);
+  }
+
+  /**
+   * A hosted conversation's authorization facts, a Sidekick's or a Canvas's,
+   * each tagged by kind, in one call; `exists: false` when the id is neither.
+   */
+  async hostedConversationAuthorizationFacts(input: Parameters<HostedSidekick["readAuthorizationFacts"]>[0]) {
+    const hosted = await this.hostedConversationParent(input.parentId, input.workspaceId);
+    if (hosted instanceof HostedCanvas) return { kind: "canvas" as const, ...await hosted.readAuthorizationFacts(input) };
+    if (hosted instanceof HostedSidekick) return { kind: "automation" as const, ...hosted.readAuthorizationFacts(input) };
+    return { kind: null, exists: false as const, validatedAt: Date.now() };
+  }
+
+  /** The hosted conversation an id names, a Sidekick or a Canvas; `null` for anything else. */
+  private async hostedConversationParent(parentId: string, workspaceId?: string): Promise<HostedSidekick | HostedCanvas | null> {
+    return await this.sidekickParent(parentId, workspaceId) ?? await this.canvasParent(parentId, workspaceId);
   }
 
   // ---------------------------------------------------------------------------
@@ -6675,6 +6700,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /** Set by a hosted Canvas write that moved a directory row; the Canvas list is published after it. */
   private canvasDirectoryMoved = false;
+  /** Readers whose read of a Canvas's Chat moved; see `publishCanvasList`. */
+  private readonly canvasReadersMoved = new Set<string>();
 
   /** Whether an id names a Canvas: its directory row. Asked before the Channel fallback. */
   private isCanvasParent(parentId: string): boolean {
@@ -6689,6 +6716,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       storage: this.state.storage,
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
       noteRelationship: (relationship) => this.noteRelationship(relationship),
+      noteCanvasReadChanged: (userId) => {
+        this.state.storage.sql.exec(
+          `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'canvases'`,
+        );
+        this.canvasReadersMoved.add(userId);
+      },
       noteCanvasDirectoryChanged: () => {
         this.state.storage.sql.exec(
           `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'canvases'`,
@@ -6743,6 +6776,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /** Publish the Canvas list after a write that moved it; filled in by the sidebar's Canvas rows. */
   private publishCanvasList(): void {
     this.canvasDirectoryMoved = false;
+    this.canvasReadersMoved.clear();
   }
 
   /**
@@ -7426,7 +7460,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async revokeNarrowedAudienceAccess(input: Parameters<HostedParent["revokeNarrowedAudienceAccess"]>[0]): Promise<{
     closedUserIds: string[];
     substreams: { userId: string; substreamIds: string[] }[];
-    automationIds: string[];
   }> {
     const parent = await this.hostedParent(input.parentId, input.workspaceId);
     const { closedUserIds } = await parent.revokeNarrowedAudienceAccess(input);
@@ -7437,12 +7470,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       });
       substreams.push({ userId, substreamIds });
     }
-    return {
-      closedUserIds,
-      substreams,
-      // A Channel owns no Sidekick, so closing it closes none.
-      automationIds: [],
-    };
+    // A Channel owns no Sidekick, so closing it closes none.
+    return { closedUserIds, substreams };
   }
 
   /** The `workstream` revocation hop: close this Channel's control sockets and name its conversations. */

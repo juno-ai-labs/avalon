@@ -128,6 +128,10 @@ its author, its executor and the people it is shared with read it, and a member
 also reads an Organization-scoped one. No work stream owns an automation (the
 `workstream` scope was retired by WorkspaceDO migration 137), so none supplies
 any access. Archived work streams remain readable. Deleted automations are absent.
+A Canvas supplies its visibility, creator, participant list, its writer
+Sidekick's audience (read live) and whether the person is an owner or
+administrator, and `canvasAdmits` decides; it and `sidekickAdmits` are the one
+`audienceAdmits` rule over their own facts ([`canvases.md`](canvases.md)).
 
 Guest membership comes from an explicitly carried request observation, or is
 read from `workspace_members.access_class`. Guests cannot use a legacy conversation scope/roster or
@@ -552,6 +556,26 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-11-07 — A Canvas is decided by its own audience, through one rule with a Sidekick's
+
+**What changed:** A conversation whose parent is a Canvas, and an artifact
+attached to it, are decided by `canvasAdmits` from the Canvas's facts
+(`hostedConversationAuthorizationFacts`, which answers a Sidekick or a Canvas
+in one call). `canvasAdmits` and `sidekickAdmits` are both `audienceAdmits`
+over their own facts; an owner or administrator is admitted to every Canvas.
+
+**Why:** A Canvas owns its audience (the Canvases and Sidekicks decision log),
+and its artifacts inherit it rather than a Thread's. Two rules written field
+for field would drift.
+
+**Considered and rejected:** A separate artifact-level grant: an artifact is
+generated in the Canvas's Chat and attached to it, so the attachment path
+already decides it.
+
+**Consequences:** The artifact door (`ArtifactOpenService`) needs no Canvas
+branch; it is admitted through the canonical resource decision. Resource
+authorization for a hosted conversation is one RPC whichever kind it is.
 
 ### 2026-11-07 — A Sidekick's audience is its own
 
