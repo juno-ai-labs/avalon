@@ -28,7 +28,7 @@ take the next step yourself: click the link again, press **Retry**, or start
 Second, most problems turn out to be about which account you are using. You
 are signed in with a different account from the one an invitation was sent to. A connection
 belongs to the Organization, not to you, so only an administrator can refresh
-it. A Thread is private and you are not in it. When something will not open,
+it. A Canvas was never shared with you. When something will not open,
 ask yourself which account you are using and who owns the thing you are
 reaching for. That usually leads to an owner or administrator in your
 Organization, who can fix it faster than anyone else.
@@ -40,8 +40,8 @@ helpful it seems at the time.
 
 It ends with the glossary: every Rally word in one alphabetical list. That
 includes the old names one last time. An Organization used to be a Workspace,
-a Channel was a Space (and before that a Project), a Thread was a Channel (and
-before that a Work stream), a Breakout was a Substream,
-and a Sidekick was an Automation. The app has mostly caught up, but here and
+and a Sidekick was an Automation. Before Canvases, Rally kept its conversations
+in Channels, Threads and Breakouts, which were removed when Rally moved to
+Canvases and Sidekicks. The app has mostly caught up, but here and
 there a button or a message still uses the old word. If you spot one, it is not
 a different feature, only an older label.

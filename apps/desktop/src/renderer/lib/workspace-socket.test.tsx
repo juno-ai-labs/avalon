@@ -810,8 +810,8 @@ describe('WorkspaceSocketProvider', () => {
 
   it('keeps one organization socket, subscribes durably, and invalidates every organization surface', async () => {
     const queryClient = new QueryClient();
-    const recommendationKey = ['recommended-sidekicks', 'idle-workstream'];
-    queryClient.setQueryData(recommendationKey, []);
+    const runsKey = ['automation-runs', 'idle-automation'];
+    queryClient.setQueryData(runsKey, []);
     const invalidations = vi.spyOn(queryClient, 'invalidateQueries');
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
@@ -879,9 +879,6 @@ describe('WorkspaceSocketProvider', () => {
       ['automation-draft'],
       ['automation-runs'],
       ['sidekicks-library'],
-      ['attached-sidekicks'],
-      ['workstream-sidekicks'],
-      ['recommended-sidekicks'],
       ['note'],
       ['resources'],
       ['workstream-context'],
@@ -891,7 +888,7 @@ describe('WorkspaceSocketProvider', () => {
       ['telemetry-preference'],
       ['feature-flags'],
     ]) expect(invalidatedRoots).toContain(JSON.stringify(root));
-    expect(queryClient.getQueryState(recommendationKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(runsKey)?.isInvalidated).toBe(true);
     // The two sidebar lists are pushed whole, so a topic must never invalidate
     // them: nothing would refetch, and naming them here would suggest otherwise.
     for (const pushed of [['automations'], ['notes']]) {
@@ -2103,8 +2100,6 @@ describe('WorkspaceSocketProvider', () => {
     queryClient.setQueryData(['automation-runs', automationId], []);
     queryClient.setQueryData(['sidekicks-library'], []);
     queryClient.setQueryData(['sidekick-activity', 'workstream', 'room', '0'], 0);
-    queryClient.setQueryData(['attached-sidekicks', 'room'], []);
-    queryClient.setQueryData(['workstream-sidekicks', 'room'], []);
     const getWorkspaceSocketTicket = vi.fn(async () => ({
       url: 'wss://api.rally.test/socket/workspaces/workspace-1',
       ticket: 'workspace-ticket',
@@ -2151,8 +2146,6 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryState(['automation-runs', automationId])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['sidekicks-library'])?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(['sidekick-activity', 'workstream', 'room', '0'])?.isInvalidated).toBe(false);
-    expect(queryClient.getQueryState(['attached-sidekicks', 'room'])?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(['workstream-sidekicks', 'room'])?.isInvalidated).toBe(true);
   });
 
   it('drops a sidebar list whose version is not newer than the one applied', async () => {
@@ -3550,7 +3543,7 @@ describe('the organization-sync relay between windows', () => {
         automations: { waterline: 1, items: [] },
         notes: { waterline: 1, items: [], nextCursor: null },
       },
-      featureFlags: { liveArtifactsEnabled: false },
+      featureFlags: { suggestedWorkEnabled: false },
     }));
     act(() => socket.message({
       type: 'workspace_sync',
@@ -3563,8 +3556,8 @@ describe('the organization-sync relay between windows', () => {
     act(() => socket.message({
       type: 'workspace_feature_flags',
       occurredAt: '2026-08-17T20:00:02.000Z',
-      changedFlag: 'live-artifacts-enabled',
-      flags: ClientFeatureFlagsSchema.parse({ liveArtifactsEnabled: true }),
+      changedFlag: 'suggested-work-enabled',
+      flags: ClientFeatureFlagsSchema.parse({ suggestedWorkEnabled: true }),
     }));
     act(() => socket.message({
       type: 'workspace_sidebar_list',

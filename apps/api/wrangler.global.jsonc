@@ -41,7 +41,7 @@
     // there is nothing whose absence could gate it. Anything but "true" leaves
     // the type out of the connector catalog and refuses creation here.
     "FIREFLIES_CONNECTOR_ENABLED": "true",
-    "ALLOWED_ORIGINS": "https://app.rallywith.ai,app://rallywithai,app://avalon,app://sideline,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
+    "ALLOWED_ORIGINS": "https://app.rallywith.ai,app://rallywithai,app://avalon,https://rallywith.ai,https://www.rallywith.ai,https://with-avalon.com,https://www.with-avalon.com",
     "DESKTOP_DEEP_LINK_URI": "rallywithai://auth/complete",
     "OPENROUTER_PRIMARY_MODEL": "openai/gpt-6.1-sol",
     "OPENROUTER_FALLBACK_MODELS": "google/gemini-3.8-flash",
@@ -197,7 +197,7 @@
   "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }, { "binding": "CODE_LOADER" }],
   "durable_objects": {
     "bindings": [
-      { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
+      { "name": "SUBSTREAM_AGENTS", "class_name": "AgentLoopDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
       { "name": "CRASH_SYMBOLICATOR", "class_name": "CrashSymbolicatorContainer" },
       { "name": "ARTIFACT_HOSTS", "class_name": "ArtifactHostDO" }
@@ -247,6 +247,11 @@
   // v14 irreversibly deletes SlackReactionTicker and every object in its
   // namespace. The rotating working reaction it drove was removed; a run's
   // source message now keeps its acknowledgement until the outcome replaces it.
+  // v15 renames the conversation class `SubstreamAgent` to `AgentLoopDO`, as v3
+  // renamed `WorkstreamRoom` to it: every conversation object keeps its id and
+  // its SQLite database, and its migration ledger continues under the same
+  // `substream_agent_do` component. The binding keeps its `SUBSTREAM_AGENTS`
+  // name; a binding is configuration the Worker reads, not an identity.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WorkstreamRoom", "WorkspaceScheduler"] },
     { "tag": "v2", "new_sqlite_classes": ["CrashSymbolicatorContainer"] },
@@ -265,7 +270,8 @@
     { "tag": "v11", "new_sqlite_classes": ["SpaceDO"] },
     { "tag": "v12", "deleted_classes": ["WorkstreamDO", "SpaceDO"] },
     { "tag": "v13", "deleted_classes": ["SidekickDO"] },
-    { "tag": "v14", "deleted_classes": ["SlackReactionTicker"] }
+    { "tag": "v14", "deleted_classes": ["SlackReactionTicker"] },
+    { "tag": "v15", "renamed_classes": [{ "from": "SubstreamAgent", "to": "AgentLoopDO" }] }
   ],
   "queues": {
     "producers": [

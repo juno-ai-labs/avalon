@@ -118,11 +118,20 @@ export const WORKSPACE_ARTIFACT_PINS_MIGRATION: readonly string[] = [
  * test for a version already drained, where the push starts.
  */
 export function artifactUpdateSql(version: string, pin: string): string {
+  return artifactNewsSql(version, `${pin}.user_id`, `${pin}.created_at`);
+}
+
+/**
+ * {@link artifactUpdateSql} for any reader and any moment: `userId` and
+ * `since` (epoch milliseconds) are SQL expressions in scope. A Canvas's row
+ * asks it of its viewer and their last read of the Chat.
+ */
+export function artifactNewsSql(version: string, userId: string, since: string): string {
   return `${version}.version > 1
     AND ${version}.cause IN ('published', 'replaced')
-    AND (${version}.author_user_id IS NULL OR ${version}.author_user_id <> ${pin}.user_id)
-    AND (${version}.on_behalf_of_user_id IS NULL OR ${version}.on_behalf_of_user_id <> ${pin}.user_id)
-    AND CAST(unixepoch(${version}.captured_at, 'subsec') * 1000 AS INTEGER) > ${pin}.created_at`;
+    AND (${version}.author_user_id IS NULL OR ${version}.author_user_id <> ${userId})
+    AND (${version}.on_behalf_of_user_id IS NULL OR ${version}.on_behalf_of_user_id <> ${userId})
+    AND CAST(unixepoch(${version}.captured_at, 'subsec') * 1000 AS INTEGER) > ${since}`;
 }
 
 /** Whether a drained version's cause can be news to a pinner, as {@link artifactUpdateSql} decides. */
@@ -171,10 +180,13 @@ export const WORKSPACE_ARTIFACT_UPDATES_MIGRATION: readonly string[] = [
 ];
 
 /**
- * Every kind the table stores. `artifact` is not a `PinKind`: it travels in a
- * list of its own (`ArtifactPinSchema` says why), so `list` never returns it.
+ * Every kind the table stores. `artifact`, `canvas` and `sidekick` are not a
+ * `PinKind`: each travels in a list of its own (`ArtifactPinSchema` says why;
+ * a Canvas's and a Sidekick's ride their own sidebar rows as
+ * `pinnedPosition`), so `list` never returns them, and a released client that
+ * parses `PinKind` as a closed enum is never sent one.
  */
-export type StoredPinKind = PinKind | "artifact";
+export type StoredPinKind = PinKind | "artifact" | "canvas" | "sidekick";
 
 /** One stored artifact pin: the resource and the thread it was generated in. */
 export interface StoredArtifactPin {
@@ -207,7 +219,7 @@ export class WorkspacePinStorage {
     if (!this.ready()) return [];
     return this.storage.sql.exec<PinRow>(
       `SELECT item_kind, item_id, parent_id FROM workspace_pins
-        WHERE user_id = ? AND item_kind != 'artifact' ORDER BY item_kind, position, item_id`,
+        WHERE user_id = ? AND item_kind IN ('thread', 'channel', 'breakout') ORDER BY item_kind, position, item_id`,
       userId,
     ).toArray().map((row) => ({
       kind: row.item_kind,

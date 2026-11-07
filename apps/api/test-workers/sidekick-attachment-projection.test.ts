@@ -4,7 +4,7 @@
  * A conversation's Sidekick attachments reach its parent on the
  * `directory_common` effect, which is how a Channel rail learns Main's list.
  *
- * Driven on a real SubstreamAgent: the attach a Sidekick skill load makes, the
+ * Driven on a real AgentLoopDO: the attach a Sidekick skill load makes, the
  * removal the REST rail makes, and the report the parent asks for when a
  * reader opens a Channel whose Main has never reported. The effects stay in
  * the outbox (`useHeldEffectQueue`) and are read from there.

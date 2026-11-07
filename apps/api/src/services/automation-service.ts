@@ -1,6 +1,5 @@
 import {
   asAutomationId,
-  asSubstreamId,
   asUserId,
   asWorkspaceId,
   type AutomationDetail,
@@ -12,7 +11,7 @@ import {
   type AutomationSummary,
   type DemoSeed,
   type WorkstreamAppearancePatch,
-  type WorkstreamAutomationSummary,
+  type SidekickAudienceUpdate,
 } from "@rally/contracts";
 
 import type { AutomationActor } from "../durable-objects/automation-do-protocol";
@@ -39,9 +38,6 @@ export async function createAutomation(env: Env, input: {
   workspaceId: string;
   authorUserId: string;
   scope: AutomationScope;
-  owningWorkstreamId: string | null;
-  /** The home conversation under the owning Channel: its Main ("0", the default) or a Breakout. */
-  owningSubstreamId?: string;
   automationId?: string;
 }): Promise<{ automationId: string; created: boolean }> {
   const workspaceId = asWorkspaceId(input.workspaceId);
@@ -54,8 +50,6 @@ export async function createAutomation(env: Env, input: {
     automationId,
     authorUserId: asUserId(input.authorUserId),
     scope: input.scope,
-    owningWorkstreamId: input.owningWorkstreamId,
-    owningSubstreamId: asSubstreamId(input.owningSubstreamId ?? "0"),
     authorityGeneration: authority.generation,
   });
   // Both steps run on a replay too. The object's row commits first, and a
@@ -95,7 +89,6 @@ export class AutomationService {
       workspaceId: this.auth.workspaceId,
       authorUserId: this.auth.userId,
       scope: "personal",
-      owningWorkstreamId: null,
     });
     return { automationId };
   }
@@ -120,16 +113,6 @@ export class AutomationService {
     const workspace = await this.workspace();
     return workspace.listAutomationDirectory({
       workspaceId: this.auth.workspaceId,
-      userId: this.auth.userId,
-    });
-  }
-
-  /** What one work stream owns, for its rail. The sidebar list excludes these. */
-  async listForWorkstream(workstreamId: string): Promise<{ items: WorkstreamAutomationSummary[] }> {
-    const workspace = await this.workspace();
-    return workspace.listWorkstreamAutomations({
-      workspaceId: this.auth.workspaceId,
-      workstreamId,
       userId: this.auth.userId,
     });
   }
@@ -200,6 +183,12 @@ export class AutomationService {
   ): Promise<AutomationDetail> {
     const workspace = await this.workspace();
     return workspace.sidekickSetAppearance({ ...await this.actorRequest(automationId), appearance });
+  }
+
+  /** Choose who the Sidekick is shared with, and return the Sidekick that results. */
+  async setAudience(automationId: string, update: SidekickAudienceUpdate): Promise<AutomationDetail> {
+    const workspace = await this.workspace();
+    return workspace.sidekickSetAudience({ ...await this.actorRequest(automationId), update });
   }
 
   async pause(automationId: string): Promise<void> {

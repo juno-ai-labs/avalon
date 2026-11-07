@@ -33,13 +33,19 @@ export const ConversationToolScopeSchema = z.discriminatedUnion("kind", [
 export type ConversationToolScope = z.input<typeof ConversationToolScopeSchema>;
 
 /**
- * A `conversation_post`, as the addressed conversation's SubstreamAgent takes
+ * A `conversation_post`, as the addressed conversation's AgentLoopDO takes
  * it (`appendConversationPost`): the conversation it is for, the host-derived
  * key it lands once under, and the Sidekick's post.
  */
 export const ConversationPostRequestSchema = z.strictObject({
   schemaVersion: z.literal(1),
   workspaceId: z.string().min(1),
+  /**
+   * Whose conversation `workstreamId` names: a Thread's (the default, which
+   * every post sent before this field existed meant), a Sidekick's own shared
+   * conversation, or a Canvas's Chat.
+   */
+  parentKind: z.enum(["workstream", "automation", "canvas"]).default("workstream"),
   workstreamId: z.string().min(1),
   substreamId: z.union([z.literal("0"), z.string().min(1)]),
   clientMessageId: z.string().min(1).max(300),
@@ -62,16 +68,18 @@ export type ConversationToolScopeRequest = z.input<typeof ConversationToolScopeR
 /**
  * One conversation a tool can reach. `kind` is in storage words and is the
  * host's to route on, never the model's to see: a Thread's Main (`channel`,
- * read from its conversation object), a Breakout (`breakout`, the same), or a
- * Channel (`space`, read from WorkspaceDO's feed, with `parentId` the Space's
- * id and `substreamId` "0"). `isParent` marks a conversation this one sits
- * inside: a Breakout's Thread, or a Thread's Channel.
+ * read from its conversation object), a Breakout (`breakout`, the same), a
+ * Sidekick's own shared conversation (`sidekick`, the same, with `parentId`
+ * the Sidekick's id and `substreamId` "0"), or a Channel (`space`, read from
+ * WorkspaceDO's feed, with `parentId` the Space's id and `substreamId` "0").
+ * `isParent` marks a conversation this one sits inside: a Breakout's Thread,
+ * a Thread's Channel, or a run's Sidekick.
  */
 export const ConversationToolEntrySchema = z.strictObject({
   conversationId: z.string().min(1),
   parentId: IdSchema,
   substreamId: SubstreamIdSchema,
-  kind: z.enum(["channel", "breakout", "space"]),
+  kind: z.enum(["channel", "breakout", "sidekick", "space"]),
   title: z.string(),
   isHome: z.boolean(),
   isOwn: z.boolean(),

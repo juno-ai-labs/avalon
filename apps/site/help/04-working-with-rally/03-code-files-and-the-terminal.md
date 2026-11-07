@@ -47,29 +47,26 @@ command**, **Writing a file** and **Copying an attachment into the sandbox**
 computer so it can work on it).
 
 When Rally makes something you will want, such as a chart, a cleaned-up file
-or a report, it brings it back into the Thread as a file. If it makes the same
+or a report, it brings it back into the Canvas as a file. If it makes the same
 file again later, you get a new version of that file rather than a second copy.
 Files are covered in [Artifacts](../06-things-rally-makes/01-artifacts.md).
 
 ## Which conversations share a computer
 
-Each Thread and Breakout gets its own sandbox. A Sidekick has one shared
-sandbox for its setup conversation (the wizard), all its runs, and their
-helpers. Its runs keep separate conversations, but can reuse the files left
-by the wizard or an earlier run. Different Sidekicks and the Thread that
-requested one have separate computers.
+Each Canvas gets its own sandbox. A Sidekick has one shared sandbox for its
+drafting assistant, all its runs, and their helpers. Each run starts fresh,
+but can reuse the files left by the drafting assistant or an earlier run.
+Different Sidekicks, and the Canvases they write to, have separate computers.
 
-Only the person the Sidekick runs as can access its shared Terminal files.
-Someone else can edit its instructions without accessing or resetting that
-computer. If you change who it runs as, Rally rebuilds the sandbox under the
-new person's permissions.
+People cannot browse a Sidekick's Terminal files from the app. Editing a
+Sidekick's instructions does not reset its computer.
 
 Helpers share the computer of the conversation or Sidekick they work for
 (see [Helpers, other conversations and receipts](06-helpers-and-receipts.md)).
 If two want to change files at once, one waits a moment.
 
 The sandbox is not kept running all the time. After about five idle minutes a
-Thread's or Breakout's computer goes to sleep; a Sidekick's sleeps after about
+Canvas's computer goes to sleep; a Sidekick's sleeps after about
 fifteen. Rally wakes it up when it needs it again. Files normally come back,
 but anything still running, such as a test web server, does not.
 
@@ -138,7 +135,7 @@ Some ground rules Rally keeps to:
   read-only access. It can still edit and commit on its sandbox, but it cannot
   push anything to GitHub. It asks for write access only when the job is to
   push.
-- **It works on one branch per Thread.** It pushes only that branch, never
+- **It works on one branch per Canvas.** It pushes only that branch, never
   your main branch.
 - **It does not touch your automated build setup.** Rally cannot change files
   in the repository's `.github/workflows` folder.

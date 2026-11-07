@@ -49,7 +49,7 @@ selection and the event cutoffs that unchanged rows preserve.
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, and `merge_suggestion` entries retain an incoming merged result through classification and drafting. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
 | `apps/api/src/durable-objects/hosted-parent.ts` | Channel and Space parents, which share the `WorkspaceDO` alarm: the `parent_outbox` lane, whose deadline stays derived, stored `parent_participant_projection` deliveries retried per parent/conversation/user/revision, resumable `parent_participant_migration` handoffs, and `parent_invitation_delivery`. The same alarm imports pending legacy parents and drains due breakout effects. See [`hosted-conversation-parents.md`](hosted-conversation-parents.md). |
-| `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_memory_tables`, and the delegation kinds. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_run_row` (`<sidekickId>:<runId>`, armed by migration 135's triggers on `sidekick_runs`, handled by `projectRunRow`), `sidekick_memory_tables`, and the delegation kinds. |
 
 ### Two kinds of wake reason
 
@@ -281,6 +281,7 @@ itself:
 | Hand one admitted occurrence to provisioning, which opens its child conversation and starts its loop | `automation_run` (stored) | the run id |
 | Materialize the memory tables an accepted revision declares | `sidekick_memory_tables` (stored) | the revision |
 | Ask the wizard for a scheduled self-review, and send the request again until the wizard reports it admitted | `sidekick_review` (stored) | the one `review` key; armed by the tenth run finish, cancelled by pause, archive, an accepted revision and the delivery report ([`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)) |
+| Write one run, as it stands, into its row in the Sidekick's shared conversation | `sidekick_run_row` (stored) | the run id; armed in SQL by WorkspaceDO migration 135's triggers on every insert into `sidekick_runs` and every change to its state, summary or step count, each at `MAX(updated_at, due_at + 1)` so a change during a delivery survives the drain's delete; re-armed by `replayRunRows` with a `{"replay":true}` payload that forces the write; handled by `projectRunRow`, which reads the run at delivery ([`automation-lifecycle.md`](automation-lifecycle.md#runs-in-the-shared-conversation)) |
 
 **A handler that wants to run again later moves its own entry.** The drain
 deletes an entry at the instant that ran whatever its handler returned, and
@@ -563,7 +564,13 @@ a failing target a free immediate attempt.
   runtime does not know an alarm is in progress and will deliver a real one on
   top of it — which re-enters `alarm()` and drains entries the first pass had
   not settled yet, something that cannot happen in production. Drive the drain
-  directly, or park the alarm first.
+  directly, or park the alarm first. The overlap is not always only a test
+  artefact, though: the extra Sidekick schedule run it produced also exposed a
+  production race, an entry whose schedule had moved its next occurrence into
+  the future while an earlier entry in the same pass was awaited, and
+  `executeSchedule` now refuses an occurrence that has not arrived. When a
+  forced pass changes an outcome, ask whether one real pass interleaved with an
+  RPC could change it the same way.
 - Trap: an alarm armed for `now + 1` after pending-input or execution-receipt
   admission can fire while the test is still setting up, and the loop it drains
   can settle the very rows the next assertion reads. Park it in the *same*
@@ -619,6 +626,27 @@ row to its own grant directory right after the write, and the outbox lane of the
 alarm retries a failed apply. See [scope grant directory](scope-grant-directory.md).
 
 ## Changelog
+
+### 2026-11-07 — A Sidekick's run rows are a stored kind armed by triggers
+
+**What changed:** `sidekick_run_row` joins a Sidekick's stored kinds. It is the
+one kind armed in SQL: WorkspaceDO migration 135's triggers on `sidekick_runs`
+write the entry in the statement that changes the run, at one past any due
+instant already held. A replay arms the same entry with a payload that forces
+the conversation to apply the projection whatever version it holds.
+
+**Why:** A run's row in the Sidekick's shared conversation must follow every
+change to the run, and seven code paths write runs; arming at each would let a
+writer added later leave its row behind. The +1 fence is the drain's rule: it
+deletes the entry it ran by its instant, so a change during the delivery must
+land at another instant to survive. The forced replay exists because an
+ordinary delivery drops a projection older than the row, which would never
+repair a row whose version ran ahead.
+
+**Consequences:** A change to how this kind is armed is a migration, not an
+edit to `HostedSidekick`. A trigger that re-arms the entry before a replay's
+entry runs replaces it with an ordinary one; the handler reads the run either
+way, so only a row whose version is ahead needs the replay run again.
 
 ### 2026-11-03 — A stopped agent's queue is not a wake reason, and an idle pass is held
 

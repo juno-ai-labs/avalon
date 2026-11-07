@@ -223,7 +223,7 @@ describe("GitHub repository access settings", () => {
     await new ConnectionService(environment(database), authorization()).disable(CONNECTION_ID);
 
     // Post-cutover, disabling no longer fans a revocation out to every
-    // SubstreamAgent: the object row is immutable provenance and every
+    // AgentLoopDO: the object row is immutable provenance and every
     // bootstrap rechecks the connector, which is now disabled and stripped of
     // credentials — the state that makes the selection unusable.
     expect(database.prepare(

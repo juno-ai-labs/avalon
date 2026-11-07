@@ -13,12 +13,10 @@ const RUNNING_STATES = ['running', 'scheduled', 'preparing_context', 'waiting_ca
 export function runningSidekickCount(sql: SqlStorage, target: SidekickActivityRequest, channelSidekickIds: readonly string[] = []): number {
   const candidates = sql.exec<{
     id: string; direct: number; scope: string; author_user_id: string;
-    run_as_user_id: string | null; owning_workstream_id: string | null;
+    run_as_user_id: string | null;
   }>(
     `WITH attached(id, instruction) AS (
        SELECT value, 1 FROM json_each(?4)
-       UNION SELECT automation_id, 0 FROM automation_directory
-         WHERE ?1 = 'workstream' AND owning_workstream_id = ?2 AND owning_substream_id = ?3
        UNION SELECT automation_id, 0 FROM sidekick_conversation_attachments
          WHERE ?1 = 'workstream' AND parent_id = ?2 AND substream_id = ?3
        UNION SELECT sidekick_id, 1 FROM parent_sidekicks WHERE ?1 = 'workstream' AND parent_id = ?2
@@ -28,7 +26,7 @@ export function runningSidekickCount(sql: SqlStorage, target: SidekickActivityRe
            AND json_extract(effect_json, '$.kind') = 'directory_common'
      )
      SELECT DISTINCT directory.automation_id AS id, directory.scope, directory.author_user_id,
-         directory.run_as_user_id, directory.owning_workstream_id,
+         directory.run_as_user_id,
          EXISTS (SELECT 1 FROM attached WHERE id = directory.automation_id AND instruction = 0) AS direct
        FROM attached JOIN automation_directory directory ON directory.automation_id = attached.id
        JOIN sidekick_child_projections child ON child.sidekick_id = directory.automation_id
@@ -42,8 +40,8 @@ export function runningSidekickCount(sql: SqlStorage, target: SidekickActivityRe
         )))`,
     target.parentKind, target.parentId, target.substreamId, JSON.stringify(channelSidekickIds), JSON.stringify(RUNNING_STATES),
   ).toArray();
-  // Instruction-only links use the rail's audience rule. A home or explicit
-  // posting attachment is already consent to show activity in this conversation.
+  // Instruction-only links use the rail's audience rule. An explicit posting
+  // attachment is already consent to show activity in this conversation.
   const scope = sql.exec<{ scope: 'personal' | 'workspace' }>(
     `SELECT json_extract(effect_json, '$.scope') AS scope FROM parent_child_projections
       WHERE parent_id = ? AND substream_id = ?`, target.parentId, target.substreamId,
@@ -55,7 +53,6 @@ export function runningSidekickCount(sql: SqlStorage, target: SidekickActivityRe
     ).toArray().map((row) => row.user_id) : [];
   return candidates.filter((row) => row.direct || sidekickAudienceAllows({
     scope: row.scope, authorUserId: row.author_user_id, runAsUserId: row.run_as_user_id,
-    owningWorkstreamId: row.owning_workstream_id,
   }, {
     principalUserId: target.userId, conversationParentId: target.parentId,
     audienceScope: scope, audienceUserIds,

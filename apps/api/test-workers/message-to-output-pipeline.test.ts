@@ -3,7 +3,7 @@
 /**
  * The complete member-visible pipeline: a message goes in, something comes out.
  *
- * This drives the SubstreamAgent through its real product endpoint and direct
+ * This drives the AgentLoopDO through its real product endpoint and direct
  * room socket with real D1 session auth, and then lets the
  * real alarm execute the run. Nothing is seeded into the object by hand; every
  * row the pipeline needs is created by the pipeline.
@@ -28,12 +28,8 @@ import { __integrationTesting, runWorkstreamHarness } from "../src/services/inte
 import { encryptString } from "../src/lib/crypto";
 import { readWorkspaceRelationship } from "../src/services/workspace-relationship-service";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
-import { consumeAccessRevocationQueue } from "../src/queues/access-revocation-consumer";
 import {
   evictDurableObject,
-  createExecutionContext,
-  createMessageBatch,
-  getQueueResult,
   reset,
   runDurableObjectAlarm,
   runInDurableObject,
@@ -43,11 +39,9 @@ import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
 import { consumeEffectBodies, deliverChildEffects, deliverEffectsToWorkspaceInOrder, pendingChildEffects } from "./helpers/conversation-effects";
 
 import {
-  AutomationDraftSchema,
   asAutomationId,
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
-  ParentEffectEnvelopeSchema,
   WorkstreamWorkflowInputSchema,
   asArtifactId,
   asHarnessRunId,
@@ -59,7 +53,7 @@ import {
 } from "@rally/contracts";
 
 import type { AuthContext, Env } from "../src/env";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import {
   capturedProviderRequests,
   capturedCompletionRequests,
@@ -85,7 +79,6 @@ import { ParticipantAuthorityTransferStorage } from "../src/durable-objects/part
 import { enqueueSemanticRealtimeReference } from "../src/durable-objects/workstream-semantic-realtime-outbox";
 import type { ScopeGrantStorage } from "../src/durable-objects/scope-grant-storage";
 import { hostedParentStub, readSharedWorkstream, withHostedParent } from "./helpers/hosted-parent";
-import { resolveSidekickSkills } from "../src/services/sidekick-skills";
 import { AuthorizationService } from "../src/services/authorization-service";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
@@ -270,7 +263,7 @@ beforeEach(async () => {
   // never a slow query.
 }, 30_000);
 
-function agentStub(): DurableObjectStub<SubstreamAgent> {
+function agentStub(): DurableObjectStub<AgentLoopDO> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", WORKSPACE_ID, WORKSTREAM_ID),
   ));
@@ -449,7 +442,7 @@ async function waitForLoopRelease(stub: DurableObjectStub): Promise<void> {
 }
 
 /**
- * Give one real SubstreamAgent isolate a deterministic OpenRouter boundary.
+ * Give one real AgentLoopDO isolate a deterministic OpenRouter boundary.
  *
  * The Worker test deliberately omits a selected model so unrelated pipeline
  * cases cannot reach the network. This test needs the stronger oracle: the
@@ -3262,7 +3255,7 @@ describe("a member's message travels the whole pipeline", () => {
       ).one().count), { timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS, interval: 25 }).toBe(1);
   });
 
-  it("leaves successful activation alarm ownership with the SubstreamAgent", async () => {
+  it("leaves successful activation alarm ownership with the AgentLoopDO", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
     await externallySettledRun(stub, opened.body.harnessRunId as string);
@@ -3766,265 +3759,6 @@ describe("a member's message travels the whole pipeline", () => {
       expect(resourceDecisions[0]).toMatchObject({ status:"allowed" });
       expect(resourceDecisions[1]?.status).not.toBe("allowed");
       expect(resourceDecisions[2]).toMatchObject({ status:"allowed" });
-      const makeSidekick = async (scope: "workspace" | "workstream" | "personal",owningWorkstreamId: string | null = null) => {
-        const automationId = asAutomationId(crypto.randomUUID());
-        // Every Sidekick's parent is hosted by the Organization object.
-        const sidekick = workspace;
-        await sidekick.sidekickCreate({ workspaceId:WORKSPACE_ID,automationId,authorUserId:OTHER_USER_ID,
-          scope,owningWorkstreamId,authorityGeneration:1 });
-        await sidekick.sidekickSaveDefinition({ workspaceId:WORKSPACE_ID,automationId,
-          actor:{ userId:OTHER_USER_ID,actorRole:"member",participantOfOwningWorkstream:true },
-          submittedByRunId:null,evaluatorRules:null,
-          draft:AutomationDraftSchema.parse({ definitionVersion:2,name:`${scope} helper`,description:"Shared instructions",
-            overview:"A guest collaboration helper",instructions:"Use short sentences.",triggers:[],requiredCapabilities:[],
-            expectedOutputs:[],defaultBehavior:{},recommendedPlugins:[],memoryTables:[],suggestedScope:scope,
-            followUpQuestion:null,elicitation:null,ready:true }),
-        });
-        return { automationId,sidekick };
-      };
-      const ownedSidekick = await makeSidekick("workstream",WORKSTREAM_ID);
-      const authoringAgent = env.SUBSTREAM_AGENTS.getByName(conversationObjectName("global", WORKSPACE_ID, ownedSidekick.automationId));
-      expect((await authoringAgent.bootstrapRuntime({ workspaceId: WORKSPACE_ID, parentKind: "automation",
-        parentId: ownedSidekick.automationId, substreamId: "0", generation: 1 })).status).toBe(200);
-      expect((await authoringAgent.executeIdentityOperation({ workspaceId: WORKSPACE_ID, workstreamId: ownedSidekick.automationId,
-        operation: "provision", args: [{ title: "Owned Sidekick", objective: "Author shared instructions", scope: "personal",
-          originType: "ad_hoc", createdByUserId: OTHER_USER_ID, participantUserIds: [OTHER_USER_ID],
-          harnessStatus: "idle", emailAddress: null, emailRouteStatus: null, systemKind: null, automationRunId: null,
-          plannedFor: null, modelOverride: null, now: Date.now() }] })).status).toBe(200);
-      const authoringResource = crypto.randomUUID();
-      await runInDurableObject(workspace, (_instance, state) => {
-        state.storage.sql.exec(`INSERT INTO resources
-          (id,workspace_id,resource_type,provider,title,metadata_json,created_at,updated_at)
-          VALUES (?,?,'file','google_drive','Sidekick resource','{}','2026-09-17T00:00:00Z','2026-09-17T00:00:00Z')`, authoringResource, WORKSPACE_ID);
-      });
-      await runInDurableObject(authoringAgent, (_instance, state) => {
-        state.storage.sql.exec(`INSERT INTO workstream_resource_links
-          (resource_id,attached_by_user_id,watch_enabled,relationship_type,resource_json,attached_at,updated_at)
-          VALUES (?,?,0,'attachment','{}',1,1)`, authoringResource, OTHER_USER_ID);
-      });
-      await workspace.applyAuthorizationLocations({ workspaceId: WORKSPACE_ID, parentId: ownedSidekick.automationId,
-        substreamId: "0", parentKind: "automation", revision: 1, validatedAt: Date.now(), resourceIds: [authoringResource] });
-      const readAuthoringResource = () => app.request(`/resources/${authoringResource}`, { headers }, apiEnv);
-      expect((await readAuthoringResource()).status).not.toBe(200);
-      const recommendedSidekick = await makeSidekick("workspace");
-      const privateSidekick = await makeSidekick("personal");
-      const otherRoomSidekick = await makeSidekick("workstream",crypto.randomUUID());
-      const unselectedSidekick = await makeSidekick("workspace");
-      await runInDurableObject(parent,(_instance,state) => {
-        for (const id of [recommendedSidekick.automationId,privateSidekick.automationId,otherRoomSidekick.automationId]) {
-          state.storage.sql.exec("INSERT INTO parent_sidekicks(parent_id,sidekick_id,attached_at) VALUES (?,?,?)",WORKSTREAM_ID,id,Date.now());
-        }
-      });
-      // Stale or corrupt discovery IDs never widen canonical source access.
-      const recommendationReads: { check?: () => void; restore?: () => void } = {};
-      await runInDurableObject(parent, (instance) => {
-        // A Channel's kind and authority now come from one hosted-parent read.
-        const authority = vi.spyOn(Object.getPrototypeOf(instance), "resolveHostedParent");
-        // One resolution at admission and one at the final access recheck.
-        recommendationReads.check = () => expect(authority).toHaveBeenCalledTimes(2);
-        recommendationReads.restore = () => authority.mockRestore();
-      });
-      let recommendations: Response;
-      try {
-        recommendations = await app.request(`${path}/recommended-sidekicks`,{ headers },apiEnv);
-        await runInDurableObject(parent, () => recommendationReads.check!());
-      } finally {
-        await runInDurableObject(parent, () => recommendationReads.restore!());
-      }
-      expect(recommendations.status,await recommendations.clone().text()).toBe(200);
-      const recommendationsBody = await recommendations.json() as { items: Array<{ id:string;available:boolean }> };
-      expect(recommendationsBody.items.map((item) => item.id).sort()).toEqual([ownedSidekick.automationId,recommendedSidekick.automationId].sort());
-      expect(recommendationsBody.items.every((item) => item.available)).toBe(true);
-      for (const item of recommendationsBody.items) expect(Object.keys(item).sort()).toEqual(["available","description","id","name"]);
-      expect(recommendationsBody.items.some((item) => item.id === unselectedSidekick.automationId)).toBe(false);
-      const guestExecution = WorkstreamWorkflowInputSchema.parse({ region:"global",workspaceId:WORKSPACE_ID,
-        parentKind:"workstream",parentId:WORKSTREAM_ID,substreamId,loopId:substreamLoopId(WORKSTREAM_ID,substreamId),
-        harnessRunId:crypto.randomUUID(),triggerMessageId:null,activityId:null,
-        executionPrincipal:{ type:"user",userId:USER_ID },reason:"guest_sidekick_test" });
-      const sources = await resolveSidekickSkills(TEST_ENV,guestExecution,true,
-        [ownedSidekick.automationId,recommendedSidekick.automationId,privateSidekick.automationId,otherRoomSidekick.automationId]);
-      expect(sources.map((source) => source.id).sort()).toEqual([ownedSidekick.automationId,recommendedSidekick.automationId].sort());
-      expect(sources.every((source) => source.instructions === "Use short sentences.")).toBe(true);
-      const freshSources = await resolveSidekickSkills(TEST_ENV,guestExecution,true);
-      expect(freshSources.map((source) => source.id).sort()).toEqual([ownedSidekick.automationId,recommendedSidekick.automationId].sort());
-      await recommendedSidekick.sidekick.sidekickPause({ workspaceId:WORKSPACE_ID,automationId:recommendedSidekick.automationId,
-        actor:{ userId:OTHER_USER_ID,actorRole:"member",participantOfOwningWorkstream:false } });
-      const pausedRecommendations = await app.request(`${path}/recommended-sidekicks`,{ headers },apiEnv);
-      expect(await pausedRecommendations.json()).toMatchObject({ items:expect.arrayContaining([{ id:recommendedSidekick.automationId,
-        name:"workspace helper",description:"Shared instructions",available:false }]) });
-      expect(await resolveSidekickSkills(TEST_ENV,guestExecution,true,[recommendedSidekick.automationId],false)).toEqual([]);
-
-      expect((await app.request(`/conversations/${ownedSidekick.automationId}`,{ headers },apiEnv)).status).not.toBe(200);
-      expect((await app.request(`/conversations/${WORKSTREAM_ID}/substreams/0/recommended-sidekicks`,{ headers },apiEnv)).status).toBe(404);
-      await waitForLoopRelease(child);
-      try {
-        await installScriptedProvider(child,[
-          [{ choices:[{ delta:{ tool_calls:[{ index:0,id:"guest-sidekick-plugin",type:"function",
-            function:{ name:"load_plugin",arguments:JSON.stringify({ pluginId:"rally_skill_recommendations" }) } }] },finish_reason:"tool_calls" }] }],
-          [{ choices:[{ delta:{ tool_calls:[{ index:0,id:"guest-sidekick-list",type:"function",
-            function:{ name:"list_skill_recommendations",arguments:"{}" } }] },finish_reason:"tool_calls" }] }],
-          [{ choices:[{ delta:{ tool_calls:[{ index:0,id:"guest-load-sidekick",type:"function",
-            function:{ name:"load_skill",arguments:JSON.stringify({ name:"skill-workstream-helper" }) } }] },finish_reason:"tool_calls" }] }],
-          [{ choices:[{ delta:{ content:"I will use short sentences." },finish_reason:"stop" }] }],
-        ],{ primaryModel:"guest-sidekick/primary",fallbackModels:[] });
-        const parentCalls: { check?: () => void; restore?: () => void } = {};
-        await runInDurableObject(parent, (instance) => {
-          const prototype = Object.getPrototypeOf(instance) as typeof instance;
-          const joins = vi.spyOn(prototype, "joinConversation");
-          const grants = vi.spyOn(prototype, "mutateParticipantGrant");
-          parentCalls.check = () => {
-            expect(joins).not.toHaveBeenCalled();
-            expect(grants).not.toHaveBeenCalled();
-          };
-          parentCalls.restore = () => { joins.mockRestore(); grants.mockRestore(); };
-        });
-        const loadedReceipt = nextSocketCommandOutcome(childSocket.socket);
-        let loadedOutcome: SocketFrame;
-        try {
-          childSocket.socket.send(JSON.stringify({ type:"create_message",operationId:crypto.randomUUID(),payload:{
-            text:"please summarize the risks",clientMessageId:crypto.randomUUID(),mentions:[],confirmedParticipantUserIds:[],attachmentIds:[],
-          } }));
-          loadedOutcome = await loadedReceipt;
-          await runInDurableObject(parent, () => parentCalls.check!());
-        } finally {
-          await runInDurableObject(parent, () => parentCalls.restore!());
-        }
-        expect(loadedOutcome).toMatchObject({ type:"client_command_succeeded" });
-        const loadedTurn = loadedOutcome.turn as { turnId:string };
-        const loadedRun = await settledRunForTrigger(child,loadedTurn.turnId);
-        expect(loadedRun.status,loadedRun.error_json ?? "").toBe("completed");
-        const catalogResults = (await capturedProviderRequests(child)).flatMap((request) =>
-          request.body.messages as Array<{ role?: string; tool_call_id?: string; content?: string }>)
-          .filter((message) => message.role === "tool" && message.tool_call_id === "guest-sidekick-list");
-        expect(catalogResults.length).toBeGreaterThan(0);
-        for (const result of catalogResults) {
-          expect(JSON.parse(result.content ?? "null")).toMatchObject({ success: true, data: {
-            skills: [{ skillId: recommendedSidekick.automationId,
-              canRecommend: false, recommended: true }],
-          } });
-        }
-        await waitForLoopRelease(child);
-      } finally {
-        await restoreProviderFetch(child);
-      }
-      expect(await runInDurableObject(main,(_instance,state) => state.storage.sql.exec("SELECT sidekick_id FROM sidekick_attachments").toArray())).toEqual([]);
-      await runInDurableObject(main,(_instance,state) => {
-        state.storage.sql.exec("INSERT INTO sidekick_attachments(sidekick_id,attached_at) VALUES (?,?)",ownedSidekick.automationId,Date.now());
-      });
-      const localSidekicks = await app.request(`${path}/sidekicks`,{ headers },apiEnv);
-      expect(localSidekicks.status,await localSidekicks.clone().text()).toBe(200);
-      expect(await localSidekicks.json()).toMatchObject({ items:[{ id:ownedSidekick.automationId,available:true }] });
-      const removedSidekick = await app.request(`${path}/sidekicks/${ownedSidekick.automationId}`,{ method:"DELETE",headers },apiEnv);
-      expect(removedSidekick.status,await removedSidekick.clone().text()).toBe(200);
-      expect(await removedSidekick.json()).toEqual({ items:[] });
-      expect(await runInDurableObject(main,(_instance,state) => state.storage.sql.exec<{ sidekick_id:string }>("SELECT sidekick_id FROM sidekick_attachments").toArray().map((row) => row.sidekick_id))).toEqual([ownedSidekick.automationId]);
-      expect(await parent.recommendedSidekickIds({ workspaceId:WORKSPACE_ID,parentId:WORKSTREAM_ID })).toContain(recommendedSidekick.automationId);
-      const recommendationMutation = (sidekickId: string, method: "PUT" | "DELETE") =>
-        app.request(`${path}/recommended-sidekicks/${sidekickId}`, { method, headers }, apiEnv);
-      expect((await recommendationMutation(recommendedSidekick.automationId, "PUT")).status).toBe(403);
-      const readOptions = async () => {
-        const response = await app.request(`${path}/sidekick-recommendation-options`, { headers }, apiEnv);
-        expect(response.status).toBe(200);
-        return response.json() as Promise<{ canManage: boolean; items: Array<{ id: string; attached: boolean }> }>;
-      };
-      const childOptions = await readOptions();
-      expect(childOptions.canManage).toBe(false);
-      expect(childOptions.items.map((item) => item.id)).toEqual([recommendedSidekick.automationId]);
-      const changeSidekickAppearance = (color: string) => app.request(`/sidekicks/${ownedSidekick.automationId}/appearance`, {
-        method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ color }),
-      }, apiEnv);
-      expect((await changeSidekickAppearance("blue")).status).toBe(403);
-      const parentTarget = { kind: "workstream" as const, workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID };
-      await withParentGrants(parent, address, (store) => {
-        expect(store.mutate({ operationId: crypto.randomUUID(),
-          actorUserId: OTHER_USER_ID, userId: USER_ID, target: parentTarget, active: true, expectedRevision: store.read(USER_ID, parentTarget)?.revision ?? 0 }, "existing-member"))
-          .toMatchObject({ status: "committed" });
-      });
-      // Whether the grant makes them one of the home's people is the
-      // Organization object's to decide, from its own rows; the request below
-      // is how that shows.
-      const changedAppearance = await changeSidekickAppearance("blue");
-      expect(changedAppearance.status, await changedAppearance.clone().text()).toBe(200);
-      expect(await changedAppearance.json()).toMatchObject({ appearance: { color: "blue" } });
-      for (const action of ["pause", "resume"]) {
-        const response = await app.request(`/sidekicks/${ownedSidekick.automationId}/${action}`, { method: "POST", headers }, apiEnv);
-        expect(response.status, await response.clone().text()).toBe(204);
-      }
-      for (const suffix of ["", "/runs"]) {
-        const response = await app.request(`/sidekicks/${ownedSidekick.automationId}${suffix}`, { headers }, apiEnv);
-        expect(response.status, await response.clone().text()).toBe(200);
-        expect((await app.request(`/sidekicks/${recommendedSidekick.automationId}${suffix}`, { headers }, apiEnv)).status).toBe(404);
-      }
-      const authoringResourceResponse = await readAuthoringResource();
-      expect(authoringResourceResponse.status, await authoringResourceResponse.clone().text()).toBe(200);
-      expect(await authoringResourceResponse.json()).toMatchObject({ id: authoringResource, title: "Sidekick resource" });
-      const authoringTicket = await app.request(`/conversations/${ownedSidekick.automationId}/substreams/0/socket`, { headers }, apiEnv);
-      expect(authoringTicket.status, await authoringTicket.clone().text()).toBe(200);
-      const authoringIssued = await authoringTicket.json() as { ticket: string; url: string };
-      const authoringUpgrade = await app.request(authoringIssued.url.replace("wss:", "https:"), { headers: {
-        Origin: "https://app.example.test", Upgrade: "websocket",
-        "Sec-WebSocket-Protocol": socketTicketProtocols(authoringIssued.ticket).join(", "),
-      } }, apiEnv);
-      const authoringSocket = await openSubscribedSocket(authoringAgent, crypto.randomUUID(), "0", 0, authoringUpgrade);
-      let authoringClosed = false;
-      authoringSocket.socket.addEventListener("close", () => { authoringClosed = true; }, { once: true });
-      const parentOptions = await readOptions();
-      expect(parentOptions.canManage).toBe(true);
-      expect(parentOptions.items.map((item) => item.id)).toEqual([recommendedSidekick.automationId]);
-      // Parent management does not grant discovery of unrelated workspace skills.
-      expect((await recommendationMutation(unselectedSidekick.automationId, "PUT")).status).toBe(403);
-      expect((await recommendationMutation(recommendedSidekick.automationId, "PUT")).status).toBe(200);
-      expect((await recommendationMutation(recommendedSidekick.automationId, "DELETE")).status).toBe(200);
-      // The Organization object publishes the owned Sidekicks' `automation`
-      // hops itself while it applies the revoked grant's directory row, since
-      // it holds the list of Sidekicks the Channel owns. Refuse that publish
-      // until released, so the test can see the row wait in the local outbox.
-      type RevocationSender = {
-        sendBatch: (messages: Iterable<MessageSendRequest<unknown>>, options?: QueueSendBatchOptions) => Promise<void>;
-      };
-      const revocationQueue: RevocationSender = Object.getPrototypeOf(env.ACCESS_REVOCATION_QUEUE);
-      // Every Queue binding shares this prototype, and the held effect queue
-      // (`helpers/effect-queue-hold.ts`) already spies on its `sendBatch`.
-      // Spying again returns that same spy, so this layers on top of its
-      // implementation and puts it back afterwards rather than restoring the
-      // real binding under it.
-      const heldSendBatch = vi.isMockFunction(revocationQueue.sendBatch)
-        ? revocationQueue.sendBatch.getMockImplementation()
-        : undefined;
-      const originalRevocationSendBatch = heldSendBatch ?? revocationQueue.sendBatch;
-      let holdSidekickRevocations = true;
-      let sidekickRevocationRefusals = 0;
-      const isSidekickRevocation = (body: unknown) => {
-        const target = (body as { target?: { scope?: string; automationId?: string } } | null)?.target;
-        return target?.scope === "automation" && target.automationId === ownedSidekick.automationId;
-      };
-      const publishedSidekickRevocations: unknown[] = [];
-      const revocationSend = vi.spyOn(revocationQueue, "sendBatch").mockImplementation(async function (this: RevocationSender, messages, options) {
-        const requests = [...messages];
-        const bodies = requests.map((message) => message.body);
-        if (bodies.some(isSidekickRevocation)) {
-          if (holdSidekickRevocations) {
-            sidekickRevocationRefusals += 1;
-            throw new Error("revocation_queue_unavailable");
-          }
-          publishedSidekickRevocations.push(...bodies.filter(isSidekickRevocation));
-        }
-        return originalRevocationSendBatch.call(this, requests, options);
-      });
-      await withParentGrants(parent, address, (store) => {
-        expect(store.mutate({ operationId: crypto.randomUUID(), actorUserId: OTHER_USER_ID, userId: USER_ID,
-          target: parentTarget, active: false, expectedRevision: store.read(USER_ID, parentTarget)!.revision }, "existing-member"))
-          .toMatchObject({ status: "committed" });
-      });
-      expect((await recommendationMutation(recommendedSidekick.automationId, "DELETE")).status).toBe(403);
-      expect((await changeSidekickAppearance("red")).status).toBe(403);
-      expect((await readAuthoringResource()).status).not.toBe(200);
-      expect((await app.request(`/sidekicks/${ownedSidekick.automationId}`, { headers }, apiEnv)).status).toBe(404);
-      expect((await app.request(`/conversations/${ownedSidekick.automationId}`, { headers }, apiEnv)).status).toBe(404);
-      await runInDurableObject(ownedSidekick.sidekick,(_instance,state) => {
-        expect(JSON.parse(state.storage.sql.exec<{ appearance_json:string }>("SELECT appearance_json FROM automation_directory WHERE automation_id=?",ownedSidekick.automationId).one().appearance_json).color).toBe("blue");
-      });
-      expect((await readOptions()).canManage).toBe(false);
       // Directory rows are applied inside the Organization object right after
       // the parent write, so Main's directory row exists without a Queue hop.
       await deliverChildEffects(TEST_ENV, main);
@@ -4032,56 +3766,10 @@ describe("a member's message travels the whole pipeline", () => {
         expect(state.storage.sql.exec("SELECT workstream_id FROM channels WHERE workstream_id=?", WORKSTREAM_ID).toArray())
           .toEqual([{ workstream_id: WORKSTREAM_ID }]);
       });
-      const revokedGrantRows = () => runInDurableObject(parent, (_instance, state) => state.storage.sql.exec<{ payload_json: string; attempts: number }>(
-        "SELECT payload_json,attempts FROM parent_outbox WHERE parent_id=? AND effect_kind='scope_grant_directory'", WORKSTREAM_ID,
-      ).toArray().filter((row) => {
-        const envelope = ParentEffectEnvelopeSchema.parse(JSON.parse(row.payload_json));
-        return envelope.effect.kind === "scope_grant_directory" && !envelope.effect.grant.active
-          && envelope.effect.grant.target.kind === "workstream" && envelope.effect.grant.userId === USER_ID;
-      }));
-      const drainParentOutboxNow = async () => {
-        await runInDurableObject(parent, async (_instance, state) => {
-          state.storage.sql.exec("UPDATE parent_outbox SET not_before=0 WHERE parent_id=?", WORKSTREAM_ID);
-          await state.storage.setAlarm(Date.now());
-        });
-        await runDurableObjectAlarm(parent);
-      };
-      const revocationBatch = vi.spyOn(TEST_ENV.ACCESS_REVOCATION_QUEUE, "sendBatch");
-      try {
-        // A refused publish keeps the grant row in the local outbox for the
-        // alarm to retry, the way the Queue retried it before the move.
-        await expect.poll(async () => {
-          await drainParentOutboxNow();
-          return sidekickRevocationRefusals;
-        }, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBeGreaterThan(0);
-        expect((await revokedGrantRows())[0]?.attempts).toBeGreaterThan(0);
-        holdSidekickRevocations = false;
-        await expect.poll(async () => {
-          await drainParentOutboxNow();
-          return (await revokedGrantRows()).length;
-        }, { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(0);
-        const published = publishedSidekickRevocations;
-        expect(published.length).toBeGreaterThan(0);
-        const pending: unknown[] = [published.at(-1)];
-        let batchOffset = 0;
-        while (pending.length) {
-          const batch = createMessageBatch("avalon-do-runtime-test-access-revocations", pending.splice(0).map((body) => ({
-            id: crypto.randomUUID(), body, timestamp: new Date(), attempts: 1,
-          })));
-          await consumeAccessRevocationQueue(batch, TEST_ENV);
-          expect((await getQueueResult(batch, createExecutionContext())).retryMessages).toEqual([]);
-          for (const [messages] of revocationBatch.mock.calls.slice(batchOffset)) {
-            for (const message of messages) pending.push(message.body);
-          }
-          batchOffset = revocationBatch.mock.calls.length;
-        }
-        await expect.poll(() => authoringClosed, { timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS }).toBe(true);
-      } finally {
-        if (heldSendBatch) revocationSend.mockImplementation(heldSendBatch);
-        else revocationSend.mockRestore();
-        revocationBatch.mockRestore();
-        authoringSocket.socket.close(1000, "done");
-      }
+      const guestExecution = WorkstreamWorkflowInputSchema.parse({ region:"global",workspaceId:WORKSPACE_ID,
+        parentKind:"workstream",parentId:WORKSTREAM_ID,substreamId,loopId:substreamLoopId(WORKSTREAM_ID,substreamId),
+        harnessRunId:crypto.randomUUID(),triggerMessageId:null,activityId:null,
+        executionPrincipal:{ type:"user",userId:USER_ID },reason:"guest_sidekick_test" });
       // The same resource may remain shared through another conversation.
       const secondChildId = asSubstreamId("ffffffff-ffff-4fff-8fff-ffffffffffff");
       const secondAddress = { workspaceId: WORKSPACE_ID, parentId: WORKSTREAM_ID, substreamId: secondChildId };
@@ -4211,16 +3899,17 @@ describe("a member's message travels the whole pipeline", () => {
       });
       expect((await authorizer.checkMany(subject,[resourceAccess(sharedResource)]))[0]?.status).not.toBe("allowed");
       expect((await app.request(`/resources/${sharedResource}/content`,{ headers },apiEnv)).status).not.toBe(200);
-      // This fixture has no completed workspace-wide location inventory. Once
-      // its only positive source is revoked, reads fail closed as unavailable.
+      // Once its only positive source is revoked, reads fail closed. (No
+      // Sidekick conversation holds a partial location inventory in this
+      // fixture any more, so the answer is not found rather than unavailable.)
       for (const suffix of versionPaths) {
         const revoked = await app.request(`/resources/${sharedResource}${suffix}`, { headers }, apiEnv);
-        expect(revoked.status, suffix).toBe(503);
-        expect(await revoked.json()).toMatchObject({ error: { code: "authorization_unavailable" } });
+        expect(revoked.status, suffix).toBe(404);
+        expect(await revoked.json()).toMatchObject({ error: { code: "resource_not_found" } });
       }
 
 
-      await expect(artifactService.open(sharedResource)).rejects.toThrow("Authorization could not be established");
+      await expect(artifactService.open(sharedResource)).rejects.toThrow("That artifact does not exist here.");
       // A viewer session is an admitted capability: resource-scope changes do
       // not put canonical authorization back in front of every artifact asset.
       // It remains valid until explicit revocation or fixed expiry.
@@ -4241,8 +3930,6 @@ describe("a member's message travels the whole pipeline", () => {
           "SELECT archived_at FROM parent_children WHERE parent_id=? AND substream_id=?", WORKSTREAM_ID, substreamId).one().archived_at).toBeNull();
       });
       expect((await app.request(`${path}/socket`,{ headers },apiEnv)).status).toBe(404);
-      expect((await app.request(`${path}/recommended-sidekicks`,{ headers },apiEnv)).status).toBe(404);
-      expect((await app.request(`${path}/sidekicks`,{ headers },apiEnv)).status).toBe(404);
       expect((await attach(uploadId)).status).toBe(404);
       childSocket.socket.close(1000,"done");
       expect(await parent.addPrivateChildParticipant(participantRequest)).toEqual(added);

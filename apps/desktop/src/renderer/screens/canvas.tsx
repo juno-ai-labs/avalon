@@ -1,0 +1,129 @@
+import type { CanvasDetail } from '@rally/contracts';
+import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
+
+import { CanvasMark } from '../components/canvas-mark';
+import { CanvasShareDialog } from '../components/canvas-share-dialog';
+import { AvatarStack, Button, EmptyState, ErrorNotice } from '../components/primitives';
+import { canvasDetailQueryKey, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { useCollaborationSession } from '../lib/collaboration-session';
+import { layoutKey, readArtifactPanel } from '../lib/desktop-layout';
+import { openResourceRequest, openThreadResourceState } from '../lib/navigation-routes';
+import { ConversationSurface } from './conversation-surface';
+
+/**
+ * `/canvases/:id`: a Canvas open. Its Chat, the `canvas`-kind conversation
+ * whose parent id is the Canvas id, fills the main pane as a Thread's does,
+ * and its artifacts open in the same right rail, with the same per-conversation
+ * restore (`artifact-panel:<canvas>:0`). Arriving with nothing saved there, the
+ * newest artifact opens; a Canvas with none opens with the rail closed.
+ * `docs/canvases.md` owns the model.
+ */
+export function CanvasScreen(): React.JSX.Element {
+  const { id } = useParams();
+  if (!id) return <EmptyState description="This link names no Canvas." title="Canvas" />;
+  return <CanvasConversation id={id} key={id} />;
+}
+
+function CanvasConversation({ id }: { id: string }): React.JSX.Element {
+  const { api, session } = useCollaborationSession();
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const canvas = useQuery({
+    queryKey: canvasDetailQueryKey(id),
+    queryFn: ({ signal }) => api!.getCanvas(id, signal),
+    enabled: Boolean(api),
+    staleTime: 5_000,
+  });
+  // The list row paints the name before the detail answers.
+  const row = useCanvasList()?.find((candidate) => candidate.id === id);
+  const { membersById } = useCanvasNameSources(api);
+  const [sharing, setSharing] = useState(false);
+  const [pinError, setPinError] = useState<Error | null>(null);
+  useOpenNewestArtifact(id, canvas.data, session?.workspace?.id, session?.user.id, location.state, (resourceId) => {
+    void navigate(`${location.pathname}${location.search}`, { replace: true, state: openThreadResourceState(id, resourceId) });
+  });
+  const title = canvas.data?.title ?? row?.title ?? '';
+  const pinned = row ? row.pinnedPosition !== null : false;
+  const togglePin = (): void => {
+    if (!api) return;
+    setPinError(null);
+    api.setCanvasPinned(id, !pinned).catch((cause: unknown) => setPinError(cause instanceof Error ? cause : new Error('The Canvas could not be pinned.')));
+  };
+  if (canvas.error && !row) {
+    return <div className="screen-error-state screen-with-titlebar">
+      <div className="screen-drag-strip window-drag" />
+      <ErrorNotice title="Canvas could not be opened">{canvas.error.message}</ErrorNotice>
+      <EmptyState action={<Button onClick={() => void canvas.refetch()}>Try again</Button>} description="It may have been removed, or you may no longer have access." title="Canvas" />
+    </div>;
+  }
+  const level = (): TitlePillLevel => ({
+    key: `canvas:${id}`,
+    icon: <CanvasMark kind={canvas.data?.artifacts[0]?.kind ?? row?.artifactKind ?? null} size={24} />,
+    title,
+    label: `Canvas menu: ${title}`,
+    menu: <>
+      <TitleMenuItem icon={pinned ? <IconPinnedOff aria-hidden="true" size={16} stroke={1.8} /> : <IconPin aria-hidden="true" size={16} stroke={1.8} />} onSelect={togglePin}>
+        {pinned ? 'Unpin' : 'Pin'}
+      </TitleMenuItem>
+      <TitleMenuItem disabled={!canvas.data} icon={<IconUsers aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => setSharing(true)}>
+        Share…
+      </TitleMenuItem>
+    </>,
+  });
+  return <>
+    {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
+    <ConversationSurface
+      parentId={id}
+      parentKind="canvas"
+      renderHeader={(context) => {
+        const present = context.presentUserIds.filter((userId) => userId !== session?.user.id).flatMap((userId) => {
+          const member = membersById.get(userId);
+          return member ? [member] : [];
+        });
+        return <TitlePillHeader
+          current={level()}
+          trailing={<span className="canvas-header-trailing">
+            {present.length > 0 && <span aria-label={`${present.length} ${present.length === 1 ? 'person' : 'people'} here`} className="canvas-header-present" role="group">
+              <AvatarStack currentUserId={session?.user.id ?? null} members={present} presentUserIds={context.presentUserIds} />
+            </span>}
+            <Button className="canvas-share-button" disabled={!canvas.data} onClick={() => setSharing(true)}>Share</Button>
+          </span>}
+        />;
+      }}
+      substreamId="0"
+    />
+    {canvas.data && <CanvasShareDialog canvas={canvas.data} onOpenChange={(open) => {
+      setSharing(open);
+      if (!open) void queryClient.invalidateQueries({ queryKey: canvasDetailQueryKey(id) });
+    }} open={sharing} />}
+  </>;
+}
+
+/**
+ * Open the Canvas's newest artifact once its detail says it has one, unless
+ * this conversation already restores a panel or the navigation asked for an
+ * artifact. Once per opening: closing the panel afterwards keeps it closed.
+ */
+function useOpenNewestArtifact(
+  canvasId: string,
+  canvas: CanvasDetail | undefined,
+  workspaceId: string | undefined,
+  userId: string | undefined,
+  routeState: unknown,
+  open: (resourceId: string) => void,
+): void {
+  const decided = useRef(false);
+  const newest = canvas?.artifacts[0]?.resourceId;
+  useEffect(() => {
+    if (decided.current || !canvas) return;
+    decided.current = true;
+    if (!newest || openResourceRequest(routeState)) return;
+    const saved = readArtifactPanel(layoutKey(workspaceId ?? 'unbound', userId ?? 'unbound', `artifact-panel:${canvasId}:0`));
+    if (!saved) open(newest);
+  });
+}

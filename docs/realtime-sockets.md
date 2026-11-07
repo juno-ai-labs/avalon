@@ -1,7 +1,7 @@
 # Realtime socket admission
 
 Every Rally WebSocket (workspace synchronization/commands, the retired Channel
-control socket that installed desktops and the iOS client still open, the direct
+control socket that installed desktops still open, the direct
 conversation feed of a work stream or an automation, and the dictation bridge to
 Azure) is opened with a short-lived ticket rather than
 the session credential. This document owns how a purpose-specific ticket is
@@ -61,7 +61,7 @@ admission is split in two.
    is mounted with the workspace-relationship check, not the member-only
    `requireAuth`, because WorkspaceDO shapes a guest's socket itself),
    `GET /workstreams/:id/control-socket` for the retired Channel control socket
-   (still served for installed desktops and the iOS client; the current desktop
+   (still served for installed desktops; the current desktop
    never asks for it),
    `GET /conversations/:parentId/substreams/:substreamId/socket` for the feed
    of a work stream's or an automation's conversation, or
@@ -108,11 +108,7 @@ admission is split in two.
    protocol: `[rally.ticket.v1, <ticket>]`. Native browser sockets send those
    from the `WebSocket` constructor; Electron's work-stream broker passes the
    same pair from Node's `ws` client and supplies the fixed application Origin
-   (`app://rallywithai`). iOS `URLSession` does not send `Origin` on a WebSocket
-   upgrade, so the native client sets that same allowlisted value on the
-   handshake request. Sideline's main process opens only the workspace
-   socket, from the `ws` client, and presents its own `app://sideline`
-   Origin rather than borrowing Rally's. Both become `Sec-WebSocket-Protocol`, the handshake header
+   (`app://rallywithai`). Both become `Sec-WebSocket-Protocol`, the handshake header
    available for browser-compatible ticket presentation. A ticket is a compact
    JWS — base64url joined by dots — which is a legal subprotocol token, so it
    needs no encoding.
@@ -410,7 +406,10 @@ only members. The connect snapshot, `list_workstreams`, `workspace_workstream_st
 frames, `channel_rails` and `set_presence` all ask whether this person may list
 the Channel, so a guest is sent nothing of an Organization-wide Channel they are
 not in, not even a tombstone, and foregrounding one closes the socket as it
-would a member's. A guest is sent no automations: the Sidekick library is a
+would a member's. `set_presence` also admits a Canvas id as the foreground
+conversation, when the viewer may open that Canvas by its audience
+([`canvases.md`](canvases.md#presence)); one they may not open is kept out of
+presence the same way. A guest is sent no automations: the Sidekick library is a
 member's.
 
 The sidebar keeps the first page, and the desktop keeps `list_workstreams`
@@ -502,19 +501,19 @@ or holds an active impersonation relationship to them. It is not a
 `workspace_sync` topic, because the topic enum is closed and a new value would
 fail every older desktop's subscribe answer; an unknown event `type` is ignored
 instead. It is not on the waterline or replayed, so a listener rereads on every
-subscribe answer. Three clients listen. The desktop's own workspace socket rereads the
+subscribe answer. Two clients listen. The desktop's own workspace socket rereads the
 conversation directory (`shared-navigation`) on it: Channel rows and Space
 pages already move on the same flip, but the directory says which conversation
 a Breakout-only Channel opens on, and without the reread a new grant's row
-opened on Main. Hosts with no workspace
-socket of their own — Sideline ([`impersonation.md`](impersonation.md)) and the
-lite browser client ([`browser-client.md`](browser-client.md)) — hold one
-through `watchWorkspaceReach` in `@rally/contracts/workspace-reach-watch`, which
-subscribes, discards the sidebar, and reports only this event and subscribe
-answers, with a diagnostic hook the host logs when it cannot connect. It is a
-filter over `watchWorkspaceSocket` in the same module, the transport alone,
-which the desktop's main process also uses to hold the Channel directory behind
-the menu bar ([`menu-bar.md`](menu-bar.md)).
+opened on Main. `watchWorkspaceReach` in
+`@rally/contracts/workspace-reach-watch` is the listen-only socket for a host
+with no workspace socket of its own: it subscribes, discards the sidebar, and
+reports only this event and subscribe answers, with a diagnostic hook the host
+logs when it cannot connect. No shipped host holds one since Sideline was
+removed; the browser client uses the full workspace socket. It is a filter
+over `watchWorkspaceSocket` in the same module, the transport alone, which the
+desktop's main process uses to hold the Channel directory behind the menu bar
+([`menu-bar.md`](menu-bar.md)).
 
 After a plan change, WorkspaceDO sends `workspace_usage`, the new usage meter,
 to every member socket, outside the waterline and never replayed.
@@ -532,7 +531,18 @@ trip for the rare one is the way round that suits the p95; the reverse would put
 a debug preference in everyone's connect. The automations and notes do not vary
 by it at all.
 
-Neither list has a REST fetcher behind it any more. WorkspaceDO re-sends the
+A third list, each viewer's Canvases, rides the same machinery on its own
+event, `workspace_canvas_list`, with `canvases` as an optional key of the
+subscribe payload's sidebar and its own `canvases` waterline in
+`workspace_sidebar_list_state`. It is a separate event type rather than a third
+`workspace_sidebar_list` discriminator value because a released client fails a
+discriminator value it does not know and ignores an event type it does not
+know. A Canvas row, its participants, its Chat's latest message or who is in
+it now advance that waterline and push to every socket; one person's read or
+pins push to that person alone. [`canvases.md`](canvases.md#the-canvas-list)
+owns its rows.
+
+Neither of the first two lists has a REST fetcher behind it any more. WorkspaceDO re-sends the
 affected list whole as `workspace_sidebar_list` whenever it writes one of their
 rows, so the batch is the only load and the push is the only refresh — which is
 also why *every* first page is a batch, not just the cold one: a reconnect or a
@@ -557,12 +567,15 @@ path never saw them, and a sidebar row's next-run time stayed stale until
 something unrelated refetched the list.
 
 The event carries the whole list and a waterline for that list, monotonic within
-WorkspaceDO and advanced inside the transaction of the write that earned it. Two
-counters rather than one, because the lists change independently and one counter
-would let a note write hide an automation update. The opening batch carries the
-same two numbers, so the batch and every later push land in one client receiver
-that applies only a strictly greater version — `sidebar-list-store.ts` — rather
-than two handlers each trusting arrival order. What the lists do *not* carry is a
+WorkspaceDO and advanced inside the transaction of the write that earned it. A
+counter per list rather than one, because the lists change independently and one
+counter would let a note write hide an automation update. The opening batch
+carries the same numbers, so the batch and every later push land in one client
+receiver that applies only a strictly greater version — `sidebar-list-store.ts`
+— rather than handlers each trusting arrival order. A push therefore always
+advances its list's waterline, even when only a derived field such as a Canvas
+row's presence moved: one sent at the waterline the client already holds is
+dropped. What the lists do *not* carry is a
 version per row: unlike a work-stream row, which is assembled from child objects
 over an unordered Queue and needs one per field, the list is the unit here, and
 a row the viewer can no longer see is expressed by its absence, so archive and
@@ -1015,6 +1028,33 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive. Already-open private-child sockets additionally check the versioned local archive mirror; there is no per-command parent RPC. See [work-stream durable objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-11-07 — A Canvas's Chat is a conversation feed with ticket kind `canvas`
+
+**What changed:** A conversation ticket's `pk` may be `canvas`, and
+`verifySocketTicket` accepts it. The route admits a Canvas reader by the
+Canvas's audience and seats them in the Chat before minting, as it does for a
+Sidekick's conversation. The workspace socket carries each viewer's Canvas
+list: `canvases` on the subscribe payload's sidebar and a
+`workspace_canvas_list` push; `set_presence` admits a Canvas the viewer may
+open as its foreground conversation.
+
+**Why:** A Canvas's Chat is an ordinary conversation object (the Canvases and
+Sidekicks decision log), so it opens on the same feed socket. The list is its
+own event type because a released client fails a `workspace_sidebar_list`
+discriminator value it does not know and ignores an event type it does not
+know.
+
+**Consequences:** The conversation object refuses a ticket whose kind
+disagrees with its root row, so a Canvas id cannot be opened as a Thread. A
+new sidebar list goes on its own event type, never as a new discriminator
+value of an existing one.
+
+### 2026-11-06 — The iOS client is deleted
+
+The native client that set `app://rallywithai` on its own handshake and kept
+opening the retired control socket is gone; the control socket now serves only
+installed desktops, and its removal is a later phase of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
 
 ### 2026-10-16 — The dictation lease is held by the open socket, not by its frames
 

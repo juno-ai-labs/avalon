@@ -75,7 +75,7 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
 Human replies have their own `newMessages` delivery setting, defaulting to push
 independently of explicit mentions and Rally completions.
 
-The desktop and browser renderers honour the preference. iOS does not yet. A new
+The desktop and browser renderers honour the preference. A new
 display preference is a column in `member_preferences`, a field in
 `MemberPreferencesSchema` with a default, and a setting definition. A new kind
 is a value in `NotificationKindSchema` with a default in

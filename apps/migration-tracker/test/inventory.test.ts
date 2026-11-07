@@ -34,9 +34,9 @@ function namespaceListing(): unknown {
     result: [
       {
         id: "ns-1",
-        name: "avalon-api-global-SubstreamAgent",
+        name: "avalon-api-global-AgentLoopDO",
         script: "avalon-api-global",
-        class: "SubstreamAgent",
+        class: "AgentLoopDO",
         use_sqlite: true,
       },
     ],
@@ -239,7 +239,7 @@ describe("sweepInventory", () => {
             body: {
               success: true,
               result: [
-                { id: "ns-1", script: "avalon-api-global", class: "SubstreamAgent" },
+                { id: "ns-1", script: "avalon-api-global", class: "AgentLoopDO" },
                 { script: "avalon-api-global", class: "MysteryAgent" },
               ],
             },

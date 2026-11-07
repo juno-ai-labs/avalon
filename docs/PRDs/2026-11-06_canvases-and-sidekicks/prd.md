@@ -70,10 +70,11 @@ See [design.html](design.html) for every screen in light and dark.
 - **Canvases home.** Title, New Canvas, search, filter chips (Everyone, Made by
   me, Shared with me, From Sidekicks), a Live now group, then Recent.
 - **Canvas open.** The header pill names the Canvas; to its right are the
-  people present, Share and a menu. The Canvas fills the pane. The right panel
-  has two tabs: Chat (the Canvas's conversation with Rally, open to everyone in
-  it, where a quoted selection travels with the message) and Comments (the
-  current artifact annotations). Rally's pending edit shimmers where it lands.
+  people present, Share and a menu. The conversation fills the main pane, open
+  to everyone in the Canvas, and the artifact sits in the right panel once one
+  exists, with its version. A quoted selection travels with a message, and
+  comments are the artifact annotations people drop, arriving in the
+  conversation as today. Rally changes the artifact by publishing a version.
 - **Sidekicks sidebar.** Needs input, then Pinned, then all Sidekicks. Rows
   show the hexagon mark and current state (working, next run, paused). "Needs
   input" means the Sidekick is missing information only a person has; it never
@@ -81,9 +82,11 @@ See [design.html](design.html) for every screen in light and dark.
 - **Sidekicks home.** Today's library, moved into the main window, as rows with
   status, who it is shared with, and when it next wakes.
 - **Sidekick open.** One shared conversation, with runs as collapsed rows and
-  Canvases as cards. The details column keeps today's Sidekick page (status,
-  Pause, delegation, schedule) and adds triggers, tools and the Canvases it
-  writes to.
+  Canvases as cards. People talk to each other there; a message addressed to
+  the Sidekick starts a run, whose row carries the reply. Managers edit the
+  Sidekick in the same conversation through the wizard, as today. The details
+  column keeps today's Sidekick page (status, Pause, delegation, schedule) and
+  adds triggers, tools and the Canvases it writes to.
 
 ### States
 
@@ -136,7 +139,241 @@ The brief needs its own update once this PRD is approved.
 
 ## Decision log
 
-None yet.
+The implementation plan written against these decisions is
+[plan.md](plan.md).
+
+### 2026-11-06 — Existing Threads, Breakouts and Channels are deleted
+
+**Decided:** At cutover, every Thread, Breakout and Channel is deleted through
+the workspace-retirement walk, object by object. No read-only mode, export or
+conversion into Canvases.
+
+**Why:** The product owner's call on open question 1. The old product drew no
+market interest, and keeping its data reachable means keeping its readers
+deployed.
+
+**Changes:** Open question 1 closes. The Rollout section's no-flag default now
+holds. Deletion is irreversible, so it runs as a guarded operator operation
+after the readers are gone.
+
+### 2026-11-06 — A Canvas has its own participant list
+
+**Decided:** A Canvas is visible to its creator by default. The creator can add
+participants, including guests, or open it to the whole Organization. The
+public per-artifact origin keeps its current rules.
+
+**Why:** The product owner's call on the first half of open question 2. Sharing
+is per Canvas, with no grouping layer (non-goal 2).
+
+**Changes:** Open question 2's first half closes. The Security and trust model's
+first boundary is now decided.
+
+### 2026-11-06 — A shared Sidekick uses delegate access only for its own runs
+
+**Decided:** Anyone a Sidekick is shared with can talk to it. Delegate access is
+used for runs its triggers start or that a delegate asks for. A request from a
+person who is not a delegate runs under that person's own access, and a tool
+that would need a delegate is refused with a named reason.
+
+**Why:** The product owner's call on the second half of open question 2. A
+person must not read, through the Sidekick, what they cannot read themselves.
+
+**Changes:** Open question 2 closes. The Security and trust model's second
+boundary is now decided.
+
+### 2026-11-06 — Editing stays as it is; live co-editing is out of scope
+
+**Decided:** Rally changes a Canvas by republishing it, as it does today, and
+people comment through the existing annotations. Several people editing one
+Canvas at once, live cursors and selections, in-place typed edit tools and the
+pending-edit shimmer are not built.
+
+**Why:** The product owner's call. The two modes already exist in the codebase
+and are being pulled to the front; the collaboration layer the Summary names as
+the larger half is the one part that does not exist, and the commenting feature
+covers working together on a Canvas for now.
+
+**Changes:** Goal 4 narrows to presence: people see who is in a Canvas. The
+Product behavior for an open Canvas loses cursors and the shimmer. The Agent
+behavior clause "republishing a whole directory is not how a Canvas changes"
+is withdrawn; republishing is how a Canvas changes, and each version is
+attributed to Rally. The tool contract the build PRD was to hold is the
+existing `publish_resource`, scoped to a Canvas.
+
+### 2026-11-06 — Connector ingress stops creating conversations
+
+**Decided:** A Slack mention of Rally and inbound email no longer create a
+conversation. Slack and email remain Sidekick triggers and delivery, and a
+Slack reply still continues the Sidekick run it answers. Routing suggestions and
+Suggested Work are deleted. Digests are deleted. Push notifications stay for
+mentions in a Canvas Chat or Sidekick conversation, "Needs input" and finished
+runs.
+
+**Why:** The product owner's call on open question 3 and the ingress paths the
+survey found. Routing suggestions were retired on 2026-08-30 and Suggested Work
+has rendered nothing since 2026-09-11; both only ever created Threads.
+
+**Changes:** Open question 3 closes. The Activity-derived clauses of the brief's
+contract are removed rather than relocated.
+
+### 2026-11-06 — A Canvas is any generated artifact, not only a live site
+
+**Decided:** Every artifact Rally generates is a Canvas: documents,
+spreadsheets, images, PDFs, archives and live sites. A Canvas is one resource
+with versions and its own Chat; a site Canvas also has its per-artifact origin.
+
+**Why:** The product owner's call. The Summary and the "What each feature
+becomes" table read as if only live web artifacts became Canvases, which would
+leave every other generated file with no home.
+
+**Changes:** The "Artifacts section, live web artifacts, annotations" row of
+that table covers all artifacts. The Canvas viewer is chosen by kind, reusing
+the existing previews. Annotations already work across these kinds.
+
+### 2026-11-06 — A Canvas is identified by its conversation and starts empty
+
+**Decided:** A Canvas's id is the id of its own conversation (the agent loop's
+parent coordinate), not an artifact or resource id. The artifacts a Canvas
+generates hang off that conversation, one today and possibly several later. A
+new Canvas has no artifacts; the first publish from its Chat creates the first
+one as version 1.
+
+**Why:** The product owner's call, after the plan first keyed a Canvas by its
+resource and started it with a synthetic empty document. A resource version is
+a pointer snapshot with provenance, and an empty file nobody made has none. The
+conversation is the one thing that exists from the moment a Canvas is created,
+and keying on it leaves room for one Canvas to produce many artifacts.
+
+**Changes:** Nothing in the agreed scope. The artifact-to-conversation link
+that exists today keeps its role, with the Canvas in the place a Thread held.
+
+### 2026-11-06 — An open Canvas reuses the conversation layout
+
+**Decided:** Opening a Canvas shows its conversation in the main pane and, once
+an artifact exists, that artifact in the right panel, the way a Thread shows a
+generated artifact today. Comments stay annotations in the conversation.
+
+**Why:** The product owner's call. The layout, the artifact panel and the
+annotation flow already exist for Threads; the mockup's artifact-first pane
+with Chat and Comments tabs would have been the one new client primitive in the
+pivot.
+
+**Changes:** The Product behavior for "Canvas open" changes, and section 2 and
+the dark frame in section 5 of [design.html](design.html) were redrawn the same
+day: transcript in the main pane, artifact in the right panel with its version,
+no cursors or pending-edit shimmer. The header pill, people present, Share and
+the menu stay as drawn.
+
+### 2026-11-06 — The shared Sidekick conversation keeps the wizard and run separation
+
+**Decided:** In a Sidekick's shared conversation, a message addressed to the
+Sidekick starts a run under its definition, the same path a manual trigger
+takes, and the run's row carries its reply. Managers keep editing the Sidekick
+through the wizard in that conversation. The conversation itself never runs the
+Sidekick's definition directly.
+
+**Why:** The product owner's call. Today's split between the authoring
+conversation and runs is what makes a run auditable and delegatable; collapsing
+them would make the conversation's loop act with delegate access on any
+message.
+
+**Changes:** The Product behavior for "Sidekick open" and the prose of section
+4 of [design.html](design.html) now say so. The frames are unchanged.
+
+### 2026-11-07 — Administrators can open what they manage; a Sidekick's Canvas reads the Sidekick's audience live
+
+**Decided:** An Organization's owners and administrators can open every
+Canvas, since they manage every Canvas's audience and cannot manage what they
+cannot see. A Canvas a Sidekick writes admits the Sidekick's audience as it
+stands, read live from the Sidekick, plus whoever its managers add to the
+Canvas itself; nothing copies the Sidekick's list into the Canvas.
+
+**Why:** The first build refused an administrator a private Canvas, so a
+creator leaving the company stranded their Canvases. The first build also
+copied the Sidekick's audience at creation and read it live, two sources of
+truth that disagreed as soon as either list changed. Reading it live stores
+nothing twice and keeps a Sidekick's Canvases open to whoever joins the
+Sidekick later.
+
+**Changes:** Plan steps A-6 and A-7. The earlier entry's "starts out open to
+the people the Sidekick is shared with" means this live rule.
+
+### 2026-11-07 — Who manages a Canvas's participants, and who can open a Sidekick's Canvas
+
+**Decided:** A Canvas's creator, and the Organization's owners and
+administrators, manage who can open it: add people, invite guests, or open
+it to the Organization. Other participants read and take part but do not
+change the audience. A Canvas a Sidekick makes starts out open to the people
+the Sidekick is shared with, and the Sidekick's managers manage its audience
+from then on.
+
+**Why:** The help center had to say who can add people and found no decision.
+Goal 6 needs a Sidekick's Canvas reachable from the Sidekick's conversation by
+everyone in it, which a creator-only default would break. Keeping audience
+changes with the creator and administrators matches the roles the product
+already has.
+
+**Changes:** Plan steps A-6 (participant management) and A-9 (a Sidekick's
+Canvas inherits the Sidekick's audience). The help center's
+who-can-see-what and where-results-go pages say the same.
+
+### 2026-11-07 — A manager marks a wizard edit explicitly
+
+**Decided:** In a Sidekick's shared conversation, every message addressed to
+the Sidekick starts a run, from a manager as much as from anyone else. A
+manager edits the Sidekick by marking a message as a wizard edit with an
+explicit intent carried on the message; the server accepts that intent only
+from a manager. Nothing infers which of the two a manager meant.
+
+**Why:** The first build of the routing sent every manager message to the
+wizard, so a manager could never ask the Sidekick to do work from its own
+conversation. Inferring wizard-versus-run from the text would be a new
+classifier with its own failure mode; an explicit mark is cheaper, faster and
+cannot misroute.
+
+**Changes:** Plan step A-1 and the composer in step A-13 (a wizard-edit
+affordance for managers). The wizard and run separation from the earlier
+entry stands.
+
+### 2026-11-06 — Canvas conversations stay in the conversation object, which is renamed
+
+**Decided:** A Canvas's conversation is an ordinary conversation object, the
+class today called `SubstreamAgent`, hosted in WorkspaceDO by one hosting
+primitive shared with Sidekicks. The class is renamed `AgentLoopDO`; no new
+Durable Object is added.
+
+**Why:** The product owner's call. The object already hosts every kind of
+conversation; the name describes a Breakout that no longer exists.
+
+**Changes:** Nothing in the agreed scope. The rename is a `renamed_classes`
+migration, as the earlier `WorkstreamRoom` to `SubstreamAgent` rename was.
+
+### 2026-11-06 — Transcripts are dumped to R2 before Threads are retired
+
+**Decided:** Before any Thread or Breakout is retired, its transcript is written
+to R2 as text by a one-off operator operation. The dump is for operators, not a
+product surface.
+
+**Why:** Retirement is irreversible and the product owner chose deletion; the
+dump costs one pass the retirement walk already makes.
+
+**Changes:** Adds one step before deletion. Slack mentions and the browser
+session import stay deleted; a Canvas conversation could have hosted them, and
+the product owner chose not to.
+
+### 2026-11-06 — iOS, Sideline, browser import and Thread-scoped Sidekicks
+
+**Decided:** All iOS code is deleted rather than left to follow later. Sideline,
+the represented-messaging app whose destinations are Threads, is deleted. The
+ChatGPT and Claude session import is deleted. Thread-scoped Sidekicks convert to
+Organization scope. Help center and site copy change in the same train as the
+code.
+
+**Why:** The product owner's call. Each either targets a Thread or is a
+prototype with no home after the pivot.
+
+**Changes:** Non-goal 1 (iOS deferred) becomes a deletion. The rollout is one
+cutover train with no flag.
 
 ## Key design decisions
 
@@ -197,10 +434,11 @@ adds the supersession note to its `state.md`.
 
 ## Open questions
 
-1. **What happens to existing Threads, Breakouts and their transcripts?** Keep
-   them read-only, export them, or convert them into Canvases. **Blocks the
-   build**, because the answer decides whether shipping deletes user data.
-2. **Who can open a Canvas, and whose access a shared Sidekick uses.** See
-   Security and trust model. **Blocks the build.**
-3. **Where connector routing suggestions go** once there are no streams to
-   suggest routing into.
+All three were answered on 2026-11-06; see the decision log.
+
+1. **What happens to existing Threads, Breakouts and their transcripts?**
+   Deleted.
+2. **Who can open a Canvas, and whose access a shared Sidekick uses.** A
+   per-Canvas participant list, creator-only by default; a shared Sidekick uses
+   delegate access only for its own runs.
+3. **Where connector routing suggestions go.** Nowhere; they are deleted.

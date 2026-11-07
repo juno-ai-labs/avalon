@@ -1,7 +1,7 @@
 # Architecture
 
-Rally is a pnpm TypeScript monorepo with an Electron desktop client, a native
-SwiftUI iOS client, a lite browser client, a Hono API Worker
+Rally is a pnpm TypeScript monorepo with an Electron desktop client, a lite
+browser client, a Hono API Worker
 across configured deployments,
 internal operator Workers, and shared packages that hold every contract and rule
 the surfaces agree on. This document is the map of how those surfaces fit
@@ -18,8 +18,6 @@ and the map points at it rather than absorbing it.
 ```text
 apps/
   desktop/                 Electron main, preload, React renderer, packaging
-  sideline/                Internal represented-messaging Electron host
-  ios/                     Native SwiftUI iOS client (TestFlight). See ios-client.md
   api/                     Hono Worker, routes, services, DOs, Workflows, Queue
   ace/                     Access-protected internal administration Worker
 packages/
@@ -34,9 +32,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item, main-owned telemetry/crash handling, and raw Node transport for work-stream socket swarms. |
-| `apps/ios` | Native SwiftUI iPhone/iPad client: Keychain sessions, Google PKCE through `ASWebAuthenticationSession`, conversation feed and workspace directory sockets, TestFlight archive. Owned by [`ios-client.md`](ios-client.md). |
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
-| `apps/sideline` | Internal Electron host over `@rally/ui`: dedicated PKCE callback, encrypted operator session, relationship-filtered catalog, represented new-message request, and native handoff to Rally. Owned by [`impersonation.md`](impersonation.md). |
 | `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. Keeps a local cache of the directory and each opened conversation so a space, a stream, and a substream paint before their socket answers; [`local-cache.md`](local-cache.md) owns it. |
 | `apps/browser` | Lite browser host, static SPA email sign-in and same-origin regional API forwarding. Shared collaboration uses standalone visible conversation sockets. Owned by [`browser-client.md`](browser-client.md). |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
@@ -56,10 +52,7 @@ docs/                      Product, architecture, security, setup, runbooks
 
 ### Core surfaces
 
-1. **`apps/ios`** is the native SwiftUI application. It is a conversation client
-   on the same HTTP and socket contracts as desktop, with Keychain sessions and
-   no renderer to isolate. [`ios-client.md`](ios-client.md) owns it.
-2. **`apps/desktop`** is the Electron application. Its main process owns main and
+1. **`apps/desktop`** is the Electron application. Its main process owns main and
    Settings window lifecycle, custom-protocol login completion, encrypted session
    storage, file selection, and a minimal validated IPC bridge. Both sandboxed
    React surfaces use a packaged CommonJS preload and talk only to the configured
@@ -93,12 +86,7 @@ docs/                      Product, architecture, security, setup, runbooks
    over that bridge. A renderer combines them with its own window focus and
    active work-stream route before reporting ephemeral presence to WorkspaceDO;
    pooled work-stream sockets are never treated as attention.
-3. **`apps/sideline`** is the internal Electron host for the first
-   impersonation-aware surface. It has its own custom authentication scheme,
-   keeps operator credentials in its main process, exposes no general transport
-   to its renderer, and stops after the direct standard-message response.
-   [`impersonation.md`](impersonation.md) owns its platform boundary.
-4. **`apps/api`** is a Hono application deployed as three statically imported
+3. **`apps/api`** is a Hono application deployed as three statically imported
    Cloudflare Worker graphs in each of configured deployments: the regional API plus
    private document-processing and Terminal-provider services reached through
    typed Service Bindings. Global adds a private telemetry-delivery graph and a
@@ -107,10 +95,10 @@ docs/                      Product, architecture, security, setup, runbooks
    production and consumption, Workflows, scheduling, connector execution, and
    the OpenRouter harness. The private services isolate heavyweight stateless
    SDKs without request-time module loading or another product authority.
-5. **Shared packages** contain runtime-validated contracts, database schema and
+4. **Shared packages** contain runtime-validated contracts, database schema and
    repositories, connector adapters, agent-loop code, UI primitives, and test
    fixtures. Business rules live here or in services, never in route handlers.
-6. **Internal operator Workers** sit behind Cloudflare Access and verify the
+5. **Internal operator Workers** sit behind Cloudflare Access and verify the
    signed Access assertion again in application code. Ace manages product flags;
    the migration tracker manages Durable Object schema state. Neither is a
    privileged route inside the customer API.
@@ -713,6 +701,15 @@ Telemetry IPC is a closed named surface, local files are owner-only and bounded,
 and raw dumps remain in a dedicated regional bucket behind audited opaque-ID
 access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
+
+### 2026-11-06 — The native iOS client is deleted
+
+**What changed:** `apps/ios` and `ios-client.md` are gone; the deployment
+surfaces are the Electron desktop and the browser SPA. **Why:** the Canvases and
+Sidekicks pivot deletes iOS rather than carrying a prototype client forward
+([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)). Server mechanisms kept
+only for iOS, such as `platform: "ios"` push registration, are removed in a
+later phase.
 
 ### 2026-09-17 — A lite browser host reuses regional identity
 

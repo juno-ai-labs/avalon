@@ -13,15 +13,12 @@ import {
   resourceDirectionForRelationship,
   ResourceRelationshipTypeSchema,
   WorkstreamAppearanceSchema,
-  type AutomationOwningThread,
   type AutomationSummary,
   type ChannelRail,
-  type ChannelRailOwnedSidekick,
   type ChannelRailResource,
   type SidekickAttachment,
   type WorkspaceChannelRailsEvent,
   type WorkstreamAppearance,
-  type WorkstreamAutomationSummary,
 } from "@rally/contracts";
 import { truncateUtf16Safe } from "@rally/contracts/text";
 import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
@@ -40,8 +37,7 @@ export interface AutomationDirectoryRow extends Record<string, SqlStorageValue> 
   appearance_json: string | null;
   automation_id: string;
   lifecycle: "draft" | "active" | "paused";
-  scope: "personal" | "workspace" | "workstream";
-  owning_workstream_id: string | null;
+  scope: "personal" | "workspace";
   title: string;
   description: string;
   next_run_at: number | null;
@@ -68,42 +64,17 @@ function storedAppearance(row: AutomationDirectoryRow, report: InvalidAppearance
   return parsedAppearance(row.appearance_json, "automation_appearance", (code) => report(row.automation_id, code));
 }
 
-/** Told which Thread's stored appearance no longer parses, and why; the Thread is named without it. */
-export type InvalidThreadAppearanceReport = (workstreamId: string, code: string) => void;
-
-/**
- * The Threads that own these Sidekicks, by id, in one read: each one's title
- * and the glyph it chose. An archived Thread is left out, as it is from every
- * participant read, so its Sidekick is labelled without a name rather than
- * with a link to a Thread that will not open.
- */
-export function owningThreads(
-  sql: Sql,
-  workstreamIds: readonly string[],
-  report: InvalidThreadAppearanceReport,
-): Map<string, AutomationOwningThread> {
-  const result = new Map<string, AutomationOwningThread>();
-  if (workstreamIds.length === 0) return result;
-  for (const row of sql.exec<{ workstream_id: string; title: string; appearance_json: string | null }>(
-    `SELECT workstream_id, title, appearance_json FROM channels
-      WHERE workstream_id IN (SELECT value FROM json_each(?)) AND archived_at IS NULL`,
-    JSON.stringify([...new Set(workstreamIds)]),
-  ).toArray()) {
-    const appearance = parsedAppearance(row.appearance_json, "thread_appearance", (code) => report(row.workstream_id, code));
-    result.set(row.workstream_id, {
-      id: row.workstream_id,
-      title: truncateUtf16Safe(row.title, 180),
-      ...(appearance ? { appearance } : {}),
-    });
-  }
-  return result;
-}
-
 /** A directory row as a summary; an appearance that no longer parses is left out and reported. */
 export function automationSummary(
-  row: AutomationDirectoryRow & { last_run_at?: number | null },
+  row: AutomationDirectoryRow & {
+    last_run_at?: number | null;
+    /** Rows on the `people` list (`AUTOMATION_AUDIENCE_SQL`); absent from a read that did not ask. */
+    shared_count?: number;
+    /** The viewer's read state of the shared conversation (`AUTOMATION_VIEWER_SQL`); sidebar reads only. */
+    unread?: number;
+    needs_input?: number;
+  },
   report: InvalidAppearanceReport,
-  owningThread: AutomationOwningThread | null = null,
 ): AutomationSummary {
   const appearance = storedAppearance(row, report);
   return {
@@ -114,71 +85,57 @@ export function automationSummary(
     description: row.description,
     emailAddress: null,
     scope: row.scope,
-    owningWorkstreamId: row.owning_workstream_id,
-    owningThread,
     status: row.lifecycle,
     nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
     lastRunAt: row.last_run_at == null ? null : new Date(row.last_run_at).toISOString(),
     updatedAt: new Date(row.projected_at).toISOString(),
+    ...(row.shared_count === undefined ? {} : {
+      audience: row.shared_count > 0 ? "people" as const : row.scope === "workspace" ? "workspace" as const : "personal" as const,
+    }),
+    ...(row.unread === undefined ? {} : { unread: row.unread === 1 }),
+    ...(row.needs_input === undefined ? {} : { needsInput: row.needs_input === 1 }),
   };
 }
+
+/** `shared_count` for `automationSummary`, over an `automation_directory` aliased `directory`. */
+export const AUTOMATION_AUDIENCE_SQL = `(SELECT COUNT(*) FROM sidekick_audience shared
+   WHERE shared.sidekick_id = directory.automation_id) AS shared_count`;
 
 /**
- * The automations each of these rooms owns, newest projection first, as the
- * REST rail read lists them. 250 per room is that read's existing bound.
+ * `unread` and `needs_input` for `automationSummary`, for the viewer bound to
+ * `?1`, over an `automation_directory` aliased `directory`.
+ *
+ * Unread is the shared conversation's own read state as it last reported it
+ * for this viewer (`sidekick_viewer_reads`) against its latest attention
+ * ordinal (its `directory_common` projection): a manual unread mark, or a
+ * message past what they saw. A viewer who has never opened the conversation
+ * has no read state there and reads as unread, as a Channel they have not
+ * opened is `unseen`; its author, who wrote it in that conversation, does not.
+ * Needs input is the delegation attention or the conversation waiting on input.
  */
-export function ownedAutomationSummaries(
-  sql: Sql,
-  workstreamIds: readonly string[],
-  report: InvalidAppearanceReport,
-): Map<string, WorkstreamAutomationSummary[]> {
-  const result = new Map<string, WorkstreamAutomationSummary[]>();
-  if (workstreamIds.length === 0) return result;
-  for (const row of sql.exec<AutomationDirectoryRow>(
-    `SELECT automation_id, loadable, appearance_json, lifecycle, scope, owning_workstream_id, title,
-            description, next_run_at, projected_at
-       FROM (
-         SELECT *, ROW_NUMBER() OVER (
-                  PARTITION BY owning_workstream_id ORDER BY projected_at DESC, automation_id
-                ) AS position
-           FROM automation_directory
-          WHERE owning_workstream_id IN (SELECT value FROM json_each(?)) AND lifecycle <> 'deleted'
-       )
-      WHERE position <= 250
-      ORDER BY owning_workstream_id, projected_at DESC, automation_id`,
-    JSON.stringify(workstreamIds),
-  ).toArray()) {
-    const summary = automationSummary(row, report);
-    const list = result.get(row.owning_workstream_id!) ?? [];
-    list.push({
-      id: summary.id,
-      loadable: summary.loadable,
-      ...(summary.appearance ? { appearance: summary.appearance } : {}),
-      name: summary.name,
-      description: summary.description,
-      emailAddress: summary.emailAddress,
-      status: summary.status,
-      nextRunAt: summary.nextRunAt,
-      lastRunAt: summary.lastRunAt,
-      updatedAt: summary.updatedAt,
-    });
-    result.set(row.owning_workstream_id!, list);
-  }
-  return result;
-}
+export const AUTOMATION_VIEWER_SQL = `CASE
+     WHEN reads.user_id IS NULL THEN CASE WHEN directory.author_user_id = ?1 THEN 0 ELSE 1 END
+     WHEN reads.manual_unread_from_ordinal IS NOT NULL THEN 1
+     WHEN COALESCE(json_extract(main.effect_json, '$.latestAttentionOrdinal'), 0) > reads.seen_attention_ordinal THEN 1
+     ELSE 0 END AS unread,
+   CASE WHEN directory.delegation_attention_code IS NOT NULL
+          OR json_extract(main.effect_json, '$.state') = 'needs_input' THEN 1 ELSE 0 END AS needs_input`;
 
-/** What the rail shows of an owned Sidekick: no run times, which move on every run. */
-function railOwnedSidekick(summary: WorkstreamAutomationSummary): ChannelRailOwnedSidekick {
-  return {
-    id: summary.id,
-    loadable: summary.loadable,
-    ...(summary.appearance ? { appearance: summary.appearance } : {}),
-    name: summary.name,
-    description: summary.description,
-    emailAddress: summary.emailAddress,
-    status: summary.status,
-  };
-}
+/** The joins `AUTOMATION_VIEWER_SQL` reads, for the viewer bound to `?1`. */
+export const AUTOMATION_VIEWER_JOINS = `LEFT JOIN sidekick_viewer_reads reads
+     ON reads.sidekick_id = directory.automation_id AND reads.user_id = ?1
+   LEFT JOIN sidekick_child_projections main
+     ON main.sidekick_id = directory.automation_id AND main.substream_id = '0'`;
+
+/**
+ * Whether the sidebar lists a Sidekick to the viewer bound to `?1`, in the
+ * Organization bound to `?2`, over an `automation_directory` aliased
+ * `directory`: the viewer's own, the Organization's, and those shared with them.
+ */
+export const SIDEBAR_SIDEKICK_LISTED_SQL = `directory.workspace_id = ?2 AND directory.lifecycle <> 'deleted'
+   AND (directory.scope = 'workspace' OR directory.author_user_id = ?1 OR directory.run_as_user_id = ?1
+     OR EXISTS (SELECT 1 FROM sidekick_audience audience
+                 WHERE audience.sidekick_id = directory.automation_id AND audience.user_id = ?1))`;
 
 /** Each Channel's Main participants at the Channel's generation, newest first. */
 export function channelParticipantIds(sql: Sql, workstreamIds: readonly string[]): Map<string, string[]> {
@@ -208,7 +165,6 @@ interface SidekickRow extends Record<string, SqlStorageValue> {
   run_as_user_id: string | null;
   lifecycle: string;
   scope: string;
-  owning_workstream_id: string | null;
   title: string;
   description: string;
   loadable: number | null;
@@ -227,7 +183,6 @@ function sidekickShown(row: SidekickRow, channel: RailChannel, participants: rea
     scope: row.scope,
     authorUserId: row.author_user_id,
     runAsUserId: row.run_as_user_id,
-    owningWorkstreamId: row.owning_workstream_id,
   }, {
     principalUserId: viewerId,
     conversationParentId: channel.workstreamId,
@@ -308,24 +263,12 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
   const visibleJson = JSON.stringify(visibleIds);
 
   const participants = channelParticipantIds(sql, visibleIds);
-  // The REST read answers only a member who is a participant of the room.
-  const ownedFor = request.accessClass === "member"
-    ? visibleIds.filter((id) => participants.get(id)?.includes(request.userId) === true)
-    : [];
-  const owned = ownedAutomationSummaries(sql, ownedFor, request.onInvalidAppearance);
 
-  // Recommended is the explicit recommendations, then everything the room
-  // owns, as `WorkstreamService.recommendedSidekicks` builds it.
+  // Recommended is the explicit recommendations; a room owns no Sidekick.
   const explicit = groupIds(sql.exec<{ workstream_id: string; sidekick_id: string }>(
     `SELECT parent_id AS workstream_id, sidekick_id FROM parent_sidekicks
       WHERE parent_id IN (SELECT value FROM json_each(?))
       ORDER BY parent_id, attached_at, sidekick_id`,
-    visibleJson,
-  ).toArray());
-  const ownedIds = groupIds(sql.exec<{ workstream_id: string; sidekick_id: string }>(
-    `SELECT owning_workstream_id AS workstream_id, automation_id AS sidekick_id FROM automation_directory
-      WHERE owning_workstream_id IN (SELECT value FROM json_each(?)) AND lifecycle <> 'deleted'
-      ORDER BY owning_workstream_id, automation_id`,
     visibleJson,
   ).toArray());
   const reported = visibleIds.filter((id) => channels.get(id)!.reported);
@@ -336,11 +279,11 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
     JSON.stringify(reported),
   ).toArray());
   const sidekickIds = new Set<string>();
-  for (const ids of [...explicit.values(), ...ownedIds.values(), ...attachedIds.values()]) {
+  for (const ids of [...explicit.values(), ...attachedIds.values()]) {
     for (const id of ids) sidekickIds.add(id);
   }
   const sidekicks = new Map(sidekickIds.size === 0 ? [] : sql.exec<SidekickRow>(
-    `SELECT automation_id, author_user_id, run_as_user_id, lifecycle, scope, owning_workstream_id, title, description, loadable
+    `SELECT automation_id, author_user_id, run_as_user_id, lifecycle, scope, title, description, loadable
        FROM automation_directory WHERE automation_id IN (SELECT value FROM json_each(?))`,
     JSON.stringify([...sidekickIds]),
   ).toArray().map((row) => [row.automation_id, row]));
@@ -395,8 +338,9 @@ export function channelRails(sql: Sql, request: ChannelRailsRequest): ChannelRai
       railWaterline: channel.railWaterline,
       participantUserIds: people as ChannelRail["participantUserIds"],
       sidekicks: {
-        owned: (owned.get(workstreamId) ?? []).map(railOwnedSidekick),
-        recommended: summaries([...explicit.get(workstreamId) ?? [], ...ownedIds.get(workstreamId) ?? []]),
+        // Released clients parse the list; no room owns a Sidekick any more.
+        owned: [],
+        recommended: summaries(explicit.get(workstreamId) ?? []),
         ...(channel.reported ? { attached: summaries(attachedIds.get(workstreamId) ?? []) } : {}),
       },
       resources: resources.get(workstreamId) ?? [],

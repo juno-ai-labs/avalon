@@ -145,6 +145,7 @@ const EXPECTED_TABLES = [
   "runs",
   "sidekick_attachments",
   "sidekick_execution_skills",
+  "sidekick_run_rows",
   "sidekick_skill_names",
   "substream_agent_identity",
   "substream_context_captures",
@@ -1077,6 +1078,70 @@ describe("the Workstream Durable Object relational schema", () => {
       expect(database.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
       expect(database.prepare(
         `SELECT name FROM sqlite_master WHERE name = '_parent_kind_copy_workstream'`,
+      ).all()).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("upgrades a populated v82 root to the canvas parent kind without losing its row, columns or triggers", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 82),
+        component: "substream_agent_do",
+        workerVersionId: "worker-v82",
+        now: 1_000,
+      });
+      database.prepare(
+        `INSERT INTO workstream
+           (id, workstream_key, parent_workspace_key, region, authority_mode,
+            authority_generation, title, description, scope, exact_state,
+            state_reason_code, next_sequence_number, next_attention_ordinal,
+            authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
+            deletion_epoch, run_revision, created_at, last_people_activity_at,
+            state_changed_at, updated_at, parent_kind, appearance_json, model_override,
+            agent_profile, channel_color_revision, archive_generation)
+         VALUES (1, ?, ?, 'global', 'authoritative', 4, 'Launch', 'About the launch',
+                 'personal', 'idle', 'test', 7, 3, 2, 1, 0, 1, 0, 1,
+                 1000, 1100, 1200, 1300, 'automation', '{"icon":"briefcase"}', 'sonnet',
+                 'researcher', 5, 2)`,
+      ).run(WORKSTREAM_ID, WORKSPACE_ID);
+      database.prepare(
+        `INSERT INTO content_audience_fences (fence_id, audience_json, created_at)
+         VALUES ('fence-1', '{"scope":"users","userIds":["${RECIPIENT_ID}"]}', 1000)`,
+      ).run();
+
+      applyWorkstreamObjectSchema(storage, "worker-v83", 2_000);
+
+      // The columns added after version 66 crossed the swap with the rest.
+      expect(database.prepare(`SELECT * FROM workstream WHERE id = 1`).get()).toMatchObject({
+        workstream_key: WORKSTREAM_ID, title: "Launch", next_sequence_number: 7, parent_kind: "automation",
+        model_override: "sonnet", agent_profile: "researcher", channel_color_revision: 5, archive_generation: 2,
+      });
+      database.prepare(`UPDATE workstream SET parent_kind = 'canvas' WHERE id = 1`).run();
+      expect(database.prepare(`SELECT parent_kind FROM workstream WHERE id = 1`).get()).toEqual({ parent_kind: "canvas" });
+      expect(() => database.prepare(`UPDATE workstream SET parent_kind = 'project' WHERE id = 1`).run()).toThrow();
+      expect(database.prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'workstream' ORDER BY name`,
+      ).all()).toEqual([
+        { name: "authorization_workstream_delete" },
+        { name: "authorization_workstream_insert" },
+        { name: "authorization_workstream_update" },
+        { name: "conversation_view_generation" },
+        { name: "conversation_view_header_delete" },
+        { name: "conversation_view_header_insert" },
+        { name: "conversation_view_header_update" },
+        { name: "workstream_restricted_content_scope" },
+        { name: "workstream_search_display_update" },
+      ]);
+      expect(() => database.prepare(`UPDATE workstream SET scope = 'workspace' WHERE id = 1`).run())
+        .toThrow(/workstream_audience_restricted_content/u);
+      expect(database.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
+      expect(database.prepare(
+        `SELECT name FROM sqlite_master WHERE name = '_canvas_parent_kind_copy_workstream'`,
       ).all()).toEqual([]);
     } finally {
       database.close();

@@ -41,12 +41,13 @@ const RevisionSchema = z.number().int().nonnegative();
 
 /**
  * The conversation a call acts in: a Thread's Main (`substreamId` `"0"`), a
- * Breakout, a Sidekick's own conversation or run, or a Channel's own feed.
+ * Breakout, a Sidekick's own conversation or run, a Channel's own feed, or a
+ * Canvas's Chat, whose facts are the Canvas's (`canvas:<canvasId>`).
  * `memorySourceOf` renders it as the source string a fact stores, and
  * `memoryConversationKeyOf` as the key that names this one conversation.
  */
 export const MemoryConversationSchema = z.strictObject({
-  parentKind: z.enum(["workstream", "automation", "space"]),
+  parentKind: z.enum(["workstream", "automation", "space", "canvas"]),
   parentId: z.string().min(1),
   substreamId: z.string().min(1),
 });
@@ -62,6 +63,8 @@ export function memorySourceOf(conversation: MemoryConversation): string {
       return `sidekick:${conversation.parentId}`;
     case "space":
       return `space:${conversation.parentId}`;
+    case "canvas":
+      return `canvas:${conversation.parentId}`;
   }
 }
 

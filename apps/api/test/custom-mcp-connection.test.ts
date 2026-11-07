@@ -51,9 +51,9 @@ describe("custom MCP connections", () => {
       displayName: "Rally Engineering", scope: "workspace", serverUrl: SERVER_URL,
       requestHeaders: { "X-Api-Key": "secret-value" }, toolPolicy: "all_tools",
     });
-    const input = { ...catalogWorkflowInput(), parentKind: "automation" as const };
+    const input = { ...catalogWorkflowInput(), parentKind: "automation" as const, sidekickWizard: true as const };
     await workspace.instance.sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: input.parentId,
-      authorUserId: USER_ID, scope: "personal", owningWorkstreamId: null, authorityGeneration: 1 });
+      authorUserId: USER_ID, scope: "personal", authorityGeneration: 1 });
     const saved: AutomationDraft = {
       definitionVersion: 2, name: "Engineering", description: "Inspect Rally", overview: "Inspect Rally",
       instructions: "Inspect the selected Thread.", triggers: [{ type: "manual" }], requiredCapabilities: [],

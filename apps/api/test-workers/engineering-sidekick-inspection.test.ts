@@ -94,7 +94,6 @@ async function createSidekick(): Promise<void> {
     workspaceId: WORKSPACE_ID,
     authorUserId: AUTHOR_ID,
     scope: "personal",
-    owningWorkstreamId: null,
     automationId: SIDEKICK_ID,
   });
   // Its directory row is written in the Organization object by the create
@@ -161,7 +160,7 @@ describe("engineering inspection of a Sidekick", () => {
       value: {
         region: "global",
         workspaceId: WORKSPACE_ID,
-        items: [{ sidekickId: SIDEKICK_ID, lifecycle: "draft", scope: "personal", owningWorkstreamId: null }],
+        items: [{ sidekickId: SIDEKICK_ID, lifecycle: "draft", scope: "personal" }],
       },
     });
   });

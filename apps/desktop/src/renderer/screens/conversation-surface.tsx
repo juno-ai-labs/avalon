@@ -7,7 +7,6 @@ import { loadAnnotationPreview, readAnnotationVersion } from '../lib/annotation-
 import { AnnotationDraftProvider, useAnnotationDraft } from '../components/artifact-annotations';
 import { ScopeSharingPanel, useScopeInvitations } from "../components/scope-sharing-panel";
 import { EmailMentionContext, emailMentionDirectory, inviteeAsMember, NO_INVITEES, useWorkspaceInvitees } from "../lib/workspace-invitees";
-import { conversationSidekickMentions, SidekickMentionScope } from "../lib/sidekick-mentions";
 import { mentionLinksAsText } from "@rally/contracts/citations";
 import { useWorkspaceMembers } from "../lib/workspace-members";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
@@ -46,6 +45,7 @@ import {
   type SpaceSummary,
   type ConversationMergeResult,
   type ConversationSuggestion,
+  type SidekickMessageIntent,
   mergeResourceIds,
   suggestionTurnIsVisible,
 } from '@rally/contracts';
@@ -58,10 +58,9 @@ import { artifactPinActions, combineResourceActions } from '../lib/artifact-pin-
 import { copyArtifactLink } from '../lib/copy-workstream-link';
 import { breakoutResourceActions } from '../lib/breakout-resource-actions';
 import { ApiError, type MentionIdentity } from '../lib/api';
-import { useChannelRail } from '../lib/channel-rails';
 import { readDraftText, writeDraftText } from '../lib/draft-cache';
 import { IconCheck, IconChevronDown, IconCloudDownload, IconCornerDownRight, IconCornerUpLeft, IconLock } from '@tabler/icons-react';
-import { workstreamDraftKey } from '../lib/draft-keys';
+import { conversationAnnotationScope, conversationDraftKey, workstreamDraftKey } from '../lib/draft-keys';
 import { useSpaceDirectories } from '../lib/use-space-directories';
 import { useBrowserRailLinks } from '../lib/browser-rail-links';
 import { BreakoutTickBar, breakoutsByOrigin, orderBreakoutsForTicks, type BreakoutMark } from '@rally/ui/components/breakout-marks';
@@ -135,7 +134,6 @@ import {
 import { patchCachedWorkstreamViewerState } from '../lib/workstream-state-store';
 import { useOpenFirstWorkstream } from '../lib/workstream-landing';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, MessageMergedInto, Participant, PendingOpening, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
-import { workstreamSidekickRows, type SidekickRow, type SidekickSectionFailure } from '../components/sidekick-section';
 import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
 import { InspectorRail } from '../components/inspector-rail';
@@ -928,7 +926,7 @@ export function WorkstreamErrorState({
   description: string;
   onRetry: () => void;
   /** What could not be opened, for the title: a work stream or an automation. */
-  parentNoun?: 'channel' | 'automation';
+  parentNoun?: 'channel' | 'automation' | 'Canvas';
   workstreamId: string;
 }): React.JSX.Element {
   const copyWorkstreamId = (): void => {
@@ -953,11 +951,11 @@ export function WorkstreamErrorState({
       </div>
       <EmptyState
         action={<div className="empty-state-actions">
-          <ErrorNotice detailsLabel="Connection details" title={`${parentNoun === 'automation' ? 'Sidekick' : 'Thread'} could not be opened`}>{description}</ErrorNotice>
+          <ErrorNotice detailsLabel="Connection details" title={`${parentNoun === 'automation' ? 'Sidekick' : parentNoun === 'Canvas' ? 'Canvas' : 'Thread'} could not be opened`}>{description}</ErrorNotice>
           <Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>
         </div>}
         description="Try opening it again."
-        title={parentNoun === 'automation' ? 'Sidekick' : 'Thread'}
+        title={parentNoun === 'automation' ? 'Sidekick' : parentNoun === 'Canvas' ? 'Canvas' : 'Thread'}
       />
     </div>
   );
@@ -1001,7 +999,7 @@ export function highestVisibleAttentionSequence(
 /**
  * The acknowledgement one conversation owes, addressed to itself, or nothing.
  *
- * Every conversation keeps its own read waterline: a `SubstreamAgent` per
+ * Every conversation keeps its own read waterline: an `AgentLoopDO` per
  * substream, each with its own attention ordinals and its own
  * `member_attention` row. So the conversation on screen is always the one to
  * acknowledge, whether it is Main or a private child. This used to be a work
@@ -1115,10 +1113,6 @@ type ConversationPanel =
  */
 export interface ConversationHeaderContext {
   detail: WorkstreamDetail;
-  sidekicks?: SidekickRow[] | undefined;
-  sidekickFailure?: SidekickSectionFailure | undefined;
-  loadSidekickOptions: () => void;
-  refreshSidekicks: () => void;
   socketState: SocketState;
   presentUserIds: readonly string[];
   openParticipantDialog: () => void;
@@ -1373,10 +1367,19 @@ export interface ConversationSurfaceProps {
    * surface writing a Breakout from it — so each owns its own right panel.
    */
   paneKey?: string;
+  /**
+   * What every message sent from this surface is for, when the host says:
+   * `edit_sidekick` marks it for a Sidekick's wizard. The server routes an
+   * unmarked message in a Sidekick's conversation to a run.
+   */
+  messageIntent?: SidekickMessageIntent;
+  /** Entries the host adds to the composer's menu, after the surface's own. */
+  composerMenuActions?: readonly ComposerMenuAction[];
+  /** What the composer says while empty, when the host has something more specific to say. */
+  composerPlaceholder?: string;
+  /** Draw the feed without a composer: a run's own conversation, read from its Sidekick. */
+  readOnly?: boolean;
   renderSidebar?: (context: ConversationHeaderContext & {
-    /** This room's Sidekicks; `undefined` until both lists behind it answer. */
-    sidekicks: SidekickRow[] | undefined;
-    sidekickFailure: SidekickSectionFailure | undefined;
     focusTranscript: () => void;
     openArtifact: (id: string, returnFocus: HTMLElement) => void;
   }) => React.ReactNode;
@@ -1394,7 +1397,7 @@ export interface ConversationSurfaceProps {
  */
 export function ConversationSurface(props: ConversationSurfaceProps): React.JSX.Element {
   const { api, session } = useCollaborationSession();
-  return <AnnotationDraftProvider draftKey={workstreamDraftKey(session?.workspace?.region ?? 'global', session?.workspace?.id ?? 'unbound', props.parentId, props.substreamId)} scopeKey={`${props.parentId}:${props.substreamId}`} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal,annotation,mimeType) => readAnnotationVersion(api,id,version,signal,annotation,mimeType) : undefined} upload={api ? async (file) => (await api.uploadResource(file, crypto.randomUUID())).id : undefined}><ConversationSurfaceContent {...props} /></AnnotationDraftProvider>;
+  return <AnnotationDraftProvider draftKey={conversationDraftKey(session?.workspace?.region ?? 'global', session?.workspace?.id ?? 'unbound', props.parentKind, props.parentId, props.substreamId)} scopeKey={conversationAnnotationScope(props.parentKind, props.parentId, props.substreamId)} readResource={api ? (id) => api.getResource(id) : undefined} readResourceVersion={api ? (id,version,signal,annotation,mimeType) => readAnnotationVersion(api,id,version,signal,annotation,mimeType) : undefined} upload={api ? async (file) => (await api.uploadResource(file, crypto.randomUUID())).id : undefined}><ConversationSurfaceContent {...props} /></AnnotationDraftProvider>;
 }
 
 function ConversationSurfaceContent({
@@ -1423,13 +1426,17 @@ function ConversationSurfaceContent({
   paneKey,
   breakoutOrigin,
   parentCrumbs,
+  messageIntent,
+  composerMenuActions: hostMenuActions,
+  composerPlaceholder,
+  readOnly = false,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
   const parentDetailQueryKey = useMemo(() => workstreamDetailQueryKey(id, '0'), [id]);
   const transcriptQueryKey = useMemo(() => orderedTranscriptQueryKey(id, substreamId), [id, substreamId]);
   const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
-  const parentNoun = parentKind === 'automation' ? 'automation' : 'channel';
+  const parentNoun = parentKind === 'automation' ? 'automation' : parentKind === 'canvas' ? 'Canvas' : 'channel';
   const navigate = useNavigate();
   const openFirstWorkstream = useOpenFirstWorkstream();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1590,7 +1597,7 @@ function ConversationSurfaceContent({
   const accessRequests = useAccessRequests(workspaceId);
   const decideAccessRequest = useDecideAccessRequest(api ?? null, workspaceId);
   const workspaceRegion = session?.workspace?.region ?? 'global';
-  const attachmentDraft = useFileAttachments(api, workstreamDraftKey(workspaceRegion, workspaceId, id, substreamId));
+  const attachmentDraft = useFileAttachments(api, conversationDraftKey(workspaceRegion, workspaceId, parentKind, id, substreamId));
   const transcriptDrop = useFileDrop(attachmentDraft.addFiles);
   const railDrop = useFileDrop(attachmentDraft.addFiles);
   // The composer does not take focus when a work stream opens, so a paste that
@@ -2503,11 +2510,6 @@ function ConversationSurfaceContent({
     onSuccess: (updated, { target, member }) => {
       if (updated) queryClient.setQueryData(workstreamDetailQueryKey(id, target), updated);
       else cacheAddedParticipant(target, member);
-      // Participation is what decides whether the room's own Sidekicks may be
-      // listed at all, and it is not in this query's key: somebody who joins
-      // the main room would otherwise keep the empty list their refusal
-      // cached, and somebody who leaves would keep the names it held.
-      if (target === '0') void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks', id] });
       // The roster is the dialog's job: it stays open so another person can be
       // added or removed without reopening. Dismissal is click-outside, Escape,
       // or the header close control. Self-removal still closes, below, because
@@ -2557,7 +2559,6 @@ function ConversationSurfaceContent({
         participants: current.participants.filter((participant) => participant.id !== member.id),
       } : current);
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
-      if (target === '0') void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks', id] });
       if (member.id !== session?.user.id) return;
       // Leave-room navigation is only for a substream or a personal Main, but
       // the dialog has to close for every self-removal: a workspace-scoped
@@ -2694,84 +2695,11 @@ function ConversationSurfaceContent({
     },
   });
 
-  // The two halves of what this room's rails show under **Sidekicks**: the
-  // Sidekicks the room owns, and the ones its main conversation has loaded.
-  // Both are the room's, so both are fetched here and folded into one list.
-  // Main's three lists ride its Channel rail on the workspace socket; REST
-  // stays for a breakout, an older server, and a Main not yet reported.
-  const railSidekicks = useChannelRail(parentKind === 'workstream' && substreamId === '0' ? id ?? null : null)?.sidekicks;
-  // A refresh of a rail-backed list that could not reach the organization;
-  // the section says so rather than leaving the reader's click unanswered.
-  const [railRefreshFailedFor, setRailRefreshFailedFor] = useState<string | null>(null);
-  const railRefreshFailed = railRefreshFailedFor !== null && railRefreshFailedFor === id;
-  const attachedSidekicks = useQuery({
-    queryKey: ['attached-sidekicks', id, substreamId],
-    queryFn: ({ signal }) => api!.getAttachedSidekicks(id!, signal, substreamId),
-    enabled: Boolean(api && id && parentKind === 'workstream' && railSidekicks?.attached === undefined),
-  });
-  // Guest recommendations already include eligible owned sources as minimal
-  // summaries. The member-only authoring directory is neither needed nor allowed.
-  const readOwnedSidekickDetails = !guest;
-  const ownedSidekicks = useQuery({
-    queryKey: ['workstream-sidekicks', id],
-    // A person viewing a room they do not participate in may not list what it
-    // owns, and that refusal is about the viewer rather than about the room —
-    // rendering it as an error would put a permission notice where a list
-    // belongs, on every workspace-scoped room a non-participant opens.
-    queryFn: ({ signal }) => api!.getWorkstreamSidekicks(id!, signal).catch((error: unknown) => {
-      if (error instanceof ApiError && error.status === 403) return [];
-      throw error;
-    }),
-    enabled: Boolean(api && id && parentKind === 'workstream' && readOwnedSidekickDetails && !railSidekicks),
-  });
-  const ownedSidekickList = railSidekicks
-    ? railSidekicks.owned
-    : readOwnedSidekickDetails ? ownedSidekicks.data : undefined;
-  const attachedSidekickList = railSidekicks?.attached ?? attachedSidekicks.data;
-  const recommendedSidekicks = useQuery({
-    queryKey: ['recommended-sidekicks', id, substreamId],
-    queryFn: ({ signal }) => api!.getRecommendedSidekicks(id!, signal, substreamId),
-    enabled: Boolean(api && id && parentKind === 'workstream' && !railSidekicks),
-  });
-  const recommendedSidekickList = railSidekicks?.recommended ?? recommendedSidekicks.data;
-  // The Sidekicks this conversation owns, has attached, and recommends, in the
-  // order its Sidekicks section lists them: nameable with `@` here ahead of
-  // the Organization's.
-  const conversationSidekicks = useMemo(
-    () => conversationSidekickMentions(ownedSidekickList, attachedSidekickList, recommendedSidekickList),
-    [attachedSidekickList, ownedSidekickList, recommendedSidekickList],
-  );
-  const recommendationOptions = useQuery({
-    queryKey: ['sidekick-recommendation-options', id, substreamId],
-    queryFn: ({ signal }) => api!.getSidekickRecommendationOptions(id!, substreamId, signal),
-    enabled: false,
-  });
-  const removeSidekick = useMutation({
-    mutationKey: ['remove-sidekick', id, substreamId],
-    mutationFn: async ({ sidekickId, recommendation, attached = false, workstreamId, substreamId: targetSubstreamId }: { sidekickId: string; recommendation: boolean; attached?: boolean; workstreamId: string; substreamId: string }) => {
-      if (recommendation) {
-        await api!.setRecommendedSidekick(workstreamId, sidekickId, attached, targetSubstreamId);
-      } else await api!.removeAttachedSidekick(workstreamId, sidekickId, targetSubstreamId);
-    },
-    onSettled: (_result, _error, { workstreamId }) => {
-      void workspaceSocket?.refreshChannelRails([workstreamId]).catch(() => undefined);
-      void queryClient.invalidateQueries({ queryKey: ['sidekick-recommendation-options', workstreamId] });
-      void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', workstreamId] });
-      void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', workstreamId] });
-    },
-  });
   const sidekickRefreshSequence = orderedTranscript.data?.eventSequence;
   useEffect(() => {
     if (parentKind === 'automation') {
       void queryClient.invalidateQueries({ queryKey: ['automation', id] });
       void queryClient.invalidateQueries({ queryKey: ['sidekicks-library'] });
-    } else {
-      void queryClient.invalidateQueries({ queryKey: ['attached-sidekicks', id] });
-      void queryClient.invalidateQueries({ queryKey: ['recommended-sidekicks', id] });
-      // A room's Sidekick is created from its conversation, by the run that is
-      // writing the turns this sequence counts, so the list that would show it
-      // is stale exactly when the transcript moves.
-      void queryClient.invalidateQueries({ queryKey: ['workstream-sidekicks', id] });
     }
   }, [id, parentKind, queryClient, sidekickRefreshSequence]);
 
@@ -3011,6 +2939,7 @@ function ConversationSurfaceContent({
         confirmedParticipantUserIds: parentKind === 'workstream' && substreamId !== '0' ? [] : confirmedParticipantUserIds,
         attachmentIds: [...readyAttachments.flatMap((attachment) => attachment.resource ? [attachment.resource.id] : []), ...sentPins.flatMap((p) => p.annotation.content.imageAttachmentId ? [p.annotation.content.imageAttachmentId] : [])],
         ...(deliveryMode ? { runMode: deliveryMode } : {}),
+        ...(messageIntent ? { intent: messageIntent } : {}),
       });
       annotationDraft?.clearAccepted(sentPins);
       queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) => {
@@ -3523,59 +3452,6 @@ function ConversationSurfaceContent({
     ...displayedDetail, resources: [], participants: [], viewers: [],
   };
   const resourceManagementDetail = resourcePanel?.workstreamScoped ? sidebarDetail : displayedDetail;
-  // One list for both rails, composed once: the room's own Sidekicks and its
-  // conversation's attachments are two answers about the same objects, and
-  // only a participant may detach one.
-  const sidekickRows = workstreamSidekickRows({
-    // A failed owned read is not a pending one: the attachments answered, and
-    // hiding them because the other half failed takes down a list that worked.
-    // The error still travels beside the rows that did arrive.
-    owned: railSidekicks
-      ? railSidekicks.owned
-      : readOwnedSidekickDetails ? ownedSidekicks.data ?? (ownedSidekicks.isError ? [] : undefined) : [],
-    attached: railSidekicks?.attached ?? attachedSidekicks.data ?? (attachedSidekicks.isError ? [] : undefined),
-    recommended: railSidekicks?.recommended ?? recommendedSidekicks.data ?? (recommendedSidekicks.isError ? [] : undefined),
-    ...(detail.participants.some((person) => person.id === session?.user.id)
-      ? { onRemoveAttachment: (sidekickId: string) => removeSidekick.mutate({ sidekickId, recommendation: false, workstreamId: id!, substreamId }) }
-      : {}),
-    recommendationOptions: recommendationOptions.data,
-    managementOptionsPending: !recommendationOptions.data && !recommendationOptions.isError,
-    onChangeRecommendation: (sidekickId, attached) => removeSidekick.mutate({ sidekickId, attached,
-      recommendation: true, workstreamId: id!, substreamId }),
-  });
-  // A server/provider message belongs in diagnostics, not in the sidebar.
-  // The API client already records request path, status and request id; this
-  // surface passes only failure presence to shared presentation, which owns
-  // the stable Rally copy.
-  const sidekickFailure: SidekickSectionFailure | undefined = removeSidekick.error
-    ? removeSidekick.variables?.recommendation
-      ? removeSidekick.variables.attached ? 'recommend' : 'unrecommend'
-      : 'remove'
-    : (readOwnedSidekickDetails && ownedSidekicks.error)
-      || attachedSidekicks.error
-      || recommendedSidekicks.error
-      || railRefreshFailed
-      ? 'load'
-      : undefined;
-  const loadSidekickOptions = (): void => {
-    // A failed removal remains visible until the person next engages with
-    // Sidekick management. At that point it describes the previous action,
-    // while the fresh options read owns any new failure of its own. A pending
-    // removal remains observed so its eventual failure is not lost.
-    if (removeSidekick.isError) removeSidekick.reset();
-    void recommendationOptions.refetch();
-  };
-  const refreshSidekicks = (): void => {
-    if (railSidekicks && id) {
-      const refreshing = id;
-      setRailRefreshFailedFor(null);
-      void (workspaceSocket?.refreshChannelRails([refreshing]) ?? Promise.reject(new Error('no_organization_socket')))
-        .catch(() => setRailRefreshFailedFor(refreshing));
-    }
-    if (readOwnedSidekickDetails && !railSidekicks) void ownedSidekicks.refetch();
-    if (railSidekicks?.attached === undefined) void attachedSidekicks.refetch();
-    if (!railSidekicks) void recommendedSidekicks.refetch();
-  };
   const discoveredResources = [...new Map(
     (availableResources.data?.pages.flatMap((page) => page.items) ?? []).map((resource) => [resource.id, resource]),
   ).values()];
@@ -3590,14 +3466,9 @@ function ConversationSurfaceContent({
   return (
     <MessageIssueProvider api={api} target={issueSubstreamId ? { kind: 'conversation', parentId: id, substreamId: issueSubstreamId } : null}>
     <EmailMentionContext.Provider value={emailMentions}>
-    <SidekickMentionScope sidekicks={conversationSidekicks}>
     <ConnectorConnectionsProvider connections={visibleConnections}>
     <div className="conversation-layout" ref={layoutRef}>
       {renderSidebar?.({
-        sidekicks: sidekickRows,
-        loadSidekickOptions,
-        refreshSidekicks,
-        sidekickFailure,
         detail: sidebarDetail,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
@@ -3655,10 +3526,6 @@ function ConversationSurfaceContent({
       /> : <>
       {renderHeader?.({
         detail: displayedDetail,
-        sidekicks: sidekickRows,
-        loadSidekickOptions,
-        refreshSidekicks,
-        sidekickFailure,
         socketState,
         presentUserIds: presenceUserIdsByWorkstream[id] ?? [],
         openParticipantDialog: () => { setParticipantDialogSubstreamId(substreamId); setParticipantDialogOpen(true); },
@@ -3848,7 +3715,9 @@ function ConversationSurfaceContent({
               title="Ready to begin"
               description={parentKind === 'automation'
                 ? 'Tell your Sidekick what you’d like help with. You can ask for changes as you go.'
-                : 'Send a message to start work in this thread.'}
+                : parentKind === 'canvas'
+                  ? 'Ask Rally for what you want to make. Everyone in this Canvas sees the conversation.'
+                  : 'Send a message to start work in this thread.'}
             />
           ) : (
             <MessageFeed
@@ -3921,14 +3790,16 @@ function ConversationSurfaceContent({
             || stopAcknowledgement.runId !== null)
             && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
           {mergeCardWithDialog && !mergeCardAnchored && <div className="merge-response-card-end">{mergeCardWithDialog}</div>}
-          <WorkstreamComposer
+          {!readOnly && <WorkstreamComposer
             api={api ?? undefined}
-            placeholder={parentKind === 'automation'
+            placeholder={composerPlaceholder ?? (parentKind === 'automation'
               ? 'Ask your Sidekick…'
+              : parentKind === 'canvas'
+                ? 'Ask Rally or the people here…'
               // A name still being chosen is not one to address yet.
               : displayedDetail.titleStatus === 'naming' || !displayedDetail.title
                 ? 'Message the thread…'
-                : substreamId === '0' ? `Message ${displayedDetail.title}` : `Reply in ${displayedDetail.title}`}
+                : substreamId === '0' ? `Message ${displayedDetail.title}` : `Reply in ${displayedDetail.title}`)}
             attachments={attachmentDraft.attachments}
             error={sendError
               ?? attachmentDraft.error
@@ -3966,10 +3837,10 @@ function ConversationSurfaceContent({
             uploading={attachmentDraft.uploading}
             key={conversationAddress}
             workstream={displayedDetail}
-            draftKey={workstreamDraftKey(workspaceRegion, workspaceId, displayedDetail.id, substreamId)}
+            draftKey={conversationDraftKey(workspaceRegion, workspaceId, parentKind, displayedDetail.id, substreamId)}
             substreamId={substreamId}
-            {...(composerMenuActions ? { menuActions: composerMenuActions } : {})}
-          />
+            {...(composerMenuActions || hostMenuActions ? { menuActions: [...composerMenuActions ?? [], ...hostMenuActions ?? []] } : {})}
+          />}
         </div>
       </div>
       </>}
@@ -4011,9 +3882,6 @@ function ConversationSurfaceContent({
         resourceVersionsFailed={Boolean(resourceVersions.error)}
         {...(siteArtifacts ? { siteArtifacts } : {})}
         workstream={resourceManagementDetail}
-        sidekicks={sidekickRows}
-        sidekickFailure={sidekickFailure}
-        onRefreshSidekicks={refreshSidekicks}
       />}
 
       {railVariant === 'browser' && (railOpen || railLeaving) && window.rally && <EmbeddedBrowserRail
@@ -4123,7 +3991,6 @@ function ConversationSurfaceContent({
     </div>
     </div>
     </ConnectorConnectionsProvider>
-    </SidekickMentionScope>
     </EmailMentionContext.Provider>
     </MessageIssueProvider>
   );

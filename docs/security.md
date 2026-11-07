@@ -73,7 +73,6 @@ bounded-evidence contract in [Sidekick lifecycle](automation-lifecycle.md#sideki
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
 | `apps/desktop/src/main/media-permission.ts` | Chromium media permission for the shared composer: audio-only capture from the main and Sidekicks windows. |
 | `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local browser in the right rail and the import window; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
-| `apps/sideline/src/main/index.ts`, `apps/sideline/src/preload/index.ts` | The internal represented-messaging host, encrypted operator session, dedicated OAuth target, sender-confined IPC, and narrow renderer bridge. Main also holds one ticketed workspace socket (fixed `app://sideline` Origin) and sends the renderer only a payload-free `sideline:catalog-stale` signal. The relationship and audit boundary is documented in [`impersonation.md`](impersonation.md). |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the conversation-window socket IPC boundary. |
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Route-confined Node socket transport, ordered system/PAC routing, OS trust roots, frame limits, and renderer-owner teardown. |
@@ -91,7 +90,6 @@ bounded-evidence contract in [Sidekick lifecycle](automation-lifecycle.md#sideki
 | `apps/api/src/lib/crypto.ts` | AES-GCM credential envelopes and key-version handling. |
 | `apps/api/src/services/terminal/` | The isolated Daytona execution boundary, network compiler, authority-fenced lifecycle, resource bridge, and trusted GitHub publisher. |
 | `apps/desktop/scripts/mac-signature-policy.mjs`, `apple-notarization.mjs`, `finalize-macos-release.mjs` | Entitlement rules, notarization, and the release verifier. |
-| `apps/ios/Rally/Auth/KeychainStore.swift`, `apps/ios/Rally/Rally.entitlements` | iOS session secrets and APNs/associated-domain entitlements. Owned with [`ios-client.md`](ios-client.md). |
 | `.gitleaks.toml`, `scripts/gitleaks-allowlist.test.mjs` | The scan's bounded exceptions and the test that keeps them honest. |
 
 The renderer socket-ticket lint rule follows immutable awaited ticket aliases,
@@ -105,14 +103,6 @@ The renderer, inbound internet, connector providers, monitored URLs, model
 output, and connector payloads are untrusted. The Electron main process and
 regional Worker are trusted only within their narrow responsibilities. D1 and R2
 are canonical storage services, not authorization layers.
-
-iOS has no renderer. The comparable split is the SwiftUI process (untrusted for
-secrets it does not need) versus the Keychain (identity and workspace refresh
-tokens) versus the regional Worker. Google credentials stay in
-`ASWebAuthenticationSession`. Refresh tokens are
-`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and are never written to
-UserDefaults or iCloud. Socket tickets still travel as `Sec-WebSocket-Protocol`,
-same as desktop.
 
 ### Electron
 
@@ -1210,6 +1200,13 @@ receive no application bridge. See
 [artifact annotations](artifact-annotations.md) for the protocol.
 
 ## Changelog
+
+### 2026-11-06 — The iOS client and its Keychain boundary are deleted
+
+`apps/ios` is gone, so the Keychain session store and the iOS entitlements are no
+longer part of the trust model; the desktop `avalon-desktop` audience and the
+`ai.rallywith.ios` push topic it reused stay in server code until a later phase
+removes them ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)).
 
 ### 2026-11-03 — Cross-origin requests reach a site anonymously, not refused
 

@@ -6,9 +6,15 @@ import {
 } from "@rally/contracts";
 import type { Region } from "@rally/contracts/regions";
 import { truncateUtf16Safe } from "@rally/contracts/text";
+import { z } from "zod";
 
 import {
+  type AutomationActorRequestSchema,
+  SidekickConversationMessageRouteSchema,
   SidekickRunContinuationSchema,
+  type SidekickConversationMessageRefusalCode,
+  type SidekickConversationMessageRequest,
+  type SidekickConversationMessageRoute,
   type SidekickRunContinuation,
   type SidekickRunContinuationRefusalCode,
 } from "../durable-objects/automation-do-protocol";
@@ -81,4 +87,31 @@ export const SIDEKICK_RUN_REFUSAL_TEXT: Record<SidekickRunContinuationRefusalCod
   sidekick_deleted: "This message did not continue the run because its Sidekick was archived.",
   run_not_found: "This message did not continue the run because its Sidekick no longer knows the run.",
   run_no_eligible_delegate: "This message did not continue the run because no delegated user is available. Add a delegate with access to continue.",
+};
+
+/**
+ * Ask the Sidekick who answers a message in its shared conversation: the
+ * wizard, a run the message starts, or nobody. The shared conversation's loop
+ * asks before it takes the message, as a run child asks `continueSidekickRun`.
+ */
+export async function routeSidekickConversationMessage(
+  env: Env,
+  input: SidekickConversationMessageRequest,
+): Promise<SidekickConversationMessageRoute> {
+  const workspace = await hostedParentStub(env, asWorkspaceId(input.workspaceId));
+  return SidekickConversationMessageRouteSchema.parse(await workspace.sidekickAdmitConversationMessage(input));
+}
+
+/** Whether a person manages a Sidekick, asked by its shared conversation before it records a wizard answer. */
+export async function sidekickAllowsManager(env: Env, input: z.input<typeof AutomationActorRequestSchema>): Promise<boolean> {
+  const workspace = await hostedParentStub(env, asWorkspaceId(input.workspaceId));
+  return z.boolean().parse(await workspace.sidekickAllowsManager(input));
+}
+
+/** What the shared conversation says when a message addressed to the Sidekick started no run. */
+export const SIDEKICK_MESSAGE_REFUSAL_TEXT: Record<SidekickConversationMessageRefusalCode, string> = {
+  sidekick_not_active: "This message did not start a run because the Sidekick is not active.",
+  sidekick_not_runnable: "This message did not start a run because this Sidekick has no way to run; it is used as a skill in other conversations.",
+  run_no_eligible_delegate: "This message did not start a run because this Sidekick cannot act for you yet.",
+  sidekick_edit_requires_manager: "This message did not change the Sidekick because only the people who manage it can edit it.",
 };

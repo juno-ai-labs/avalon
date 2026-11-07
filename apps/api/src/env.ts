@@ -31,7 +31,7 @@ import type { RegionalTelemetryBridgeRpcBinding } from "./telemetry/regional-bri
 import type { GlobalTelemetryControlRpcBinding } from "./telemetry/control";
 import type { CrashSymbolicatorContainer } from "./crash-symbolicator-container";
 import type { ArtifactHostDO } from "./durable-objects/artifact-host-do";
-import type { SubstreamAgent } from "./durable-objects/substream-agent";
+import type { AgentLoopDO } from "./durable-objects/agent-loop-do";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
@@ -74,7 +74,7 @@ export interface Env {
   // throws `Binding FLAGS needs to be run remotely`, so readers must handle
   // both. Either way they fall back to the model variables below.
   FLAGS?: Flagship;
-  SUBSTREAM_AGENTS: DurableObjectNamespace<SubstreamAgent>;
+  SUBSTREAM_AGENTS: DurableObjectNamespace<AgentLoopDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
   CRASH_SYMBOLICATOR: DurableObjectNamespace<CrashSymbolicatorContainer>;
   /** One supervisor per live web artifact, named by the artifact's own id. */
@@ -317,7 +317,7 @@ export interface IdentityAuthContext {
    * by the Worker on the very message being delivered — and `sessionId` is a
    * correlation value only, not a row anywhere. The objects verify a connector
    * principal against current workspace membership instead of `sessions`;
-   * see `SubstreamAgent.connectorPrincipalAuth`.
+   * see `AgentLoopDO.connectorPrincipalAuth`.
    *
    * `"demo_seed"` is the same kind of authority for the demo seeder: it acts
    * as a cast member who never signs in, on a workspace the seeder is
@@ -464,7 +464,7 @@ const EnvContractSchema = z.object({
   DOCUMENT_PROCESSOR: binding<DocumentProcessingRpcBinding>().optional(),
   TERMINAL_PROVIDER: binding<TerminalProviderRpcBinding>().optional(),
   TELEMETRY_DELIVERY: binding<TelemetryDeliveryRpcBinding>().optional(),
-  SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
+  SUBSTREAM_AGENTS: binding<DurableObjectNamespace<AgentLoopDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),
   CRASH_SYMBOLICATOR: binding<DurableObjectNamespace<CrashSymbolicatorContainer>>(),
   ARTIFACT_HOSTS: binding<DurableObjectNamespace<ArtifactHostDO>>(),

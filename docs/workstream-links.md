@@ -109,8 +109,8 @@ tries the deep link once on load, shows **Open in Rally for Mac**, then
 **Continue in browser**, which opens the same path on `app.rallywith.ai`; the
 browser client reads every addressed path this page does
 ([`browser-client.md`](browser-client.md#the-shell)). Under them sits the Mac
-download. On an iPhone or iPad a Channel or Breakout opens the iOS app, with the
-browser as the second choice. Where no Rally app can open the link (Windows,
+download. On an iPhone or iPad a Channel or Breakout still tries the deleted iOS
+app's link, with the browser as the second choice. Where no Rally app can open the link (Windows,
 Linux, Android, or a Space or Sidekick on iOS) the page skips the launch and the
 browser is the one button. An ID-only link from before workspace addressing
 names no Organization, so it gets no browser button.
@@ -395,20 +395,23 @@ copied into this table; they come from `WorkspaceDO.channels`.
 ## Apple universal links
 
 Both Rally hosts serve `/.well-known/apple-app-site-association`. Desktop claims
-`/app/*`; iOS still claims only the earlier `/app/workspaces/*` and
-`/app/workstreams/*` paths until an iPhone release with the new parser is
-available. A canonical Channel or Breakout link opens the site handoff, which
-uses the old addressed iPhone reader; it does not send the new Base58 path to
-an installed old build. Space-only and Sidekick URLs open in the web app on an
-iPhone because it has no Space dashboard or Sidekick screen.
+`/app/*`; the file still lists the deleted iOS client on the earlier
+`/app/workspaces/*` and `/app/workstreams/*` paths. A canonical Channel or
+Breakout link opens the site handoff, which uses the old addressed iPhone
+reader. Space-only and Sidekick URLs open in the web app on an iPhone.
 The desktop main process adapts these HTTPS links with `workstreamHttpsDeepLink`, then
-uses existing scheme navigation. The iPhone opens the Channel and Breakout paths
-into the native client. Legacy origins and other path families remain
+uses existing scheme navigation. Legacy origins and other path families remain
 in the browser. The site must deploy before a desktop release that relies on a
 new path. Push clicks
 use the same adapter with notification attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-11-06 — The iOS client is deleted
+
+The iPhone entry in the Apple association file and the site handoff's iPhone
+branch existed only for `apps/ios`, which is deleted; both stay in site code
+until a later phase of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md) removes them.
 
 ### 2026-10-17 — A link can open a thread onto an artifact
 

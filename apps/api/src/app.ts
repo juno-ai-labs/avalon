@@ -1,5 +1,6 @@
 import { messageIssueRoutes } from "./routes/message-issues";
 import { sharingRoutes } from "./routes/sharing";
+import { canvasRoutes } from "./routes/canvases";
 import { createBrowserRoutes } from "./routes/browser";
 import { daytonaWebhookRoutes } from "./routes/daytona";
 import { Hono } from "hono";
@@ -45,7 +46,6 @@ import { deviceTimezoneRoutes, workspaceMembers, workspaceProfile, workspaceRout
 import { workspaceMembershipRoutes } from "./routes/workspace-membership";
 import { workspaceOperatorRoutes } from './routes/workspace-operations';
 import { workstreamCreateRoutes, workstreamRoutes } from "./routes/workstreams";
-import { sidelineRoutes } from "./routes/sideline";
 import {
   isAllowedGitHubIngressRoute,
   isSharedGitHubIngress,
@@ -181,6 +181,7 @@ export function createApp(): Hono<HonoAppEnv> {
   identityApi.route("/message-issues", messageIssueRoutes);
   identityApi.route("/sharing", sharingRoutes);
   identityApi.route("/resources", resourceRoutes);
+  identityApi.route("/canvases", canvasRoutes);
   identityApi.route("/automations", automationRoutes);
   identityApi.route("/sidekicks", sidekickRoutes);
   identityApi.route("/feature-flags", featureFlagRoutes);
@@ -200,7 +201,6 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/workspace", workspaceRoutes);
   protectedApi.route("/workspaces", workspaceMembershipRoutes);
   protectedApi.route("/workstreams", workstreamRoutes);
-  protectedApi.route("/sideline", sidelineRoutes);
   protectedApi.route("/work-opportunities", workOpportunityRoutes);
   protectedApi.route("/projects", projectRoutes);
   protectedApi.route("/spaces", spaceRoutes);

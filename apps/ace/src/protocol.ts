@@ -181,7 +181,6 @@ export const MANAGED_FLAGS = [
   { key: 'suggested-work-enabled', label: 'Suggested Work Enabled', description: 'True shows Suggested Work surfaces in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'multiple-workspaces-enabled', label: 'Multiple Workspaces Enabled', description: 'True shows workspace switching, invitations, creation, and background attention in Electron; false hides them without changing API availability.', defaultVariation: 'off' },
   { key: 'push-notifications-enabled', label: 'Push Notifications Enabled', description: 'True enables Apple push delivery and the desktop Notifications setting for everyone from launch; false pauses push for the targeted users.', defaultVariation: 'on' },
-  { key: 'live-artifacts-enabled', label: 'Live Artifacts Enabled', description: 'True shows live-artifact surfaces in Electron — the rail site detail and preview, the data view, and the artifact window; false hides them. An artifact URL somebody already holds keeps working either way, because its authorization is structural rather than flagged.', defaultVariation: 'off' },
 ] as const;
 
 export const FLAG_ATTRIBUTES = [

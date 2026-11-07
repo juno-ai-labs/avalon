@@ -41,13 +41,18 @@ import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";
 
 type SessionImportRun = z.infer<typeof SessionImportRunSchema>;
 import {
+  CanvasDetailSchema,
+  CreatedCanvasSchema,
+  type CanvasAudienceUpdate,
+  type CanvasDetail,
+  type CreateCanvasRequest,
+  type CreatedCanvas,
   ConversationSuggestionActionResultSchema,
   type ConversationSuggestionActionResult,
   AutomationDetailSchema as WireAutomationDetailSchema,
   AutomationExecutionPrincipalClaimSchema,
   AutomationRunSchema as WireAutomationRunSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
-  WorkstreamAutomationSummarySchema as WireWorkstreamAutomationSummarySchema,
   WorkstreamBatchAcceptedSchema as WireWorkstreamBatchAcceptedSchema,
   WorkstreamBatchPreviewSchema as WireWorkstreamBatchPreviewSchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
@@ -115,9 +120,6 @@ import {
   ConnectorInstallationReadResponseSchema,
   ConnectorInstallationSetupResponseSchema,
   OnboardingJourneySchema,
-  SidekickAttachmentsSchema,
-  SidekickRecommendationOptionsSchema,
-  type SidekickAttachment,
   type UpdateOnboardingJourney
 } from '@rally/contracts';
 import { MutatePrivateChildParticipantResultSchema } from '@rally/contracts/conversation-parent';
@@ -155,7 +157,6 @@ import type {
   AutomationRun,
   AutomationScope,
   AutomationSummary,
-  WorkstreamAutomationSummary,
   BackgroundTask,
   CreatedWorkstream,
   DigestSchedule,
@@ -290,9 +291,6 @@ const wireChannelFeedPageSchema = ChannelFeedPageSchema.extend({
 });
 const wireAutomationPageSchema = z.object({ items: z.array(WireAutomationSummarySchema) });
 const wireExecutionPrincipalClaimSchema = AutomationExecutionPrincipalClaimSchema;
-const wireWorkstreamAutomationPageSchema = z.object({
-  items: z.array(WireWorkstreamAutomationSummarySchema),
-});
 const wireConnectionPageSchema = z.object({ items: z.array(WireConnectionSchema) });
 const wireAutomationRunPageSchema = z.object({ items: z.array(WireAutomationRunSchema) });
 const createdAutomationSchema = z.object({ automationId: z.string() });
@@ -574,36 +572,14 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     description: automation.description,
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     scope: mapAutomationScope(automation.scope),
-    ...(automation.owningWorkstreamId ? { owningWorkstreamId: automation.owningWorkstreamId } : {}),
-    ...(automation.owningThread ? { owningThread: automation.owningThread } : {}),
     status: automation.status,
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
     ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
     updatedAt: automation.updatedAt,
-  };
-}
-
-/**
- * The rail's rows.
- *
- * Written out rather than delegating to {@link mapAutomationSummary} with an
- * invented scope: the wire row has no scope, and manufacturing one to throw
- * away would put a value in the type that no caller may trust.
- */
-export function mapWorkstreamAutomationSummary(
-  automation: z.infer<typeof WireWorkstreamAutomationSummarySchema>,
-): WorkstreamAutomationSummary {
-  return {
-    id: automation.id,
-    loadable: automation.loadable,
-    ...(automation.appearance ? { appearance: automation.appearance } : {}),
-    name: automation.name,
-    description: automation.description,
-    ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
-    status: automation.status,
-    ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
-    ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
-    updatedAt: automation.updatedAt,
+    ...(automation.unread === undefined ? {} : { unread: automation.unread }),
+    ...(automation.needsInput === undefined ? {} : { needsInput: automation.needsInput }),
+    ...(automation.pinnedPosition === undefined ? {} : { pinnedPosition: automation.pinnedPosition }),
+    ...(automation.audience === undefined ? {} : { audience: automation.audience }),
   };
 }
 
@@ -621,6 +597,8 @@ function mapAutomationDetail(detail: z.infer<typeof WireAutomationDetailSchema>)
     connectorBindings: { ...detail.connectorBindings },
     triggerSummaries: (detail.currentDefinition?.triggers ?? []).map(triggerSummary),
     recentRuns: detail.recentRuns.map(mapAutomationRun),
+    ...(detail.sharedWithUserIds === undefined ? {} : { sharedWithUserIds: detail.sharedWithUserIds }),
+    ...(detail.canvases === undefined ? {} : { canvases: detail.canvases }),
   };
 }
 
@@ -1228,31 +1206,6 @@ export class RallyApi {
     await this.requestVoid(`/onboarding/invitations/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
-  async getAttachedSidekicks(workstreamId: string, signal?: AbortSignal, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
-  }
-
-  async removeAttachedSidekick(workstreamId: string, sidekickId: string, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekicks/${encodeURIComponent(sidekickId)}`, { method: 'DELETE', schema: SidekickAttachmentsSchema })).items;
-  }
-
-  async getRecommendedSidekicks(workstreamId: string, signal?: AbortSignal, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/recommended-sidekicks`, { signal, schema: SidekickAttachmentsSchema })).items;
-  }
-
-  getSidekickRecommendationOptions(workstreamId: string, substreamId = '0', signal?: AbortSignal) {
-    return this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/sidekick-recommendation-options`, {
-      signal, schema: SidekickRecommendationOptionsSchema,
-    });
-  }
-
-  async setRecommendedSidekick(workstreamId: string, sidekickId: string, attached: boolean, substreamId = '0'): Promise<SidekickAttachment[]> {
-    return (await this.request(`/conversations/${encodeURIComponent(workstreamId)}/substreams/${encodeURIComponent(substreamId)}/recommended-sidekicks/${encodeURIComponent(sidekickId)}`, {
-      method: attached ? 'PUT' : 'DELETE', schema: SidekickAttachmentsSchema,
-    })).items;
-  }
-
-
   async getSidekicks(signal?: AbortSignal): Promise<AutomationSummary[]> {
     const result = await this.request('/sidekicks', { signal, schema: wireAutomationPageSchema });
     return result.items.map(mapAutomationSummary);
@@ -1298,27 +1251,6 @@ export class RallyApi {
   }
 
   /**
-   * What one work stream owns: the Sidekicks created in it, whose managers are
-   * its participants. Its own rail and the library are where these are listed.
-   *
-   * Under `/sidekicks` rather than `/automations`, which serves the same rows
-   * through the same handler: a new client reads the Sidekick surface, and the
-   * legacy prefix exists for installed builds that cannot parse a modern
-   * detail. A caller who is not a participant is refused, so a viewer's 403 is
-   * an answer about them rather than about the room.
-   */
-  async getWorkstreamSidekicks(
-    workstreamId: string,
-    signal?: AbortSignal,
-  ): Promise<WorkstreamAutomationSummary[]> {
-    const page = await this.request(
-      `/sidekicks/workstream/${encodeURIComponent(workstreamId)}`,
-      { schema: wireWorkstreamAutomationPageSchema, signal },
-    );
-    return page.items.map(mapWorkstreamAutomationSummary);
-  }
-
-  /**
    * "New automation": the object and its conversation, and nothing else.
    *
    * No body, because the draft is written in that conversation. The id that
@@ -1360,6 +1292,43 @@ export class RallyApi {
       method: 'POST',
       schema: wireExecutionPrincipalClaimSchema,
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Canvases (docs/canvases.md). A Canvas's Chat is an ordinary conversation,
+  // opened by its id as any conversation is; these are the Canvas's own reads
+  // and writes.
+  // -------------------------------------------------------------------------
+
+  /**
+   * A new Canvas with no artifacts; `prompt` is the "Start from a prompt"
+   * card's first message. The id is minted here, so a retry of this request
+   * answers the Canvas the first made rather than making a second.
+   */
+  createCanvas(input: CreateCanvasRequest = {}): Promise<CreatedCanvas> {
+    return this.request('/canvases', {
+      method: 'POST', body: { ...input, canvasId: input.canvasId ?? uuidV7() }, schema: CreatedCanvasSchema,
+    });
+  }
+
+  /** The Canvas as this person sees it: its row, who it is shared with, and its artifacts. */
+  getCanvas(id: string, signal?: AbortSignal): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}`, { schema: CanvasDetailSchema, signal });
+  }
+
+  /** Change who can open a Canvas; its creator's, an administrator's, or its Sidekick's manager's. */
+  setCanvasAudience(id: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}/audience`, { method: 'POST', body: update, schema: CanvasDetailSchema });
+  }
+
+  /** Pin a Canvas in, or out of, the Canvas list's Pinned group. */
+  async setCanvasPinned(id: string, pinned: boolean): Promise<void> {
+    await this.requestVoid(`/canvases/${encodeURIComponent(id)}/pin`, { method: 'POST', body: { pinned } });
+  }
+
+  /** Pin a Sidekick in, or out of, the Sidekick list's Pinned group. */
+  async setSidekickPinned(id: string, pinned: boolean): Promise<void> {
+    await this.requestVoid(`/sidekicks/${encodeURIComponent(id)}/pin`, { method: 'POST', body: { pinned } });
   }
 
   async getAutomation(id: string, signal?: AbortSignal): Promise<AutomationDetail> {

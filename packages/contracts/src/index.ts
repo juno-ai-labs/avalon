@@ -11,7 +11,7 @@ import { AttachmentKindSchema, ResourceSlugSchema, parseStoredSuggestedAttachmen
 import { AutomationLifecycleStateSchema,
   AutomationRunReferenceV1Schema,
   AutomationRunTriggerV1Schema,
-  AutomationScopeSchema } from "./automation-agent";
+  AutomationScopeSchema, SidekickAudienceSchema, StoredAutomationScopeSchema } from "./automation-agent";
 import { ConnectorInstallationSchema } from "./connector-installation";
 export * from "./conversation-attention";
 export * from "./conversation-source";
@@ -56,6 +56,7 @@ export * from "./automation-evaluators";
 export * from "./connector-connection-card";
 export * from "./conversation-effects";
 export * from "./conversation-parent";
+export * from "./canvases";
 export * from "./demo-operations";
 export * from "./demo-seed";
 export * from "./identifiers";
@@ -70,6 +71,7 @@ export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
 import { ConversationParentKindSchema } from "./conversation-parent";
+import { CanvasSidebarListSchema, CanvasSummarySchema } from "./canvases";
 import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
 export * from "./artifacts";
@@ -474,16 +476,6 @@ export const ClientFeatureFlagsSchema = z.object({
   suggestedWorkEnabled: z.boolean().default(false),
   /** Whether Electron offers workspace switching and plural workspace setup. */
   multipleWorkspacesEnabled: z.boolean().default(false),
-  /**
-   * Whether live-artifact surfaces are shown in Electron for this person.
-   *
-   * Presentation only, and that distinction is load-bearing: it gates the
-   * rail's site detail, the preview pane, the Data view, and the artifact
-   * window. Nothing that protects an artifact's data is scoped by it —
-   * authorization is structural, so a URL somebody already holds keeps working
-   * through its session checks whether or not this is on.
-   */
-  liveArtifactsEnabled: z.boolean().default(false),
   pushNotificationsEnabled: z.boolean().default(false),
 });
 
@@ -492,7 +484,6 @@ export const ProductFeatureFlagKeySchema = z.enum([
   "suggested-work-enabled",
   "multiple-workspaces-enabled",
   "push-notifications-enabled",
-  "live-artifacts-enabled",
 ]);
 export const ProductFeatureFlagFanoutMessageSchema = z.strictObject({
   kind: z.literal("product_feature_flag_changed"),
@@ -1596,11 +1587,10 @@ export const AutomationDraftSchema = z.object({
   customTools: z.array(SidekickCustomToolSchema).default([]),
   /**
    * Who will be able to see and change this automation, asked before it is
-   * submitted because it cannot be changed afterwards. `workstream` is the room
-   * the authoring run happened in — there is no ID to name here and none can
-   * be, because no other room is reachable.
+   * submitted because it cannot be changed afterwards. A revision stored while
+   * the retired `workstream` scope existed reads as `workspace`.
    */
-  suggestedScope: AutomationScopeSchema,
+  suggestedScope: StoredAutomationScopeSchema,
   followUpQuestion: z.string().nullable(),
   elicitation: AutomationDraftElicitationSchema.nullable().default(null),
   ready: z.boolean()
@@ -1816,14 +1806,6 @@ export const AutomationRunDefinitionV1Schema = z.strictObject({
   activitySourcePluginIds: ActivitySourcePluginIdsSchema,
   connectorBindings: z.record(z.string(), z.string()),
   scope: AutomationScopeSchema,
-  /** The Channel that owns a `workstream`-scoped automation; null for the other two scopes. */
-  owningWorkstreamId: IdSchema.nullable(),
-  /**
-   * The home conversation under `owningWorkstreamId`: `"0"` for the Channel's
-   * Main conversation, a Breakout id otherwise. The home is where a run posts
-   * by default with `conversation_post`.
-   */
-  owningSubstreamId: SubstreamIdSchema.default("0" as SubstreamId),
   runAsUserId: IdSchema,
   /** Per-run coordination is independent of the legacy human access entitlement. */
   coordinatorUserId: IdSchema.nullable().optional(),
@@ -1848,19 +1830,6 @@ export const AutomationRunStatusSchema = z.enum([
   "pending", "running", "needs_input", "completed", "failed", "stopped",
 ]);
 
-/**
- * The Thread that owns a `workstream`-scoped Sidekick, as the library and the
- * detail header name it: its title and the glyph it chose. Sent only to a
- * reader who is a participant of that Thread, so a Sidekick someone still
- * reads as its author never reveals a Thread they have left.
- */
-export const AutomationOwningThreadSchema = z.object({
-  id: IdSchema,
-  title: z.string(),
-  appearance: WorkstreamAppearanceSchema.optional(),
-});
-export type AutomationOwningThread = z.infer<typeof AutomationOwningThreadSchema>;
-
 export const AutomationSummarySchema = z.object({
   loadable: z.boolean().default(false),
   /**
@@ -1874,24 +1843,30 @@ export const AutomationSummarySchema = z.object({
   description: z.string(),
   emailAddress: z.string().email().nullable().default(null),
   scope: AutomationScopeSchema,
-  /** The room that owns a `workstream`-scoped automation; null for the other two. */
-  owningWorkstreamId: IdSchema.nullable().default(null),
-  /** The owning Thread's name and glyph; null for the other scopes and when the reader is not in it. */
-  owningThread: AutomationOwningThreadSchema.nullable().default(null),
   status: z.enum(["draft", "active", "paused"]),
   nextRunAt: TimestampSchema.nullable(),
   lastRunAt: TimestampSchema.nullable(),
   updatedAt: TimestampSchema,
+  /** Who it is shared with; absent from a server that predates it. */
+  audience: SidekickAudienceSchema.optional(),
+  /**
+   * This viewer has not read the latest message in the Sidekick's shared
+   * conversation, or marked it unread. Sidebar rows only; absent elsewhere.
+   */
+  unread: z.boolean().optional(),
+  /** The Sidekick waits on someone: its delegation needs attention, or its shared conversation needs input. */
+  needsInput: z.boolean().optional(),
+  /** Its place in this viewer's Pinned group of Sidekicks; null when not pinned. Sidebar rows only; absent elsewhere. */
+  pinnedPosition: z.number().int().nonnegative().nullable().optional(),
 });
 
 /**
- * One automation in a work stream's rail: the summary without its scope and
- * owner, because every row in that list is owned by the work stream showing it.
+ * One automation in a work stream's rail: the summary without its scope. No
+ * Thread owns a Sidekick any more, so the rail's `owned` list is always empty;
+ * the schema stays because released clients parse that list.
  */
 export const WorkstreamAutomationSummarySchema = AutomationSummarySchema.omit({
   scope: true,
-  owningWorkstreamId: true,
-  owningThread: true,
 });
 export type WorkstreamAutomationSummary = z.infer<typeof WorkstreamAutomationSummarySchema>;
 
@@ -1938,6 +1913,10 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   runnable: z.boolean().default(false),
   connectorBindings: z.record(z.string(), z.string()),
   recentRuns: z.array(AutomationRunSchema),
+  /** The people a `people` Sidekick is shared with, besides its author; empty for the other audiences. Absent from a server that predates it. */
+  sharedWithUserIds: z.array(IdSchema).optional(),
+  /** The Canvases this Sidekick writes that the reader may open, most recently active first. Absent from a server that predates it. */
+  canvases: z.array(CanvasSummarySchema).optional(),
 });
 
 export const ApiErrorSchema = z.object({
@@ -2425,6 +2404,16 @@ export const ReorderPendingLoopInputsResultSchema = z.object({
   pendingInputs: z.array(PendingTranscriptInputSchema),
 });
 
+/**
+ * What a message in a Sidekick's shared conversation is for, when its sender
+ * says. `edit_sidekick` marks it for the wizard, which edits the Sidekick, and
+ * the server accepts it only from someone who manages the Sidekick; a message
+ * without it that is addressed to the Sidekick starts a run, whoever sent it.
+ * Elsewhere it means nothing.
+ */
+export const SidekickMessageIntentSchema = z.enum(["edit_sidekick"]);
+export type SidekickMessageIntent = z.infer<typeof SidekickMessageIntentSchema>;
+
 export const CreateMessageRequestSchema = z.object({
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
   clientMessageId: z.string().min(1).max(120),
@@ -2434,6 +2423,7 @@ export const CreateMessageRequestSchema = z.object({
   /** Steer yields the in-flight loop at a turn boundary; queue never interrupts it. */
   annotations: AnnotationsSchema.optional(),
   runMode: z.enum(["steer", "queue"]).optional(),
+  intent: SidekickMessageIntentSchema.optional(),
 }).superRefine(validateAnnotationAttachments).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((a) => a.comment.trim()), {
   message: "A message must include text or an attachment",
 });
@@ -2597,7 +2587,7 @@ export const UpdateCustomMcpToolPolicyRequestSchema = z.object({
 });
 
 /**
- * The REST recovery twin of the SubstreamAgent `snapshot` frame.
+ * The REST recovery twin of the AgentLoopDO `snapshot` frame.
  *
  * Normal opens subscribe directly and paint the first snapshot. This response
  * remains for an explicit unavailable-state retry and is assembled by the same
@@ -2993,6 +2983,12 @@ export const WorkspaceSidebarSchema = z.strictObject({
   /** Each listed Channel's thread count and last activity, for the Channels tab. */
   channelStats: z.array(ChannelStatsSchema).optional(),
   /**
+   * This viewer's Canvases (`docs/canvases.md#the-canvas-list`). Optional, so a
+   * client reading a payload from a server that predates Canvases draws none;
+   * a released client ignores the key.
+   */
+  canvases: CanvasSidebarListSchema.optional(),
+  /**
    * False while the Organization has not finished creating General and placing
    * every Channel in it.
    *
@@ -3315,7 +3311,7 @@ export const WorkspaceWorkstreamStateEventSchema = z.strictObject({
 /**
  * The WorkstreamDO-owned common metadata plus the authenticated viewer overlay.
  * Transcript, tools, presence, and streaming output intentionally remain on
- * the selected SubstreamAgent feed.
+ * the selected AgentLoopDO feed.
  */
 export const WorkstreamControlMetadataSchema = z.strictObject({
   appearance: WorkstreamAppearanceSchema.optional(),
@@ -3978,6 +3974,13 @@ export const WorkstreamWorkflowInputSchema = z.object({
   }).optional(),
   /** The received agent exchange supplies discovery scope and the ordinary reply reference. */
   agentExchange: AgentExchangeSchema.optional(),
+  /**
+   * Set on a turn in a Sidekick's shared conversation (substream `"0"`), which
+   * the Sidekick has already routed to its wizard: every other input there
+   * starts a run or is refused before a turn exists. The only turn that loads
+   * the authoring tools; `docs/automation-lifecycle.md` owns the routing.
+   */
+  sidekickWizard: z.literal(true).optional(),
   /** Host-derived conversation kind; not a model-selectable execution option. */
   backgroundAgent: z.boolean().optional(),
   activityId: IdSchema.nullable(),

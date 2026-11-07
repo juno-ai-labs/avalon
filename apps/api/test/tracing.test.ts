@@ -55,7 +55,7 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
 
     await inDurableObjectPhase(envAt("info"), "initialize", {
       component: "substream_agent",
-      className: "SubstreamAgent",
+      className: "AgentLoopDO",
       latestVersion: 26,
       startedAt: 1_000,
     }, () => Promise.resolve());
@@ -65,14 +65,14 @@ describe("custom spans over Cloudflare's automatic tracing", () => {
       ended: true,
       attributes: {
         "rally.component": "substream_agent",
-        "rally.durable_object.class": "SubstreamAgent",
+        "rally.durable_object.class": "AgentLoopDO",
         "rally.migration.latest_version": 26,
       },
     });
     expect(rows(info)[0]).toMatchObject({
       event: "durable_object_initialization",
       component: "substream_agent",
-      class_name: "SubstreamAgent",
+      class_name: "AgentLoopDO",
       phase: "initialize",
       status: "completed",
       latest_version: 26,

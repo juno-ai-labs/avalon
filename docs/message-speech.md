@@ -213,8 +213,7 @@ Any scheme other than `http(s)` is read as written too. The domain honours the
 Public Suffix List's private section, unlike the favicon and network-policy
 callers, so `rally.github.io` is heard as the site and not as `github.io`. An image with no alt text is spoken as
 *image*, as a screen reader names an unlabelled graphic; its address was all it
-had. The iOS client's Speak hands the raw message text to the system
-synthesizer and is not on this path.
+had.
 
 Shipped in [#1278](https://github.com/juno-ai-labs/avalon/pull/1278).
 

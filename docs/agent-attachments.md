@@ -756,6 +756,26 @@ attachment reservation, since a pin usually names an already-sent resource.
 
 ## Changelog
 
+### 2026-11-07 — `publish_resource` lands in a Canvas
+
+**What changed:** A publish from a Canvas's Chat is one of the Canvas's
+artifacts: the bridge tells the Canvas after each publish
+(`canvasArtifactNoter`). A Sidekick run's publish goes to a Canvas
+(`resolveTerminalPublicationHome`): the one its first publish made, or one it
+names with the new optional `canvas` argument, which must be a Canvas the
+Sidekick writes. The run's own conversation is still attached, so it reads
+back what it published.
+
+**Why:** A Sidekick's output is a Canvas (the Canvases and Sidekicks PRD), and
+a Canvas holds every artifact its conversation generates; the publish identity
+`(conversation, path)` did not need to change for either.
+
+**Considered and rejected:** A separate Canvas publish tool: it would have been
+the same tool with a second identity rule.
+
+**Consequences:** One run makes at most one Canvas of its own. A publish
+outside a Sidekick run that names a `canvas` is refused rather than ignored.
+
 ### 2026-11-06 — Out-of-scope resources no longer trip the grounding guard
 
 **What changed:** The attachment grounding guard ignores `resource_not_found`,

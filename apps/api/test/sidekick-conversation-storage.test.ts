@@ -136,10 +136,27 @@ describe("the WorkspaceDO home-conversation migration", () => {
       `SELECT parent_id, substream_id, attached_by_user_id FROM sidekick_conversation_attachments`,
     ).all()).toEqual([{ parent_id: OTHER_CHANNEL, substream_id: "0", attached_by_user_id: AUTHOR }]);
   });
+
+  it("files a Canvas's Chat attachment under the canvas kind, and scopes it as one", () => {
+    const database = migratedWorkspace();
+    const sql = createTestSqlStorage(database);
+    seedSidekick(database);
+    // Migration 140 admits the canvas kind in the attachment CHECK.
+    applyWorkspace(database, 140, HOME_COLUMN_VERSION);
+    const canvasId = "00000000-0000-7000-8000-0000000000f1";
+    attachSidekickConversation(sql, {
+      automationId: SIDEKICK, address: { parentKind: "canvas", parentId: canvasId, substreamId: "0" }, userId: AUTHOR, now: 1,
+    });
+    expect(database.prepare(`SELECT parent_kind, parent_id FROM sidekick_conversation_attachments`).all())
+      .toEqual([{ parent_kind: "canvas", parent_id: canvasId }]);
+    // No Thread directory describes a Canvas, so it is never offered as a Thread.
+    expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }, AUTHOR)
+      .some((conversation) => conversation.parentId === canvasId)).toBe(false);
+  });
 });
 
 describe("a conversation scope", () => {
-  it("puts a Sidekick's Breakout home first, and flags what a person cannot open or what is archived", () => {
+  it("puts a Sidekick's own conversation first, then its Breakout home, and flags what a person cannot open or what is archived", () => {
     const database = migratedWorkspace();
     const sql = createTestSqlStorage(database);
     seedSidekick(database);
@@ -159,6 +176,8 @@ describe("a conversation scope", () => {
       id: conversation.conversationId, kind: conversation.kind, home: conversation.isHome,
       readable: conversation.readable, archived: conversation.archived,
     }))).toEqual([
+      // Its own conversation's id is the Sidekick's; the Sidekick admits it, so the directories mark it readable.
+      { id: SIDEKICK, kind: "sidekick", home: false, readable: true, archived: false },
       { id: `${CHANNEL}/${BREAKOUT}`, kind: "breakout", home: true, readable: true, archived: false },
       { id: OTHER_CHANNEL, kind: "channel", home: false, readable: true, archived: true },
       { id: CHANNEL, kind: "channel", home: false, readable: true, archived: false },
@@ -166,7 +185,7 @@ describe("a conversation scope", () => {
     // Someone in neither the private Channel nor the Breakout reaches only
     // the workspace-scoped Channel, and that one is archived.
     expect(scopeConversations(sql, scope, STRANGER).map((conversation) => [conversation.conversationId, conversation.readable]))
-      .toEqual([[`${CHANNEL}/${BREAKOUT}`, false], [OTHER_CHANNEL, true], [CHANNEL, false]]);
+      .toEqual([[SIDEKICK, true], [`${CHANNEL}/${BREAKOUT}`, false], [OTHER_CHANNEL, true], [CHANNEL, false]]);
   });
 
   it("archives a Breakout with its Channel, and reaches nothing for a deleted Sidekick", () => {
@@ -178,7 +197,8 @@ describe("a conversation scope", () => {
     seedBreakout(database, "Weekly call");
     seedBreakoutMember(database, AUTHOR);
 
-    expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }, AUTHOR)[0]?.archived).toBe(true);
+    expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }, AUTHOR)
+      .find((conversation) => conversation.isHome)?.archived).toBe(true);
     database.prepare(`UPDATE automation_directory SET lifecycle = 'deleted'`).run();
     expect(scopeConversations(sql, { kind: "sidekick", automationId: SIDEKICK }, AUTHOR)).toEqual([]);
   });

@@ -19,6 +19,7 @@ import {
   IconCornerDownRight,
   IconDeviceDesktopDown,
   IconDots,
+  IconHexagon,
   IconLock,
   IconMenu2,
   IconPin,
@@ -30,7 +31,7 @@ import {
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { File, type LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Link, matchPath, useLocation, useNavigate } from 'react-router-dom';
 
 import type { AttentionItem } from '../lib/attention-items';
@@ -61,6 +62,10 @@ import { useWorkspaceMembers } from '../lib/workspace-members';
 import { resourceKindLabel } from './markdown-citations';
 import { Avatar, Button, IconButton, ErrorNotice, Modal, RallyAvatar, TitleSkeleton, Tip } from './primitives';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
+import { CanvasesSection, useUnreadCanvasCount } from './canvas-sidebar-section';
+import { SidekicksSection, useSidekickAttentionCount } from './sidekick-sidebar-section';
+import { useCreateCanvas } from '../lib/canvases';
+import { ghostProps, opensElsewhere, PinnedSection, pinnedPosition, RowLayout, SectionHeading, useSectionMotion } from './navigation-rows';
 import { RailItem } from './rail-item';
 import { RelativeTime } from './relative-time';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
@@ -90,6 +95,17 @@ const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNo
   { id: 'artifacts', label: 'Artifacts', icon: <ShapeOutline shape="sheet" /> },
 ];
 type Section = (typeof SECTIONS)[number];
+
+/**
+ * The sections the rail switches to at cutover (plan step B-1): Canvases,
+ * whose outline is the page every artifact tile draws, and Sidekicks, the
+ * hexagon a Sidekick is drawn in. Their bodies, badges and header actions are
+ * wired below; nothing in the rail selects them yet.
+ */
+const PIVOT_SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNode }> = [
+  { id: 'canvases', label: 'Canvases', icon: <ShapeOutline shape="sheet" /> },
+  { id: 'sidekicks', label: 'Sidekicks', icon: <IconHexagon aria-hidden="true" size={22} stroke={1.8} /> },
+];
 
 /**
  * How many sections the phone's tab row draws before folding the rest into a
@@ -249,8 +265,15 @@ export function NavigationSidebar({
     // Each pinned artifact with a version this person has not seen.
     artifacts: unreadArtifacts,
     activity: unreadActivity,
+    // Each Canvas holding something this person has not read; each Sidekick
+    // waiting on input or holding something unread.
+    canvases: useUnreadCanvasCount(),
+    sidekicks: useSidekickAttentionCount(),
   };
-  const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Threads';
+  const title = [...SECTIONS, ...PIVOT_SECTIONS].find((candidate) => candidate.id === section)?.label ?? 'Threads';
+  const createCanvas = useCreateCanvas();
+  const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
+  const navigate = useNavigate();
   // The phone's tab row has room for four sections beside More and Settings;
   // the rest fold into More. A guest's four all fit, so they get no More.
   const phone = usePhoneLayout();
@@ -308,6 +331,12 @@ export function NavigationSidebar({
             {section === 'channels' && <IconButton label="New channel" onClick={() => setCreatingChannel(true)}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
+            {section === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { setCreateCanvasError(null); void createCanvas().catch((cause: unknown) => setCreateCanvasError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))); }}>
+              <IconPlus aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>}
+            {section === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
+              <IconPlus aria-hidden="true" size={18} stroke={1.8} />
+            </IconButton>}
             {section === 'activity' && <IconButton label="Mark all read" onClick={markActivityRead}>
               <IconChecks aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
@@ -318,10 +347,13 @@ export function NavigationSidebar({
         </header>
         <SidebarScroll className="navigation-panel-scroll" scrollRef={scroll}>
           {pinFailure && <ErrorNotice>{pinFailure}</ErrorNotice>}
+          {section === 'canvases' && createCanvasError && <ErrorNotice occurrence={createCanvasError}>The Canvas could not be made. Try again.</ErrorNotice>}
           {section === 'pinned' && <PinnedPanel guest={guest} scroll={scroll} />}
           {section === 'threads' && <ThreadsSection guest={guest} scroll={scroll} />}
           {section === 'artifacts' && <ArtifactsSection scroll={scroll} />}
           {section === 'channels' && <ChannelsSection scroll={scroll} />}
+          {section === 'canvases' && <CanvasesSection scroll={scroll} />}
+          {section === 'sidekicks' && <SidekicksSection scroll={scroll} />}
           {section === 'activity' && <ActivitySection
             accessDecisionFailed={accessDecisionFailed}
             accessRequests={accessRequests}
@@ -339,7 +371,7 @@ export function NavigationSidebar({
 }
 
 /** What a section's count says it counts, for its accessible name. */
-const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned with news', channels: 'with new threads', threads: 'waiting', artifacts: 'updated', activity: 'unread' };
+const BADGE_NOUNS: Record<SidebarSection, string> = { pinned: 'pinned with news', channels: 'with new threads', threads: 'waiting', artifacts: 'updated', activity: 'unread', canvases: 'unread', sidekicks: 'waiting' };
 
 /** What a section's count says, for its accessible name: "3 waiting". */
 function badgeLabel(section: SidebarSection, count: number): string {
@@ -685,53 +717,6 @@ function usePinDrop(pinnedIds: ReadonlySet<string>, orderOf: (kind: PinKind) => 
 }
 
 /**
- * The Pinned section of a tab. It is always there, because it is where a row
- * is dragged to pin it: with nothing pinned it says so, and it wakes in the
- * accent while a row is being dragged. The whole section, heading included,
- * is the drop target, so a release in a gap between rows still counts.
- */
-function PinnedSection({ children, count, drop, heading = 'Pinned', howToPin, label, loading = false, noun, pinnedOnly = false, reorderable, target }: {
-  children: ReactNode;
-  count: number;
-  drop: PinDrop | null;
-  heading?: string;
-  /** The heading mark's tip while there is nothing to arrange, where dragging a row in is not how this kind is pinned. */
-  howToPin?: string;
-  label: string;
-  /**
-   * In the Pinned tab, where no list beside it shows its own placeholders:
-   * the rows are still being read, so placeholders stand in for them.
-   */
-  loading?: boolean;
-  noun: string;
-  /** In the Pinned tab, where no unpinned row sits beside it to be moved in. */
-  pinnedOnly?: boolean;
-  /** Whether any one kind holds two or more pins; each kind reorders on its own. */
-  reorderable: boolean;
-  target: React.HTMLAttributes<HTMLElement>;
-}): React.JSX.Element {
-  const hint = useId();
-  // How to reorder is said once, for the section; each row says only its
-  // place (`pinnedPosition`). As a per-row description it would be repeated
-  // before every title.
-  return <section aria-busy={loading || undefined} aria-describedby={reorderable ? hint : undefined} aria-label={label} className="navigation-section" {...target}>
-    <SectionHeading motionKey={pinnedOnly ? `pinned:${noun}` : 'pinned'} trailing={<PinnedMark howToPin={howToPin} reorderable={reorderable} />}>{heading}</SectionHeading>
-    {reorderable && <p className="sr-only" id={hint}>Hold Alt and press the up or down arrow to move a pinned {noun}.</p>}
-    {loading && <SidebarSkeletonRows count={Math.max(1, count)} />}
-    {!loading && count === 0 && drop?.index == null && <div className={clsx('pinned-empty-drop-surface', drop && 'is-armed')}>
-      <IconPin aria-hidden="true" size={15} stroke={1.7} />
-      <span>{pinnedOnly ? `Pin ${/^[aeiou]/u.test(noun) ? 'an' : 'a'} ${noun} to keep it here` : `Move a ${noun} here to pin it`}</span>
-    </div>}
-    {children}
-  </section>;
-}
-
-/** A pinned row's place, read after its title. */
-function pinnedPosition(index: number, count: number): string {
-  return `Pinned, ${index + 1} of ${count}.`;
-}
-
-/**
  * Scrolls to a row a pin or unpin moved, once the list shows the move, and
  * focuses it if the move left focus nowhere. Where the move took the row off
  * the tab, as unpinning does on Pinned, focus goes to the row that was beside
@@ -771,24 +756,10 @@ function usePinReveal(
   }, [motionKeyOf, scroll]);
 }
 
-/**
- * Where a link's own click should be left to the browser: a modifier or a
- * button other than the main one opens it somewhere else (a new tab, in the
- * web app), so it is not this window opening the row.
- */
-function opensElsewhere(event: React.MouseEvent): boolean {
-  return event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
-}
-
 /** The open route, as a link's `to` would name it. */
 function useCurrentRoute(): string {
   const location = useLocation();
   return `${location.pathname}${location.search}`;
-}
-
-/** A placeholder row: a picture of where a dragged row would land, out of reach of focus and assistive technology. */
-function ghostProps(ghost: boolean): React.HTMLAttributes<HTMLElement> {
-  return ghost ? { 'aria-hidden': true, tabIndex: -1 } : {};
 }
 
 /**
@@ -847,30 +818,6 @@ function PinMoveItems({ moves }: { moves: PinMoves | undefined }): React.JSX.Ele
   </>;
 }
 
-/**
- * A section's heading. It is a held row of the list motion, so it travels with
- * the rows under it when a section above appears or goes, rather than being
- * the thing seen to leave.
- */
-function SectionHeading({ children, motionKey, trailing }: {
-  children: ReactNode;
-  motionKey: string;
-  trailing?: ReactNode;
-}): React.JSX.Element {
-  return <div className="navigation-section-heading" data-motion-hold="" data-motion-key={`heading:${motionKey}`}>
-    <span>{children}</span>
-    {trailing && <span className="navigation-section-trailing">{trailing}</span>}
-  </div>;
-}
-
-/** The Pinned heading's pin; its tooltip says how to pin, then how to arrange once there is something to arrange. */
-function PinnedMark({ howToPin = 'Drag a row here or right-click it to pin', reorderable }: { howToPin?: string | undefined; reorderable: boolean }): React.JSX.Element {
-  const mark = <span aria-hidden="true" className="navigation-section-mark">
-    <IconPin size={14} stroke={1.8} />
-  </span>;
-  return <Tip label={reorderable ? 'Drag to reorder' : howToPin}>{mark}</Tip>;
-}
-
 /** A Channel's identity as a tile: its glyph on its hue's pastel pair. */
 function channelLook(space: SpaceSummary): { Icon: LucideIcon; tint: string; ink: string } {
   return { Icon: WORKSTREAM_ICON_COMPONENTS[space.iconKey], ...markColors(space.colorKey) };
@@ -895,34 +842,6 @@ function channelBadge(space: SpaceSummary): TileBadge {
 function threadBadge(threadId: string, title: string, saved: WorkstreamAppearance | undefined, channel: SpaceSummary | undefined): TileBadge {
   const { Icon, ink, tint } = resolveWorkstreamAppearance(threadId, saved);
   return { key: threadId, shape: 'circle', fill: ink, ink: tint, icon: Icon, label: title, badge: channel && channelBadge(channel) };
-}
-
-/**
- * One row of any of the three lists: a tile, a name with its time, and a
- * second line with an optional unread dot at its end.
- */
-function RowLayout({ detail, tile, time, title, titleExtra, unread }: {
-  detail: ReactNode;
-  tile: ReactNode;
-  time?: ReactNode;
-  title: ReactNode;
-  titleExtra?: ReactNode;
-  unread: boolean;
-}): React.JSX.Element {
-  return <>
-    {tile}
-    <span className="navigation-row-copy">
-      <span className="navigation-row-line">
-        <span className="navigation-row-title">{title}</span>
-        {titleExtra}
-        {time}
-      </span>
-      <span className="navigation-row-line">
-        <span className="navigation-row-detail">{detail}</span>
-        {unread && <span aria-label="Unread" className="navigation-row-unread-dot" role="img" />}
-      </span>
-    </span>
-  </>;
 }
 
 /**
@@ -968,7 +887,6 @@ function withLiveThread(
 }
 
 /** A list motion with nothing to watch, for a section drawn inside a tab that runs one over several. */
-const NO_CONTAINER: RefObject<HTMLElement | null> = { current: null };
 
 /**
  * The Pinned tab: what this person pinned, a section per kind, each the same
@@ -987,15 +905,6 @@ function PinnedPanel({ guest, scroll }: { guest: boolean; scroll: RefObject<HTML
   </>;
 }
 
-/**
- * A section's list motion: its own over the scroll box, or, inside the Pinned
- * tab, the tab's shared one. Call after `usePinReveal`.
- */
-function useSectionMotion(scroll: RefObject<HTMLElement | null>, shared: (() => void) | undefined): void {
-  const own = useListMotionPass(shared ? NO_CONTAINER : scroll);
-  const run = shared ?? own;
-  useLayoutEffect(() => run());
-}
 
 /**
  * The Threads tab: what this person pinned, then every thread and breakout

@@ -39,7 +39,7 @@ import {
   conversationObjectName,
   workspaceDOName,
 } from "../src/durable-objects/names";
-import type { SubstreamAgent } from "../src/durable-objects/substream-agent";
+import type { AgentLoopDO } from "../src/durable-objects/agent-loop-do";
 import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import {
   consumeEffectBodies,
@@ -90,7 +90,7 @@ function workspaceStub() {
   return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
 }
 
-function childStub(parentId: string, substreamId = asSubstreamId("0")): DurableObjectStub<SubstreamAgent> {
+function childStub(parentId: string, substreamId = asSubstreamId("0")): DurableObjectStub<AgentLoopDO> {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
     conversationObjectName("global", WORKSPACE_ID, parentId, substreamId),
   ));
@@ -174,7 +174,7 @@ async function captureEffectQueue(
  * the endpoint's execution-receipt wake, so no model run is admitted and the
  * only alarm work the object has is its outbox.
  */
-async function openWorkstream(stub: DurableObjectStub<SubstreamAgent>, workstreamId: string, title: string): Promise<void> {
+async function openWorkstream(stub: DurableObjectStub<AgentLoopDO>, workstreamId: string, title: string): Promise<void> {
   await runInDurableObject(stub, async (instance) => {
     const product = (instance as unknown as { product: WorkstreamObjectProductService }).product;
     await product.initialize(AUTH, {
@@ -581,7 +581,6 @@ describe("an automation's child", () => {
       automationId: AUTOMATION_ID,
       authorUserId: USER_ID,
       scope: "personal",
-      owningWorkstreamId: null,
       authorityGeneration: 1,
     });
     const run = childStub(AUTOMATION_ID, AUTOMATION_RUN_ID);

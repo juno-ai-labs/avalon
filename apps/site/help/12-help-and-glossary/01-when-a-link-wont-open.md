@@ -5,7 +5,7 @@ description: What each 'Rally could not open that link' message means and what t
 
 Lots of things hand you into Rally by link: an invitation email, the browser
 page you sign in on, the page where you approve a connection to Google or
-Slack, a Thread link a teammate pasted into Slack. Most of the time the link
+Slack, a Canvas link a teammate pasted into Slack. Most of the time the link
 does its job and you land where you meant to. This page is for the other
 times.
 
@@ -35,8 +35,7 @@ A few things about this window:
   to leave no message at all, which was worse.
 - It works whatever state Rally is in, even while it is starting up or
   after your session has expired.
-- It is on the Mac only. The iPhone app and the browser version do not
-  have it.
+- It is on the Mac only. The browser version does not have it.
 
 ## When you are signed out
 
@@ -44,10 +43,10 @@ If you are not signed in at all, Rally does not open the window. The sign-in
 screen is the only thing showing, so the message appears there instead, under
 the sign-in buttons. For example:
 
-> Sign in before opening this thread link.
+> Sign in before creating an automation.
 
 Sign in, then click the link again. Rally forgot the link when it refused it,
-so it will not open the Thread for you after you sign in.
+so it will not open the place it pointed at for you after you sign in.
 
 You may also see **Your session expired. Sign in again to continue.** on the
 sign-in screen. That is not a link problem: your sign-in ran out and
@@ -117,7 +116,7 @@ the two kinds of Slack connection.
 
 ### Links into an Organization
 
-Links to a Channel, a Thread, a Sidekick or a page of Settings belong to one
+Links to a Canvas, a Sidekick or a page of Settings belong to one
 Organization. Before Rally follows one, it switches to that Organization. If it
 cannot, you see one of these and nothing changes: you stay exactly where you
 were.
@@ -133,32 +132,31 @@ on the way in, so it does not always mean your membership has ended. If you
 are sure you are still a member, try the link once more, then contact support.
 
 A link is an address, not a key. If a teammate sends you a link
-to a private Thread you are not in, it will open Rally but not the Thread.
-[Who can see what](../03-spaces-and-breakouts/04-who-can-see-what.md) explains
+to a Canvas that was not shared with you, it will open Rally but not the Canvas.
+[Who can see what](../02-canvases/08-who-can-see-what.md) explains
 why, and how to be let in.
 
 ### Other messages
 
 | Message | What to do |
 | --- | --- |
-| Sign in before starting a thread. | Sign in, or open an Organization, then try again. |
-| Sign in before opening this channel link. | Sign in, then click the link again. |
-| Sign in before opening this thread link. | Sign in, then click the link again. |
 | Sign in before creating an automation. | Sign in, then click the link again. "Automation" is the old name for a Sidekick; this message has not caught up yet. |
 | Rally could not open that note link. | The link is damaged. Ask whoever sent it to copy it again from inside Rally. |
 | Rally could not open that link. | Something unexpected went wrong. Try the link once more. If it keeps happening, contact support with the time it happened. |
 
-A link to start a new Thread opens Rally and leaves the choosing to you: open a
-Channel and type your request in the message box at the bottom. A link to make a new Sidekick opens
-the app's home. Neither of those is a failure. Each is a link with modest
-ambitions.
+A link to make a new Sidekick opens the app's home. That is not a failure. It
+is a link with modest ambitions.
+
+A link to a Channel, a Thread or a Breakout no longer opens anything: those
+were the conversations Rally had before Canvases, and they were removed. Ask
+whoever sent it what they meant to show you; it may be in a Canvas now.
 
 ## When a browser link does not open Rally at all
 
-Links to Channels, Threads and Breakouts are ordinary web addresses starting
+Links to Canvases and Sidekicks are ordinary web addresses starting
 with `https://rallywith.ai/app/`. If Rally is installed, the link should open
 straight in the app. Otherwise you see a short web page that hands you over,
-as described in [Search and links](../03-spaces-and-breakouts/06-search-and-links.md).
+as described in [Search and links](../02-canvases/11-search-and-links.md).
 
 If you end up staring at a browser page and no Rally:
 
@@ -169,8 +167,8 @@ If you end up staring at a browser page and no Rally:
    whether it may open Rally. Say yes.
 3. Open Rally first, then the link again. Start Rally from Applications,
    wait for it to finish opening, then click the original link once more.
-4. Search instead. If the link is to a Thread you can see, the search in
-   Rally gets you there as well. Search for its name.
+4. Search instead. If the link is to a Canvas you can open, the search box on
+   the Canvases home page gets you there as well. Search for its name.
 
 ## Who to ask
 
@@ -178,8 +176,9 @@ If you end up staring at a browser page and no Rally:
   or administrator of that Organization. Only they can send a new invitation or
   change who belongs. [Roles: owners, administrators, members and guests](../10-running-an-organization/01-roles.md)
   explains who can do what.
-- A private Thread you cannot open: someone who is already in it, who can
-  add you.
+- A Canvas you cannot open: its creator, or an owner or administrator of
+  the Organization. For a Canvas a Sidekick made, one of the Sidekick's
+  managers can add you too.
 - An Organization connection that will not connect: an owner or
   administrator, since only they can manage those.
 - Anything that keeps failing after you have tried the fix above: the

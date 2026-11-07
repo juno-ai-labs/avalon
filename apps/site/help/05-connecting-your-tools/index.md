@@ -4,15 +4,15 @@ description: Let Rally read and act in Google, GitHub, Linear, Notion, meeting-n
 nav_title: Connecting your tools
 ---
 
-Your work does not live in Rally. Not yet, anyway. It lives in your inbox, your calendar, a Drive folder somebody named "Final FINAL", a Linear board, a Notion wiki and last Tuesday's meeting notes. Rally can be clever in a Thread all day long, but until it can see those places it is a sharp assistant locked in an empty room.
+Your work does not live in Rally. Not yet, anyway. It lives in your inbox, your calendar, a Drive folder somebody named "Final FINAL", a Linear board, a Notion wiki and last Tuesday's meeting notes. Rally can be clever in a Canvas all day long, but until it can see those places it is a sharp assistant locked in an empty room.
 
-A connection opens the door. Once you connect a tool, Rally can read what is there and, where the tool allows it, act there for you: draft the email, file the issue, update the page, book the meeting. You ask in plain words in a Thread, the same way you ask for anything else, and Rally reaches for the right tool.
+A connection opens the door. Once you connect a tool, Rally can read what is there and, where the tool allows it, act there for you: draft the email, file the issue, update the page, book the meeting. You ask in plain words in a Canvas, the same way you ask for anything else, and Rally reaches for the right tool.
 
 ## Yours, or everyone's
 
 Every connection is one of two kinds, and most of this chapter is easier once you know which you are looking at.
 
-A personal connection acts as you. Rally signs in to the tool with your own account and sees what you can see there. Nobody else in your Organization can use it, and sharing a Thread with someone does not lend it to them. Your Gmail is a personal connection, and it should be.
+A personal connection acts as you. Rally signs in to the tool with your own account and sees what you can see there. Nobody else in your Organization can use it, and sharing a Canvas with someone does not lend it to them. Your Gmail is a personal connection, and it should be.
 
 An Organization connection is shared. An owner or administrator sets it up once, and every member can then ask Rally to use it. It acts for the Organization, not for whichever person asked. The team's GitHub repositories or the company Notion are good candidates.
 
@@ -32,4 +32,4 @@ After that, every connector gets its own page, one for each card in Settings, in
 
 You need the overview and the pages for the tools you use. Skip the rest.
 
-The Slack page here is about connecting Slack. Using Rally inside Slack day to day, with direct messages, mentions and `/rally`, has its own pages in [Rally outside the app](../08-rally-everywhere/index.md).
+The Slack page here is about connecting Slack. Using Rally inside Slack day to day, with Sidekicks that listen and post there, has its own pages in [Rally outside the app](../08-rally-everywhere/index.md).

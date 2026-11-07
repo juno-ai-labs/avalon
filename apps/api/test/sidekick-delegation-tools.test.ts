@@ -18,15 +18,14 @@ function plugin(authoring: boolean, autonomous = false) {
 }
 
 describe("Sidekick delegation plugin presentations", () => {
-  it("keeps the existing room recommendations and adds only the delegation subset with stable wire names", () => {
+  it("gives a room only the delegation subset, and authoring the same tools with stable wire names", () => {
     const room = plugin(false);
     const authoring = plugin(true);
     const delegation = ["my_delegations_list", "delegates_list", "set_delegation"];
-    expect(room.modelId).toBe("rally_skill_recommendations");
+    // A room no longer recommends Sidekicks; it keeps managing delegation.
+    expect(room.modelId).toBe("rally_sidekick_delegation");
     expect(room.shortWireName).toBe("");
-    expect(room.tools.map((tool) => tool.definition.name)).toEqual([
-      "list_skill_recommendations", "recommend_skill", "unrecommend_skill", ...delegation.map((name) => `sidekick_${name}`),
-    ]);
+    expect(room.tools.map((tool) => tool.definition.name)).toEqual(delegation.map((name) => `sidekick_${name}`));
     expect(authoring.modelId).toBe("rally_sidekicks");
     expect(authoring.shortWireName).toBe("sidekick");
     expect(authoring.tools.slice(-3).map((tool) => tool.definition.name)).toEqual(delegation);

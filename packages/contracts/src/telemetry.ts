@@ -532,7 +532,7 @@ export const TELEMETRY_EVENTS = {
   workstream_socket_started: event({
     ...common,
     name: "workstream_socket_started",
-    definition: "The desktop began one WorkstreamDO control or SubstreamAgent feed connection attempt, including its ticket request.",
+    definition: "The desktop began one WorkstreamDO control or AgentLoopDO feed connection attempt, including its ticket request.",
     productQuestion: "Why are work-stream sockets started, which kind starts, and how much connection work comes from initial admission versus reconnects?",
     sources: ["desktop-renderer"],
     authoritativeSource: "desktop-renderer",

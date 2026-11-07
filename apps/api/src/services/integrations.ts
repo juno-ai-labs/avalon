@@ -89,7 +89,6 @@ import {
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
   AutomationDetailSchema,
-  IdSchema,
   ConnectorResourceAuthorizationHintSchema,
   ConnectorResourceAuthorizationRequestSchema,
   ModelPluginIdSchema,
@@ -158,7 +157,6 @@ import { connectorTextPages } from "./connector-text-pages";
 import { conversationObjectName, workspaceDOName } from "../durable-objects/names";
 import { PERSONAL_SYSTEM_PROMPT_REASONS } from "../durable-objects/personal-system-prompt";
 import { AutomationService } from "./automation-service";
-import { WorkstreamService } from "./workstream-service";
 import { ResourceService } from "./resource-service";
 import { DEMO_SEED_PROVIDER_KEY, demoSeedModelRoute, demoSeedProviderFetch } from "./demo-seed-provider";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
@@ -323,7 +321,6 @@ import {
   conversationToolPorts,
   createConversationsPlugin,
 } from "./conversation-tools";
-import { conversationIdOf } from "../durable-objects/workspace-sidekick-conversation-storage";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import { CODE_PROGRAM_TOOL_TIMEOUT_MS, createCodePlugin, createCustomToolsPlugin, type CodePlugin } from "./code-mode";
 import { TerminalToolError } from "./terminal/tools";
@@ -1845,59 +1842,16 @@ function createAvalonAutomationsPlugin(
   const authorUserId = input.executionPrincipal?.type === "user"
     ? input.executionPrincipal.userId
     : null;
-  const attachmentAuth = async () => {
-    if (!authorUserId) throw new Error("sidekick_attachment_principal_required");
-    const membership = await env.DB.prepare(`SELECT role FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND status = 'active'`)
-      .bind(input.workspaceId, authorUserId).first<{ role: "owner" | "admin" | "member" | null }>();
-    if (!membership) throw new Error("sidekick_attachment_membership_required");
-    return { sessionId: `run:${input.harnessRunId}`, userId: asUserId(authorUserId), workspaceId: input.workspaceId,
-      region: input.region, role: membership.role, analyticsWorkspaceId: null };
-  };
+
   if (input.parentKind === "workstream") {
-    const tools: HarnessTool[] = [{
-      definition: {
-        name: "list_skill_recommendations",
-        description: "List reusable skills that can be recommended for this thread, with skillId, availability and recommendation state. This does not list agents to configure. Use load_skill with a name from the Skills catalog to load instructions now.",
-        capability: "rally.sidekick.list", mode: "read", idempotency: "safe",
-        inputSchema: z.toJSONSchema(z.strictObject({})),
-      },
-      execute: async () => {
-        const options = await new WorkstreamService(env, await attachmentAuth()).sidekickRecommendationOptions(
-          input.parentId, input.backgroundAgent ? "0" : input.substreamId ?? "0");
-        return { output: { skills: options.items.filter((item) => item.available || item.attached).map((item) => ({
-          skillId: item.id, name: item.name, description: item.description, available: item.available,
-          canRecommend: options.canManage, recommended: item.attached,
-        })) }, summary: "Listed skill recommendations" };
-      },
-    }, ...([true, false] as const).map((recommended): HarnessTool => {
-      const schema = z.strictObject({ skillId: IdSchema });
-      return {
-        definition: {
-          name: recommended ? "recommend_skill" : "unrecommend_skill",
-          description: `${recommended ? "Recommend" : "Stop recommending"} a reusable skill for this thread's future executions. Use a skillId from list_skill_recommendations. Loading instructions now still requires load_skill.`,
-          capability: `rally.sidekick.${recommended ? "attach" : "detach"}`, mode: "write", idempotency: "record_before_execute",
-          inputSchema: z.toJSONSchema(schema),
-        },
-        serial: true,
-        validateInput: (raw) => { const parsed = schema.safeParse(raw); return parsed.success ? null : parsed.error; },
-        execute: async (raw) => {
-          const { skillId } = schema.parse(raw);
-          const result = await new WorkstreamService(env, await attachmentAuth()).setSidekickRecommendation(
-            input.parentId, skillId, recommended, input.substreamId ?? "0", input.backgroundAgent ? input : undefined);
-          return { output: { skills: result.items.map((item) => ({ skillId: item.id, name: item.name,
-            description: item.description, available: item.available })),
-            note: "Recommendations apply to future executions. Call load_skill to use instructions in this execution." },
-          summary: recommended ? "Recommended a skill" : "Removed a skill recommendation" };
-        },
-      };
-    })];
-    if (delegationUser) tools.push(...sidekickDelegationTools(env, input, delegationUser, true));
-    return { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_skill_recommendations", shortWireName: "",
-      displayName: "Skill recommendations",
-      description: `Choose which reusable skills to recommend for future runs in this thread. To use a skill now, call load_skill.${delegationUser ? " Inspect and manage Sidekick delegates for Organization users." : ""}`,
-      searchAliases: ["skill", "instructions", "knowledge", "recommend", "procedure",
-        ...(delegationUser ? ["sidekick", "delegate", "delegation", "account", "consent", "allow", "withdraw"] : [])],
-      systemMessage: `Use list_skill_recommendations, recommend_skill and unrecommend_skill to manage this thread's skill recommendations. Recommendations affect future executions; call load_skill with a name from the Skills catalog to use instructions now. To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.${delegationUser ? ` ${sidekickDelegationGuidance()}` : ""}`,
+    // A Thread no longer owns or recommends a Sidekick; what is left here is
+    // managing Sidekick delegation, for a person.
+    const tools = delegationUser ? sidekickDelegationTools(env, input, delegationUser, true) : [];
+    return { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekick_delegation", shortWireName: "",
+      displayName: "Sidekick delegation",
+      description: "Inspect and manage Sidekick delegates for Organization users.",
+      searchAliases: ["sidekick", "delegate", "delegation", "account", "consent", "allow", "withdraw"],
+      systemMessage: `To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.${delegationUser ? ` ${sidekickDelegationGuidance()}` : ""}`,
       tools, preload: false, explicit: false };
   }
   /**
@@ -3234,7 +3188,7 @@ export async function runWorkstreamHarness(
   const activeCredentialPluginIds = new Set<string>();
   // Inline child harnesses would create a second Bind loop inside this
   // substream's one persistent state machine. Keep the tool off the production
-  // surface until delegation is routed to its own durable child SubstreamAgent.
+  // surface until delegation is routed to its own durable child AgentLoopDO.
   let ambiguousToolOutcome = false;
   let suppressInferenceRequestCapture = false;
   const toolEffectIntents = createToolEffectIntents();
@@ -5250,6 +5204,36 @@ function principalSystemSectionFor(
  * re-rendered on every turn and must be byte-identical across a retry, and
  * SQLite is free to return two rows in either order.
  */
+/**
+ * What Rally in a Canvas's Chat is told about the Canvas: its title, its
+ * artifacts at their current versions, and how publishing works there. A
+ * derived user message, as a Sidekick run's activation context is, rather
+ * than system prompt text: the system prompt prefix is byte-stable and
+ * cached, and the artifact list changes with every publish. Keyed on the
+ * message that woke the run, so a recovered execution renders the same
+ * context, under its own source kind, so it never shares an identity with
+ * the SLACK CONTEXT keyed on that same message. `docs/canvases.md#rally-in-a-canvas-chat`.
+ */
+async function canvasRunContextMessage(env: Env, input: WorkstreamWorkflowInput): Promise<ModelMessage | null> {
+  const canvas = await (await hostedParentStub(env, input.workspaceId)).canvasContext({
+    workspaceId: input.workspaceId, canvasId: input.parentId,
+  });
+  if (!canvas) return null;
+  return modelDerivative({
+    role: "user",
+    content: `CANVAS CONTEXT (host-provided):\n${JSON.stringify({
+      canvasId: canvas.canvasId,
+      title: canvas.title,
+      artifacts: canvas.artifacts.map((artifact) => ({
+        resourceId: artifact.resourceId, title: artifact.title, kind: artifact.kind, version: artifact.version,
+      })),
+      publishing: "This conversation is a Canvas's Chat, open to everyone in the Canvas. The artifacts above are the Canvas. "
+        + "To change one, read it (read_resource, view_resource, or import_resource into the Terminal), then publish_resource the same filePath: "
+        + "that is a new version of it, attributed to you. Publishing a different filePath adds another artifact to this Canvas.",
+    })}`,
+  }, "canvas_context", input.triggerMessageId ?? input.harnessRunId);
+}
+
 async function loadRunPromptContext(
   env: Env,
   input: WorkstreamWorkflowInput,
@@ -5282,11 +5266,10 @@ async function loadRunPromptContext(
     // immutable, so nothing is frozen into the loop input beyond the reference.
     const definition = await runDefinitionPreparation.get();
     if (!definition) throw new Error("sidekick_run_reference_missing");
-    // The home, as the conversation tools name it: the Channel's Main
-    // conversation or a Breakout. Null tells the run nobody reads it in Rally.
-    const homeConversationId = definition.owningWorkstreamId === null ? null
-      : conversationIdOf({ parentId: definition.owningWorkstreamId, substreamId: definition.owningSubstreamId });
-    automationSendsOutward = definition.owningWorkstreamId === null;
+    // No Thread is a Sidekick's home any more: the run delivers its result
+    // itself, and its reply reaches the Sidekick's own conversation as its row.
+    const homeConversationId = null;
+    automationSendsOutward = true;
     automationContext = {
       sidekickId: input.automationRun.automationId,
       name: definition.definition.name,
@@ -5375,6 +5358,10 @@ async function loadRunPromptContext(
     }), "scheduled_wakeup", input.scheduledWakeupId);
   }
   if (triggerMessage) additionalMessages.push(triggerMessage);
+  if (input.parentKind === "canvas") {
+    const canvas = await canvasRunContextMessage(env, input);
+    if (canvas) additionalMessages.push(canvas);
+  }
   if (input.automationRun && input.automationContinuation) {
     // After the input that continued the run, which is already in the
     // transcript above. Keyed on that input, so a recovered execution reuses
@@ -5885,8 +5872,10 @@ async function loadHarnessTools(
   const customToolsPlugin = codeMode && env.CODE_LOADER && runDefinition?.definition.customTools.length
     ? await createCustomToolsPlugin(codeMode, runDefinition.definition.customTools, { loader: env.CODE_LOADER, input })
     : null;
+  // In a Sidekick's shared conversation the authoring tools are the wizard's,
+  // and a turn there is the wizard's only once the Sidekick routed it so.
   const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
-    || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0"))
+    || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0" && input.sidekickWizard === true))
     ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages, codeMode)
     : input.executionPrincipal.type === "user" ? {
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",
@@ -5901,13 +5890,11 @@ async function loadHarnessTools(
     } : null;
   // List, read and post to Rally conversations, scoped by the loop: a
   // Breakout loop reaches its own conversation and its Channel's Main; a
-  // Sidekick's configuration conversation and runs reach its home and
-  // attachments. The only way a Sidekick run reaches a room. A run knows from
-  // its definition whether the Sidekick has a home; the configuration
-  // conversation does not read one.
+  // Sidekick's configuration conversation and runs reach its own
+  // conversation, where a post that names none lands, its home and its
+  // attachments. The only way a Sidekick run reaches a room.
   const conversationsPlugin = createConversationsPlugin(input, conversationToolPorts(env, input),
-    (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX, null),
-    { home: runDefinition ? runDefinition.owningWorkstreamId !== null : null });
+    (tool) => expandPages(tool, CONVERSATIONS_WIRE_PREFIX, null));
   // `tools` retains the historical flattened view for API diagnostics and
   // tests. Bind receives stable always-active core plugins plus loadable
   // built-in and credential-scoped plugins.

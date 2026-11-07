@@ -1,4 +1,7 @@
 import { sidekickProjectionRunning } from "./sidekick-activity";
+import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
+import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
+import { conversationObjectName } from "./names";
 import {
   SIDEKICK_DELEGATION_ERRORS, SidekickDelegatesResultSchema,
   SidekickExecutionDelegationSchema, type SidekickExecutionDelegation, type WorkspaceExternalEvent,
@@ -8,6 +11,7 @@ import {
   SidekickReviewNoticeV1Schema, type SidekickReviewNoticeV1,
 } from "@rally/contracts";
 import { SidekickDelegationStorage } from "./sidekick-delegation-storage";
+import { sidekickAdmits } from "../services/authorization-policy";
 import { queueSidekickSourceReconciliation, sidekickSourceRegistrations } from "./sidekick-source-registrations";
 import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
@@ -20,7 +24,6 @@ import {
   AutomationDetailSchema,
   SidekickSkillSourceSchema,
   type SidekickSkillSource,
-  type SpaceColorKey,
   AutomationDraftSchema,
   AutomationExecutionPrincipalClaimSchema,
   AutomationRunDefinitionV1Schema,
@@ -28,7 +31,6 @@ import {
   AutomationSetEvaluatorRulesInputV1Schema,
   ExternalEventRegistrationProjectionV1Schema,
   PROJECT_COLOR_RING,
-  generatedWorkstreamAppearance,
   WORKSTREAM_ICON_KEYS,
   WorkstreamAppearanceSchema,
   WorkstreamAppearancePatchSchema,
@@ -37,6 +39,8 @@ import {
   sidekickReceivesEmail,
   automationDraftAcceptanceBlocker,
   asAutomationId,
+  asSubstreamId,
+  asWorkspaceId,
   asUserId,
   isExternalEventTrigger,
   semanticConditionsForEventType,
@@ -53,29 +57,7 @@ import {
 } from "@rally/contracts";
 import type { WorkspaceRelationship } from "@rally/contracts/scope-grants";
 import { zodDiagnosticCode, describeZodIssues, codeShaped } from "@rally/contracts/zod-diagnostics";
-import type { ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
-import {
-  ConversationParentAuthorityRequestSchema,
-  ConversationParentAuthorityResultSchema,
-  ConversationParentAuthorizeViewerRequestSchema,
-  ConversationParentAuthorizeViewerResultSchema,
-  ConversationParentListChildrenRequestSchema,
-  ConversationParentListChildrenResultSchema,
-  ConversationParentReserveChildRequestSchema,
-  ConversationParentReserveChildResultSchema,
-  ConversationParentTerminalDeadlinesRequestSchema,
-  ConversationParentTerminalDeadlinesResultSchema,
-  type ConversationParentAuthorityRequest,
-  type ConversationParentAuthorityResult,
-  type ConversationParentAuthorizeViewerRequest,
-  type ConversationParentAuthorizeViewerResult,
-  type ConversationParentListChildrenRequest,
-  type ConversationParentListChildrenResult,
-  type ConversationParentReserveChildRequest,
-  type ConversationParentReserveChildResult,
-  type ConversationParentTerminalDeadlinesRequest,
-  type ConversationParentTerminalDeadlinesResult,
-} from "@rally/contracts/conversation-parent";
+import type { ConversationParentAuthorizeViewerRequest } from "@rally/contracts/conversation-parent";
 
 import type { Env } from "../env";
 import { ApiError, asApiError } from "../lib/api-error";
@@ -83,6 +65,8 @@ import { connectorPluginBindingViews } from "../lib/connector-plugin-views";
 import { connectorActivityTriggerDescriptors, storedConnectionScope } from "../lib/connector-activity-triggers";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { sha256 } from "../lib/crypto";
+import { conversationMessageOpening } from "../lib/conversation-message-opening";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { externalEventOpening } from "../lib/external-event-opening";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { parseRpcInput } from "../lib/rpc-input";
@@ -104,12 +88,17 @@ import {
   AutomationCreateRequestSchema,
   AutomationExternalEventAdmissionSchema,
   AutomationInboundEmailAdmissionSchema,
-  AutomationOwningRoomArchivedRequestSchema,
   AutomationRunDefinitionRequestSchema,
   AutomationRunNowRequestSchema,
+  SidekickConversationMessageRequestSchema,
+  type SidekickRunRowProjection,
+  type SidekickConversationMessageRequest,
+  type SidekickConversationMessageRoute,
   AutomationRunRequestSchema,
   AutomationRunSeededRequestSchema,
   AutomationSetAppearanceRequestSchema,
+  AutomationSetAudienceRequestSchema,
+  type AutomationSetAudienceRequest,
   AutomationSubmitDefinitionRequestSchema,
   AUTOMATION_RUN_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
@@ -124,7 +113,6 @@ import {
   type AutomationExternalEventAdmission,
   type AutomationExternalEventPlan,
   type AutomationInboundEmailAdmission,
-  type AutomationOwningRoomArchivedRequest,
   type AutomationRunDefinitionRequest,
   type AutomationRunNowRequest,
   type AutomationRunRequest,
@@ -134,8 +122,7 @@ import {
   type SidekickRunContinuation,
   type SidekickSkillReadRequest,
 } from "./automation-do-protocol";
-import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect, type ReceiveChildEffectsRequest } from "./conversation-parent-object";
-import { owningThreads, parsedAppearance } from "./channel-rails";
+import type { DirectoryCommonEffect } from "./conversation-parent-object";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
 import { conversationIdOf } from "./workspace-sidekick-conversation-storage";
@@ -188,6 +175,7 @@ export const SIDEKICK_REVIEW_SAMPLE_LIMITS = { failed: 10, needsInput: 5, comple
 const SIDEKICK_REVIEW_ALARM_INNER_KEY = "review";
 /** The Sidekick alarm kinds `WorkspaceDO` dispatches here. */
 export const HOSTED_SIDEKICK_ALARM_KINDS: ReadonlySet<string> = new Set([
+  SIDEKICK_RUN_ROW_ALARM_KIND,
   AUTOMATION_SCHEDULE_ALARM_KIND,
   AUTOMATION_RUN_ALARM_KIND,
   SIDEKICK_MEMORY_TABLES_ALARM_KIND,
@@ -231,8 +219,6 @@ const RUN_STATE_FROM_CONVERSATION_STATE: Record<string, RunState | null> = {
   restoring: null,
 };
 const TERMINAL_RUN_STATES = new Set<RunState>(["completed", "failed", "stopped"]);
-// The same replay window `SidekickDO` kept: a fence, not history.
-const CHILD_EFFECT_RECEIPT_RETENTION_MS = 180 * 24 * 60 * 60_000;
 
 export type RunState = "pending" | "running" | "needs_input" | "completed" | "failed" | "stopped";
 export type Lifecycle = "draft" | "active" | "paused" | "deleted";
@@ -250,10 +236,6 @@ export interface HostedSidekickRow extends Record<string, SqlStorageValue> {
   lifecycle: Lifecycle;
   paused_by: "person" | "room_archive" | null;
   scope: AutomationScope;
-  owning_workstream_id: string | null;
-  /** The home under `owning_workstream_id`: `"0"` for its Main conversation, else a Breakout id. */
-  owning_substream_id: string;
-  owning_room_archived_at: number | null;
   title: string;
   description: string;
   current_definition_revision: number;
@@ -317,6 +299,8 @@ interface RunRow extends Record<string, SqlStorageValue> {
   /** Who the run runs as, recorded when it is provisioned; null while pending. */
   run_as_user_id: string | null;
   coordinator_user_id: string | null;
+  /** Set when a non-delegate's message started the run: it acts as them alone. */
+  requester_user_id: string | null;
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
@@ -391,24 +375,20 @@ export interface HostedSidekickHost {
   afterRegistrations(automationId: string, revision: number | null, evaluators: readonly unknown[]): Promise<void>;
   /** Inside the transaction that changed a directory row: the sidebar's waterline and a deleted Sidekick's bindings. */
   noteDirectoryChanged(automationId: string, deleted: boolean, now: number): void;
+  /**
+   * Inside the transaction that changed one person's read of a shared
+   * conversation: their sidebar's waterline, with the Sidekick list sent only
+   * to that person's sockets, since nobody else's row moved.
+   */
+  noteViewerReadChanged(userId: string): void;
   /** Record an activity-only refresh inside the projection transaction. */
   noteSidekickActivityChanged(workspaceId: string): void;
-  /** Whether a person is an active participant of a live Channel: a read of this object's own rows. */
-  isChannelParticipant(workstreamId: string, userId: string): boolean | Promise<boolean>;
-  /** Current canonical Channel color, independent of delayed conversation projections. */
-  channelColor(workstreamId: string): SpaceColorKey | null;
-  /** A Channel's or Breakout's own viewer decision, for a Sidekick homed there. */
-  channelViewer(input: {
-    workspaceId: string; parentId: string; substreamId: string; userId: string; requireGrantAuthority?: boolean;
-  }): Promise<{ authorized: boolean; archived: boolean }>;
   readManagementAccess(input: { workspaceId: string; parentId: string; userId: string }): Promise<{ allowed: boolean; writable: boolean }>;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
   /** Hand a run to the activity Queue, whose consumer provisions it. */
   sendRunProvision(message: { workspaceId: string; automationId: string; runId: string }): Promise<void>;
   /** Hand a review to the activity Queue, whose consumer wakes the wizard with it. */
   sendReview(message: { workspaceId: string; automationId: string; reviewId: string }): Promise<void>;
-  /** The Channel a review announces a change in, for a Sidekick no room owns; null when there is none. */
-  announcementSpaceId(row: { scope: string; author_user_id: string }): string | null;
 }
 
 function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCursor<T>): T | null {
@@ -418,6 +398,9 @@ function first<T extends Record<string, SqlStorageValue>>(cursor: SqlStorageCurs
 function iso(timestamp: number | null): string | null {
   return timestamp === null ? null : new Date(timestamp).toISOString();
 }
+
+/** The payload a replay arms a run-row entry with; see `replayRunRows`. */
+const SIDEKICK_RUN_ROW_REPLAY_PAYLOAD = JSON.stringify({ replay: true });
 
 function forbidden(): ApiError {
   return new ApiError(403, "sidekick_forbidden", "You cannot manage this Sidekick");
@@ -436,63 +419,46 @@ function scheduleDueAfter(kind: "calendar" | "interval", definitionJson: string,
 
 /**
  * The library's and the management API's read rule, over a directory row
- * alone, so a Sidekick whose import has not run is decided the same way.
- *
- * Organization scope admits members with a role and never a guest; personal
- * scope its author and the person it runs as; Channel scope that Channel's
- * participants, or a Breakout home's members.
+ * alone, so a Sidekick whose import has not run is decided the same way:
+ * `sidekickAdmits` over its scope, its author and executor, and its `people`
+ * list. A guest has no `actorRole`, so Organization scope never admits one.
  */
-export async function sidekickReaderAllows(
+export function sidekickReaderAllows(
   row: {
-    automation_id?: string;
+    automation_id: string;
     scope: string; author_user_id: string; run_as_user_id: string | null; lifecycle: string;
-    owning_workstream_id: string | null; owning_substream_id: string; workspace_id: string;
   },
   actor: { userId: string; actorRole: "owner" | "admin" | "member" | null },
-  host: Pick<HostedSidekickHost, "isChannelParticipant" | "readManagementAccess" | "channelViewer">,
-  rule: "participant" | "manager" = "participant",
-): Promise<boolean> {
+  sql: SqlStorage,
+): boolean {
   if (row.lifecycle === "deleted") return false;
-  if (row.author_user_id === actor.userId || row.run_as_user_id === actor.userId) return true;
-  if (row.scope === "workspace") return actor.actorRole != null;
-  if (row.scope !== "workstream" || row.owning_workstream_id === null) return false;
-  return homeAdmits(row, actor.userId, host, rule);
+  return sidekickAdmits({
+    scope: row.scope,
+    author: row.author_user_id === actor.userId,
+    executor: row.run_as_user_id === actor.userId,
+    shared: sidekickSharedWith(sql, row.automation_id, actor.userId),
+  }, actor.actorRole != null);
 }
 
 /**
- * Whether a Channel-scoped Sidekick's home admits this person. For a
- * Main-homed one, `participant` asks the Channel's own participant rows, which
- * leave an archived Channel out and cost no read beyond this object's; that is
- * the viewer's and the library's rule. `manager` asks who may manage the
- * Channel, grants and an archive included, which is the rule the management
- * API applied before the move. A Breakout-homed one admits the Breakout's
- * members either way.
+ * Who manages a Sidekick: its author, the person it runs as, and for an
+ * Organization one its owners and administrators. Also who manages the
+ * audience of a Canvas the Sidekick writes.
  */
-async function homeAdmits(
-  row: { owning_workstream_id: string | null; owning_substream_id: string; workspace_id: string },
-  userId: string,
-  host: Pick<HostedSidekickHost, "isChannelParticipant" | "readManagementAccess" | "channelViewer">,
-  rule: "participant" | "manager" = "participant",
-): Promise<boolean> {
-  if (row.owning_workstream_id === null) return false;
-  if (row.owning_substream_id === "0") {
-    if (rule === "manager") {
-      return (await host.readManagementAccess({
-        workspaceId: row.workspace_id, parentId: row.owning_workstream_id, userId,
-      })).allowed;
-    }
-    return host.isChannelParticipant(row.owning_workstream_id, userId);
-  }
-  return (await host.channelViewer({
-    workspaceId: row.workspace_id, parentId: row.owning_workstream_id,
-    substreamId: row.owning_substream_id, userId,
-  })).authorized;
+export function sidekickManagerAllows(
+  row: { scope: string; author_user_id: string; run_as_user_id: string | null },
+  actor: { userId: string; actorRole?: "owner" | "admin" | "member" | null | undefined },
+): boolean {
+  return row.author_user_id === actor.userId || row.run_as_user_id === actor.userId
+    || (row.scope === "workspace" && (actor.actorRole === "owner" || actor.actorRole === "admin"));
 }
 
-/** An agent's child reservation: the reservation request without what the parent supplies itself. */
-const AgentChildReservationSchema = ConversationParentReserveChildRequestSchema.omit({
-  authorityGeneration: true, directory: true, kind: true,
-});
+/** Whether this person is on a Sidekick's `people` list. */
+export function sidekickSharedWith(sql: SqlStorage, sidekickId: string, userId: string): boolean {
+  return sql.exec(`SELECT 1 FROM sidekick_audience WHERE sidekick_id = ? AND user_id = ? LIMIT 1`, sidekickId, userId)
+    .toArray().length > 0;
+}
+
 
 /** What a skill read says about its audience: the request without the Sidekick it names. */
 type SidekickAudienceRequest = Omit<SidekickSkillReadRequest, "workspaceId" | "automationId">;
@@ -503,7 +469,6 @@ function skillAudienceAllows(row: HostedSidekickRow, request: SidekickAudienceRe
     scope: row.scope,
     authorUserId: row.author_user_id,
     runAsUserId: row.run_as_user_id,
-    owningWorkstreamId: row.owning_workstream_id,
   }, request);
 }
 
@@ -520,7 +485,7 @@ export function skillSummary(
   return SidekickAttachmentSchema.parse({
     id: row.automation_id, name: row.title, description: row.description,
     available: row.lifecycle === "active" && row.loadable === 1
-      && row.accepted_definition_revision !== null && row.owning_room_archived_at === null,
+      && row.accepted_definition_revision !== null,
   });
 }
 
@@ -532,7 +497,7 @@ export function skillSource(
   row: HostedSidekickRow & { accepted_definition_json: string | null },
   request: SidekickAudienceRequest,
 ): SidekickSkillSource | null {
-  if (row.lifecycle === "deleted" || row.accepted_definition_revision === null || row.owning_room_archived_at !== null) return null;
+  if (row.lifecycle === "deleted" || row.accepted_definition_revision === null) return null;
   if (!request.existingExecution && (row.lifecycle !== "active" || row.loadable !== 1)) return null;
   if (!skillAudienceAllows(row, request)) return null;
   if (row.accepted_definition_json === null) throw new Error("sidekick_accepted_revision_missing");
@@ -544,25 +509,18 @@ export function skillSource(
   });
 }
 
-export class HostedSidekick {
-  constructor(
-    private readonly host: HostedSidekickHost,
-    readonly sidekickId: string,
-  ) {}
-
-  private get env(): Env {
-    return this.host.env;
+export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
+  constructor(host: HostedSidekickHost, sidekickId: string) {
+    super(host, sidekickId, "automation");
   }
 
-  private get storage(): DurableObjectStorage {
-    return this.host.storage;
+  protected readonly codeNoun = "sidekick";
+
+  get sidekickId(): string {
+    return this.parentId;
   }
 
-  private get sql(): SqlStorage {
-    return this.host.storage.sql;
-  }
-
-  private logFields(): Record<string, unknown> {
+  protected override logFields(): Record<string, unknown> {
     const row = this.row();
     return { workspace_id: row?.workspace_id ?? null, automation_id: this.sidekickId, parent_kind: "automation" };
   }
@@ -587,31 +545,6 @@ export class HostedSidekick {
     // The insert is the existence check: a repeat finds the row and returns
     // nothing, and is answered from the row it found.
     return this.storage.transactionSync(() => {
-      // The home directory and the new Sidekick share this transaction. Copy
-      // only its color; the Sidekick keeps its own generated icon and later edits.
-      let appearanceJson: string | null = null;
-      if (request.owningWorkstreamId !== null) {
-        const main = request.owningSubstreamId === "0";
-        const home = main
-          ? this.sql.exec<{ appearance_json: string | null }>(
-            "SELECT appearance_json FROM channels WHERE workstream_id = ?", request.owningWorkstreamId,
-          ).toArray()[0]
-          : this.sql.exec<{ appearance_json: string | null }>(
-            "SELECT appearance_json FROM breakouts WHERE workstream_id = ? AND substream_id = ?",
-            request.owningWorkstreamId, request.owningSubstreamId,
-          ).toArray()[0];
-        const appearance = parsedAppearance(home?.appearance_json ?? null, "sidekick_home_appearance", (code) => {
-          logWarn(this.env, "sidekick_home_appearance_invalid", {
-            workspace_id: request.workspaceId, automation_id: request.automationId,
-            workstream_id: request.owningWorkstreamId, substream_id: request.owningSubstreamId, code,
-          });
-        });
-        // Conversation projections may still wear the old color while the
-        // Channel's recolor job is pending. Both home kinds use its authority.
-        const color = this.host.channelColor(request.owningWorkstreamId) ?? appearance?.color
-          ?? generatedWorkstreamAppearance(main ? request.owningWorkstreamId : request.owningSubstreamId).color;
-        appearanceJson = JSON.stringify({ icon: null, color });
-      }
       const created = this.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, region, author_user_id, run_as_user_id, source_version, payload_hash,
@@ -621,7 +554,7 @@ export class HostedSidekick {
             default_plugin_ids_json, activity_source_plugin_ids_json, evaluator_projection_json,
             model_override, email_address, effective_after_event_sequence, authority_generation,
             stop_generation, chat_appearance_json, delegation_migrated, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, ?, ?, NULL, '', '', NULL, ?, 0, ?,
+         VALUES (?, ?, ?, ?, ?, 1, 'hosted', 'draft', NULL, ?, NULL, '0', NULL, '', '', NULL, ?, 0, NULL,
                  0, NULL, '{}', '[]', '{}', '[]', NULL, NULL, NULL, ?, 0, NULL, 1, ?, ?)
          ON CONFLICT(automation_id) DO NOTHING
          RETURNING automation_id`,
@@ -631,10 +564,7 @@ export class HostedSidekick {
         request.authorUserId,
         request.authorUserId,
         request.scope,
-        request.owningWorkstreamId,
-        request.owningSubstreamId,
         now,
-        appearanceJson,
         request.authorityGeneration,
         now,
         now,
@@ -686,9 +616,27 @@ export class HostedSidekick {
   }
 
   /** One eventually consistent authorization view shared by admission and operation selection. */
-  async readExecutionDelegation(input: { workspaceId: string; automationId: string }): Promise<SidekickExecutionDelegation> {
-    const request = parseRpcInput(z.strictObject({ workspaceId: z.string().uuid(), automationId: z.string().uuid() }), input, "sidekick_execution_delegation");
+  async readExecutionDelegation(input: { workspaceId: string; automationId: string; runId?: string }): Promise<SidekickExecutionDelegation> {
+    const request = parseRpcInput(z.strictObject({ workspaceId: z.string().uuid(), automationId: z.string().uuid(),
+      runId: z.string().uuid().optional() }), input, "sidekick_execution_delegation");
     this.assertSidekick(request.workspaceId, request.automationId);
+    // A run a non-delegate asked for acts as them alone: their own accounts,
+    // never a delegate's (the PRD's "delegate access only for its own runs").
+    const requester = request.runId === undefined ? null : first(this.sql.exec<{ requester_user_id: string | null; created_at: number }>(
+      `SELECT requester_user_id, created_at FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, this.sidekickId, request.runId,
+    ));
+    if (requester?.requester_user_id) {
+      // As `runPrincipal` decides: a requester who has left the Organization
+      // leaves the run nobody to act as.
+      const active = await this.requesterActive(request.workspaceId, requester.requester_user_id);
+      const row = this.assertSidekick(request.workspaceId, request.automationId);
+      return SidekickExecutionDelegationSchema.parse({
+        sidekickId: this.sidekickId, creatorUserId: row.author_user_id,
+        accountUserId: row.legacy_account_user_id ?? row.author_user_id,
+        delegates: active ? [{ userId: requester.requester_user_id, generation: 0, grantedAt: requester.created_at }] : [],
+        requesterUserId: requester.requester_user_id,
+      });
+    }
     await this.migrateDelegation();
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     const grants = this.delegations().forSidekick(this.sidekickId);
@@ -784,7 +732,7 @@ export class HostedSidekick {
     if (!row || row.lifecycle === "deleted") return false;
     const relationship = await this.host.readRelationship(row.workspace_id, grant.userId);
     return relationship?.status === "active" && relationship.incarnation === grant.membershipIncarnation &&
-      await sidekickReaderAllows(row, { userId: grant.userId, actorRole: relationship.role }, this.host);
+      sidekickReaderAllows(row, { userId: grant.userId, actorRole: relationship.role }, this.sql);
   }
 
   /** Capture before asynchronous dispatch. Withdrawal needs no viewer or membership access. */
@@ -801,7 +749,7 @@ export class HostedSidekick {
     if (!row || row.workspace_id !== workspaceId || row.lifecycle === "deleted") throw this.delegationError("sidekick_not_found");
     const relationship = await this.host.readRelationship(workspaceId, userId);
     if (!relationship || relationship.status !== "active") throw this.delegationError("sidekick_delegation_membership_unavailable");
-    if (!organizationTarget && !await sidekickReaderAllows(row, { userId, actorRole: relationship.role }, this.host)) throw this.delegationError("sidekick_not_found");
+    if (!organizationTarget && !sidekickReaderAllows(row, { userId, actorRole: relationship.role }, this.sql)) throw this.delegationError("sidekick_not_found");
     return { row, relationship };
   }
 
@@ -846,9 +794,9 @@ export class HostedSidekick {
     const row = this.row();
     if (!row || row.workspace_id !== request.workspaceId || row.lifecycle === "deleted") throw this.delegationError("sidekick_not_found");
     const relationship = await this.host.readRelationship(request.workspaceId, request.actor.userId);
-    if (relationship?.status !== "active" || !await sidekickReaderAllows(row, {
+    if (relationship?.status !== "active" || !sidekickReaderAllows(row, {
       userId: request.actor.userId, actorRole: relationship.role,
-    }, this.host)) throw this.delegationError("sidekick_not_found");
+    }, this.sql)) throw this.delegationError("sidekick_not_found");
     const grants = this.delegations().forSidekick(this.sidekickId).filter((grant) => grant.allowed);
     const [people, availability] = await Promise.all([this.env.DB.prepare(
       "SELECT id,name,avatar_url,presentation_json FROM users WHERE id IN (SELECT value FROM json_each(?))",
@@ -952,9 +900,7 @@ export class HostedSidekick {
         request.origin === "sidekick_review" ? this.latestDeliveredReviewId() : null,
         now,
       );
-      const scope = latest.lifecycle === "draft" && latest.scope !== "workstream" && request.draft.suggestedScope !== "workstream"
-        ? request.draft.suggestedScope
-        : latest.scope;
+      const scope = latest.lifecycle === "draft" ? request.draft.suggestedScope : latest.scope;
       // A submitted appearance is a new choice only when it differs from the
       // last one the chat knew of: its own previous submission, or what the
       // Sidekick wore when it first submitted. A repeat of that is the chat
@@ -980,6 +926,9 @@ export class HostedSidekick {
         now,
         this.sidekickId,
       );
+      // A draft's suggested scope that moves the audience is a new choice of
+      // it, so a `people` list does not outlive it.
+      if (scope !== latest.scope) this.sql.exec(`DELETE FROM sidekick_audience WHERE sidekick_id = ?`, this.sidekickId);
       this.touchDirectory(now);
       return definitionRevision;
     });
@@ -1005,15 +954,12 @@ export class HostedSidekick {
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
     await this.assertManager(row, request.actor);
-    if (row.owning_room_archived_at !== null) {
-      throw new ApiError(409, "sidekick_room_archived", "The thread that owns this Sidekick is archived");
-    }
     const revision = this.revision(row.current_definition_revision);
     if (!revision || revision.ready !== 1) {
       throw new ApiError(422, "sidekick_definition_not_ready", "The Sidekick's definition is not ready to apply");
     }
     if (row.lifecycle === "active" && row.accepted_definition_revision === revision.definition_revision) {
-      return this.detail(request.actor.userId);
+      return this.detail();
     }
     const definition = AutomationDraftSchema.parse(JSON.parse(revision.definition_json));
     const prepared = definition.triggers.length === 0
@@ -1030,7 +976,7 @@ export class HostedSidekick {
       const current = this.row();
       if (!current || current.current_definition_revision !== revision.definition_revision
         || current.lifecycle !== row.lifecycle || current.run_as_user_id !== row.run_as_user_id
-        || current.scope !== row.scope || current.owning_room_archived_at !== row.owning_room_archived_at
+        || current.scope !== row.scope
         || current.accepted_definition_revision !== row.accepted_definition_revision) {
         throw new ApiError(409, "sidekick_revision_changed", "The Sidekick changed while saving; retry the latest revision");
       }
@@ -1066,7 +1012,7 @@ export class HostedSidekick {
       this.touchDirectory(now, effectiveAfter);
     });
     await this.host.afterRegistrations(this.sidekickId, revision.definition_revision, prepared.evaluators);
-    return this.detail(request.actor.userId);
+    return this.detail();
   }
 
   /** Explicit reconciliation when the loading policy changes. */
@@ -1108,7 +1054,43 @@ export class HostedSidekick {
       );
       this.touchDirectory(now);
     });
-    return this.detail(request.actor.userId);
+    return this.detail();
+  }
+
+  /**
+   * Choose who the Sidekick is shared with, and return the Sidekick that
+   * results. `people` is stored as scope `personal` with its list in
+   * `sidekick_audience`, so the released scope CHECK and every reader of
+   * `scope` are unchanged; the other two clear the list. Everyone named must
+   * be an active member or guest of the Organization.
+   */
+  async setAudience(input: AutomationSetAudienceRequest): Promise<AutomationDetail> {
+    const request = parseRpcInput(AutomationSetAudienceRequestSchema, input, "set_audience");
+    const row = this.assertSidekick(request.workspaceId, request.automationId);
+    await this.assertManager(row, request.actor);
+    if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
+    const userIds = [...new Set(request.update.userIds)].filter((userId) => userId !== row.author_user_id);
+    // A list naming nobody but the author would store as personal and read
+    // back as `personal`, not the `people` that was asked for.
+    if (request.update.audience === "people" && userIds.length === 0) {
+      throw new ApiError(422, "sidekick_audience_people_empty", "Name someone other than the author to share a Sidekick with");
+    }
+    await assertAudienceInOrganization((workspaceId, userId) => this.host.readRelationship(workspaceId, userId), row.workspace_id,
+      userIds, () => new ApiError(422, "sidekick_audience_not_member", "Everyone a Sidekick is shared with must be in the Organization"));
+    const now = Date.now();
+    this.storage.transactionSync(() => {
+      this.sql.exec(`DELETE FROM sidekick_audience WHERE sidekick_id = ?`, this.sidekickId);
+      for (const userId of request.update.audience === "people" ? userIds : []) {
+        this.sql.exec(`INSERT INTO sidekick_audience (sidekick_id, user_id, added_at) VALUES (?, ?, ?)`,
+          this.sidekickId, userId, now);
+      }
+      this.sql.exec(
+        `UPDATE automation_directory SET scope = ?, updated_at = ? WHERE automation_id = ?`,
+        request.update.audience === "workspace" ? "workspace" : "personal", now, this.sidekickId,
+      );
+      this.touchDirectory(now);
+    });
+    return this.detail();
   }
 
   async pause(input: AutomationActorRequest): Promise<void> {
@@ -1135,10 +1117,6 @@ export class HostedSidekick {
       if (current.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
       if (current.lifecycle === "active") return null;
       if (current.lifecycle !== "paused") throw new ApiError(409, "sidekick_not_paused", "Only a paused Sidekick can be resumed");
-      // Retained legacy rooms can still carry this marker until reconciled.
-      if (current.owning_room_archived_at !== null) {
-        throw new ApiError(409, "sidekick_room_archived", "The thread that owns this Sidekick is archived");
-      }
       return { revision: current.accepted_definition_revision, evaluators: this.resumeFromPause(Date.now()) };
     });
     if (resumed) await this.host.afterRegistrations(this.sidekickId, resumed.revision, resumed.evaluators);
@@ -1151,25 +1129,6 @@ export class HostedSidekick {
     if (row.lifecycle === "deleted") return;
     this.storage.transactionSync(() => this.archive(Date.now()));
     await this.host.afterRegistrations(this.sidekickId, null, []);
-  }
-
-  /**
-   * Archiving the home Thread or Breakout archives the Sidekick too. Restoring
-   * the room does not restore the Sidekick. The caller owns the transaction.
-   */
-  setOwningRoomArchived(input: AutomationOwningRoomArchivedRequest, now: number): { changed: boolean; outcomeCode: string } {
-    const request = parseRpcInput(AutomationOwningRoomArchivedRequestSchema, input, "set_owning_room_archived");
-    const row = this.assertSidekick(request.workspaceId, request.automationId);
-    if (row.owning_workstream_id !== request.workstreamId) {
-      return { changed: false, outcomeCode: "sidekick_not_owned_by_workstream" };
-    }
-    if (row.lifecycle === "deleted") return { changed: false, outcomeCode: "sidekick_already_archived" };
-    if (!request.archived && row.owning_room_archived_at === null) {
-      return { changed: false, outcomeCode: "sidekick_room_not_archived" };
-    }
-    // A legacy archive marker is terminal even when the next notice is restore.
-    this.archive(now, row.owning_room_archived_at ?? now);
-    return { changed: true, outcomeCode: "sidekick_archived" };
   }
 
   async runNow(input: AutomationRunNowRequest): Promise<{ runId: string; reused: boolean }> {
@@ -1218,6 +1177,100 @@ export class HostedSidekick {
       request.seed,
     );
     return admitted;
+  }
+
+  /**
+   * Who answers a person's input in the Sidekick's shared conversation
+   * (substream `"0"`), once it is addressed to an agent.
+   *
+   * The conversation keeps the wizard and run separation the PRD's decision
+   * log records, and a manager marks a wizard edit explicitly (its 2026-11-07
+   * entry): input for the wizard (`intent: "edit_sidekick"`) is the wizard's
+   * when its sender manages the Sidekick and refused otherwise; anything else
+   * starts a run under the Sidekick's definition, from a manager as from
+   * anyone, the path `runNow` takes, with the message as the run's opening,
+   * and the run answers in its own child conversation. The conversation's
+   * loop itself never acts on the Sidekick's definition.
+   *
+   * The run acts only as its sender: as a delegate when the sender is an
+   * eligible one, and otherwise under the sender's own access, recorded as the
+   * run's requester (`requester_user_id`), which its continuations keep and
+   * its connector operations are limited to. A person must not read, through
+   * the Sidekick, what they cannot read themselves, and borrowing another
+   * delegate's access here would be exactly that. A guest on the Sidekick's
+   * list runs under their own access as a member does.
+   * Idempotent on the message's turn id, so a retried claim admits nothing
+   * twice.
+   */
+  async admitConversationMessage(input: SidekickConversationMessageRequest): Promise<SidekickConversationMessageRoute> {
+    const request = parseRpcInput(SidekickConversationMessageRequestSchema, input, "admit_conversation_message");
+    const initial = this.assertSidekick(request.workspaceId, request.automationId);
+    if (request.intent === "edit_sidekick") {
+      return await this.managerAllows(initial, request.actor)
+        ? { route: "wizard" }
+        : { route: "refused", code: "sidekick_edit_requires_manager" };
+    }
+    if (initial.lifecycle !== "active") return { route: "refused", code: "sidekick_not_active" };
+    const coordinator = await this.coordinator(request.actor.userId, [request.actor.userId], false);
+    // Read after the awaits, as `runNow` does: a pause or a revision applied
+    // meanwhile is what the run must see.
+    const row = this.assertIdentity(this.withAccepted(), request.workspaceId, request.automationId);
+    if (row.lifecycle !== "active") return { route: "refused", code: "sidekick_not_active" };
+    const definition = row.accepted_definition_json ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json)) : null;
+    if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
+      return { route: "refused", code: "sidekick_not_runnable" };
+    }
+    // Someone who is not a delegate, a guest among them, gets a run under
+    // their own access: the run acts as them, and an operation that would
+    // need an account they lack is refused by name.
+    const requester = coordinator === null && await this.requesterActive(row.workspace_id, request.actor.userId)
+      ? request.actor.userId : null;
+    if (coordinator === null && requester === null) return { route: "refused", code: "run_no_eligible_delegate" };
+    const admitted = this.admitOccurrence(
+      row.accepted_definition_revision,
+      `message:${request.messageId}`,
+      { kind: "manual", requestedByUserId: asUserId(request.actor.userId) },
+      conversationMessageOpening({
+        messageId: request.messageId,
+        authorUserId: request.actor.userId,
+        authorName: request.authorName,
+        text: request.text,
+      }),
+      coordinator ?? requester,
+      null,
+      requester,
+    );
+    return { route: "run", runId: admitted.runId, reused: admitted.reused };
+  }
+
+  /** Whether a run may act as this person under their own access: they are still in the Organization, as a member or a guest. */
+  private async requesterActive(workspaceId: string, userId: string): Promise<boolean> {
+    const relationship = await this.host.readRelationship(workspaceId, userId);
+    return relationship?.status === "active";
+  }
+
+  /**
+   * Who a run acts as now: its requester while they are still a member, for a
+   * run a non-delegate started; otherwise an eligible delegate, preferring the
+   * one it had. Null when nobody is left to act.
+   */
+  private async runPrincipal(run: { coordinator_user_id: string | null; requester_user_id: string | null }): Promise<string | null> {
+    if (run.requester_user_id !== null) {
+      const row = this.row();
+      return row && await this.requesterActive(row.workspace_id, run.requester_user_id) ? run.requester_user_id : null;
+    }
+    return this.coordinator(run.coordinator_user_id);
+  }
+
+  /**
+   * Whether this person manages the Sidekick, for a caller that must refuse
+   * before it writes anything: the shared conversation asks it before it
+   * records an answer to a question the wizard asked, which only a manager
+   * may give.
+   */
+  allowsManager(input: z.input<typeof AutomationActorRequestSchema>): Promise<boolean> {
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "allows_manager");
+    return this.managerAllows(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
   }
 
   /**
@@ -1338,9 +1391,13 @@ export class HostedSidekick {
         : !emailEnabled || row.email_address === null || row.email_address.toLowerCase() !== request.emailAddress.toLowerCase()
           ? "sidekick_email_route_mismatch"
           : request.senderUserId === null
-            || (row.scope === "personal"
-              && request.senderUserId !== row.author_user_id
-              && request.senderUserId !== row.run_as_user_id)
+            // Whoever the Sidekick is shared with; an Organization one takes
+            // any member's mail, which the email route has already resolved.
+            || (row.scope === "personal" && !sidekickAdmits({
+              scope: row.scope, author: request.senderUserId === row.author_user_id,
+              executor: request.senderUserId === row.run_as_user_id,
+              shared: sidekickSharedWith(this.sql, this.sidekickId, request.senderUserId),
+            }, true))
             ? "email_sender_not_authorized"
             : null;
     };
@@ -1436,8 +1493,6 @@ export class HostedSidekick {
       activitySourcePluginIds: JSON.parse(sidekick.activity_source_plugin_ids_json),
       connectorBindings: JSON.parse(sidekick.connector_bindings_json),
       scope: sidekick.scope,
-      owningWorkstreamId: sidekick.owning_workstream_id,
-      owningSubstreamId: sidekick.owning_substream_id,
       runAsUserId: sidekick.run_as_user_id,
       coordinatorUserId: run.coordinator_user_id,
       modelOverride: sidekick.model_override,
@@ -1479,8 +1534,10 @@ export class HostedSidekick {
   async continueRun(input: AutomationRunRequest): Promise<SidekickRunContinuation> {
     const request = parseRpcInput(AutomationRunRequestSchema, input, "continue_run");
     if (!this.row()) return { outcome: "refused", code: "run_not_found" };
-    const preferred = this.runView(request.runId)?.run?.coordinator_user_id ?? null;
-    const coordinator = await this.coordinator(preferred);
+    const before = this.runView(request.runId)?.run;
+    // A requester's run keeps its requester; any other run keeps or re-picks a delegate.
+    const coordinator = await this.runPrincipal({ coordinator_user_id: before?.coordinator_user_id ?? null,
+      requester_user_id: before?.requester_user_id ?? null });
     const view = this.runView(request.runId);
     if (!view) return { outcome: "refused", code: "run_not_found" };
     const { sidekick, run } = view;
@@ -1513,7 +1570,7 @@ export class HostedSidekick {
     const request = parseRpcInput(AutomationActorRequestSchema, input, "read_detail");
     const row = this.assertSidekick(request.workspaceId, request.automationId);
     await this.assertReader(row, request.actor);
-    return this.detail(request.actor.userId);
+    return this.detail();
   }
 
   async listRuns(input: AutomationActorRequest): Promise<{ items: AutomationRun[] }> {
@@ -1589,66 +1646,6 @@ export class HostedSidekick {
   // The conversation-parent contract.
   // ---------------------------------------------------------------------------
 
-  /**
-   * The conversation-parent viewer check (`sidekickViewer`), or with
-   * `requireGrantAuthority` the guest path (`sidekickGrantViewer`): a guest
-   * reaches a Channel- or Breakout-homed Sidekick through that place's grants,
-   * and nothing else.
-   */
-  async authorizeViewer(input: ConversationParentAuthorizeViewerRequest): Promise<ConversationParentAuthorizeViewerResult> {
-    const request = parseRpcInput(ConversationParentAuthorizeViewerRequestSchema, input, "authorize_viewer");
-    const row = this.row();
-    if (!row || row.lifecycle === "deleted") {
-      return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: true });
-    }
-    this.assertIdentity(row, request.workspaceId, request.parentId);
-    if (request.requireGrantAuthority) return this.sidekickGrantViewer(row, request.userId);
-    return ConversationParentAuthorizeViewerResultSchema.parse({
-      authorized: await this.sidekickViewer(row, request.userId),
-      archived: row.owning_room_archived_at !== null,
-    });
-  }
-
-  /** Who may read a Sidekick's conversations. */
-  private async sidekickViewer(row: HostedSidekickRow, userId: string): Promise<boolean> {
-    if (row.scope === "workspace" || row.author_user_id === userId || row.run_as_user_id === userId) return true;
-    if (row.scope !== "workstream") return false;
-    return homeAdmits(row, userId, this.host);
-  }
-
-  /** A guest's path: the home Channel's grants, or a Breakout home's own. */
-  private async sidekickGrantViewer(row: HostedSidekickRow, userId: string): Promise<ConversationParentAuthorizeViewerResult> {
-    if (row.scope !== "workstream" || !row.owning_workstream_id) {
-      return ConversationParentAuthorizeViewerResultSchema.parse({ authorized: false, archived: false });
-    }
-    if (row.owning_substream_id !== "0") {
-      const home = await this.host.channelViewer({
-        workspaceId: row.workspace_id, parentId: row.owning_workstream_id,
-        substreamId: row.owning_substream_id, userId, requireGrantAuthority: true,
-      });
-      return ConversationParentAuthorizeViewerResultSchema.parse({
-        authorized: home.authorized, archived: row.owning_room_archived_at !== null || home.archived,
-      });
-    }
-    const access = await this.host.readManagementAccess({
-      workspaceId: row.workspace_id, parentId: row.owning_workstream_id, userId,
-    });
-    return ConversationParentAuthorizeViewerResultSchema.parse({
-      authorized: access.allowed,
-      archived: row.owning_room_archived_at !== null || (access.allowed && !access.writable),
-    });
-  }
-
-  authorizationDiscoveryChildren(input: ConversationParentAuthorityRequest): { substreamIds: string[] } {
-    const request = parseRpcInput(ConversationParentAuthorityRequestSchema, input, "authorization_discovery_children");
-    const row = this.row();
-    if (!row || row.lifecycle === "deleted") return { substreamIds: [] };
-    this.assertIdentity(row, request.workspaceId, request.parentId);
-    // A registered, unprovisioned child is unresolved authority, not evidence
-    // that its content can be discarded.
-    return { substreamIds: this.childRegistry().map((child) => child.substreamId) };
-  }
-
   /** No participant admission and no projection-dependent permission decision. */
   readAuthorizationFacts(input: ConversationAuthorizationRequest) {
     const request = parseRpcInput(ConversationAuthorizationRequestSchema, input, "read_authorization_facts");
@@ -1656,171 +1653,63 @@ export class HostedSidekick {
     if (!row || row.lifecycle === "deleted") return { exists: false as const, validatedAt: Date.now() };
     this.assertIdentity(row, request.workspaceId, request.parentId);
     return {
-      exists: true as const, scope: row.scope, owningWorkstreamId: row.owning_workstream_id,
-      owningSubstreamId: row.owning_substream_id,
+      exists: true as const, scope: row.scope,
       author: row.author_user_id === request.userId,
+      shared: sidekickSharedWith(this.sql, this.sidekickId, request.userId),
       executor: row.run_as_user_id === request.userId,
       children: this.childRegistry().map((child) => child.substreamId),
       revision: JSON.stringify([row.authority_generation, row.updated_at]), validatedAt: Date.now(),
     };
   }
 
-  authority(input: ConversationParentAuthorityRequest): ConversationParentAuthorityResult {
-    const request = parseRpcInput(ConversationParentAuthorityRequestSchema, input, "authority");
+  /** The Sidekick's row, as the hosted conversation contract reads it. */
+  protected identity(): HostedConversationIdentity | null {
     const row = this.row();
-    if (!row) return ConversationParentAuthorityResultSchema.parse({ exists: false, authorityGeneration: 0, archived: false });
-    this.assertIdentity(row, request.workspaceId, request.parentId);
-    return ConversationParentAuthorityResultSchema.parse({
-      exists: true,
-      authorityGeneration: row.authority_generation,
-      archived: row.lifecycle === "deleted" || row.owning_room_archived_at !== null,
-    });
+    return row ? { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: row.lifecycle === "deleted" } : null;
   }
 
-  /** Reserve against current parent authority without a caller-side preflight call. */
-  reserveAgentChild(input: Omit<ConversationParentReserveChildRequest, "authorityGeneration" | "directory" | "kind">): ConversationParentReserveChildResult {
-    const request = parseRpcInput(AgentChildReservationSchema, input, "reserve_agent_child");
-    const row = this.row();
-    if (!row || row.lifecycle === "deleted" || row.owning_room_archived_at !== null) throw new Error("workstream_archived");
-    this.assertIdentity(row, request.workspaceId, request.parentId);
-    this.registerChild(request.substreamId, "child", request.createdByUserId, Date.now());
-    return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration: row.authority_generation });
-  }
-
-  reserveChild(input: ConversationParentReserveChildRequest): ConversationParentReserveChildResult {
-    const request = parseRpcInput(ConversationParentReserveChildRequestSchema, input, "reserve_child");
-    const row = this.assertSidekick(request.workspaceId, request.parentId);
-    if (request.kind === "child" && (row.lifecycle === "deleted" || row.owning_room_archived_at !== null)) {
-      throw new Error("workstream_archived");
-    }
-    this.registerChild(request.substreamId, request.kind, request.createdByUserId, Date.now());
-    return ConversationParentReserveChildResultSchema.parse({ reserved: true, authorityGeneration: row.authority_generation });
-  }
-
-  /** The children whose own projection names a terminal action, soonest first. */
-  childTerminalDeadlines(input: ConversationParentTerminalDeadlinesRequest): ConversationParentTerminalDeadlinesResult {
-    const request = ConversationParentTerminalDeadlinesRequestSchema.parse(input);
-    this.assertSidekick(request.workspaceId, request.parentId);
-    return ConversationParentTerminalDeadlinesResultSchema.parse({
-      items: this.sql.exec<{ substream_id: string; next_terminal_action_at: string }>(
-        `SELECT substream_id, json_extract(effect_json, '$.nextTerminalActionAt') AS next_terminal_action_at
-           FROM sidekick_child_projections
-          WHERE sidekick_id = ? AND json_extract(effect_json, '$.kind') = 'directory_common'
-            AND json_extract(effect_json, '$.nextTerminalActionAt') IS NOT NULL
-          ORDER BY next_terminal_action_at, substream_id`,
-        this.sidekickId,
-      ).toArray().map((row) => ({ substreamId: row.substream_id, nextTerminalActionAt: row.next_terminal_action_at })),
-    });
-  }
-
-  listChildren(input: ConversationParentListChildrenRequest): ConversationParentListChildrenResult {
-    const request = ConversationParentListChildrenRequestSchema.parse(input);
-    this.assertSidekick(request.workspaceId, request.parentId);
-    return ConversationParentListChildrenResultSchema.parse({ children: this.childRegistry() });
-  }
-
-  /** The children the retirement walk closes; `missing` when no row exists. */
-  childrenForRetirement(): { status: "missing" } | { status: "ok"; children: ReturnType<HostedSidekick["childRegistry"]> } {
-    return this.row() ? { status: "ok", children: this.childRegistry() } : { status: "missing" };
+  protected assertParent(workspaceId: string, parentId: string): HostedConversationIdentity {
+    const row = this.assertSidekick(workspaceId, parentId);
+    return { workspaceId: row.workspace_id, authorityGeneration: row.authority_generation, archived: row.lifecycle === "deleted" };
   }
 
   /**
-   * Apply one batch of a run's or the authoring conversation's effects. Each
-   * envelope is its own transaction; nothing leaves this object, and a
-   * redelivery is answered by its receipt.
+   * Whoever the Sidekick is shared with (`sidekickReaderAllows`). A guest is
+   * admitted only from its `people` list, whichever path asks: the caller
+   * admitted the person to the Organization, and a guest asks with
+   * `requireGrantAuthority`, so only that path withholds Organization scope.
    */
-  receiveChildEffects(input: ReceiveChildEffectsRequest): { messageId: string; payloadHash: string }[] {
-    const request = parseRpcInput(ReceiveChildEffectsRequestSchema, input, "receive_child_effects");
-    // The Sidekick's identity does not change inside a batch, so it is read
-    // once; each envelope is still its own transaction.
-    const row = this.row();
-    if (!row) throw new Error("sidekick_missing");
-    const accepted: { messageId: string; payloadHash: string }[] = [];
-    for (const envelope of request.envelopes) {
-      if (envelope.region !== this.env.AVALON_REGION) throw new Error("conversation_effect_region_mismatch");
-      if (envelope.substreamId !== request.substreamId) throw new Error("conversation_effect_substream_mismatch");
-      if (envelope.parentKind !== "automation") throw new Error("sidekick_effect_parent_kind_mismatch");
-      if (row.workspace_id !== envelope.workspaceId || row.automation_id !== envelope.parentId) {
-        throw new Error("sidekick_effect_identity_mismatch");
-      }
-      this.applyChildEnvelope(request.substreamId, envelope);
-      accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
-    }
-    // The receipt is a replay fence, not history: past retention a
-    // redelivery converges on the projection's version. Once per batch.
-    const now = Date.now();
-    this.sql.exec(
-      `DELETE FROM sidekick_child_receipts
-        WHERE (sidekick_id, substream_id, message_id) IN (
-          SELECT sidekick_id, substream_id, message_id FROM sidekick_child_receipts
-           WHERE received_at < ? ORDER BY received_at LIMIT 100
-        )`,
-      now - CHILD_EFFECT_RECEIPT_RETENTION_MS,
-    );
-    return accepted;
+  protected admitsViewer(request: ConversationParentAuthorizeViewerRequest): boolean {
+    const row = this.row()!;
+    return sidekickReaderAllows(row, {
+      userId: request.userId, actorRole: request.requireGrantAuthority ? null : "member",
+    }, this.sql);
   }
 
-  private applyChildEnvelope(substreamId: string, envelope: ConversationEffectEnvelope): void {
-    this.storage.transactionSync(() => {
-      const now = Date.now();
-      // The receipt first: its insert is the witness that this envelope is
-      // new, and a redelivery reads the hash it was first accepted with.
-      const fresh = this.sql.exec(
-        `INSERT INTO sidekick_child_receipts(sidekick_id, substream_id, message_id, payload_hash, received_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(sidekick_id, substream_id, message_id) DO NOTHING
-         RETURNING message_id`,
-        this.sidekickId, substreamId, envelope.messageId, envelope.payloadHash, now,
-      ).toArray().length === 1;
-      if (!fresh) {
-        const receipt = first(this.sql.exec<{ payload_hash: string }>(
-          `SELECT payload_hash FROM sidekick_child_receipts WHERE sidekick_id = ? AND substream_id = ? AND message_id = ?`,
-          this.sidekickId, substreamId, envelope.messageId,
-        ));
-        if (receipt?.payload_hash !== envelope.payloadHash) throw new Error("substream_effect_idempotency_conflict");
-        return;
-      }
-      if (envelope.effect.kind === "directory_common" && this.acceptChildProjection(substreamId, envelope, now)) {
-        this.onChildCommonProjection(substreamId, envelope.effect, now);
-      }
-    });
+  protected onViewerReadChanged(userId: string): void {
+    this.host.noteViewerReadChanged(userId);
   }
 
-  /** Keep a child's newest common projection; `false` for one that is not newer. */
-  private acceptChildProjection(substreamId: string, envelope: ConversationEffectEnvelope, now: number): boolean {
-    const existing = first(this.sql.exec<{
-      source_version: number; payload_hash: string; state: string; archived_at: string | null; background_agent: number | null;
-    }>(
-      `SELECT source_version, payload_hash, json_extract(effect_json, '$.state') AS state,
-         json_extract(effect_json, '$.archivedAt') AS archived_at,
-         json_extract(effect_json, '$.backgroundAgent') AS background_agent FROM sidekick_child_projections WHERE sidekick_id = ? AND substream_id = ?`,
-      this.sidekickId, substreamId,
-    ));
-    if (existing && existing.source_version > envelope.sourceVersion) return false;
-    if (existing?.source_version === envelope.sourceVersion) {
-      if (existing.payload_hash === envelope.payloadHash) return false;
-      // The child is the authority for its own projection and restarts its
-      // counter when a maintenance import rebuilds it, so the newer bytes win.
-      logWarn(this.env, "substream_projection_version_reused", {
-        ...this.logFields(), substream_id: substreamId, source_version: envelope.sourceVersion,
-      });
-    }
-    this.sql.exec(
-      `INSERT INTO sidekick_child_projections(sidekick_id, substream_id, source_version, payload_hash, effect_json, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(sidekick_id, substream_id) DO UPDATE SET source_version = excluded.source_version,
-         payload_hash = excluded.payload_hash, effect_json = excluded.effect_json, updated_at = excluded.updated_at`,
-      this.sidekickId, substreamId, envelope.sourceVersion, envelope.payloadHash, JSON.stringify(envelope.effect), now,
-    );
-    if (envelope.effect.kind === "directory_common") {
-      const wasRunning = existing ? sidekickProjectionRunning({
-        state: existing.state, archivedAt: existing.archived_at, backgroundAgent: existing.background_agent === 1,
-      }) : false;
-      if (wasRunning !== sidekickProjectionRunning(envelope.effect)) {
-        this.host.noteSidekickActivityChanged(envelope.workspaceId);
+  /**
+   * What a child's newer projection moves: the sidebar row for the shared
+   * conversation's latest message (for anyone who has read it) and for
+   * whether it waits on input, the running count, and a run's own row.
+   */
+  protected onChildProjection(substreamId: string, effect: DirectoryCommonEffect,
+    prior: PriorChildProjection | null, now: number): void {
+    if (substreamId === "0") {
+      const unreadMoved = (prior?.latestAttentionOrdinal ?? null) !== (effect.latestAttentionOrdinal ?? null) && this.hasReaders();
+      if (unreadMoved || (prior?.state === "needs_input") !== (effect.state === "needs_input")) {
+        this.host.noteDirectoryChanged(this.sidekickId, false, now);
       }
     }
-    return true;
+    const wasRunning = prior ? sidekickProjectionRunning({
+      state: prior.state, archivedAt: prior.archivedAt, backgroundAgent: prior.backgroundAgent,
+    }) : false;
+    if (wasRunning !== sidekickProjectionRunning(effect)) {
+      this.host.noteSidekickActivityChanged(this.row()!.workspace_id);
+    }
+    this.onChildCommonProjection(substreamId, effect, now);
   }
 
   /**
@@ -1842,7 +1731,7 @@ export class HostedSidekick {
     // instant equal to `now` is the witness that this projection finished it.
     const moved = first(this.sql.exec<{ completed_at: number | null; definition_revision: number }>(
       `UPDATE sidekick_runs
-          SET summary = ?1, updated_at = ?2,
+          SET summary = ?1, updated_at = ?2, step_count = COALESCE(?9, step_count),
               state = CASE WHEN state <> ?3 THEN ?3 ELSE state END,
               completed_at = CASE WHEN state <> ?3 AND ?4 = 0 THEN ?2 ELSE completed_at END
         WHERE sidekick_id = ?5 AND run_id = ?6
@@ -1852,9 +1741,84 @@ export class HostedSidekick {
             ) = 'active'))
         RETURNING completed_at, definition_revision`,
       effect.preview || null, now, next, live ? 1 : 0, this.sidekickId, substreamId, effect.state !== "idle" ? 1 : 0,
-      JSON.stringify([...TERMINAL_RUN_STATES]),
+      JSON.stringify([...TERMINAL_RUN_STATES]), effect.stepCount ?? null,
     ));
     if (!live && moved?.completed_at === now) this.noteRunFinished(moved.definition_revision, now);
+  }
+
+  // ---------------------------------------------------------------------------
+  // A run's row in the shared conversation: a projection of `sidekick_runs`.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Write one run, as it stands now, into the Sidekick's shared conversation.
+   *
+   * The entry that calls this is armed by `sidekick_runs`' own triggers on
+   * every change to what the row shows, and this reads the run when it runs
+   * rather than carrying a copy, so the row is always the table's: a lost or
+   * repeated delivery converges on the next one, and `replayRunRows` rebuilds
+   * every row from the table. `replay` is set for a replay's entry, and has
+   * the conversation apply the row even over a newer version it holds. A
+   * throw retries on the scheduler's backoff.
+   */
+  private async projectRunRow(runId: string, replay: boolean): Promise<void> {
+    const row = first(this.sql.exec<{
+      workspace_id: string; region: string | null; title: string; trigger_json: string; state: RunState;
+      summary: string | null; step_count: number; created_at: number; updated_at: number;
+    }>(
+      `SELECT directory.workspace_id, directory.region, directory.title, run.trigger_json, run.state, run.summary,
+              run.step_count, run.created_at, run.updated_at
+         FROM sidekick_runs run JOIN automation_directory directory ON directory.automation_id = run.sidekick_id
+        WHERE run.sidekick_id = ? AND run.run_id = ? AND directory.lifecycle <> 'deleted'`,
+      this.sidekickId, runId,
+    ));
+    if (!row) return;
+    const workspaceId = asWorkspaceId(row.workspace_id);
+    const projection: SidekickRunRowProjection = {
+      workspaceId,
+      automationId: this.sidekickId,
+      runId,
+      automationName: row.title || "New Sidekick",
+      triggerKind: (JSON.parse(row.trigger_json) as AutomationRunTriggerV1).kind,
+      createdAt: row.created_at,
+      state: row.state,
+      stepCount: row.step_count,
+      // The reply is what the run said last, once it stopped working: a
+      // finish, or the question it is waiting on. While it works the summary
+      // is whatever it said most recently, which is progress, not a reply.
+      reply: row.state === "pending" || row.state === "running" ? null : row.summary,
+      version: row.updated_at,
+      replay,
+    };
+    const conversation = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
+      conversationObjectName(row.region ?? this.env.AVALON_REGION, workspaceId, this.sidekickId, asSubstreamId("0")));
+    const written = await conversation.projectSidekickRunRow(projection);
+    if (written.outcome === "refused") {
+      logWarn(this.env, "sidekick_run_row_refused", { ...this.logFields(), run_id: runId, code: written.code });
+    }
+  }
+
+  /**
+   * Rebuild every run's row in the shared conversation from `sidekick_runs`,
+   * newest last. Each entry is armed as a replay, which the conversation
+   * applies whatever version it holds. A run is never deleted from
+   * `sidekick_runs`, so there is no row whose run is gone to remove; a trigger
+   * that re-arms an entry before it runs replaces it with an ordinary one.
+   */
+  async replayRunRows(input: AutomationActorRequest): Promise<{ armed: number }> {
+    const request = parseRpcInput(AutomationActorRequestSchema, input, "replay_run_rows");
+    await this.assertManager(this.assertSidekick(request.workspaceId, request.automationId), request.actor);
+    const now = Date.now();
+    const runs = this.sql.exec<{ run_id: string }>(
+      `SELECT run_id FROM sidekick_runs WHERE sidekick_id = ? ORDER BY created_at, run_id`, this.sidekickId,
+    ).toArray();
+    for (const run of runs) {
+      this.host.alarms.schedule({
+        kind: SIDEKICK_RUN_ROW_ALARM_KIND, key: sidekickAlarmKey(this.sidekickId, run.run_id), dueAt: now,
+        payload: SIDEKICK_RUN_ROW_REPLAY_PAYLOAD,
+      }, now);
+    }
+    return { armed: runs.length };
   }
 
   // ---------------------------------------------------------------------------
@@ -2061,9 +2025,8 @@ export class HostedSidekick {
       definitionRevision: revision,
       since: iso(row.reviewed_at),
       until: new Date(now).toISOString(),
-      announceTo: row.owning_workstream_id !== null
-        ? conversationIdOf({ parentId: row.owning_workstream_id, substreamId: row.owning_substream_id })
-        : this.host.announcementSpaceId(row),
+      // Its own shared conversation, where everyone it is shared with reads.
+      announceTo: conversationIdOf({ parentId: this.sidekickId, substreamId: "0" }),
       finished: {
         completed: counts?.completed ?? 0, failed: counts?.failed ?? 0,
         needsInput: counts?.needs_input ?? 0, stopped: counts?.stopped ?? 0,
@@ -2136,6 +2099,11 @@ export class HostedSidekick {
       return { progressed: true };
     }
     if (alarm.kind === AUTOMATION_RUN_ALARM_KIND) return this.startRun(innerKey, alarm.attempt);
+    if (alarm.kind === SIDEKICK_RUN_ROW_ALARM_KIND) {
+      // A trigger's arm carries no payload; a replay's forces the write.
+      await this.projectRunRow(innerKey, alarm.payload === SIDEKICK_RUN_ROW_REPLAY_PAYLOAD);
+      return { progressed: true };
+    }
     if (alarm.kind === SIDEKICK_REVIEW_ALARM_KIND) return this.startReview();
     if (alarm.kind === SIDEKICK_MEMORY_TABLES_ALARM_KIND) {
       try {
@@ -2156,17 +2124,21 @@ export class HostedSidekick {
 
   private async executeSchedule(scheduleId: string): Promise<void> {
     // Only an active Sidekick's due schedule fires; anything else reads nothing.
+    // Due means its occurrence has arrived: an entry that ran after a pause and
+    // resume, or an apply that kept the schedule, moved `next_due_at` into the
+    // future, and admitting that occurrence now would start its run early.
+    // The transaction below re-checks the instant read here, so it stays due.
+    const now = Date.now();
     const due = first(this.sql.exec<ScheduleRow & { accepted_definition_revision: number | null }>(
       `SELECT schedule.schedule_id, schedule.schedule_kind, schedule.definition_json, schedule.next_due_at,
               directory.accepted_definition_revision
          FROM sidekick_schedules schedule
          JOIN automation_directory directory ON directory.automation_id = schedule.sidekick_id
         WHERE schedule.sidekick_id = ? AND schedule.schedule_id = ?
-          AND schedule.next_due_at IS NOT NULL AND directory.lifecycle = 'active'`,
-      this.sidekickId, scheduleId,
+          AND schedule.next_due_at IS NOT NULL AND schedule.next_due_at <= ? AND directory.lifecycle = 'active'`,
+      this.sidekickId, scheduleId, now,
     ));
     if (!due || due.next_due_at === null) return;
-    const now = Date.now();
     const dueAt = due.next_due_at;
     const nextDueAt = scheduleDueAfter(due.schedule_kind, due.definition_json, now);
     const coordinator = await this.coordinator();
@@ -2209,6 +2181,7 @@ export class HostedSidekick {
     opening: AutomationRunDefinitionV1["opening"],
     coordinatorUserId: string | null,
     seed: DemoSeed | null = null,
+    requesterUserId: string | null = null,
   ): { runId: string; reused: boolean } {
     if (acceptedRevision === null) {
       throw new ApiError(409, "sidekick_not_active", "The Sidekick has no accepted definition");
@@ -2222,8 +2195,9 @@ export class HostedSidekick {
     const run = first(this.sql.exec<{ run_id: string; state: RunState }>(
       `INSERT INTO sidekick_runs
          (sidekick_id, run_id, occurrence_key, trigger_json, definition_revision, harness_run_id, state,
-          summary, opening_json, seed_json, created_at, started_at, completed_at, updated_at, coordinator_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+          summary, opening_json, seed_json, created_at, started_at, completed_at, updated_at, coordinator_user_id,
+          requester_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
        ON CONFLICT(sidekick_id, occurrence_key) DO UPDATE SET occurrence_key = excluded.occurrence_key
        RETURNING run_id, state`,
       this.sidekickId,
@@ -2239,6 +2213,7 @@ export class HostedSidekick {
       now,
       now,
       coordinatorUserId,
+      requesterUserId,
     ));
     if (!run) throw new Error("sidekick_occurrence_missing");
     if (coordinatorUserId === null) this.noteDelegationAttention("no_eligible_delegate");
@@ -2274,7 +2249,7 @@ export class HostedSidekick {
       );
       return { progressed: true };
     }
-    const coordinator = await this.coordinator(run.coordinator_user_id);
+    const coordinator = await this.runPrincipal(run);
     if (coordinator === null) {
       this.sql.exec("UPDATE sidekick_runs SET state='needs_input',summary=?,updated_at=? WHERE sidekick_id=? AND run_id=? AND state='pending'",
         SIDEKICK_DELEGATION_ATTENTION_MESSAGES.no_eligible_delegate, now, this.sidekickId, runId);
@@ -2317,7 +2292,8 @@ export class HostedSidekick {
     const view = this.assertRunView(this.runView(request.runId), request.workspaceId, request.automationId);
     const { sidekick, run } = view;
     if (!run || run.state !== "pending" || sidekick.lifecycle !== "active") return null;
-    const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId });
+    const authority = await this.readExecutionDelegation({ workspaceId: request.workspaceId, automationId: request.automationId,
+      runId: request.runId });
     if (!run.coordinator_user_id || !authority.delegates.some((grant) => grant.userId === run.coordinator_user_id)) return null;
     return {
       region: sidekick.region,
@@ -2412,15 +2388,14 @@ export class HostedSidekick {
   // Lifecycle helpers, each inside the caller's transaction.
   // ---------------------------------------------------------------------------
 
-  private archive(now: number, owningRoomArchivedAt: number | null = null): void {
+  private archive(now: number): void {
     this.stopOpenRuns(now);
     this.cancelSidekickAlarms();
     this.sql.exec(
       `UPDATE automation_directory
-          SET lifecycle = 'deleted', paused_by = NULL, stop_generation = stop_generation + 1,
-              owning_room_archived_at = COALESCE(?, owning_room_archived_at), updated_at = ?
+          SET lifecycle = 'deleted', paused_by = NULL, stop_generation = stop_generation + 1, updated_at = ?
         WHERE automation_id = ?`,
-      owningRoomArchivedAt, now, this.sidekickId,
+      now, this.sidekickId,
     );
     this.touchDirectory(now, this.writeRegistrations([]));
   }
@@ -2836,7 +2811,8 @@ export class HostedSidekick {
                 'run_id', run.run_id, 'occurrence_key', run.occurrence_key, 'trigger_json', run.trigger_json,
                 'definition_revision', run.definition_revision, 'harness_run_id', run.harness_run_id,
                 'state', run.state, 'summary', run.summary, 'opening_json', run.opening_json,
-                'seed_json', run.seed_json, 'run_as_user_id', run.run_as_user_id, 'coordinator_user_id', run.coordinator_user_id, 'created_at', run.created_at,
+                'seed_json', run.seed_json, 'run_as_user_id', run.run_as_user_id, 'coordinator_user_id', run.coordinator_user_id,
+                'requester_user_id', run.requester_user_id, 'created_at', run.created_at,
                 'started_at', run.started_at, 'completed_at', run.completed_at, 'updated_at', run.updated_at
               ) END AS run,
               CASE WHEN revision.definition_revision IS NULL THEN NULL ELSE json_object(
@@ -2882,60 +2858,24 @@ export class HostedSidekick {
     ))?.state ?? null;
   }
 
-  /** Record a child; `false` when it was already there. */
-  private registerChild(substreamId: string, kind: "main" | "child", createdByUserId: string | null, now: number): boolean {
-    return this.sql.exec<{ substream_id: string }>(
-      `INSERT OR IGNORE INTO sidekick_children(sidekick_id, substream_id, kind, created_by_user_id, created_at)
-       VALUES (?, ?, ?, ?, ?) RETURNING substream_id`,
-      this.sidekickId, substreamId, kind, createdByUserId, now,
-    ).toArray().length === 1;
-  }
-
-  /** Every child this Sidekick knows, the authoring conversation first; `"0"` always. */
-  childRegistry(): { substreamId: string; kind: "main" | "child"; createdAt: number }[] {
-    const rows = this.sql.exec<{ substream_id: string; kind: "main" | "child"; created_at: number }>(
-      `SELECT substream_id, kind, created_at FROM sidekick_children WHERE sidekick_id = ?
-        ORDER BY CASE WHEN substream_id = '0' THEN 0 ELSE 1 END, created_at, substream_id`,
-      this.sidekickId,
-    ).toArray();
-    const children = rows.map((row) => ({ substreamId: row.substream_id, kind: row.kind, createdAt: row.created_at }));
-    if (!children.some((child) => child.substreamId === "0")) children.unshift({ substreamId: "0", kind: "main", createdAt: 0 });
-    return children;
-  }
-
   /** Who may change a Sidekick (`sidekickManager`). */
   private async assertManager(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
     if (!await this.managerAllows(row, actor)) throw forbidden();
   }
 
   private async managerAllows(row: HostedSidekickRow, actor: AutomationActor): Promise<boolean> {
-    if (row.scope === "workstream") {
-      // Whoever may manage the owning Channel manages it, as a grant or an
-      // archive leaves that, and so does the person who asked for it. No
-      // Breakout narrowing here: that is the reader's and viewer's rule, and a
-      // Channel's managers manage what it owns wherever it is homed.
-      if (row.author_user_id === actor.userId) return true;
-      if (row.owning_workstream_id !== null && (await this.host.readManagementAccess({
-        workspaceId: row.workspace_id, parentId: row.owning_workstream_id, userId: actor.userId,
-      })).allowed) return true;
-      return false;
-    }
-    return row.author_user_id === actor.userId || row.run_as_user_id === actor.userId
-      || (row.scope === "workspace" && (actor.actorRole === "owner" || actor.actorRole === "admin"));
+    return sidekickManagerAllows(row, actor);
   }
 
   /** The management API's read check (`sidekickReader`). */
   private async assertReader(row: HostedSidekickRow, actor: AutomationActor): Promise<void> {
     if (row.lifecycle === "deleted") throw new ApiError(404, "sidekick_not_found", "This Sidekick was archived");
-    if (await sidekickReaderAllows(row, { userId: actor.userId, actorRole: actor.actorRole ?? null }, this.host, "manager")) return;
+    if (sidekickReaderAllows(row, { userId: actor.userId, actorRole: actor.actorRole ?? null }, this.sql)) return;
     throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
   }
 
-  /**
-   * The detail as this reader sees it. The owning Thread is named only to a
-   * participant of it, the library's rule, read from this object's own rows.
-   */
-  async detail(readerUserId: string): Promise<AutomationDetail> {
+  /** The detail as this reader sees it. */
+  async detail(): Promise<AutomationDetail> {
     // The row with both revisions and its last run in one read; the recent
     // runs are the second. `next_run_at` is kept by `touchDirectory`.
     const row = first(this.sql.exec<HostedSidekickRow & {
@@ -2960,12 +2900,9 @@ export class HostedSidekick {
     const acceptedDefinition = row.accepted_definition_json
       ? AutomationDraftSchema.parse(JSON.parse(row.accepted_definition_json))
       : null;
-    const threadId = row.scope === "workstream" ? row.owning_workstream_id : null;
-    const owningThread = threadId !== null && await this.host.isChannelParticipant(threadId, readerUserId)
-      ? owningThreads(this.sql, [threadId], (workstreamId, code) => logWarn(this.env, "owning_thread_appearance_invalid", {
-        ...this.logFields(), workstream_id: workstreamId, code,
-      })).get(threadId) ?? null
-      : null;
+    const sharedWithUserIds = this.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM sidekick_audience WHERE sidekick_id = ? ORDER BY added_at, user_id`, this.sidekickId,
+    ).toArray().map((shared) => shared.user_id);
     return AutomationDetailSchema.parse({
       id: row.automation_id,
       ...(row.appearance_json ? { appearance: WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) } : {}),
@@ -2974,8 +2911,6 @@ export class HostedSidekick {
       description: row.description,
       emailAddress: acceptedDefinition !== null && sidekickReceivesEmail(acceptedDefinition) ? row.email_address : null,
       scope: row.scope,
-      owningWorkstreamId: row.owning_workstream_id,
-      owningThread,
       status: row.lifecycle,
       nextRunAt: iso(row.lifecycle === "active" ? row.next_run_at : null),
       lastRunAt: iso(row.last_run_at),
@@ -2994,6 +2929,8 @@ export class HostedSidekick {
         && (acceptedDefinition.triggers.length > 0 || sidekickReceivesEmail(acceptedDefinition)),
       connectorBindings: JSON.parse(row.connector_bindings_json),
       recentRuns: this.runSummaries(20),
+      audience: sharedWithUserIds.length > 0 ? "people" : row.scope === "workspace" ? "workspace" : "personal",
+      sharedWithUserIds,
     });
   }
 

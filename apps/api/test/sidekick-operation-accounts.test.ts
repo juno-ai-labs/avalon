@@ -54,6 +54,22 @@ function fixture() {
 }
 
 describe("Sidekick operation account selection over durable receipts", () => {
+  it("refuses a requester's run an account only a delegate can use, by name", async () => {
+    const f = fixture();
+    // A run a non-delegate asked for: its view names only the requester.
+    const requesterAuthority = SidekickExecutionDelegationSchema.parse({ sidekickId: id(4), creatorUserId: creator,
+      accountUserId: creator, delegates: [{ userId: other, generation: 0, grantedAt: 1 }], requesterUserId: other });
+    const refused = await executeSidekickAccountOperation({ ...f.options(), authority: requesterAuthority,
+      coordinatorUserId: other, requested: a, candidates: [a] }).then(() => null, (error: unknown) => error);
+    expect(refused).toBeInstanceOf(ConnectorError);
+    expect((refused as ConnectorError).details).toEqual({ code: "sidekick_requester_account_unavailable" });
+    expect(f.calls).toEqual([]);
+    // The requester's own account still serves.
+    await executeSidekickAccountOperation({ ...f.options(), authority: requesterAuthority,
+      coordinatorUserId: other, requested: b, candidates: [a, b] });
+    expect(f.calls).toEqual([id(6)]);
+  });
+
   it("does not expose delegation to a Sidekick configuration chat", async () => {
     const input = WorkstreamWorkflowInputSchema.parse({ workspaceId, parentKind: "automation", parentId: id(4),
       loopId: "config-loop", harnessRunId: id(7), region: "global", reason: "human_message", triggerMessageId: null, activityId: null,

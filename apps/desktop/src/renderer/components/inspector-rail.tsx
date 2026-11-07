@@ -3,7 +3,6 @@ import { AnnotationSurface } from './annotation-surface';
 import { openLink } from '../lib/browser-rail-links';
 import { desktopBridge } from '../lib/platform';
 import { downloadPreview } from './attachment-lightbox';
-import { SidekickSection, type SidekickRow, type SidekickSectionFailure } from './sidekick-section';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { IconArchive, IconArrowLeft, IconChevronRight, IconChevronsRight, IconDownload, IconExternalLink, IconEye, IconFileText, IconHistory, IconLink, IconLoader2, IconPencil, IconPin, IconDots, IconPlus, IconRefresh, IconUserPlus, IconWindowMaximize, IconX } from '@tabler/icons-react';
 import { ActionTile, ActionTiles, LevelRow, TitleMenuHeader, TitleMenuItem, TitlePillClose, TitlePillHeader, openLevel, useTitleMenuNav, type TitlePillLevel } from '@rally/ui/components/title-pill';
@@ -59,10 +58,10 @@ interface InspectorRailProps {
   /**
    * Everything the live-artifact detail needs, or absent.
    *
-   * Absent is how the feature is off: a surface with no API session cannot mint
-   * access, and the `live-artifacts-enabled` flag decides whether the caller
-   * passes this at all. A site then falls back to the ordinary resource card,
-   * which is a working outcome rather than a hidden one.
+   * Absent only when the surface cannot host one: with no API session there is
+   * no access to mint, and with no desktop or browser bridge there is nowhere
+   * to present it. A site then falls back to the ordinary resource card, which
+   * is a working outcome rather than a hidden one.
    */
   siteArtifacts?: {
     openArtifact: SiteResourceDetailProps['openArtifact'];
@@ -71,14 +70,6 @@ interface InspectorRailProps {
     surface: SiteResourceDetailProps['surface'];
   };
   workstream?: WorkstreamDetail;
-  /**
-   * This work stream's Sidekicks, or `undefined` while the answer is on its
-   * way. Both pending and empty states retain the shared Sidekicks heading;
-   * only actual Sidekicks and a failed-read recovery action add rows beneath it.
-   */
-  sidekicks?: SidekickRow[] | undefined;
-  sidekickFailure?: SidekickSectionFailure | undefined;
-  onRefreshSidekicks?: (() => void) | undefined;
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
@@ -193,17 +184,11 @@ function watchLabel(resource: WorkstreamResource): { text: string; name: string 
 
 function ContextContent({
   workstream,
-  sidekicks,
-  sidekickFailure,
-  onRefreshSidekicks,
   onAddParticipant,
   onAddResource,
   onToggleWatch,
 }: Pick<InspectorRailProps,
   | 'workstream'
-  | 'sidekicks'
-  | 'sidekickFailure'
-  | 'onRefreshSidekicks'
   | 'onAddParticipant'
   | 'onAddResource'
   | 'onToggleWatch'
@@ -250,8 +235,6 @@ function ContextContent({
           <ResourceCards onToggleWatch={onToggleWatch} resources={[...sources, ...artifacts]} />
         )}
       </Section>
-
-      <SidekickSection items={sidekicks} failure={sidekickFailure} onRefresh={onRefreshSidekicks} />
 
       <Section title="Details">
         <dl className="detail-list">

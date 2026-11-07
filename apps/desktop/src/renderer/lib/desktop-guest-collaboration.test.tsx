@@ -30,7 +30,7 @@ const directory: DesktopWorkspaceOnboardingState = {
  * the API, less the Organization profile, roster and socket ticket under `/workspace`,
  * and the Sidekick library and creation, which refuse a guest per route.
  */
-const MEMBER_ONLY = /^\/(workspace\/(?!socket$|members$|me\/device-timezone$)|workspaces|workstreams|sideline|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime|(sidekicks|automations)\/?$)/u;
+const MEMBER_ONLY = /^\/(workspace\/(?!socket$|members$|me\/device-timezone$)|workspaces|workstreams|work-opportunities|projects|spaces(?!\/[^/]+\/channels)|digest|connections|favicons|realtime|(sidekicks|automations)\/?$)/u;
 
 const spaceId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 
@@ -81,7 +81,7 @@ beforeEach(() => {
     if (path === '/workspace') return Response.json({ ...served, id: workspace.id });
     if (path === '/workspace/socket') return Response.json({ url: `wss://api.rallywith.ai/socket/workspaces/${workspace.id}`, ticket: 'ticket' });
     if (path === '/navigation/threads') return Response.json({ items: [], pinned: [], nextCursor: null });
-    if (path === '/feature-flags') return Response.json({ multipleWorkspacesEnabled: true, liveArtifactsEnabled: false });
+    if (path === '/feature-flags') return Response.json({ multipleWorkspacesEnabled: true });
     if (path === '/sharing/navigation') return Response.json({ spaces: [], workstreams: [] });
     return Response.json({ error: { message: `Unexpected request: ${path}` } }, { status: 404 });
   }));

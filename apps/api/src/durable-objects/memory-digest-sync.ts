@@ -335,6 +335,8 @@ function conversationLive(sql: SqlStorage, conversation: MemoryConversation): bo
       return exists("SELECT 1 FROM automation_directory WHERE automation_id = ? AND lifecycle <> 'deleted'", conversation.parentId);
     case "space":
       return exists("SELECT 1 FROM spaces WHERE space_id = ? AND archived_at IS NULL", conversation.parentId);
+    case "canvas":
+      return exists("SELECT 1 FROM canvas_directory WHERE canvas_id = ?", conversation.parentId);
   }
 }
 

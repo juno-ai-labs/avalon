@@ -585,7 +585,7 @@ describe("suspending bindings", () => {
     // Through the product path: a person archives the Sidekick.
     await workspace().sidekickCreate({
       workspaceId: WORKSPACE_ID, automationId: SIDEKICK, authorUserId: USER_ID,
-      scope: "personal", owningWorkstreamId: null, authorityGeneration: 1,
+      scope: "personal", authorityGeneration: 1,
     });
     await workspace().sidekickRemove({
       workspaceId: WORKSPACE_ID, automationId: SIDEKICK,
@@ -641,7 +641,7 @@ describe("a lasting suspension during a disconnect", () => {
     });
     await writeSidekickDirectoryRow(env, {
       automationId: SIDEKICK, workspaceId: WORKSPACE_ID, authorUserId: USER_ID, lifecycle: "deleted",
-      scope: "workspace", owningWorkstreamId: null, title: "Weekly call prep", description: "",
+      scope: "workspace", title: "Weekly call prep", description: "",
     });
 
     await workspace().reactivateExternalConversationBindings({
@@ -976,9 +976,9 @@ describe("the connector side of a binding", () => {
     await seedSlackConnection();
     for (const automationId of [SIDEKICK, AUTOMATION]) {
       await workspace().sidekickCreate({ workspaceId: WORKSPACE_ID, automationId, authorUserId: USER_ID,
-        scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1 });
+        scope: "workspace", authorityGeneration: 1 });
       await writeSidekickDirectoryRow(env, { automationId, workspaceId: WORKSPACE_ID, authorUserId: USER_ID,
-        lifecycle: "active", scope: "workspace", owningWorkstreamId: null, title: "Reply watcher", description: "Watch replies" });
+        lifecycle: "active", scope: "workspace", title: "Reply watcher", description: "Watch replies" });
     }
     const register = (automationId: string, evaluatorId: string) => workspace().applyExternalEventRegistrations({
       schemaVersion: 1,

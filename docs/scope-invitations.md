@@ -34,6 +34,7 @@ both reads settle, so a quick repeat does not send another invitation email.
 | `apps/api/src/services/conversation-preview.ts` | The last turns of one conversation, named and truncated for somewhere outside the product. |
 | `apps/api/src/services/browser-session-service.ts`, `platform-onboarding-service.ts` | The two sign-in points that claim: browser session registration, and regional discovery. |
 | `apps/api/src/durable-objects/scope-invitation-service.ts` | Current sharing authority, relationship admission, grant activation on claim, and email delivery. |
+| `apps/api/src/durable-objects/hosted-canvas.ts` | A Canvas's shares: the service given its `parent` hook (`targetsReady`, `title`) because a Canvas has no participant migration and no `channels` row, and a grant directory step that adds the claimed guest to the Canvas's participants ([`canvases.md`](canvases.md#guests)). |
 | `apps/api/src/durable-objects/scope-invitation-storage.ts` | Operation receipts, share state, encrypted delivery and claim binding. |
 | `apps/api/src/durable-objects/hosted-parent.ts` | Addressed RPCs and delivery alarm execution. |
 | `apps/api/src/services/workspace-service.ts` (`listInvitees`), `GET /workspace/invitees` | Pending Organization invitations as every member may see them: address and date, for the people pickers. |
@@ -399,8 +400,6 @@ Rally **AI**:
 - **A Space's participants.** Not a share: a Space grants no access, so its
   invitees are listed by address and seated as participants when they accept
   ([Spaces](spaces.md#participants)).
-- **iOS, the Channel details sheet.** Lists invitees under People and shares
-  the open conversation with the one tapped.
 
 When the invitee signs in, the claim makes them a guest of the Channel, and
 accepting the Organization invitation makes them a member, which keeps the
@@ -527,6 +526,27 @@ handoff against real Main and child agents, including refusal to transfer for a
 nonparticipant and reconciliation of a stale child roster.
 
 ## Changelog
+
+### 2026-11-07 — A Canvas is shared through the same invitations
+
+**What changed:** `ScopeInvitationService` takes an optional `parent` hook, and
+`WorkspaceDO` routes creating, claiming and revoking a share, and its delivery
+and index alarms, to a Canvas when the parent id names one. A claimed Canvas
+share writes its grant as a Channel's does, and the Canvas's directory step
+adds the guest to its participants.
+
+**Why:** A Canvas invites guests the way a Channel does (the Canvases and
+Sidekicks decision log), and this service already owns delivery, the sign-in
+claim and the guest relationship; a second invitation path would have been a
+second place for those to drift.
+
+**Considered and rejected:** A Canvas-only invitation table and claim: the
+sign-in claim reads one lookup table keyed by parent id, and would have needed
+a second.
+
+**Consequences:** Listing a Canvas's shares and its grants is not routed yet.
+The service's Channel-only reads (`parent_participant_migrations`, `channels`)
+must stay behind the hook for a non-Channel parent.
 
 ### 2026-11-05 — A guest's run finishes its thread's handoff before refusing
 

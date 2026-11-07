@@ -1,7 +1,7 @@
 /**
  * Which conversation a read acknowledgement moves the waterline on.
  *
- * Read state is substream-owned: every `SubstreamAgent` keeps its own attention
+ * Read state is substream-owned: every `AgentLoopDO` keeps its own attention
  * ordinals and its own `member_attention` row, and a child's ordinals are
  * deliberately not comparable to Main's
  * ([`workstream-durable-object.md`](../../../docs/workstream-durable-object.md)).

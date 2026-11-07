@@ -240,7 +240,7 @@ export interface InventoryObject {
  * the exact count this list exists to keep meaningful.
  */
 export const REPORTING_CLASSES = [
-  "SubstreamAgent",
+  "AgentLoopDO",
   "WorkspaceDO",
 ] as const;
 

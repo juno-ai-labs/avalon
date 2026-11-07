@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -2728,6 +2729,27 @@ describe('a Sidekick result in the room', () => {
     expect(article.textContent).not.toContain('Rally');
   });
 
+  it("draws a run's row in its Sidekick's conversation collapsed, opening into the run", () => {
+    render(<MemoryRouter initialEntries={['/sidekicks/00000000-0000-7000-8000-0000000000aa']}><MessageBlock {...actions} collapseHeadings message={{
+      ...activation,
+      automationActivation: {
+        automationId: '00000000-0000-7000-8000-0000000000aa',
+        automationName: 'Incident triage',
+        runId: '00000000-0000-7000-8000-0000000000bb',
+        trigger: 'external_event',
+        run: { state: 'needs_input', stepCount: 4, reply: 'Should the update go to #status or the status page?' },
+      },
+    }} /></MemoryRouter>);
+
+    const row = screen.getByRole('article', { name: 'Incident triage run' });
+    expect(within(row).getByText('Run · Event · Needs input · 4 steps')).toBeInTheDocument();
+    // Collapsed, the reply is a preview; the run's own work stays in its conversation.
+    expect(row.querySelector('.sidekick-run-row-preview')).toHaveTextContent('Should the update go to #status or the status page?');
+    expect(within(row).getByRole('link', { name: 'Open run', hidden: true }))
+      .toHaveAttribute('href', '/sidekicks/00000000-0000-7000-8000-0000000000aa?run=00000000-0000-7000-8000-0000000000bb');
+    expect(row.querySelector('.message-author')).toBeNull();
+  });
+
   it('gets the feed treatment every other message gets', () => {
     const { container } = render(
       <MessageBlock {...actions} collapseHeadings message={activation} />,
@@ -2754,7 +2776,7 @@ describe('the card proposing an automation drafted in this room', () => {
       automationName: 'Weekly changelog',
       description: 'Summarize what shipped each week.',
       triggerSummaries: ['Every Monday at 9:00 AM'],
-      suggestedScope: 'workstream' as const,
+      suggestedScope: 'workspace' as const,
       ready: true,
     },
   };
@@ -2773,7 +2795,7 @@ describe('the card proposing an automation drafted in this room', () => {
 
   it('says who will be able to manage it, which acceptance freezes', () => {
     render(<MessageBlock {...actions} message={proposal} />);
-    expect(screen.getByRole('group').textContent).toContain('This thread can manage it');
+    expect(screen.getByRole('group').textContent).toContain('The organization can manage it');
 
     const personal = { ...proposal, draftProposed: { ...proposal.draftProposed, suggestedScope: 'personal' as const } };
     const { unmount } = render(<MessageBlock {...actions} message={personal} />);

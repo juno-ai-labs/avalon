@@ -2862,8 +2862,8 @@ const automationDraftSubmissionJsonSchema = {
     },
     suggestedScope: {
       type: "string",
-      enum: ["personal", "workspace", "workstream"],
-      description: "The scope already selected for this Sidekick. Preserve it; do not ask the person to choose again. Before first publication, change between personal and workspace only when explicitly requested. Published scope and workstream ownership cannot change. personal uses the run-as person's connections; workspace uses shared Organization connections; workstream belongs to its owning Thread and follows that Thread's management permissions."
+      enum: ["personal", "workspace"],
+      description: "The scope already selected for this Sidekick. Preserve it; do not ask the person to choose again. Before first publication, change between personal and workspace only when explicitly requested. Published scope cannot change. personal uses the run-as person's connections; workspace uses shared Organization connections."
     },
     ready: {
       type: "boolean",

@@ -1,1 +1,1 @@
-export { annotationDraftKeyForScope, newAutomationDraftKey, newWorkstreamDraftKey, workspaceDraftPrefix, workstreamDraftKey } from '../../common/draft-keys';
+export { annotationDraftKeyForScope, canvasDraftKey, conversationAnnotationScope, conversationDraftKey, newAutomationDraftKey, newWorkstreamDraftKey, workspaceDraftPrefix, workstreamDraftKey } from '../../common/draft-keys';

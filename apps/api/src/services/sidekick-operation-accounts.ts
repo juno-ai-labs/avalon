@@ -1,5 +1,5 @@
 import {
-  SidekickExecutionDelegationSchema, asUserId, type SidekickExecutionDelegation,
+  SIDEKICK_REQUESTER_ACCOUNT_UNAVAILABLE, SidekickExecutionDelegationSchema, asUserId, type SidekickExecutionDelegation,
   type ToolExecutionAccount, type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { ConnectorError, isConnectorResourceAccessRefusal, type ConnectorToolResult } from "@rally/connectors";
@@ -14,8 +14,10 @@ export async function readSidekickOperationDelegation(env: Env, input: Workstrea
   if (input.parentKind !== "automation" || (!input.automationRun && !input.automationDelegation)) return null;
   const workspace = await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, input.workspaceId,
     workspaceDOName(env.AVALON_REGION, input.workspaceId));
+  // The run's own view: a run a non-delegate asked for answers with only them.
+  const runId = input.automationRun?.runId ?? input.automationDelegation?.runId;
   return SidekickExecutionDelegationSchema.parse(await workspace.sidekickReadExecutionDelegation({
-    workspaceId: input.workspaceId, automationId: input.parentId,
+    workspaceId: input.workspaceId, automationId: input.parentId, ...(runId ? { runId } : {}),
   }));
 }
 
@@ -77,6 +79,16 @@ export async function executeSidekickAccountOperation<C extends SidekickAccountC
     for (let index = 0; index < a.length; index++) if (a[index] !== b[index]) return a[index]! < b[index]! ? -1 : 1;
     return 0;
   });
+  if (eligible.length === 0 && authority.requesterUserId) {
+    // A run a non-delegate asked for has only their own accounts; this one
+    // needs a delegate's, or the requester has left the Organization and the
+    // run's account view names nobody. Named, so the run's reply can say why.
+    const left = !authority.delegates.some((delegate) => delegate.userId === authority.requesterUserId);
+    throw new ConnectorError("unauthorized", left
+      ? `${SIDEKICK_REQUESTER_ACCOUNT_UNAVAILABLE}: the person who asked for this run is no longer in the Organization, so it has no account to act with.`
+      : `${SIDEKICK_REQUESTER_ACCOUNT_UNAVAILABLE}: this needs an account that only someone this Sidekick acts for can use. Ask one of them to request it.`,
+      { code: SIDEKICK_REQUESTER_ACCOUNT_UNAVAILABLE });
+  }
   if (eligible.length === 0) throw unavailable("No eligible delegated account is available. Restore delegation, connection and access.");
   let refusal: ConnectorError | undefined;
   for (const connection of eligible) {

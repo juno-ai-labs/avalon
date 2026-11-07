@@ -22,14 +22,6 @@ substream `0` under the automation, dialled through the same broker and the
 same `/socket/conversations/:parentId/:substreamId` route, opened on demand
 by that page rather than proactively, and with no control socket beside it.
 
-The native iOS client is a fourth deployment surface on the same ticketed
-routes, not a mode of this Electron topology. It has no Node broker. Its retain
-set is the navigation stack — workspace, the parent on the stack, the visible
-feed, and Main of that parent — plus presence-free feeds for directory rows
-that stayed on screen for one second, documented in
-[`ios-client.md`](ios-client.md). It does not open the pin/recent/running swarm
-or keep sockets across suspend.
-
 The lite browser host forwards same-origin ticketed upgrades through a configured
 regional API service binding. It returns the source upgrade directly, without
 accepting a socket or relaying frames. The shared API client maps browser ticket
@@ -41,11 +33,10 @@ same set the desktop does — the full workspace socket and the proactive feed
 swarm — over native `WebSocket`s, with presence from page visibility and focus.
 See [browser-client.md](browser-client.md).
 
-Sideline's main process holds one workspace socket for the signed-in operator
-over Node's `ws`, presenting `app://sideline`, and reads only the same event
-([`impersonation.md`](impersonation.md)). Both use `watchWorkspaceReach` in
-`@rally/contracts/workspace-reach-watch`, which shares the desktop workspace
-socket's heartbeat and reconnect numbers.
+`watchWorkspaceReach` in `@rally/contracts/workspace-reach-watch`, the
+listen-only workspace socket for a host without one of its own, has had no
+caller since Sideline was removed; it shares the desktop workspace socket's
+heartbeat and reconnect numbers.
 
 This document owns the end-to-end topology, connection-selection policy, process
 boundaries, and lifecycle. [`realtime-sockets.md`](realtime-sockets.md) owns the
@@ -69,7 +60,7 @@ broadcast and replay delivery for older enum decoders; see
 | `apps/desktop/src/common/workspace-sync-relay.ts` | The relay's IPC channel names and message types, the `{ region, workspaceId }` comparison every hop uses, the preload's structural check, and the preload's inbox that holds news arriving before any listener. Dependency-free for the sandboxed preload. |
 | `apps/desktop/src/main/workspace-sync-relay.ts` | Main's relay state: the closed Zod parse of what the main window publishes, which Organization is attached, the revision that orders source changes, and forwarding news only for the attached Organization. |
 | `apps/desktop/src/main/workspace-sync-relay-ipc.ts` | The relay's two invoke channels and their sender checks: publish from the main window only, read the source from the Settings and Sidekicks windows only. `main/index.ts` registers it and owns the one receiver and the release points. |
-| `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for hosts without one of their own (Sideline main, the lite browser), and the heartbeat and reconnect numbers every workspace-socket client shares. |
+| `packages/contracts/src/workspace-reach-watch.ts` | The listen-only workspace socket for a host without one of its own (no caller since Sideline was removed), and the heartbeat and reconnect numbers every workspace-socket client shares. |
 | `apps/desktop/src/renderer/lib/conversation-admission.tsx` | Composes account and workspace-journey readiness independently of connection warming. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns one substream `0` feed per selected work stream above the route, retains recently viewed feeds for five minutes, and supports presence-free feed warming on deliberate hover. |
 | `apps/api/src/durable-objects/workspace-resource-versions.ts`, `apps/desktop/src/renderer/lib/resource-heads.ts` | The one ledger of new resource versions, drained for `workspace_resource_versions` and the pinned-artifact announcement, and the client's merge of each announced head into the conversation details and popped-out windows that show it. |
@@ -87,8 +78,6 @@ broadcast and replay delivery for older enum decoders; see
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API and publishes each Channel's row, with that viewer's breakouts and running background agents, on it. Still accepts the retired Channel control socket at the internal `/parent-socket` path, tagged `parent-control:<id>`, for clients released before this change. |
 | `apps/api/src/durable-objects/hosted-parent.ts` | Reads the per-viewer breakout list and background-agent counts a Channel row carries, and republishes the row when either moves outside a directory change. Serves the retired control socket's protocol for older clients ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)). |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the substream feed socket, sends the canonical snapshot, and publishes ordered transcript/runtime events. |
-| `apps/ios/Rally/Network/RallySocketPolicy.swift` | iOS retain set: navigation-shaped, not the desktop swarm. |
-| `apps/ios/Rally/Network/RallySocketPool.swift` | Opens and closes iOS `URLSessionWebSocketTask` owners to match that set. |
 
 ## Sidekick library synchronization
 
@@ -610,7 +599,7 @@ This operation preserves windows, login, IndexedDB, drafts and transcript caches
 Healthy Node-brokered feeds remain open. It neither retries interrupted REST
 mutations nor changes the existing socket command reconciliation contract. The
 ordinary failure surface remains available if the connection reset is insufficient.
-Browser and iOS clients retain their existing reconnect behavior.
+The browser client retains its existing reconnect behavior.
 
 ### Best practices for extending proactive coverage
 
@@ -942,6 +931,14 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-11-06 — The iOS client is deleted
+
+`apps/ios` and its navigation-shaped retain set are gone. `/parent-socket`,
+`WorkstreamControlSocketService` and `GET /workstreams/:id/control-socket` were
+kept partly for iOS; they now serve only desktops released before the
+workspace-socket breakout list, and their removal is a later phase of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
 
 ### 2026-10-21 — Push exact-target Sidekick counts to open composers
 

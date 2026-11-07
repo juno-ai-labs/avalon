@@ -31,7 +31,7 @@ function fixtureFetch({
     if (url.pathname.endsWith('/workers/durable_objects/namespaces')) {
       return response(queues.map(([region]) => ({
         id: `${region}-namespace`,
-        class: 'SubstreamAgent',
+        class: 'AgentLoopDO',
         script: `avalon-api-${region}`,
       })), { page: 1, total_pages: 1 });
     }
@@ -111,7 +111,7 @@ test('apply batches only stored object ids and waits for the regional queue to d
   assert.deepEqual(batches.map(({ init }) => JSON.parse(init.body).messages.length), [100, 1]);
   const commands = batches.flatMap(({ init }) => JSON.parse(init.body).messages.map((message) => message.body));
   assert.deepEqual(commands.map((command) => command.objectId), stored);
-  assert.equal(commands.every((command) => command.className === 'SubstreamAgent'), true);
+  assert.equal(commands.every((command) => command.className === 'AgentLoopDO'), true);
   assert.equal(commands.every((command) => command.region === 'global'), true);
   assert.equal(new Set(commands.map((command) => command.runId)).size, 1);
   assert.equal(result.dispatched, 101);
@@ -181,7 +181,7 @@ test('apply requires a jurisdiction probe before it can enqueue commands', async
   );
 });
 
-test('refuses an ambiguous regional SubstreamAgent namespace', async () => {
+test('refuses an ambiguous regional AgentLoopDO namespace', async () => {
   const fixture = fixtureFetch();
   const fetcher = async (input, init) => {
     const url = new URL(input);
@@ -189,8 +189,8 @@ test('refuses an ambiguous regional SubstreamAgent namespace', async () => {
       return fixture.fetcher(input, init);
     }
     return response([
-      { id: 'one', class: 'SubstreamAgent', script: 'avalon-api-global' },
-      { id: 'two', class: 'SubstreamAgent', script: 'avalon-api-global' },
+      { id: 'one', class: 'AgentLoopDO', script: 'avalon-api-global' },
+      { id: 'two', class: 'AgentLoopDO', script: 'avalon-api-global' },
     ], { page: 1, total_pages: 1 });
   };
 

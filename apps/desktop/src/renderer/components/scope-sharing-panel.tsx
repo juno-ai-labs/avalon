@@ -12,9 +12,16 @@ import { ErrorNotice, Modal } from './primitives';
  * their guest to sign in, inviting more, and taking one back. Shared by the
  * share panel and the title menu's People level, which read one cache entry.
  */
-export function useScopeInvitations({ api, workspaceId, parentId, substreamId, enabled = true, refreshParticipants }: {
+export function useScopeInvitations({ api, workspaceId, parentId, substreamId, enabled = true, refreshParticipants, target: targetKind = 'conversation', listsPending = true }: {
   api: RallyApi; workspaceId: string; parentId: string; substreamId: string; enabled?: boolean;
   refreshParticipants?: () => Promise<unknown>;
+  /**
+   * What a share admits the guest to: one conversation of a parent, or the
+   * whole parent. A Canvas is shared whole (`docs/canvases.md#guests`).
+   */
+  target?: ScopeGrantTarget['kind'];
+  /** Whether the parent answers a listing of its waiting shares; a Canvas does not yet. */
+  listsPending?: boolean;
 }) {
   // One retry identity per batch, kept until that batch is created, so a retry
   // replays the same operation even while another batch is in flight.
@@ -24,13 +31,15 @@ export function useScopeInvitations({ api, workspaceId, parentId, substreamId, e
   const refreshing = useRef(new Set<string>());
   // Main is conversation 0: a workstream grant would also include inheriting children.
   // Built on use: a surface mounts this before it has a workspace to parse.
-  const target = (): ScopeGrantTarget => ({ kind: 'conversation', workspaceId: asWorkspaceId(workspaceId),
-    parentId: asWorkstreamId(parentId), substreamId: asSubstreamId(substreamId) });
+  const target = (): ScopeGrantTarget => targetKind === 'workstream'
+    ? { kind: 'workstream', workspaceId: asWorkspaceId(workspaceId), parentId: asWorkstreamId(parentId) }
+    : { kind: 'conversation', workspaceId: asWorkspaceId(workspaceId),
+      parentId: asWorkstreamId(parentId), substreamId: asSubstreamId(substreamId) };
   // Shares nobody has claimed yet. Someone who already has an account is
   // claimed as the share is made and appears among the participants instead.
   const pending = useQuery({
     queryKey: ['scope-invitations', parentId, substreamId],
-    enabled,
+    enabled: enabled && listsPending,
     queryFn: async ({ signal }) => {
       const result = await api.listScopeInvitations(target(), signal);
       // Denied means this person cannot share here, so there is nothing of
@@ -68,14 +77,16 @@ export function useScopeInvitations({ api, workspaceId, parentId, substreamId, e
     const committed = recipients.map(recipientKey);
     for (const email of committed) refreshing.current.add(email);
     const refreshed = (): void => { for (const email of committed) refreshing.current.delete(email); };
-    void Promise.all([pending.refetch(), refreshParticipants?.()]).then(refreshed, refreshed);
+    void Promise.all([listsPending ? pending.refetch() : undefined, refreshParticipants?.()]).then(refreshed, refreshed);
     return result;
   } });
   return { pending, invite, remove };
 }
 
-export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onShared }: {
+export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onShared, target, listsPending }: {
   api: RallyApi; workspaceId: string; parentId: string; substreamId: string;
+  target?: ScopeGrantTarget['kind'];
+  listsPending?: boolean;
   // Told when an invitation was created. The panel reports the outcome rather
   // than announcing it: the emptied form is what a container that stays open
   // shows, and the share dialog dismisses itself.
@@ -83,7 +94,8 @@ export function ScopeSharingPanel({ api, workspaceId, parentId, substreamId, onS
 }): React.JSX.Element {
   const [emails, setEmails] = useState('');
   const [failure, setFailure] = useState<{ kind: 'invalid_emails' | 'share' | 'remove' | 'joined' } | null>(null);
-  const { pending, invite, remove } = useScopeInvitations({ api, workspaceId, parentId, substreamId });
+  const { pending, invite, remove } = useScopeInvitations({ api, workspaceId, parentId, substreamId,
+    ...(target ? { target } : {}), ...(listsPending === undefined ? {} : { listsPending }) });
   return <section className="scope-sharing-panel" aria-label="Share by email" aria-busy={invite.isPending}>
     <form onSubmit={(event) => {
       event.preventDefault(); setFailure(null);

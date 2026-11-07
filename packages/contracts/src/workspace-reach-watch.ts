@@ -325,10 +325,11 @@ export function watchWorkspaceSocket(dependencies: WorkspaceSocketWatchDependenc
  * Hold one workspace socket and report when a list drawn from membership went
  * stale.
  *
- * For a host with no workspace socket of its own, Sideline and the lite
- * browser client, that needs only to hear that somebody it shows joined or
- * left a Channel or Breakout, so it ignores everything but
- * `workspace_reach_changed` and the subscribe answer.
+ * For a host with no workspace socket of its own that needs only to hear that
+ * somebody it shows joined or left a Channel or Breakout, so it ignores
+ * everything but `workspace_reach_changed` and the subscribe answer. No shipped
+ * host uses it since Sideline was removed; the desktop's menu bar uses
+ * `watchWorkspaceSocket` directly.
  *
  * Every subscribe answer reports stale, the first included: nothing is
  * replayed across a reconnect, and the host's opening read can finish before

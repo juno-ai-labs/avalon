@@ -631,6 +631,27 @@ authority. `retracted_by` records who forgot a fact.
 
 ## Changelog
 
+### 2026-11-07 — A Canvas's Chat has its own memory source
+
+**What changed:** A conversation whose parent is a Canvas is memory source
+`canvas:<canvasId>`, filed under the stored subject kind `thread` with the
+Canvas id. Its audience is the Canvas's: a person reads its facts when
+`canvasReaderAllows` admits them, every member when the Canvas or its writer
+Sidekick is Organization-wide.
+
+**Why:** The Canvases and Sidekicks plan replaces `workstream:<id>` with
+`canvas:<id>` for a Canvas's Chat. The stored subject kind stays `thread`
+because `memory_facts.subject_kind` is under a CHECK, and widening it means
+rebuilding the table, which the memory step that renames every subject kind
+(plan step C-5) does once.
+
+**Considered and rejected:** Leaving a Canvas's Chat with no memory until C-5,
+which would make it the one conversation Rally forgets in.
+
+**Consequences:** A reader of `subject_kind = 'thread'` must not assume the id
+names a Channel; the titles a fact shows are looked up in `canvas_directory`
+as well.
+
 ### 2026-10-19 — A person reviews and removes what Rally remembers where it lives
 
 **What changed:** PRD rollout step 3, the last. Four reads and four removals

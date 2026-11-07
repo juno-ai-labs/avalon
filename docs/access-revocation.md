@@ -110,11 +110,12 @@ The producers are:
   The self-leave route cannot skip the producer by performing its own delete.
 - **A room participant is removed.** `WorkstreamService.removeParticipant`
   tells the room, which closes its own sockets, then publishes with
-  `sessionId: null` and a `workstream_automations` target naming the room:
-  the automations the room owns admitted this person through the room, and
-  nothing inside the room reaches those objects.
+  `sessionId: null` and a `workstream_automations` target naming the room. A
+  room owns no Sidekick any more, so the consumer acknowledges that hop without
+  a call; the producer still publishes it.
 - **A workstream grant is revoked.** The durable grant-directory effect publishes
-  the owned Sidekicks' `automation` hops before acknowledgment. Main and child
+  the same `workstream_automations` hop before acknowledgment, which likewise
+  reaches nothing. Main and child
   conversation membership is independently handled by participant projections.
 - **A session is revoked.** `AuthService.logout` returns the rows it revoked
   (`RETURNING id, user_id, workspace_id`) and publishes one message per row,
@@ -143,10 +144,10 @@ about; each child becomes its own message on the same queue.
 ```
 workspace              ──▶ WorkspaceDO    ──▶ [substreams of every hosted Channel] + [automationIds] + [artifactIds]
                                               (+ a workstream hop per Channel still awaiting its import)
-workstream_automations ──▶ WorkspaceDO    ──▶ [automationIds the room owns]  (automationIdsOwnedByWorkstream)
+workstream_automations ──▶ (dropped: a room owns no Sidekick; acknowledged without a call)
 workstream             ──▶ WorkspaceDO    ──▶ [substreamIds]   (revokeParentSocketAccess)
 workstream_audience_narrowed
-                       ──▶ WorkspaceDO    ──▶ [substreams per closed reader] + [automationIds the room owns]
+                       ──▶ WorkspaceDO    ──▶ [substreams per closed reader] + [automationIds: always empty]
                                               (revokeNarrowedAudienceAccess)
 automation             ──▶ WorkspaceDO    ──▶ [substreamIds]   (listChildren; a Sidekick holds no socket)
 space                  ──▶ WorkspaceDO    ──▶ [substreamIds]   (listChildren; a Space holds no socket)
@@ -164,9 +165,10 @@ not in `channels`. The narrowing hop answers `substreams` and `automationIds`
 beside `closedUserIds`. Both keep the older fields so a consumer from before
 this change still reaches everything, and the consumer falls back to the older
 hops when an object from before it answers without the new ones. The
-`workstream` and `workstream_automations` hops stay: Workers still publish
-`workstream_automations` for a removed participant, and messages of both kinds
-may already be queued at a deploy.
+`workstream` hop stays: messages of that kind may already be queued at a
+deploy. Workers still publish `workstream_automations` for a removed
+participant and a revoked grant, and the consumer acknowledges it without a
+call, since a room owns no Sidekick.
 
 The fan-out is queue-driven rather than one long call chain for three reasons: a
 hop that fails is retried alone rather than restarting the walk; no single
@@ -204,13 +206,11 @@ keyed by the automation id as the parent. Its list comes from
 `automation_directory`, the one place the workspace knows an automation exists,
 and is unfiltered by person for the reason the artifact list is: an
 automation's conversation admits its author, its run-as principal, any member
-when it is workspace-scoped, and any participant of the room that owns it, so
-the workspace cannot tell which automations a person holds a socket on, and a
-hop that finds nothing to drop costs one call. A room-owned automation has one
-more way to lose a reader: the room removes a participant, a write the room
-makes locally that no membership revocation follows. The room's writer
-publishes a `workstream_automations` hop, and WorkspaceDO names the room's
-automations for it.
+when it is workspace-scoped, and anyone it is shared with, so the workspace
+cannot tell which automations a person holds a socket on, and a hop that finds
+nothing to drop costs one call. No room owns an automation, so a participant
+removal no longer reaches one; the `workstream_automations` hop its writer
+still publishes ends at the consumer.
 
 A **narrowed audience** is the one hop that names nobody. Every other message
 is about one person, because every other way access ends names one: a member is
@@ -319,9 +319,8 @@ room would go on seeing an evicted reader listed as present.
 - **An object returns lists; it does not publish.** Keeping the transport in the
   consumer is what keeps the five objects independent of the queue. The one
   exception is WorkspaceDO applying a revoked Channel grant from its own outbox:
-  no consumer is involved there, so it publishes the owned Sidekicks'
-  `automation` hops itself, as it published the `workstream_automations` hop
-  before.
+  no consumer is involved there, so it publishes that grant's hops itself. A
+  Channel owns no Sidekick, so those include no `automation` hop.
 - **Every object that accepts a socket is on this walk.** A room admits on a
   ticket and never re-authorizes, so an object added to the tree without a
   `revokeSocketAccess` and a hop to reach it keeps serving somebody who has lost
@@ -469,8 +468,8 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
   every socket an object holds when it writes the tombstone, so a hop that
   reaches a retired object has nothing left to find. `revokeSocketAccess` is
   permitted on every gated class, and the permit covers the whole call rather
-  than that one method name; the enumerations the other hops ask for
-  (`listChildren`, `automationIdsOwnedByWorkstream`) stay refused, and the
+  than that one method name; the enumeration the `automation` and `space` hops
+  ask for (`listChildren`) stays refused, and the
   consumer acknowledges that refusal through `isRetirementRefusal` rather than
   retrying it — a retry would dead-letter one message per retired object,
   spending this module's own monitoring signal on a condition somebody designed.
@@ -527,6 +526,27 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-11-07 — A room owns no Sidekick, so its Sidekick hop ends at the consumer
+
+**What changed:** `WorkspaceDO.automationIdsOwnedByWorkstream` is deleted, and
+the consumer acknowledges a `workstream_automations` message without a call.
+`revokeNarrowedAudienceAccess` answers an empty `automationIds`.
+
+**Why:** The Canvases and Sidekicks PRD converts every Thread-scoped Sidekick
+to the Organization's scope, so no room owns one and a person who loses a room
+loses no Sidekick with it: their access to a Sidekick comes from its own
+scope and audience, which a room removal does not change.
+
+**Considered and rejected:** Removing the target from the schema now. Workers
+still publish it and messages of that kind may be queued at a deploy, so a
+rejected parse would dead-letter them.
+
+**Consequences:** The producers (`WorkstreamService.removeParticipant`, the
+grant-directory effect, the guest-reach path) still publish a hop that reaches
+nothing; removing those publishes, and then the target, is a later change. A
+future rule that lets a room admit someone to a Sidekick needs a new hop here,
+not the old one revived.
 
 ### 2026-10-07 — Organization settings can suspend a member
 

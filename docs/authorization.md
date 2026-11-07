@@ -19,7 +19,7 @@ participants or become a new canonical owner of memberships.
 | `durable-objects/authorization-projection.ts` | Transactional child outbox and reference-only Queue contract |
 | `services/authorization-projection-service.ts` | Reloads attachment inventories from their owners when jobs execute |
 | `durable-objects/workspace-do.ts` | Legacy snapshot compatibility validation, resource facts, migration fan-out and discovery status |
-| `durable-objects/hosted-parent.ts`, `sidekick-do.ts` | Canonical parent/private-child facts; automation author, executor and owning work stream |
+| `durable-objects/hosted-parent.ts`, `hosted-sidekick.ts` | Canonical parent/private-child facts; a Sidekick's author, executor and the people it is shared with |
 | `authorization-control.ts` | Private operator Service Binding entrypoint |
 
 ## How it works
@@ -122,9 +122,16 @@ RPC across multiple substreams. Each response carries exact grant decisions for 
 Canonical checks reload facts. Main and Breakout scopes are independent: a
 Breakout member need not read Main, and reading Main does not admit a restricted
 Breakout.
-An automation supplies its own scope, author, executor and child registry; an
-owning work stream's canonical roster supplies inherited access. Archived work
-streams remain readable. Deleted automations are absent.
+An automation supplies its own scope, author, executor, `people` list
+membership and child registry, and `sidekickAdmits` decides from those alone:
+its author, its executor and the people it is shared with read it, and a member
+also reads an Organization-scoped one. No work stream owns an automation (the
+`workstream` scope was retired by WorkspaceDO migration 137), so none supplies
+any access. Archived work streams remain readable. Deleted automations are absent.
+A Canvas supplies its visibility, creator, participant list, its writer
+Sidekick's audience (read live) and whether the person is an owner or
+administrator, and `canvasAdmits` decides; it and `sidekickAdmits` are the one
+`audienceAdmits` rule over their own facts ([`canvases.md`](canvases.md)).
 
 Guest membership comes from an explicitly carried request observation, or is
 read from `workspace_members.access_class`. Guests cannot use a legacy conversation scope/roster or
@@ -173,11 +180,9 @@ metadata snapshot is retained.
 Search previews retain their independent source-version comparison after storage;
 that comparison does not reauthorize. This contract does not relax mutations,
 socket admission or the existing artifact viewer-session revocation mechanism.
-Resources attached to workstream-owned Sidekick conversations reuse that
-Sidekick's viewer admission, which for a guest follows the Sidekick's home: the
-owning workstream's management grant for a home in its Main conversation, and
-the home Breakout's own grant for a Breakout home, which a workstream grant
-does not reach.
+Resources attached to a Sidekick's conversations reuse that Sidekick's
+audience: a guest reads them only from its `people` list, never through a
+grant on a Channel or Breakout.
 Guest admission observations are shared only within the current authorization
 batch, like other owner observations. Skill visibility alone does not expose a
 Sidekick's resources; existing member authorization remains on its original path.
@@ -551,6 +556,46 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-11-07 — A Canvas is decided by its own audience, through one rule with a Sidekick's
+
+**What changed:** A conversation whose parent is a Canvas, and an artifact
+attached to it, are decided by `canvasAdmits` from the Canvas's facts
+(`hostedConversationAuthorizationFacts`, which answers a Sidekick or a Canvas
+in one call). `canvasAdmits` and `sidekickAdmits` are both `audienceAdmits`
+over their own facts; an owner or administrator is admitted to every Canvas.
+
+**Why:** A Canvas owns its audience (the Canvases and Sidekicks decision log),
+and its artifacts inherit it rather than a Thread's. Two rules written field
+for field would drift.
+
+**Considered and rejected:** A separate artifact-level grant: an artifact is
+generated in the Canvas's Chat and attached to it, so the attachment path
+already decides it.
+
+**Consequences:** The artifact door (`ArtifactOpenService`) needs no Canvas
+branch; it is admitted through the canonical resource decision. Resource
+authorization for a hosted conversation is one RPC whichever kind it is.
+
+### 2026-11-07 — A Sidekick's audience is its own
+
+**What changed:** A Sidekick's conversations and the resources in them are
+read by whoever the Sidekick is shared with (`sidekickAdmits`): its author, the
+person it runs as, anyone on its new `people` list (`sidekick_audience`), and
+for an Organization-scoped one every member. The owner rule that also admitted
+the participants of a Sidekick's owning Thread or Breakout
+(`<owningWorkstreamId>/<owningSubstreamId>`), and the guest path through that
+home's grants, are removed, here and in search audience and memory facts.
+
+**Why:** The Canvases and Sidekicks pivot retires Threads, and a Sidekick's
+shared conversation is read by the people it is shared with (plan step A-4).
+An audience inherited from a Thread would outlive the Thread it came from.
+
+**Consequences:** A Thread-scoped Sidekick is an Organization one since
+WorkspaceDO migration 137 (plan step A-5), so its former Thread's people keep
+reading it as members do. A guest reaches a Sidekick
+only by being named on its list. The rule is one function; a reader that
+decides Sidekick access some other way is a defect.
 
 ### 2026-10-21 — Admit attachment and artifact reads once per request
 

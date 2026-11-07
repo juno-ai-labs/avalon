@@ -141,7 +141,7 @@ describe("forceMigration", () => {
   it("cannot address an object through another class's namespace", async () => {
     await expect(applyMigrationCommand(env, command({
       objectId: workspaceObjectId("02"),
-      className: "SubstreamAgent",
+      className: "AgentLoopDO",
     }))).rejects.toThrow(/not valid for this namespace/u);
   });
 
@@ -164,7 +164,7 @@ describe("forceMigration", () => {
     await runInDurableObject(stub, async (instance) => {
       await expect(instance.forceMigration(command({
         objectId: workspaceObjectId("03"),
-        className: "SubstreamAgent",
+        className: "AgentLoopDO",
       }))).rejects.toThrow(/durable_object_migration_command_class_mismatch/u);
 
       await expect(instance.forceMigration(command({
@@ -175,7 +175,13 @@ describe("forceMigration", () => {
 
   it("has a dispatcher for every class the tracker may name", () => {
     expect(Object.keys(migrationCommandDispatchers(env)).sort())
-      .toEqual(["SubstreamAgent", "WorkspaceDO"]);
+      .toEqual(["AgentLoopDO", "WorkspaceDO"]);
+  });
+
+  it("carries a command queued under the conversation class's old name to the renamed class", async () => {
+    const objectId = env.SUBSTREAM_AGENTS.idFromName(`global:${WORKSPACE_PREFIX}0f:00000000-0000-7000-8000-00000060ff0f`).toString();
+    const outcome = await applyMigrationCommand(env, command({ className: "SubstreamAgent", objectId }));
+    expect(outcome).toMatchObject({ objectId, className: "AgentLoopDO" });
   });
 
   it("refuses a class this Worker does not deploy", async () => {

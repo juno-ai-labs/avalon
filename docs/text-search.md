@@ -380,7 +380,7 @@ reloaded from a canonical source.
 ## Invariants
 
 - Search scope enumeration includes archived and system conversations and has its own complete-list contract. Sidebar visibility is not search readability.
-- The searcher's audience groups decide which rows member search returns: a row is a candidate only when its `audience` shares one of them. This reverses the earlier rule that an index attribute never grants access, deliberately and only for search (see the 2026-09-28 changelog entry). The groups are computed live on every search by `readSearchAudience`, the only code that computes them. It decides each conversation through its parent's own `readableSubstreams`, and each Sidekick and connection through the predicates canonical authorization shares (`sidekickAdmitsMember`, `owningChannelAdmitsMember`, `connectionAdmits`). A Sidekick homed in a Breakout goes to whoever reads that Breakout, the audience its viewer admission uses. A Channel's `space:<id>` group goes to whoever reaches that Channel (`WorkspaceSpaceStorage.reach`), the rule the resource check applies to what a merge shared with it. Search adds two narrowings of its own (a guest never holds a workspace connection, and reaches a Channel-owned Sidekick only through management access) and skips archived Channels and Spaces, whose rows member search never returns. The attribute still grants nothing beyond the excerpt: opening a row keeps its own canonical check. Scope prefilters remain an optimization, and `connection_id` grants nothing.
+- The searcher's audience groups decide which rows member search returns: a row is a candidate only when its `audience` shares one of them. This reverses the earlier rule that an index attribute never grants access, deliberately and only for search (see the 2026-09-28 changelog entry). The groups are computed live on every search by `readSearchAudience`, the only code that computes them. It decides each conversation through its parent's own `readableSubstreams`, and each Sidekick and connection through the predicates canonical authorization shares (`sidekickAdmits`, `connectionAdmits`): a Sidekick's group goes to its author, the person it runs as, the people it is shared with, and for an Organization Sidekick every member, its viewer admission's rule. A Channel's `space:<id>` group goes to whoever reaches that Channel (`WorkspaceSpaceStorage.reach`), the rule the resource check applies to what a merge shared with it. Search adds one narrowing of its own (a guest never holds a workspace connection) and skips archived Channels and Spaces, whose rows member search never returns. The attribute still grants nothing beyond the excerpt: opening a row keeps its own canonical check. Scope prefilters remain an optimization, and `connection_id` grants nothing.
 - The response never reports what it omitted. A failed group read fails the search (the route's 503); it never returns an unfiltered page.
 - A row without its display attributes, or with `archived` set, is never returned. Member retrieval filters on `archived Eq false`, which a null attribute does not match, so neither kind consumes a candidate page; the read path checks the same value again on every row it renders. Omission is the safe failure; nothing falls back to a canonical reload.
 - Every writer of a conversation's display writes the current state it reads beside the text: the producer at upsert time, the patch job when it runs. A display job names the conversation and never carries a title, so a delayed or redelivered job cannot write an old one; the pipeline's post-write fence retries an upsert whose display changed underneath it, and the patch job re-reads the display after patching and retries when it changed, so two overlapping deliveries for one conversation converge on the newest state rather than the last to run.
@@ -717,6 +717,22 @@ through Queue failure rather than silent truncation. Document-size and capture
 budgets require team policy; no arbitrary new caps are introduced here.
 
 ## Changelog
+
+### 2026-11-07 — A Sidekick's search group follows its own audience
+
+**What changed:** `readSearchAudience` gives a Sidekick's `sidekick:<id>` group
+to whoever `sidekickAdmits` admits: its author, the person it runs as, anyone on
+its `people` list, and every member for an Organization Sidekick. The owning
+Channel's and Breakout's audiences, and a guest's management-access path to a
+Channel-owned Sidekick, no longer reach it.
+
+**Why:** A Sidekick's audience became its own share list (Canvases and Sidekicks
+plan step A-4; the PRD decision log's "A Sidekick's audience is the people it is
+shared with"). Search groups follow canonical admission, so they moved with it;
+a Thread no longer owns a Sidekick.
+
+**What a future change must respect:** the Sidekick group is computed by the same
+predicate as its viewer admission, never a search-only rule.
 
 ### 2026-10-19 — A Channel's own messages are indexed
 

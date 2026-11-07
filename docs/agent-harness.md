@@ -384,6 +384,8 @@ For subsequent messages that need addressing classification, a lightweight class
 
 A message that invokes nothing is still a turn the model reads. The conversation object appends every such human or external text turn, and every Sidekick `conversation_post`, to the loop's projection at the next text admission, in transcript order, ahead of the input that follows it — rendered with a header saying it was said to the room, not to Rally, and naming its author (a member's `person_id`, or a Sidekick's `sidekick_id`), so the model reads it as context rather than as a request ([`workstream-durable-object.md`](workstream-durable-object.md)). An elicitation answer carries no such fill; the turns said while the question was open wait for the next text input.
 
+In a Sidekick's own conversation (substream `"0"` under the Sidekick) the classifier's answer decides only whether an agent answers. Which agent is the Sidekick's to say when the loop takes the message: a message its sender marked as a wizard edit (`intent: "edit_sidekick"`), or an answer to what the wizard asked, is the wizard's when the sender manages the Sidekick and is refused otherwise; every other message addressed there starts a run under the Sidekick's definition with the message as its opening, from a manager as much as from anyone, and the run answers in its own conversation ([`automation-lifecycle.md`](automation-lifecycle.md#the-shared-conversation)). A marked edit needs no classifier: the mark addresses it. The conversation's own loop therefore runs only the wizard, only for a manager, and a message there always queues rather than steering.
+
 A record-only message from the engineering bridge ([`engineering-mcp.md`](engineering-mcp.md#messages-and-text-reads)) never reaches either classifier: like a Breakout merge, it starts no run whatever the room's size. Apart from it, a demo seed action is the one message the classifier never sees. It carries a `seed` ([`demo-workspaces.md`](demo-workspaces.md#seeding-a-demo-from-a-pack)) whose `assistant` turn says whether the line starts a run — present means yes, `null` means no — and the object takes that answer over the room's size and the message's attachments alike. The pack is the authority on which of its lines address Rally, and seeding a scripted conversation cannot wait on a live model's guess about each one. The field reaches the object only over its internal RPC; the message route has none.
 
 A separate continuation classifier handles information supplied for earlier work.
@@ -761,7 +763,7 @@ A plugin gives the model a capability; a **skill** gives it a procedure. Skills 
 
 A run's skills are **frozen with its scope**, exactly like its plugins. The host resolves them against the execution principal before admission and passes them on `RunHarnessInput.skills`; nothing in the loop reaches a store, so `load_skill` can only surface a body the run was already authorized to read. When a run has no skills, neither prompt section nor either tool appears.
 
-The deferred `rally_skill_recommendations` plugin manages recommendations through `list_skill_recommendations`, `recommend_skill`, and `unrecommend_skill`. It exposes skill IDs and recommendation state, with no authoring agent targets. It reuses the existing recommendation service and permissions. Sidekick authoring remains a separate surface; the product still calls these saved sources Sidekicks.
+A Thread's loop no longer recommends skills: the `rally_skill_recommendations` plugin and its `list_skill_recommendations`, `recommend_skill` and `unrecommend_skill` tools are gone, because a Sidekick is no longer something a Thread owns or recommends. What remains of the Thread-loop `rally:sidekicks` variant is the Sidekick delegation tools, under `rally_sidekick_delegation`, offered only to a user principal. Sidekick authoring remains a separate surface; the product still calls these saved sources Sidekicks.
 
 The always-active `rally_skills` plugin owns two globally named controls. `load_skill` takes an exact name from the `# Skills` catalog and adds the skill's body to `# Active Skill Instructions` for the rest of the run. `read_skill_resource` reads a bundled reference file, and refuses until its skill has been loaded — that gate is what stops a model pulling every catalog skill's references without taking on the instructions they belong to.
 
@@ -1871,6 +1873,36 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-07 — Addressing in a Sidekick's conversation goes to the wizard only on a manager's marked edit
+
+**What changed:** In a Sidekick's conversation (`"0"`), a message addressed to
+an agent starts a run of the Sidekick, whoever sent it; `"0"`'s loop takes no
+turn for it. A message marked `intent: "edit_sidekick"` on `create_message`, an
+elicitation answer and a resource authorization are the wizard's, and only from
+a manager. A marked edit skips the classifier. The classifier and its prompt are
+unchanged.
+
+**Why:** The Canvases and Sidekicks decision log keeps the wizard and run
+separation in a conversation now open to everyone the Sidekick is shared with,
+and its 2026-11-07 entry has a manager mark a wizard edit explicitly. The first
+build sent every manager's message to the wizard, so a manager could never ask
+the Sidekick for work there. Rejected: telling an edit from a request by the
+text, which would be a second classifier with its own way to misroute.
+
+**Consequences:** Addressing in a Sidekick's conversation has two stages, the
+classifier (or the mark) and the Sidekick's routing. Anything that adds a new
+kind of human input to `"0"` must say whether it is the wizard's.
+
+With the `workstream` scope retired (plan step A-5), the Thread loop's
+`rally:sidekicks` variant keeps only the delegation tools, presented as
+`rally_sidekick_delegation`; `list_skill_recommendations`, `recommend_skill`
+and `unrecommend_skill` are gone, because a Thread no longer owns or recommends
+a Sidekick. The authoring prompt and the submission schema offer only
+`personal` and `workspace`, and lose the owning-Thread lines (the room scope,
+"Scheduled result delivery to a workstream is limited to the owning
+workstream", and the home conversation as where feedback and Terminal
+publications live); the rest of the prompt is unchanged.
 
 ### 2026-11-03 — Task skills: reporting on data and creating an app
 
