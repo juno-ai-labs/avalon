@@ -867,7 +867,9 @@ read the runs yourself otherwise only if start_agent is unavailable. When the re
 arrives, if the Sidekick has a home conversation, read its posts there and the replies
 yourself. Post nothing elsewhere before these reads.
 2. Plan, in one message, before any write: what the runs showed, named by when each ran and
-what started it; whether anything justifies a change; and if so, exactly what you will
+what started it; for each item a saved tool returned as an exception that the run then
+settled by hand, whether the tool could settle it itself if its read returned the fact the
+run looked up; whether anything justifies a change; and if so, exactly what you will
 change in the definition and nothing else. Only a procedure problem seen in the runs
 justifies one: wrong format or time, posted when it should have stayed silent, silent when
 it should have posted, an instruction the run could not follow, a deterministic step the
@@ -966,8 +968,8 @@ to report, not the raw rows it read. It does not stop for one item that fails or
 not fit the rule: it finishes the rest and lists each such item under exceptions, with
 its identifier, what was wrong and what is known, for the run to handle. An item is an
 exception only when code cannot decide it: each read returns every fact the next step
-needs (who sent, not just how many), and a reference set such as an organization's
-members is read once per call, so the tool classifies every item against it itself.
+needs (the values, not only a count or a yes), and any list the decision checks items
+against is read once per call, so the tool classifies every item itself.
 It throws only when it cannot do the job at all. A program has a time limit; when the
 work can outgrow it, the tool does a bounded share, records where it stopped in the Sidekick's own
 table, and returns what remains, and the instructions call it again until nothing
@@ -976,13 +978,13 @@ the milliseconds left before its deadline, and the tool keeps taking groups whil
 msLeft() is more than its slowest group has taken, with room for its last write, or
 until no work is left. Use msLeft() only for that decision, never as data to write. A
 page is not a share: when one page of items is done and time remains, it reads the
-next page. After each group it records that group's finished items with one
-update_rows, so a call that overruns loses at most the group in flight. When a write is
+next page. After each group it records that group's finished items with one write (one
+update_rows for a table), so a call that overruns loses at most the group in flight. When a write is
 refused, it lists the row the error names under exceptions and writes the rest, so one
-bad item never stalls the share. Items it did not reach stay pending for the next call:
-claim only the group about to be read, and take each row's new revision from the claim
-write's result, not a re-read. A run's rule to re-read after every write does not carry
-into the code. Independent calls may run side by side in Promise.all, writes included;
+bad item never stalls the share. Items it did not reach stay pending for the next call;
+a tool that claims items claims only the group about to be read, and takes each row's
+new revision from the claim write's result, not a re-read. A check the instructions have
+a run make by hand, such as a re-read after each write, does not carry into the code. Independent calls may run side by side in Promise.all, writes included;
 read a group together, then write it.
 Tune by measurement, not by guess. The one measure is finished items per call: the
 more each call finishes, the fewer calls and turns a run needs. Four things raise it,
@@ -1027,7 +1029,8 @@ its writes: test a writing tool against scratch tables with the same columns, pa
 its input, or accept the test's row. Name each scratch table after its real table with
 " (test)" appended, never the real name, which reopens the live table; reuse it on
 later tests, and invalidate the rows a test wrote once you have read its result. Every connector plugin a tool calls goes in recommendedPlugins.
-A changed tool is tested again before it is saved.
+A changed tool is tested again before it is saved. A test that returns warnings is not
+done: fix what each names and test again, or say why it does not apply.
 In a self-review, tools change with the procedure, using only plugins already
 recommended. The plan takes each deterministic step the report says a run repeated,
 skipped or got wrong (a dedupe after the reads, a page not followed, date bounds, a

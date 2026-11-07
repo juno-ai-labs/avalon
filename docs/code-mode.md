@@ -23,6 +23,7 @@ verified.
 | --- | --- |
 | `apps/api/src/services/code-mode/plugin.ts` | The `rally:code` plugin and its one tool; `runProgram` (a fresh isolate per program, the deadline race, the parsed answer); `finishProgram` (the result, or the typed failure read from the gateway's own records); `createCustomToolsPlugin`, `runProgramForTool` and `customToolFailure` for a Sidekick's saved tools; the three prompts. |
 | `apps/api/src/services/code-mode/gateway.ts` | `GatewaySession`, one program's calls: the refusal rules, Bind's dispatch order and failure classification, the per-call timer, the closed and stopped states. `CodeToolGateway`, the `RpcTarget` a program holds, forwards its one method to the session. `callableTools` is the one rule for what a program may call. |
+| `apps/api/src/services/code-mode/test-warnings.ts` | `programTestWarnings`: the warning a saved tool's test adds when it timed its share with repeated `current_time` reads. |
 | `apps/api/src/services/code-mode/entry-module.ts` | The isolate's entry module as a string (the `tools` proxy, the console capture, the deadline timer); `wrapProgram`, which always wraps the model's function body. |
 | `apps/api/src/services/code-mode/check.ts` | `checkProgram`, the static pre-run check: a parse with acorn and a walk that refuses, by line, a body that does not parse and the write shapes whose outcome a program cannot know or a re-run cannot match; `writeToolKeys`, the callable writes it judges against. |
 | `apps/api/src/services/code-mode/limits.ts` | The deadline and the load allowance, both set and provisional; the result bound, `LIMIT UNSET`. |
@@ -238,7 +239,10 @@ again, or a defect to report, by the refusal's reason), and
 returns `{ value, logs: [{ level, text }], calls: [{ index, tool, mode, ms,
 outcome }] }`, where `outcome` is `completed`, `replayed`, `failed`, `refused`
 or `ambiguous`. `sidekick_tool_test` takes `{ tool, input }` and returns the
-program's output plus `{ name, identityHash, testedAt }`. A `custom_<name>`
+program's output plus `{ name, identityHash, testedAt }`, and `warnings` when
+`programTestWarnings` finds a program that read `current_time` more than once
+and never calls `msLeft()`. The guide tells the setup agent a test with warnings is not
+done. A `custom_<name>`
 takes the saved schema and returns what `code_execute` returns.
 
 | Code | Raised when | Model-visible sentence says |
@@ -499,6 +503,25 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   is a listing-rules question still open.
 
 ## Changelog
+
+### 2026-11-07 — A tool test warns when a share is timed by the clock
+
+**What changed:** `sidekick_tool_test` adds `warnings` to its result when the
+program read `current_time` more than once and never calls `msLeft()`. The
+guide says a test with warnings is not done until each is fixed or explained.
+
+**Why:** Daily Active Rally Organizations' self-review on 2026-11-07 saved a
+scanner that still timed its share with `current_time` against a fixed 90
+seconds, though the guide names that as a reason to re-tune; its test took 117.6
+of the program's 120 seconds. The rule was one sentence in a long guide.
+
+**Considered and rejected:** A warning when a test runs past a share of the
+deadline: a tool that stops on `msLeft()` rightly runs until little time is
+left, so the warning would send the agent to fix a correct tool, and its number
+had nothing left to come from once the guide stopped naming one. Refusing the
+save: one read for the dates is correct, so the evidence only suggests.
+
+Shipped in juno-ai-labs/avalon#1488.
 
 ### 2026-11-07 — A program reads its own time left
 

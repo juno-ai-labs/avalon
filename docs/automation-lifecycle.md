@@ -1101,7 +1101,10 @@ wrong and what each run's routine work cost (model turns, calls to each saved
 tool, and the items, requests and seconds each call reported), says in one line that it is waiting, and when the reply wakes it,
 it reads the Sidekick's posts and replies in its home itself. It then
 plans, in one message before any write: what
-the runs showed, run by run; whether anything justifies a change (a
+the runs showed, run by run; for each item a saved tool returned as an
+exception that the run settled by hand, whether the tool could settle it
+itself if its read returned the fact the run looked up; whether anything
+justifies a change (a
 procedure problem seen in the runs, a deterministic step the runs repeated,
 skipped or got wrong among them, or routine work that cost more turns or tool
 calls than the work needs, never a platform failure); and if so
@@ -1727,6 +1730,26 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-11-07 — The review plan asks whether a tool could have settled its exceptions
+
+**What changed:** Self-review step 2 asks, for each item a saved tool returned
+as an exception that the run settled by hand, whether the tool could settle it
+itself if its read returned the fact the run looked up.
+
+**Why:** Daily Active Rally Organizations' manual self-review on 2026-11-07
+re-tuned its scanner but left it returning only a count per conversation, so
+every active conversation still came back as a membership exception for the
+model to settle in a second pass. The rule existed in the custom-tools guide,
+but nothing in the plan made the review look for it.
+
+**Considered and rejected:** Leaving it to the guide alone: that review showed
+a rule stated once in the guide is not applied when the plan does not ask for it.
+
+**Consequences:** The plan grows by one question per review; a review that finds
+no hand-settled exceptions answers it in a clause.
+
+Shipped in juno-ai-labs/avalon#1488.
 
 ### 2026-11-07 — A run's first page says what it spent
 
