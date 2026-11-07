@@ -168,15 +168,15 @@ describe('draft cache', () => {
     expect((await readDraftText('workstream:1'))?.text).toBe('a new session, a new draft');
   });
 
-  it("keeps a Canvas's Chat draft apart from a thread with the same id, and clears it with its organization", async () => {
+  it("keeps a Canvas's Chat draft apart from a Sidekick's with the same id, and clears it with its organization", async () => {
     const canvasKey = conversationDraftKey('enterprise', 'shared-workspace', 'canvas', '7');
-    const threadKey = conversationDraftKey('enterprise', 'shared-workspace', 'workstream', '7');
+    const sidekickKey = conversationDraftKey('enterprise', 'shared-workspace', 'automation', '7');
     await writeDraftText(canvasKey, 'the Canvas draft');
-    await writeDraftText(threadKey, 'the thread draft');
+    await writeDraftText(sidekickKey, 'the Sidekick draft');
     await cacheAttachment(canvasKey, 'canvas-file', 'canvas');
 
     expect((await readDraftText(canvasKey))?.text).toBe('the Canvas draft');
-    expect((await readDraftText(threadKey))?.text).toBe('the thread draft');
+    expect((await readDraftText(sidekickKey))?.text).toBe('the Sidekick draft');
 
     await clearWorkspaceDrafts('enterprise', 'shared-workspace');
 

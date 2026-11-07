@@ -47,7 +47,6 @@ import type {
   ConversationParentAuthorityResult,
   ConversationParentAuthorizeViewerRequest,
   ConversationParentAuthorizeViewerResult,
-  ConversationParentKind,
   ConversationParentListChildrenRequest,
   ConversationParentListChildrenResult,
   ConversationParentReserveChildRequest,
@@ -63,7 +62,7 @@ import type {
  * four kinds from migration 146.
  */
 interface RetirementGraphNode {
-  parentKind: ConversationParentKind;
+  parentKind: RetirementParentKind;
   parentId: string;
 }
 import {
@@ -100,7 +99,7 @@ import {
 } from './connector-installation-protocol';
 import { createInstallation, readInstallation, readInstallations, claimInstallation, recordInstallationDelivery, settleInstallation, changeInstallation, cancelInstallationMaintenance, prepareInstallationMaintenance, prepareInstallationRotation, replaceInstallationCredentials } from './connector-installation-storage';
 import { MEETING_NOTES_FINALIZATION_MIGRATION, MEETING_NOTES_RETIREMENT_MIGRATION, purgeRetiredMeetingObjects, applyMeetingRetirementMigrations } from "./meeting-notes-retirement";
-import { AgentIdSchema, type AgentId } from "@rally/contracts";
+import { AgentIdSchema, type AgentId, type RetirementParentKind } from "@rally/contracts";
 import { AGENT_TEAM_SCHEMA, AgentTeamStorage, agentTeamResult, type AgentMessageRoute, type AgentTeamResult } from "./agent-team-storage";
 import type { WorkspaceNotificationIntentDelivery } from "./workspace-notification-intent-protocol";
 import {
@@ -11806,7 +11805,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const progress = this.retirementProgress();
     const nodes = this.state.storage.sql.exec<{
-      parent_kind: ConversationParentKind;
+      parent_kind: RetirementParentKind;
       parent_id: string;
       retired_at: number | null;
     }>(
@@ -11825,7 +11824,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private retirementGraphNodes(): RetirementGraphNode[] {
     return this.state.storage.sql.exec<{
-      parent_kind: ConversationParentKind;
+      parent_kind: RetirementParentKind;
       parent_id: string;
     }>(
       `SELECT parent_kind, parent_id FROM workspace_retirement_graph

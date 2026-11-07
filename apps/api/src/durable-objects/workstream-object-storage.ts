@@ -1,5 +1,4 @@
 import type { Region } from "@rally/contracts/regions";
-import { ConversationParentKindSchema, type ConversationParentKind } from "@rally/contracts/conversation-parent";
 import { z } from "zod";
 import {
   AgentCompactionStateSchema,
@@ -82,7 +81,7 @@ interface ProjectionKeyRow extends Record<string, SqlStorageValue> {
 interface AuthorityRow extends Record<string, SqlStorageValue> {
   workstream_key: string;
   parent_workspace_key: string;
-  parent_kind: ConversationParentKind;
+  parent_kind: StoredConversationParentKind;
   region: Region;
   authority_mode: string;
   authority_generation: number;
@@ -101,18 +100,24 @@ export interface RegionalEffectCommand {
 
 /** The parents a conversation object is hosted under. */
 export const HostedConversationParentKindSchema = z.enum(["automation", "canvas"]);
+/**
+ * Every kind a stored root row may name: the hosted two and the retired
+ * Thread (`workstream`) and Space parents, which only the retirement readers
+ * see. Wider than `ConversationParentKindSchema` on purpose.
+ */
+const StoredConversationParentKindSchema = z.enum(["workstream", "automation", "space", "canvas"]);
+type StoredConversationParentKind = z.infer<typeof StoredConversationParentKindSchema>;
 export type HostedConversationParentKind = z.infer<typeof HostedConversationParentKindSchema>;
 
 /** A stored parent kind, refusing the retired Thread and Space kinds by name. */
 export function hostedConversationParentKind(stored: string): HostedConversationParentKind {
-  const kind = ConversationParentKindSchema.parse(stored);
-  if (kind === "workstream" || kind === "space") {
+  if (stored === "workstream" || stored === "space") {
     // The message is the code with the kind: a Durable Object RPC hop keeps
     // only the message, and the kind is what an operator needs.
-    throw new ApiError(409, "conversation_parent_kind_retired", `conversation_parent_kind_retired:${kind}`,
-      undefined, `conversation_parent_kind_retired:${kind}`);
+    throw new ApiError(409, "conversation_parent_kind_retired", `conversation_parent_kind_retired:${stored}`,
+      undefined, `conversation_parent_kind_retired:${stored}`);
   }
-  return kind;
+  return HostedConversationParentKindSchema.parse(stored);
 }
 
 /**
@@ -582,7 +587,7 @@ export class WorkstreamObjectStore {
    * constructor, which has to stay constructible so `retireObject` can close
    * it. Everything else reads {@link identity}, which refuses those kinds.
    */
-  identityForRetirement(): (Omit<WorkstreamObjectIdentity, "parentKind"> & { parentKind: ConversationParentKind }) | null {
+  identityForRetirement(): (Omit<WorkstreamObjectIdentity, "parentKind"> & { parentKind: StoredConversationParentKind }) | null {
     const row = first(this.storage.sql.exec<{
       workstream_key: string;
       parent_workspace_key: string;
@@ -592,7 +597,7 @@ export class WorkstreamObjectStore {
     ));
     if (!row) return null;
     return {
-      parentKind: ConversationParentKindSchema.parse(row.parent_kind),
+      parentKind: StoredConversationParentKindSchema.parse(row.parent_kind),
       parentId: row.workstream_key,
       workspaceId: asWorkspaceId(row.parent_workspace_key),
     };

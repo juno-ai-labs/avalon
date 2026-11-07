@@ -1,6 +1,6 @@
 import type { SqlStorageCursor, SqlStorageValue } from "@cloudflare/workers-types";
 import {
-  type SpaceColorKey,
+  type ProjectColorKey,
   WorkstreamAppearanceSchema,
   WorkstreamIconKeySchema,
   type WorkstreamIconKey,
@@ -89,7 +89,7 @@ export interface WorkstreamProvisionInput {
    * A conversation's birth colour. No producer still sends one: it was a
    * Thread's Channel colour.
    */
-  color?: SpaceColorKey | null;
+  color?: ProjectColorKey | null;
   now: number;
 }
 
