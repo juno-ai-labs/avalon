@@ -1297,9 +1297,15 @@ export class RallyApi {
   // and writes.
   // -------------------------------------------------------------------------
 
-  /** A new Canvas with no artifacts; `prompt` is the "Start from a prompt" card's first message. */
+  /**
+   * A new Canvas with no artifacts; `prompt` is the "Start from a prompt"
+   * card's first message. The id is minted here, so a retry of this request
+   * answers the Canvas the first made rather than making a second.
+   */
   createCanvas(input: CreateCanvasRequest = {}): Promise<CreatedCanvas> {
-    return this.request('/canvases', { method: 'POST', body: input, schema: CreatedCanvasSchema });
+    return this.request('/canvases', {
+      method: 'POST', body: { ...input, canvasId: input.canvasId ?? uuidV7() }, schema: CreatedCanvasSchema,
+    });
   }
 
   /** The Canvas as this person sees it: its row, who it is shared with, and its artifacts. */

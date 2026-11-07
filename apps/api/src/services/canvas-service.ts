@@ -29,6 +29,8 @@ export async function createCanvas(env: Env, input: {
   title?: string;
   canvasId?: string;
   writer?: { sidekickId: string; runId: string };
+  /** The caller's id has a D1 anchor; see `CanvasCreateRequestSchema.anchored`. */
+  anchored?: boolean;
 }): Promise<{ canvasId: string; created: boolean }> {
   const workspaceId = asWorkspaceId(input.workspaceId);
   const requestedId = input.canvasId ?? uuidV7();
@@ -40,6 +42,7 @@ export async function createCanvas(env: Env, input: {
     workspaceId, canvasId: requestedId, title, createdByUserId: asUserId(input.creatorUserId),
     authorityGeneration: authority.generation,
     ...(input.writer ? { writer: input.writer } : {}),
+    ...(input.anchored ? { anchored: true } : {}),
   });
   // A run's second create answers with the Canvas its first made.
   const canvasId = made.canvasId;
@@ -81,11 +84,20 @@ export class CanvasService {
    * A new Canvas, and for the "Start from a prompt" card its first message,
    * sent to the Chat as the creator's through the ordinary message admission.
    * A guest makes none: a Canvas is the Organization's.
+   *
+   * A caller-minted `canvasId` makes a retry answer the first create's Canvas,
+   * and the prompt's `clientMessageId` makes it send once there. An id some
+   * conversation already anchors is a replay only when it is this creator's
+   * Canvas; the Organization object decides that inside its transaction.
    */
   async create(request: CreateCanvasRequest): Promise<CreatedCanvas> {
     if (this.auth.role === null) throw new ApiError(403, "canvas_create_member_required", "Only a member of the Organization can make a Canvas");
+    const anchored = request.canvasId !== undefined && await this.env.DB.prepare(
+      `SELECT 1 AS anchored FROM workstreams WHERE id = ? LIMIT 1`,
+    ).bind(request.canvasId).first() !== null;
     const { canvasId } = await createCanvas(this.env, {
       workspaceId: this.auth.workspaceId, creatorUserId: this.auth.userId,
+      ...(request.canvasId ? { canvasId: request.canvasId, anchored } : {}),
       ...(request.title ? { title: request.title } : {}),
     });
     if (!request.prompt) return { canvasId: asWorkstreamId(canvasId), turnId: null };
