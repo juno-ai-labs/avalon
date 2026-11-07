@@ -8,16 +8,14 @@ import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import type { HonoAppEnv } from "../src/env";
 import { requireAuth } from "../src/middleware/auth";
 import { errorHandler } from "../src/middleware/errors";
-import { spaceRoutes } from "../src/routes/spaces";
 import { workspaceRoutes } from "../src/routes/workspace";
-import { workstreamRoutes } from "../src/routes/workstreams";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestWorkspaceDO, testWorkspaceObjectBinding } from "./helpers/workspace-object-rpcs";
 
 /**
- * "What Rally remembers": the review of agent memory in its four places (a
- * person's own, the Organization's, a Thread's, a Channel's) and their Remove
+ * "What Rally remembers": the review of agent memory in Settings (a
+ * person's own and the Organization's) and their Remove
  * action, through the real routes, middleware, services and `WorkspaceDO`.
  * Only the transport to the object is doubled. `docs/agent-memory.md` owns
  * which facts a person sees and who may remove them.
@@ -191,8 +189,6 @@ async function fixture() {
   const app = new Hono<HonoAppEnv>();
   app.use("*", requireAuth);
   app.route("/workspace", workspaceRoutes);
-  app.route("/workstreams", workstreamRoutes);
-  app.route("/spaces", spaceRoutes);
   app.onError(errorHandler);
   const request = (actor: string, method: "GET" | "DELETE", path: string) => app.request(path, {
     method,
@@ -302,78 +298,5 @@ describe("the Organization's facts, under Settings → Organization", () => {
 
     expect(await forget(OWNER_ID, "/workspace/memory/fact-org-open")).toEqual(notFound);
     expect(retractedBy("fact-org-open")).toEqual({ retracted_by: null });
-  });
-});
-
-describe("a Thread's facts, in its title pop-out", () => {
-  it("lists the Thread's own facts to a participant, removable, and refuses a non-participant of a private one", async () => {
-    const { review, refusedReview } = await fixture();
-
-    const member = await review(MEMBER_ID, `/workstreams/${OPEN_THREAD}/memory`);
-    expect(member.facts.map((fact) => [fact.factId, fact.subjectKind, fact.subjectTitle, fact.removable])).toEqual([
-      ["fact-thread-open", "thread", "Launch", true],
-    ]);
-    expect(await refusedReview(MEMBER_ID, `/workstreams/${PRIVATE_THREAD}/memory`)).toEqual({
-      status: 404, body: { error: expect.objectContaining({ code: "conversation_not_found" }) },
-    });
-    expect(ids(await review(OWNER_ID, `/workstreams/${PRIVATE_THREAD}/memory`))).toEqual(["fact-thread-private"]);
-  });
-
-  it("lists a Breakout's own facts under its substreamId and not under the Thread's Main", async () => {
-    const { review, refusedReview, forget } = await fixture();
-
-    const breakout = await review(MEMBER_ID, `/workstreams/${OPEN_THREAD}/memory?substreamId=${BREAKOUT}`);
-    expect(breakout.facts.map((fact) => [fact.factId, fact.subjectKind, fact.subjectTitle, fact.removable, fact.source])).toEqual([
-      ["fact-breakout", "breakout", "Member's notes", true,
-        { kind: "breakout", workstreamId: OPEN_THREAD, substreamId: BREAKOUT, title: "Member's notes" }],
-    ]);
-    expect(ids(await review(MEMBER_ID, `/workstreams/${OPEN_THREAD}/memory`))).toEqual(["fact-thread-open"]);
-    // The owner is not in the Breakout, so it is not theirs to open.
-    expect((await refusedReview(OWNER_ID, `/workstreams/${OPEN_THREAD}/memory?substreamId=${BREAKOUT}`)).status).toBe(404);
-    expect(await forget(MEMBER_ID, `/workstreams/${OPEN_THREAD}/memory/fact-breakout?substreamId=${BREAKOUT}`))
-      .toEqual(removed("fact-breakout"));
-  });
-
-  it("lets a participant remove the Thread's own fact, and nobody else's through it", async () => {
-    const { forget, retractedBy } = await fixture();
-
-    expect(await forget(MEMBER_ID, `/workstreams/${OPEN_THREAD}/memory/fact-thread-open`)).toEqual(removed("fact-thread-open"));
-    expect(retractedBy("fact-thread-open")).toEqual({ retracted_by: `person:${MEMBER_ID}` });
-    // The Organization's fact is not the Thread's, even though it came from here.
-    expect(await forget(MEMBER_ID, `/workstreams/${OPEN_THREAD}/memory/fact-org-open`)).toEqual(notFound);
-    expect((await forget(MEMBER_ID, `/workstreams/${PRIVATE_THREAD}/memory/fact-thread-private`)).status).toBe(404);
-    expect(retractedBy("fact-thread-private")).toEqual({ retracted_by: null });
-  });
-});
-
-describe("a Channel's facts, in its title pop-out", () => {
-  it("lists a Channel's facts to whoever it is listed to, removable by an administrator", async () => {
-    const { review, refusedReview } = await fixture();
-
-    expect((await review(MEMBER_ID, `/spaces/${OPEN_CHANNEL}/memory`)).facts
-      .map((fact) => [fact.factId, fact.subjectKind, fact.subjectTitle, fact.removable]))
-      .toEqual([["fact-channel-open", "channel", "Design", false]]);
-    expect((await review(OWNER_ID, `/spaces/${OPEN_CHANNEL}/memory`)).facts.map((fact) => fact.removable)).toEqual([true]);
-    expect(await refusedReview(MEMBER_ID, `/spaces/${PRIVATE_CHANNEL}/memory`)).toEqual({
-      status: 404, body: { error: expect.objectContaining({ code: "space_not_found" }) },
-    });
-    expect(ids(await review(OWNER_ID, `/spaces/${PRIVATE_CHANNEL}/memory`))).toEqual(["fact-channel-private"]);
-  });
-
-  it("refuses a member's removal of a Channel fact and takes an administrator's", async () => {
-    const { forget } = await fixture();
-    expect(await forget(MEMBER_ID, `/spaces/${OPEN_CHANNEL}/memory/fact-channel-open`)).toEqual(notRemovable);
-    expect(await forget(OWNER_ID, `/spaces/${OPEN_CHANNEL}/memory/fact-channel-open`)).toEqual(removed("fact-channel-open"));
-  });
-
-  it("lets the owner of a Personal Channel remove its facts, which no administrator is listed", async () => {
-    const { review, refusedReview, forget, retractedBy } = await fixture();
-
-    expect((await review(MEMBER_ID, `/spaces/${PERSONAL_CHANNEL}/memory`)).facts.map((fact) => [fact.factId, fact.removable]))
-      .toEqual([["fact-personal-channel", true]]);
-    expect((await refusedReview(OWNER_ID, `/spaces/${PERSONAL_CHANNEL}/memory`)).status).toBe(404);
-    expect(await forget(MEMBER_ID, `/spaces/${PERSONAL_CHANNEL}/memory/fact-personal-channel`))
-      .toEqual(removed("fact-personal-channel"));
-    expect(retractedBy("fact-personal-channel")).toEqual({ retracted_by: `person:${MEMBER_ID}` });
   });
 });

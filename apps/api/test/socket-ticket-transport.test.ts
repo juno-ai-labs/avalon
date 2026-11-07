@@ -4,17 +4,14 @@ import { socketTicketProtocols, SOCKET_TICKET_SUBPROTOCOL } from "@rally/contrac
 import { ApiError } from "../src/lib/api-error";
 import {
   issueSocketTicket,
-  issueWorkstreamControlSocketTicket,
   issueWorkspaceSocketTicket,
   roomUpgradeDiagnostics,
   SocketService,
   socketTicketFromRequest,
   verifySocketTicket,
-  verifyWorkstreamControlSocketTicket,
   verifyWorkspaceSocketTicket,
   withNegotiatedSubprotocol,
   WorkspaceSocketService,
-  WorkstreamControlSocketService,
 } from "../src/services/socket-service";
 import type { Env } from "../src/env";
 import {
@@ -299,8 +296,6 @@ describe("socket ticket transport", () => {
     await expect(issueSocketTicket(env, auth, { kind: "workstream", id: "00000000-0000-7000-8000-000000000724" }))
       .rejects.toMatchObject(refusal);
     await expect(issueWorkspaceSocketTicket(env, auth)).rejects.toMatchObject(refusal);
-    await expect(issueWorkstreamControlSocketTicket(env, auth, "00000000-0000-7000-8000-000000000724"))
-      .rejects.toMatchObject(refusal);
   });
 
   it("routes one workspace-scoped sync and command ticket to WorkspaceDO", async () => {
@@ -349,57 +344,6 @@ describe("socket ticket transport", () => {
     await expect(verifyWorkspaceSocketTicket(env, ticket)).resolves.toMatchObject({
       workspaceId,
     });
-  });
-
-  it.each([false, true])("ignores legacy query configuration when routing a metadata ticket (%s)", async (supportsAppearance) => {
-    const sessionId = "00000000-0000-7000-8000-000000000721";
-    const userId = asUserId("00000000-0000-7000-8000-000000000722");
-    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000723");
-    const workstreamId = "00000000-0000-7000-8000-000000000724";
-    const workstreamFetch = vi.fn(async (request: Request) => {
-      expect(new URL(request.url).search).toBe("");
-      expect(request.headers.get("x-rally-workspace-id")).toBe(workspaceId);
-      expect(request.headers.get("x-rally-workstream-id")).toBe(workstreamId);
-      expect(request.headers.get("x-rally-session-id")).toBe(sessionId);
-      expect(request.headers.get("sec-websocket-protocol")).toBeNull();
-      return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
-    });
-    const env = createTestEnv({
-      APP_ENV: "test",
-      AVALON_REGION: "global",
-      ALLOWED_ORIGINS: "app://avalon",
-      SESSION_SIGNING_KEY: "socket-ticket-test-signing-key",
-      // The Channel control socket is served by the Organization object that
-      // hosts the Channel's parent.
-      WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
-        idFromName: () => createTestDurableObjectId("workspace-do-id"),
-        get: () => ({ fetch: workstreamFetch }),
-      }),
-    });
-    const auth = { sessionId, userId, workspaceId, region: "global", role: "member" } as const;
-    const ticket = await issueWorkstreamControlSocketTicket(env, auth, workstreamId);
-    const request = new Request(`https://api.avalon.test/workstreams/${workstreamId}${supportsAppearance ? "?workstreamAppearance=1" : ""}`, {
-      headers: {
-        Origin: "app://avalon",
-        Upgrade: "websocket",
-        "Sec-WebSocket-Protocol": socketTicketProtocols(ticket).join(", "),
-      },
-    });
-
-    const response = await new WorkstreamControlSocketService(env).upgrade(
-      workstreamId,
-      undefined,
-      request,
-    );
-
-    expect(response.status).toBe(401);
-    expect(workstreamFetch).toHaveBeenCalledOnce();
-    await expect(verifyWorkstreamControlSocketTicket(env, ticket)).resolves.toMatchObject({
-      workspaceId,
-      workstreamId,
-    });
-    await expect(verifyWorkspaceSocketTicket(env, ticket))
-      .rejects.toMatchObject({ code: "invalid_socket_ticket" });
   });
 
   it("reads the ticket from the handshake header a browser can actually set", () => {

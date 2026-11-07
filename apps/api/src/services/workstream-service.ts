@@ -36,7 +36,6 @@ import { truncateUtf16Safe } from "../lib/text";
 import { activateWorkstreamLoop, publishWorkstreamEvent } from "./integrations";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting, conversationModelContext } from "./agent-model-flags";
-import { issueWorkstreamControlSocketTicket } from "./socket-service";
 import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import {
   activityOriginLocator,
@@ -975,16 +974,6 @@ export class WorkstreamService {
     slackOrigin?: SlackOriginContext,
   ) {
     return (await this.authoritativeClient(id)).answerElicitation(elicitationId, input, slackOrigin);
-  }
-
-  async workstreamControlSocketTicket(id: string) {
-    await this.requireVisibleWorkstream(id);
-    const ticket = await issueWorkstreamControlSocketTicket(this.env, this.auth, id);
-    const url = new URL(this.env.PUBLIC_API_BASE_URL);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.pathname = `/socket/workstreams/${id}`;
-    url.search = "";
-    return { url: url.toString(), ticket };
   }
 
   /** Gate socket credentials on WorkspaceDO's authoritative viewer state. */

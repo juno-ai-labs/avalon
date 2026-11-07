@@ -6883,6 +6883,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.artifacts() };
   }
 
+  /** Retitle a Canvas; see `HostedCanvas.rename`. */
+  async canvasRename(input: Parameters<HostedCanvas["rename"]>[0]) {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    return this.canvasWrite(() => canvas.rename(input));
+  }
+
   /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */
   async canvasSetAudience(input: Parameters<HostedCanvas["setAudience"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);

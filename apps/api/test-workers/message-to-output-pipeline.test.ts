@@ -82,7 +82,7 @@ import { hostedParentStub, readSharedWorkstream, withHostedParent } from "./help
 import { AuthorizationService } from "../src/services/authorization-service";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
-import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
+import { launchWorkstreamHarness } from "../src/services/workstream-service";
 import { BOUND_PARAMETER_ID_CHUNK } from "../src/durable-objects/bound-parameters";
 import { SCOPE_SHARE_TABLES } from "./helpers/scope-share-tables";
 import { ensureAuditSchema } from "./helpers/audit-fixture";
@@ -5072,9 +5072,6 @@ describe("a member's message travels the whole pipeline", () => {
       const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)));
       const page = await workspace.listWorkstreams({ workspaceId: WORKSPACE_ID, userId: USER_ID, limit: 20, includeSystem: false });
       expect(page.items.find((item) => item.id === WORKSTREAM_ID)?.appearance).toEqual({ icon: "rocket", color: null });
-      const service = new WorkstreamService({ ...TEST_ENV, SESSION_SIGNING_KEY: "appearance-test-signing-key", PUBLIC_API_BASE_URL: "https://api.rally.test" }, AUTH);
-      const ticket = await service.workstreamControlSocketTicket(WORKSTREAM_ID);
-      expect(new URL(ticket.url).search).toBe("");
       socket.close(1000, "done");
       await evictDurableObject(stub);
       const reopened = await openSubscribedSocket(stub, "00000000-0000-7000-8000-0000000006c4");

@@ -236,12 +236,11 @@ session, which unmounts the shell when the session is gone. The shell keeps
 transcripts in the local cache, so the entry wipes it alongside drafts on
 sign-out and account change.
 
-The cookie adapter forwards the member route families (`spaces`, `projects`,
-`onboarding/account`, `onboarding/organization-suggestion`, `work-opportunities`, `digest`, `push-devices`,
-`workspaces`) in addition to the ones guests use, which include `navigation`
-(the client now reads only pins and the people ranking there). The client no
-longer calls `spaces`, `projects` or `work-opportunities`; the families stay
-forwarded until the server retires them. The list is
+The cookie adapter forwards the member route families (`canvases`,
+`onboarding/account`, `onboarding/organization-suggestion`, `push-devices`,
+`workspaces`) in addition to the ones guests use. `spaces`, `projects`,
+`workstreams`, `navigation`, `work-opportunities` and `digest` stopped being
+forwarded when the server deleted those routes (plan step C-1). The list is
 `BROWSER_ROUTE_FAMILIES` in `apps/api/src/routes/browser.ts`: a new route family
 the browser calls must be added there, or the browser's request for it is not
 forwarded. Each route keeps its own role

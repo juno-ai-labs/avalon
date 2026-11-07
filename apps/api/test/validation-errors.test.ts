@@ -56,9 +56,9 @@ describe("public validation errors", () => {
     const env = { ...authenticatedTestEnv(), LOG_LEVEL: "info" } satisfies Env;
 
     const response = await createApp().request(
-      "https://api.example.com/workstreams/00000000-0000-7000-8000-0000000000f1/participants",
+      "https://api.example.com/workspace/pinned-order",
       {
-        method: "POST",
+        method: "PUT",
         headers: {
           "content-type": "application/json",
           "x-request-id": requestId,
@@ -66,7 +66,8 @@ describe("public validation errors", () => {
           "x-rally-dev-workspace-id": "00000000-0000-7000-8000-0000000000e2",
         },
         body: JSON.stringify({
-          userId: invalidParticipantId,
+          kind: "canvas",
+          itemIds: [invalidParticipantId],
           diagnosticShape: {
             label: "member-supplied-label",
             count: 47,
@@ -89,15 +90,16 @@ describe("public validation errors", () => {
       event: "request_failed",
       status: 400,
       code: "invalid_request",
-      method: "POST",
-      path: "/workstreams/00000000-0000-7000-8000-0000000000f1/participants",
-      route: "/workstreams/:id/participants",
+      method: "PUT",
+      path: "/workspace/pinned-order",
+      route: "/workspace/pinned-order",
       validation_target: "json",
       validation_issues: expect.arrayContaining([
-        expect.objectContaining({ path: "userId" }),
+        expect.objectContaining({ path: "itemIds.0" }),
       ]),
       request_body: {
-        userId: "***",
+        kind: "***",
+        itemIds: ["***"],
         diagnosticShape: {
           label: "***",
           count: -1,
