@@ -1,12 +1,13 @@
 # Pinning
 
-A person pins what they want to hand: a thread, a Channel, a breakout, an
-artifact Rally generated, a Canvas or a Sidekick. Each sidebar section
-(Threads, Channels, Artifacts, Canvases, Sidekicks) has a **Pinned** part
-above its list,
-arranged by hand, never sorted, and both the pin and the arrangement live on
+A person pins what they want to hand: a Canvas or a Sidekick. Each of the two
+sidebar sections has a **Pinned** group above its list, and the pin lives on
 the server, so the same person opening Rally on another machine finds their
-list as they left it.
+list as they left it. The client's Thread, Channel, Breakout and artifact pins,
+and the Pinned, Threads, Channels and Artifacts sections that drew them, were
+removed at the 2026-11 cutover; the server's pin list and its routes for those
+kinds stay until phase C removes them, and the sections below that describe
+them describe the server.
 
 A pin is **one person's opinion about one item**. Pinning tells nobody else
 anything, changes nothing about who may read the item, and does not appear on
@@ -34,11 +35,8 @@ the product calls a thread.
 | `apps/api/src/routes/workstreams.ts` | The old routes, kept for older desktops: `PUT /workstreams/:id/pin`, `DELETE /workstreams/:id/pin`, `PUT /workstreams/pins`. |
 | `apps/api/src/routes/workspace.ts` | `PUT /workspace/pinned-order`, the old desktop's All order, kept for older desktops. |
 | `packages/contracts/src/navigation.ts` | `Pin`, `PinKind`, `PinList` and the request shapes. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | The Pinned part of the Threads and Channels tabs, the right-click **Pin** / **Unpin** item, the drag to reorder (`usePinnedDrag`), and the pin-failure line. |
-| `packages/ui/src/components/conversation-menus.tsx` | **Pinned in my sidebar**, the switch in a thread's and a Channel's title menu. |
-| `apps/desktop/src/renderer/lib/artifact-pin-actions.ts` | **Pin** / **Unpin** on an artifact card, offered for what the thread's Main holds as an artifact. |
+| `apps/desktop/src/renderer/components/navigation-rows.tsx` | The Pinned group both sections draw: `PinnedSection`, `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
 | `apps/desktop/src/renderer/components/resource-action-menu.tsx` | A resource card's right-click menu and its `⋯` button, drawing the same actions. |
-| `apps/desktop/src/renderer/screens/workstream-landing.tsx`, `lib/workstream-landing.ts` | The root route, and `useOpenFirstWorkstream`, the one way a screen leaves for it. |
 
 ## How it works
 
@@ -77,24 +75,8 @@ The old tables and routes go once the desktops that call them have aged out.
 
 ### In the sidebar
 
-Each tab's Pinned part lists that tab's kinds in the person's order: Channels
-on the Channels tab, threads then breakouts on the Threads tab. The Pinned tab
-draws both of those parts, titled Channels and Threads, and nothing else
-([`desktop-shell.md`](desktop-shell.md#the-sidebar)). Right-click
-**Pin** or **Unpin** on a row, or the title menu's **Pinned in my sidebar**
-switch, writes one pin. A drag inside a Pinned part moves the row under the
-pointer and saves the kind's whole order on drop (`PUT /navigation/pins`). A
-pin or reorder that did not save leaves a line above the open tab saying so,
-and the list keeps what the server answered last. Only the newest write's
-answer is applied, so an older response cannot snap the list back. A pinned
-row travels into **Pinned** rather than reappearing there, and a drag resolves
-its target by layout; [`list-motion.md`](list-motion.md) owns both.
-
-The Pinned part is always drawn, because it is also where an unpinned row is
-dragged to pin it. A drop is the append the server always does, then
-`PUT /navigation/pins` with the row in the slot it was dropped in; a newer pin
-write skips that second step, so an older drop cannot save its order over it.
-A landed row stays in Pinned until the pin list holds it.
+The Canvases and Sidekicks sections each draw a **Pinned** group above their
+list; see [Canvas and Sidekick pins in the client](#canvas-and-sidekick-pins-in-the-client).
 
 ### Artifact pins
 
@@ -223,38 +205,6 @@ The recency headings use access time too. Their bulk commands select
 `recency: "access"`; existing activity-based API callers retain their original
 meaning. Notes retain activity-based grouping, and automations keep their own
 section ordering. Pins remain manually ordered.
-
-### Leaving for the first work stream
-
-The root route is where Rally opens and where every screen goes when what it
-was showing is no longer there: an archived thread or Channel, a thread the
-reader left, the not-found screen's way out, the end of onboarding. It lands on
-a Channel, never on a thread, in this order
-(`screens/workstream-landing.tsx`):
-
-1. the route this person last had open on this device, unless it names a
-   thread the leaving screen asked to pass over;
-2. the Channel the leaving screen asked to return to: a thread open beside its
-   Channel returns to that Channel, and one open on its own returns to the
-   Channel its caller names (`useOpenFirstWorkstream`);
-3. their first pinned Channel;
-4. General;
-5. the first Channel A–Z.
-
-With no Channel at all it shows "No channels yet". While the Channels have not
-arrived it waits, and says so when the socket cannot deliver them.
-
-`useOpenFirstWorkstream` is the one way a screen leaves. It always replaces the
-history entry, so Back cannot return to a screen the API refuses, and it names
-the threads the landing must not reopen from the saved route
-(`skipWorkstreamIds`). No leaving screen patches the directory: the tombstone
-the socket delivers is what removes an archived row, under the directory
-waterline that orders the removal against everything else in flight for it.
-
-The one deliberate exception is the inert `/opening` route a cross-workspace
-deep link parks on while its resource action resolves. Landing there would open and
-record a visit to an unrelated room in the new workspace a moment before the
-link's own destination arrives.
 
 ## Invariants
 
@@ -418,6 +368,24 @@ group; a row's context menu pins and unpins it. The rows' order within the
 group is not changed from the client yet.
 
 ## Changelog
+
+### 2026-11-07 — The client's Thread, Channel and artifact pins are removed
+
+**What changed:** The Pinned, Threads, Channels and Artifacts sections, their
+drag to reorder (`usePinnedDrag`, `usePinDrop`), the personal order
+(`personal-order.ts`), the pin hooks (`lib/pins.ts`), the artifact pin actions
+and the title menus' **Pinned in my sidebar** switch are deleted from the
+client, with the landing that opened the first pinned Channel. The Pinned group
+the Canvases and Sidekicks sections draw is what remains, built from
+`navigation-rows.tsx`.
+
+**Why:** Plan step B-3 of the
+[Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md):
+the PRD keeps "a Pinned group in each list" and removes the Pinned section, and
+the pinnable kinds other than Canvases and Sidekicks are deleted.
+
+**Consequences:** The server keeps `workspace_pins` rows of the old kinds and
+the routes that write them until phase C; no client reads them.
 
 ### 2026-11-07 — A Canvas and a Sidekick can be pinned
 

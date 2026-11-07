@@ -27,7 +27,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Conversation object migration 83: its root row admits the `canvas` parent kind. |
 | `apps/api/src/services/canvas-service.ts` | `createCanvas`: the directory row, then the Chat's object, bootstrapped and provisioned with the creator seated; `CanvasService`, the routes' service. |
-| `apps/api/src/routes/canvases.ts` | `POST /canvases`, `GET /canvases/:id`, `POST /canvases/:id/audience`, `POST /canvases/:id/pin`. |
+| `apps/api/src/routes/canvases.ts` | `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`. `PUT /workspace/pinned-order` (in `routes/workspace.ts`) orders a Pinned group. |
 | `apps/api/src/services/integrations.ts` | `canvasRunContextMessage`: the `CANVAS CONTEXT` message a run in a Canvas's Chat is given. |
 | `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
@@ -259,7 +259,10 @@ the Sidekick list already has; an owner's or administrator's list does not add
 every private Canvas they could open.
 
 A Canvas or a Sidekick is pinned in its list's Pinned group with
-`setSidebarPin` and ordered with `reorderSidebarPins`, in `workspace_pins`
+`setSidebarPin` (`POST /canvases/:id/pin`, `POST /sidekicks/:id/pin`) and
+ordered with `reorderSidebarPins` (`PUT /workspace/pinned-order`, one list's
+kind and its ids first to last; ids it does not pin are ignored and pins left
+out keep their order after the named ones), in `workspace_pins`
 (WorkspaceDO migration 141 admits the `canvas` and `sidekick` kinds). Neither
 kind is sent in the `pins` list, whose `PinKind` released clients parse as a
 closed enum; each rides its own rows as `pinnedPosition`. A pin must be of
@@ -320,14 +323,14 @@ does not list the section yet (plan step B-1), so `/canvases` and
 - **Pinning** is `POST /canvases/:id/pin`, from the pill's menu, a row's
   context menu, or dragging a row into the section's Pinned group
   (`useRowPinDrop`). A pin lands at the end of the group: the order is
-  `reorderSidebarPins` in `WorkspaceDO`, which no route exposes yet.
+  `reorderSidebarPins` in `WorkspaceDO`, which `PUT /workspace/pinned-order`
+  exposes.
 
 Copying a Canvas's link is the pill menu's **Copy link**, the Canvas form
 `/app/<region>/<organization>/cv/<canvas>/` ([`links.md`](links.md)); a
 detached artifact window's **Copy link** adds the artifact's segment, and a
-link with one opens the Canvas with that artifact in the rail. Not built yet,
-because nothing on the server answers it: renaming a Canvas (no route writes
-`canvas_directory.title`).
+link with one opens the Canvas with that artifact in the rail. Renaming a
+Canvas is `PATCH /canvases/:id`.
 
 ## Invariants
 
@@ -403,6 +406,10 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   publish recovered as `landed` after its attempt died before the note is
   noted; another person's new version marks a viewer's row unread while the
   publisher's own does not.
+- `canvas-conversation.test.ts` retitles a Canvas as a participant, seen on
+  the creator's open list, and refuses the retitle to someone it does not
+  admit as `canvas_not_found`; it orders one viewer's pinned Canvases, keeping
+  a pin the request left out after the named ones.
 - `canvas-conversation.test.ts` creates a Canvas twice with one `canvasId` and
   gets one Canvas and one prompt, and refuses the id to another person and an
   id another conversation holds.
@@ -458,6 +465,22 @@ the Thread link forms, which went with Threads.
 **Consequences:** [`links.md`](links.md) owns the form; a Canvas's id being its
 conversation's parent id is what lets a server mint the link from a
 conversation alone.
+
+### 2026-11-07 — A Canvas can be retitled, and a Pinned group reordered
+
+**What changed:** `PATCH /canvases/:id` writes the title (`HostedCanvas.rename`)
+for anyone the Canvas admits and moves the list's waterline for every open
+socket. `PUT /workspace/pinned-order` now takes `{ kind, itemIds }` and calls
+`reorderSidebarPins` for the Canvases or Sidekicks list; the Space-era
+container order (`PUT /workspace/order`) and the All Pinned order it replaced
+were deleted with the Channel routes.
+
+**Why:** The client's Rename Canvas had no route, and a pin landed at the end
+of its group with no way to move it. Retitling is open to anyone the Canvas
+admits rather than only to its managers because anyone it admits already
+changes its artifacts from its Chat; the title is no more protected than what
+it names. The order route kept its path so the browser's route family and the
+desktop's request path stay as they were.
 
 ### 2026-11-07 — Document created: a Canvas is a hosted conversation with its own audience
 

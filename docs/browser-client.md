@@ -125,17 +125,10 @@ are split into timer-range-safe waits by `session-timer.ts`.
 
 A guest's sidebar is the desktop sidebar fed by the workspace socket, listed
 by the same rules a member's is ([`listing-rules.md`](listing-rules.md)): the
-threads with a conversation the guest may open, and the Organization-wide
-Channels those threads sit in. Organization-wide scope admits only members, so
-a guest is told nothing of an Organization-wide thread they are not in. The shared-navigation directory adds no rows; it says which
-conversations of a Channel the guest holds. A child-only share still omits Main
-and every unshared Breakout; such a Breakout opens alone, in Main's place. The
-Channel's canonical parent in WorkspaceDO independently re-authorizes every
-thread and Breakout. The Organization root and a Channel link open the same
-landing route and Channel screen a member's do; a guest's Channel screen lists
-only the threads they may open, and no composer. A guest's
-shell holds background thread sockets as a member's does, for every thread
-whose Main is theirs (`mainReachable`).
+Canvases shared with them and the Sidekicks they may open. A guest has no New
+Canvas or New Sidekick, and the Canvases home's empty state says a shared
+Canvas appears there. The server re-authorizes every conversation a guest
+opens.
 
 ### Google sign-in
 
@@ -206,8 +199,8 @@ that held what the old relationship could read.
 The shell reuses the desktop renderer rather than forking it. It builds an
 `AppSessionValue` over the cookie session and installs it with
 `AppSessionValueProvider`, then mounts the desktop's `AccountOnboardingGate`
-and `WorkspaceApp`: the workspace socket provider, the sidebar, the Channel feed,
-Breakouts, the details rail and the Settings route. The value carries
+and `WorkspaceApp`: the workspace socket provider, the sidebar, the Canvases and Sidekicks
+screens, the details rail and the Settings route. The value carries
 `host: "browser"`. Account onboarding is identity-scoped, so it goes through the
 `_` workspace of the cookie adapter. Anything only the Mac app can do (accepting
 a workspace invitation from the desktop flow, desktop sign-in) rejects with
@@ -246,12 +239,12 @@ sign-out and account change.
 The cookie adapter forwards the families the Canvases and Sidekicks shell
 calls: `canvases`, `conversations` (a Canvas's Chat and a Sidekick's
 conversation), `sidekicks`, `automations`, `sharing`, `resources`, `search`,
-`connections`, `workspace`, `workspaces`, `push-devices`, `digest` (the
-schedule in Settings), `onboarding/account` and
+`connections`, `workspace`, `workspaces`, `push-devices`, `onboarding/account` and
 `onboarding/organization-suggestion`, with `feature-flags`, `telemetry`,
 `message-issues`, `favicons`, `speech` and `realtime`. The Thread, Channel and
 Space families (`workstreams`, `spaces`, `projects`, `navigation`,
-`work-opportunities`) are not forwarded. The list is
+`work-opportunities`) and `digest` are not forwarded; the server deleted those
+routes in plan step C-1. The list is
 `BROWSER_ROUTE_FAMILIES` in `apps/api/src/routes/browser.ts`: a new route family
 the browser calls must be added there, or the browser's request for it is not
 forwarded. Each route keeps its own role
@@ -665,8 +658,24 @@ Forwarding is the whole of the browser's reach; a family nothing calls is reach
 nobody needs.
 
 **Consequences:** A route family a later step adds to the shell must be added
-to the list in the same change. `digest` stays while Settings shows the
-schedule. The links themselves are [`links.md`](links.md)'s.
+to the list in the same change. The links themselves are [`links.md`](links.md)'s.
+
+### 2026-11-07 — Links open Canvases and Sidekicks; the Channel shell is gone
+
+**What changed:** `shellLocation` turns a canonical conversation link into
+`#/canvases/:id`, a Channel link into `#/canvases`, and a Sidekick link into
+`#/sidekicks/:id`, dropping a link's Breakout and artifact. The shell mounts
+the two-section sidebar (Canvases, Sidekicks) rather than Channels, Threads
+and Activity, and a guest's sidebar lists what was shared with them there.
+
+**Why:** The client pivot to Canvases and Sidekicks removed the Thread and
+Channel screens, and `App.tsx` redirects their old hash routes to the Canvases
+home, so a link rewritten to `#/workstreams/:id` would have lost its target.
+
+**Consequences:** An artifact link opens its Canvas on the newest artifact,
+not the one linked, until Canvases get links of their own. The server still
+forwards the `spaces`, `projects` and `work-opportunities` families; retiring
+them is the server half's work.
 
 ### 2026-11-07 — Sidekicks are a pane beside the sidebar, not a full-tab surface
 

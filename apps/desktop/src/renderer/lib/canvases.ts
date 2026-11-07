@@ -20,7 +20,6 @@ export function canvasRoute(canvasId: string): string {
   return `${CANVASES_ROUTE}/${encodeURIComponent(canvasId)}`;
 }
 
-/** The Canvas as `GET /canvases/:id` answers it for this reader. */
 /** The Canvas a route has open, or null; a malformed segment is returned raw, as React Router decodes a param. */
 export function openCanvasId(pathname: string): string | null {
   const id = /^\/canvases\/([^/]+)$/.exec(pathname)?.[1];
@@ -28,6 +27,7 @@ export function openCanvasId(pathname: string): string | null {
   try { return decodeURIComponent(id); } catch { return id; }
 }
 
+/** The Canvas as `GET /canvases/:id` answers it for this reader. */
 export function canvasDetailQueryKey(canvasId: string): readonly unknown[] {
   return ['canvas', canvasId];
 }

@@ -1969,7 +1969,7 @@ function ToolBlock({ message }: { message: Message }): React.JSX.Element | null 
         {tool.input !== undefined && <div><h4>Input</h4><pre>{safeJson(tool.input)}</pre></div>}
         {tool.output !== undefined && <div><h4>Result</h4><pre>{safeJson(tool.output)}</pre></div>}
         {tool.input === undefined && tool.output === undefined && tool.summary && (
-          <div><h4>Activity</h4><p>{normalizeModelText(tool.summary)}</p></div>
+          <div><h4>Summary</h4><p>{normalizeModelText(tool.summary)}</p></div>
         )}
         {tool.status === 'ambiguous' && <p className="tool-warning">Rally could not confirm whether this external action completed. It will not retry automatically.</p>}
       </div>

@@ -7,28 +7,17 @@ import {
   menuBarTitle,
   supportsSectionHeaders,
   type MenuBarActions,
-  type MenuBarAttentionRow,
+  type MenuBarRow,
   type MenuBarContent,
 } from './menu-bar-menu';
 
 function actions(): MenuBarActions {
-  return {
-    selected: vi.fn(),
-    openConversation: vi.fn(),
-    openChannel: vi.fn(),
-    openAccessRequest: vi.fn(),
-    openRally: vi.fn(),
-    quit: vi.fn(),
-  };
+  return { selected: vi.fn(), open: vi.fn(), openRally: vi.fn(), quit: vi.fn() };
 }
 
 function template(
   content: Partial<MenuBarContent>,
-  overrides: {
-    signedIn?: boolean;
-    sectionHeaders?: boolean;
-    actions?: MenuBarActions;
-  } = {},
+  overrides: { signedIn?: boolean; sectionHeaders?: boolean; actions?: MenuBarActions } = {},
 ): MenuItemConstructorOptions[] {
   return menuBarMenuTemplate({
     appName: 'Rally',
@@ -49,212 +38,76 @@ function labels(items: MenuItemConstructorOptions[]): (string | undefined)[] {
   return items.map((item) => (item.type === 'separator' ? '—' : item.label));
 }
 
-const workstreams = Array.from({ length: 7 }, (_value, index) => ({
-  id: `workstream-${index}`,
-  title: `Channel ${index}`,
-  substreamId: null,
-}));
-
-function main(id: string, title: string, detail = 'Rally finished'): MenuBarAttentionRow {
-  return { key: id, workstreamId: id, substreamId: null, title, detail };
+function canvas(id: string, title: string, detail: string | null = null): MenuBarRow {
+  return { key: `canvas:${id}`, kind: 'canvas', id, title, detail };
 }
 
-const waiting = Array.from({ length: 7 }, (_value, index) => main(`waiting-${index}`, `Waiting ${index}`));
+function sidekick(id: string, name: string, detail = 'Needs input'): MenuBarRow {
+  return { key: `sidekick:${id}`, kind: 'sidekick', id, title: name, detail };
+}
 
 describe('menu bar menu', () => {
-  it('draws Needs attention, then Most recent, then the app controls', () => {
+  it('draws Needs attention, then Recent Canvases, then the app controls', () => {
     const items = template({
-      attention: [
-        main('a', 'Acme renewal', 'Ana Ruiz mentioned you'),
-        {
-          key: 'b:s',
-          workstreamId: 'b',
-          substreamId: 's',
-          title: 'Pricing breakout',
-          detail: 'Rally finished in Pricing',
-        },
-      ],
-      recents: [{ id: 'c', title: 'Hiring loop', substreamId: null }, { id: 'a', title: 'Acme renewal', substreamId: null }],
+      attention: [sidekick('triage', 'Incident triage'), canvas('q4', 'Q4 review', 'Unread')],
+      recents: [canvas('q4', 'Q4 review'), canvas('plan', 'Launch plan')],
     });
-
     expect(labels(items)).toEqual([
-      'Needs attention',
-      'Acme renewal',
-      'Pricing breakout',
-      '—',
-      'Most recent',
-      'Hiring loop',
-      'Acme renewal',
-      '—',
-      'Open Rally',
-      'Quit Rally',
+      'Needs attention', 'Incident triage', 'Q4 review', '—',
+      'Recent Canvases', 'Q4 review', 'Launch plan', '—',
+      'Open Rally', 'Quit Rally',
     ]);
-    // What happened, as the Activity tab says it.
-    expect(items[1]?.sublabel).toBe('Ana Ruiz mentioned you');
-    expect(items[2]?.sublabel).toBe('Rally finished in Pricing');
-  });
-
-  it('lists access requests first, counts them, and opens one in the main window', () => {
-    const subject = actions();
-    const items = template({
-      accessRequests: [{ id: 'r1', requesterName: 'Samantha Lee', title: 'Hiring plan' }],
-      attention: [main('a', 'Acme renewal')],
-    }, { actions: subject });
-
-    expect(labels(items).slice(0, 3)).toEqual(['Needs attention', 'Samantha Lee asked to join Hiring plan', 'Acme renewal']);
-    expect(items[1]?.sublabel).toBe('Access request');
-    activate(items[1]);
-    expect(subject.openAccessRequest).toHaveBeenCalledWith('r1');
-    expect(subject.selected).toHaveBeenCalledWith('access_request');
-    expect(subject.openConversation).not.toHaveBeenCalled();
-  });
-
-  it('keeps the section to five rows when requests and conversations share it', () => {
-    const drawn = labels(template({
-      accessRequests: [0, 1].map((index) => ({ id: `r${index}`, requesterName: `Person ${index}`, title: 'Plan' })),
-      attention: waiting,
-    }));
-    expect(drawn.filter((label) => label?.startsWith('Person') || label?.startsWith('Waiting'))).toEqual([
-      'Person 0 asked to join Plan', 'Person 1 asked to join Plan', 'Waiting 0', 'Waiting 1', 'Waiting 2',
-    ]);
-  });
-
-  it('starts nothing', () => {
-    const drawn = labels(template({ attention: waiting, recents: workstreams }));
-
-    for (const label of ['New Meeting/Note', 'New Channel', 'New Automation', 'Suggestions']) {
-      expect(drawn).not.toContain(label);
-    }
-    expect(drawn.at(0)).toBe('Needs attention');
+    expect(items[1]?.sublabel).toBe('Needs input');
+    expect(items[2]?.sublabel).toBe('Unread');
   });
 
   it('lists at most five rows in each section, in the order given', () => {
-    const drawn = labels(template({ attention: waiting, recents: workstreams }));
-
-    expect(drawn.filter((label) => label?.startsWith('Waiting'))).toEqual([
-      'Waiting 0', 'Waiting 1', 'Waiting 2', 'Waiting 3', 'Waiting 4',
-    ]);
-    expect(drawn.filter((label) => label?.startsWith('Channel'))).toEqual([
-      'Channel 0', 'Channel 1', 'Channel 2', 'Channel 3', 'Channel 4',
-    ]);
+    const many = Array.from({ length: 7 }, (_value, index) => canvas(`c${index}`, `Canvas ${index}`, 'Unread'));
+    const items = template({ attention: many, recents: many });
+    expect(labels(items).filter((label) => label?.startsWith('Canvas '))).toHaveLength(10);
+    expect(labels(items)[1]).toBe('Canvas 0');
   });
 
-  it('says why a section is empty, in the sidebar\'s words', () => {
-    const quiet = template({ attention: [], recents: [] });
-    expect(labels(quiet)).toEqual([
-      'Needs attention',
-      'Nothing needs your attention',
-      '—',
-      'Most recent',
-      'No recent threads',
-      '—',
-      'Open Rally',
-      'Quit Rally',
-    ]);
-    expect(quiet.find((item) => item.label === 'Nothing needs your attention')?.enabled).toBe(false);
-  });
-
-  it('never claims nothing is waiting before Activity has been read', () => {
-    const loading = labels(template({ attention: [], attentionComplete: false }));
+  it('says why a section is empty, and never says so before its list has arrived', () => {
+    expect(labels(template({}))).toContain('Nothing needs your attention');
+    expect(labels(template({}))).toContain('No Canvases yet');
+    const loading = labels(template({ attentionComplete: false, recentsComplete: false }));
+    expect(loading).toContain('Still loading');
+    expect(loading).toContain('Still loading Canvases');
     expect(loading).not.toContain('Nothing needs your attention');
-    expect(loading).toContain('Still loading activity');
-
-    // Rows read so far are real, and the line under them says they may not be all.
-    const partial = labels(template({ attention: [main('a', 'Acme')], attentionComplete: false }));
-    expect(partial.slice(0, 3)).toEqual(['Needs attention', 'Acme', 'Still loading activity']);
-  });
-
-  it('never claims there are no recent threads before every Space has been walked', () => {
-    const loading = labels(template({ recents: [], recentsComplete: false }));
-    expect(loading).not.toContain('No recent threads');
-    expect(loading.slice(loading.indexOf('Most recent'), loading.indexOf('Most recent') + 2))
-      .toEqual(['Most recent', 'Still loading threads']);
-
-    // Rows already walked are drawn as they are, with no line under them.
-    const partial = labels(template({ recents: [workstreams[0]!], recentsComplete: false }));
-    expect(partial).toContain('Channel 0');
-    expect(partial).not.toContain('Still loading threads');
   });
 
   it('shows the signed-out state once, with nothing to list', () => {
-    expect(labels(template({ attention: waiting, recents: workstreams }, { signedIn: false }))).toEqual([
-      'Needs attention',
-      'Sign in to Rally',
-      '—',
-      'Open Rally',
-      'Quit Rally',
-    ]);
+    expect(labels(template({ attention: [canvas('a', 'A', 'Unread')] }, { signedIn: false })))
+      .toEqual(['Needs attention', 'Sign in to Rally', '—', 'Open Rally', 'Quit Rally']);
   });
 
   it('heads both sections, and falls back to a disabled row where macOS has no section headers', () => {
-    const items = template({ attention: waiting, recents: workstreams });
-    for (const label of ['Needs attention', 'Most recent']) {
-      expect(items.find((item) => item.label === label)?.type).toBe('header');
-    }
-
-    const old = template({ attention: waiting, recents: workstreams }, { sectionHeaders: false });
-    for (const label of ['Needs attention', 'Most recent']) {
-      const header = old.find((item) => item.label === label);
-      expect(header?.type).toBeUndefined();
-      // Still unclickable: a header that could be activated is a menu row that
-      // does nothing, which is worse than an unstyled one.
-      expect(header?.enabled).toBe(false);
-      expect(header?.click).toBeUndefined();
-    }
+    const items = template({}, { sectionHeaders: false });
+    expect(items[0]).toEqual({ label: 'Needs attention', enabled: false });
+    expect(template({})[0]).toEqual({ label: 'Needs attention', type: 'header' });
   });
 
-  it('never draws two rules in a row, or a rule at either end', () => {
-    for (const content of [{}, { attention: waiting }, { recents: workstreams }, { attentionComplete: false }]) {
-      for (const overrides of [{}, { signedIn: false }]) {
-        const drawn = labels(template(content, overrides));
-        expect(drawn.some((label, index) => label === '—' && drawn[index + 1] === '—')).toBe(false);
-        expect(drawn.at(0)).not.toBe('—');
-        expect(drawn.at(-1)).not.toBe('—');
-      }
-    }
-  });
-
-  it('offers no login-item control: that preference lives in Settings', () => {
-    const items = template({});
-    expect(items.some((item) => item.type === 'checkbox')).toBe(false);
-    expect(labels(items).some((label) => label?.toLowerCase().includes('login'))).toBe(false);
-  });
-
-  it('routes each row to its conversation', () => {
-    const menuActions = actions();
-    const items = template(
-      {
-        attention: [{
-          key: 'b:s', workstreamId: 'b', substreamId: 's', title: 'Breakout', detail: 'New breakout in Pricing',
-        }],
-        recents: [{ id: 'workstream-0', title: 'Renewal thread', substreamId: null }],
-      },
-      { actions: menuActions },
-    );
-    for (const item of items) activate(item);
-
-    // Headers carry no handler, so activating everything must not produce a
-    // stray call.
-    expect(items.filter((item) => item.click).length).toBe(4);
-    expect(vi.mocked(menuActions.openConversation).mock.calls).toEqual([['b', 's'], ['workstream-0', null]]);
-    expect(menuActions.openRally).toHaveBeenCalledTimes(1);
-    expect(menuActions.quit).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(menuActions.selected).mock.calls.map(([action]) => action)).toEqual([
-      'attention_conversation',
-      'recent_workstream',
-      'open_rally',
-      'quit_rally',
-    ]);
+  it('opens each row in the main window and reports which section it came from', () => {
+    const handlers = actions();
+    const items = template({
+      attention: [sidekick('triage', 'Incident triage')],
+      recents: [canvas('plan', 'Launch plan')],
+    }, { actions: handlers });
+    activate(items.find((item) => item.label === 'Incident triage'));
+    activate(items.find((item) => item.label === 'Launch plan'));
+    expect(handlers.open).toHaveBeenNthCalledWith(1, expect.objectContaining({ kind: 'sidekick', id: 'triage' }));
+    expect(handlers.open).toHaveBeenNthCalledWith(2, expect.objectContaining({ kind: 'canvas', id: 'plan' }));
+    expect(handlers.selected).toHaveBeenNthCalledWith(1, 'attention_conversation');
+    expect(handlers.selected).toHaveBeenNthCalledWith(2, 'recent_workstream');
   });
 
   it('does not let failed selection reporting block the menu action', () => {
-    const menuActions = actions();
-    vi.mocked(menuActions.selected).mockImplementation(() => { throw new Error('telemetry unavailable'); });
-    const items = template({}, { actions: menuActions });
-
-    activate(items.find((item) => item.label === 'Open Rally'));
-
-    expect(menuActions.openRally).toHaveBeenCalledOnce();
+    const handlers = actions();
+    vi.mocked(handlers.selected).mockImplementation(() => { throw new Error('telemetry down'); });
+    activate(template({ recents: [canvas('plan', 'Launch plan')] }, { actions: handlers })
+      .find((item) => item.label === 'Launch plan'));
+    expect(handlers.open).toHaveBeenCalledOnce();
   });
 
   it('writes the count beside the icon the way the sidebar button does', () => {

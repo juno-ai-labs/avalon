@@ -920,7 +920,7 @@ import {
   WorkspaceBreakoutStorage,
   type WorkspaceBreakoutRow,
 } from "./workspace-breakout-storage";
-import { HOSTED_PARENT_SCHEMA_STATEMENTS } from "./hosted-parent-schema";
+import { HOSTED_PARENT_SCHEMA_STATEMENTS, HOSTED_PARENT_STATE_TABLES } from "./hosted-parent-schema";
 import {
   HOSTED_CHANNEL_ROLE,
   HOSTED_SPACE_ROLE,
@@ -6567,6 +6567,92 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
+   * Every Thread and Channel this Organization still holds, with each
+   * conversation under it, for the Thread retirement walk
+   * (`services/thread-retirement-service.ts`).
+   *
+   * A Thread is a `channels` row and a Channel is a `spaces` row; either can
+   * also survive as parent state alone, so `parent_metadata` is read too. Its
+   * conversations are Main `0` (always named, as `childRegistry` names it,
+   * because a Space created before 2026-09-26 has a hidden one) and every
+   * child the parent registry, its projections or the Breakout directory
+   * knows. Canvases and Sidekicks are other parents, in other tables, and are
+   * never named here.
+   */
+  async threadRetirementInventory(): Promise<{
+    parents: { parentKind: "workstream" | "space"; parentId: string; substreamIds: string[] }[];
+  }> {
+    await this.initialized;
+    const sql = this.state.storage.sql;
+    const parents = sql.exec<{ parent_kind: "workstream" | "space"; parent_id: string }>(
+      `SELECT 'workstream' AS parent_kind, workstream_id AS parent_id FROM channels
+       UNION SELECT 'space', space_id FROM spaces
+       UNION SELECT parent_kind, parent_id FROM parent_metadata
+       ORDER BY parent_kind DESC, parent_id`,
+    ).toArray();
+    return {
+      parents: parents.map((parent) => ({
+        parentKind: parent.parent_kind,
+        parentId: parent.parent_id,
+        substreamIds: sql.exec<{ substream_id: string }>(
+          `SELECT '0' AS substream_id
+           UNION SELECT substream_id FROM parent_children WHERE parent_id = ?
+           UNION SELECT substream_id FROM parent_child_projections WHERE parent_id = ?
+           UNION SELECT substream_id FROM breakouts WHERE workstream_id = ?
+           ORDER BY substream_id`,
+          parent.parent_id, parent.parent_id, parent.parent_id,
+        ).toArray().map((row) => row.substream_id),
+      })),
+    };
+  }
+
+  /**
+   * Delete one Thread's or Channel's rows once every conversation under it is
+   * retired: its directory row and viewer rows (and a Thread's Breakout
+   * directory), and its parent state in every table
+   * `HOSTED_PARENT_STATE_TABLES` names that the schema still holds, so a table
+   * phase C drops first is skipped. The foreign keys that cascade from `channels` and `spaces`
+   * (pins, resource links, access rows) go with them; the resources a link
+   * names do not. Idempotent: a second call finds nothing to delete.
+   */
+  async deleteRetiredThreadParent(input: { parentKind: "workstream" | "space"; parentId: string }): Promise<void> {
+    await this.initialized;
+    const sql = this.state.storage.sql;
+    const present = new Set(sql.exec<{ name: string }>(
+      "SELECT name FROM sqlite_schema WHERE type = 'table'",
+    ).toArray().map((row) => row.name));
+    const parentTables = HOSTED_PARENT_STATE_TABLES.filter((table) => present.has(table));
+    this.state.storage.transactionSync(() => {
+      // Checked at commit, when every referencing row is gone too, so the
+      // delete order among the parent tables does not matter: definition
+      // order deletes `parent_invitation_operations` before the
+      // `parent_invitations` rows whose foreign key names it with no ON
+      // DELETE, which an immediate check refuses. The nuance: inside
+      // `transactionSync` a deferred violation is not raised here but at the
+      // commit of the whole event, after this method returns, so it would
+      // surface as this RPC failing rather than inside the service's
+      // try/catch. Only a row this sweep does not delete can cause one, and
+      // every referencing table is in the list.
+      sql.exec("PRAGMA defer_foreign_keys = ON");
+      // First: while a participant migration row stands, a Breakout's member
+      // rows refuse deletion (`parent_breakout_members_freeze_delete`).
+      if (parentTables.includes("parent_participant_migrations")) {
+        sql.exec("DELETE FROM parent_participant_migrations WHERE parent_id = ?", input.parentId);
+      }
+      for (const table of parentTables) sql.exec(`DELETE FROM "${table}" WHERE parent_id = ?`, input.parentId);
+      if (input.parentKind === "workstream") {
+        sql.exec("DELETE FROM breakout_viewers WHERE workstream_id = ?", input.parentId);
+        sql.exec("DELETE FROM breakouts WHERE workstream_id = ?", input.parentId);
+        sql.exec("DELETE FROM channel_viewers WHERE workstream_id = ?", input.parentId);
+        sql.exec("DELETE FROM channels WHERE workstream_id = ?", input.parentId);
+      } else {
+        sql.exec("DELETE FROM space_viewers WHERE space_id = ?", input.parentId);
+        sql.exec("DELETE FROM spaces WHERE space_id = ?", input.parentId);
+      }
+    });
+  }
+
+  /**
    * The parent step of a conversation's effects, delivered by the activity
    * Queue consumer. The directory step lands in the same transaction. The
    * people the effects name are learned before it, so the transaction does
@@ -6795,6 +6881,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const row = canvas?.row();
     if (!canvas || !row || row.workspace_id !== input.workspaceId) return null;
     return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.artifacts() };
+  }
+
+  /** Retitle a Canvas; see `HostedCanvas.rename`. */
+  async canvasRename(input: Parameters<HostedCanvas["rename"]>[0]) {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    return this.canvasWrite(() => canvas.rename(input));
   }
 
   /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */

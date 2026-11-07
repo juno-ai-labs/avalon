@@ -228,7 +228,7 @@ async function connect(userId: string): Promise<{ socket: WebSocket; frames: Arr
   return { socket, frames };
 }
 
-type Row = { id: string; unread: boolean; sharedWithMe: boolean; presentUserIds: string[]; pinnedPosition: number | null };
+type Row = { id: string; title: string; unread: boolean; sharedWithMe: boolean; presentUserIds: string[]; pinnedPosition: number | null };
 
 /** The Canvas rows a socket was last told: the newest list push, else its subscribe payload. */
 function canvasRows(frames: Array<Record<string, unknown>>): Row[] {
@@ -303,6 +303,38 @@ describe("the Canvas list", () => {
     expect(await workspace().setSidebarPin({ workspaceId: WORKSPACE_ID, userId: MEMBER, accessClass: "member",
       kind: "canvas", itemId: canvasId, pinned: true })).toEqual({ ok: false });
     for (const { socket } of [creator, outsider]) socket.close(1000, "done");
+  });
+});
+
+describe("a Canvas's title and pin order", () => {
+  it("retitles a Canvas for anyone it admits, on every open list, and tells anyone else it does not exist", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    await expect(new CanvasService(TEST_ENV, auth(MEMBER)).rename(canvasId, "Taken over"))
+      .rejects.toMatchObject({ code: "canvas_not_found" });
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: CREATOR, actorRole: "member" },
+      update: { visibility: "participants", userIds: [MEMBER] } });
+    const creator = await connect(CREATOR);
+    const renamed = await new CanvasService(TEST_ENV, auth(MEMBER)).rename(canvasId, "  Launch plan, v2 ");
+    expect(renamed.title).toBe("Launch plan, v2");
+    expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).title).toBe("Launch plan, v2");
+    await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title).toBe("Launch plan, v2");
+    creator.socket.close(1000, "done");
+  });
+
+  it("orders one viewer's pinned Canvases as asked, keeping the ones left out after them", async () => {
+    const canvases = [];
+    for (const title of ["First", "Second", "Third"]) {
+      const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title });
+      await new CanvasService(TEST_ENV, auth(CREATOR)).pin("canvas", canvasId, true);
+      canvases.push(canvasId);
+    }
+    const [first, second, third] = canvases as [string, string, string];
+    const creator = await connect(CREATOR);
+    const position = (canvasId: string) => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.pinnedPosition;
+    expect([position(first), position(second), position(third)]).toEqual([0, 1, 2]);
+    await new CanvasService(TEST_ENV, auth(CREATOR)).reorderPins("canvas", [third, first, crypto.randomUUID()]);
+    await expect.poll(() => [position(third), position(first), position(second)]).toEqual([0, 1, 2]);
+    creator.socket.close(1000, "done");
   });
 });
 

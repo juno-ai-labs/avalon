@@ -156,3 +156,18 @@ export type CreatedCanvas = z.infer<typeof CreatedCanvasSchema>;
 
 /** `POST /canvases/:id/pin` and `POST /automations/:id/pin`: pin in, or out of, the list's Pinned group. */
 export const SidebarPinRequestSchema = z.strictObject({ pinned: z.boolean() });
+
+/**
+ * `PUT /workspace/pinned-order`: one viewer's order for one list's Pinned
+ * group, first to last. Ids not pinned in that list are ignored, and pins the
+ * request leaves out keep their order after the ones it names.
+ */
+export const SidebarPinOrderRequestSchema = z.strictObject({
+  kind: z.enum(["canvas", "sidekick"]),
+  itemIds: z.array(IdSchema),
+});
+export type SidebarPinOrderRequest = z.infer<typeof SidebarPinOrderRequestSchema>;
+
+/** `PATCH /canvases/:id`: the Canvas's title. */
+export const CanvasRenameRequestSchema = z.strictObject({ title: z.string().trim().min(1).max(300) });
+export type CanvasRenameRequest = z.infer<typeof CanvasRenameRequestSchema>;

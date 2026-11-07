@@ -15,6 +15,12 @@ import {
   SetEngineeringSidekickPausedInputSchema,
   SetEngineeringSidekickPausedResultSchema,
   type SetEngineeringSidekickPausedResult,
+  ThreadRetirementOperationInputSchema,
+  type ThreadRetirementOperationInput,
+  DumpThreadTranscriptsResultSchema,
+  type DumpThreadTranscriptsResult,
+  RetireThreadsResultSchema,
+  type RetireThreadsResult,
   type EngineeringTextResult,
   CreateEngineeringOrgInputSchema,
   CreateEngineeringOrgResultSchema,
@@ -88,12 +94,13 @@ import {
   workspacePlacementAffinity,
 } from "./lib/durable-object-namespace";
 import { parseRpcInput } from "./lib/rpc-contracts";
-import { asApiError } from "./lib/api-error";
+import { ApiError, asApiError } from "./lib/api-error";
 import { WORKSTREAM_DO_SERVING_CONTRACT_VERSION } from "./services/workstream-authority";
 import { createEngineeringOrg, createEngineeringChannel, createEngineeringThread } from "./services/engineering-creation";
 import { sendEngineeringMessage, readEngineeringChannel, readEngineeringConversation, listEngineeringUserChannels, listEngineeringUserConversations } from "./services/engineering-messages";
 import { auditedEngineeringWrite } from "./services/engineering-audit";
 import { setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
+import { dumpThreadTranscripts, retireThreads } from "./services/thread-retirement-service";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
   id: z.string(),
@@ -287,6 +294,60 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
       }, async () => SetEngineeringSidekickPausedResultSchema.parse(await setEngineeringSidekickPaused(this.env, request)),
       (result) => ({ lifecycle: result.lifecycle }));
     });
+  }
+
+  /**
+   * B-7a: every Thread, Breakout and Channel conversation of one Organization
+   * written to R2 as text, before any is retired. Resumable: a rerun writes
+   * only what the last pass did not.
+   */
+  async dumpThreadTranscripts(input: unknown, operator: unknown): Promise<DumpThreadTranscriptsResult> {
+    return this.productOperation("dumpThreadTranscripts", async () => {
+      const request = await this.confirmedThreadRetirement(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      const operationId = crypto.randomUUID();
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "dump_thread_transcripts", orgId: request.orgId, operationId,
+      }, async () => DumpThreadTranscriptsResultSchema.parse(await dumpThreadTranscripts(this.env, {
+        workspaceId: request.orgId, operationId, operatorSubject: trusted.subject,
+      })), (result) => ({ conversations: result.conversations, dumped: result.dumped, skipped: result.skipped,
+        failed: result.failed.length }));
+    });
+  }
+
+  /**
+   * B-7: every Thread, Breakout and Channel of one Organization retired,
+   * refused until the dump covers each of their conversations. Canvases,
+   * Sidekicks and resources stay. Resumable, and a no-op once done.
+   */
+  async retireThreads(input: unknown, operator: unknown): Promise<RetireThreadsResult> {
+    return this.productOperation("retireThreads", async () => {
+      const request = await this.confirmedThreadRetirement(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      const operationId = crypto.randomUUID();
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "retire_threads", orgId: request.orgId, operationId,
+      }, async () => RetireThreadsResultSchema.parse(await retireThreads(this.env, {
+        workspaceId: request.orgId, operationId, operatorSubject: trusted.subject,
+      })), (result) => ({ parents: result.parents, retiredParents: result.retiredParents,
+        retiredConversations: result.retiredConversations, failed: result.failed.length }));
+    });
+  }
+
+  /**
+   * The confirmation the operator typed must name the Organization, and the
+   * Organization must be this region's: an id another region owns would read
+   * as an Organization with no Threads, and a pass over it would report done.
+   */
+  private async confirmedThreadRetirement(input: unknown): Promise<ThreadRetirementOperationInput> {
+    const request = ThreadRetirementOperationInputSchema.parse(input);
+    if (request.confirm !== request.orgId) {
+      throw new ApiError(409, "thread_retirement_unconfirmed", "The confirmation does not name this Organization");
+    }
+    if (!await resolveInspectionWorkspaceRoute(this.env, request.orgId)) {
+      throw new ApiError(404, "workspace_not_found", "No Organization with this id in this region");
+    }
+    return request;
   }
 
   async readChannel(input: unknown): Promise<EngineeringTextResult> {

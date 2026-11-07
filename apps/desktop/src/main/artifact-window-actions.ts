@@ -44,7 +44,7 @@ export function artifactWindowActionRequest(
       if (!canvas || !parent.success) throw new Error('This artifact has no Canvas to link to');
       return { canvasId: parent.data };
     }
-    if (preview.editable !== true || !parent.success || (!canvas && second !== '0')) throw new Error('This artifact has no editable thread context');
+    if (preview.editable !== true || !parent.success || (!canvas && second !== '0')) throw new Error('This artifact cannot be edited here');
     if (canvas && action.type === 'pin') {
       // A Canvas artifact's pin belongs to the Canvas, not a thread, and has
       // no route from a detached window.

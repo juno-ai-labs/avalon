@@ -20,7 +20,7 @@ the attachment hook, or the cache itself.
 | `apps/desktop/src/renderer/lib/use-draft-text.ts` | The text half: hydration, the debounce, the two commits, `releaseDraft`. |
 | `apps/desktop/src/renderer/lib/use-file-attachments.ts` | The attachment half: restore, re-upload, the ten-file settle. |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Watches the session and calls `clearAllDrafts` on a scope change. |
-| `apps/desktop/src/renderer/components/workstream-composer.tsx`, `components/channel-composer.tsx`, `screens/conversation-surface.tsx` | The surfaces that cache: the composer of an existing conversation (a thread's or an automation's, keyed by the parent id) and a Channel's composer, which starts a thread. |
+| `apps/desktop/src/renderer/components/workstream-composer.tsx`, `screens/conversation-surface.tsx` | The surfaces that cache: the composer of an existing conversation, a Canvas's Chat or a Sidekick's, keyed by the parent id. |
 
 ### Which surfaces cache a draft
 
@@ -28,9 +28,8 @@ These surfaces cache a draft, and they are the only ones that do:
 
 | Surface | Component | Cache key |
 | --- | --- | --- |
-| A conversation's composer, a work stream's or an automation's | `ConversationSurface` through `WorkstreamComposer` | `workspace:<region>:<workspaceId>:workstream:<parentId>`, the parent being the work stream or the automation |
+| A Sidekick's conversation | `ConversationSurface` through `WorkstreamComposer` | `workspace:<region>:<workspaceId>:workstream:<parentId>`, the parent being the Sidekick (storage: automation) |
 | A Canvas's Chat | `ConversationSurface` with `parentKind: "canvas"` | `workspace:<region>:<workspaceId>:canvas:<canvasId>`, `canvasDraftKey`; its annotation scope is `canvas:<canvasId>`, which `annotationDraftKeyForScope` maps back for a detached artifact window |
-| A Channel's composer | `ChannelComposer` | `workspace:<region>:<workspaceId>:new-workstream:space:<channelId>`, `newWorkstreamDraftKey` plus the Channel's id |
 
 `common/draft-keys.ts` is the single place those strings are built; `ConversationSurface` picks the family by parent kind through `conversationDraftKey` and `conversationAnnotationScope`, and a Sidekick's shared conversation stays in the work-stream family it has always used, so no released draft moves. A draft's text and
 its attachments share one key, so the two halves of a composer can never drift
@@ -79,7 +78,7 @@ network check on each keystroke. Dirty and restored records retain their origina
 sort position. Detached transfers carry the captured edit generation and preserve
 comments edited, removed, or sent while an image upload is in flight.
 
-Annotations use the same conversation/breakout or Channel launcher key as text.
+Annotations use the same conversation key as text.
 Detached windows receive that key from main's registered window identity, filter
 it to their own artifact, and preserve IDs through acknowledged transfers. They
 share the draft rather than deleting it on transfer; the actual message receipt
@@ -309,6 +308,12 @@ it renames and deletes through `/conversations/<canvasId>/resources/…` and
 refuses pin with a reason naming the Canvas, since a Canvas artifact's pin
 belongs to the Canvas. (Its link, refused here at first, became the Canvas
 link onto the artifact on 2026-11-07; [`links.md`](links.md) owns it.)
+
+The client cutover then deleted the Channel composer and the Thread and
+Breakout screens, so only the Canvas and Sidekick families are written. The
+`new-workstream` and Breakout key builders in `common/draft-keys.ts` stay, as
+does the legacy migration: drafts already stored under them expire on the
+ordinary schedule rather than being deleted on upgrade.
 
 ### 2026-10-20 — Persist confirmed artifact comments with composer drafts
 

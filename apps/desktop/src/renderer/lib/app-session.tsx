@@ -260,7 +260,7 @@ function leaveSupportRoute(): void {
 function retiredDeepLink(url: URL | null): boolean {
   if (!url) return false;
   const destination = parseWorkspaceAddressedDeepLink(url)?.destination ?? url;
-  return destination.hostname === 'spaces' || (destination.hostname === 'workstreams' && destination.pathname !== '/new');
+  return destination.hostname === 'spaces' || destination.hostname === 'workstreams';
 }
 
 export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.Element {
@@ -1049,15 +1049,6 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         }
         return activeSession;
       };
-      if (intent.kind === 'new-workstream') {
-        if (!requireActiveWorkspace('Sign in before starting a thread.')) return;
-        setDeepLinkError(null);
-        markSurfaceEntrypoint(navigation.entrypoint);
-        // A Channel is started from a Space, which this link does not name, so
-        // it opens the app; the sidebar's plus asks for the Space.
-        navigateAppRoute('/');
-        return;
-      }
       if (intent.kind === 'canvas') {
         await runInDeepLinkWorkspace(intent.target, () => {
           setDeepLinkError(null);

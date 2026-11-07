@@ -3,7 +3,6 @@ import {
   type NotificationChannel,
   type NotificationKind,
 } from '@rally/contracts';
-import { ShapeOutline } from '@rally/ui/components/identity-tile';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bell, Mail, MessageCircle } from 'lucide-react';
 
@@ -36,14 +35,16 @@ function connectorOption(connection: WorkstreamConnection): ChannelOption {
   };
 }
 
-const KIND_SETTINGS: Record<NotificationKind, SettingDefinition> = {
+/**
+ * The kinds offered, each with its copy. `newThreads`, `newBreakouts` and
+ * `merges` are still stored kinds, but nothing in the client can start or
+ * open what they announce, so they are not offered.
+ */
+const KIND_SETTINGS: Partial<Record<NotificationKind, SettingDefinition>> = {
   mentions: settings.notifyMentions,
   newMessages: settings.notifyNewMessages,
   added: settings.notifyAdded,
-  newThreads: settings.notifyNewThreads,
-  newBreakouts: settings.notifyNewBreakouts,
   runFinished: settings.notifyRunFinished,
-  merges: settings.notifyMerges,
   artifactUpdates: settings.notifyArtifactUpdates,
 };
 
@@ -101,11 +102,14 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
         <p>Pick how each kind reaches you. Applies on every device in this Organization.</p>
       </div>
       <div className="settings-list-card">
-        {NotificationKindSchema.options.map((kind) => (
+        {NotificationKindSchema.options.flatMap((kind) => {
+          const setting = KIND_SETTINGS[kind];
+          return setting ? [{ kind, setting }] : [];
+        }).map(({ kind, setting }) => (
           <div className="settings-preference-row" key={kind}>
-            <SettingCopy setting={KIND_SETTINGS[kind]} />
+            <SettingCopy setting={setting} />
             <ChannelPicker
-              label={`How to tell you about ${KIND_SETTINGS[kind].label.toLowerCase()}`}
+              label={`How to tell you about ${setting.label.toLowerCase()}`}
               none="Digest only"
               onToggle={(channel) => toggle(kind, channel)}
               options={options}
@@ -115,7 +119,7 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
         ))}
       </div>
       <p className="settings-footnote">
-        None selected means you won't be told, apart from Activity and your digest. Connected messaging apps
+        None selected means you won't be told, apart from your digest. Connected messaging apps
         that can reach you show up here.
       </p>
       {save.error && <ErrorNotice occurrence={save.error}>{save.error.message}</ErrorNotice>}
@@ -178,9 +182,10 @@ export function scheduleFromDraft(draft: DigestDraft) {
 }
 
 /**
- * Settings → Notifications → Daily digest: what is still unread in Activity,
- * sent at the start and end of the day to the person's Personal Channel,
- * email, or a connected messaging app. Each change saves at once.
+ * Settings → Notifications → Daily digest: what is still unread, sent at the
+ * start and end of the day to email or a connected messaging app. A stored
+ * `personal_channel` target is kept but no longer offered: nothing in the
+ * client opens the Thread it posts into. Each change saves at once.
  */
 export function DailyDigestSettings({ api, connections, onEditTimezone }: {
   api: Pick<RallyApi, 'getDigestSchedule' | 'updateDigestSchedule'>;
@@ -211,8 +216,6 @@ export function DailyDigestSettings({ api, connections, onEditTimezone }: {
   const surfaces = connectorSurfaces(connections);
   const email = saved.deliveryTargets.find((target) => target.type === 'email')?.displayName;
   const options: ChannelOption[] = [
-    { id: 'personal_channel', label: 'Personal Channel', shortLabel: 'Rally', hint: 'A new thread in your Personal Channel',
-      icon: <ShapeOutline shape="squircle" size={ICON_SIZE} /> },
     { id: 'email', label: 'Email', hint: email ? `To ${email}` : 'To your account address', icon: <Mail aria-hidden="true" size={ICON_SIZE} /> },
     ...surfaces.map(connectorOption),
   ];
@@ -235,7 +238,7 @@ export function DailyDigestSettings({ api, connections, onEditTimezone }: {
     <section className="settings-pane">
       <div className="settings-pane-heading settings-pane-heading-spaced">
         <h2>Daily digest</h2>
-        <p>Whatever is still unread in Activity, in one message. Nothing unread, nothing sent.</p>
+        <p>Whatever is still unread, in one message. Nothing unread, nothing sent.</p>
       </div>
       <div className="settings-list-card">
         {slots.map((slot) => {

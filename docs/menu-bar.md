@@ -1,22 +1,22 @@
 # Menu bar item
 
 Rally puts a status item in the macOS menu bar. Beside the icon it shows the
-number of unread rows in the sidebar's Activity tab, plus the access requests
-waiting on the reader. Clicking it drops down a menu with two sections:
-**Needs attention**, the top five of those, and **Most recent**,
-the five most recently active Channels in the sidebar's Recent order under
-All. Below them are the two controls that keep the app reachable when nothing
-else is on screen: open Rally, and quit.
+number the sidebar's rail counts: each Sidekick waiting on input or holding
+something unread, plus each Canvas holding something unread. Clicking it drops
+down a menu with two sections: **Needs attention**, the top five of those, and
+**Recent Canvases**, the five most recently updated Canvases. Below them are the
+two controls that keep the app reachable when nothing else is on screen: open
+Rally, and quit.
 
 **Every row reopens something that already exists.** The menu starts nothing at
-all: no meeting or note, no work stream, no automation, no suggested work.
+all: no Canvas, no Sidekick, no meeting or note.
 
 It is the one Rally surface that outlives every window. Rally registers itself
 to open at login by default and, on a login launch, opens **no** window at all,
 so on a freshly started Mac the menu bar item is the whole application until
 someone asks for more. That is why nothing here is read through a renderer:
-the main process holds its own workspace socket, the Channel rows behind it,
-and the first page of Activity.
+the main process holds its own workspace socket and, from it, the same two
+lists the sidebar draws.
 
 The shared workspace watcher recovery policy and phase diagnostics are owned by
 [`websocket-architecture.md`](websocket-architecture.md#reconnect-and-teardown).
@@ -26,16 +26,14 @@ The shared workspace watcher recovery policy and phase diagnostics are owned by
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/main/menu-bar-menu.ts` | The drop-down as a plain Electron template, and `menuBarTitle`, the count beside the icon. No Electron objects, no I/O. |
-| `apps/desktop/src/main/menu-bar-content.ts` | `menuBarContent`: Needs attention from the Activity page, Most recent from the Channel directory with the sidebar's Recent sort. |
-| `apps/desktop/src/main/channel-directory-watch.ts` | `ChannelDirectoryWatch`: the Organization's Channel rows and Breakout lists, held over the main process's workspace socket, and the sync topics that socket names (`onSync`). |
-| `apps/desktop/src/main/activity-feed-watch.ts` | `ActivityFeedWatch`: the first page of `GET /navigation/activity`, read again when the socket says Activity moved. |
+| `apps/desktop/src/main/menu-bar-content.ts` | `menuBarContent`: Needs attention and Recent Canvases from the two lists `SidebarListsWatch` holds. |
+| `apps/desktop/src/main/sidebar-lists-watch.ts` | `SidebarListsWatch`: the Organization's Canvases and Sidekicks lists, held over the main process's workspace socket from the frames the renderer's socket applies. |
 | `packages/contracts/src/workspace-reach-watch.ts` | `watchWorkspaceSocket`, the listen-only workspace socket transport (ticket, subscribe, heartbeat, reconnect) this rides on. |
-| `apps/desktop/src/common/recency-groups.ts` | `compareRecentChannels`, the sidebar's Recent sort, shared for the same reason. |
 | `apps/desktop/src/main/menu-bar.ts` | The status item's lifecycle: whether it exists, and rebuilding its menu and title when its content moves. |
 | `apps/desktop/src/main/launch-at-login.ts` | Whether Rally is registered to open at login, and `launchedAtLogin`, which decides whether this launch opens a window. |
 | `apps/desktop/src/main/application-open-observer.ts` | Coalesces a menu-triggered focus with Electron activation so one open retains the explicit `menu_bar` source. |
-| `apps/desktop/src/renderer/lib/app-session.tsx` | Where each `avalon://` row lands: `workstreams/:id`, or `workstreams/:id/substreams/:sid` for a Breakout. |
-| `apps/desktop/src/main/index.ts` | Wires them together: creates the Electron `Tray`, opens and closes the socket as the session and preference move (`syncMenuBarDirectory`, `stopMenuBarDirectory`), fetches its ticket and the Activity page (`rallyApiRequest`), and supplies every action. |
+| `apps/desktop/src/renderer/lib/app-session.tsx` | Where each deep link a row emits lands: `workstreams/:id` opens the Canvas at `/canvases/:id`, and a Sidekick link opens `/sidekicks/:id`. |
+| `apps/desktop/src/main/index.ts` | Wires them together: creates the Electron `Tray`, opens and closes the socket as the session and preference move (`syncMenuBarDirectory`, `stopMenuBarDirectory`), fetches its ticket (`rallyApiRequest`), and supplies every action. |
 | `apps/desktop/src/main/application-settings.ts` | Stores `menuBarEnabled` and `launchAtLoginDefaultApplied` beside Lockdown mode and the Developer preference. |
 | `apps/desktop/resources/menu-bar/rallyTemplate.png` (+ `@2x`) | The status-item artwork, generated by `scripts/generate-brand-assets.py`. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Application → Appearance → **Show Rally in the menu bar**, above the app-icon picker, and Application → Startup → **Open Rally at login**. |
@@ -56,21 +54,16 @@ mark into a black blob. `nativeImage` resolves the `@2x` sibling by name.
 
 `MenuBarController.refresh()` sets the tray's title (`Tray.setTitle`, which
 macOS draws to the right of the icon) to the number of rows Needs attention
-holds: access requests plus unread Activity rows, every one, not the five the
-menu lists. `menuBarTitle` formats it as the sidebar's badge — `99+` past two
-digits, nothing at zero — and it is empty while signed out. Activity's first
-page is 250 rows, so the count is exact up to the cap.
+holds — every one, not the five the menu lists. `menuBarTitle` formats it as the
+rail's badge — `99+` past two digits, nothing at zero — and it is empty while
+signed out.
 
-**It is the Activity tab's number, not the Threads tab's.** The menu and the
-tab read the same rows from `GET /navigation/activity`, and an unread row is
-one newer than the person's one read mark, which only **Mark all read** moves
-([`digests.md`](digests.md#the-activity-tab)). Opening a thread reads the
-thread, not its Activity row, so the row and the count stay until then, as the
-tab's dot does. The Threads button's badge and the dock badge still count
-`attentionItems` (the attention menu, retired), so they can show
-a different number: they answer "which threads have unread messages", and this
-answers "what has happened since I last cleared Activity". The sidebar's
-Activity button carries this same number.
+**It is the rail's number.** The rail's two badges and the dock badge are
+`useSectionCounts` in `navigation-sidebar.tsx`: Canvases counts each Canvas
+whose row is `unread`, Sidekicks each Sidekick whose row is `needsInput` or
+`unread`. `menuBarContent` applies the same two rules to the same two lists,
+read from the same socket frames, so the menu bar, the rail and the dock
+cannot disagree for longer than one push takes to land.
 
 ### The menu
 
@@ -78,39 +71,22 @@ The drop-down is rebuilt from `menuBarMenuTemplate` whenever the content or the
 preference changes — never on open. A click therefore always produces a menu
 immediately. In order:
 
-1. **Needs attention**: access requests waiting on the reader first, each
-   "*Name* asked to join *title*" with the sublabel **Access request**, then
-   the attention list. Five rows in all. A native menu row cannot hold
-   buttons, so choosing a request emits `access-requests/<id>`, which opens
-   the main window on the request's dialog with **Decline** and **Approve**
-   ([`channel-access-requests.md`](channel-access-requests.md)). The
-   Activity tab's unread rows follow, newest first, as the tab lists them.
-   Each row's label is the thread's title, or the Breakout's, and its
-   `sublabel` is what happened, which the tab writes after the actor:
-   "Rally finished", "*Name* mentioned you", "*Name* added you", and "New
-   thread" or "New breakout" for a start, whose starter the tab names from a
-   member directory the main process does not hold. A Breakout's adds "in
-   *thread*". A row opens where the tab's row opens. Under them, **Still
-   loading activity** until the first page has been read, and **Nothing needs
-   your attention** only after it has, so an unread list is never called empty.
-2. **Most recent**: the first five threads in `compareRecentChannels` order
-   (newest `lastActivityAt` first, ties A to Z) over every listed thread,
-   archived and system rows excluded. This is the Threads tab's Recent sort
-   with no pins ([`workstream-pinning.md`](workstream-pinning.md)). A Channel listed to the
-   reader only through a Breakout (`mainWithheld`) opens its first Breakout,
-   since Main is not theirs; until its Breakout list arrives it is left out
-   rather than opening Main. With no rows, **Still loading threads** until the
-   first walk of every Space has finished, and **No recent threads** only
-   after it has.
+1. **Needs attention**: each Sidekick that needs input, sublabel **Needs
+   input**; then each other Sidekick holding something unread, and each Canvas
+   holding something unread, sublabel **Unread**. Five rows in all, in the
+   order each list draws them. Under the header, **Still loading** until both
+   lists have arrived, and **Nothing needs your attention** only after they
+   have, so a waiting list is never called empty.
+2. **Recent Canvases**: the first five Canvases, newest `updatedAt` first, as
+   the Canvases list orders them. With none, **Still loading Canvases** until
+   the list has arrived, and **No Canvases yet** only after it has.
 3. A separator, then **Open Rally** and **Quit Rally**.
+
+A row with no title yet reads **Untitled**: a native menu row cannot draw the
+skeleton the sidebar does.
 
 Signed out, both sections collapse to one **Needs attention** header over
 **Sign in to Rally**: there is nothing to list in either.
-
-**Most recent no longer carries recency headings.** The earlier menu grouped
-ten Channels under the sidebar's **Last hour**, **Today** and so on; two fixed
-sections of five replaced them, so the clock no longer changes a heading and
-nothing has to rebuild the menu when a day ends.
 
 Headers use `type: 'header'`, which macOS added in 14 and which AppKit
 styles as a real section header. `supportsSectionHeaders` reads
@@ -122,34 +98,29 @@ without it.
 Separators are pushed only between sections; the menu opens directly on its
 first header.
 
-Rows carry titles somebody's model wrote, and the contract allows 180
-characters. A macOS menu is as wide as its widest row, so `menuBarLabel`
-collapses whitespace and truncates at 60 characters, trimming back to the last
-whole word when one falls within the final 20 and cutting hard otherwise —
-"Prepare the Acme cli…" is worse than losing the word. Punctuation left dangling
-by the cut is dropped, and the ellipsis fits inside the limit rather than pushing
-past it.
+Rows carry titles somebody's model wrote. A macOS menu is as wide as its widest
+row, so `menuBarLabel` collapses whitespace and truncates at 60 characters,
+trimming back to the last whole word when one falls within the final 20 and
+cutting hard otherwise. Punctuation left dangling by the cut is dropped, and
+the ellipsis fits inside the limit rather than pushing past it.
 
-**The menu starts nothing.** There is no New Meeting/Note row, no New Work
-Stream row, no New Automation row, and no Suggestions section: this surface is
-for getting back to work that is already in flight, and the two rows at the
-bottom open the app, where starting something belongs.
-`avalon://workstreams/new` and `avalon://automations/new` are still handled — the
-deep-link vocabulary is public — they simply have no emitter here.
+**The menu starts nothing.** This surface is for getting back to work that is
+already in flight; the two rows at the bottom open the app, where starting
+something belongs.
 
-**No client feature flag reaches the main process.** The meeting row was the
-last thing here that depended on one; a future main-process surface that needs a
-flag re-adds the channel.
+**No client feature flag reaches the main process.** A future main-process
+surface that needs a flag re-adds the channel.
 
 **The menu carries no login-item control.** It is rebuilt only when its content
 moves, and macOS can change the login item from System Settings at any time, so a
 checkbox here would go stale with nothing to correct it. Settings owns that
 preference and reads it fresh — see below.
 
-Every row re-enters through the existing `avalon://` deep links rather than
-through a second navigation path, so a menu row and a link clicked anywhere else
-land in the same place: `workstreams/:id` for a Channel's Main and
-`workstreams/:id/substreams/:sid` for a Breakout.
+Every row re-enters through the existing deep links rather than through a
+second navigation path, so a menu row and a link clicked anywhere else land in
+the same place: a Canvas row emits `<protocol>://workstreams/<id>`, which the
+renderer opens at `/canvases/:id`, and a Sidekick row emits `sidekickDeepLink`
+for the active credential's Organization.
 
 Rows carry `app.focus({ steal: true })` before they act. A status-item click does
 not activate the application the way a Dock click does, so a window opened
@@ -157,81 +128,59 @@ without it appears behind whatever is frontmost.
 
 ### The content
 
-**The main process holds a workspace socket of its own.** Most recent is the
-sidebar's Channel list, which only the workspace socket carries, and a renderer
-is not there to ask on a login launch or after the last window closes.
-`ChannelDirectoryWatch` therefore holds the sidebar's rows, from the same
-frames, but only the fields Most recent reads: title, naming state, last
-activity, archive and system state, `mainWithheld`, and each Channel's Breakout
-list (`privateChildren`, read for a withheld Channel's first Breakout). No
-unread, mention or attention field is kept, because nothing in the menu reads
-one:
+**The main process holds a workspace socket of its own.** Both lists are
+socket-owned: only the workspace socket carries them, and a renderer is not
+there to ask on a login launch or after the last window closes.
+`SidebarListsWatch` therefore holds them from the same frames the renderer's
+socket applies, but only the fields the menu reads: a Canvas's id, title,
+`unread` and `updatedAt`; a Sidekick's id, name, `needsInput` and `unread`.
 
 - It dials through `watchWorkspaceSocket` with a ticket from
   `GET /workspace/socket`, over the main-process Node broker's route
   (`createNodeRealtimeSocketFactory`), so it takes the system proxy, the
   operating system's certificates and the Rally `Origin` the feed sockets
-  take. Its frame ceiling is off (`maxPayload` 0), as the renderer's Chromium
-  socket's is: the subscribe answer is the whole sidebar.
-- On each subscribe answer it walks every Space in the answer's snapshot with
-  `space_channels` (rails off; the menu draws none), all Spaces at once and each
-  Space's pages in order. An Organization still opening, whose answer carries
-  rows instead, is paged with `list_workstreams`. When the walk ends, a row held
-  from before that no page returned and no push named is dropped: nothing is
-  replayed across a reconnect, so a tombstone missed while the socket was down
-  is only recovered this way.
-- `workspace_workstream_state` and `workspace_workstream_recency` pushes are
-  applied under their state version with the renderer's ordering: a superseded
-  authority generation is refused, each half (common, viewer) is taken only when
-  its waterline has not gone back, and a tombstone removes the row.
-- `workspace_space_snapshot` naming a Space the walk has not read walks it.
-- `workspace_sync` frames are handed to `onSync` with their topics, and a
-  subscribe answer as every topic, because nothing is replayed across a
-  reconnect.
+  take.
+- Each subscribe answer's `sidebar` replaces both lists whole, whatever was
+  held: nothing is replayed across a reconnect, so the answer is the only
+  record of what moved while the socket was away.
+- A pushed `workspace_canvas_list`, or a `workspace_sidebar_list` for
+  `automations`, replaces its list when its waterline is newer than the one
+  held, and is dropped otherwise — the same rule `applyVersionedSidebarList`
+  applies in the renderer, so a push overtaken by a fresher answer cannot
+  bring an old list back.
+- The socket sends nothing: no request, no presence, no command.
 
-**Activity is a REST read the socket only announces.** `ActivityFeedWatch`
-holds the first page of `GET /navigation/activity` and reads it again on a
-subscribe and on every `workspace_sync` naming `activity`: the signals the
-sidebar's Activity tab re-reads on. A mention, an add and a message publish
-that topic to the Organization; **Mark all read** publishes it to the reader
-alone, so the menu clears when the window clears. After a failed read, the
-next sync of any topic reads again rather than waiting for one naming Activity,
-so a read lost at login does not leave the menu loading until the next mention.
-One read is in flight at a time, and a signal that arrives meanwhile costs one more read after it, so a
-burst of messages costs two reads, and the last read starts after the last
-signal.
-
-Changes are coalesced to one menu rebuild per microtask, so a walk's pages and a
-burst of pushes do not each rebuild the native menu.
+Changes are coalesced to one menu rebuild per microtask, so a subscribe answer
+and a burst of pushes do not each rebuild the native menu.
 
 `syncMenuBarDirectory` in `index.ts` decides whether the socket exists. It runs
 on every session change, on the preference moving and at launch, reads the
 active credential from storage (a login launch has no in-memory session yet),
 and opens one socket per account and Organization; a token renewal keeps it.
-No socket exists while signed out, for a guest (refused the Channel list), off
-macOS, or with the preference off. A sign-out stops it synchronously, before the
-queued sync runs, and stopping forgets every row.
+No socket exists while signed out, for a guest, off macOS, or with the
+preference off. A sign-out stops it synchronously, before the queued sync runs,
+and stopping forgets both lists.
 
 This is a second workspace socket per desktop while a main window is open, which
 [`websocket-architecture.md`](websocket-architecture.md) otherwise keeps to one.
 It is the price of a count that is correct with no window, and the cheapest
-option to reverse: the alternative, the main window publishing its attention
-list to main over IPC, leaves the menu bar with no count at all once the last
-window closes.
+option to reverse: the alternative, the main window publishing its lists to
+main over IPC, leaves the menu bar with no count at all once the last window
+closes.
 
 Opening the drop-down emits the product event `menu_bar_opened` with whether
 the account is signed in, the bounded recent-row count, and `attentionCount`,
-the unread Activity rows in Needs attention (access requests not included).
-Before 2026-10-13 it counted waiting threads (`attentionItems`), so a chart over
-it steps at that release. The legacy pinned count is always zero.
-Electron can notify one opening through both the Tray click and the
-Menu `menu-will-show`; `MenuBarOpenObserver` coalesces those until
-`menu-will-close`, so one visible menu is one event. Selecting an enabled row
-emits `menu_bar_action_selected` with a closed action enum —
-`attention_conversation` for a Needs attention row, `recent_workstream` for a
-Most recent one — whose values come from `TELEMETRY_MENU_BAR_ACTIONS` in the
-registry. It never includes a title or identifier, and reporting cannot block
-the selected action.
+the rows in Needs attention. Before 2026-11-07 it counted unread Activity rows,
+and before 2026-10-13 waiting threads, so a chart over it steps at each of
+those releases. The legacy pinned count is always zero. Electron can notify one
+opening through both the Tray click and the Menu `menu-will-show`;
+`MenuBarOpenObserver` coalesces those until `menu-will-close`, so one visible
+menu is one event. Selecting an enabled row emits `menu_bar_action_selected`
+with a closed action enum — `attention_conversation` for a Needs attention row,
+`recent_workstream` for a Recent Canvases one — whose values come from
+`TELEMETRY_MENU_BAR_ACTIONS` in the registry. The names predate Canvases and
+are kept because the enum is admitted at ingestion. It never includes a title
+or identifier, and reporting cannot block the selected action.
 
 ### Opening at login
 
@@ -286,13 +235,11 @@ destination, so the hidden state is not sticky.
   an empty menu exactly when the menu is the only surface there is.
 - **The menu is built from what the main process holds, never fetched on
   open.** A drop-down that waited on the network would hang under the pointer
-  on a bad connection. The Activity page is read when the socket says it moved,
-  not when the menu opens.
+  on a bad connection. Freshness arrives as socket pushes.
 - **Signing out forgets every row, including whatever is still on the wire.**
-  The previous account's Channel titles are workspace content. `stop()` closes
-  the socket, rejects every request asked of it, and empties the directory; a
-  frame from a replaced connection is ignored because each handler checks that
-  its connection is still the current one.
+  The previous account's Canvas and Sidekick titles are workspace content.
+  `stop()` closes the socket and forgets both lists; a frame from a closed
+  connection never reaches the watch.
 - **A launch opens no window only when there is a status item to hide into.**
   Otherwise Rally starts invisible with no menu bar presence, reachable only by
   hunting for it in the Dock. The Startup toggle's own copy says so, because the
@@ -300,16 +247,18 @@ destination, so the hidden state is not sticky.
 - **`menuBarEnabled` is a preference; `menuBarPresent` is a fact.** Both cross
   the bridge, because a toggle that succeeded and an item that exists are
   different claims and only the second one is what the person asked for.
-- **One count, one list.** The number beside the icon is the Needs attention
-  rows, all of them, and those rows are the Activity tab's unread rows. A row
-  or a count from anywhere else would disagree with the tab, which is the
-  mismatch this design replaced.
-- **One recent order.** Most recent uses `compareRecentChannels`, the function
-  the sidebar's Recent sort calls.
+- **One count, one rule.** The number beside the icon is the Needs attention
+  rows, all of them, and those rows are what the rail counts. A row or a count
+  from anywhere else would disagree with the rail and the dock, which is the
+  mismatch this design exists to avoid. A change to what the rail counts
+  changes `menuBarContent` in the same change.
+- **A list is "none" only once it has arrived.** `null` is not yet heard and
+  `[]` is empty; the menu says **Still loading** for the first and the empty
+  copy only for the second.
 - **Menu analytics are structural, never content-bearing.** Open events carry
   booleans and counts, action events carry one enum, and the enum lives in the
-  registry rather than being retyped beside the producer. Titles, activity
-  content, and provider account IDs remain outside telemetry.
+  registry rather than being retyped beside the producer. Titles and provider
+  account IDs remain outside telemetry.
 - **A retired action value stays admitted, and stops arriving.** The registry
   schema is what accepts an event at ingestion, and released clients keep
   emitting what their build offers. A value's presence in
@@ -332,8 +281,7 @@ destination, so the hidden state is not sticky.
   ships on, and any other reading would silently withdraw it from every device
   that upgraded.
 - **A header is never drawn with nothing under it.** Each section either has
-  rows or says in a disabled line why it has none, and "nothing" is said only
-  once the whole directory has been read.
+  rows or says in a disabled line why it has none.
 - **The menu never renders state the operating system can change behind it.**
   It is rebuilt on content changes, not on open, so anything macOS owns
   independently — the login item is the case that came up — belongs in Settings,
@@ -353,45 +301,37 @@ login-item registration. It exposes two IPC channels —
 `DesktopApplicationSettings`: `menuBarEnabled`, `menuBarAvailable`,
 `launchAtLogin`, and `launchAtLoginAvailable`.
 
-It no longer reads any client feature flag: the meeting row was the last
-main-process consumer of one, and the channel that carried them went with it.
-
 It does **not** own: the application menu bar at the top of the screen
 (`application-menu.ts`), the Dock and Finder icon
-([`desktop-icons.md`](desktop-icons.md)), suggested work, which this surface no
-longer shows at all ([`suggested-work.md`](suggested-work.md)), what a
-work-stream link means
-([`links.md`](links.md)), or session storage and refresh —
-it borrows `loadStoredAuth` and the coalescing refresh and adds nothing to them.
+([`desktop-icons.md`](desktop-icons.md)), what a Canvas or Sidekick link means
+([`links.md`](links.md)), the lists' shapes and their waterlines
+([`websocket-architecture.md`](websocket-architecture.md)), or session storage
+and refresh — it borrows `loadStoredAuth` and the coalescing refresh and adds
+nothing to them.
 
-It depends on the `avalon://` deep-link vocabulary already handled in
-`app-session.tsx`. Adding a menu row that navigates somewhere new means adding
-the link there first, not a second navigation channel here.
+It depends on the deep-link vocabulary already handled in `app-session.tsx`.
+Adding a menu row that navigates somewhere new means adding the link there
+first, not a second navigation channel here.
 
-It shares `common/recency-groups.ts` with the renderer's sidebar and owns it:
-a change to how Channels are ordered changes both surfaces, which is the point
-of the module being there rather than beside either one. What counts as
-needing attention is the Activity feed's
-([`digests.md`](digests.md#the-activity-tab)), not this module's.
+What counts as needing attention is the rail's (`useSectionCounts` in
+[`desktop-shell.md`](desktop-shell.md)), not this module's; this module
+mirrors it.
 
 ## Failure modes and limits
 
 | Situation | Behavior |
 | --- | --- |
-| The socket drops | `watchWorkspaceSocket` redials with the shared backoff and logs the close. The rows already held stay on screen; the next subscribe walks again and reconciles them, and reads Activity again. |
-| An Activity read fails | Logged; the rows already held stay. The next sync of any topic, or the next subscribe, reads again. Before any read has landed, the section says **Still loading activity**. |
-| Mark all read in another window | The server publishes `activity` to the reader's sockets, the watch reads again, and the rows and count clear. |
-| The socket drops mid-walk | The walk's requests are rejected, the list stays marked incomplete (**Still loading threads**), and the next subscribe walks again. |
-| The server ends the session's access | The watch stops redialling (`stopped`), logs it, and forgets every row, so no title or count outlives the access. The next session change opens it again. |
-| The active workspace is a guest's | No socket and no Activity read. Activity is reported complete and empty, so the menu says **Nothing needs your attention** and **No recent threads** rather than loading forever. |
+| The socket drops | `watchWorkspaceSocket` redials with the shared backoff and logs the close. The lists already held stay on screen; the next subscribe answer replaces them. |
+| A subscribe answer cannot be read | Logged with the rejected fields (`describeZodIssues`); the lists already held stay. |
+| A push arrives older than the list held | Dropped by its waterline. |
+| The server ends the session's access | The watch stops redialling (`stopped`), logs it, and forgets both lists, so no title or count outlives the access. The next session change opens it again. |
+| The active workspace is a guest's | No socket. Both lists read as arrived and empty, so the menu says **Nothing needs your attention** and **No Canvases yet** rather than loading forever. |
 | Signed out | One **Needs attention** header over a disabled **Sign in to Rally** row, a rule, and the two trailing controls. No number beside the icon. |
 | A label runs long | Truncated to 60 characters at the last word boundary in the final 20, hard otherwise. |
-| Nothing waiting, or nothing recent | The section's header over one disabled line saying so. |
+| Nothing waiting, or no Canvases | The section's header over one disabled line saying so. |
 | More than five waiting | Five rows; the number beside the icon counts them all. |
 | A push arrives while the menu is **open** | Applied to the next build. macOS owns an open menu and nothing can redraw it underneath the reader. |
 | macOS 13 or older | Every header falls back to a disabled row. Everything else is unchanged. |
-| A `space_channels` request is never answered on a live socket | It waits; there is no per-request timeout. The heartbeat closes a socket that stops answering, and the close rejects it. |
-| Sign-out while a walk is in flight | `stop()` rejects every pending request and empties the directory; frames from that connection are ignored. |
 | The login item registers but the marker fails to write | The registration is reported as it stands, not as off. The marker is retried on the next launch. |
 | The login item cannot be read | The last answer is kept rather than reported as off, which would be a claim about a system this cannot see. |
 | No status item on this platform, or the preference is off | No socket is opened. Turning the preference off closes it. |
@@ -420,26 +360,23 @@ uses `rallyApiRequest`'s 8 s timeout.
 ```text
 pnpm --filter @rally/desktop exec vitest run src/main/menu-bar-menu.test.ts \
   src/main/menu-bar-content.test.ts src/main/menu-bar.test.ts \
-  src/main/channel-directory-watch.test.ts src/main/activity-feed-watch.test.ts \
+  src/main/sidebar-lists-watch.test.ts \
   src/main/menu-bar-open-observer.test.ts src/main/telemetry-reporter.test.ts \
   src/main/launch-at-login.test.ts
 pnpm --filter @rally/contracts exec vitest run src/workspace-reach-watch.test.ts
 ```
 
-`channel-directory-watch.test.ts` drives the real `watchWorkspaceSocket` and
-`ChannelDirectoryWatch` through a fake socket with frames shaped as the server
-sends them, so the walk, the versioned pushes and the reconnect reconciliation
-run end to end without a network. It cannot prove the server answers those
-frames; that was checked against the local API (`pnpm dev:api:local`) by
-running the watch over Node `ws`, reading the seeded Organization's two unread
-Channels, marking one read over REST, and watching the pushed row lower the
-count from 2 to 1.
+`sidebar-lists-watch.test.ts` drives `SidebarListsWatch` with frames shaped as
+the server sends them — parsed by the contracts' own schemas — so the subscribe
+answer, the pushes and the waterline guard run without a network. It cannot
+prove the server sends those frames; the renderer's socket tests and
+[`websocket-architecture.md`](websocket-architecture.md) own that.
 
 Nothing here imports Electron at runtime. `menu-bar-menu.ts` builds a plain
-template object, and the controller and directory take their Electron and
-socket surfaces as injected dependencies. The template's `click` handlers are
-typed with the menu item, window, and event AppKit passes but ignore all three,
-so tests call them through a cast. The renderer Settings shell shows disabled
+template object, and the controller and watch take their Electron and socket
+surfaces as injected dependencies. The template's `click` handlers are typed
+with the menu item, window, and event AppKit passes but ignore all three, so
+tests call them through a cast. The renderer Settings shell shows disabled
 controls while `getApplicationSettings` is pending; a test for an unavailable
 menu bar waits for the menu-bar control itself to disappear.
 
@@ -454,17 +391,15 @@ The renderer's only reach into this module is
 `application-settings:set-menu-bar-enabled` and
 `application-settings:set-launch-at-login`, each of which takes a boolean and is
 rejected for anything else. The menu itself is built in the main process from
-values the API returned, and its rows carry identifiers the main process fetched
-rather than anything a renderer supplied.
+values the API returned, and its rows carry identifiers the main process
+received rather than anything a renderer supplied.
 
 `rallyApiRequest` is a main-process caller of the stored credential. Here it
-reaches only `GET /workspace/socket` for a ticket and `GET
-/navigation/activity` for the first Activity page, and adds no credential
-storage of its own. The socket is listen-only apart from the directory requests
-(`space_channels`, `list_workstreams`); it sends no presence and no commands.
-Channel titles and Activity rows are workspace content and are held in
+reaches only `GET /workspace/socket` for a ticket, and adds no credential
+storage of its own. The socket is listen-only; it sends no request, presence or
+command. Canvas and Sidekick titles are workspace content and are held in
 main-process memory only — never written to disk — and are dropped on sign-out
-(`stopMenuBarDirectory` stops both watches).
+(`stopMenuBarDirectory`).
 
 `menuBarEnabled` and `launchAtLoginDefaultApplied` share
 `application-settings.json` with Lockdown mode, so they go through the same
@@ -478,6 +413,36 @@ is reported before `app.focus`, so the application-open coalescer suppresses the
 generic Electron activation callback rather than also counting a Dock open.
 
 ## Changelog
+
+### 2026-11-07 — Needs attention is what the rail counts; the Channel and Activity watches are deleted
+
+**What changed:** The menu is built from the Canvases and Sidekicks lists,
+which `SidebarListsWatch` holds over the main process's workspace socket.
+Needs attention, and the number beside the icon, are each Sidekick waiting on
+input or holding something unread and each Canvas holding something unread —
+the rail's `useSectionCounts`. **Most recent** became **Recent Canvases**,
+newest `updatedAt` first. `ChannelDirectoryWatch`, `ActivityFeedWatch` and
+`common/recency-groups.ts` are deleted, and with them the Space walk, the
+Activity REST read and the access-request rows. The socket now sends nothing.
+
+**Why:** The client pivot to two sections (Canvases, Sidekicks) removed
+Channels, Threads, Breakouts, Activity and access requests from the product,
+so neither list the menu read exists in the app any more. The dock badge moved
+to `useSectionCounts` in the same pivot; reading the same two lists here keeps
+the 2026-10-13 rule — a count that matches the rows under it — and extends it
+so the menu, the rail and the dock are one number.
+
+**Considered and rejected:** Retiring the menu bar item with the features it
+listed. It is still the whole application on a login launch, and the two lists
+carry exactly what it needs. Keeping a REST read for either list: both are
+socket-owned and pushed with a waterline, so a read would only add a request
+per change and a second ordering rule.
+
+**Consequences:** `menu_bar_opened.attentionCount` changed meaning again. The
+telemetry action names `attention_conversation` and `recent_workstream` are
+kept for the new rows because the enum is admitted at ingestion. Something that
+should appear in Needs attention must change what the rail counts, and
+`menuBarContent` with it.
 
 ### 2026-10-13 — Needs attention is the Activity tab's unread rows
 

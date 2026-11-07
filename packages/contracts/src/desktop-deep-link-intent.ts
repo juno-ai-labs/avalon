@@ -20,7 +20,6 @@ type Targeted = { target: WorkspaceTarget | null };
 export type DesktopDeepLinkIntent =
   /** A Canvas, opened onto one of its artifacts when the link names one. */
   | { kind: "canvas"; canvasId: string; artifactId?: string; target: WorkspaceTarget }
-  | { kind: "new-workstream" }
   /** The menu bar's request row: open the main window on this request's approve-or-decline dialog. */
   | ({ kind: "access-request"; requestId: string } & Targeted)
   | ({ kind: "settings"; section: "workspace" | "members" | "connections" | "digest" } & Targeted)
@@ -167,9 +166,6 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
   const target = addressed?.target ?? null;
   if (url.hash || url.username || url.password || url.port) return null;
 
-  if (url.hostname === "workstreams" && url.pathname === "/new") {
-    return !target && !url.search ? { kind: "new-workstream" } : null;
-  }
   if (url.hostname === "canvases") {
     const [encodedCanvasId = "", childKind, encodedArtifactId, ...extra] = url.pathname.slice(1).split("/");
     const canvasId = uuidFromBase58(encodedCanvasId);
