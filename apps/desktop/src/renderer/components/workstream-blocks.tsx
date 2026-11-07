@@ -1848,7 +1848,10 @@ export function MessageActions({
         // sitting under a turn the next day reads as a broken feature rather than
         // as one attempt that did not work.
       >
-        {reportIssue && telemetry && <MessageAction description="Oopsie" onClick={() => reportIssue(telemetry.turnId ?? telemetry.messageId, telemetry.messageId)}>
+        {/* "Oopsie" is the feature's visible name; the name a screen reader and
+            the tip give says what it does, and keeps the visible word first so
+            a voice command that says what it sees still finds it. */}
+        {reportIssue && telemetry && <MessageAction description="Oopsie: report a problem with this message" onClick={() => reportIssue(telemetry.turnId ?? telemetry.messageId, telemetry.messageId)}>
           <IconBug aria-hidden="true" size={12} /> Oopsie
         </MessageAction>}
         {offersText && (
