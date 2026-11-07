@@ -10,7 +10,7 @@ merges or starts a Breakout on its own. The product requirements are
 [`PRDs/2026-10-17_merge-and-breakout-suggestions/prd.md`](PRDs/2026-10-17_merge-and-breakout-suggestions/prd.md);
 the design and the evidence behind the classifier's question, its threshold and
 its context are in that folder's `design.md`. Related:
-[`conversation-merge.md`](conversation-merge.md) (the response card every merge
+`conversation-merge.md` (retired) (the response card every merge
 now uses, and the marker that resolves a suggestion),
 [`substream-creation.md`](substream-creation.md) (the launch pane a Breakout
 suggestion opens), [`agent-harness.md`](agent-harness.md) (the JEV primitives

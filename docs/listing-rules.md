@@ -144,7 +144,7 @@ for what the person may already reach.
   when a member who cannot open it reads the feed, then it is not listed".
   A merge from such a thread is shown, as the merger chose, with its words and
   embeds but without the thread's name or summary
-  ([`conversation-merge.md`](conversation-merge.md)).
+  (`conversation-merge.md` (retired)).
 - **A hidden placement is not news.** A private thread placed since a member
   last read a Channel moves its latest number but leaves it read. Guard: the
   same file, "given a private thread placed since a member last read a
@@ -160,7 +160,7 @@ for what the person may already reach.
 Owns: the yes-or-no of being listed. Does not own whether content is readable
 (each conversation's own authority), the name and mark a member who holds a
 link is shown so they can request access
-([`channel-access-requests.md`](channel-access-requests.md)),
+(`channel-access-requests.md` (retired)),
 Space writes ([`spaces.md`](spaces.md)), or which conversations a guest holds
 in a Channel ([`scope-grant-directory.md`](scope-grant-directory.md)).
 
