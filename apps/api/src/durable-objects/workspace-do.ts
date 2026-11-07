@@ -307,16 +307,12 @@ import {
   WorkspaceDirectoryNotificationStateSchema,
   WorkspaceDirectoryScheduleTargetsRequestSchema,
   WorkspaceDirectoryScheduleTargetsResultSchema,
-  WorkspaceRegionalEffectApplyRequestSchema,
-  WorkspaceRegionalEffectApplyResultSchema,
   type WorkspaceAttentionRequest,
   type WorkspaceAttentionResult,
   type WorkspaceDirectoryNotificationRequest,
   type WorkspaceDirectoryNotificationState,
   type WorkspaceDirectoryScheduleTargetsRequest,
   type WorkspaceDirectoryScheduleTargetsResult,
-  type WorkspaceRegionalEffectApplyRequest,
-  type WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
 import {
   SLACK_REACTION_COLUMN_STATEMENTS,
@@ -492,9 +488,6 @@ import {
   PARTICIPANT_PROJECTION_ALARM,
 } from "./scope-grant-storage";
 import { SCOPE_INVITATION_DELIVERY_ALARM, SCOPE_INVITATION_INDEX_ALARM } from "./scope-invitation-storage";
-import {
-  applyWorkstreamRegionalEnvelope,
-} from "./workspace-regional-effect-storage";
 import {
   WorkspaceConnectorResourceResolveRequestSchema,
   WorkspaceDiscoveredResourcesRequestSchema,
@@ -5145,11 +5138,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const envelope = request.envelopes[0]!;
     if (envelope.parentKind === "automation") {
       return this.sidekickCall(envelope.parentId, envelope.workspaceId,
-        (sidekick) => ({ accepted: sidekick.receiveChildEffects(request) }));
+        (sidekick) => sidekick.receiveChildEffects(request));
     }
     if (envelope.parentKind === "canvas") {
       const canvas = await this.hostedCanvas(envelope.parentId, envelope.workspaceId);
-      return this.canvasWrite(() => ({ accepted: canvas.receiveChildEffects(request) }));
+      return this.canvasWrite(() => canvas.receiveChildEffects(request));
     }
     // A Thread's or Space's effect: the envelope admits the retired kinds so
     // the refusal is named here and the message dead-letters loudly, rather
@@ -9049,23 +9042,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { applied };
   }
 
-  /**
-   * Apply one Channel or Space parent's activity/mention effect and its replay receipt in a
-   * single transaction. The caller resolves current D1 identity (actor, target
-   * membership, mention recipient) before the call; the object never reaches
-   * back into the regional database mid-transaction, and the receipt can never
-   * commit without the product row it acknowledges.
-   */
-  async applyWorkstreamRegionalEffect(
-    input: WorkspaceRegionalEffectApplyRequest,
-  ): Promise<WorkspaceRegionalEffectApplyResult> {
-    await this.initialized;
-    const request = WorkspaceRegionalEffectApplyRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    const result = applyWorkstreamRegionalEnvelope(this.state.storage, request, Date.now());
-    return WorkspaceRegionalEffectApplyResultSchema.parse(result);
-  }
-
   async readNotificationIntentForDelivery(input: WorkspaceNotificationIntentRequest): Promise<WorkspaceNotificationIntentDelivery | null> {
     await this.initialized;
     const request = WorkspaceNotificationIntentRequestSchema.parse(input);
@@ -10430,12 +10406,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // The role beside the access class: an owner or administrator opens every
     // Canvas (`canvasReaderAllows`), so reading every member as `member`
     // withheld a mention from an administrator a creator-only Canvas admits.
-    const relationship = sql.exec<{ access_class: string | null; role: string | null }>(
-      `SELECT json_extract(relationship_json, '$.accessClass') AS access_class,
-              json_extract(relationship_json, '$.role') AS role
-         FROM workspace_member_status WHERE user_id = ? AND active = 1`, request.userId,
-    ).toArray()[0];
-    const actorRole = relationship?.access_class !== "member" ? null
+    // Read through `readRelationship`, not the table alone: a member this
+    // object has not heard of yet (a Sidekick's admission never reads them)
+    // read as nobody, and an Organization-wide Sidekick's mention was skipped
+    // as `recipient_not_listable`.
+    const relationship = await this.readRelationship(request.workspaceId, request.userId);
+    const actorRole = relationship?.status !== "active" || relationship.accessClass !== "member" ? null
       : relationship.role === "owner" || relationship.role === "admin" ? relationship.role : "member" as const;
     const canvas = sql.exec<CanvasRow>(`SELECT * FROM canvas_directory WHERE canvas_id = ?`, request.workstreamId).toArray()[0];
     if (canvas) {
@@ -11735,10 +11711,8 @@ applyRetirementGate(WorkspaceDO, {
     // A conversation's effects for a hosted parent, handed to the Queue before
     // the tombstone landed. Acknowledged as the legacy parents did, so the
     // message stops redelivering an effect nothing will apply.
+    // It names no notification intent, so the consumer delivers nothing.
     receiveChildEffects: ([input]) => ({ accepted: droppedEnvelopeReceipts(input) }),
-    // `replayed` is this receiver's terminal answer — it already means "this
-    // changed nothing, do not send it again", which is exactly true here.
-    applyWorkstreamRegionalEffect: () => ({ replayed: true, notificationIntentId: null }),
     // An HTTP door refuses in the protocol it speaks rather than by throwing,
     // so a caller reads a status instead of a 500 it has to guess about.
     fetch: () => retiredObjectResponse(),

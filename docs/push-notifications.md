@@ -32,6 +32,14 @@ membership in the same deployment registered. Delivery requires a live session b
 session cannot keep it alive. The device switch and a separate push installation
 ID persist in the existing application settings file on the Mac.
 
+A mention or an add in a Canvas's Chat or a Sidekick's conversation becomes
+an intent where the conversation's effect lands: the hosted parent records it
+beside the effect's receipt and the activity consumer processes it at once
+([A mention or an add](hosted-conversation-parents.md#a-mention-or-an-add)).
+Processing reads whether the recipient is still an active member (D1), may
+still open the parent and is not the author, then sends each channel the
+person chose.
+
 The producer enqueues only region, workspace, recipient and intent identifiers.
 Settlement retains the payload only when push was enqueued, until the existing
 intent retention expires. The consumer reads content through `WorkspaceDO.readNotificationIntentForDelivery`
@@ -363,7 +371,11 @@ off; `hosted-sidekick.test.ts` covers who each notice is recorded for
 (requester and managers for Needs input, the requester alone for a finish,
 managers alone for a scheduled run's Needs input and nobody for its finish),
 and `test/workspace-notification-intent-run-kinds-migration.test.ts` migration
-145 over populated rows. `test/conversation-effect-service.test.ts` covers
+145 over populated rows. `hosted-mention-notifications.test.ts` starts from the message: a mention
+posted in a Canvas's Chat and in an Organization-wide Sidekick's conversation
+reaches the parent, records one `mention` intent for the recipient, enqueues
+one push and sends its literal alert, and a redelivery of every effect sends
+nothing again. `test/conversation-effect-service.test.ts` covers
 a mention whose conversation has no link: Slack and email log
 `conversation_not_linkable` with `parent_kind`, and the intent settles. The provider itself and macOS alert
 presentation require a signed installed build.
