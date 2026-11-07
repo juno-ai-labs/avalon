@@ -296,7 +296,6 @@ export interface Env {
   WEBHOOK_REPLAY_WINDOW_SECONDS: string;
   PROVIDER_WEBHOOK_MAX_BYTES?: string;
   INBOUND_EMAIL_MAX_BYTES?: string;
-  INBOUND_EMAIL_PROCESSING_LEASE_SECONDS?: string;
   LOG_LEVEL: "debug" | "info" | "warn" | "error";
 }
 
@@ -537,7 +536,6 @@ const EnvContractSchema = z.object({
   CONNECTOR_POLL_TIMEOUT_MS: numericString.optional(),
   PROVIDER_WEBHOOK_MAX_BYTES: numericString.optional(),
   INBOUND_EMAIL_MAX_BYTES: numericString.optional(),
-  INBOUND_EMAIL_PROCESSING_LEASE_SECONDS: numericString.optional(),
 
 
   GITHUB_INGRESS_BASE_URL: HttpUrlSchema.optional(),
@@ -731,8 +729,7 @@ export function numericEnv(
     | "MAX_ATTACHMENT_BYTES"
     | "WEBHOOK_REPLAY_WINDOW_SECONDS"
     | "PROVIDER_WEBHOOK_MAX_BYTES"
-    | "INBOUND_EMAIL_MAX_BYTES"
-    | "INBOUND_EMAIL_PROCESSING_LEASE_SECONDS",
+    | "INBOUND_EMAIL_MAX_BYTES",
   fallback: number,
 ): number {
   const parsed = Number.parseInt(env[key] ?? "", 10);
