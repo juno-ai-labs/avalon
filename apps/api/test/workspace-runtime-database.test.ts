@@ -84,7 +84,7 @@ describe("workspace runtime database routing", () => {
     // "anything unlisted". These would break if it did.
     expect(__workspaceRuntimeDatabaseTesting.localStatement(
       `SELECT directory.title FROM workspace_workstream_directory directory
-         JOIN workspace_workstream_pins pin ON pin.workstream_id = directory.workstream_id`,
+         JOIN workstream_notification_intents intent ON intent.workstream_id = directory.workstream_id`,
     )).toBe(true);
     // `workspaces` must not match inside `workspace_workstream_directory`, and
     // `sessions` must not match inside `slack_agent_sessions`.
@@ -177,7 +177,6 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "agent_message_routes",
   "connector_installations", // Generation-fenced installation RPC only.
   "connector_installation_steps", // Exact provider-dispatch receipts; no facade access.
-  "workspace_workstream_access", // Private WorkspaceDO visit state; no facade callers.
   "onboarding_journeys", // Owned by the typed onboardingJourney RPC only.
   "_internal_durable_alarms",
   // Retirement's tables. All are read and written only by the object
@@ -187,10 +186,6 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "object_retirement",
   "workspace_retirement_graph",
   "workspace_retirement_children",
-  "opportunity_batch_events",
-  "opportunity_batch_windows",
-  "opportunity_provenance_edges",
-  "opportunity_provenance_nodes",
   "scope_grant_directory", // Typed candidate projection/read RPCs own this table.
   // A hosted Sidekick's tables (migration 91). `HostedSidekick` reads and
   // writes them through the object's own storage, behind the `sidekick*`
@@ -212,75 +207,36 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "canvas_artifacts",
   // The Space authority's ten tables. Every one of them is reached through
   // the typed Space RPCs in `workspace-space-protocol.ts` and nothing else — a
-  // Space is a relationship the Organization owns, not product state a runtime
-  // statement names.
-  "space_bootstrap",
-  "space_channel_memberships",
-  "space_default_publications",
-  "space_default_targets",
-  "space_defaults",
-  "space_intents",
-  "suggested_work_ranking_rounds",
-  "suggested_work_sets",
-  "work_opportunities",
-  "work_opportunity_provenance_roots",
-  "work_opportunity_snapshots",
-  "work_opportunity_user_links",
-  "work_opportunity_user_states",
-  "workspace_activity_event_targets",
-  "workspace_activity_events",
   // The breakout directory's two. Read by the Space conversation page and
   // written by the directory handoff, both inside the object; a runtime
   // statement naming a breakout would be a surface listing one, and nothing
   // outside a Space dashboard lists one at all.
   "breakouts",
   "breakout_viewers",
-  "workspace_batch_dispatch_targets",
-  "workspace_batch_dispatches",
-  "workspace_container_order",
-  "workspace_pinned_order", // All's Pinned order; read and written only by the Space authority.
   "workspace_pins", // Every pin; read and written only by the pin RPCs.
   "workspace_resource_version_changes", // Filled by a resource_versions trigger, drained by the object after each write.
-  "workspace_activity_seen", // How far each person read Activity; only the Activity RPCs.
-  "workspace_activity_reads", // How far each person read each subject for Activity; only the Activity RPCs.
-  "workspace_activity_alerts", // Actual provider acceptance; Activity delivery RPCs only.
-  "workspace_activity_alert_claims", // Provider handoff fencing; Activity delivery RPCs only.
-  "workspace_activity_pushes", // Which Activity rows went to whom as a push; only the directory follow-up.
-  "workspace_activity_push_origin", // When this object began pushing Activity rows; only the directory follow-up.
   "member_personal_system_prompts", // Read and written only by the personal system prompt RPCs.
   "member_preferences", // Read and written only by the member preference RPCs.
-  "conversation_access_requests", // Read and written only by the access request RPCs.
   "workspace_directory_state",
   "workspace_external_event_registrations",
   "external_registration_generations", // Owned by typed registration RPC only.
   "retired_meeting_resources", // Operator-only cleanup manifest.
   "workspace_identity",
   "spaces",
-  "workspace_space_state",
   "space_viewers",
-  "space_invitees", // Read and written only by the Space audience and invitee RPCs.
-  "channel_color_sync", // Its triggers, the alarm lane and the channel-colour RPCs only.
-  "channel_color_sync_state", // The revision counter those triggers number marks from.
-  "thread_backfill", // The alarm lane and the thread-backfill RPCs only.
   "conversation_view_headers", // Typed projection RPCs and admitted socket reads only.
   "conversation_view_turns",
-  "import_reservation_reclaim", // Armed by the import reservation, read by its alarm lane.
   "memory_digest_holders", // Conversations holding a memory digest copy; `memoryDigest` and the lane only.
   "memory_digest_holder_facts", // The fact ids each holder's copy was read with; `memoryDigest` and the marks only.
   "memory_revision", // The ordering token of digest reads; the fact writes and marks advance it.
   "memory_digest_sync", // The copy-sync lane's marks; its triggers, the alarm lane and its RPCs only.
   "memory_digest_sync_state", // The revision counter those marks number from.
-  "space_reads", // Each person's Channel read position; only the Space read RPCs.
-  "space_messages", // Rally's messages in a Channel; written at Space creation, read by the feed RPC.
-  "space_message_operations", // Every operation that wrote a Channel message, for merge retries; WorkspaceDO RPC only.
-  "channel_message_search_versions", // Each Channel message's search revision; its triggers, the alarm lane and its RPCs only.
   "workspace_sidebar_list_state",
   "workspace_socket_ticket_receipts",
   "workspace_socket_unheard", // The first-frame watch's ledger; socket paths and the alarm only.
   "workspace_sync_events",
   "channels",
   "workspace_workstream_effect_receipts",
-  "workspace_workstream_resource_links",
   "channel_viewers",
   // Hosted Channel and Space parents (WorkspaceDO migration 72). Every row is
   // read and written by `HostedParent` through the object's own storage,
@@ -310,11 +266,6 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "parent_invitations",
   "parent_connector_admissions",
   "parent_sidekicks",
-  // The Channel rail (WorkspaceDO migration 82): Main's reported attachments,
-  // written only by the directory apply, and the change ledger its triggers
-  // fill and the object drains.
-  "channel_sidekick_attachments",
-  "channel_rail_changes",
 ] as const;
 
 /** Every table WorkspaceDO's migrations leave standing, in application order. */
