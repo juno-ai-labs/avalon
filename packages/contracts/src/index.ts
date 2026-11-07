@@ -71,7 +71,7 @@ export * from "./workstream-transcript";
 
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
 import { ConversationParentKindSchema } from "./conversation-parent";
-import { CanvasSidebarListSchema } from "./canvases";
+import { CanvasSidebarListSchema, CanvasSummarySchema } from "./canvases";
 import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
 export * from "./artifacts";
@@ -1915,6 +1915,8 @@ export const AutomationDetailSchema = AutomationSummarySchema.extend({
   recentRuns: z.array(AutomationRunSchema),
   /** The people a `people` Sidekick is shared with, besides its author; empty for the other audiences. Absent from a server that predates it. */
   sharedWithUserIds: z.array(IdSchema).optional(),
+  /** The Canvases this Sidekick writes that the reader may open, most recently active first. Absent from a server that predates it. */
+  canvases: z.array(CanvasSummarySchema).optional(),
 });
 
 export const ApiErrorSchema = z.object({

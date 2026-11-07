@@ -757,6 +757,10 @@ meaning.
 **Why:** A Canvas, not a Thread, is each artifact's owner and audience (the
 Canvases and Sidekicks decision log).
 
+A publish from a Canvas's Chat, or from a Sidekick run into the Canvas it
+writes, keeps the `(conversation, path)` identity with the Canvas as the
+conversation, and tells the Canvas which artifact it made.
+
 **Consequences:** The serving Worker's public-by-default rules are unchanged;
 only the protected door's admission moved. See [`canvases.md`](canvases.md).
 

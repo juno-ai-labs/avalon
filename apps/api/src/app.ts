@@ -1,5 +1,6 @@
 import { messageIssueRoutes } from "./routes/message-issues";
 import { sharingRoutes } from "./routes/sharing";
+import { canvasRoutes } from "./routes/canvases";
 import { createBrowserRoutes } from "./routes/browser";
 import { daytonaWebhookRoutes } from "./routes/daytona";
 import { Hono } from "hono";
@@ -180,6 +181,7 @@ export function createApp(): Hono<HonoAppEnv> {
   identityApi.route("/message-issues", messageIssueRoutes);
   identityApi.route("/sharing", sharingRoutes);
   identityApi.route("/resources", resourceRoutes);
+  identityApi.route("/canvases", canvasRoutes);
   identityApi.route("/automations", automationRoutes);
   identityApi.route("/sidekicks", sidekickRoutes);
   identityApi.route("/feature-flags", featureFlagRoutes);

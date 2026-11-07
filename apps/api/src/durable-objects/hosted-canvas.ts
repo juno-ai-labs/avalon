@@ -4,10 +4,12 @@ import { IdSchema, UserIdSchema, WorkspaceIdSchema } from "@rally/contracts";
 import {
   CanvasAudienceUpdateSchema,
   CanvasDetailSchema,
+  CanvasEditorSchema,
   CanvasSidebarRowSchema,
   CanvasSummarySchema,
   type CanvasSidebarRow,
   type CanvasArtifact,
+  type CanvasArtifactKind,
   type CanvasDetail,
   type CanvasSummary,
 } from "@rally/contracts/canvases";
@@ -26,6 +28,7 @@ import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { parseRpcInput } from "../lib/rpc-input";
 import { canvasAdmits, canvasManages } from "../services/authorization-policy";
+import { listedResourceVisibilitySql } from "../services/resource-listing";
 import type { ConversationParentAuthorizeViewerRequest } from "@rally/contracts/conversation-parent";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from "../services/authorization-policy";
 import type { DirectoryCommonEffect } from "./conversation-parent-object";
@@ -56,6 +59,17 @@ export const CanvasCreateRequestSchema = z.strictObject({
 export type CanvasCreateRequest = z.infer<typeof CanvasCreateRequestSchema>;
 
 export const CanvasActorRequestSchema = z.strictObject({ ...Addressed, actor: CanvasActorSchema });
+
+export const CanvasNoteArtifactRequestSchema = z.strictObject({
+  ...Addressed,
+  resourceId: IdSchema,
+  editor: CanvasEditorSchema,
+});
+
+/** What an artifact is, from its resource row: a site Rally serves, an archive, or any other file. */
+export function canvasArtifactKind(resourceType: string, mimeType: string | null): CanvasArtifactKind {
+  return resourceType === "generated_site" ? "site" : mimeType === "application/zip" ? "archive" : "file";
+}
 export type CanvasActorRequest = z.infer<typeof CanvasActorRequestSchema>;
 
 export const CanvasSetAudienceRequestSchema = CanvasActorRequestSchema.extend({ update: CanvasAudienceUpdateSchema });
@@ -249,7 +263,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    * shared with, read live from the Sidekick, so nothing is copied. A replay
    * answers `created: false`.
    */
-  create(input: z.input<typeof CanvasCreateRequestSchema>): { created: boolean } {
+  create(input: z.input<typeof CanvasCreateRequestSchema>): { created: boolean; canvasId: string } {
     const request = parseRpcInput(CanvasCreateRequestSchema, input, "canvas_create");
     if (request.canvasId !== this.canvasId) throw new Error("canvas_identity_mismatch");
     const now = Date.now();
@@ -257,8 +271,15 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       const existing = this.row();
       if (existing) {
         if (existing.workspace_id !== request.workspaceId) throw notFound();
-        return { created: false };
+        return { created: false, canvasId: this.canvasId };
       }
+      // A run makes one Canvas: a second create for the same run, under any
+      // id, answers with the Canvas its first made.
+      const made = request.writer ? this.sql.exec<{ canvas_id: string }>(
+        `SELECT canvas_id FROM canvas_directory WHERE writer_sidekick_id = ? AND writer_run_id = ?`,
+        request.writer.sidekickId, request.writer.runId,
+      ).toArray()[0] : undefined;
+      if (made) return { created: false, canvasId: made.canvas_id };
       if (request.writer && !writerSidekick(this.sql, request.writer.sidekickId)) {
         throw new ApiError(404, "sidekick_not_found", "This Sidekick does not exist");
       }
@@ -270,7 +291,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         request.writer?.sidekickId ?? null, request.writer?.runId ?? null, request.authorityGeneration,
       );
       this.host.noteCanvasDirectoryChanged(this.canvasId);
-      return { created: true };
+      return { created: true, canvasId: this.canvasId };
     });
   }
 
@@ -295,9 +316,53 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     ).toArray().map((row) => row.user_id);
   }
 
-  /** The Canvas's artifacts at their current versions; none until its Chat publishes one. */
+  /** The Canvas's artifacts at their current versions, the most recently changed first; none until its Chat publishes one. */
   artifacts(): CanvasArtifact[] {
-    return [];
+    return this.sql.exec<{
+      id: string; title: string; mime_type: string | null; resource_type: string; current_version: number; updated_at: string;
+    }>(
+      `SELECT resource.id, resource.title, resource.mime_type, resource.resource_type, resource.current_version,
+              resource.updated_at
+         FROM canvas_artifacts artifact JOIN resources resource ON resource.id = artifact.resource_id
+        WHERE artifact.canvas_id = ? AND ${listedResourceVisibilitySql("resource")}
+        ORDER BY resource.updated_at DESC, resource.id`,
+      this.canvasId,
+    ).toArray().map((row) => ({
+      resourceId: row.id,
+      title: row.title,
+      mimeType: row.mime_type,
+      kind: canvasArtifactKind(row.resource_type, row.mime_type),
+      version: Math.max(1, Number(row.current_version)),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    }));
+  }
+
+  /**
+   * A publish from the Canvas's Chat, or from a run of its writer Sidekick,
+   * attached this resource to the Canvas's conversation: record it among the
+   * Canvas's artifacts and move the row's recency and last editor. The first
+   * publish of a path is the artifact's version 1, a later one a new version
+   * of it, and a publish of another path another artifact; the resource
+   * versioning layer records each version, this records only which resources
+   * the Canvas holds. Answers `false` for an id that is no Canvas.
+   */
+  noteArtifact(input: z.input<typeof CanvasNoteArtifactRequestSchema>): { noted: boolean } {
+    const request = parseRpcInput(CanvasNoteArtifactRequestSchema, input, "canvas_note_artifact");
+    const row = this.row();
+    if (!row || row.workspace_id !== request.workspaceId) return { noted: false };
+    const now = Date.now();
+    this.host.storage.transactionSync(() => {
+      this.sql.exec(
+        `INSERT INTO canvas_artifacts (canvas_id, resource_id, added_at) VALUES (?, ?, ?)
+         ON CONFLICT(canvas_id, resource_id) DO NOTHING`, this.canvasId, request.resourceId, now,
+      );
+      this.sql.exec(
+        `UPDATE canvas_directory SET updated_at = MAX(updated_at, ?), last_editor_kind = ?, last_editor_id = ? WHERE canvas_id = ?`,
+        now, request.editor.kind, request.editor.id, this.canvasId,
+      );
+      this.host.noteCanvasDirectoryChanged(this.canvasId);
+    });
+    return { noted: true };
   }
 
   /** The Canvas as this reader sees it; not found to anyone it does not admit. */
@@ -443,19 +508,34 @@ export function canvasSidebarRows(
   present: ReadonlyMap<string, readonly string[]>,
   limit: number,
 ): CanvasSidebarRow[] {
-  const rows = sql.exec<CanvasRow & { participant: number; unread: number; pinned_position: number | null }>(
+  const rows = sql.exec<CanvasRow & {
+    participant: number; unread: number; pinned_position: number | null; artifact_type: string | null; artifact_mime: string | null;
+  }>(
     `SELECT canvas.*, (participant.user_id IS NOT NULL) AS participant,
             CASE
               WHEN reads.user_id IS NULL THEN CASE WHEN canvas.created_by_user_id = ?1 THEN 0 ELSE 1 END
               WHEN reads.manual_unread_from_ordinal IS NOT NULL THEN 1
               WHEN COALESCE(json_extract(chat.effect_json, '$.latestAttentionOrdinal'), 0) > reads.seen_attention_ordinal THEN 1
+              -- A version of one of its artifacts somebody else made since this
+              -- viewer last read the Chat, as a pinned artifact's news is told.
+              WHEN EXISTS (SELECT 1 FROM canvas_artifacts artifact
+                  JOIN resource_versions version ON version.resource_id = artifact.resource_id
+                 WHERE artifact.canvas_id = canvas.canvas_id AND version.version > 1
+                   AND version.cause IN ('published', 'replaced')
+                   AND (version.author_user_id IS NULL OR version.author_user_id <> ?1)
+                   AND (version.on_behalf_of_user_id IS NULL OR version.on_behalf_of_user_id <> ?1)
+                   AND CAST(unixepoch(version.captured_at, 'subsec') * 1000 AS INTEGER) > reads.updated_at) THEN 1
               ELSE 0 END AS unread,
-            pin.position AS pinned_position
+            pin.position AS pinned_position,
+            newest.resource_type AS artifact_type, newest.mime_type AS artifact_mime
        FROM canvas_directory canvas
        LEFT JOIN canvas_participants participant ON participant.canvas_id = canvas.canvas_id AND participant.user_id = ?1
        LEFT JOIN sidekick_viewer_reads reads ON reads.sidekick_id = canvas.canvas_id AND reads.user_id = ?1
        LEFT JOIN sidekick_child_projections chat ON chat.sidekick_id = canvas.canvas_id AND chat.substream_id = '0'
        LEFT JOIN workspace_pins pin ON pin.user_id = ?1 AND pin.item_kind = 'canvas' AND pin.item_id = canvas.canvas_id
+       LEFT JOIN resources newest ON newest.id = (SELECT resource.id FROM canvas_artifacts artifact
+           JOIN resources resource ON resource.id = artifact.resource_id
+          WHERE artifact.canvas_id = canvas.canvas_id ORDER BY resource.updated_at DESC, resource.id LIMIT 1)
       WHERE canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
          OR (?2 = 1 AND canvas.visibility = 'workspace') OR canvas.writer_sidekick_id IS NOT NULL
       ORDER BY canvas.updated_at DESC, canvas.canvas_id`,
@@ -475,7 +555,7 @@ export function canvasSidebarRows(
     }, viewer.member)) continue;
     listed.push(CanvasSidebarRowSchema.parse({
       ...canvasSummary(row),
-      artifactKind: null,
+      artifactKind: row.artifact_type === null ? null : canvasArtifactKind(row.artifact_type, row.artifact_mime),
       unread: row.unread === 1,
       presentUserIds: [...(present.get(row.canvas_id) ?? [])].filter((userId) => userId !== viewer.userId),
       pinnedPosition: row.pinned_position,
@@ -483,4 +563,11 @@ export function canvasSidebarRows(
     }));
   }
   return listed;
+}
+
+/** The Canvases a Sidekick writes that this viewer may open, most recently active first: "the Canvases it writes to". */
+export function canvasesWrittenBy(sql: SqlStorage, sidekickId: string, actor: { userId: string; actorRole: CanvasActor["actorRole"] }): CanvasSummary[] {
+  return sql.exec<CanvasRow>(
+    `SELECT * FROM canvas_directory WHERE writer_sidekick_id = ? ORDER BY updated_at DESC, canvas_id`, sidekickId,
+  ).toArray().filter((row) => canvasReaderAllows(row, actor, sql)).map(canvasSummary);
 }

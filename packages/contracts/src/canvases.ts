@@ -127,3 +127,27 @@ export const WorkspaceCanvasListEventSchema = z.strictObject({
   items: z.array(CanvasSidebarRowSchema).max(250),
 });
 export type WorkspaceCanvasListEvent = z.infer<typeof WorkspaceCanvasListEventSchema>;
+
+/**
+ * `POST /canvases`: a new Canvas with no artifacts. `prompt` is the "Start
+ * from a prompt" card's first message, sent to its Chat as the creator's;
+ * `clientMessageId` makes a retried create send it once.
+ */
+export const CreateCanvasRequestSchema = z.strictObject({
+  title: z.string().trim().max(300).optional(),
+  prompt: z.strictObject({
+    text: z.string().trim().min(1),
+    clientMessageId: z.string().min(1).max(120),
+  }).optional(),
+});
+export type CreateCanvasRequest = z.infer<typeof CreateCanvasRequestSchema>;
+
+export const CreatedCanvasSchema = z.object({
+  canvasId: CanvasIdSchema,
+  /** The prompt's turn in the Chat, when one was sent. */
+  turnId: z.string().nullable(),
+});
+export type CreatedCanvas = z.infer<typeof CreatedCanvasSchema>;
+
+/** `POST /canvases/:id/pin` and `POST /automations/:id/pin`: pin in, or out of, the list's Pinned group. */
+export const SidebarPinRequestSchema = z.strictObject({ pinned: z.boolean() });
