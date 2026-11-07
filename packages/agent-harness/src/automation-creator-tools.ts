@@ -967,7 +967,8 @@ table, and returns what remains, and the instructions call it again until nothin
 remains. Size the share by elapsed time, never a fixed count: the tool reads
 current_time when it starts and again after each group of reads (a program that writes
 may not use Date.now() or new Date()), and keeps taking groups until about three
-quarters of the two minutes have passed. After each group it records that group's
+quarters of the two minutes have passed or no work is left. A page is not a share: when
+one page of items is done and time remains, it reads the next page. After each group it records that group's
 finished items with one update_rows, so a call that overruns loses at most the group in
 flight. When a write is refused, it lists the row the error names under exceptions and
 writes the rest, so one bad item never stalls the share. Items it did not reach stay
@@ -978,8 +979,8 @@ read a group together, then write it. Tune by measurement, not by
 guess: the aim is the most finished items per call, so the run needs the fewest calls
 and turns. Have the tool return how many items it finished, the seconds it took and
 the errors it met, take the concurrency and group size as inputs while you tune, and
-run sidekick_tool_test on a representative share of real items at a few settings (for
-example 4, 8 and 16 calls at once). Keep the setting with the most items per second
+run sidekick_tool_test on a representative share of real items, more than one page of
+them, at a few settings (for example 4, 8 and 16 calls at once). Keep the setting with the most items per second
 that adds no errors and no slowdown per item, then fix it in the tool. A limit a person
 asked for, or a source's documented rate limit, caps the setting; a number an earlier
 revision wrote without a measurement is a guess to re-measure, not a limit. Write the
