@@ -9,11 +9,14 @@ import {
   classifyAttachmentKind,
   ResourceSchema,
 } from "@rally/contracts";
+import { codeShaped, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../../env";
 import { numericEnv } from "../../env";
+import { ApiError } from "../../lib/api-error";
 import { sha256Hex } from "../../lib/crypto";
+import { logWarn } from "../../observability/logger";
 import { verifyAttachmentMimeType } from "../attachment-mime-verification";
 import {
   attachWorkstreamRuntimeResource,
@@ -707,6 +710,25 @@ export function createTerminalResourceBridge(
       fileCount: files.length,
     };
   };
+  /**
+   * Record a landed publish as one of its Canvas's artifacts. The publish has
+   * already attached the resource, so a note that cannot run does not fail
+   * the tool call; it is logged by name, and the next publish of the path
+   * notes it again (the note is idempotent).
+   */
+  const noteInCanvas = async (target: { parentId: string; substreamId: string }, resourceId: string): Promise<void> => {
+    if (!noteCanvasArtifact) return;
+    try {
+      await noteCanvasArtifact(target, resourceId);
+    } catch (error) {
+      logWarn(env, "canvas_artifact_note_failed", {
+        parent_id: target.parentId, resource_id: resourceId,
+        error_code: error instanceof ApiError ? error.code
+          : error instanceof Error && isCodeShaped(error.message) ? error.message
+            : codeShaped(error instanceof Error ? error.name : typeof error),
+      });
+    }
+  };
   const bridge: TerminalResourceBridge = {
     async importResource(context, input, destinationPath, sandboxGeneration, providerSandboxId, provider) {
       const rows = await loadVisibleWorkstreamResourcesByIds(
@@ -975,6 +997,9 @@ export function createTerminalResourceBridge(
           const metadata = JSON.parse(mine.metadata_json) as { size?: unknown };
           size = typeof metadata.size === "number" ? metadata.size : 0;
         } catch { /* legacy metadata; every other output field still resolves */ }
+        // A recovered publish is as much the Canvas's artifact as one that
+        // returned: the interrupted attempt may have died before its note.
+        await noteInCanvas(target, document.id);
         // Built from the captured version rather than the live row, because
         // those differ exactly when somebody revised the document afterwards,
         // and what this attempt published is the version it wrote.
@@ -1413,7 +1438,7 @@ export function createTerminalResourceBridge(
     input: { canvas?: string | undefined; displayName?: string | undefined; providerResourceId?: string | undefined },
     published: T): Promise<T> => {
     if (input.providerResourceId === undefined) {
-      await noteCanvasArtifact(await publicationAddress(context, input), published.resourceId);
+      await noteInCanvas(await publicationAddress(context, input), published.resourceId);
     }
     return published;
   };

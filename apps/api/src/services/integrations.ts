@@ -5214,7 +5214,8 @@ function principalSystemSectionFor(
  * than system prompt text: the system prompt prefix is byte-stable and
  * cached, and the artifact list changes with every publish. Keyed on the
  * message that woke the run, so a recovered execution renders the same
- * context. `docs/canvases.md#rally-in-a-canvas-chat`.
+ * context, under its own source kind, so it never shares an identity with
+ * the SLACK CONTEXT keyed on that same message. `docs/canvases.md#rally-in-a-canvas-chat`.
  */
 async function canvasRunContextMessage(env: Env, input: WorkstreamWorkflowInput): Promise<ModelMessage | null> {
   const canvas = await (await hostedParentStub(env, input.workspaceId)).canvasContext({
@@ -5233,7 +5234,7 @@ async function canvasRunContextMessage(env: Env, input: WorkstreamWorkflowInput)
         + "To change one, read it (read_resource, view_resource, or import_resource into the Terminal), then publish_resource the same filePath: "
         + "that is a new version of it, attributed to you. Publishing a different filePath adds another artifact to this Canvas.",
     })}`,
-  }, "run_context", input.triggerMessageId ?? input.harnessRunId);
+  }, "canvas_context", input.triggerMessageId ?? input.harnessRunId);
 }
 
 async function loadRunPromptContext(

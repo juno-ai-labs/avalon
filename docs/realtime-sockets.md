@@ -406,7 +406,10 @@ only members. The connect snapshot, `list_workstreams`, `workspace_workstream_st
 frames, `channel_rails` and `set_presence` all ask whether this person may list
 the Channel, so a guest is sent nothing of an Organization-wide Channel they are
 not in, not even a tombstone, and foregrounding one closes the socket as it
-would a member's. A guest is sent no automations: the Sidekick library is a
+would a member's. `set_presence` also admits a Canvas id as the foreground
+conversation, when the viewer may open that Canvas by its audience
+([`canvases.md`](canvases.md#presence)); one they may not open is kept out of
+presence the same way. A guest is sent no automations: the Sidekick library is a
 member's.
 
 The sidebar keeps the first page, and the desktop keeps `list_workstreams`
@@ -528,7 +531,18 @@ trip for the rare one is the way round that suits the p95; the reverse would put
 a debug preference in everyone's connect. The automations and notes do not vary
 by it at all.
 
-Neither list has a REST fetcher behind it any more. WorkspaceDO re-sends the
+A third list, each viewer's Canvases, rides the same machinery on its own
+event, `workspace_canvas_list`, with `canvases` as an optional key of the
+subscribe payload's sidebar and its own `canvases` waterline in
+`workspace_sidebar_list_state`. It is a separate event type rather than a third
+`workspace_sidebar_list` discriminator value because a released client fails a
+discriminator value it does not know and ignores an event type it does not
+know. A Canvas row, its participants, its Chat's latest message or who is in
+it now advance that waterline and push to every socket; one person's read or
+pins push to that person alone. [`canvases.md`](canvases.md#the-canvas-list)
+owns its rows.
+
+Neither of the first two lists has a REST fetcher behind it any more. WorkspaceDO re-sends the
 affected list whole as `workspace_sidebar_list` whenever it writes one of their
 rows, so the batch is the only load and the push is the only refresh — which is
 also why *every* first page is a batch, not just the cold one: a reconnect or a
@@ -553,12 +567,15 @@ path never saw them, and a sidebar row's next-run time stayed stale until
 something unrelated refetched the list.
 
 The event carries the whole list and a waterline for that list, monotonic within
-WorkspaceDO and advanced inside the transaction of the write that earned it. Two
-counters rather than one, because the lists change independently and one counter
-would let a note write hide an automation update. The opening batch carries the
-same two numbers, so the batch and every later push land in one client receiver
-that applies only a strictly greater version — `sidebar-list-store.ts` — rather
-than two handlers each trusting arrival order. What the lists do *not* carry is a
+WorkspaceDO and advanced inside the transaction of the write that earned it. A
+counter per list rather than one, because the lists change independently and one
+counter would let a note write hide an automation update. The opening batch
+carries the same numbers, so the batch and every later push land in one client
+receiver that applies only a strictly greater version — `sidebar-list-store.ts`
+— rather than handlers each trusting arrival order. A push therefore always
+advances its list's waterline, even when only a derived field such as a Canvas
+row's presence moved: one sent at the waterline the client already holds is
+dropped. What the lists do *not* carry is a
 version per row: unlike a work-stream row, which is assembled from child objects
 over an unordered Queue and needs one per field, the list is the unit here, and
 a row the viewer can no longer see is expressed by its absence, so archive and
@@ -1017,15 +1034,16 @@ Child archive admission uses the same `parent_archived` ticket field as parent a
 **What changed:** A conversation ticket's `pk` may be `canvas`, and
 `verifySocketTicket` accepts it. The route admits a Canvas reader by the
 Canvas's audience and seats them in the Chat before minting, as it does for a
-Sidekick's conversation.
+Sidekick's conversation. The workspace socket carries each viewer's Canvas
+list: `canvases` on the subscribe payload's sidebar and a
+`workspace_canvas_list` push; `set_presence` admits a Canvas the viewer may
+open as its foreground conversation.
 
 **Why:** A Canvas's Chat is an ordinary conversation object (the Canvases and
-Sidekicks decision log), so it opens on the same feed socket.
-
-The workspace socket carries each viewer's Canvas list: `canvases` on the
-subscribe payload's sidebar and a `workspace_canvas_list` push, its own event
-type so released clients ignore it; `set_presence` admits a Canvas the viewer
-may open as its foreground conversation.
+Sidekicks decision log), so it opens on the same feed socket. The list is its
+own event type because a released client fails a `workspace_sidebar_list`
+discriminator value it does not know and ignores an event type it does not
+know.
 
 **Consequences:** The conversation object refuses a ticket whose kind
 disagrees with its root row, so a Canvas id cannot be opened as a Thread. A

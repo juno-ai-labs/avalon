@@ -34,6 +34,7 @@ import type { DirectoryCommonEffect } from "./conversation-parent-object";
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationHost, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { sidekickManagerAllows, sidekickReaderAllows } from "./hosted-sidekick";
 import { ScopeInvitationService } from "./scope-invitation-service";
+import { artifactNewsSql } from "./workspace-pin-storage";
 
 /** Who is asking: their id and, for a member, their Organization role; a guest has none. */
 export const CanvasActorSchema = z.strictObject({
@@ -54,6 +55,11 @@ export const CanvasCreateRequestSchema = z.strictObject({
    * that made it. It starts out open to whoever the Sidekick is shared with.
    */
   writer: z.strictObject({ sidekickId: IdSchema, runId: IdSchema }).optional(),
+  /**
+   * The id already has a D1 anchor: a caller-minted id another conversation
+   * may hold. Only a replay of this creator's own Canvas is answered then.
+   */
+  anchored: z.boolean().optional(),
 });
 export type CanvasCreateRequest = z.infer<typeof CanvasCreateRequestSchema>;
 
@@ -100,6 +106,10 @@ export interface HostedCanvasHost extends HostedConversationHost {
 
 function forbidden(): ApiError {
   return new ApiError(403, "canvas_forbidden", "You cannot change who can open this Canvas");
+}
+
+function idUnavailable(): ApiError {
+  return new ApiError(409, "canvas_id_unavailable", "This Canvas id is already in use");
 }
 
 function notFound(): ApiError {
@@ -270,8 +280,11 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       const existing = this.row();
       if (existing) {
         if (existing.workspace_id !== request.workspaceId) throw notFound();
+        // A replay is its creator's: anybody else naming the id is refused.
+        if (existing.created_by_user_id !== request.createdByUserId) throw idUnavailable();
         return { created: false, canvasId: this.canvasId };
       }
+      if (request.anchored) throw idUnavailable();
       // A run makes one Canvas: a second create for the same run, under any
       // id, answers with the Canvas its first made.
       const made = request.writer ? this.sql.exec<{ canvas_id: string }>(
@@ -519,11 +532,8 @@ export function canvasSidebarRows(
               -- viewer last read the Chat, as a pinned artifact's news is told.
               WHEN EXISTS (SELECT 1 FROM canvas_artifacts artifact
                   JOIN resource_versions version ON version.resource_id = artifact.resource_id
-                 WHERE artifact.canvas_id = canvas.canvas_id AND version.version > 1
-                   AND version.cause IN ('published', 'replaced')
-                   AND (version.author_user_id IS NULL OR version.author_user_id <> ?1)
-                   AND (version.on_behalf_of_user_id IS NULL OR version.on_behalf_of_user_id <> ?1)
-                   AND CAST(unixepoch(version.captured_at, 'subsec') * 1000 AS INTEGER) > reads.updated_at) THEN 1
+                 WHERE artifact.canvas_id = canvas.canvas_id
+                   AND ${artifactNewsSql("version", "?1", "reads.updated_at")}) THEN 1
               ELSE 0 END AS unread,
             pin.position AS pinned_position,
             newest.resource_type AS artifact_type, newest.mime_type AS artifact_mime
