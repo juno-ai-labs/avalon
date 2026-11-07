@@ -6,7 +6,6 @@ import {
   AutomationRunSchema,
   AutomationExecutionPrincipalClaimSchema,
   AutomationSummarySchema,
-  WorkstreamAutomationSummarySchema,
   WorkstreamAppearancePatchSchema,
   SidekickAudienceUpdateSchema,
   IdSchema,
@@ -24,9 +23,6 @@ const runHeaders = z.object({ "idempotency-key": z.string().min(8).max(120) });
 
 /** Envelopes this route composes; the entities inside come from the contracts. */
 const AutomationPageSchema = z.object({ items: z.array(AutomationSummarySchema) });
-const WorkstreamAutomationPageSchema = z.object({
-  items: z.array(WorkstreamAutomationSummarySchema),
-});
 const AutomationRunPageSchema = z.object({ items: z.array(AutomationRunSchema) });
 const CreatedAutomationSchema = z.object({ automationId: IdSchema });
 const StartedRunSchema = z.object({ runId: IdSchema, reused: z.boolean() });
@@ -51,15 +47,6 @@ automationRoutes.get("/", async (c) =>
 // draft is written in that conversation, so there is no body.
 automationRoutes.post("/", async (c) =>
   c.json(CreatedAutomationSchema.parse(await new AutomationService(c.env, getAuth(c)).create()), 201));
-// A room's automations, for its rail. Under /automations rather than under the
-// work stream: the resource is the automation, and the work stream is which
-// ones — the same relationship the workspace list has to the workspace.
-automationRoutes.get("/workstream/:workstreamId", zValidator("param", z.object({
-  workstreamId: IdSchema,
-})), async (c) => c.json(WorkstreamAutomationPageSchema.parse(
-  await new AutomationService(c.env, getAuth(c))
-    .listForWorkstream(c.req.valid("param").workstreamId),
-)));
 automationRoutes.get("/:id", zValidator("param", idParam), async (c) =>
   c.json(AutomationDetailSchema.parse(detailResponse(
     await new AutomationService(c.env, getWorkspaceAuth(c)).detail(c.req.valid("param").id),

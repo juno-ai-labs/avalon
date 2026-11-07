@@ -2754,7 +2754,7 @@ describe('the card proposing an automation drafted in this room', () => {
       automationName: 'Weekly changelog',
       description: 'Summarize what shipped each week.',
       triggerSummaries: ['Every Monday at 9:00 AM'],
-      suggestedScope: 'workstream' as const,
+      suggestedScope: 'workspace' as const,
       ready: true,
     },
   };
@@ -2773,7 +2773,7 @@ describe('the card proposing an automation drafted in this room', () => {
 
   it('says who will be able to manage it, which acceptance freezes', () => {
     render(<MessageBlock {...actions} message={proposal} />);
-    expect(screen.getByRole('group').textContent).toContain('This thread can manage it');
+    expect(screen.getByRole('group').textContent).toContain('The organization can manage it');
 
     const personal = { ...proposal, draftProposed: { ...proposal.draftProposed, suggestedScope: 'personal' as const } };
     const { unmount } = render(<MessageBlock {...actions} message={personal} />);

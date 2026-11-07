@@ -140,7 +140,7 @@ const channelAMain = (extra: Partial<CommonEffect> = {}) => common("Channel A", 
 });
 
 function sidekick(automationId: string, extra: {
-  title: string; scope: "personal" | "workspace" | "workstream"; owningWorkstreamId?: string; authorUserId?: string;
+  title: string; scope: "personal" | "workspace"; authorUserId?: string;
   runAsUserId?: string; nextRunAt?: string; lifecycle?: "active" | "deleted";
 }): SidekickDirectoryRow {
   return {
@@ -151,7 +151,6 @@ function sidekick(automationId: string, extra: {
     lifecycle: extra.lifecycle ?? "active",
     loadable: true,
     scope: extra.scope,
-    owningWorkstreamId: extra.owningWorkstreamId ?? null,
     title: extra.title,
     description: `${extra.title} does things`,
     nextRunAt: extra.nextRunAt ?? null,
@@ -377,11 +376,16 @@ beforeEach(async () => {
   await publish(channelB, [common("Channel B", { scope: "personal", sidekickAttachmentIds: [] }), viewer(member, true, at)]);
   await publish(channelC, [common("Channel C"), viewer(owner, true, at), viewer(guest, true, at)]);
   for (const automation of [
-    sidekick(skOwned, { title: "Room helper", scope: "workstream", owningWorkstreamId: channelA }),
+    sidekick(skOwned, { title: "Room helper", scope: "workspace", }),
     sidekick(skRecommended, { title: "Weekly brief", scope: "workspace" }),
     sidekick(skAttached, { title: "Summarizer", scope: "workspace" }),
     sidekick(skPersonal, { title: "My own", scope: "personal", authorUserId: owner }),
   ]) await writeSidekickDirectoryRow(env, automation);
+  // The room's helper reaches Main as a posting attachment, which is how a
+  // Sidekick's activity shows in a conversation now that no room owns one.
+  await runInDurableObject(organization(), (_instance, state) => state.storage.sql.exec(
+    `INSERT INTO sidekick_conversation_attachments (automation_id, parent_kind, parent_id, substream_id, attached_by_user_id, attached_at)
+     VALUES (?, 'workstream', ?, '0', ?, 1)`, skOwned, channelA, member));
   await organization().setSidekickRecommendation({
     workspaceId, parentId: channelA, userId: member, sidekickId: skRecommended, attached: true,
   });
@@ -393,10 +397,11 @@ describe("channel_rails answers", () => {
     const rail = await railOf(connection, channelA);
 
     expect(rail.participantUserIds).toEqual([member, owner]);
-    expect(rail.sidekicks.owned.map((item) => item.id)).toEqual([skOwned]);
+    // A room owns no Sidekick, so nothing is owned and only the explicit
+    // recommendation is recommended.
+    expect(rail.sidekicks.owned).toEqual([]);
     expect(rail.sidekicks.recommended).toEqual([
       { id: skRecommended, name: "Weekly brief", description: "Weekly brief does things", available: true },
-      { id: skOwned, name: "Room helper", description: "Room helper does things", available: true },
     ]);
     // Another person's personal Sidekick is not shown in an Organization-wide
     // Channel, even though Main attached it.
@@ -417,14 +422,6 @@ describe("channel_rails answers", () => {
     const connection = await connect(member);
     const rail = await railOf(connection, channelB);
     expect(rail.sidekicks.attached?.map((item) => item.id)).toEqual([runAs]);
-    connection.socket.close(1000, "done");
-  });
-
-  it("tells a reader who is not in the room that it owns nothing, as the REST read does", async () => {
-    const connection = await connect(reader);
-    const rail = await railOf(connection, channelA);
-    expect(rail.sidekicks.owned).toEqual([]);
-    expect(rail.sidekicks.recommended.map((item) => item.id)).toEqual([skRecommended, skOwned]);
     connection.socket.close(1000, "done");
   });
 
@@ -481,22 +478,6 @@ describe("channel_rails answers", () => {
 });
 
 describe("channel_rails for a guest, and a row that no longer parses", () => {
-  it("tells a guest in the room that it owns nothing", async () => {
-    await writeSidekickDirectoryRow(env, sidekick("00000000-0000-7000-8000-0000000d72c1", { title: "C's helper", scope: "workstream", owningWorkstreamId: channelC }));
-    await runInDurableObject(organization(), (_instance, state) => insertSpace(state, [channelA, channelC]));
-    // A member in the same room is told what it owns.
-    const ownerConnection = await connect(owner);
-    expect((await railOf(ownerConnection, channelC)).sidekicks.owned.map((item) => item.id))
-      .toEqual(["00000000-0000-7000-8000-0000000d72c1"]);
-    ownerConnection.socket.close(1000, "done");
-
-    const connection = await connect(guest);
-    const rail = await railOf(connection, channelC);
-    expect(rail.participantUserIds).toEqual(expect.arrayContaining([guest, owner]));
-    expect(rail.sidekicks.owned).toEqual([]);
-    connection.socket.close(1000, "done");
-  });
-
   it("lists a guest the Channel they take part in, and nothing of an Organization-wide one they are not in", async () => {
     const connection = await connect(guest);
     const sidebar = connection.sync.sidebar as { workstreams: { items: Array<{ id: string }> }; automations: { items: unknown[] } };
@@ -564,8 +545,7 @@ describe("channel_rails for a guest, and a row that no longer parses", () => {
     expect(frames.at(-1)!.final).toBe(true);
     const rails = frames.flatMap((frame) => frame.rails);
     expect(rails.map((rail) => rail.workstreamId)).toEqual([channelA]);
-    expect(rails[0]!.sidekicks.owned).toEqual([expect.objectContaining({ id: skOwned, name: "Room helper" })]);
-    expect(rails[0]!.sidekicks.owned[0]).not.toHaveProperty("appearance");
+    expect(rails[0]!.sidekicks.owned).toEqual([]);
     expect(frames.flatMap((frame) => frame.oversized)).toEqual([{ workstreamId: channelC, railWaterline: expect.any(Number) }]);
     expect(logged.mock.calls.map(([entry]) => entry as Record<string, unknown>)
       .filter((entry) => entry?.event === "channel_rail_invalid"))
@@ -744,7 +724,7 @@ describe("the rail waterline", () => {
       workspaceId, parentId: channelA, userId: member, sidekickId: skRecommended, attached: false,
     });
     await pushed;
-    expect((await railOf(connection, channelA)).sidekicks.recommended.map((item) => item.id)).toEqual([skOwned]);
+    expect((await railOf(connection, channelA)).sidekicks.recommended).toEqual([]);
     connection.socket.close(1000, "done");
   });
 
@@ -801,34 +781,6 @@ describe("the rail waterline", () => {
     const pushed = rowPast(connection, channelA, before);
     await publish(channelA, [channelAMain({ scope: "personal" })]);
     await pushed;
-    connection.socket.close(1000, "done");
-  });
-
-  it("advances when an owned Sidekick is renamed, and not when only its next run moved", async () => {
-    const connection = await connect(owner);
-    const before = (await railOf(connection, channelA)).railWaterline;
-    await writeSidekickDirectoryRow(env, sidekick(skOwned, {
-      title: "Room helper", scope: "workstream", owningWorkstreamId: channelA, nextRunAt: "2026-09-26T09:00:00.000Z",
-    }));
-    expect((await railOf(connection, channelA)).railWaterline).toBe(before);
-
-    const pushed = rowPast(connection, channelA, before);
-    await writeSidekickDirectoryRow(env, sidekick(skOwned, {
-      title: "Room helper, renamed", scope: "workstream", owningWorkstreamId: channelA,
-    }));
-    await pushed;
-    expect((await railOf(connection, channelA)).sidekicks.owned).toEqual([expect.objectContaining({ name: "Room helper, renamed" })]);
-    connection.socket.close(1000, "done");
-  });
-
-  it("advances when a Sidekick the room owns is added", async () => {
-    const added = "00000000-0000-7000-8000-0000000d72c2";
-    const connection = await connect(owner);
-    const before = (await railOf(connection, channelC)).railWaterline;
-    const pushed = rowPast(connection, channelC, before);
-    await writeSidekickDirectoryRow(env, sidekick(added, { title: "New helper", scope: "workstream", owningWorkstreamId: channelC }));
-    await pushed;
-    expect((await railOf(connection, channelC)).sidekicks.recommended.map((item) => item.id)).toEqual([added]);
     connection.socket.close(1000, "done");
   });
 
@@ -947,30 +899,6 @@ describe("attached Sidekick activity", () => {
     await organization().receiveChildEffects({ substreamId: manualId, envelopes: [stale] });
     expect(await count()).toEqual({ count: 0 });
     connection.socket.close();
-  });
-
-  it("keeps homes and loaded attachments local to the selected conversation and excludes background children", async () => {
-    const localSidekick = "00000000-0000-7000-8000-0000000d7113";
-    await writeSidekickDirectoryRow(env, { ...sidekick(localSidekick, {
-      title: "Breakout helper", scope: "workstream", owningWorkstreamId: channelA,
-    }), owningSubstreamId: breakoutA });
-    await sidekickEffect(localSidekick, asSubstreamId("0"), "running");
-    await sidekickEffect(skAttached, asSubstreamId("0"), "running");
-    // A stale personal skill attachment is hidden by the rail's audience rule.
-    await sidekickEffect(skPersonal, asSubstreamId("0"), "running");
-    await sidekickEffect(skOwned, asSubstreamId("00000000-0000-7000-8000-0000000d7114"), "running", { backgroundAgent: true });
-    expect(await count()).toEqual({ count: 1 });
-    expect(await count(channelA, breakoutA)).toEqual({ count: 1 });
-    expect(await count(channelB)).toEqual({ count: 0 });
-    await organization().attachSidekickConversation({
-      workspaceId, userId: member, automationId: skAttached, reference: channelB,
-    });
-    expect(await count(channelB)).toEqual({ count: 1 });
-    await sidekickEffect(localSidekick, asSubstreamId("0"), "needs_input");
-    expect(await count(channelA, breakoutA)).toEqual({ count: 0 });
-    await expect(runInDurableObject(organization(), (instance) =>
-      instance.readSidekickActivity({ workspaceId, userId: reader, parentKind: "workstream", parentId: channelB, substreamId: "0" }),
-    )).rejects.toThrow("Conversation not found");
   });
 
   it("signals changed Main and Breakout attachments without signaling ordinary conversation updates", async () => {

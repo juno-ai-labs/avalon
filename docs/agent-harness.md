@@ -763,7 +763,7 @@ A plugin gives the model a capability; a **skill** gives it a procedure. Skills 
 
 A run's skills are **frozen with its scope**, exactly like its plugins. The host resolves them against the execution principal before admission and passes them on `RunHarnessInput.skills`; nothing in the loop reaches a store, so `load_skill` can only surface a body the run was already authorized to read. When a run has no skills, neither prompt section nor either tool appears.
 
-The deferred `rally_skill_recommendations` plugin manages recommendations through `list_skill_recommendations`, `recommend_skill`, and `unrecommend_skill`. It exposes skill IDs and recommendation state, with no authoring agent targets. It reuses the existing recommendation service and permissions. Sidekick authoring remains a separate surface; the product still calls these saved sources Sidekicks.
+A Thread's loop no longer recommends skills: the `rally_skill_recommendations` plugin and its `list_skill_recommendations`, `recommend_skill` and `unrecommend_skill` tools are gone, because a Sidekick is no longer something a Thread owns or recommends. What remains of the Thread-loop `rally:sidekicks` variant is the Sidekick delegation tools, under `rally_sidekick_delegation`, offered only to a user principal. Sidekick authoring remains a separate surface; the product still calls these saved sources Sidekicks.
 
 The always-active `rally_skills` plugin owns two globally named controls. `load_skill` takes an exact name from the `# Skills` catalog and adds the skill's body to `# Active Skill Instructions` for the rest of the run. `read_skill_resource` reads a bundled reference file, and refuses until its skill has been loaded — that gate is what stops a model pulling every catalog skill's references without taking on the instructions they belong to.
 
@@ -1893,6 +1893,16 @@ text, which would be a second classifier with its own way to misroute.
 **Consequences:** Addressing in a Sidekick's conversation has two stages, the
 classifier (or the mark) and the Sidekick's routing. Anything that adds a new
 kind of human input to `"0"` must say whether it is the wizard's.
+
+With the `workstream` scope retired (plan step A-5), the Thread loop's
+`rally:sidekicks` variant keeps only the delegation tools, presented as
+`rally_sidekick_delegation`; `list_skill_recommendations`, `recommend_skill`
+and `unrecommend_skill` are gone, because a Thread no longer owns or recommends
+a Sidekick. The authoring prompt and the submission schema offer only
+`personal` and `workspace`, and lose the owning-Thread lines (the room scope,
+"Scheduled result delivery to a workstream is limited to the owning
+workstream", and the home conversation as where feedback and Terminal
+publications live); the rest of the prompt is unchanged.
 
 ### 2026-11-03 — Task skills: reporting on data and creating an app
 

@@ -665,7 +665,8 @@ export function ChannelMenu({
     <ResolveRow actions={actions} noun="Thread" target={target} />
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(workstream.participants.length, workstream.scope, participantsPending)} view={PEOPLE_VIEW} />
     <LevelRow icon={<IconFiles aria-hidden="true" size={17} stroke={1.7} />} label="Artifacts" meta={resourcesPending ? undefined : artifacts.length} view={ARTIFACTS_VIEW} />
-    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={countMeta(sidekicks)} view={SIDEKICKS_VIEW} />
+    {/* Listed only when the caller supplies Sidekicks: a Thread no longer has its own. */}
+    {(sidekicks !== undefined || addSidekick) && <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={countMeta(sidekicks)} view={SIDEKICKS_VIEW} />}
     <LevelRow icon={<IconCornerDownRight aria-hidden="true" size={17} stroke={1.7} />} label="Breakouts" meta={breakouts?.length} view={BREAKOUTS_VIEW} />
     <MemoryLevelRow memory={memory} />
   </>;
@@ -832,7 +833,7 @@ export function BreakoutMenu({
     <MergeRow actions={actions} />
     <ResolveRow actions={actions} noun="Breakout" target={breakout} />
     <LevelRow icon={<IconUsers aria-hidden="true" size={17} stroke={1.7} />} label="People" meta={peopleMeta(participants.length, scope, participantsPending)} view={PEOPLE_VIEW} />
-    <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={countMeta(sidekicks)} view={SIDEKICKS_VIEW} />
+    {(sidekicks !== undefined || addSidekick) && <LevelRow icon={<IconHexagons aria-hidden="true" size={17} stroke={1.7} />} label="Sidekicks" meta={countMeta(sidekicks)} view={SIDEKICKS_VIEW} />}
     <MemoryLevelRow memory={memory} />
   </>;
 }

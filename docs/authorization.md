@@ -125,7 +125,8 @@ Breakout.
 An automation supplies its own scope, author, executor, `people` list
 membership and child registry, and `sidekickAdmits` decides from those alone:
 its author, its executor and the people it is shared with read it, and a member
-also reads an Organization-scoped one. An owning work stream no longer supplies
+also reads an Organization-scoped one. No work stream owns an automation (the
+`workstream` scope was retired by WorkspaceDO migration 137), so none supplies
 any access. Archived work streams remain readable. Deleted automations are absent.
 
 Guest membership comes from an explicitly carried request observation, or is
@@ -177,7 +178,7 @@ that comparison does not reauthorize. This contract does not relax mutations,
 socket admission or the existing artifact viewer-session revocation mechanism.
 Resources attached to a Sidekick's conversations reuse that Sidekick's
 audience: a guest reads them only from its `people` list, never through a
-grant on a home Channel or Breakout.
+grant on a Channel or Breakout.
 Guest admission observations are shared only within the current authorization
 batch, like other owner observations. Skill visibility alone does not expose a
 Sidekick's resources; existing member authorization remains on its original path.
@@ -566,8 +567,9 @@ home's grants, are removed, here and in search audience and memory facts.
 shared conversation is read by the people it is shared with (plan step A-4).
 An audience inherited from a Thread would outlive the Thread it came from.
 
-**Consequences:** A Thread-scoped Sidekick reads as personal until its
-conversion to Organization scope (plan step A-5). A guest reaches a Sidekick
+**Consequences:** A Thread-scoped Sidekick is an Organization one since
+WorkspaceDO migration 137 (plan step A-5), so its former Thread's people keep
+reading it as members do. A guest reaches a Sidekick
 only by being named on its list. The rule is one function; a reader that
 decides Sidekick access some other way is a defect.
 

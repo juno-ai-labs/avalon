@@ -1546,35 +1546,3 @@ describe('resource detail content preview', () => {
     expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith(note.id, expect.anything());
   });
 });
-
-describe('a channel’s Sidekicks in the main workstream rail', () => {
-  beforeEach(() => {
-    useUiStore.setState({ railOpen: true, railVariant: 'context', railWidth: 360, inspector: null });
-  });
-  it('keeps the Sidekicks heading for an empty answer and a pending one', () => {
-    const { rerender } = render(<Tooltip.Provider><InspectorRail workstream={workstream} sidekicks={[]} /></Tooltip.Provider>);
-    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
-    rerender(<Tooltip.Provider><InspectorRail workstream={workstream} /></Tooltip.Provider>);
-    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
-  });
-  it('shows the room’s Sidekicks and removes the one that offers it', () => {
-    const onRemove = vi.fn();
-    render(<Tooltip.Provider><InspectorRail workstream={workstream} sidekicks={[
-      { id: 'sidekick-1', name: 'Editorial guidance', description: 'Write clearly.', onRemove },
-    ]} /></Tooltip.Provider>);
-    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeVisible();
-    // The rail's own tooltip carries the name, so the row takes no `title`:
-    // the platform's draws in the desktop's type and never for a keyboard.
-    expect(screen.getByRole('button', { name: 'Editorial guidance' })).not.toHaveAttribute('title');
-    expect(screen.getByText('Write clearly.')).toBeVisible();
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Editorial guidance' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from this breakout' }));
-    expect(onRemove).toHaveBeenCalledOnce();
-  });
-  it('keeps an authorized unavailable attachment visible', () => {
-    render(<Tooltip.Provider><InspectorRail workstream={workstream} sidekicks={[
-      { id: 'sidekick-1', name: 'Editorial guidance', description: 'Write clearly.', note: 'Unavailable' },
-    ]} /></Tooltip.Provider>);
-    expect(screen.getByText('Unavailable · Write clearly.')).toBeVisible();
-  });
-});

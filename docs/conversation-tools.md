@@ -14,8 +14,8 @@ host's routing on the entry's internal `kind`, which no tool output carries.
 Read this before changing what an agent can read or post to outside its own
 conversation, and before giving a new kind of loop these tools. The tool design
 rules are [`agent-tools.md`](agent-tools.md)'s; the page-id mechanism is
-[`tool-pagination.md`](tool-pagination.md)'s; a Sidekick's home and its
-attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
+[`tool-pagination.md`](tool-pagination.md)'s; a Sidekick's attached
+conversations are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 
 ## Where the code lives
 
@@ -38,8 +38,8 @@ attachments are [`automation-lifecycle.md`](automation-lifecycle.md)'s.
 | --- | --- | --- | --- |
 | Breakout (`parentKind: workstream`, substream not `"0"`) | Its own conversation, its Thread's Main, the Channels the Thread is in, and all Threads and Breakouts in those Channels | list, read, search, merge | The person it works for, admitted to Main by the Breakout |
 | Thread Main (`parentKind: workstream`, substream `"0"`) | Its own thread, the Channels it is in, and all Threads and Breakouts in those Channels | list, read, search, merge | The person it works for |
-| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's own conversation (`isOwn`), its home and attachments | list, read, search, post, attach | The person talking to it |
-| Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`), its home and attachments | list, read, search, post | The run-as user |
+| Sidekick configuration (`parentKind: automation`, substream `"0"`, no run) | The Sidekick's own conversation (`isOwn`) and its attachments | list, read, search, post, attach | The person talking to it |
+| Sidekick run (`automationRun` present) | The Sidekick's own conversation (`isParent`) and its attachments | list, read, search, post | The run-as user |
 
 A Thread's Channels are the ones `channelSpaceIds` lists for the acting person
 today, unarchived, Organization-wide first: the person's own reach, never the
@@ -50,7 +50,8 @@ once, and a sibling's other Channels do not extend the scope: it is one hop
 from the current Thread's Channels, never the whole Organization. Canonical
 admission still decides each candidate independently; being in a Channel grants
 no access to a private Thread or Breakout. Sidekick scopes stay at the
-Sidekick's own conversation, its home and explicit attachments.
+Sidekick's own conversation and explicit attachments; a Sidekick has no home
+Thread and reaches no Channel.
 
 A Sidekick's own conversation is its shared conversation, substream `"0"`
 under the Sidekick (`kind: "sidekick"` to the host). Its `conversationId` is
@@ -80,8 +81,8 @@ attempt is never evidence of delivery. An activation post refused by scope,
 access or archival also records the existing Sidekick attention state with a
 fixed recovery message. No provider or event content is retained there, and
 ordinary successful posts perform no extra RPC. A later admitted occurrence
-clears attention through normal admission. A Sidekick without a home leaves the
-actionable failure on its activation.
+clears attention through normal admission. The actionable failure stays on
+the activation.
 
 Wire names are `conversation_list`, `conversation_list_next`,
 `conversation_read`, `conversation_read_next`, `conversation_post` and
@@ -96,7 +97,7 @@ it.
   and a `nextPageId`. The home (or the loop's own) comes first, then (for a
   Breakout loop) Main, then the Channels' feeds, then the peer Threads and
   Breakouts ordered by id. Parents stay ahead of peers across list pages. A
-  Sidekick's home comes first, then attachments in the order they were made. `isParent` marks a
+  Sidekick's own conversation comes first, then attachments in the order they were made. `isParent` marks a
   conversation this one sits inside: a Breakout's Main, a Thread's Channel.
   Every call re-reads the directories for the acting person and omits what they can no longer open and anything
   archived. A Channel's id is its Space id, a UUID no Thread shares.
@@ -149,8 +150,8 @@ it.
 - **post** takes `text` and `conversation`, and returns
   `{ conversationId, messageId, replayed }`. `conversation` may always be left
   out: the post lands in the Sidekick's own conversation, where everyone the
-  Sidekick is shared with reads it. A home, where there is one, is named like
-  any other conversation. The post request carries the target's `parentKind`
+  Sidekick is shared with reads it. A Channel's feed refuses a Sidekick's post
+  (`conversation_not_in_scope`). The post request carries the target's `parentKind`
   (`workstream`, the default, or `automation`), and
   `appendConversationPost` refuses one that does not match the object, or an
   `automation` target that is not substream `"0"`. The host derives the key
@@ -239,7 +240,7 @@ WorkspaceDO for the directories and admission
 conversation's SubstreamAgent for messages
 ([`workstream-durable-object.md`](workstream-durable-object.md)), and on the
 pagination wrapper ([`tool-pagination.md`](tool-pagination.md)). What a
-Sidekick's home and attachments are, and who may change them, belongs to
+Sidekick's attached conversations are, and who may change them, belongs to
 [`automation-lifecycle.md`](automation-lifecycle.md). It does not route
 external replies into a run, which is
 [`external-conversation-bindings.md`](external-conversation-bindings.md)'s, or
@@ -257,7 +258,6 @@ Each refusal is a typed failure with a stable `code`, a model-visible sentence
 | attach | `conversation_not_found` | `field` |
 | read, search, post, attach | `conversation_archived` | `resourceId` |
 | read, search, post, attach | `conversation_access_denied` (a Channel's feed refused included) | `resourceId` |
-| post | `invalid_arguments` (no home, `conversation` left out) | `field`, `expected` |
 | merge | `invalid_arguments` (empty `body`, or any other field) | `field`, `expected` |
 | merge | `merge_target_not_writable` (no Channel the person can post in) | none |
 | merge | `merge_resource_not_shareable` | `field` (`body.resources[i]`) |
@@ -354,7 +354,11 @@ conversation (`"0"`, `kind: "sidekick"`, id the Sidekick's) first, admitted by
 the Sidekick; `conversation_post` with no `conversation` posts there instead of
 to the home, so `conversation` is never required; and `appendConversationPost`
 accepts `parentKind: "automation"` substream `"0"` beside a Thread's
-conversations. The home and attachments stay reachable by id or title.
+conversations. Attachments stay reachable by id or title. Then, with the
+`workstream` scope retired (plan step A-5), a Sidekick has no home at all, and
+its wizard's scope no longer lists the General or Personal Channel a review
+announced in: a review announces in the Sidekick's own conversation, and
+`post` to a Channel's feed is refused, so `postSidekickChannelMessage` is gone.
 
 **Why:** The Canvases and Sidekicks pivot gives every Sidekick one shared
 conversation that everyone it is shared with reads, and the plan makes it the
@@ -364,7 +368,10 @@ and Threads are being retired. The own conversation is derived from the
 Sidekick, like the home, so it needs no `sidekick_conversation_attachments`
 row and the table's `parent_kind = 'workstream'` CHECK is unchanged. The
 `parentKind` field defaults to `workstream` so a post request written before it
-existed still means what it meant; a Canvas's conversation joins its enum.
+existed still means what it meant; a Canvas's conversation joins its enum. The
+review's Channel announcement went for the same reason: General and a Personal
+Channel are retired surfaces, and the people a Sidekick works for read its own
+conversation.
 
 **Consequences:** A homed Sidekick's run that left `conversation` out used to
 post in its Thread and now posts in its own conversation; instructions that

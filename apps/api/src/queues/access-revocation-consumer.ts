@@ -213,22 +213,8 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
   }
 
   if (target.scope === "workstream_automations") {
-    // A person who lost a room: every automation the room owns admitted them
-    // through the room, so each becomes an `automation` hop, which names the
-    // conversations. Only WorkspaceDO knows which automations a room owns.
-    const workspace = await durableObjectStubForWorkspace(
-      env,
-      env.WORKSPACE_DOS,
-      workspaceId,
-      workspaceDOName(env.AVALON_REGION, workspaceId),
-      placementAffinity,
-    );
-    const { automationIds = [] } = await workspace.automationIdsOwnedByWorkstream({
-      workspaceId,
-      workstreamId: target.workstreamId,
-    });
-    await publishDescendantRevocations(env, automationIds.map((automationId) =>
-      descendantRevocation(revocation, { scope: "automation", automationId })));
+    // A room owns no Sidekick any more, so a person who lost one lost no
+    // Sidekick with it; a hop queued before that has nothing to name.
     return;
   }
 
@@ -318,7 +304,7 @@ export async function consumeAccessRevocationQueue(
       message.ack();
     } catch (error) {
       // A retired object refuses the enumeration a hop asks for
-      // (`listChildren`, `automationIdsOwnedByWorkstream`), and will refuse it
+      // (`listChildren`), and will refuse it
       // on every redelivery. Retirement closed every socket beneath that object
       // when it wrote the tombstone, so there is nothing left for this hop to
       // find: the message is done, not failed.

@@ -198,7 +198,7 @@ describe("Terminal Bind integration", () => {
     } });
     await workspace.instance.sidekickCreate({
       workspaceId: W, automationId: S, authorUserId: U, scope: "workspace",
-      owningWorkstreamId: null, owningSubstreamId: asSubstreamId("0"), authorityGeneration: 1
+      authorityGeneration: 1
     });
     const consent = async (userId: typeof U, allowed: boolean) => {
       const request = { workspaceId: W, automationId: S, userId, allowed, operationId: crypto.randomUUID() };
@@ -288,7 +288,7 @@ describe("Terminal Bind integration", () => {
       workspaceId: W, userId: U, accessClass: "member", role: "owner", status: "active", incarnation: "test-member", revision: 1,
     } });
     await workspace.instance.sidekickCreate({ workspaceId: W, automationId: S, authorUserId: U,
-      scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1 });
+      scope: "workspace", authorityGeneration: 1 });
     const snapshot = { id: "wizard-sandbox", name: "wizard-sandbox", state: "running" as const, domainAllowList: [] as string[] };
     // Only the external sandbox provider is doubled; inventory assembly,
     // delegation, shared-file authority and Terminal execution remain real.

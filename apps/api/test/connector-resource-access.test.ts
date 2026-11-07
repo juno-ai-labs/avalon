@@ -188,7 +188,7 @@ describe("reaching one resource through whichever connection can", () => {
     database.prepare("INSERT INTO workspace_members(workspace_id,user_id,role,status,joined_at) VALUES (?,?,'member','active',?)")
       .run(WORKSPACE_ID, other, NOW);
     await workspaceObject.instance.sidekickCreate({ workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID,
-      authorUserId: USER_ID, scope: "workspace", owningWorkstreamId: null, authorityGeneration: 1
+      authorUserId: USER_ID, scope: "workspace", authorityGeneration: 1
     });
     const request = { workspaceId: WORKSPACE_ID, automationId: WORKSTREAM_ID, userId: other, allowed: true, operationId: crypto.randomUUID() };
     const prepared = await workspaceObject.instance.sidekickPrepareMyDelegation(request);

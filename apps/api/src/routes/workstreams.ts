@@ -13,7 +13,7 @@ import {
 } from "@rally/contracts";
 import { SubstreamCreationResultSchema } from "@rally/contracts/substream-creation";
 import { SessionImportRunService, assertImportIdentity } from "../services/session-import-run-service";
-import { MemoryForgetResponseSchema, MemoryReviewSchema, SidekickAttachmentsSchema } from "@rally/contracts";
+import { MemoryForgetResponseSchema, MemoryReviewSchema } from "@rally/contracts";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono, type Context } from "hono";
 import { requireSendableMessageLength, zValidator } from "../middleware/validation";
@@ -110,21 +110,6 @@ const SocketTicketSchema = z.object({
 });
 
 export const workstreamRoutes = new Hono<HonoAppEnv>();
-workstreamRoutes.get("/:id/recommended-sidekicks", zValidator("param", idParam), async (c) =>
-  c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).recommendedSidekicks(c.req.valid("param").id))));
-workstreamRoutes.put("/:id/recommended-sidekicks/:sidekickId", zValidator("param", z.object({ id: IdSchema, sidekickId: IdSchema })), async (c) => {
-  const { id, sidekickId } = c.req.valid("param");
-  return c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).setSidekickRecommendation(id, sidekickId, true)));
-});
-workstreamRoutes.delete("/:id/recommended-sidekicks/:sidekickId", zValidator("param", z.object({ id: IdSchema, sidekickId: IdSchema })),
-  zValidator("query", z.object({ substreamId: z.union([z.literal("0"), IdSchema]).default("0") })), async (c) => {
-    const { id, sidekickId } = c.req.valid("param");
-    return c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).setSidekickRecommendation(id, sidekickId, false, c.req.valid("query").substreamId)));
-  });
-workstreamRoutes.get("/:id/sidekicks", zValidator("param", idParam), async (c) =>
-  c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).sidekickAttachments(c.req.valid("param").id))));
-workstreamRoutes.delete("/:id/sidekicks/:sidekickId", zValidator("param", z.object({ id: IdSchema, sidekickId: IdSchema })), async (c) =>
-  c.json(SidekickAttachmentsSchema.parse(await new WorkstreamService(c.env, getAuth(c)).sidekickAttachments(c.req.valid("param").id, c.req.valid("param").sidekickId))));
 /**
  * What Rally remembers about this Thread, or one of its Breakouts by
  * `substreamId`: the facts whose subject is that conversation, as the person

@@ -203,6 +203,8 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "sidekick_child_projections",
   "sidekick_child_receipts",
   "sidekick_reviews",
+  "sidekick_audience",
+  "sidekick_viewer_reads",
   // The Space authority's ten tables. Every one of them is reached through
   // the typed Space RPCs in `workspace-space-protocol.ts` and nothing else — a
   // Space is a relationship the Organization owns, not product state a runtime

@@ -140,9 +140,7 @@ export interface SidekickDirectoryRow {
   authorUserId: string;
   runAsUserId?: string;
   lifecycle: "draft" | "active" | "paused" | "deleted";
-  scope: "personal" | "workspace" | "workstream";
-  owningWorkstreamId: string | null;
-  owningSubstreamId?: string;
+  scope: "personal" | "workspace";
   title: string;
   description: string;
   nextRunAt?: string | null;
@@ -168,23 +166,20 @@ export async function writeSidekickDirectoryRow(env: Env, row: SidekickDirectory
       host.storage.sql.exec(
         `INSERT INTO automation_directory
            (automation_id, workspace_id, author_user_id, run_as_user_id, source_version, payload_hash,
-            lifecycle, scope, owning_workstream_id, owning_substream_id, title, description, next_run_at,
-            projected_at, loadable)
-         VALUES (?, ?, ?, ?, 1, 'test-row', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            lifecycle, scope, title, description, next_run_at, projected_at, loadable)
+         VALUES (?, ?, ?, ?, 1, 'test-row', ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(automation_id) DO UPDATE SET
            author_user_id = excluded.author_user_id,
            run_as_user_id = COALESCE(excluded.run_as_user_id, run_as_user_id),
            lifecycle = excluded.lifecycle,
            scope = excluded.scope,
-           owning_workstream_id = excluded.owning_workstream_id,
-           owning_substream_id = excluded.owning_substream_id,
            title = excluded.title,
            description = excluded.description,
            next_run_at = excluded.next_run_at,
            projected_at = excluded.projected_at,
            loadable = excluded.loadable`,
         row.automationId, row.workspaceId, row.authorUserId, row.runAsUserId ?? null,
-        row.lifecycle, row.scope, row.owningWorkstreamId, row.owningSubstreamId ?? "0",
+        row.lifecycle, row.scope,
         row.title, row.description, row.nextRunAt ? Date.parse(row.nextRunAt) : null, now,
         row.loadable === undefined ? null : row.loadable ? 1 : 0,
       );

@@ -87,12 +87,14 @@ it("upgrades a populated v79 Organization through 82 in one wake, every Channel 
     expect(rows(sql, `SELECT workstream_id FROM channels WHERE rail_waterline > 0`)).toEqual([{ workstream_id: "channel-a" }]);
     expect(rows(sql, `SELECT workstream_id FROM channel_rail_changes`)).toEqual([{ workstream_id: "channel-a" }]);
 
-    // The Sidekick carried across 81 moves the room that owns it when it is renamed, and only that room.
+    // The room's Sidekick carried across 81 is an Organization Sidekick since
+    // 137, which retired the room scope and the owner trigger: renaming it
+    // moves no room.
     const [channelA] = rows(sql, `SELECT rail_waterline FROM channels WHERE workstream_id = 'channel-a'`);
     sql.exec(`UPDATE automation_directory SET title = 'Room helper, renamed' WHERE automation_id = 'sidekick-b'`);
     expect(rows(sql, `SELECT workstream_id, rail_waterline FROM channels ORDER BY workstream_id`)).toEqual([
       { workstream_id: "channel-a", rail_waterline: channelA!.rail_waterline },
-      { workstream_id: "channel-b", rail_waterline: 1 },
+      { workstream_id: "channel-b", rail_waterline: 0 },
     ]);
   });
 });
