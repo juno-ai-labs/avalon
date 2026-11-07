@@ -899,7 +899,7 @@ export function createConversationsPlugin(
     modelId: "rally_conversations",
     shortWireName: CONVERSATIONS_WIRE_PREFIX,
     displayName: "Conversations",
-    searchAliases: ["thread", "channel", "breakout", "messages", "search", "post", "home conversation"],
+    searchAliases: ["canvas", "chat", "sidekick conversation", "messages", "search", "post"],
     description: "List, read, search, and post to the Rally conversations this agent can reach.",
     systemMessage: conversationsSystemMessage({ posts, attaches, run: input.automationRun !== undefined,
       parents: scope.kind === "conversation", breakout: inBreakout,
@@ -915,7 +915,7 @@ export function createConversationsPlugin(
  * A run's final message stays in the run child, which nobody but the run's
  * people reads: a result reaches a conversation only by a post.
  */
-export const RUN_POST_INSTRUCTION = "Your final message stays in this run; when the instructions say a conversation should hear something, post it with conversation_post, once, in full, after the work is done. When a permission problem prevents you from finishing, use conversation_post to tell the owning conversation what is blocked and how someone can fix it. Distinguish completed and unfinished work; report the unresolved problem once for this run. Successful fallback needs no permission-error message. Share no private event contents, tokens or raw provider errors. Name a concrete recovery step, such as adding a delegate, reconnecting an account, or restoring resource or destination access. If you cannot post, leave the actionable failure visible and do not claim delivery.";
+export const RUN_POST_INSTRUCTION = "Your final message is this run's reply on its row in this Sidekick's own conversation, where everyone it is shared with reads it, so never post that reply there again. When the instructions say another conversation should hear something, post it with conversation_post, once, in full, after the work is done. When a permission problem prevents you from finishing, say in your final message what is blocked and how someone can fix it. Distinguish completed and unfinished work; report the unresolved problem once for this run. Successful fallback needs no permission-error message. Share no private event contents, tokens or raw provider errors. Name a concrete recovery step, such as adding a delegate, reconnecting an account, or restoring resource or destination access. If you cannot post, leave the actionable failure visible and do not claim delivery.";
 
 /**
  * What sits above a Thread or Breakout is this loop's to read: a Breakout's

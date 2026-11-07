@@ -554,7 +554,7 @@ Every address, identifier, URL, name, date, and quoted fact in an outward-facing
 
 Substantial interactive work starts with a brief approach; updates then focus on changes to participants' expectations or decisions they need to make. Headless runs skip progress narration. Final responses lead with the result and omit padding while retaining requested detail and material caveats. The prompt owns the writing rules; its preference for natural language applies to style only and does not relax platform policy. Private reasoning is never emitted.
 
-A run of a room's Sidekick posts its result itself, with `conversation_post` from the preloaded `rally:conversations` plugin, which defaults to the home named by the task context's `sidekick.homeConversationId`; the plugin's system message, not standing policy, names the tool. Nothing posts after the run. A Sidekick no room owns runs on the `self_delivery` surface, whose section tells the run that any sending its instructions ask for is its own work, done with its tools inside the run, and that it sends nothing when they ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the home.
+The standing prompt names the product as it is: an Organization holds Canvases and Sidekicks, a Canvas's Chat is where its people ask Rally for work, and a Sidekick's shared conversation is where the people it is shared with read its runs and ask for more, each run in a conversation of its own. It names no Channel, Thread, Breakout or Space, and the task context's key for the title and objective is `conversation`. Every Sidekick run that an inbound email did not start runs on the `self_delivery` surface, whose section says what the people in the Sidekick's shared conversation see (the final message is the reply on the run's row there, and nothing sends it anywhere else), that any send to a reader outside Rally is the run's own work, done with its tools, and that it sends nothing when the instructions ask for no delivery; left silent, a run that *describes* emailing a summary has not emailed it. The `rally:conversations` plugin's run instruction says the same about the row and tells the run not to post that reply into the shared conversation again; a post is for another conversation. [`conversation-tools.md`](conversation-tools.md) owns the plugin and [`automation-lifecycle.md`](automation-lifecycle.md) the run rows.
 
 A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the document-type trigger, the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run, with an explicit output-surface tie-breaker: an externally delivered run includes the complete usable result in its final message because recipients cannot open Rally resource embeds. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the normal work-stream rule steers into.
 
@@ -1873,6 +1873,59 @@ credentials, or run state. Isolate eviction drops these optimizations and demand
 reconstructs them. There is no timer, persistent cache, or global readiness gate.
 
 ## Changelog
+
+### 2026-11-07 — The prompts speak of Canvases and Sidekicks, and a run's result is posted once
+
+**What changed:** Plan step C-5's vocabulary half. The standing work prompt
+(`prompts/workstream.ts`) replaces the Channel, Thread and Breakout paragraph
+and its identifier map with the Organization, Canvas and Sidekick paragraph
+above, renames the task context's `workstream` key to `conversation`, and says
+"outside Rally" where it said "outside this thread". The `self_delivery`
+section and the activation rules now say the final message is the reply on the
+run's row in the Sidekick's shared conversation, read by everyone the Sidekick
+is shared with, where they said it notified nobody; permission recovery says
+what is blocked in the final message rather than alerting an owning
+conversation that no Sidekick has. `RUN_POST_INSTRUCTION` and the wizard's
+guide (`AUTOMATIONS_PLUGIN_SYSTEM_MESSAGE`) say the same and tell a run not to
+post its report into the shared conversation a second time; the wizard's
+sandbox line names "the conversation that asked for this one" and its
+publication line a Canvas the Sidekick writes. The compaction prompt and the
+live inventory appendix say "conversation" (`# Authoritative conversation
+resource inventory`); the memory digest titles a Canvas's facts (stored kind
+`thread`) "About the Canvas" and a retired room's by its label, and the sweep's
+prose files a fact under the placement's own subject; the `building-live-sites`
+skill saves the Canvas a site is in and publishes a refresh into it with
+`publish_resource`'s `canvas` argument rather than using a Thread-owned
+Sidekick; `sidekicks_list`, the run change guidance, the skill catalog, the
+document policy, the scheduled wake-up header and three built-in skills drop
+Thread wording. The turn-disposition eval and `turn-disposition-evaluation.ts`,
+which only exercised merge and Breakout dispositions, are deleted.
+
+**Why:** After the cutover every run is a Canvas Chat, a Sidekick's wizard or a
+Sidekick run, and the prompt still told the model it was in a Thread under a
+Channel, a structure no conversation has any more. A-4 projects a run's final
+message into the Sidekick's shared conversation as the run's row, so "notifies
+nobody" was false, and the guidance that also had runs post their report with
+`conversation_post` put the same report in `"0"` twice.
+
+**Golden hashes moved:** `workstream`, `automationWorkstream` (the paragraph,
+the context key, the document line and, for the second, the activation lines),
+`memorySweep` (the subject rule), `memoryDigest` (two group titles) and
+`compactionCheckpoint` (its fixture's appendix heading). Each was regenerated by
+rendering the case before and after the change and reading the diff, which held
+only the edits above. The fixed-prompt byte ceiling (8,500) holds: the new
+paragraph is shorter than the one it replaced.
+
+**Evals:** The plan asked for the addressing and premature-stop evals before
+and after. The addressing prompt is unchanged, so its eval inputs are byte for
+byte the same. The premature-stop addressing set, whose wake-up case quotes the
+renamed header, was rerun after the change against JEV 1.14.0: 15 of 15 labels
+correct.
+
+**Consequences:** The prompt files keep their stored names (`workstream.ts`,
+`outputSurface: "workstream"`, the memory subject kinds); renaming those is the
+main removal's. A future prompt that names a room must name a Canvas or a
+Sidekick's conversation, and a Sidekick report in Rally is its final message.
 
 ### 2026-11-07 — Addressing in a Sidekick's conversation goes to the wizard only on a manager's marked edit
 

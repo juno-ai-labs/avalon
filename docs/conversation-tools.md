@@ -162,7 +162,9 @@ it.
   run), so the client renders it under the Sidekick's name. When the run was
   woken by an external message (a bound thread's reply), the host copies that
   sender into `externalSource`. A run's system message says its final message
-  stays in the run, so a conversation hears a result only by a post. Its
+  is the reply on its row in the Sidekick's shared conversation, so it never
+  posts that reply there again; another conversation hears a result only by a
+  post ([`automation-lifecycle.md`](automation-lifecycle.md#runs-in-the-shared-conversation)). Its
   description and the plugin's instructions steer a Sidekick's own reports
   through this path.
 - **attach** takes `conversation` and returns

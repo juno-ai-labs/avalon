@@ -1222,9 +1222,10 @@ window, `SIDEKICK_REVIEW_SAMPLE_LIMITS`). Every count and every sampled run is
 under the accepted revision, since the window can reach back past a revision
 and an earlier revision's runs followed a procedure the person already
 changed. It carries no run content: the wizard reads a run with
-`sidekick_runs_read`. It names where a change is announced (`announceTo`,
-as the conversation tools name it): the Sidekick's own shared conversation,
-whose id is the Sidekick's, for every Sidekick. It is admitted through
+`sidekick_runs_read`. It still carries `announceTo` (the Sidekick's own shared
+conversation, whose id is the Sidekick's, for every Sidekick), but the
+rendered notice no longer names it: the review runs in that conversation, so
+the wizard's report is the announcement. It is admitted through
 `admitSystemActivation`
 (`SubstreamAgent.admitSidekickReview`, only on a Sidekick's substream `0`) as
 a queued `system` row whose text (`sidekickReviewText`) is the one sentence a
@@ -1282,14 +1283,12 @@ reports that once rather than estimating, and a saved condition for when to
 report (nothing new, a threshold not crossed) still holds. Only a person adds
 a check: their own message in the wizard, or a change request whose
 host-written "Run turn started by" line names a Rally member, never a request
-another agent relays. When a change was saved
-and the notice names where to announce it, it publishes one message there
-with `conversation_post`, naming that conversation, for the people the
-Sidekick works for: what it now does differently, why, and how to restore
-the earlier version; nothing is posted when nothing changed. The target is
-the Sidekick's own conversation, an ordinary post there; a Channel's feed takes
-no Sidekick post ([`conversation-tools.md`](conversation-tools.md)). It ends with a report in the authoring conversation for
-the owner, who was not present. A revision it submits is an ordinary
+another agent relays. It ends with one report in the
+Sidekick's shared conversation, where the review runs, for the owner, who was
+not present, and for everyone the Sidekick is shared with: what it now does
+differently and why, or why nothing changed, and how to restore the earlier
+version. That report is the announcement; the wizard posts nothing else with
+`conversation_post`. A revision it submits is an ordinary
 revision, and the person reverts by asking for the earlier one.
 
 ### Change request from a run
@@ -1840,6 +1839,30 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-11-07 — A review and a run each say their result once in the shared conversation
+
+**What changed:** The self-review's guide merges its announce and report
+steps: the wizard ends with one report in the Sidekick's shared conversation,
+for the owner and everyone the Sidekick is shared with, and that report is the
+announcement. `renderSidekickReviewNotice` drops its "Where to announce a
+change" line; the notice keeps `announceTo`. The run instructions in the
+wizard's guide and `RUN_POST_INSTRUCTION` say a run's final message is the
+reply on its row in the shared conversation, so a report in Rally needs no
+`conversation_post` step.
+
+**Why:** The review runs in `"0"` and `announceTo` is `"0"`, so a review that
+saved a change posted twice there: the announcement, then the report. Runs had
+the same doubling once A-4 projected their final message into `"0"` as their
+row while the guide still saved `conversation_post` as the delivery for a
+report in Rally. Rejected: keeping the line and telling the wizard to skip a
+post when the target is its own conversation, which asks the model to compare
+an id it is never shown.
+
+**Consequences:** `announceTo` is unread by the model; removing it from
+`SidekickReviewNoticeV1Schema` waits for its writer in `hosted-sidekick.ts` to
+go. A Sidekick whose saved instructions predate this still names
+`conversation_post` for its report until a review or a manager revises it.
 
 ### 2026-11-07 — The separate Sidekicks window is removed
 
