@@ -1,4 +1,5 @@
 import { rpcResultBody } from "../durable-objects/rpc-result";
+import { hostedConversationParentKind } from "../durable-objects/workstream-object-storage";
 import { Preparation } from "./harness-preparation";
 import {
   agentAddressForId, agentIdForAddress, AgentIdSchema, asSubstreamId, modelAgentId,
@@ -115,7 +116,7 @@ export class AgentCommunicationService {
         throw error;
       });
     const child = await this.conversation(childId);
-    const initialized = await child.initializeDelegatedAgent({ bootstrap: { workspaceId: this.input.workspaceId, parentKind: this.input.parentKind,
+    const initialized = await child.initializeDelegatedAgent({ bootstrap: { workspaceId: this.input.workspaceId, parentKind: hostedConversationParentKind(this.input.parentKind),
       parentId: this.input.parentId, substreamId: asSubstreamId(id), generation: reservation.authorityGeneration }, provision: {
       title: args.name, objective: args.description, scope: identity.scope,
       createdByUserId: identity.created_by_user_id,

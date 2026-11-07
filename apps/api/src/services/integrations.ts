@@ -25,7 +25,7 @@ import { ObjectPortError } from "../runtime/object-port";
 import { dynamicConnectorCapability, stableConnectionWireName, stableWireToolName, validateDynamicConnectorTools, discoverDynamicConnectorTools, connectorServerPresentation, storedConnectorServerMetadata } from "./connector-tool-inventory";
 import { ApiError } from "../lib/api-error";
 import { connectorPluginViews, connectorPluginBindingViews, connectorPluginCanonicalId, type GooglePluginBundle, type ConnectorPluginView } from "../lib/connector-plugin-views";
-import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef, recommendedSidekickRefs } from "./sidekick-skills";
+import { resolveSidekickSkills, sidekickSkillCatalog, sidekickSkillRef } from "./sidekick-skills";
 import type { SidekickSkillSnapshot } from "@rally/contracts";
 import { assertSafePublicUrl } from '../lib/public-web-url';
 import {
@@ -1842,17 +1842,6 @@ function createAvalonAutomationsPlugin(
     ? input.executionPrincipal.userId
     : null;
 
-  if (input.parentKind === "workstream") {
-    // A Thread no longer owns or recommends a Sidekick; what is left here is
-    // managing Sidekick delegation, for a person.
-    const tools = delegationUser ? sidekickDelegationTools(env, input, delegationUser, true) : [];
-    return { canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekick_delegation", shortWireName: "",
-      displayName: "Sidekick delegation",
-      description: "Inspect and manage Sidekick delegates for Organization users.",
-      searchAliases: ["sidekick", "delegate", "delegation", "account", "consent", "allow", "withdraw"],
-      systemMessage: `To set up delegated work, use the separate sidekicks_list and create_sidekick agent tools.${delegationUser ? ` ${sidekickDelegationGuidance()}` : ""}`,
-      tools, preload: false, explicit: false };
-  }
   /**
    * Person ids a submitted rule is allowed to name.
    *
@@ -2911,14 +2900,10 @@ export async function runWorkstreamHarness(
       input,
     ));
   const storedSidekickSkills = runtime?.persistentLoop?.readSidekickSkills() ?? null;
-  const recommendationState: { preparation: Preparation<string[]> | null } = { preparation: null };
-  const readRecommendations = () => (
-    recommendationState.preparation ??= new Preparation(() => recommendedSidekickRefs(env, input))
-  ).get();
   const sidekickSourcesPreparation = new Preparation(async () => {
     const { principalIsGuest } = await authorityPreparation.get();
     return resolveSidekickSkills(env, input, principalIsGuest,
-      storedSidekickSkills?.sources.map((source) => source.id), storedSidekickSkills !== null, readRecommendations);
+      storedSidekickSkills?.sources.map((source) => source.id), storedSidekickSkills !== null);
   });
   // These are read-only preparations. Keep the healthy turn's independent work
   // overlapped; the stored outcome still wins without replaying execution.
@@ -2940,10 +2925,8 @@ export async function runWorkstreamHarness(
     throw new ApiError(403, "sidekick_access_changed", "A skill is no longer available to this execution");
   }
   const attachedSidekickIds = new Set(runtime?.persistentLoop?.attachedSidekickIds() ?? []);
-  // No eligible sources means no recommendation can enter this snapshot. Avoid
-  // waking parent authorities for executions that cannot use any Sidekick.
-  const recommendations = storedSidekickSkills ? storedSidekickSkills.recommendedRefs ?? []
-    : currentSidekickSources.length > 0 ? await readRecommendations() : [];
+  // A Channel's defaults were the only recommendations; a stored snapshot keeps its own.
+  const recommendations: readonly string[] = storedSidekickSkills?.recommendedRefs ?? [];
   const sidekickSnapshot = storedSidekickSkills ?? {
     sources: currentSidekickSources,
     activeRefs: currentSidekickSources.filter((source) => attachedSidekickIds.has(source.id)).map((source) => sidekickSkillRef(source.id)),
@@ -3462,7 +3445,8 @@ export async function runWorkstreamHarness(
       persistedOutcomeMs: persistedHostOutcomePreparation.elapsedMs ?? 0,
       initialRunAuthorityMs: authorityPreparation.elapsedMs ?? 0,
       sidekickAuthorityMs: sidekickSourcesPreparation.elapsedMs ?? 0,
-      sidekickRecommendationsMs: recommendationState.preparation?.elapsedMs ?? 0,
+      // A Channel's recommended Sidekicks were the only source; none is read now.
+      sidekickRecommendationsMs: 0,
       leaseHeartbeatMs,
       runContextMs: promptPreparation.elapsedMs ?? 0,
       transcriptBootstrapMs,
@@ -3471,7 +3455,7 @@ export async function runWorkstreamHarness(
       attachmentReplayMs: attachmentGroundingPreparation.elapsedMs ?? 0,
       transcriptBootstrapRequired: requiresCanonicalBootstrap,
       sidekickSnapshotReused: storedSidekickSkills !== null,
-      sidekickRecommendationsRead: recommendationState.preparation !== null,
+      sidekickRecommendationsRead: false,
     } satisfies AgentInferencePreparationBreakdown,
   });
 
@@ -5870,8 +5854,8 @@ async function loadHarnessTools(
     : null;
   // In a Sidekick's shared conversation the authoring tools are the wizard's,
   // and a turn there is the wizard's only once the Sidekick routed it so.
-  const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && (input.parentKind === "workstream"
-    || (input.parentKind === "automation" && (input.substreamId ?? "0") === "0" && input.sidekickWizard === true))
+  const automationsPlugin = input.executionPrincipal.type === "user" && !input.automationRun && input.parentKind === "automation"
+    && (input.substreamId ?? "0") === "0" && input.sidekickWizard === true
     ? createAvalonAutomationsPlugin(env, input, loadedAutomationPluginIds, expandPages, codeMode)
     : input.executionPrincipal.type === "user" ? {
       canonicalId: AUTOMATIONS_PLUGIN_ID, modelId: "rally_sidekicks", shortWireName: "sidekick",

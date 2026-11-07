@@ -1210,18 +1210,12 @@ with a message id prefixed by the substream, and a person notification records
 the recipient's viewer projection version as `requiredProjectionVersion` so it
 cannot be delivered before that person's directory row has landed.
 
-A Channel forwards Main effects, plus mention and participant-added
-notifications addressed to current private-child members. It stamps these with
-the child ID, preserving the child's title and notification identity. Child
-viewer state does not enter shared surfaces, and child activity enters in one
-shape only: a breakout message that mentions somebody is forwarded emptied (no
-body, not digestible, targets the mentions alone) with `metadata.substreamId`
-stamped, and WorkspaceDO stores it with the author as its only audience
-(`digests.md` (retired)). A child common
-projection still updates only the private-child title registry — it is never
-merged into Main's. Before forwarding a person notification, it ensures an
-unchanged Main viewer projection (or a neutral nonparticipant projection)
-supplies the existing delivery barrier.
+A Canvas's parent hosts one conversation, `0`, and forwards its effects; a
+Sidekick's forwards its shared conversation's and records its runs' locally.
+The Channel forwarding of Main and private-child effects (mention and
+participant-added notifications to private-child members, the emptied
+Breakout mention, the private-child title registry) went with Channel hosting
+in plan step C-2.
 
 **It also forwards a breakout's own `directory_common` and `directory_user`
 projections, unchanged, under keys of their own.** That is a second question
@@ -1972,6 +1966,23 @@ and the private-child roster and archive mirrors (`applyPrivateChildMembership`,
 the membership mirror its three authorization triggers. `prepared_conversation_receipts` stays as a dead
 table: `pending_attachment_reservation_recovery`'s foreign key names it, and
 dropping it would rebuild a live table to remove a reference nothing writes.
+
+A conversation object now admits only a Sidekick (`automation`) or a Canvas
+parent: `HostedConversationParentKindSchema` types every request the object
+parses, a product request must name its parent kind (the `workstream` default
+is gone), and a root row whose stored `parent_kind` is `workstream` or `space`
+is refused on open with `conversation_parent_kind_retired:<kind>`, the code a
+child effect for those kinds already answers. The contract's
+`ConversationParentKindSchema` keeps all four kinds until the contracts step
+(B-8), so the Worker narrows at each call into the object
+(`hostedConversationParentKind`). The Thread-only branches went with it: the
+Space loop refusal, Thread appearance writes, the private-child archive guard,
+a Main's Sidekick attachment list and its report on wake, the Thread
+terminal-sandbox sweep with the alarm lane that ran it, and the Slack outcome
+delivery a Channel run made. Two readers still see a retired kind, through
+`identityForRetirement`: the constructor, so a Thread's object still
+constructs and `retireObject` can close it, and `conversationTranscriptText`,
+the operator dump that must read it first (`thread-retirement-service.ts`).
 
 **Why:** The Canvases and Sidekicks PRD's decision log: Threads, Channels,
 Spaces and Breakouts leave the product, a Canvas's Chat is an ordinary

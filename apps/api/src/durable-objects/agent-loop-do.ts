@@ -16,7 +16,7 @@ import { conversationAsText } from "../services/conversation-text";
 import { safeParseSocketEvent, isUnknownSocketEvent, ClientSocketEventTypeSchema } from "@rally/contracts";
 import { SidekickSkillSnapshotSchema } from "@rally/contracts";
 import { SlackOriginContextSchema } from "@rally/contracts";
-import { sidekickSkillCatalog, sidekickSkillRef } from "../services/sidekick-skills";
+import { sidekickSkillCatalog } from "../services/sidekick-skills";
 import { flushAuthorizationProjection, nextAuthorizationProjectionAt } from './authorization-projection';
 import { searchIndexingConfigured } from '../services/search-embedding';
 import { conversationSearchDocumentIds, prepareConversationLinks, readConversationSearchLink, type ConversationDisplay } from './conversation-link-search';
@@ -27,7 +27,6 @@ import {
 import { drainSearchProjectionOutbox, nextSearchProjectionDueAt, SearchConversationProjectionMessageSchema, SearchProjectionMessageSchema } from './search-projection-outbox';
 import { searchDocumentId } from '../services/text-search';
 import { conversationSearchAudience } from '../services/search-audience';
-import { ConversationParentKindSchema } from "@rally/contracts/conversation-parent";
 
 import { workspaceDOName } from "./names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -61,7 +60,6 @@ import {
   asWorkspaceId,
   ServerSocketEventSchema,
   UpdateWorkstreamRequestSchema,
-  WorkstreamAppearancePatchSchema,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamSocketCommandResultSchema,
@@ -139,8 +137,6 @@ import {
   type WorkstreamHarnessResult,
 } from "../services/integrations";
 import { CODE_PLUGIN_ID, CUSTOM_TOOLS_PLUGIN_ID } from "../services/code-mode";
-import { canonicalExternalResultText } from "../services/external-result-delivery";
-import { SlackAgentService } from "../services/slack-agent-service";
 import { attemptMemorySweep } from "../services/memory-sweep-service";
 import { digestReaderFor, refreshMemoryDigestCopy } from "../services/memory-digest-service";
 import { loadOpenRouterContextWindows } from "../services/openrouter-context-windows";
@@ -149,10 +145,7 @@ import {
   withLocalWorkstreamAuthorities,
   type LocalAuthorityExecutor,
 } from "../runtime/local-authorities";
-import { createTerminalObjectPort, TerminalObjectPortError } from "../services/terminal/object-port";
-import { parseTerminalRegionConfiguration } from "../services/terminal/contract";
-import { refreshTerminalProviderObservation } from "../services/terminal/observation";
-import { createTerminalProviderRpcClient } from "../services/terminal/provider-rpc-client";
+import { TerminalObjectPortError } from "../services/terminal/object-port";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import { loadWorkstreamWakeup } from "../services/workstream-wakeup-service";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
@@ -169,7 +162,7 @@ import {
   type ConversationEffectEnvelope,
 } from "@rally/contracts/conversation-effects";
 import { conversationObjectName, substreamLoopId } from "./names";
-import { WorkstreamObjectStore } from "./workstream-object-storage";
+import { HostedConversationParentKindSchema, WorkstreamObjectStore } from "./workstream-object-storage";
 import type { SequencedSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
@@ -367,7 +360,7 @@ const SocketAttachmentSchema = z.object({
 const SocketAdmissionPreparationSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   /** The parent this conversation belongs to; `workstreamId` is its id whatever the kind. */
-  parentKind: ConversationParentKindSchema,
+  parentKind: HostedConversationParentKindSchema,
   workstreamId: IdSchema,
   substreamId: SubstreamIdSchema,
   userId: UserIdSchema,
@@ -388,7 +381,7 @@ export type SocketAdmissionPreparation = z.input<typeof SocketAdmissionPreparati
 const SocketUpgradeIdentitySchema = z.object({
   workspaceId: WorkspaceIdSchema,
   /** Sent by the Worker from the ticket; absent only on a self-addressed upgrade, which reads the stored kind. */
-  parentKind: ConversationParentKindSchema.optional(),
+  parentKind: HostedConversationParentKindSchema.optional(),
   workstreamId: IdSchema,
   substreamId: SubstreamIdSchema,
   userId: UserIdSchema,
@@ -427,7 +420,7 @@ const RuntimeReaderAudienceRequestSchema = z.strictObject({
 });
 const RuntimeBootstrapRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
-  parentKind: ConversationParentKindSchema,
+  parentKind: HostedConversationParentKindSchema,
   parentId: IdSchema,
   /** Which of the parent's conversations this object is; the main one by default. */
   substreamId: z.union([z.literal("0"), IdSchema]).optional(),
@@ -469,21 +462,14 @@ const ProductAuthSchema = z.strictObject({
  *
  * `parentKind` is which authority the caller believes owns this conversation's
  * parent, and `runProductRequest` refuses a request whose answer disagrees with
- * the object's own identity. It is needed because a conversation is addressed
- * by *id*: `WorkstreamObjectClient` derives the object name from the id alone,
- * so without this a Space's hidden main conversation — which the PRD gives no
- * product surface at all, no feed, no transcript, no search result — is
- * reachable through `/workstreams/:id` by anybody holding a Space id, and every
- * member is handed every Space id on the workspace socket. A Space id is not a
- * secret; what it must not be is an address for a Channel operation.
- *
- * Defaulted to `workstream` so the wire shape is unchanged for every existing
- * caller, all of which mean a Channel.
+ * the object's own identity: a conversation is addressed by id, and the kind
+ * keeps a Sidekick's id from reaching an operation meant for a Canvas's Chat.
+ * Required: every caller names its parent, a Sidekick or a Canvas.
  */
 function productOperation<Shape extends z.ZodRawShape>(shape: Shape) {
   return z.strictObject({
     auth: ProductAuthSchema,
-    parentKind: ConversationParentKindSchema.default("workstream"),
+    parentKind: HostedConversationParentKindSchema,
     ...shape,
   });
 }
@@ -505,11 +491,6 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
   productOperation({ operation: z.literal("create_message"),
     input: WorkstreamObjectCreateMessageInputSchema }),
   productOperation({ operation: z.literal("add_participant"), userId: IdSchema }),
-  // The appearance write over the product request. A Space admits no feed
-  // socket, so the socket command that carries this for a Channel cannot reach
-  // it; the write itself is the same one.
-  productOperation({ operation: z.literal("set_appearance"),
-    operationId: IdSchema, patch: WorkstreamAppearancePatchSchema }),
   productOperation({ operation: z.literal("remove_participant"), userId: IdSchema,
     operationId: IdSchema.optional(), owningThread: z.boolean().optional() }),
   productOperation({ operation: z.literal("attach_resource"), resourceId: IdSchema }),
@@ -1140,31 +1121,18 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
       // its first scoped request and may never change it afterward.
-      const constructedIdentity = this.objectStore.identity();
-      if (constructedIdentity) {
+      // Read unnarrowed: an object whose parent was retired (a Thread's or a
+      // Space's) must still construct, so the operator dump can read it and
+      // `retireObject` can close it; it has no loop to recover.
+      const constructedIdentity = this.objectStore.identityForRetirement();
+      if (constructedIdentity && HostedConversationParentKindSchema.safeParse(constructedIdentity.parentKind).success) {
         const persistedSubstream = this.state.storage.sql.exec<{
           external_substream_id: string;
         }>(
           `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
         ).toArray()[0];
         if (!persistedSubstream) this.ensureSubstreamIdentity("0");
-        // A Space's hidden conversation has no loop to recover, and asking for
-        // one here is not a no-op: `ensurePersistentLoop` refuses a Space
-        // parent by design, and a throw inside the constructor's
-        // `blockConcurrencyWhile` breaks the object's input gate. So the first
-        // time a Space's conversation was rebuilt from storage — which is
-        // every time, because nothing opens it and it is evicted seconds after
-        // it is made — it could not be constructed at all, and every Space
-        // operation that addresses it answered 500: its audience, its name and
-        // appearance, its participants and its defaults, and the drain that
-        // carries its own directory projection to the Organization.
-        //
-        // The guard is here rather than in `ensurePersistentLoop` because the
-        // refusal is right everywhere else: a Space with an agent loop is the
-        // thing that must not exist, and every other caller is asking to run
-        // something. This one is only asking to *recover*, and there is
-        // nothing of the kind to recover.
-        if (constructedIdentity.parentKind !== "space") {
+        {
           // Before the first projection read, which caches every message:
           // loop state written before the harness stopped persisting tool
           // image parts would otherwise load them all, the very load that ran
@@ -1336,12 +1304,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
   private ensurePersistentLoop() {
     const identity = this.objectStore.identity();
     if (!identity) throw new Error("substream_loop_identity_unavailable");
-    // A Space's retired hidden conversation (only Spaces created before
-    // 2026-09-26 have one) holds nothing anybody reads: no composer reaches
-    // it, no socket opens it, and no agent runs in it. This is the one place a loop is minted, so it is the
-    // one place that has to say so — every other branch that excludes a Space
-    // from a run path is excluding something that could not have started.
-    if (identity.parentKind === "space") throw new Error("substream_loop_space_parent_refused");
     const substreamId = this.externalSubstreamId();
     const loopId = substreamLoopId(asWorkstreamId(identity.parentId), substreamId);
     const bindStateRevision = this.transcript.readBindProjection(loopId)?.stateRevision ?? 0;
@@ -1410,17 +1372,10 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * Awaiting `storageReady` is the whole point: it runs the migrations and the
    * schema work that make the first real call slow. WorkspaceDO fires this
    * when a person opens a Channel, so Main's cold start runs before the first
-   * request that needs it. Without side effects unless the parent passes
-   * `reportAttachments`, so it stays free to call on an object nobody has
-   * asked for yet.
-   *
-   * `reportAttachments`: the parent has never heard this Main's Sidekick
-   * attachments, so commit its directory projection now, which carries them.
-   * Asked for by the parent when a reader opens the Channel, rather than done
-   * as the object starts, where a write would move the alarm ahead of a
-   * recovering loop's own wake.
+   * request that needs it. Without side effects, so it stays free to call on
+   * an object nobody has asked for yet.
    */
-  async wake(options: { reportAttachments?: boolean } = {}): Promise<{
+  async wake(): Promise<{
     objectId: string;
     authorityMode: "unclaimed" | "preparing" | "authoritative";
   }> {
@@ -1428,10 +1383,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     const root = this.state.storage.sql.exec<{ authority_mode: "preparing" | "authoritative" }>(
       `SELECT authority_mode FROM workstream WHERE id = 1`,
     ).toArray()[0];
-    if (options.reportAttachments === true && root?.authority_mode === "authoritative"
-      && this.objectStore.identity()?.parentKind === "workstream" && this.externalSubstreamId() === "0") {
-      await this.product.commitWithCommonEffect(() => true);
-    }
     return {
       objectId: this.state.id.toString(),
       authorityMode: root?.authority_mode ?? "unclaimed",
@@ -1461,10 +1412,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     ) {
       return { outcome: "refused" };
     }
-    if (preparation.parentKind === "workstream"
-      && preparation.substreamId !== "0"
-      && preparation.membershipVersion <= 0) return { outcome: "refused" };
-
     try {
       this.ensureSubstreamIdentity(preparation.substreamId);
       this.objectStore.ensureIdentity({
@@ -1977,7 +1924,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       || identity.parentId !== request.workstreamId
       || this.externalSubstreamId() !== request.substreamId
       // A Sidekick's and a Canvas's posts land only in the shared conversation.
-      || (request.parentKind !== "workstream" && request.substreamId !== "0")) {
+      || request.substreamId !== "0") {
       return { outcome: "refused", code: "workstream_destination_mismatch", messageId: null };
     }
     const existing = this.messages.messageByClientId({ clientMessageId: request.clientMessageId });
@@ -2301,35 +2248,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       }
       throw error;
     }
-  }
-
-  /** Authoritative current readers for privacy decisions made outside this object. */
-  async sidekickAttachments(input: { workspaceId: string; workstreamId: string; removeId?: string; auth?: AuthContext }): Promise<string[]> {
-    await this.initialized;
-    const request = z.strictObject({ workspaceId: WorkspaceIdSchema, workstreamId: IdSchema, removeId: IdSchema.optional(), auth:ProductAuthSchema.optional() }).parse(input);
-    const identity = this.objectStore.identity();
-    if (!identity || identity.workspaceId !== request.workspaceId || identity.parentId !== request.workstreamId || identity.parentKind !== "workstream") {
-      throw new Error("sidekick_attachment_identity_mismatch");
-    }
-    if (request.auth) {
-      const { principal,...auth } = request.auth;
-      const root = await this.product.authorize({ ...auth,...(principal ? { principal } : {}) });
-      if (request.removeId) {
-        this.assertPrivateChildNotArchived();
-        if (root.archived_at !== null) throw new ApiError(409,"workstream_archived","The conversation is archived");
-        if (this.state.storage.sql.exec("SELECT user_id FROM participants WHERE user_id = ? AND status = 'active'",auth.userId).toArray().length === 0) {
-          throw new ApiError(403,"sidekick_attachment_forbidden","Only participants can change Sidekick attachments");
-        }
-      }
-    }
-    const removeId = request.removeId;
-    if (removeId) {
-      // The parent hears the new list, so a Channel rail drops it too.
-      await this.product.commitWithCommonEffect((sql) => sql.exec<{ sidekick_id: string }>(
-        `DELETE FROM sidekick_attachments WHERE sidekick_id = ? RETURNING sidekick_id`, removeId,
-      ).toArray().length > 0);
-    }
-    return this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id);
   }
 
   async readerAudience(input: z.input<typeof RuntimeReaderAudienceRequestSchema>): Promise<WorkstreamReaderAudience | null> {
@@ -3432,10 +3350,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         // Only a merge is told whether it replayed: the receipt is a strict
         // client shape, and the merge service is the one caller that asks.
         return jsonResponse(request.input.merge ? { ...receipt, replayed } : receipt);
-      }
-      if (request.operation === "set_appearance") {
-        await this.product.setAppearance(current, request.operationId, request.patch);
-        return jsonResponse({ ok: true });
       }
       if (request.operation === "add_participant") {
         const participant = await this.product.addParticipant(current, request.userId);
@@ -5136,9 +5050,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         ).toArray()[0];
         return row ? SidekickSkillSnapshotSchema.parse(JSON.parse(row.snapshot_json)) : null;
       },
-      attachedSidekickIds: () => this.objectStore.identity()?.parentKind === "workstream"
-        ? this.state.storage.sql.exec<{ sidekick_id: string }>(`SELECT sidekick_id FROM sidekick_attachments ORDER BY attached_at, sidekick_id`).toArray().map((row) => row.sidekick_id)
-        : [],
+      // Only a Thread's conversation attached Sidekicks to itself.
+      attachedSidekickIds: () => [],
       saveSidekickSkills: (snapshot) => {
         fence();
         this.state.storage.sql.exec(`INSERT OR IGNORE INTO sidekick_execution_skills (execution_id, snapshot_json) VALUES (?, ?)`,
@@ -5153,16 +5066,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           const snapshot = SidekickSkillSnapshotSchema.parse(JSON.parse(row.snapshot_json));
           if (!snapshot.activeRefs.includes(ref)) snapshot.activeRefs.push(ref);
           sql.exec(`UPDATE sidekick_execution_skills SET snapshot_json = ? WHERE execution_id = ?`, JSON.stringify(snapshot), execution.runId);
-          const source = snapshot.sources.find((entry) => sidekickSkillRef(entry.id) === ref);
-          if (!source || this.objectStore.identity()?.parentKind !== "workstream") return false;
-          // Strictly after the last attach: the list is reported in attach
-          // order, and `Date.now()` does not move within one request.
-          return sql.exec<{ sidekick_id: string }>(
-            `INSERT INTO sidekick_attachments (sidekick_id, attached_at)
-             VALUES (?, MAX(?, COALESCE((SELECT MAX(attached_at) FROM sidekick_attachments), 0) + 1))
-             ON CONFLICT(sidekick_id) DO NOTHING RETURNING sidekick_id`,
-            source.id, Date.now(),
-          ).toArray().length > 0;
+          // Only a Thread's conversation filed a loaded Sidekick as attached.
+          return false;
         });
       },
       projection: this.transcript.readBindProjection(input.loopId),
@@ -5533,11 +5438,10 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
       ? await this.deliverAgentRunResult(input, outcome)
       : null;
-    // The memory sweep admits a Sidekick's own conversation and runs as well
-    // as a Thread's, which is why it sits outside the guard above. Two
+    // The memory sweep admits a Canvas's and a Sidekick's conversations. Two
     // single-row reads on most calls; a claim sends the window to the Queue
     // rather than calling the model here. Never throws.
-    if (input.parentKind === "workstream" || input.parentKind === "automation" || input.parentKind === "canvas") {
+    if (input.parentKind === "automation" || input.parentKind === "canvas") {
       await attemptMemorySweep(executionEnv, {
         workspaceId: input.workspaceId,
         parentKind: input.parentKind,
@@ -5602,38 +5506,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       // said, and let the owner decide.
       await new AgentCommunicationService(this.env, input).notifySilentCompletion((await this.agentRuntimeInfo())?.name ?? null);
     }
-    // Hidden workers publish results only through explicit messaging tools. Their
-    // local final response must not be projected into the parent's Slack room.
-    if (input.backgroundAgent) return settlementDiagnosticCode;
-    const elicitationMessage = outcome.status === "needs_input"
-      ? await this.product.elicitationMessageForRunForRuntime(input.harnessRunId)
-      : null;
-    const message = elicitationMessage ?? finalMessage;
-    // External platforms are projections of durable transcript state. Status
-    // cleanup may still run without a final turn, but no adapter may invent or
-    // stream response prose that the canonical transcript does not contain.
-    const text = canonicalExternalResultText(message);
-
-    // Only a Channel's run has a Slack thread waiting on its outcome.
-    if (input.parentKind !== "workstream") return settlementDiagnosticCode;
-    const slack = new SlackAgentService(this.env);
-    await slack.deliverWorkstreamOutcome(
-      input.workspaceId,
-      input.parentId,
-      text,
-      `${input.harnessRunId}:${outcome.status}`,
-      outcome.status,
-      {
-        // The member whose message started this run, not the thread's opener:
-        // a needs-input connect prompt belongs to whoever asked.
-        triggeringSlackUserId: input.slackOrigin?.actorSlackUserId ?? null,
-        reactionAnchor: input.slackOrigin?.reactionAnchor ?? null,
-        // Follow-ups steered into this run have no run of their own; this one
-        // answered them, so it settles their messages too.
-        absorbedReactionAnchors: this.transcript.absorbedSlackOrigins(input.harnessRunId)
-          .flatMap((origin) => SlackOriginContextSchema.safeParse(origin).data?.reactionAnchor ?? []),
-      },
-    );
+    // Only a Thread's run had an external room (a Slack thread) waiting on
+    // its outcome; a Canvas's and a Sidekick's results stay in Rally.
     return settlementDiagnosticCode;
   }
 
@@ -6352,13 +6226,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     }
   }
 
-  private assertPrivateChildNotArchived(): void {
-    if (this.objectStore.identity()?.parentKind !== "workstream" || this.externalSubstreamId() === "0") return;
-    if (this.identityRows.identity()?.archived_at != null) {
-      throw new ApiError(409, "substream_archived", "This substream is archived");
-    }
-  }
-
   private async mutateSocketSubstream(
     socket: WebSocket,
     attachment: SocketAttachment,
@@ -6393,7 +6260,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         throw new ApiError(503, "workstream_maintenance", "Threads are temporarily unavailable");
       }
       assertParentWritable(attachment);
-      this.assertPrivateChildNotArchived();
       const auth = await this.socketViewerAuth(attachment);
       if (!auth) {
         disconnect(socket, 1012, "Reconnect for substream commands");
@@ -6447,9 +6313,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         return;
       }
       if (command.type === "set_workstream_appearance") {
-        await this.product.setAppearanceForAdmittedSocket(auth, command.operationId, command.appearance);
-        this.sendSocketCommandResult(socket, { type: "client_command_succeeded", command: command.type, operationId: command.operationId });
-        return;
+        // A Thread's icon and colour; a Canvas's and a Sidekick's conversation has none.
+        throw new ApiError(403, "main_conversation_required", "This conversation has no appearance to change");
       }
       if (command.type === "reorder_pending_inputs") {
         const result = await this.product.reorderPendingInputsForAdmittedSocket(
@@ -6575,7 +6440,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
           throw new ApiError(503, "workstream_maintenance", "Threads are temporarily unavailable");
         }
         assertParentWritable(attachment);
-        this.assertPrivateChildNotArchived();
         if (!attachment.sessionId || attachment.role === undefined) {
           // A socket admitted before this command path existed has no role in
           // its hibernation attachment. A normal reconnect obtains a fresh
@@ -7088,7 +6952,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     text: string;
   }> {
     await this.storageReady;
-    const identity = this.objectStore.identity();
+    const identity = this.objectStore.identityForRetirement();
     const throughSequence = this.transcript.transcriptThrough();
     const range = this.transcript.range(
       { snapshotId: "operator-dump", snapshotThrough: throughSequence, snapshotAtUtc: new Date().toISOString() },
@@ -7208,7 +7072,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       || this.objectStore.nextSemanticRealtimeDueAt() !== null
       || this.nextLoopWorkAt(now) !== null
       || this.nextExternalSettlementAt() !== null
-      || this.terminalObservationDue(now)
       || this.memorySweepDue(now)
       || this.scheduledAlarms.due(now, 1).length > 0;
   }
@@ -7247,74 +7110,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       this.localRuntimeEnvironment(identity.workspaceId, identity.parentId, substreamId),
       { workspaceId: identity.workspaceId, parentKind: identity.parentKind, parentId: identity.parentId, substreamId },
     );
-  }
-
-  /**
-   * When this conversation's own Terminal sandbox is next due a provider
-   * observation, or `null` when this object has none to observe.
-   *
-   * A Channel conversation's check runs here, on its own alarm, rather than
-   * on the workspace's: the workspace could only learn the deadline from the
-   * directory, which made every check a directory write. A Sidekick's
-   * conversation has never been observed — its sandbox is retired by Daytona
-   * alone — and an archived Channel is not swept, so neither is observed.
-   */
-  private nextTerminalObservationAt(): number | null {
-    if (this.objectStore.identity()?.parentKind !== "workstream") return null;
-    const root = this.state.storage.sql.exec<{ archived_at: number | null }>(
-      `SELECT archived_at FROM workstream WHERE id = 1`,
-    ).toArray()[0];
-    if (root && root.archived_at !== null) return null;
-    return this.terminal.nextProviderObservationAt();
-  }
-
-  private terminalObservationDue(now: number): boolean {
-    const dueAt = this.nextTerminalObservationAt();
-    return dueAt !== null && dueAt <= now;
-  }
-
-  /**
-   * Ask Daytona what this conversation's sandbox is, and record the answer.
-   *
-   * The read reserves its request before the provider call, which is also what
-   * moves the deadline out, so a failing provider waits a full interval rather
-   * than turning this alarm into a hot loop. Nothing here publishes: the
-   * observation feeds the state API and nothing the directory carries.
-   */
-  private async observeDueTerminalSandbox(): Promise<void> {
-    const identity = this.objectStore.identity();
-    const sandbox = this.terminal.sandbox();
-    if (!identity || !sandbox?.sandboxId) return;
-    // One client per check, disposed when the check ends. This object never
-    // ends the context that would release the provider session for it, and a
-    // session left open every interval is what ran the provider Worker out of
-    // memory.
-    let client: ReturnType<typeof createTerminalProviderRpcClient> | undefined;
-    const provider = {
-      getSandbox: (id: string) => {
-        const configuration = parseTerminalRegionConfiguration(this.env);
-        if (configuration.capability !== "supported") throw new Error("terminal_provider_unavailable");
-        client ??= createTerminalProviderRpcClient(this.env.TERMINAL_PROVIDER, configuration);
-        return client.getSandbox(id);
-      },
-    };
-    try {
-      await refreshTerminalProviderObservation(
-        createTerminalObjectPort(this.env, identity.workspaceId, identity.parentId, this.terminal,
-          this.externalSubstreamId()),
-        provider,
-        { sandboxId: sandbox.sandboxId, generation: sandbox.generation },
-      );
-    } catch (error) {
-      logWarn(this.env, "terminal_provider_observation_failed", {
-        workspace_id: identity.workspaceId,
-        workstream_id: identity.parentId,
-        substream_id: this.externalSubstreamId(),
-        code: diagnosticErrorCode(error, "terminal_provider_observation_failed"),
-      });
-    } finally {
-      client?.[Symbol.dispose]();
-    }
   }
 
   /**
@@ -7433,14 +7228,8 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     const nextExternalSettlementAt = this.nextExternalSettlementAt();
     // A timer that fired above may have left the index behind the table.
     this.syncAgentTimerAlarms();
-    // Started, not awaited here: a provider read must not delay the run lane
-    // below, which a member's message may be waiting on. It catches its own
-    // failures and is joined before this alarm re-arms.
-    const terminalObservation = this.terminalObservationDue(now)
-      ? this.observeDueTerminalSandbox()
-      : null;
-    // Likewise started here and joined below: the attempt is two reads and at
-    // most one Queue send, and must not wait behind the run lane.
+    // Started here and joined below: the attempt is two reads and at most one
+    // Queue send, and must not wait behind the run lane.
     const memorySweep = this.memorySweepDue(now) ? this.attemptDueMemorySweep() : null;
     try {
       await this.runDueAlarmLanes(now, {
@@ -7448,7 +7237,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         nextAuthorizationProjectionDueAt, nextExternalBindingAt, nextLoopAt, nextExternalSettlementAt,
       });
     } finally {
-      if (terminalObservation) await terminalObservation;
       if (memorySweep) await memorySweep;
     }
   }
@@ -7761,11 +7549,10 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
 
     if (!identity.success) return jsonResponse({ error: "invalid_socket_identity" }, 400);
 
-    if ((identity.data.parentKind ?? this.objectStore.identity()?.parentKind) === "workstream"
-      && identity.data.substreamId !== "0"
-      && (identity.data.membershipVersion ?? 0) <= 0) {
-      span.setError("private_child_admission_missing");
-      return jsonResponse({ error: "forbidden" }, 403);
+    const parentKind = identity.data.parentKind ?? this.objectStore.identity()?.parentKind;
+    if (!parentKind) {
+      span.setError("conversation_parent_kind_missing");
+      return jsonResponse({ error: "conversation_parent_kind_missing" }, 400);
     }
 
     span.setAttributes({
@@ -7784,7 +7571,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       this.ensureSubstreamIdentity(identity.data.substreamId);
       this.objectStore.ensureIdentity({
         workspaceId: identity.data.workspaceId,
-        parentKind: identity.data.parentKind ?? this.objectStore.identity()?.parentKind ?? "workstream",
+        parentKind,
         parentId: identity.data.workstreamId,
       }, this.env.AVALON_REGION);
       this.ensurePersistentLoop();
@@ -7970,9 +7757,11 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     try {
       // An event is published into an object that already knows what it is;
       // the header names the parent id and the stored row says its kind.
+      const stored = this.objectStore.identity();
+      if (!stored) return jsonResponse({ error: "room_identity_unavailable" }, 409);
       this.objectStore.ensureIdentity({
         workspaceId: requestIdentity.data.workspaceId,
-        parentKind: this.objectStore.identity()?.parentKind ?? "workstream",
+        parentKind: stored.parentKind,
         parentId: requestIdentity.data.workstreamId,
       }, this.env.AVALON_REGION);
     } catch (error) {
@@ -8070,7 +7859,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         nextSearchProjectionDueAt(this.state.storage.sql, this.env),
         nextAuthorizationProjectionAt(this.state.storage.sql),
         this.nextExternalSettlementAt(),
-        this.nextTerminalObservationAt(),
         this.nextMemorySweepAt(),
         now + KEEP_ALIVE_INTERVAL_MS,
       ],
@@ -8184,7 +7972,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         nextAuthorizationProjectionAt(this.state.storage.sql),
       this.nextLoopWorkAt(now),
       this.nextExternalSettlementAt(),
-      this.nextTerminalObservationAt(),
       this.nextMemorySweepAt(),
     ];
     if (this.keepAliveLease.active) candidates.push(now + KEEP_ALIVE_INTERVAL_MS);

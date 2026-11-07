@@ -171,6 +171,8 @@ function roomFor(
   const objectDatabase = testWorkstreamObjectStore();
   databases.push(objectDatabase);
   seedWorkstreamObjectRoot(objectDatabase, { workspaceId: WORKSPACE, workstreamId: WORKSTREAM });
+  // A conversation is a Canvas's or a Sidekick's; a stored Thread kind is refused on open.
+  objectDatabase.prepare("UPDATE workstream SET parent_kind = 'canvas' WHERE id = 1").run();
   const source = database.prepare(
     "SELECT scope FROM workstreams WHERE id = ? AND workspace_id = ?",
   ).get(WORKSTREAM, WORKSPACE) as { scope: string };
@@ -520,14 +522,14 @@ describe("what authority the product API accepts", () => {
     { operation: "search_turns" as const, turnIds: ["private-turn"] },
     { operation: "search_link" as const, turnId: "private-turn", linkId: "private-link" },
   ])("refuses revoked sessions for $operation", async (operation) => {
-    const result = await roomFor(seededDatabase()).handleProductRequest({ ...operation, auth: productAuth() });
+    const result = await roomFor(seededDatabase()).handleProductRequest({ ...operation, parentKind: "canvas" as const, auth: productAuth() });
     expect(result.status).toBe(401);
     expect(rpcResultBody(result)).toEqual(sessionRefusal);
   });
 
   it("still refuses a synthesized session id that claims no principal", async () => {
     const result = await roomFor(seededDatabase())
-      .handleProductRequest({ operation: "get", auth: productAuth() });
+      .handleProductRequest({ operation: "get", parentKind: "canvas" as const, auth: productAuth() });
 
     expect(result.status).toBe(401);
     expect(rpcResultBody(result)).toEqual(sessionRefusal);
@@ -535,65 +537,10 @@ describe("what authority the product API accepts", () => {
 
   it("runs a connector-principal request as the member the ingress verified", async () => {
     const result = await roomFor(seededDatabase())
-      .handleProductRequest({ operation: "get", auth: productAuth({ principal: "connector" }) });
+      .handleProductRequest({ operation: "get", parentKind: "canvas" as const, auth: productAuth({ principal: "connector" }) });
 
     expect(result.status).toBe(200);
     expect(rpcResultBody(result)).toMatchObject({ id: WORKSTREAM });
-  });
-
-  it("returns pins only for active, readable Space placements", async () => {
-    const database = seededDatabase();
-    const visibleSpace = "00000000-0000-7000-8000-0000000000d1";
-    const archivedSpace = "00000000-0000-7000-8000-0000000000d2";
-    const privateSpace = "00000000-0000-7000-8000-0000000000d3";
-    const inactiveSpace = "00000000-0000-7000-8000-0000000000d4";
-    database.prepare(
-      `INSERT INTO channels
-         (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
-          title, description, preview, scope, exact_state, system_kind, last_activity_at,
-          completed_at, archived_at, email_address, origin_type, origin_label,
-          created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
-          title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
-          next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
-          source_created_at, source_updated_at, projected_at)
-       VALUES (?, 1, 1, 'pin-projection-event', 'pin-projection-hash',
-               'Compensation review', '', '', 'personal', 'idle', NULL, 1,
-               NULL, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
-               'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
-    ).run(WORKSTREAM, PARTICIPANT);
-    for (const [spaceId, scope, archivedAt, membershipState] of [
-      [visibleSpace, "workspace", null, "active"],
-      [archivedSpace, "workspace", 1, "active"],
-      [privateSpace, "personal", null, "active"],
-      [inactiveSpace, "workspace", null, "removed"],
-    ] as const) {
-      database.prepare(
-        `INSERT INTO spaces
-           (space_id, title, scope, appearance_json, archived_at, created_by_user_id,
-            system_role, authority_generation, source_version, payload_hash, revision,
-            created_at, updated_at, source_created_at, source_updated_at)
-         VALUES (?, 'Pin projection', ?, NULL, ?, ?, NULL, 1, 1, ?, 1, 1, 1, 1, 1)`,
-      ).run(spaceId, scope, archivedAt, PARTICIPANT, `pin-projection-${spaceId}`);
-      database.prepare(
-        `INSERT INTO space_channel_memberships
-           (space_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
-         VALUES (?, ?, ?, 1, 1, 1, NULL)`,
-      ).run(spaceId, WORKSTREAM, membershipState);
-      database.prepare(
-        `INSERT INTO workspace_workstream_pins
-           (user_id, space_id, workstream_id, position, created_at, updated_at)
-         VALUES (?, ?, ?, 0, 1, 1)`,
-      ).run(PARTICIPANT, spaceId, WORKSTREAM);
-    }
-
-    const result = await roomFor(database)
-      .handleProductRequest({ operation: "get", auth: productAuth({ principal: "connector" }) });
-
-    expect(result.status).toBe(200);
-    expect(rpcResultBody(result)).toMatchObject({
-      id: WORKSTREAM,
-      spacePins: [{ spaceId: visibleSpace, position: 0 }],
-    });
   });
 
   it("refuses a connector principal for somebody who is not an active member", async () => {
@@ -604,7 +551,7 @@ describe("what authority the product API accepts", () => {
     );
 
     const result = await roomFor(database)
-      .handleProductRequest({ operation: "get", auth: productAuth({ principal: "connector" }) });
+      .handleProductRequest({ operation: "get", parentKind: "canvas" as const, auth: productAuth({ principal: "connector" }) });
 
     expect(result.status).toBe(401);
     expect(rpcResultBody(result)).toEqual(connectorRefusal);
@@ -613,7 +560,7 @@ describe("what authority the product API accepts", () => {
   it("refuses a connector principal whose asserted role has gone stale", async () => {
     const result = await roomFor(seededDatabase()).handleProductRequest({
       operation: "get",
-      auth: productAuth({ principal: "connector", role: "member" }),
+      parentKind: "canvas" as const, auth: productAuth({ principal: "connector", role: "member" }),
     });
 
     expect(result.status).toBe(401);
@@ -630,7 +577,7 @@ describe("what authority the product API accepts", () => {
     // row alone would admit this request and the equality check would pass.
     const result = await roomFor(seededDatabase(), [], "enterprise").handleProductRequest({
       operation: "get",
-      auth: productAuth({ principal: "connector", region: "enterprise" }),
+      parentKind: "canvas" as const, auth: productAuth({ principal: "connector", region: "enterprise" }),
     });
 
     expect(result.status).toBe(401);
@@ -640,7 +587,7 @@ describe("what authority the product API accepts", () => {
   it("refuses a connector principal that asserts another region", async () => {
     const result = await roomFor(seededDatabase()).handleProductRequest({
       operation: "get",
-      auth: productAuth({ principal: "connector", region: "enterprise" }),
+      parentKind: "canvas" as const, auth: productAuth({ principal: "connector", region: "enterprise" }),
     });
 
     expect(result.status).toBe(401);
@@ -676,7 +623,7 @@ describe("what authority the product API accepts", () => {
       workspaceId: asWorkspaceId(WORKSPACE),
       region: "global",
       role: "owner",
-    }, WORKSTREAM);
+    }, WORKSTREAM, "0", false, "canvas");
 
     await expect(client.get()).rejects.toMatchObject({ code: "session_revoked" });
 

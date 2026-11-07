@@ -261,7 +261,7 @@ describe("the member's artifacts rail", () => {
     });
     const store = new WorkstreamObjectStore(storage, "resource-listing-rail", "global");
     store.ensureIdentity(
-      { workspaceId: WORKSPACE, parentKind: "workstream", parentId: WORKSTREAM },
+      { workspaceId: WORKSPACE, parentKind: "canvas", parentId: WORKSTREAM },
       "global",
     );
     sql.exec(

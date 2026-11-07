@@ -2750,28 +2750,4 @@ describe("provider observations", () => {
     expect(republished).toEqual(published);
   });
 
-  it("checks a stopped sandbox on the conversation's own alarm, every ten minutes", async () => {
-    // Forget the check `setup` seeded: a sandbox never observed is due one at
-    // once, and the next Terminal call re-arms this object's own alarm for it,
-    // with no workspace sweep involved.
-    const stub = await setup();
-    await runInDurableObject(stub, (_instance, state) => {
-      state.storage.sql.exec(`DELETE FROM terminal_provider_observation`);
-    });
-    await terminal(stub, "sandbox");
-    // Polled, not forced: the alarm is overdue, so `runDurableObjectAlarm`
-    // can find the slot already cleared by the automatic firing and run
-    // nothing (see "Writing a workerd test" in docs/testing.md). This
-    // suite's region has no Terminal provider configured, so the read is
-    // recorded as unavailable — which is proof the check ran here.
-    await expect.poll(async () => ((await terminal(stub, "providerObservation")).value as
-      { errorCode: string | null } | null)?.errorCode ?? null).toBe("provider_unavailable");
-    // The interval is read off the two instants the object wrote together,
-    // never against this test's clock.
-    const row = await runInDurableObject(stub, (_instance, state) => state.storage.sql
-      .exec<{ requested_at: number; next_observe_at: number }>(
-        "SELECT requested_at, next_observe_at FROM terminal_provider_observation WHERE id = 1",
-      ).toArray()[0]!);
-    expect(row.next_observe_at - row.requested_at).toBe(10 * 60_000);
-  });
 });

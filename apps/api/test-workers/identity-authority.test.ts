@@ -305,21 +305,6 @@ describe("identity authority on real workerd", () => {
     });
   });
 
-  it("refuses Channel admission through the identity roster writer", async () => {
-    const stub = agent();
-    await boot(stub);
-    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
-    await expect(identity(stub, "admitParticipant", {
-      userId: TAYLOR, addedByUserId: TAYLOR, reason: "explicit", now: 7,
-    })).rejects.toThrow("channel_participant_grant_required");
-    expect((await identity(stub, "admitParticipants", {
-      userIds: [TAYLOR], addedByUserId: TAYLOR, reason: "explicit", now: 7,
-    })).status).toBe(400);
-    await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec("SELECT user_id FROM participants").toArray()).toEqual([]);
-    });
-  });
-
   it("updates creator attribution without independently granting participants", async () => {
     const stub = agent();
     await boot(stub);

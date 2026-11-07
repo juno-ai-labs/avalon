@@ -297,7 +297,7 @@ describe("work-stream transcript on workerd SQLite", () => {
         status: "running", startedAt: now, model: "test/model", triggerPartId: null,
         parentRunId: null, expectedLatestRunId: null, now });
       state.storage.sql.exec(`UPDATE runs SET execution_context_json = ? WHERE run_id = ?`, JSON.stringify(
-        WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID, parentKind: "workstream",
+        WorkstreamWorkflowInputSchema.parse({ region: "global", workspaceId: WORKSPACE_ID, parentKind: "canvas",
           parentId: WORKSTREAM_ID, substreamId: "0", loopId: LOOP_ID, harnessRunId: runId, triggerMessageId: null,
           activityId: null, executionPrincipal: { type: "user", userId: USER_ID }, reason: "user_message" }),
       ), runId);
@@ -453,7 +453,7 @@ describe("work-stream transcript on workerd SQLite", () => {
     const workflowInput = WorkstreamWorkflowInputSchema.parse({
       region: "global",
       workspaceId: WORKSPACE_ID,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: WORKSTREAM_ID,
       substreamId: "0",
       loopId: LOOP_ID,
@@ -699,7 +699,7 @@ describe("work-stream transcript on workerd SQLite", () => {
     const workflowInput = WorkstreamWorkflowInputSchema.parse({
       region: "global",
       workspaceId: WORKSPACE_ID,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: WORKSTREAM_ID,
       substreamId: "0",
       loopId,
@@ -1109,7 +1109,7 @@ describe("work-stream transcript on workerd SQLite", () => {
     const workflowInput = WorkstreamWorkflowInputSchema.parse({
       region: "global",
       workspaceId: WORKSPACE_ID,
-      parentKind: "workstream",
+      parentKind: "canvas",
       parentId: WORKSTREAM_ID,
       substreamId: "0",
       loopId: LOOP_ID,
@@ -1545,7 +1545,7 @@ describe("work-stream transcript on workerd SQLite", () => {
       const workflowInput = WorkstreamWorkflowInputSchema.parse({
         region: "global",
         workspaceId: WORKSPACE_ID,
-        parentKind: "workstream",
+        parentKind: "canvas",
         parentId: WORKSTREAM_ID,
         substreamId: "0",
         loopId: LOOP_ID,
@@ -1747,7 +1747,7 @@ describe("work-stream transcript on workerd SQLite", () => {
       const workflowInput = WorkstreamWorkflowInputSchema.parse({
         region: "global",
         workspaceId: WORKSPACE_ID,
-        parentKind: "workstream",
+        parentKind: "canvas",
         parentId: WORKSTREAM_ID,
         substreamId: "0",
         loopId: LOOP_ID,
@@ -2064,7 +2064,7 @@ describe("work-stream transcript on workerd SQLite", () => {
       const workflowInput = WorkstreamWorkflowInputSchema.parse({
         region: "global",
         workspaceId: WORKSPACE_ID,
-        parentKind: "workstream",
+        parentKind: "canvas",
         parentId: WORKSTREAM_ID,
         substreamId: "0",
         loopId: LOOP_ID,

@@ -105,7 +105,7 @@ it("publishes retained preview work when an identity-only source is bootstrapped
   expect(await stub.backfillConversationView({ ...job, turnId: '' })).toBe('missing');
   const response = await stub.fetch('https://substream.test/internal/runtime-bootstrap', {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ workspaceId, parentKind: 'workstream', parentId, generation: 1 }),
+    body: JSON.stringify({ workspaceId, parentKind: 'canvas', parentId, generation: 1 }),
   });
   expect(await response.json()).toEqual({ ok: true });
   expect(response.status).toBe(200);
