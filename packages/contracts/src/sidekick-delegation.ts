@@ -80,6 +80,12 @@ export const SidekickExecutionDelegationSchema = z.strictObject({
  * need an account that only a delegate's access reaches.
  */
 export const SIDEKICK_REQUESTER_ACCOUNT_UNAVAILABLE = "sidekick_requester_account_unavailable";
+/**
+ * Why a run started by a non-delegate refuses the Terminal: a Sidekick's
+ * shared Terminal files hold what runs under its delegates' access wrote, so
+ * reading them would reach a delegate's access through the Sidekick.
+ */
+export const SIDEKICK_REQUESTER_FILES_UNAVAILABLE = "sidekick_requester_files_unavailable";
 export type SidekickExecutionDelegation = z.infer<typeof SidekickExecutionDelegationSchema>;
 
 export const SidekickDelegationAttentionCodeSchema = z.enum(["no_eligible_delegate", "event_no_eligible_delegate", "permission_report_unavailable"]);

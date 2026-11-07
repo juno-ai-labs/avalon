@@ -647,11 +647,14 @@ export class HostedSidekick {
       `SELECT requester_user_id, created_at FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, this.sidekickId, request.runId,
     ));
     if (requester?.requester_user_id) {
+      // As `runPrincipal` decides: a requester who has left the Organization
+      // leaves the run nobody to act as.
+      const active = await this.requesterActive(request.workspaceId, requester.requester_user_id);
       const row = this.assertSidekick(request.workspaceId, request.automationId);
       return SidekickExecutionDelegationSchema.parse({
         sidekickId: this.sidekickId, creatorUserId: row.author_user_id,
         accountUserId: row.legacy_account_user_id ?? row.author_user_id,
-        delegates: [{ userId: requester.requester_user_id, generation: 0, grantedAt: requester.created_at }],
+        delegates: active ? [{ userId: requester.requester_user_id, generation: 0, grantedAt: requester.created_at }] : [],
         requesterUserId: requester.requester_user_id,
       });
     }
@@ -1218,8 +1221,8 @@ export class HostedSidekick {
    * run's requester (`requester_user_id`), which its continuations keep and
    * its connector operations are limited to. A person must not read, through
    * the Sidekick, what they cannot read themselves, and borrowing another
-   * delegate's access here would be exactly that. A guest who is not a
-   * delegate is refused (`run_no_eligible_delegate`).
+   * delegate's access here would be exactly that. A guest on the Sidekick's
+   * list runs under their own access as a member does.
    * Idempotent on the message's turn id, so a retried claim admits nothing
    * twice.
    */
@@ -1241,10 +1244,10 @@ export class HostedSidekick {
     if (!definition || (definition.triggers.length === 0 && !sidekickReceivesEmail(definition))) {
       return { route: "refused", code: "sidekick_not_runnable" };
     }
-    // Someone who is not a delegate gets a run under their own access: the
-    // run acts as them, and an operation that would need a delegate's account
-    // is refused by name. A guest has no Organization access to run under.
-    const requester = coordinator === null && await this.requesterMember(row.workspace_id, request.actor.userId)
+    // Someone who is not a delegate, a guest among them, gets a run under
+    // their own access: the run acts as them, and an operation that would
+    // need an account they lack is refused by name.
+    const requester = coordinator === null && await this.requesterActive(row.workspace_id, request.actor.userId)
       ? request.actor.userId : null;
     if (coordinator === null && requester === null) return { route: "refused", code: "run_no_eligible_delegate" };
     const admitted = this.admitOccurrence(
@@ -1264,10 +1267,10 @@ export class HostedSidekick {
     return { route: "run", runId: admitted.runId, reused: admitted.reused };
   }
 
-  /** Whether a run may act as this person under their own access: an active member, never a guest. */
-  private async requesterMember(workspaceId: string, userId: string): Promise<boolean> {
+  /** Whether a run may act as this person under their own access: they are still in the Organization, as a member or a guest. */
+  private async requesterActive(workspaceId: string, userId: string): Promise<boolean> {
     const relationship = await this.host.readRelationship(workspaceId, userId);
-    return relationship?.status === "active" && relationship.accessClass === "member";
+    return relationship?.status === "active";
   }
 
   /**
@@ -1278,7 +1281,7 @@ export class HostedSidekick {
   private async runPrincipal(run: { coordinator_user_id: string | null; requester_user_id: string | null }): Promise<string | null> {
     if (run.requester_user_id !== null) {
       const row = this.row();
-      return row && await this.requesterMember(row.workspace_id, run.requester_user_id) ? run.requester_user_id : null;
+      return row && await this.requesterActive(row.workspace_id, run.requester_user_id) ? run.requester_user_id : null;
     }
     return this.coordinator(run.coordinator_user_id);
   }
@@ -2329,17 +2332,21 @@ export class HostedSidekick {
 
   private async executeSchedule(scheduleId: string): Promise<void> {
     // Only an active Sidekick's due schedule fires; anything else reads nothing.
+    // Due means its occurrence has arrived: an entry that ran after a pause and
+    // resume, or an apply that kept the schedule, moved `next_due_at` into the
+    // future, and admitting that occurrence now would start its run early.
+    // The transaction below re-checks the instant read here, so it stays due.
+    const now = Date.now();
     const due = first(this.sql.exec<ScheduleRow & { accepted_definition_revision: number | null }>(
       `SELECT schedule.schedule_id, schedule.schedule_kind, schedule.definition_json, schedule.next_due_at,
               directory.accepted_definition_revision
          FROM sidekick_schedules schedule
          JOIN automation_directory directory ON directory.automation_id = schedule.sidekick_id
         WHERE schedule.sidekick_id = ? AND schedule.schedule_id = ?
-          AND schedule.next_due_at IS NOT NULL AND directory.lifecycle = 'active'`,
-      this.sidekickId, scheduleId,
+          AND schedule.next_due_at IS NOT NULL AND schedule.next_due_at <= ? AND directory.lifecycle = 'active'`,
+      this.sidekickId, scheduleId, now,
     ));
     if (!due || due.next_due_at === null) return;
-    const now = Date.now();
     const dueAt = due.next_due_at;
     const nextDueAt = scheduleDueAfter(due.schedule_kind, due.definition_json, now);
     const coordinator = await this.coordinator();

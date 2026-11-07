@@ -3,7 +3,7 @@ import {
   type HarnessPluginActivationContext,
   type HarnessToolContext,
 } from "@rally/agent-harness";
-import { asWorkspaceId, runRequesterUserId, SidekickExecutionDelegationSchema, type SidekickExecutionDelegation, type WorkstreamWorkflowInput } from "@rally/contracts";
+import { asWorkspaceId, runRequesterUserId, SIDEKICK_REQUESTER_FILES_UNAVAILABLE, SidekickExecutionDelegationSchema, type SidekickExecutionDelegation, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { newId } from "@rally/db";
 
 import type { Env } from "../../env";
@@ -162,14 +162,24 @@ export async function createAvalonTerminalPlugin(
     ? await durableObjectStubForWorkspace(env, env.WORKSPACE_DOS, asWorkspaceId(input.workspaceId),
       workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)))
     : null;
+  // The run's own view: a run a non-delegate asked for names its requester
+  // rather than the Sidekick's delegates.
   const readDelegation = async () => SidekickExecutionDelegationSchema.parse(
-    await sidekickWorkspace!.sidekickReadExecutionDelegation({ workspaceId: input.workspaceId, automationId: input.parentId }),
+    await sidekickWorkspace!.sidekickReadExecutionDelegation({ workspaceId: input.workspaceId, automationId: input.parentId,
+      ...(input.automationRun?.runId ? { runId: input.automationRun.runId } : {}) }),
   );
   const initialDelegation = options.delegation !== undefined ? options.delegation : sidekickWorkspace ? await readDelegation() : null;
   // Consent refreshes at inventory boundaries; files remain Sidekick-owned.
   const assertSandboxPrincipal = (context: HarnessToolContext): void => {
     if (!sidekickWorkspace) return;
     const principal = context.executionPrincipal;
+    if (initialDelegation?.requesterUserId) {
+      throw new TerminalToolError(
+        SIDEKICK_REQUESTER_FILES_UNAVAILABLE,
+        "This run acts only as the person who asked for it, and this Sidekick's shared Terminal files are reached only through someone it acts for.",
+        { reason: "Ask someone this Sidekick acts for to request this work." },
+      );
+    }
     if (principal.type !== "user" || !initialDelegation?.delegates.some((delegate) => delegate.userId === principal.userId)) {
       throw new TerminalToolError(
         "sandbox_authority_mismatch",

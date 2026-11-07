@@ -52,14 +52,19 @@ const MEMBER_SESSION_ID = "00000000-0000-7000-8000-00000000c8a4";
 /** An Organization admin who did not write the Sidekick: a manager of an Organization one by role. */
 const ADMIN_ID = asUserId("00000000-0000-7000-8000-00000000c8a5");
 const ADMIN_SESSION_ID = "00000000-0000-7000-8000-00000000c8a6";
+/** A guest of the Organization, on a `people` Sidekick's list and not a delegate. */
+const GUEST_ID = asUserId("00000000-0000-7000-8000-00000000c8a7");
+const GUEST_SESSION_ID = "00000000-0000-7000-8000-00000000c8a8";
 const NOW = "2026-11-06T10:00:00.000Z";
 const TEST_ENV: Env = env;
 /** A turn reaches the double and ends; sized for a contended multi-suite run. */
 const SETTLE_TIMEOUT_MS = 15_000;
 
 function auth(userId: string): AuthContext {
-  const sessionId = userId === MEMBER_ID ? MEMBER_SESSION_ID : userId === ADMIN_ID ? ADMIN_SESSION_ID : SESSION_ID;
-  return { sessionId, userId: asUserId(userId), workspaceId: WORKSPACE_ID, region: "global", role: userId === ADMIN_ID ? "admin" : "member" };
+  const sessionId = userId === MEMBER_ID ? MEMBER_SESSION_ID : userId === ADMIN_ID ? ADMIN_SESSION_ID
+    : userId === GUEST_ID ? GUEST_SESSION_ID : SESSION_ID;
+  return { sessionId, userId: asUserId(userId), workspaceId: WORKSPACE_ID, region: "global",
+    role: userId === ADMIN_ID ? "admin" : userId === GUEST_ID ? null : "member" };
 }
 
 /** Reassigned per test, so a finished test's draining objects stay its own. */
@@ -122,6 +127,12 @@ async function seedRegionalDatabase(): Promise<void> {
       VALUES (?, 'admin@example.com', 'Admin', NULL, 'UTC', ?)`).bind(ADMIN_ID, NOW),
     env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(ADMIN_SESSION_ID, ADMIN_ID, WORKSPACE_ID),
+    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, access_class, last_seen_at)
+      VALUES (?, ?, 'active', NULL, 'guest', ?)`).bind(WORKSPACE_ID, GUEST_ID, NOW),
+    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+      VALUES (?, 'guest@example.com', 'Guest', NULL, 'UTC', ?)`).bind(GUEST_ID, NOW),
+    env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`).bind(GUEST_SESSION_ID, GUEST_ID, WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstreams (
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, do_identity_anchor INTEGER NOT NULL DEFAULT 0
     )`),
@@ -471,6 +482,20 @@ describe("a Sidekick's shared conversation", () => {
     expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([run!.run_id]);
     expect(await workspaceStub().sidekickContinueRun({ ...addressed(), runId: run!.run_id }))
       .toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: MEMBER_ID } });
+  });
+
+  it("runs a guest's message under the guest's own access when the Sidekick is shared with them", async () => {
+    await activeSidekick("personal");
+    await runInDurableObject(workspaceStub(), (instance: WorkspaceDO) => instance.sidekickSetAudience({
+      ...addressed(), actor: actor(), update: { audience: "people", userIds: [GUEST_ID] } }));
+    const turnId = await say(GUEST_ID, "Summarize the release for me.", "guest-on-the-list");
+    await expect.poll(() => landed(turnId), { timeout: SETTLE_TIMEOUT_MS }).toBe(true);
+    expect(await systemNotes("sidekick-message-refused:")).toEqual([]);
+    const [run] = await sidekickRuns();
+    expect(run).toMatchObject({ occurrence_key: `message:${turnId}`, coordinator_user_id: GUEST_ID, requester_user_id: GUEST_ID });
+    expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([run!.run_id]);
+    expect(await workspaceStub().sidekickContinueRun({ ...addressed(), runId: run!.run_id }))
+      .toMatchObject({ outcome: "continue", executionPrincipal: { type: "user", userId: GUEST_ID } });
   });
 
   it("writes a run's row into the shared conversation and carries its reply when the run finishes", async () => {

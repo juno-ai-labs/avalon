@@ -187,6 +187,20 @@ function readGateway(baseSha = BASE): TerminalGitHubReadGateway {
 }
 
 describe("Terminal Bind integration", () => {
+  it("refuses a requester's run the Sidekick's shared files by name", async () => {
+    const { env, input } = fixture("supported");
+    const requester = input.executionPrincipal.type === "user" ? input.executionPrincipal.userId : U;
+    const plugin = await createAvalonTerminalPlugin(env, { ...input, parentKind: "automation" }, undefined, {
+      provider: provider(), readGateway: readGateway(),
+      delegation: { sidekickId: S, creatorUserId: U, accountUserId: U,
+        delegates: [{ userId: requester, generation: 0, grantedAt: 1 }], requesterUserId: requester },
+    });
+    const read = plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!;
+    await expect(read({ filePath: "site/index.html" }, { workspaceId: W, workstreamId: S, harnessRunId: R,
+      toolCallId: "requester-read", executionPrincipal: input.executionPrincipal, signal: new AbortController().signal }))
+      .rejects.toMatchObject({ code: "sidekick_requester_files_unavailable" });
+  });
+
   it.each([false, true])("shares Sidekick files and observes withdrawal on inventory refresh (personal repository %s)", async (personalRepository) => {
     const { database, objectStore, objectStores, env, input, workspace } = fixture("supported");
     if (personalRepository) {
