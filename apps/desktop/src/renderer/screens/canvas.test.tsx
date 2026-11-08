@@ -4,7 +4,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { ErrorNoticeProvider } from '@rally/ui/components/error-notice';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiError } from '../lib/api';
@@ -173,6 +173,35 @@ describe('CanvasScreen', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Canvas actions' }), { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Open artifact' }));
     await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
+  });
+
+  it('replaces the entry it reopens the panel on, so Back leaves the Canvas', async () => {
+    function Back(): React.JSX.Element {
+      const navigate = useNavigate();
+      return <button onClick={() => void navigate(-1)} type="button">Go back</button>;
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<ErrorNoticeProvider><QueryClientProvider client={client}><Tooltip.Provider>
+      <MemoryRouter initialEntries={['/canvases', `/canvases/${CANVAS}`]} initialIndex={1}>
+        <Back />
+        <Routes>
+          <Route element={<p>Canvases home</p>} path="/canvases" />
+          <Route element={<CanvasScreen />} path="/canvases/:id" />
+        </Routes>
+      </MemoryRouter>
+    </Tooltip.Provider></QueryClientProvider></ErrorNoticeProvider>);
+    await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open artifact' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go back' }));
+    expect(await screen.findByText('Canvases home')).toBeInTheDocument();
+  });
+
+  it('copies the Canvas id for support from its menu', async () => {
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy Canvas ID' }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(CANVAS));
   });
 
   it('offers no artifact to open on a Canvas that has none', async () => {
@@ -431,11 +460,32 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share Canvas' })).toBeNull());
   });
 
+  it('sends no addresses left under a closed guest section', async () => {
+    setCanvasAudience.mockResolvedValue(detail());
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    const guests = within(dialog).getByText('Invite a guest by email').closest('details')!;
+    guests.open = true;
+    fireEvent(guests, new Event('toggle'));
+    fireEvent.change(within(dialog).getByLabelText('Email addresses'), { target: { value: 'a@example.test' } });
+    guests.open = false;
+    fireEvent(guests, new Event('toggle'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share Canvas' })).toBeNull());
+    expect(createScopeInvitations).not.toHaveBeenCalled();
+  });
+
   it('saves nothing and says why when the typed addresses are not addresses', async () => {
     renderCanvas();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    const guests = within(dialog).getByText('Invite a guest by email').closest('details')!;
+    guests.open = true;
+    fireEvent(guests, new Event('toggle'));
     fireEvent.change(within(dialog).getByLabelText('Email addresses'), { target: { value: 'not-an-address' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     expect(setCanvasAudience).not.toHaveBeenCalled();

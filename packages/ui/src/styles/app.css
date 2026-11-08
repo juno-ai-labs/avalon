@@ -6933,8 +6933,10 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    and their three 16px gaps, the three facts (398px) leave the name 240px at
    760px; Status and Next alone (244px) leave it 240px at 606px. Narrower, the
    pill and Next sit under the description and keep their labels for a screen
-   reader only. */
+   reader only. The Canvases home is this page too, and carries both names
+   at a higher specificity, so neither query hangs on source order. */
 .sidekicks-library { container: sidekicks-library / inline-size; }
+.sidekicks-library.canvases-home { container-name: canvases-home sidekicks-library; }
 @container sidekicks-library (width < 760px) {
   .sidekick-list-facts { grid-template-columns: 110px 110px; }
   .sidekick-list-facts .sidekick-list-shared { display: none; }
@@ -6972,7 +6974,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    pane is that wide: the query reads the page's content box, so 900px is that
    pane less the page's two 48px margins and its stable scrollbar gutter
    (919px at 1440). Two below it; one at phone width. */
-.canvases-home { container: canvases-home / inline-size; }
 .canvases-home-grid { display: grid; gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
 @container canvases-home (min-width: 900px) { .canvases-home-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .canvases-home-grid { grid-template-columns: minmax(0, 1fr); } }
