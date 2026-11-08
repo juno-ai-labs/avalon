@@ -28,7 +28,6 @@ import {
   type WorkspaceSlackPendingPromptClearRequest,
   type WorkspaceSlackPendingPromptRequest,
   type WorkspaceSlackPendingPromptResult,
-  type WorkspaceSlackPendingPromptStoreRequest,
   type WorkspaceSlackThreadClaimRequest,
   type WorkspaceSlackThreadClaimResult,
   type WorkspaceSlackThreadReleaseRequest,
@@ -467,31 +466,6 @@ export function workspaceSlackPendingPrompt(
     request.at,
   ).toArray()[0];
   return WorkspaceSlackPendingPromptResultSchema.parse({ prompt: row?.prompt ?? null });
-}
-
-/** Retain a denied prompt so `try again` can replay it once the cause is fixed. */
-export function rememberWorkspaceSlackPendingPrompt(
-  storage: DurableObjectStorage,
-  request: WorkspaceSlackPendingPromptStoreRequest,
-): void {
-  storage.sql.exec(
-    `INSERT INTO slack_agent_pending_prompts
-       (connection_id, slack_channel_id, slack_thread_ts, slack_user_id, prompt,
-        denial_reason, expires_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(connection_id, slack_channel_id, slack_thread_ts, slack_user_id)
-     DO UPDATE SET prompt = excluded.prompt, denial_reason = excluded.denial_reason,
-       expires_at = excluded.expires_at, updated_at = excluded.updated_at`,
-    request.connectionId,
-    request.channelId,
-    request.threadTs,
-    request.slackUserId,
-    request.prompt,
-    request.denialReason,
-    request.expiresAt,
-    request.at,
-    request.at,
-  );
 }
 
 /** Drop a retained prompt: the request it held has been taken or superseded. */

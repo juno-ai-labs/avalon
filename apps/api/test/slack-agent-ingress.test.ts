@@ -231,14 +231,6 @@ describe("Slack Agent durable ingress", () => {
       "CUNKNOWN",
       "channel",
     )).resolves.toEqual({ channelType: "unknown", channelName: null, failure: "missing_scope" });
-    expect(__slackAgentTesting.slackChannelResolutionDenial("missing_scope")).toMatchObject({
-      reconnectRequired: true,
-      text: expect.stringContaining("reconnect the Slack workspace"),
-    });
-    expect(__slackAgentTesting.slackChannelResolutionDenial("lookup_failed")).toMatchObject({
-      reconnectRequired: false,
-      text: expect.stringContaining("couldn’t verify whether this Slack channel is public or private"),
-    });
     expect(__slackAgentTesting.modalPromptSource(undefined)).toBeNull();
     expect(__slackAgentTesting.modalPromptSource("not-json")).toBeNull();
   });
@@ -271,15 +263,6 @@ describe("Slack Agent durable ingress", () => {
       ],
     });
     expect(message.text).toHaveLength(2_000);
-  });
-
-  it("extracts event-only Slack search authorization without adding it to source context", () => {
-    expect(__slackAgentTesting.slackEventSearchAuthorization({
-      action_token: "1786130000.abcdef.event-token",
-      text: "find the latest project update",
-    })).toEqual({ actionToken: "1786130000.abcdef.event-token" });
-    expect(__slackAgentTesting.slackEventSearchAuthorization({ text: "no token" })).toBeUndefined();
-    expect(__slackAgentTesting.slackEventSearchAuthorization({ action_token: "" })).toBeUndefined();
   });
 
   it("returns modal field errors synchronously", async () => {

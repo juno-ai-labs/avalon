@@ -230,20 +230,6 @@ export const WorkspaceSlackPendingPromptResultSchema = deferredZodSchema(() => z
   prompt: z.string().nullable(),
 }));
 
-export const WorkspaceSlackPendingPromptStoreRequestSchema = deferredZodSchema(() => z.strictObject({
-  workspaceId: IdSchema,
-  connectionId: z.string().min(1),
-  channelId: z.string().min(1),
-  threadTs: z.string().min(1),
-  slackUserId: z.string().min(1),
-  /** Already trimmed and bounded by the caller to the column's own CHECK. */
-  prompt: z.string().min(1).max(40_000),
-  denialReason: z.enum(["connection", "channel_resolution", "policy"]),
-  /** The retention decision stays the service's; the object stores its answer. */
-  expiresAt: TimestampSchema,
-  at: TimestampSchema,
-}));
-
 export const WorkspaceSlackPendingPromptClearRequestSchema = deferredZodSchema(() => z.strictObject({
   workspaceId: IdSchema,
   connectionId: z.string().min(1),
@@ -322,7 +308,6 @@ export type WorkspaceSlackThreadRoutableRequest = z.infer<typeof WorkspaceSlackT
 export type WorkspaceSlackThreadRoutableResult = z.infer<typeof WorkspaceSlackThreadRoutableResultSchema>;
 export type WorkspaceSlackPendingPromptRequest = z.infer<typeof WorkspaceSlackPendingPromptRequestSchema>;
 export type WorkspaceSlackPendingPromptResult = z.infer<typeof WorkspaceSlackPendingPromptResultSchema>;
-export type WorkspaceSlackPendingPromptStoreRequest = z.infer<typeof WorkspaceSlackPendingPromptStoreRequestSchema>;
 export type WorkspaceSlackPendingPromptClearRequest = z.infer<typeof WorkspaceSlackPendingPromptClearRequestSchema>;
 export type WorkspaceSlackThreadClaimRequest = z.infer<typeof WorkspaceSlackThreadClaimRequestSchema>;
 export type WorkspaceSlackThreadClaimResult = z.infer<typeof WorkspaceSlackThreadClaimResultSchema>;

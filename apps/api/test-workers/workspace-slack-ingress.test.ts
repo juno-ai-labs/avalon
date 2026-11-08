@@ -420,17 +420,18 @@ describe("Slack thread claims", () => {
 });
 
 describe("Slack pending prompts and thread routing", () => {
+  // Nothing writes a pending prompt since Slack stopped starting work; a row
+  // an earlier deploy retained is what these reads still answer for until it
+  // expires, so the test writes one the way that deploy did.
   const prompt = (threadTs: string, expiresMinutes: number) =>
-    workspace().rememberSlackPendingPrompt({
-      workspaceId: WORKSPACE_ID,
-      connectionId: CONNECTION,
-      channelId: "C1",
-      threadTs,
-      slackUserId: "U1",
-      prompt: "investigate the deploy",
-      denialReason: "policy",
-      expiresAt: at(expiresMinutes),
-      at: at(0),
+    runInDurableObject(workspace(), async (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO slack_agent_pending_prompts
+           (connection_id, slack_channel_id, slack_thread_ts, slack_user_id, prompt,
+            denial_reason, expires_at, created_at, updated_at)
+         VALUES (?, 'C1', ?, 'U1', 'investigate the deploy', 'policy', ?, ?, ?)`,
+        CONNECTION, threadTs, at(expiresMinutes), at(0), at(0),
+      );
     });
 
   const loadPrompt = (threadTs: string, atMinutes = 1) =>
