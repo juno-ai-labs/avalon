@@ -195,6 +195,12 @@ export const WorkstreamMentionNotificationEffectSchema = z.strictObject({
    * none, and its item clears only by Mark all seen.
    */
   attentionOrdinal: z.number().int().nonnegative().optional(),
+  /**
+   * The mentioning turn's transcript sequence, so the recipient's Activity
+   * item can open the Chat at it (a turn is found by its id and sequence
+   * together). Optional for the reason `attentionOrdinal` is.
+   */
+  transcriptSequence: z.number().int().positive().optional(),
   occurredAt: TimestampSchema,
 });
 

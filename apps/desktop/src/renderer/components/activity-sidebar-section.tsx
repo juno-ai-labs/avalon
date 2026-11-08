@@ -4,29 +4,17 @@ import clsx from 'clsx';
 import type { ReactNode, RefObject } from 'react';
 import { Link } from 'react-router-dom';
 
-import { canvasRoute, useCanvasNameSources } from '../lib/canvases';
+import { canvasRoute, canvasTurnRoute, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
-import { SIDEBAR_LIST_QUERY_KEYS, type ActivityList } from '../lib/sidebar-list-store';
-import { useQuery } from '@tanstack/react-query';
+import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList, type ActivityList } from '../lib/sidebar-list-store';
 import { SectionHeading, useSectionMotion } from './navigation-rows';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 
-/**
- * This viewer's Activity as the workspace socket keeps it; `undefined` until
- * it has said. Read like `useSocketOwnedList`, but the entry is a page with
- * its count rather than a bare list.
- */
+/** This viewer's Activity as the workspace socket keeps it; `undefined` until it has said. */
 export function useActivityList(): ActivityList | undefined {
-  return useQuery<ActivityList>({
-    queryKey: SIDEBAR_LIST_QUERY_KEYS.activity,
-    queryFn: () => {
-      throw new Error('activity is pushed by the organization socket, never fetched');
-    },
-    enabled: false,
-    staleTime: Number.POSITIVE_INFINITY,
-  }).data;
+  return useSocketOwnedList<ActivityList>(SIDEBAR_LIST_QUERY_KEYS.activity).data;
 }
 
 export const ACTIVITY_EMPTY = 'Nothing yet. Mentions, Canvases you are added to and Sidekick runs that need you or finish show up here.';
@@ -47,12 +35,18 @@ const GLYPHS: Record<ActivityItem['kind'], ReactNode> = {
 };
 
 /**
- * Where a row opens: the Canvas, or the Sidekick's conversation, where a run's
- * row is and an answer to it goes. A mention in one of a Sidekick's runs
- * opens that run.
+ * Where a row opens: a Canvas Chat mention at its message, any other Canvas
+ * row at the Canvas, and a Sidekick row at its conversation, where a run's row
+ * is and an answer to it goes. A mention in one of a Sidekick's runs opens
+ * that run. A mention recorded before it carried its message's sequence
+ * opens the Canvas.
  */
 export function activityRoute(item: ActivityItem): string {
-  if (item.parentKind === 'canvas') return canvasRoute(item.parentId);
+  if (item.parentKind === 'canvas') {
+    return item.kind === 'mention' && item.substreamId === '0' && item.messageId !== null && item.messageSequence !== null
+      ? canvasTurnRoute(item.parentId, item.messageId, item.messageSequence)
+      : canvasRoute(item.parentId);
+  }
   const sidekick = `/sidekicks/${encodeURIComponent(item.parentId)}`;
   return item.kind === 'mention' && item.substreamId !== null && item.substreamId !== '0'
     ? `${sidekick}?run=${encodeURIComponent(item.substreamId)}`

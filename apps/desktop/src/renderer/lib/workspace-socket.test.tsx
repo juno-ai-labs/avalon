@@ -1344,7 +1344,7 @@ describe('WorkspaceSocketProvider', () => {
     const item = (seen: boolean) => ({
       id: 'mention:00000000-0000-7000-8000-0000000000a1:00000000-0000-7000-8000-0000000000a2',
       kind: 'mention', parentKind: 'canvas', parentId: '00000000-0000-7000-8000-0000000000a3', parentTitle: 'Launch plan',
-      substreamId: '0', messageId: '00000000-0000-7000-8000-0000000000a1', runId: null,
+      substreamId: '0', messageId: '00000000-0000-7000-8000-0000000000a1', messageSequence: 7, runId: null,
       actor: { kind: 'person', id: '00000000-0000-7000-8000-0000000000a4' }, preview: 'Please review the plan',
       createdAt: '2026-11-08T10:00:00.000Z', seen,
     });

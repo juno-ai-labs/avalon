@@ -75,8 +75,9 @@ immediately. In order:
 
 1. **Needs attention**: each Sidekick that needs input, sublabel **Needs
    input**; then each other Sidekick holding something unread, and each Canvas
-   holding something unread, sublabel **Unread**. Five rows in all, in the
-   order each list draws them. Under the header, **Still loading** until both
+   holding something unread, sublabel **Unread**. Five rows in all, each kind
+   in the server's list order (Sidekicks by title, Canvases by recency); the
+   sidebar's Pinned group is not applied. Under the header, **Still loading** until both
    lists have arrived, and **Nothing needs your attention** only after they
    have, so a waiting list is never called empty.
 2. **Recent Canvases**: the first five Canvases, re-sorted here by

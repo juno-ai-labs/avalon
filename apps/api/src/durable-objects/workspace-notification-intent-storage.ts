@@ -183,7 +183,7 @@ export function recordPersonNotificationIntent(
     itemId: effect.intentId, workspaceId: envelope.workspaceId, recipientUserId: effect.recipientUserId,
     kind: notificationKind, parentKind: envelope.parentKind,
     parentId: envelope.parentId, substreamId: effect.substreamId ?? envelope.substreamId,
-    messageId: mention?.messageId ?? null, runId: null, actorKind: "person",
+    messageId: mention?.messageId ?? null, messageSequence: mention?.transcriptSequence ?? null, runId: null, actorKind: "person",
     actorId: mention ? mention.authorUserId : effect.kind === "participant_notification" ? effect.actorUserId : null,
     // What the push's body says: the message, or the objective of what they were added to.
     text: mention ? mention.messageText : effect.kind === "participant_notification" ? effect.workstreamObjectiveSnapshot ?? null : null,

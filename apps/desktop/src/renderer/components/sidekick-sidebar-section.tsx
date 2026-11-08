@@ -13,7 +13,7 @@ import { AutomationGlyph } from './workstream-glyph';
 
 /** This viewer's Sidekicks as the workspace socket keeps them; `undefined` until it has said. */
 export function useSidekickList(): AutomationSummary[] | undefined {
-  return useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
+  return useSocketOwnedList<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
 }
 
 /** A Sidekick row's second line: what it is waiting on, or where it stands. */
