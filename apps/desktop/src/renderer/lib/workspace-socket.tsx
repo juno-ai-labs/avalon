@@ -152,6 +152,12 @@ interface WorkspaceSocketContextValue {
    * no-op while it has none.
    */
   markAllActivitySeen(): void;
+  /**
+   * Dial again now rather than at the next backoff step, for a person looking
+   * at a list the socket has not delivered. A no-op on an open socket and in a
+   * window that relays another window's socket.
+   */
+  retry(): void;
 }
 
 const WorkspaceSocketContext = createContext<WorkspaceSocketContextValue | null>(null);
@@ -253,6 +259,8 @@ export function WorkspaceSocketProvider({
   const reportPresenceRef = useRef<() => void>(() => undefined);
   const markAllActivitySeenRef = useRef<() => void>(() => undefined);
   const markAllActivitySeen = useCallback((): void => markAllActivitySeenRef.current(), []);
+  const retryRef = useRef<() => void>(() => undefined);
+  const retry = useCallback((): void => retryRef.current(), []);
 
   useEffect(() => {
     if (!ownSocket) return;
@@ -450,6 +458,12 @@ export function WorkspaceSocketProvider({
         clearReconnect();
         void connect();
       }
+    };
+    retryRef.current = () => {
+      if (stopped || permanentlyClosed || socket?.readyState === WebSocket.OPEN) return;
+      suspended = false;
+      clearReconnect();
+      void connect();
     };
     const scheduleReconnect = (): void => {
       if (stopped || permanentlyClosed || suspended || reconnectTimer !== null) return;
@@ -847,6 +861,7 @@ export function WorkspaceSocketProvider({
       stopApplicationFocus();
       reportPresenceRef.current = () => undefined;
       markAllActivitySeenRef.current = () => undefined;
+      retryRef.current = () => undefined;
       clearReconnect();
       activeTicketAbort?.abort();
       activeTicketAbort = null;
@@ -1011,9 +1026,11 @@ export function WorkspaceSocketProvider({
       sidebarConnect,
       requestConversationView,
       markAllActivitySeen,
+      retry,
     }),
     [
       markAllActivitySeen,
+      retry,
       requestConversationView,
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,
