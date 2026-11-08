@@ -513,8 +513,10 @@ the rail's first section and `/canvases` the landing route
   component the `access_request` Activity row uses, over
   `POST /canvases/:id/access-requests/:userId/decision`). A decision reads
   the detail again, so the request leaves the list; someone approved while
-  the panel is open joins its choice of people, so a Save that follows does
-  not take back the access just given. A refusal
+  the panel is open joins its choice of people, and a visibility the server
+  changed meanwhile (an approval opens a creator-only Canvas to Specific
+  people) replaces the panel's, so a Save that follows does not take back the
+  access just given. A refusal
   (`canvas_access_request_settled`, `canvas_access_decision_not_manager`) is
   the app's error notice.
 - **Pinning** is `POST /canvases/:id/pin`, from the pill's menu, a row's

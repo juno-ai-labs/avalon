@@ -535,6 +535,25 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'participants', userIds: [MAYA] }));
   });
 
+  it('takes the visibility an approval moved a creator-only Canvas to, so Save keeps the person let in', async () => {
+    getCanvas.mockResolvedValue(detail({ visibility: 'creator', participantUserIds: [],
+      pendingAccessRequests: [{ userId: MAYA, name: 'Maya Lin', message: null, requestedAt: '2026-11-08T09:00:00.000Z' }] }));
+    setCanvasAudience.mockResolvedValue(detail({ visibility: 'participants', participantUserIds: [MAYA] }));
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    expect(within(dialog).getByRole('radio', { name: /^Only you/u })).toBeChecked();
+
+    // The server seats Maya and opens the Canvas to its participants.
+    getCanvas.mockResolvedValue(detail({ visibility: 'participants', participantUserIds: [MAYA], pendingAccessRequests: [] }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Approve Maya Lin' }));
+    await waitFor(() => expect(within(dialog).queryByRole('region', { name: 'Requests' })).toBeNull());
+    await waitFor(() => expect(within(dialog).getByRole('radio', { name: /^Specific people/u })).toBeChecked());
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'participants', userIds: [MAYA] }));
+  });
+
   it('shows Deny and its refusal by name', async () => {
     getCanvas.mockResolvedValue(detail({ pendingAccessRequests: [{ userId: MAYA, name: 'Maya Lin', message: null, requestedAt: '2026-11-08T09:00:00.000Z' }] }));
     decideCanvasAccess.mockRejectedValue(new ApiError('canvas_access_request_settled', 409, 'canvas_access_request_settled'));
