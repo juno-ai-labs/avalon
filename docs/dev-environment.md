@@ -296,8 +296,19 @@ tab opens each conversation to an error and the Worker
 logs `socket_origin_forbidden`.
 The host uses the local Global service binding; the regional API must be running.
 
-The development seed gives its people no verified email, so email sign-in
-refuses them with `verified_identity_required`. Link one in the local database
+The signed-out page offers **Use local development account** whenever the API
+runs with `RALLY_DEV_AUTH=true` (as `pnpm dev:api:local` does): it signs in as
+the seed's Adam with no email, as the desktop's button does
+([`browser-client.md`](browser-client.md#development-sign-in)). To serve the
+browser on another port, run `wrangler dev --port <port> --local-upstream
+localhost:<port>` from `apps/browser` after `pnpm build:client`, with the same
+`WRANGLER_REGISTRY_PATH` as the API, and set `BROWSER_APP_ORIGIN` and
+`ALLOWED_ORIGINS` to that origin; without the second, the shell says "Rally
+can’t connect".
+
+To sign in as another seeded person, email sign-in works once their address is
+verified. The development seed gives its people no verified email, so email
+sign-in refuses them with `verified_identity_required`. Link one in the local database
 before signing in as them:
 
 ```bash

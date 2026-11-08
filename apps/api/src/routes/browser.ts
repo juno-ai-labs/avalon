@@ -70,6 +70,10 @@ function writeCookie(c: Context<HonoAppEnv>, value: string, expiresAt: string) {
 const BROWSER_ROUTE_FAMILIES = /^\/(message-issues|conversations|sharing|resources|feature-flags|telemetry|workspace|workspaces|onboarding\/account|onboarding\/organization-suggestion|push-devices|canvases|sidekicks|automations|connections|favicons|search|speech|realtime)(\/|$)/u;
 
 /** Same-origin cookie transport over the existing regional business API. */
+function developmentAuthEnabled(env: Env): boolean {
+  return env.APP_ENV === "development" && env.RALLY_DEV_AUTH === "true";
+}
+
 export function createBrowserRoutes(dispatch: (request:Request, context:Context<HonoAppEnv>) => Response | Promise<Response>) {
   const routes = new Hono<HonoAppEnv>();
   routes.use("*",async (c,next) => {
@@ -134,6 +138,16 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
       logEvent(c,"error","browser_google_sign_in_failed",{ code:"google_sign_in_failed",cause:codeShaped(cause) });
       return failed("google_sign_in_failed");
     }
+  });
+  // The desktop's "Use local development account", as this browser's cookie
+  // session: development with RALLY_DEV_AUTH only, which the GET answers so
+  // the signed-out page knows whether to offer it. Elsewhere both are 404.
+  routes.get("/dev/session",(c) => c.body(null,developmentAuthEnabled(c.env) ? 204 : 404));
+  routes.post("/dev/session",async (c) => {
+    const session = await new AuthService(c.env).createDevelopmentIdentitySession();
+    const cookie = await new BrowserSessionService(c.env).register(session);
+    writeCookie(c,cookie.credential,cookie.expiresAt);
+    return c.json(BrowserSessionSchema.parse(cookie.session),201);
   });
   routes.get("/email/redeem",(c) => { c.header("Allow","POST");return c.body(null,405); });
   routes.post("/email/redeem",authBodyLimit,zValidator("json",EmailLoginRedeemSchema),async (c) => {
