@@ -55,9 +55,8 @@ server just proved. That is the cost of a question whose answer was already
 determined.
 
 **The state is already in the authority that holds the socket.** In Rally that
-is WorkspaceDO, which owns the work-stream directory, the suggestion tables
-(`work_opportunities`, `suggested_work_sets`), automations, notes, resources,
-and connector connections in its own SQLite. The general form of the argument
+is WorkspaceDO, which owns the Canvas list, Sidekicks, Activity, resources and
+connector connections in its own SQLite. The general form of the argument
 matters more than the example: when the process holding the connection is also
 the process holding the rows, a REST read of those rows is a second entry into
 the same place, through another hop, with a fresh authorization pass — to
@@ -70,9 +69,9 @@ a cache entry written by two producers with different shapes. When the same
 authority sends the same shape down one ordered channel carrying its own
 version, the client's rule is a comparison, not a reconciliation.
 
-**Changing data is the common case, not the exception.** A work stream's title
+**Changing data is the common case, not the exception.** A conversation's title
 lands when the model names it; a run's state moves several times a minute;
-unread counts, attention state, and suggestions all move while nobody touches
+unread counts, attention state, and Activity all move while nobody touches
 the keyboard. Anything that changes while a window is open has to arrive over
 the socket eventually — so serving its first value over REST means writing and
 maintaining two paths to the same field, with the REST one used exactly once per
@@ -208,33 +207,21 @@ Connecting a workspace socket should deliver, without being asked:
 - **Workspace metadata** — name, slug, region, timezone, the viewer's role, and
   the viewer's own preferences and effective feature gates. Nothing paints
   correctly before these.
-- **Sidebar metadata** — the first page of the work-stream directory with each
-  row's common and viewer state, including a bounded participant preview on
-  personal rows (at most three ids, most recently added first, plus an overflow
-  count), retained for wire compatibility even though current navigation no
-  longer renders participant facepiles, plus the
-  pinned section, and the automation and note sections the sidebar renders. A
-  cursor for the rest. That is a guest's sidebar, and an Organization's while
-  it is still opening. A member is sent every visible Space instead of Channel
-  rows, and asks each Space for its Channels (`space_channels`) straight after
-  ([`realtime-sockets.md`](realtime-sockets.md)).
-- **The initial suggested actions** — the current suggestion set for this viewer.
-  It is computed in the background by the scheduler and already resident in
-  WorkspaceDO; the home screen should never be the thing that asks for it.
-- **The initial activity the new-work-stream screen shows** — what needs input
-  and what recently completed. It is the first thing a person reads in the
-  morning and it is derived from rows the same object holds.
+- **Sidebar metadata** — the viewer's Sidekick list, Canvas list and Activity
+  (its newest page and how many items are unseen), each with its own waterline
+  and pinned positions, read in one local snapshot so no write can land between
+  them ([`realtime-sockets.md`](realtime-sockets.md)).
 
 The workspace row and the member directory are the parts of that list whose
 authority is D1 rather than the object, so pushing them costs WorkspaceDO a D1
 read per connect. That is one read, once, replacing one round trip per client
 per mount — take the read.
 
-### What opening a work stream owes the client
+### What opening a conversation owes the client
 
-Opening a work stream should deliver, without being asked:
+Opening a conversation should deliver, without being asked:
 
-- **The complete metadata snapshot** — the Channel parent's common row and the
+- **The complete metadata snapshot** — the conversation's common row and the
   viewer overlay, as one snapshot rather than a patch.
 - **Canonical transcript coverage** — snapshot-fenced newest and unread
   half-open sequence ranges, including authoritative empty coverage. The client
@@ -259,8 +246,8 @@ divergences](#known-divergences) records. The way to derive the next one:
 1. **Start from the screen, not the schema.** List what the surface renders in
    its first frame. That list is the payload; anything else is a later concern.
 2. **Cut anything the surface does not paint.** A connect payload is sent on
-   every connection, to every window, on every reconnect — Main, Settings, and
-   Meeting each hold their own socket. Every field added here is sent that many
+   every connection, to every window, on every reconnect — Main and Settings
+   each hold their own socket. Every field added here is sent that many
    times.
 3. **Bound every collection.** First page plus a cursor. A collection that is
    small today is one whose maximum size nothing enforces.
@@ -284,9 +271,9 @@ connection is for*, never *what data it would like*.
 
 Rally's workspace ticket carries no such purpose today.
 `getWorkspaceSocketTicket()` takes no arguments and the subscribe frame carries
-only a waterline, so Main, Settings, and Meeting each receive the same payload
+only a waterline, so Main and Settings each receive the same payload
 and each pays for everything in it. Until a purpose is added there, "budget it
-against the window" reduces to "keep it small, because three windows pay for
+against the window" reduces to "keep it small, because every window pays for
 it" — which is still the right instinct, and is the reason the rule is worth
 stating before the mechanism exists.
 
@@ -327,27 +314,27 @@ race.** This is not an edge case to be designed out — it is the normal operati
 of any hierarchy where a child owns the truth and a parent owns the list, and it
 appears the moment a client subscribes to both levels at once.
 
-Rally's instance of it used to be two sockets: a Channel's state change was
-published on the Channel control socket and, again, on the workspace socket.
-Once both were served by the same `WorkspaceDO`
+Rally's instance of it used to be two sockets: a conversation's state change
+was published on its control socket and, again, on the workspace socket. Once
+both were served by the same `WorkspaceDO`
 ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), the
-second socket was only a second copy from the same object, and it was retired:
-a Channel's row, breakouts and running background agents now arrive on the
-workspace socket alone ([`websocket-architecture.md`](websocket-architecture.md)).
-The lesson still holds on one socket. The same row is republished by the
-directory apply, by a breakout roster change, and by a redelivered effect, and
-the conversation effects behind most changes arrive through Cloudflare Queues,
-which is at-least-once and unordered. So a copy can still arrive *behind* a
-change that superseded it.
+second socket was only a second copy from the same object, and it was retired
+([`websocket-architecture.md`](websocket-architecture.md)). The lesson still
+holds on one socket. A sidebar list is carried on the answer to `subscribe` and
+pushed again as `workspace_sidebar_list`, `workspace_canvas_list` or
+`workspace_activity_list` by every
+write that moves it, and the conversation effects behind most of those writes
+arrive through Cloudflare Queues, which is at-least-once and unordered. So a
+copy can still arrive *behind* a change that superseded it.
 
 Do not answer that by suppressing a publisher. Each republish covers a case the
-others do not (a roster change moves no directory version; a deferred directory
-apply is retried by the alarm), so dropping one trades a visible bug for an
-invisible one.
+others do not (the connect answer covers a push missed while the socket was
+away; a later push covers a write after the connect), so dropping one trades a
+visible bug for an invisible one.
 
 The generalization worth carrying to the next stream: **a client cannot
-de-duplicate by channel, by arrival order, or by timestamp.** Channels are not
-comparable to each other, arrival order is a property of the network, and clocks
+de-duplicate by transport, by arrival order, or by timestamp.** Transports are
+not comparable to each other, arrival order is a property of the network, and clocks
 belong to different machines. Only a version stamped by the authority that owns
 the data can order two payloads.
 
@@ -383,32 +370,29 @@ everything it is told.
 
 ### How Rally stamps it today
 
-`WorkstreamStateVersion` in `@rally/contracts` is the shape both work-stream
-paths carry, and it is worth reading as a design rather than a struct:
+Each stream the workspace socket carries is stamped by `WorkspaceDO`, inside
+the transaction of the write that earned it:
 
-| Field | What it decides |
-| --- | --- |
-| `authorityGeneration` | Which incarnation of the authority produced this — it advances when a work stream is imported into a new object. A payload from an older generation is rejected outright, and a newer one applies unconditionally, because its waterlines come from a different counter and are not comparable to the stored ones. |
-| `commonWaterline` | Monotonic within the Channel parent for the shared row — title, state, activity, preview. |
-| `viewerWaterline` | Monotonic within the Channel parent for *this* viewer's overlay — unread, mention, read-through, listability. Zero is a sentinel rather than a position: it means the viewer has no overlay row yet, and the schema requires `viewerEventId` to be null exactly then. A payload stamped zero therefore never applies its viewer half, because the receiver's test is strictly greater. |
-| `commonEventId` / `viewerEventId` | The UUIDv7 identity of the state row each half came from. Time-sortable trace identities for correlating the two paths — deliberately **not** a distributed clock, and never the thing a comparison is made on. |
+| Stream | Version | What it decides |
+| --- | --- | --- |
+| The Sidekick list, the Canvas list, and Activity | One waterline per list in `workspace_sidebar_list_state` | Whether a pushed list replaces the one the client holds. A list applies only if its waterline is strictly greater; equal is the duplicate the mechanism exists to absorb. |
+| `workspace_sync` invalidations | The `workspace_sync_events` log's waterline | Where a resuming `subscribe` (`afterWaterline`) picks up. A cursor older than the pruned log, or newer than its head, is answered with every topic and `reason: "history_unavailable"`. |
+| A conversation's transcript | The room sequence in its `AgentLoopDO` | See [the other streams](#the-same-discipline-on-the-other-streams). |
 
-**The two waterlines are independent on purpose, and that is the load-bearing
-detail.** Queue delivery is unordered, so a viewer row can arrive after a common
-row that was produced before it. One counter for both would let the late viewer
-row suppress a common update that had not been delivered yet, and the sidebar
-would keep a title that no longer exists. Advancing one half never advances the
-other.
+**The three lists have independent waterlines on purpose, and that is the
+load-bearing detail.** A Sidekick write and a Canvas write move without each
+other, so one counter for both would let a late push of one list carry a number
+that suppresses a newer push of the other. Advancing one never advances the
+others.
 
 The general rule behind it: **fields that change independently need independent
 counters.** Two families that advance together may share one; two that can move
 without each other must not, or updates to the faster one will hide updates to
-the slower one.
-
-WorkspaceDO-owned fields are a third ledger again. Pin position is ordered by
-the directory waterline that WorkspaceDO stamps on its own page results, because
-that ordering is the parent's and has nothing to do with the child's revisions.
-A field's version belongs to whoever owns the field.
+the slower one. `WorkstreamStateVersion` in `@rally/contracts` — an authority
+generation beside independent common and viewer waterlines — is the shape the
+retired per-conversation rows carried, and stays in the contract for the
+compatibility read of a pre-pivot desktop; it is the model to copy if a
+per-row versioned push comes back.
 
 ### One receiver, not one per socket
 
@@ -418,53 +402,24 @@ points. Two handlers each with their own comparison is how the race comes back:
 the ledger stops being one ordering and becomes two, and the two diverge the
 moment one of the sockets reconnects.
 
-Rally's receiver is
-`apps/desktop/src/renderer/lib/workstream-state-store.ts`. Every path that
-carries a Channel row (the connect sidebar, a page, a recency move, a
-`workspace_workstream_state` push) calls `applyVersionedWorkstreamState`; none
-writes the work-stream caches directly for versioned state. The breakout list a
-row carries has its own waterline and its own receiver,
-`channel-viewer-state.ts`, for the same reason. The one class of direct write is a pushed or acknowledged
-fact with no version of its own: a rename or scope event, a REST response the
-caller just received, the appearance receipt. Those go through
-`patchCachedWorkstream` in `workstreams-cache.ts`, which writes the conversation's
-cached detail. A child address updates only that child's detail, so its name or
-scope cannot overwrite Main's. Each
-write carries only the fields that are the fact's own news, so the next newer
-versioned payload replaces them whole and the receiver still has the last word.
-
-**Appearance is the exception: no unversioned write carries it.** The
-cached detail is what the appearance picker reads to decide its own optimistic
-preview is finished, so an unversioned write there retires a person's in-flight
-choice against a value they did not pick. The receipt and a naming pass's icon
-therefore write nothing, and both the header and the sidebar's lists wait for
-the versioned projection.
-[`workstream-appearance.md`](workstream-appearance.md) owns the rule and the two
-bugs that produced it.
-A REST response is a whole summary; spreading it would write versioned common
-fields through this path too, so viewer responses go through
+Rally's receiver for the sidebar is
+`apps/desktop/src/renderer/lib/sidebar-list-store.ts`. Both producers — the
+sidebar carried on the `workspace_sync` answer to `subscribe` and every later
+list push — write through it, and it keeps the waterline ledger pinned for as
+long as the lists it orders. The one class of direct write is a pushed or
+acknowledged fact with no version of its own: a rename or scope event, a REST
+response the caller just received. Those go through `patchCachedWorkstream` in
+`workstreams-cache.ts`, which writes the conversation's cached detail. A child
+address updates only that child's detail, so its name or scope cannot overwrite
+Main's. A REST response is a whole summary; viewer responses go through
 `patchCachedWorkstreamViewerState` and take only their viewer half. The harness
 status and attention advances keep their own writers because they are
 substream-owned: a child's status reaches the child's detail entry and never
 the parent's row.
-The predicate it applies, exactly:
 
-- A payload whose `authorityGeneration` is older than the ledger's is discarded
-  whole. Neither half of a stale-authority payload is trustworthy.
-- A newer generation applies both halves unconditionally, because the waterlines
-  it carries are not comparable to the stored ones.
-- At the same generation, each half applies **only if its own waterline is
-  strictly greater** than the stored one. Equal is not newer: an equal waterline
-  is the duplicate this whole mechanism exists to absorb.
-- Whichever halves applied are written back to the ledger, and the halves that
-  did not are left at their stored values. A payload can therefore be
-  half-applied, which is the correct outcome when one half is behind the other.
-- The ledger retains the accepted listability beside those waterlines. A
-  directory page rejected as stale cannot use its wire row as a fallback after
-  a newer tombstone removed the cached row. After a successful local archive,
-  the REST response remains as a hidden directory marker until that tombstone
-  arrives; this closes the earlier window in which an in-flight page made the
-  Channel disappear, reappear, and disappear again.
+The predicate it applies, exactly: a list whose waterline is not strictly
+greater than the ledger's is discarded whole, and one that is replaces the held
+list and advances the ledger. A list is never merged with the one it replaces.
 
 A useful test when adding a sender: if the new call site needs its own "have I
 seen this?" check, the receiver is in the wrong place. Move the comparison, not
@@ -563,10 +518,10 @@ will do both, in different code paths, and the resulting bug is intermittent.
 ## Why child commands use the owning socket
 
 A mutation belongs on an already-open child socket when the connection itself
-selects the durable authority being changed. For `SubstreamAgent`, that means
+selects the durable authority being changed. For `AgentLoopDO`, that means
 message admission, elicitation answers, pending-input reorder, stop, and retry.
 The socket ticket already fixes workspace, parent, substream, user, session,
-role, region, and authority generation. Repeating a work-stream URL in REST
+role, region, and authority generation. Repeating a conversation URL in REST
 would add a routing path without adding authority.
 
 A command still needs request semantics. Every substream mutation therefore
@@ -597,12 +552,12 @@ produce the parent's viewer overlay), so there is no later broadcast to correct
 an optimistic apply against, which the ordering rules above assume there is.
 `mark_opened` is the nearest thing on the socket and needs none of the three: it
 is one-way, carries no cursor, and the client settles its own attachment.
-Marking a conversation unread stays on the work stream for a different reason
+Marking a conversation unread stays on the conversation for a different reason
 again: the sidebar takes that action with no conversation open, so there is no
 child to address.
 
 REST remains right when no child socket exists yet or the mutation belongs to a
-different authority: create a work stream, rename/archive it, manage
+different authority: create a conversation, rename/archive it, manage
 participants or resources, pin it, invite a member, or change workspace
 settings. Those operations select or change the parent and may create/destroy
 the very child connection a socket command would require.
@@ -713,8 +668,7 @@ Three signs the answer above was wrong:
   feature. Cache invalidation, poll intervals, and refetch cascades on a fetch
   mean the read wanted a push.
 - **Two places produce the same field and stamp it independently.** A relay is
-  fine and is how a Channel's row reaches the workspace socket from its parent
-  — it forwards the owner's version. Two producers that each
+  fine — it forwards the owner's version. Two producers that each
   mint their own version is the problem: the next bug is the two of them
   disagreeing, reported as a value that changes when you navigate and changes
   back when you reload.
@@ -756,8 +710,8 @@ consequence of breaking it.
   tells the client to stop retrying. See
   [`access-revocation.md`](access-revocation.md). Do not build a second path, and
   in particular do not build one that polls.
-- **The connect payload is bounded**, and it is paid per window — Main,
-  Settings, and Meeting each hold their own socket, and none of them is
+- **The connect payload is bounded**, and it is paid per window — Main and
+  Settings each hold their own socket, and none of them is
   distinguishable at admission today. Break this and the cost lands on every
   window and every reconnect at once.
 - **No polling, ever.** No interval refetch, no "just in case" revalidation on
@@ -774,27 +728,24 @@ last edit to this file. The middle column says what the code does; the right-han
 column says whether that is what this document asks for. **A row marked No
 describes behaviour to replace, not a pattern to copy into something new.**
 
-| Surface | Channel today | Matches this document |
+| Surface | Rally today | Matches this document |
 | --- | --- | --- |
-| Work-stream directory pages (membership, order, pins) | First page carried on the `workspace_sync` answer to `subscribe`; later pages requested with `list_workstreams`; a `workstream_directory` sync event invalidates them and the client asks again | **Partly.** The first page is pushed and later ones are a scroll the reader asked for, but a pin or a reorder still arrives as news rather than as the changed row. |
-| Work-stream common/viewer state, breakout list, running background agents | Pushed as the Channel's row on the workspace socket, per viewer, waterlined (the breakout list on its own waterline) | Yes. |
-| A Channel's rail (Main participants, Sidekicks, Main resources) | Sent with each Space's Channel rows (`space_channels`) on the workspace socket, and requested by named Channels (`channel_rails`) when a rail moves; the row's `railWaterline` says when a held rail is stale. REST remains for a breakout's Sidekicks and for Main's attachments, which no conversation reports to the Organization yet | **Mostly.** The data comes from the object holding the socket and the change arrives on the row, but the rail itself is pulled on the waterline rather than pushed. |
-| Transcript parts, tool blocks, token frames, presence | SubstreamAgent socket, snapshot on subscribe | Yes. |
-| Transcript range loading | Correlated, snapshot-fenced half-open range request on the SubstreamAgent socket | Yes — a pull the reader asked for, answered by the authority with explicit inspected coverage. |
-| Opening a conversation | Selecting it immediately subscribes the addressed SubstreamAgent feed; its first `snapshot` carries metadata, the unread-centered 5 + anchor + 5 range, the latest-five range, active turns, and reconnect timing baselines; the Channel's own metadata is already on the client as its workspace-socket row | Yes. Main and child conversations both recover by abandoning stale connection state and reconnecting from cursor zero; Retry restarts that same socket path. |
-| The first paint of the sidebar, a Space, or a conversation after a launch | The renderer's local cache seeds the query-cache entries from what the socket last delivered, marked as a seed; the socket's first payload then applies over it through the ordinary receivers, and a seed moves no ledger | Yes, as a seed. Nothing is fetched: the seed is not a second channel for the data, it is the last thing the one channel said, and the connect payload still replaces it unasked. [`local-cache.md`](local-cache.md) owns it. |
-| Workspace profile, members, invitations, connectors, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
-| The sidebar's automations and notes | Carried on the `workspace_sync` answer to `subscribe`, then pushed whole as `workspace_sidebar_list` on every write, each with its own waterline | Yes. |
-| Suggested actions | `GET /work-opportunities?limit=4`, invalidated by the `activity` and `work_opportunities` topics | **No.** The rows are in the object holding the socket. |
-| Sending a message | Command frame on the admitted SubstreamAgent socket for Rally; generic conversation REST admission for a command-only client with no socket | Yes. Both paths enter the same object operation with the same durable client-message identity; a client never uses both. |
-| Connector list in workspace settings | `GET /connections`, re-read on every window refocus (`refetchOnWindowFocus: 'always'`) | **No.** The one focus revalidation in the client; the global default is off. See below. |
-| Substream-local commands | `create_message`, elicitation answer, pending-input reorder, stop, and retry use the addressed SubstreamAgent socket with private operation receipts | Yes. |
+| The sidebar's Sidekick list, Canvas list and Activity | Carried on the `workspace_sync` answer to `subscribe`, then pushed whole as `workspace_sidebar_list`, `workspace_canvas_list` or `workspace_activity_list` on every write that moves one, each with its own waterline; pins ride on the rows | Yes. |
+| Transcript parts, tool blocks, token frames, presence | `AgentLoopDO` socket, snapshot on subscribe | Yes. |
+| Transcript range loading | Correlated, snapshot-fenced half-open range request on the `AgentLoopDO` socket | Yes — a pull the reader asked for, answered by the authority with explicit inspected coverage. |
+| Opening a conversation | Selecting it immediately subscribes the addressed `AgentLoopDO` feed; its first `snapshot` carries metadata, the unread-centered 5 + anchor + 5 range, the latest-five range, active turns, and reconnect timing baselines | Yes. Main and child conversations both recover by abandoning stale connection state and reconnecting from cursor zero; Retry restarts that same socket path. |
+| A conversation's display view for a window that does not hold its feed | `conversation_view` request on the workspace socket, answered with `workspace_conversation_view` after the same admission a feed would get | Yes — a pull a window asked for, correlated by request id. |
+| The first paint of the sidebar or a conversation after a launch | The renderer's local cache seeds the query-cache entries from what the socket last delivered, marked as a seed; the socket's first payload then applies over it through the ordinary receivers, and a seed moves no ledger | Yes, as a seed. Nothing is fetched: the seed is not a second channel for the data, it is the last thing the one channel said, and the connect payload still replaces it unasked. [`local-cache.md`](local-cache.md) owns it. |
+| Workspace profile, members, invitations, connectors, resources, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
+| Sending a message | Command frame on the admitted `AgentLoopDO` socket for Rally; generic conversation REST admission for a command-only client with no socket | Yes. Both paths enter the same object operation with the same durable client-message identity; a client never uses both. |
+| Connector list in workspace settings | `GET /connections`, re-read on window refocus (`refetchOnWindowFocus: true`, five-second stale time) | **No.** See below. |
+| Substream-local commands | `create_message`, elicitation answer, pending-input reorder, stop, and retry use the addressed `AgentLoopDO` socket with private operation receipts | Yes. |
 | Read acknowledgement | `PATCH /conversations/:parentId/substreams/:substreamId/read-state`, addressed to the conversation whose waterline it moves | Yes, as the stated exception. It selects a child the open socket already selects, and stays on REST because it must not be resent on reconnect, needs read-your-write, and has no corrective push behind it. See **Why child commands use the owning socket**. |
 | Parent/bootstrap mutations | REST | Yes. |
 
 ## Known divergences
 
-Two places where the running code does not follow this document. They are
+Places where the running code does not follow this document. They are
 written down so that nobody reproduces them by copying what is already there,
 and so the work to close them is legible to whoever picks it up. **Neither is
 an exception you may extend.**
@@ -802,50 +753,38 @@ an exception you may extend.**
 **Cold connect pushes an invalidation, not the data.** A first `subscribe` is
 answered with a single `workspace_sync` event whose topic list is *every* topic
 and whose reason is `initial`. The client reads that as "all of it may be new"
-and refetches each mounted surface, so the home screen's first paint waits on
-`GET /workspace`, `GET /workspace/members`, and
-`GET /work-opportunities?limit=4`. One of those three reads tables in the object
-that sent the frame; the other two are one D1 read away from it. The sidebar
-used to be in that list and no longer is — the same event now carries it, which
-is what the rest of this should look like. Closing this
-means giving the connect path a payload rather than a topic list, per-topic
-waterlines so a later push can order against it, and a client that applies
-frames instead of invalidating query keys. Until then, `initial` is the boundary
-between what this document describes and what runs.
+and refetches each mounted surface, so the first paint of anything outside the
+sidebar waits on its REST read (`GET /workspace`, `GET /workspace/members` and
+the rest). Closing this means giving the connect path a payload rather than a
+topic list, per-topic waterlines so a later push can order against it, and a
+client that applies frames instead of invalidating query keys. Until then,
+`initial` is the boundary between what this document describes and what runs.
 
 The sidebar is the part of that boundary that has been closed, and it is the
-worked example to copy rather than the gap. Its three lists — the first
-directory page, the automations and the notes — ride on the `workspace_sync`
-event that answers `subscribe`, so opening it costs no request; the two that
-were REST reads are pushed whole on every write, each carrying a waterline the
-client orders against. Two details are worth taking from it. A resume where no
-topic moved still carries the payload, under `reason: "resume"` with an empty
-topic list, because a push can be missed while a socket is away and produce no
-topic at all — and the receiver applies the sidebar *before* the topic-waterline
-guard, or that resume would be discarded along with the state it exists to
-deliver. And system work streams are deliberately left out: Debug enabled is
-rare, internal, and lives in the desktop's own settings, so a viewer who wants
-those rows re-draws from a `list_workstreams` request. Serving the p95 unasked
-and charging the rare case a round trip is the trade this document is asking
-for, not an exception to it.
-
-What is still open on the sidebar is pins: a pin, an unpin, or a reorder calls
-`publishDirectorySync`, which emits only the `workstream_directory` topic, so
-the client invalidates and asks again. Work-stream row state is genuinely
-pushed, as a waterlined `workspace_workstream_state`. Closing the rest means pin
-changes publishing the changed row.
+worked example to copy rather than the gap. Its three lists ride on the
+`workspace_sync` event that answers `subscribe`, so opening it costs no
+request, and each is pushed whole on every write with a waterline the client
+orders against. One detail is worth taking from it: a resume where no topic
+moved still carries the sidebar, because a push can be missed while a socket is
+away and produce no topic at all — a scheduled Sidekick advancing its next run
+publishes none — and the receiver's per-list comparison makes a resume that
+missed nothing free to ignore.
 
 **The connector list re-reads itself on window focus.**
 `apps/desktop/src/renderer/screens/workspace-settings.tsx` sets
-`refetchOnWindowFocus: 'always'` on the `connections` query, against a global
-default of `false` in `App.tsx`. That is the "just in case" revalidation the
+`refetchOnWindowFocus: true` on the `connections` query, against a global
+default of `false` in `lib/query-client.ts`. That is the "just in case" revalidation the
 [no-polling invariant](#invariants) forbids, on state rather than on a one-shot
 signal, so the OAuth-attempt carve-out above does not cover it: the whole list
-is re-read on every refocus whether or not a provider window was ever opened.
+is re-read on a refocus more than five seconds after the last read, whether or
+not a provider window was ever opened.
 The push path already exists — `connector_connections` is one of the workspace
 sync topics — so closing it means applying pushed connection state on that
-screen instead of re-reading. Until then, this is the one place a timer-like
-read survives, and it is not a precedent.
+screen instead of re-reading. Until then it is not a precedent. Two more
+reads revalidate on focus the same way: the Settings window's own timezone
+(`refetchOnWindowFocus: 'always'`, because that window is mounted hidden while
+the main window's device report can move the zone) and a Sidekick's delegates
+(`sidekick-delegation.tsx`).
 
 Main-feed connector recovery cards use that existing push path without waiting
 for the broader Settings cleanup. The conversation keeps `['connections']` as
@@ -870,8 +809,8 @@ surface. This is event-driven revalidation, not polling and not a second socket.
   decision one layer down, between two Workers or two objects.
 - [`when-adding-a-new-http-header.md`](when-adding-a-new-http-header.md) — the
   checklist for the REST half of this boundary.
-- [`workstream-creation.md`](workstream-creation.md) — the create path, and what
-  the caller is made to wait for.
+- [`canvases.md`](canvases.md) — the Canvas create path, and what the caller is
+  made to wait for.
 
 ### 2026-09-11 — Connector recovery follows the existing workspace socket
 
@@ -900,7 +839,7 @@ acknowledgement names the conversation whose waterline it moves.
 `POST /workstreams/:id/read-state/mark-unread` did not move.
 
 **Why:** read state is per-conversation in the authority (a `member_attention`
-row per `SubstreamAgent`) and was per-work-stream in the API, so a substream's
+row per `AgentLoopDO`) and was per-conversation in the API, so a substream's
 read could not be recorded at all. The two operations now sit in different
 families on purpose, and the rule above is what splits them: a read is
 acknowledged by a reader who has that conversation open, so the conversation is
@@ -948,7 +887,7 @@ consolidation. Parent responses retain the default Main address.
 
 ### 2026-09-09 — Name the unversioned write and bound what it may carry
 
-The "one receiver" rule said neither socket hook writes the work-stream caches
+The "one receiver" rule said neither socket hook writes the conversation caches
 directly, while rename events, harness status, and REST responses already did.
 The rule now says what those writes are: unversioned facts, written through
 `patchCachedWorkstream`, carrying only the fields that are the fact's own news.
@@ -969,7 +908,7 @@ and the visible Retry action restarts the socket opening sequence only.
 **Why:** The REST recovery twin gave main and child conversations different
 failure semantics and let two independently ordered transports write the same
 detail and transcript caches. Child recovery already demonstrated the smaller
-authority-preserving path: reconnect to that exact SubstreamAgent and accept a
+authority-preserving path: reconnect to that exact `AgentLoopDO` and accept a
 new baseline under the existing connection-generation fence.
 
 **Consequences:** A broken or oversized socket snapshot is now exposed as a
@@ -981,7 +920,7 @@ parent-owned mutation wrappers still use it for read-after-write.
 ### 2026-09-02 — Substream-local commands move together onto the child socket
 
 **What changed:** elicitation answers, pending-input reorder, stop, and retry
-join message admission on the addressed SubstreamAgent socket. Their public REST
+join message admission on the addressed `AgentLoopDO` socket. Their public REST
 routes, desktop HTTP methods, and the unused WorkspaceDO message-command path
 are removed. One operation-ID receipt and
 reconnect queue serves all five commands; retry uses the operation ID as its
@@ -1003,7 +942,7 @@ admission and addressing; it must not require a second child-mutation API.
 
 ### 2026-09-01 — Message admission moves to the socket that owns the room
 
-**What changed:** `create_message` now uses the admitted SubstreamAgent socket,
+**What changed:** `create_message` now uses the admitted `AgentLoopDO` socket,
 with a private correlated receipt and reconnect resend under the same client
 message identity. The workspace socket is no longer the current desktop's
 message route.
@@ -1022,7 +961,7 @@ by every substream-local command.
 
 ### 2026-08-26 — Transcript history becomes range-addressed socket state
 
-**What changed:** Work-stream opening and history use snapshot-fenced transcript
+**What changed:** Conversation opening and history use snapshot-fenced transcript
 ranges with explicit coverage. The initial socket snapshot sends unread context
 and the latest tail together; REST retains the same shape only for recovery.
 
@@ -1030,15 +969,15 @@ and the latest tail together; REST retains the same shape only for recovery.
 between quick unread paint and an instantly usable bottom.
 
 **Considered and rejected:** Fetching the middle eagerly and moving gap reads to
-REST. Both add round trips to data already owned by the open SubstreamAgent.
+REST. Both add round trips to data already owned by the open `AgentLoopDO`.
 
 **Consequences:** Range replies are state returned on request, not invalidation
 news. Realtime events above the snapshot fence extend only their own sequence;
 they do not imply middle coverage.
 
-### 2026-08-25 — A cold work-stream open becomes socket-first
+### 2026-08-25 — A cold conversation open becomes socket-first
 
-**What changed:** Selecting a work stream now admits its SubstreamAgent feed
+**What changed:** Selecting a conversation now admits its `AgentLoopDO` feed
 immediately and paints detail plus transcript from the first `snapshot`. The
 WorkstreamDO control socket starts alongside it, not ahead of it, and its
 viewer-specific HyperSight preference is optional metadata rather than an open
@@ -1055,7 +994,7 @@ before the screen could become live.
 one Durable Object to assemble two equivalent boots and leaves their winner
 load-dependent. Awaiting the WorkstreamDO preference preserves a cross-object
 dependency for a panel that is closed safely while its metadata is unknown.
-Opening feeds on hover would publish presence for a work stream the person did
+Opening feeds on hover would publish presence for a conversation the person did
 not open; hover therefore remains control-only.
 
 **Consequences:** A normal open has one canonical payload and can send as soon

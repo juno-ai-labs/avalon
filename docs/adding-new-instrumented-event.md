@@ -23,7 +23,7 @@ Before changing code, write down:
 
 Do not include prompts, messages, documents, request bodies, URLs, arbitrary
 errors, tokens, account/user identity IDs, or other content. An opaque UUID for
-the resource being measured—such as a work stream, message, note, automation,
+the resource being measured—such as a conversation, message, note, automation,
 run, or tool invocation—may be included when it is required for paths, joins, or
 deduplication and is declared as a product property in the closed registry.
 Never include a resource title, body, clipboard value, tool argument, tool
@@ -101,7 +101,7 @@ regional persistence.
 For agent-tool adoption, emit at the durable invocation admission boundary—not
 when a menu or model schema merely exposes the tool. Allowlist only the canonical
 tool name, plugin ID, capability, read/write mode, run kind, execution scope,
-and opaque work-stream/run/automation IDs. Arguments, outputs, summaries,
+and opaque conversation/run/automation IDs. Arguments, outputs, summaries,
 provider payloads, and error text are prohibited.
 
 ### PostHog destination compatibility

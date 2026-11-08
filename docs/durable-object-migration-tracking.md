@@ -1,7 +1,7 @@
 # Durable Object migration tracking
 
 Rally runs two migrated Durable Object classes across two regional Workers,
-`SubstreamAgent` and `WorkspaceDO`, and each object applies its own SQLite
+`AgentLoopDO` and `WorkspaceDO`, and each object applies its own SQLite
 migration history in its constructor. The legacy `WorkstreamDO`, `SpaceDO` and
 `SidekickDO` were tracked here too until each class was deleted; Canvas and
 Sidekick parents live in `WorkspaceDO`
@@ -56,7 +56,7 @@ keep their last labels; new sweeps and commands name only live classes.
 | `apps/migration-tracker/src/app.ts`, `views.ts` | The Hono application and the server-rendered site. |
 | `apps/migration-tracker/wrangler.jsonc` | The deployment: the custom domain, the Access variables, the cron trigger, and the two regional command-queue producer bindings. |
 | `scripts/ensure-cloudflare-queues.mjs` | The deployment preflight that reads every Wrangler file and creates each queue it declares that the account does not hold, so the configuration stays the single source of truth and no queue is made by hand. |
-| `scripts/force-substream-agent-migrations.mjs` | The explicit one-off fleet wake for `SubstreamAgent`: inventories stored IDs, classifies their encoded jurisdiction, sends only region-addressable IDs through the existing command queues, and verifies queue drain without a new dead letter. |
+| `scripts/force-substream-agent-migrations.mjs` | The explicit one-off fleet wake for `AgentLoopDO`: inventories stored IDs, classifies their encoded jurisdiction, sends only region-addressable IDs through the existing command queues, and verifies queue drain without a new dead letter. |
 | `scripts/substream-agent-jurisdiction-probe/` | A remote-development-only Worker that parses enumerated IDs through unrestricted external bindings and returns their encoded jurisdiction without opening an object. |
 
 ### The report
@@ -65,7 +65,7 @@ keep their last labels; new sweeps and commands name only live classes.
 constructors. It reads the object's version from the runner's own
 `_sql_schema_migrations` ledger before and after the call, so it works
 identically at the sites that call the runner directly and at
-`SubstreamAgent`, which reaches it through `WorkstreamObjectStore`'s constructor.
+`AgentLoopDO`, which reaches it through `WorkstreamObjectStore`'s constructor.
 
 Three outcomes reach the tracker:
 
@@ -349,7 +349,7 @@ The link runs through the objects, which is the only place the tracker's two
 halves meet — a sweep gives an object its namespace, a report gives it its
 component and region — and that is what makes the marker per region. The same
 classes are deployed in both Workers, so asking whether any namespace for
-`SubstreamAgent` is still live would leave a component looking live in the
+`AgentLoopDO` is still live would leave a component looking live in the
 region it was deleted from because the other region still runs it. A retired component and a retired namespace both
 stay in their tables, dimmed and sorted last — what used to be deployed is
 exactly what somebody wants to see when a class disappeared and its objects went
@@ -735,7 +735,7 @@ goes through `hono/html` escaping.
   the deployment preflight creates if it is absent.
   [`runbook.md`](runbook.md#the-durable-object-migration-tracker) has the
   provisioning steps.
-- The explicit `SubstreamAgent` fleet wake is for a coordinated release that
+- The explicit `AgentLoopDO` fleet wake is for a coordinated release that
   needs every currently addressable object constructed immediately rather than
   waiting for ordinary traffic. Start its local jurisdiction classifier in one
   terminal, using credentials from a trusted checkout rather than copying them:

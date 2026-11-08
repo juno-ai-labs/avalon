@@ -52,7 +52,7 @@ pnpm --filter @rally/api exec vitest run test/security-and-config.test.ts
 For a hosted endpoint, verify the real browser preflight shape before releasing:
 
 ```bash
-curl -i -X OPTIONS https://api.rallywith.ai/workstreams \
+curl -i -X OPTIONS https://api.rallywith.ai/canvases \
   -H 'Origin: app://rallywithai' \
   -H 'Access-Control-Request-Method: POST' \
   -H 'Access-Control-Request-Headers: authorization,content-type,x-example-header'

@@ -40,7 +40,7 @@ The rest:
 | `packages/contracts` — `AGENT_MODEL_OVERRIDES` | The closed set of pinnable models. |
 | `apps/desktop/src/main/developer-settings-flag.ts` | The main-process poll and its interval. |
 | `apps/desktop/src/renderer/lib/agent-models.ts` | How every model id reads on screen — the menu's names and groups, and the shortening the conversation's read-only pill applies to an id the closed set does not admit. |
-| `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a work stream or substream being started, and the locked pill inside one that already exists. |
+| `apps/desktop/src/renderer/components/composer-input.tsx` | The one model control, in both of its shapes: the menu that pins a conversation or substream being started, and the locked pill inside one that already exists. |
 | `packages/db/src/index.ts`, `apps/api/src/durable-objects/workstream-object-product.ts` | Where compatibility reads and authoritative object reads re-validate a stored model pin before it reaches routing. |
 
 ### Why a flag rather than a Worker variable
@@ -58,7 +58,7 @@ and Rally keeps running unchanged when Flagship is unreachable.
 ### One flag per agent
 
 Each adjustable model-using agent type uses a flag keyed
-`agent-model-<agent>`. Background agents use the work-stream agent type and
+`agent-model-<agent>`. Background agents use the conversation agent type and
 inherit the source conversation's model override:
 
 | Agent | Flag key | Default model | Fallback models |
@@ -78,12 +78,12 @@ evaluated cascade fixes JEV as primary and
 fallback, with no model or provider fallbacks. Changing either side requires a
 new evaluation and deploy; leaving an editable Flagship value in front of the
 measured route would let production silently diverge from its evidence. The
-work-stream entry matches the `AgentInferenceSource` value written to the
+conversation entry matches the `AgentInferenceSource` value written to the
 inference ledger, so a ledger row and its flag key name the same agent; an
 automation activation and its delegation workers remain `workstream` runs on
-the work-stream agent's flag. The Sidekick's authoring Main (`automation` parent,
+the conversation agent's flag. The Sidekick's authoring Main (`automation` parent,
 substream `0`) and the background agents it starts use `sidekick_authoring`,
-independently defaulting to Sol even when the work-stream flag serves Terra. An explicit conversation model pin still
+independently defaulting to Sol even when the conversation flag serves Terra. An explicit conversation model pin still
 wins. The rest
 are the standalone structured-output agents: message addressing uses the
 agent-harness JEV/fallback cascade; the pasted-text title (the
@@ -106,9 +106,8 @@ keeps its Thread-era name because it is a Flagship key, and now titles pasted
 text (`pasted-text-service.ts`); a rename would be a flag migration for no
 change in behaviour. The loop read a window of up to 600 messages to judge whether
 a Thread's purpose had moved, which is why it once wanted a stronger default
-than the classifiers it shared one with;
-[`workstream-descriptions.md`](workstream-descriptions.md) (retired) keeps its
-changelog.
+than the classifiers it shared one with; its retirement record is in
+[`workstream-durable-object.md`](workstream-durable-object.md#changelog).
 
 Naming sits at the cheap end: it relabels one request in a single turn, runs
 while somebody watches for the result, and asks for no reasoning at all, so the
@@ -160,7 +159,7 @@ recorded in its own `model_override`. The pin wins, and the flag is not
 consulted at all.
 
 The two answer different questions. A flag is a fleet-wide default, rolled out
-per workspace, identical for every work stream in it. A pin is somebody asking
+per workspace, identical for every conversation in it. A pin is somebody asking
 what *this* piece of work looks like on some other model — decided once, when
 the conversation is created, and not something to stage a rollout for. Precedence
 follows from that: a rollout reaching the workspace must not quietly take the
@@ -182,7 +181,7 @@ scheduled, connector-event, and inbound-email triggers alike, and it copies
 `model_override` onto the run's child conversation, so a run resolves its model
 from its own row like every other conversation.
 
-That used to be three paths, two of which built the work-stream row inline, so
+That used to be three paths, two of which built the conversation row inline, so
 a pin that reached only one looked correct under **Run now** and was silently
 ignored by every scheduled run. That is how this shipped in review, and it is
 the concrete reason [`automation-lifecycle.md`](automation-lifecycle.md) has
@@ -208,7 +207,7 @@ whole run. [`agent-harness.md`](agent-harness.md#failure-modes-and-limits) owns
 the budget and the failure code. Do not answer a pinned run's provider outage by
 adding fallbacks here.
 
-It reaches the work-stream agent, which also authors Sidekicks, runs their
+It reaches the conversation agent, which also authors Sidekicks, runs their
 occurrences, and executes background work. A background agent inherits its
 source conversation's override. The retired inline-child flag does not control
 these agents.
@@ -236,7 +235,7 @@ migration.
 
 #### Reading it back inside the conversation
 
-The composer of a conversation that already exists — a work stream's, and a
+The composer of a conversation that already exists — a conversation's, and a
 substream's — shows the same control in the same place, behind the same **Debug
 enabled** preference: the identical dropdown, trigger and pill and chevron, with
 the trigger `disabled`. That is what
@@ -260,11 +259,11 @@ conversation**. A pin is fixed: `resolveWorkstreamModelRouting` finds it on the 
 never reads the flag, so every run uses it. An unpinned conversation re-evaluates
 `agent-model-workstream` on *every* launch, so the id shown is what the latest
 run happened to resolve and a later run may differ. What is immutable there is
-the setting, not the model — an earlier draft of this control said a work stream
+the setting, not the model — an earlier draft of this control said a conversation
 keeps the model it started on, which is a stability guarantee the server does
 not make for the unpinned majority. The renderer therefore takes `pinned`
 alongside the id and picks the claim from it. It says "conversation" rather than
-"work stream" for the same reason the column is read per row: in a substream,
+"conversation" for the same reason the column is read per row: in a substream,
 naming the parent's kind would describe a row this pill is not showing.
 
 The tooltip survives the disable — checked in a real window rather than assumed,
@@ -319,8 +318,8 @@ A caller supplies only these, and only what it knows:
 | `agent` | The role key, e.g. `workstream` |
 | `appEnv` | `APP_ENV` |
 | `workspaceId` | Present wherever the caller knows it; the right key for percentage rollouts |
-| `workstreamId` | Present on work-stream, subagent, and classifier evaluations |
-| `userId` | Present on meeting-notes and work-stream naming evaluations |
+| `workstreamId` | Present on conversation, subagent, and classifier evaluations |
+| `userId` | Present on meeting-notes and conversation naming evaluations |
 
 Identity wins over attributes: the loaded facts are spread underneath these, so
 nothing read from D1 can redefine the id a percentage rollout buckets on.
@@ -329,7 +328,7 @@ nothing read from D1 can redefine the id a percentage rollout buckets on.
 
 Ids alone cannot express a rule anybody would want to write. Nobody targets a
 uuid; they target the dogfooding workspace, the teams rather than the solo
-accounts, the work streams a person started rather than the ones an automation
+accounts, the conversations a person started rather than the ones an automation
 did. Each id the caller passes brings its facts with it:
 
 | Attribute | Type | Value | Needs |
@@ -346,7 +345,7 @@ did. Each id the caller passes brings its facts with it:
 | `workstreamCreatedByUserId` | string | Who created it | `workstreamId` |
 | `workstreamCreatorEmailDomain` | string | That person's email domain | `workstreamId` |
 | `workstreamFromOpportunity` | boolean | Whether it was started from a suggested work item | `workstreamId` |
-| `workstreamIsSystem` | boolean | Whether it is machinery (`system_kind`), such as a work stream an older digest created | `workstreamId` |
+| `workstreamIsSystem` | boolean | Whether it is machinery (`system_kind`), such as a conversation an older digest created | `workstreamId` |
 
 An attribute whose fact is unknown is **omitted rather than sent empty**, so a
 rule can never match a placeholder. The consequence worth knowing: a rule on an
@@ -365,7 +364,7 @@ does not match, so such an account sits out the rollout rather than landing in
 the wrong half of it.
 
 `workspaceOwnerEmailDomain` exists because it is the only domain most
-evaluations can have. A work-stream run, a subagent, and the
+evaluations can have. A conversation run, a subagent, and the
 classifiers carry no `userId` — nobody is asking, the workspace is — so without
 the owner's domain no rule could reach a customer's tenancy or the dogfooding
 workspaces on the paths that do the most inference.
@@ -407,15 +406,15 @@ carve-out.
   it de-duplicates rather than adding a second cache with its own staleness.
 - A **miss is not cached.** A scheduled-creation path resolves a model for a work
   stream id whose product facts are not populated yet, so remembering "no such
-  work stream" would leave those work streams unattributed through their first
+  conversation" would leave those conversations unattributed through their first
   runs. They are unattributed for that first evaluation either way — a fact the
   rows do not yet hold cannot be sent.
-- A brand-new Durable Object keeps its work-stream id in the first model
+- A brand-new Durable Object keeps its conversation id in the first model
   evaluation for identity and bucketing, but loads only workspace attributes
   until the atomic authoritative root, opening message, and first run commit.
-  Querying work-stream facts while the root is still `preparing` is not a miss:
+  Querying conversation facts while the root is still `preparing` is not a miss:
   it crosses the authority fence, logs an operational error, and suppresses the
-  now-readable row for ten seconds. Later runs load the complete work-stream
+  now-readable row for ten seconds. Later runs load the complete conversation
   attributes normally.
 - Scheduled creation uses the same resolver. `provisionSidekickRun`
   calls `scheduledWorkstreamModel` after the run's child conversation is
@@ -568,7 +567,7 @@ flag change takes to reach a running app. The poll lives in the **main
 process**, not a renderer, because that is where `application-settings.json` and
 the session are, and because both windows then read one answer instead of each
 deciding for itself. It is a poll rather than a socket: the only realtime
-channel Rally has is the per-work-stream room, which a device without a work
+channel Rally has is the per-conversation room, which a device without a work
 stream open is not connected to, and a flag change is not worth a second
 channel. A sign-in re-asks immediately rather than waiting out the interval; a
 sign-out closes the section on the way past.
@@ -612,7 +611,7 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 - **A conversation's pin wins and the flag is not consulted at all.** A rollout
   reaching the workspace must not quietly take a pinned conversation with it.
 - **A run resolves the pin on the row of the conversation it is executing in.**
-  A work stream's main conversation and each substream is a separate object with
+  A conversation's main conversation and each substream is a separate object with
   a separate column, so nothing inherits: a substream is pinned by being created
   pinned. Copying a parent's pin downward would move work nobody chose for it.
 - **The one path that creates a run copies `model_override` onto that run's
@@ -683,7 +682,7 @@ what they do with the model they are handed:
 | The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
 | Why **Debug enabled** crosses no trust boundary | [`security.md`](security.md) |
 | Why `userPlatformId` is the stable per-person id | [`regionalization.md`](regionalization.md) |
-| The retired description loop's changelog | [`workstream-descriptions.md`](workstream-descriptions.md) (retired) |
+| The retired description loop's retirement record | [`workstream-durable-object.md`](workstream-durable-object.md#changelog) |
 | Provisioning credentials and the release health gate | [`runbook.md`](runbook.md) |
 
 A subsystem that wants a rollout adds a flag here and reads it through the
@@ -713,9 +712,9 @@ correctly provisioned flag.
   binding, a binding that throws, an unresolved flag, a non-boolean value.
 - **Facts are cached in the isolate for five minutes, keyed by subject**, and
   concurrent evaluations of the same subject share one read. A **miss is not
-  cached**: the automation paths resolve a model for a work-stream id one statement
-  before they insert the row, so remembering "no such work stream" would leave those
-  work streams unattributed through their first runs.
+  cached**: the automation paths resolve a model for a conversation id one statement
+  before they insert the row, so remembering "no such conversation" would leave those
+  conversations unattributed through their first runs.
 - **A failed read is held down for ten seconds**, keyed by entity and subject.
   While D1 is unhealthy every agent path would otherwise re-issue its reads and
   warn again on every run, so an outage would arrive with a log flood on top of it.
@@ -763,7 +762,7 @@ correctly provisioned flag.
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Initial private values and per-user live re-evaluation over a real hibernating WebSocket. |
 | `apps/ace/test` | Safe rule vocabulary and Flagship limits, signed-site failure behavior, key-only notification, and cross-region Queue fan-out. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | Initial and live full-contract replacement in the feature-flag cache. |
-| Desktop menu, sidebar, work-stream, and meeting suites | Every visible entry point remains hidden until explicitly enabled while product actions remain otherwise unchanged. |
+| Desktop menu, sidebar, conversation, and meeting suites | Every visible entry point remains hidden until explicitly enabled while product actions remain otherwise unchanged. |
 | `apps/api/test/flag-targeting-attributes.test.ts` | The attribute vocabulary, the omitted-not-empty rule, the cache and its negative cases, and — scoped to the fields the rule covers — that no local part or authored text leaves the Worker. |
 | `apps/desktop/src/main/developer-settings-flag.test.ts` | The poll, the last-answer-standing behavior, and that a stored `debugEnabled` grants nothing while the flag is off. |
 | `apps/desktop/src/renderer/screens/workspace-settings.test.tsx`, `apps/desktop/src/renderer/lib/use-debug-enabled.test.tsx` | Live application-setting broadcasts win over older reads, read failures, and mutation replies, so a poll can reveal or withdraw Developer without a relaunch. |
@@ -936,7 +935,7 @@ pnpm exec wrangler flagship flags set <APP_ID> agent-model-workstream -V next
 ```
 
 Bucket the rollout by `workspaceId` rather than `workstreamId` or `userId`: it
-keeps every agent in a workspace on one generation, so a work-stream run and the
+keeps every agent in a workspace on one generation, so a conversation run and the
 subagents and classifiers around it stay consistent.
 
 Because configured deployments share the app, a rollout reaches both unless you scope it.
@@ -955,7 +954,7 @@ pnpm exec wrangler flagship flags update <APP_ID> agent-model-workstream \
 Prefer a rule whose attribute is present on the evaluations it is meant to
 reach. `userRole` and `userEmailDomain` only exist where a caller knows a user —
 the automation compiler and meeting notes — so a rule written on them leaves the
-work-stream agent on the old variation, which is rarely what a rollout means to
+conversation agent on the old variation, which is rarely what a rollout means to
 say. `workspaceOwnerEmailDomain` reaches every evaluation that knows a
 workspace, which is all of them.
 
@@ -1154,7 +1153,7 @@ icons. Terra accepts the schema.
 
 **Consequences:** The Gemini fallbacks serve naming only with the plain-string
 icon and `reasoningRequired` from the same pull request; see
-[`workstream-naming.md`](workstream-naming.md#changelog). A
+the naming retirement record in [`workstream-durable-object.md`](workstream-durable-object.md#changelog). A
 `.env.local` that sets the key, as one copied from the old `.env.example` does,
 outranks the new default until it is edited.
 

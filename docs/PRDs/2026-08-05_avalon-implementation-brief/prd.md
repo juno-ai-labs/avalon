@@ -6,8 +6,8 @@
 > agent may do, and what the prototype must deliver. Unlike a per-change PRD,
 > this one stays current: it is the document every other document defers to on
 > what Rally *is*, and it is edited when the contract itself changes. The
-> phased build against it is
-> [`../../implementation-plan.md`](../../implementation-plan.md).
+> phased build against it was the prototype's implementation checklist, retired
+> on 2026-11-08 (see [`architecture.md`](../../architecture.md#changelog)).
 >
 > Conventions for this folder: [`../../prds.md`](../../prds.md).
 

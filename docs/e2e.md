@@ -156,7 +156,7 @@ affordances below are stripped without a restart, and that
 back on and confirm the section returns with the toggle still checked, then
 continue. Right-click a Canvas row, a Sidekick row and a note in the sidebar and confirm no menu offers a copy-id action while the preference is off; turn it on and confirm they gain one without reopening the main window, and that the choice survives a restart. Turn it off and confirm the actions disappear again.
 
-7. Open **Application → Appearance** and confirm the only choices are **System**, **Light**, and **Dark** — there is no Theme family row or palette shelf. Choose Light and confirm the main window uses the `#fcfcfc` conversation canvas, `#f7f7f7` sidebar, dark human bubbles, and a light compact composer. Choose Dark and confirm the canvas becomes `#070707`, the sidebar `#111111`, raised controls `#2f2f2f`, and the selected work-stream row `#313131`; the compact composer must remain legible and its voice/send circle must invert. Confirm dropdowns and tooltips invert correctly in both modes. Restart Rally and confirm the chosen appearance is applied before the first frame, with no flash of the other mode. Under System, change the Mac between Light and Dark and confirm every open Rally window follows; after pinning either Light or Dark, changing the Mac must do nothing.
+7. Open **Application → Appearance** and confirm the only choices are **System**, **Light**, and **Dark** — there is no Theme family row or palette shelf. Choose Light and confirm the main window uses the `#fcfcfc` conversation canvas, `#f7f7f7` sidebar, dark human bubbles, and a light compact composer. Choose Dark and confirm the canvas becomes `#070707`, the sidebar `#111111`, raised controls `#2f2f2f`, and the selected conversation row `#313131`; the compact composer must remain legible and its voice/send circle must invert. Confirm dropdowns and tooltips invert correctly in both modes. Restart Rally and confirm the chosen appearance is applied before the first frame, with no flash of the other mode. Under System, change the Mac between Light and Dark and confirm every open Rally window follows; after pinning either Light or Dark, changing the Mac must do nothing.
 
 8. Open **Notifications** and confirm **Notify me about** lists exactly Mentions, New messages, Being added, Sidekick runs, Pinned Canvas updates and Access requests, in that order, each with its channels, and no **Daily digest** section. Open the old `digest` settings deep link and confirm it lands on Notifications.
 
@@ -374,12 +374,12 @@ Configure the regional Worker with an Azure OpenAI realtime deployment backed by
 8. Delay the ticket response and then the provider session acknowledgement. Confirm the microphone shows recording as soon as local capture starts, speak immediately, and Stop before either response arrives. Then delay the microphone instead (a slow Bluetooth input does it) and confirm the Worker sees the socket upgrade while the control is still armed, before capture has started. Release both responses and confirm the initial audio and final partial frame arrive in order before the commit. The backlog must catch up faster than real time in size-compliant batches. Then stall the renderer during an established recording so several seconds of worklet callbacks queue up. Confirm catch-up delivers every sample in order, Stop sends the final audio before its commit, and the recording stays open through the burst.
 9. Leave the ticket request unresolved after recording starts, both with and without pressing Stop. Confirm the existing 10-second connection budget ends the attempt with a recoverable error, releases audio inputs, and aborts the ticket request. Release a late ticket and confirm capture does not restart.
 10. Stop and immediately restart while the first permission request is still pending (before recording starts). Resolve the older request last and confirm it cannot reopen a microphone, socket, or overwrite the new draft.
-11. After Stop, deliver a transcript delta followed by a corrected completion event. Confirm the partial remains visible and Rally waits for the completion before closing. While it waits, edit the draft or activate **Cancel dictation** and confirm the pending finalization ends immediately without overwriting the edit. Switch work streams during recording and confirm the old capture stops instead of writing into the new draft.
+11. After Stop, deliver a transcript delta followed by a corrected completion event. Confirm the partial remains visible and Rally waits for the completion before closing. While it waits, edit the draft or activate **Cancel dictation** and confirm the pending finalization ends immediately without overwriting the edit. Switch conversations during recording and confirm the old capture stops instead of writing into the new draft.
 
 ## Desktop model-selector acceptance
 
 Nothing in the Canvases and Sidekicks client picks a model at creation: the
-pickers that lived on **New work stream** and **New substream** went with
+pickers that lived on **New conversation** and **New substream** went with
 them. What remains is the locked pill on a conversation that has run, and a
 Sidekick's own `model_override`.
 
@@ -449,7 +449,7 @@ Pass evidence: one Canvas, two people in its audience, one persisted attachment 
 
 ## Ordered transcript and mid-stream-open acceptance
 
-1. Open a work stream whose first unread turn is at least ten conversation
+1. Open a conversation whose first unread turn is at least ten conversation
    turns behind the tail. Confirm first paint contains the first-unread turn,
    five conversation turns before and after it, and the latest five turns from
    one snapshot. Confirm **Jump to latest** moves immediately without a network
@@ -465,7 +465,7 @@ Pass evidence: one Canvas, two people in its audience, one persisted attachment 
    exists, and response/plugin/tool timers appear from the snapshot. The active
    labels begin at the server elapsed baseline and advance locally; terminal
    labels use the durable duration.
-4. Trigger automatic compaction twice in one long-lived work stream. After each
+4. Trigger automatic compaction twice in one long-lived conversation. After each
    event, reconnect and confirm the run continues from the newest exact
    generation, both safe compaction status histories remain distinct, and no
    old private summary or system prompt is visible in the participant feed.
@@ -512,9 +512,9 @@ Use a stable public topic with authoritative sources, such as a cloud provider's
 
 1. Create **Check for new model releases every 24 hours** from natural language and review the compiled interval before creation.
 2. Confirm the automation requires the `rally:web` plugin and no connector binding.
-3. Run it manually. Confirm exactly one run work stream, successful `web_search` and selected `web_fetch` tool events, source-linked output, and a completed gray work-stream state.
-4. Retry the same manual-run request with its original idempotency key. Confirm the existing run and work stream are returned and no second harness launches.
-5. Let the next recurrence become due and confirm it creates the next planned work stream while preserving the following schedule.
+3. Run it manually. Confirm exactly one run conversation, successful `web_search` and selected `web_fetch` tool events, source-linked output, and a completed gray conversation state.
+4. Retry the same manual-run request with its original idempotency key. Confirm the existing run and conversation are returned and no second harness launches.
+5. Let the next recurrence become due and confirm it creates the next planned conversation while preserving the following schedule.
 
 Pass evidence: one initial manual run, one scheduled recurrence, authoritative source links, and no duplicate for the manual retry.
 
@@ -528,7 +528,7 @@ Run this only in provider test accounts after enabling the Google APIs listed in
 2. Exercise `google_gmail_search`, `google_gmail_read_thread` or `google_gmail_read_message`, and `google_gmail_create_draft`. Confirm the draft is present in the provider account, the tool event stores a provider operation reference, and the returned content is bounded/redacted. Do not call `google_gmail_send` during a production smoke test.
 3. Exercise `google_calendar_list_calendars`, then use an explicit returned calendar ID with `google_calendar_list_events`, `google_calendar_read_event`, `google_calendar_create_event`, and `google_calendar_update_event` against a clearly named disposable event.
 4. Establish Gmail and Calendar poll baselines, then create a new test message and modify the test event. Run the owning connector poll and confirm normalized `email.received`/`email.updated` and `calendar.event_changed` activity is persisted and queued before its cursor advances.
-5. Bind a personal automation to the connection and confirm one activity creates one authorized work stream with visible tool events. Confirm a Docs or Sheets tool is rejected because this connection does not hold those capabilities.
+5. Bind a personal automation to the connection and confirm one activity creates one authorized conversation with visible tool events. Confirm a Docs or Sheets tool is rejected because this connection does not hold those capabilities.
 
 ### Drive + Docs + Sheets preset
 
@@ -593,7 +593,7 @@ Pass evidence: the occurrence key prevents a duplicate run from the repeated ala
 10. Ask Rally to send a message, add a reaction, and create a public channel, a private channel, a DM, and a group DM through the workspace installation. Confirm the normal write execution/receipt policy without a confirmation prompt, bot attribution, stable `client_msg_id` on messages, idempotent `already_reacted` handling, and no duplicate provider mutation after a workflow retry.
 
 11. Add a personal Slack connection and confirm the row carries
-`slack.personal.mcp`. Load it from a work stream and compare the exposed names
+`slack.personal.mcp`. Load it from a conversation and compare the exposed names
 and input schemas with Slack's current `tools/list` response rather than a
 checked-in expected list. Exercise one tool with `readOnlyHint` and one without;
 confirm both receive write execution safeguards and a record-before-execute receipt,
@@ -634,7 +634,7 @@ no event for it.
 Pass evidence: one owner-only personal MCP connection whose tools match the
 live server, one admin-authorized workspace bot connection, member isolation,
 serialized rotating refresh, bot-attributed mutations from a second member's
-work stream, one workspace-scoped webhook activity, and explicit automation
+conversation, one workspace-scoped webhook activity, and explicit automation
 binding.
 
 ## Flow 13 — Fireflies workspace meetings and personal MCP
@@ -668,8 +668,8 @@ a ticket.
 3. Against the existing connection's webhook in Fireflies, record a short meeting. Confirm the `meeting.summarized` delivery produces exactly one digestible activity whose hydrated content carries the summary, and that the earlier `meeting.transcribed` delivery produces an operational one rather than a second digestible. Subscribe `meeting.bot_joined` as well, record another meeting, and confirm that delivery is rejected and does not appear as activity. **Rally no longer shows the endpoint URL, the signing secret or the installation's state anywhere in the product** — the window that did is gone with the workspace scope — so the evidence here is the activity written and Fireflies' own delivery History; the installation's own fields are read through the engineering MCP or not at all. `connector-installation-fireflies.test.ts` is what covers the state moving from action required to current on a verifying delivery.
 4. Bind a digest automation to the connection and confirm it digests the summary activity. Bind an automation to `meeting.transcribed` and confirm it fires on the operational event, which never reaches a digest.
 5. Revoke the API key in Fireflies and use a Fireflies tool: the connection flips to `needs_reconnect`. There is no repair for it — the **Manage events** window is not offered for Fireflies, and `POST /connections/:id/installation/api-key` refuses a replacement key with `connector_scope_not_connectable` even when called directly — so confirm the only remaining action on its connection page is **Delete**. A workspace connection survives the closed scope until its key changes, and then it is over: that is the decision, not an oversight.
-6. As a second member, start **Connect for me** and complete Fireflies' browser sign-in. Confirm their work streams gain Fireflies' live tools and that the first member's `list_plugins`/`search_plugins` does not surface them; a forced `load_plugin` is refused with `capability_not_granted`. Leave it a day and confirm whether the personal connection still works or asks to sign in again — which settles whether Fireflies issues a refresh token without `offline_access`.
-7. Post to `/ingest/fireflies/:id` unsigned, mis-signed, oversized, and with a stale in-body timestamp. Each is rejected and writes nothing: no activity and no receipt — observable in the work stream and the activity log, since the installation's last-received time is no longer shown in the product. Replay a valid delivery byte for byte and confirm it ingests at most once.
+6. As a second member, start **Connect for me** and complete Fireflies' browser sign-in. Confirm their conversations gain Fireflies' live tools and that the first member's `list_plugins`/`search_plugins` does not surface them; a forced `load_plugin` is refused with `capability_not_granted`. Leave it a day and confirm whether the personal connection still works or asks to sign in again — which settles whether Fireflies issues a refresh token without `offline_access`.
+7. Post to `/ingest/fireflies/:id` unsigned, mis-signed, oversized, and with a stale in-body timestamp. Each is rejected and writes nothing: no activity and no receipt — observable in the conversation and the activity log, since the installation's last-received time is no longer shown in the product. Replay a valid delivery byte for byte and confirm it ingests at most once.
 8. Remove the connection. Confirm it is disabled at once and that a delivery to the retired route is rejected. Rally cannot delete the webhook from Fireflies, so delete it there; confirm no way remains in Rally to connect another workspace key.
 9. Unset `FIREFLIES_CONNECTOR_ENABLED` in one region and confirm `fireflies` leaves that region's catalog and tool surface, its existing rows are retained, and the other region is unaffected.
 10. Run a fleet maintenance preview that changes the Fireflies destination or event set. Confirm every Fireflies installation is listed as customer action and that nothing is applied at Fireflies.
@@ -697,7 +697,7 @@ visible while the list scrolls.
 
 Hover a public stream icon and then move onto its globe in both appearances.
 The globe stays visible and answers for itself — **Public — everyone in the
-workspace can see this work stream.** — while the row's own preview card stays
+workspace can see this conversation.** — while the row's own preview card stays
 open off the row's right rather than the two taking turns. The card names the
 scope in its own shorter register, **Public to workspace**, rather than
 reprinting the tip's sentence a centimetre away. Move on to the status dot below
@@ -720,7 +720,7 @@ do not, nothing below is evidence of anything, and the fix needs the main
 process's own `browser-window-blur`/`browser-window-focus` instead; say so
 rather than reporting the checks below as passing.
 
-Then: leave the pointer resting over a work-stream row, click a different row
+Then: leave the pointer resting over a conversation row, click a different row
 first so the window has a focused row to hand back, and Command-Tab away and in.
 No preview card and no tooltip may appear — not for the row under the cursor,
 and not for the row that holds focus — until the pointer actually moves or a key

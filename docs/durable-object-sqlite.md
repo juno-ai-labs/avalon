@@ -5,7 +5,7 @@ Objects. It covers the platform semantics that are easy to mistake for D1 or
 ordinary application SQLite, and the repository practices that keep state
 transitions correct as schemas and indexes change.
 
-Read the owning module document as well. For the work-stream hierarchy that is
+Read the owning module document as well. For the conversation hierarchy that is
 [`workstream-durable-object.md`](workstream-durable-object.md); for shared alarm
 coordination it is [`durable-object-alarms.md`](durable-object-alarms.md).
 
@@ -16,9 +16,9 @@ defines which ordered state machine owns the data, and its SQLite database is
 private to that object instance.
 
 - Choose an object key that matches the consistency domain. In Rally, a
-  WorkspaceDO owns workspace-wide product state, including every Channel and
-  Space parent keyed by `parent_id`, a SubstreamAgent owns one conversation, and
-  each agent object owns its own execution state.
+  WorkspaceDO owns workspace-wide product state, including every Canvas and
+  Sidekick parent keyed by `parent_id`, an `AgentLoopDO` owns one conversation,
+  and each agent object owns its own execution state.
 - Do not make cross-object SQL joins or foreign keys. Cross-authority
   relationships travel as IDs through typed RPC, Queue messages, projections,
   receipts, and version fences.
@@ -54,7 +54,7 @@ objects today.
   SQLite transaction.
 - Prefer `STRICT` tables, explicit `NOT NULL` and `CHECK` constraints, stable
   primary keys, and foreign keys only within the same object database.
-- Store time consistently with the owning schema. Work-stream-down native
+- Store time consistently with the owning schema. Conversation-down native
   schemas use integer Unix milliseconds, while WorkspaceDO's imported
   workspace schema retains ISO strings; do not mix representations within one
   table or state machine.
@@ -98,7 +98,7 @@ first unreceipted version.
 
 The ledger itself is created inside the first pending group. Migration hashes
 include execution mode because mode changes semantics; the one pre-mode
-published work-stream migration carries an explicit legacy marker only because
+published conversation-object migration carries an explicit legacy marker only because
 its old wrapper already ran it under the identical mode. Tests cover rollback,
 resume, invalid legacy declarations, and hash mismatch warnings. A recorded
 implementation hash that differs from the current migration emits the structured
@@ -499,7 +499,7 @@ groups are the only resumable boundaries. A referenced-table rebuild must opt in
 must pass `foreign_key_check`, and must have a populated workerd upgrade test.
 
 Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
-the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+the [ordered conversation transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
 
 ### 2026-08-27 — Promise-returning callbacks cannot cross synchronous transactions
 

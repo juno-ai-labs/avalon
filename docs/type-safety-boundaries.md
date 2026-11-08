@@ -14,7 +14,7 @@ builders whose unavoidable completeness assertion lives in one place.
 | `scripts/type-assertion-boundaries.test.mjs` | Regression tests for those ESLint rules. |
 | `apps/api/test/helpers/cloudflare-test.ts` | Typed builders for partial `Env`, D1, Durable Object, R2, Queue, AI, Flagship, and Images doubles. |
 | `apps/release-retention/test/helpers/cloudflare-test.ts` | The retention Worker's corresponding R2 builder. |
-| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | An example of a typed state boundary: every write to the work-stream query cache. |
+| `apps/desktop/src/renderer/lib/workstreams-cache.ts` | An example of a typed state boundary: every write to the conversation query cache. |
 
 ## How it works
 
@@ -108,7 +108,7 @@ surface is genuinely a platform-runtime gap.
 **What changed:** Production double assertions are lint errors, application
 test doubles use narrow capability ports with `satisfies`, and partial
 Cloudflare bindings are constructed through typed helpers. The existing
-work-stream cache write lint is joined by repository-wide type-assertion rules,
+conversation cache write lint is joined by repository-wide type-assertion rules,
 and stored wake-up rows plus harness SDK messages now cross explicit runtime or
 conversion boundaries.
 

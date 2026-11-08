@@ -42,13 +42,13 @@ for the same reason the request itself is archived.
 
 The API turns each event into schema version 1. Core dimensions are columns:
 region, environment, build, source, invocation type, workspace/Broadcast-user/
-context-user/work-stream/substream and host request IDs, inference/turn/schema IDs,
+context-user/conversation/substream and host request IDs, inference/turn/schema IDs,
 provider/routed/provider model, success/disposition/failure, latency/TTFT, token
 classes, cost, and response bytes. The full request, response, error, routing
 cursor, retry/repair positions, validation issues, and counts remain JSON
 columns. The `request` and `attempt` rows join on `inference_request_id`;
 `event_id` adds the event type and is the stable deduplication key.
-For user-started work-stream creation, substream creation, and ordinary message
+For user-started conversation creation, substream creation, and ordinary message
 sends, the request row's `metadata` also carries `operationId`, `journey`,
 `requestReceivedAt`, `providerRequestIssuedAt`, and
 `requestToInferenceStartMs`. Keeping the additive boundary fields in the
@@ -70,8 +70,8 @@ application-level fallback. OpenRouter forwards those custom keys as
 
 OpenRouter's current embeddings request schema is narrower than chat: it
 accepts `user` but not the custom Broadcast `trace` object. Search embeddings
-therefore send `user = workspace_id` and the work-stream session as
-`X-Session-ID`; inference with no work-stream identity omits the session
+therefore send `user = workspace_id` and the conversation session as
+`X-Session-ID`; inference with no conversation identity omits the session
 rather than substituting an unrelated request ID.
 Rally emits a content-free regional `embedding_inference` diagnostic containing
 the same feature, trace/session identity, intended/requested/resolved model,
@@ -80,8 +80,8 @@ copied into that log or the inference lakehouse. This is a documented provider
 contract gap, not a synthetic trace field sent to an endpoint that would ignore
 it.
 
-`substream_id` is the canonical product substream inside a work stream. Rally
-currently runs the main substream, so work-stream-linked inference that has no
+`substream_id` is the canonical product substream inside a conversation. Rally
+currently runs the main substream, so conversation-linked inference that has no
 more specific identity is recorded as `"0"`; inference unrelated to a work
 stream leaves the column null. A root run and any inline children inherit the
 same product substream. Inline-child execution is a run-lineage distinction,
@@ -192,7 +192,7 @@ remains a general object store; this module owns only the
 `inference-lakehouse/records/` prefix. Global R2 Data Catalog owns Iceberg
 commits, compaction, namespace/table creation, and query-engine interoperability.
 
-The analytical projection is not the work-stream transcript, billing authority,
+The analytical projection is not the conversation transcript, billing authority,
 model-routing control, or the owning execution object's operational
 `inference_attempts` ledger. Those systems may correlate with `request_id`, `workstream_id`,
 `substream_id`, and `inference_request_id`, but none may use lakehouse arrival
@@ -329,10 +329,10 @@ Configured deployments share the existing inference archive policy. Records and 
 
 **What changed:** The shared structured-inference gateway now accepts explicit
 substream and request identity. Substream context-summary records carry the
-workspace, work stream, nonzero child, and stable preparation-operation request ID
+workspace, conversation, nonzero child, and stable preparation-operation request ID
 through OpenRouter trace metadata, structured logs, and lakehouse capture.
 
-**Why:** Defaulting every structured work-stream call to substream `0` makes a
+**Why:** Defaulting every structured conversation call to substream `0` makes a
 child-summary request look like main-feed inference and breaks exact retry and
 incident correlation.
 
@@ -448,7 +448,7 @@ include returned router metadata. Provider `user` and trace `user_id` now use
 the workspace ID consistently, with any relevant person in `context_user_id`.
 `feature` records the exact Flagship model category/key while `source` records
 the inference surface. The provider trace groups a full harness loop, not an
-individual model turn; work-stream `session_id` values are
+individual model turn; conversation `session_id` values are
 `<workstream_id>-<substream_id>`. `intended_model` records the primary Rally
 route while `model` records the attempted candidate, so fallback requests
 remain explicit in provider-side analytics. Structured fallback and repair
@@ -463,7 +463,7 @@ query session uses the active substream rather than collapsing every
 conversation into main substream `"0"`.
 
 **Why:** Operators need to join OpenRouter's routing, timing, and pipeline view
-to Rally's workspace, work stream, substream, relevant person, request,
+to Rally's workspace, conversation, substream, relevant person, request,
 deployment, and turn evidence without reconstructing that ownership from
 prompt content. A workspace-stable identity also keeps system-initiated and
 person-initiated inference for one tenant together. The previous Workers AI
@@ -514,13 +514,13 @@ The lakehouse is now the sole hosted raw-inference capture path. Existing
 legacy R2 objects are left intact rather than erased by an infrastructure
 deployment.
 
-Schema version 1 includes optional typed column `substream_id`. Work-stream
+Schema version 1 includes optional typed column `substream_id`. Conversation
 inference defaults to the canonical main substream `"0"`; streaming root and
 inline-child calls propagate the workflow's actual substream ID, while
-inference outside a work stream leaves the field null. The production query
+inference outside a conversation leaves the field null. The production query
 recipe filters and displays the dimension.
 
-The production runbook turns a work-stream URL into the correct regional R2 SQL
+The production runbook turns a conversation URL into the correct regional R2 SQL
 API request, a bounded identifier query, the matching request/attempt pair, and
 an R2 Object API retrieval of the exact regional archive. It also covers
 at-least-once duplicates, five-minute sink visibility, delivery failures,
@@ -537,7 +537,7 @@ and duplicated sensitive request bodies without retaining the matching terminal
 provider envelope.
 
 `workstream_id` alone is unambiguous only while every run belongs to the main
-substream. Once one work stream contains multiple real product substreams, it
+substream. Once one conversation contains multiple real product substreams, it
 cannot identify which conversation produced a request.
 
 Naming the table and correlation keys was not enough for an incident responder
@@ -576,9 +576,9 @@ New inference analytics do not write D1. The operational `inference_attempts`
 rows remain object-local because run recovery depends on them, and a separate
 explicit decision is required before deleting historical legacy R2 objects.
 
-Current rows linked to work streams are explicitly queryable as substream
+Current rows linked to conversations are explicitly queryable as substream
 `"0"`, future substreams remain distinct without a second storage path, and
-incident responders must include `substream_id` when narrowing a work-stream
+incident responders must include `substream_id` when narrowing a conversation
 query. The field was added before the first deployment of this new immutable
 stream schema, so no stream replacement is needed.
 

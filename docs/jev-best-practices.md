@@ -12,10 +12,10 @@ and a measured fallback. [`agent-harness.md`](agent-harness.md) owns the shipped
 runtime. The committed content-free
 `packages/agent-harness/evals/addressing/baseline-2026-09-16.json` records the
 aggregate baseline; case-level reports are ephemeral protected-scratch output.
-[`jev-classifier-opportunities.md`](jev-classifier-opportunities.md) applies this
-guide to the rest of the tree: which decisions are candidates for a second JEV
-request, which are deliberately not, and the transport primitives a second one
-needs before it is written.
+[Deciding what should be a JEV request](#deciding-what-should-be-a-jev-request)
+says which decisions in this tree are candidates and which are deliberately
+not, and [Adding another classifier](#adding-another-classifier) is the order
+of work for the next one.
 
 ## Optimize the whole application request
 
@@ -521,6 +521,103 @@ degrading primary.
 - [ ] Schema, HTTP, retry, and fallback outcomes are observable without leaking
       credentials or rejected values.
 
+## Deciding what should be a JEV request
+
+Today's JEV callers are message addressing, the semantic trigger gate
+([`semantic-activity-triggers.md`](semantic-activity-triggers.md)), completion
+verification and message continuation, all built on the two transport
+primitives in `packages/agent-harness/src/jev/`: a JEV request (`client.ts`,
+`questions.ts`), which owns the URL, the transport, the envelope schema, the
+field-named schema rejection and the owned deadline and knows nothing about any
+one decision, and a confidence cascade (`cascade.ts`), which returns which stage
+answered. Every other model-backed decision runs through
+`runStructuredInference`. A new caller adds a state shape and a question, not a
+transport.
+
+A decision is a candidate when all five are true. The first two are
+[the decision contract](#start-with-the-decision-contract); the last three are
+what makes a *replacement* worth its cost rather than just a plausible fit.
+
+1. **One bounded question.** The answer is a member of a closed set, or one
+   genuine scalar. Not a paragraph, not a plan, not a list of objects.
+2. **Operationally distinct outcomes.** Each answer leads to a different action,
+   and the cost of confusing two of them is writable in a sentence.
+3. **The state is nameable.** The evidence fits in a small object of stable
+   semantic fields the application already has, without an unbounded graph walk.
+4. **Something is wrong with the current path.** It spends a large generative
+   call on a coarse gate, it has no confidence signal at all, it reads a
+   self-reported one, or the decision is not being made at all.
+5. **There is a way to be wrong that we would notice.** A corpus exists, or can
+   be built from data we already retain, that could disagree with the shipped
+   behavior.
+
+A decision that fails (3) is not a JEV decision. A decision that fails (4) is
+working; leave it alone. A decision that fails (5) can still be built, but the
+first version is a guess and must be reversible.
+
+### Considered and rejected
+
+Each is more attractive than it deserves to be.
+
+- **Per-instance digestibility.** "Would a person who was away for a day want
+  this read back to them?" is a JEV question in the abstract, and it is answered
+  by a static per-event-type declaration in each connector manifest
+  ([`connector-digestibility.md`](connector-digestibility.md)). The declaration
+  is a *contract*, not a cached judgment: it is reviewable in one place and is
+  the reason a connector author has to think about volume before shipping an
+  event type. The retired contextual-routing gate also showed that `digestible`
+  encodes three different noes and only one of them is about relevance
+  ([its retirement record](connectors.md#2026-11-08--retirement-record-suggested-context)), so a per-instance
+  classifier would answer a different question from the field it replaced.
+- **Adding a confidence field to a generative call instead.** Asking an existing
+  `runStructuredInference` call for a number alongside its answer and
+  thresholding on it. This tree already ran the experiment: contextual routing's
+  only quality control was "a constant compared against a number the model made
+  up about its own answer". A provider-computed confidence over a closed choice
+  set is a different object from a self-report; a self-reported number is not a
+  cheap first version of one, it is the thing that failed.
+- **Replacing the external-event predicate.** The deterministic matcher is
+  intentionally total, fails closed on missing values, and its strict schemas
+  make illegal operator/value pairs unrepresentable. A semantic classifier
+  belongs *after* it, never instead of it: the predicate is what keeps the
+  classifier's population small enough to afford and its state small enough to
+  name.
+- **The correctable-argument classifier.** `classifyAttemptError` decides
+  whether a rejected tool call is the model's fault or a provider's by reading
+  whether the arguments fail the declared schema or a code-authored refinement.
+  That is structural knowledge the code has for certain; asking a model would
+  replace a fact with an opinion.
+- **Attachment kind.** `classifyAttachmentKind` reads MIME type and filename.
+  Deterministic, cheap, and its failures are wrong icons.
+- **Addressing's heuristic floor.** Keep it local and deterministic. It exists
+  so that two remote providers being down cannot decide whether Rally retains a
+  member's message, and every new JEV stage needs to ask the same question about
+  its own terminal floor.
+- **Compaction, wake-ups, inbound mail admission.** Token arithmetic, clocks,
+  and sender authorization. Nothing semantic is being decided.
+
+## Adding another classifier
+
+In order; the first classifier already paid for the lesson in each step.
+
+1. Write the downstream action and the cost of each error before the question
+   ([the contract](#start-with-the-decision-contract)).
+2. Build the corpus, split development from holdout *before* tuning, and keep the
+   production label and any independent adjudication distinguishable.
+3. Ablate one representational idea at a time, preserving each candidate's whole
+   request, and keep a compact candidate in the comparison.
+4. Choose the confidence policy and the fallback only after the request is
+   frozen, and state the threshold's equality semantics in a test.
+5. Give the new classifier its own directory under
+   `packages/agent-harness/evals/`, shaped like `evals/addressing/`: a
+   caller-supplied corpus that is never committed, a content-safe synthetic
+   fixture for smoke-testing the runner, a committed content-free aggregate
+   baseline, and reports bound to the corpus hash.
+6. Log one outcome row per cascade with the stage that answered, and capture the
+   request and response through the same access-controlled inference path as
+   every other model call.
+7. Record the *why* in the changelog of the document that owns the mechanism.
+
 ## Rally evidence
 
 The numbers in this guide were derived from ephemeral, owner-only evaluation
@@ -530,3 +627,19 @@ customer inputs and production identifiers. A future comparison must rerun the
 versioned evaluator against a fresh authorized export, inspect the protected
 scratch reports, record only content-free aggregates, and delete the scratch
 directory when finished.
+
+## Changelog
+
+### 2026-11-08 — The candidate register folded in
+
+**What changed:** `jev-classifier-opportunities.md` is deleted. Its five-part
+test, its considered-and-rejected list and its order of work for a new
+classifier are the two sections above; its candidate register is gone.
+
+**Why:** every candidate it listed — work-opportunity admission, identity
+resolution inside admission, digest settlement and the suggested-work ranking
+tournament — belonged to a mechanism the Canvases and Sidekicks pivot deleted,
+and the two transport primitives it argued for shipped on 2026-09-18. What was
+left was guidance about designing a JEV request, which is this document's
+subject. The work-stream icon entry was dropped with it: conversation naming no
+longer picks an icon.
