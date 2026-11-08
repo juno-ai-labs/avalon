@@ -605,6 +605,49 @@ export class WorkstreamObjectStore {
     };
   }
 
+  /**
+   * Rewrite the stored parent kind of a retired Thread's conversation to
+   * `canvas`, the one conversion there is: a Thread with artifacts becomes a
+   * Canvas in place, keeping its id (`services/thread-conversion-service.ts`).
+   *
+   * Everything else in this object that names the kind moves with it, in the
+   * same transaction: the root row, and every effect still waiting in the
+   * outbox, whose envelope names the parent by kind. Those were written for
+   * the Thread and would otherwise be delivered after the rewrite and
+   * refused by the Organization (`conversation_parent_kind_retired:workstream`)
+   * until they dead-letter. The effect's hash covers the effect alone, so the
+   * envelope's kind can change under it. Nothing else here keys on the kind:
+   * the authority row is read from SQL on every enqueue, and the identity on
+   * every read.
+   *
+   * Any other transition is refused with
+   * `conversation_parent_kind_conversion_unsupported:<from>:<to>`. Idempotent:
+   * a conversation already `canvas` answers `converted: false`.
+   */
+  convertParentKind(input: { workspaceId: string; parentId: string; from: string; to: string }): { converted: boolean } {
+    const unsupported = (from: string) => new ApiError(409, "conversation_parent_kind_conversion_unsupported",
+      `conversation_parent_kind_conversion_unsupported:${from}:${input.to}`, undefined,
+      `conversation_parent_kind_conversion_unsupported:${from}:${input.to}`);
+    if (input.from !== "workstream" || input.to !== "canvas") throw unsupported(input.from);
+    return this.storage.transactionSync(() => {
+      const stored = this.identityForRetirement();
+      if (!stored) throw new Error("conversation_parent_kind_conversion_identity_missing");
+      if (stored.workspaceId !== input.workspaceId || stored.parentId !== input.parentId) {
+        throw new Error("conversation_parent_kind_conversion_identity_mismatch");
+      }
+      if (stored.parentKind === input.to) return { converted: false };
+      if (stored.parentKind !== input.from) throw unsupported(stored.parentKind);
+      this.storage.sql.exec(`UPDATE workstream SET parent_kind = ? WHERE id = 1`, input.to);
+      this.storage.sql.exec(
+        `UPDATE durable_outbox SET payload_json = json_set(payload_json, '$.parentKind', ?)
+          WHERE channel = ? AND state IN ('pending', 'inflight')
+            AND json_extract(payload_json, '$.parentKind') = ?`,
+        input.to, REGIONAL_EFFECT_CHANNEL, input.from,
+      );
+      return { converted: true };
+    });
+  }
+
   databaseSize(): number {
     return this.storage.sql.databaseSize;
   }

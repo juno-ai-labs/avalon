@@ -23,6 +23,7 @@ function regionalBinding(region: string): EngineeringInspectionRpcBinding {
     setSidekickPaused: vi.fn<EngineeringInspectionRpcBinding["setSidekickPaused"]>(),
     dumpThreadTranscripts: vi.fn<EngineeringInspectionRpcBinding["dumpThreadTranscripts"]>(),
     retireThreads: vi.fn<EngineeringInspectionRpcBinding["retireThreads"]>(),
+    convertThreadsToCanvases: vi.fn<EngineeringInspectionRpcBinding["convertThreadsToCanvases"]>(),
     retireOrg: vi.fn<EngineeringInspectionRpcBinding["retireOrg"]>(),
     readConversation: vi.fn<EngineeringInspectionRpcBinding["readConversation"]>(),
     listWorkspaces: vi.fn<EngineeringInspectionRpcBinding["listWorkspaces"]>(
@@ -256,6 +257,31 @@ describe("Rally engineering MCP tools", () => {
     expect(global.retireThreads).not.toHaveBeenCalled();
   });
 
+  it("routes convert_threads_to_canvases to the Organization's region, a dry run by default and an apply only when confirm names it", async () => {
+    const global = regionalBinding("global");
+    const enterprise = regionalBinding("enterprise");
+    const orgId = asWorkspaceId("00000000-0000-7000-8000-000000000ef1");
+    vi.mocked(enterprise.resolveWorkspace).mockResolvedValue({ found: true, value: { workspaceId: orgId, region: "enterprise", authorityGeneration: 1 } });
+    vi.mocked(enterprise.convertThreadsToCanvases).mockResolvedValue({ region: "enterprise", orgId, dryRun: true,
+      candidates: [{ threadId: "thread-1", title: "Launch plan", artifactCount: 2, linkedArtifactCount: 1, participantCount: 3, conversations: 2, undumped: 0 }],
+      converted: 0, alreadyConverted: 0, failed: [], artifactsWithoutThread: 1 });
+    const env = testEnv({ GLOBAL_INSPECTION: global, ENTERPRISE_INSPECTION: enterprise });
+
+    const listed = await rpc(env, "tools/call", { name: "convert_threads_to_canvases", arguments: { orgId } });
+    expect(listed.result).not.toHaveProperty("isError", true);
+    expect(JSON.parse((listed.result as { content: Array<{ text: string }> }).content[0]!.text)).toMatchObject({
+      dryRun: true, candidates: [{ threadId: "thread-1", artifactCount: 2 }], artifactsWithoutThread: 1 });
+    expect(enterprise.convertThreadsToCanvases).toHaveBeenCalledExactlyOnceWith({ orgId, dryRun: true }, principal);
+
+    const refused = await rpc(env, "tools/call", { name: "convert_threads_to_canvases", arguments: { orgId, dryRun: false } });
+    expect(refused.result).toMatchObject({ isError: true, content: [{ type: "text", text: "confirm must equal orgId; nothing was changed" }] });
+    expect(enterprise.convertThreadsToCanvases).toHaveBeenCalledOnce();
+
+    await rpc(env, "tools/call", { name: "convert_threads_to_canvases", arguments: { orgId, dryRun: false, confirm: orgId } });
+    expect(enterprise.convertThreadsToCanvases).toHaveBeenLastCalledWith({ orgId, dryRun: false, confirm: orgId }, principal);
+    expect(global.convertThreadsToCanvases).not.toHaveBeenCalled();
+  });
+
   it("sends Organization creation to only the named region", async () => {
     const global = regionalBinding("global");
     const enterprise = regionalBinding("enterprise");
@@ -303,6 +329,7 @@ describe("Rally engineering MCP tools", () => {
       "retire_org",
       "dump_thread_transcripts",
       "retire_threads",
+      "convert_threads_to_canvases",
       "read_canvas_chat",
       "read_sidekick_conversation",
       "list_workspaces",

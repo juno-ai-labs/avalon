@@ -1127,29 +1127,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       // `retireObject` can close it; it has no loop to recover.
       const constructedIdentity = this.objectStore.identityForRetirement();
       if (constructedIdentity && HostedConversationParentKindSchema.safeParse(constructedIdentity.parentKind).success) {
-        const persistedSubstream = this.state.storage.sql.exec<{
-          external_substream_id: string;
-        }>(
-          `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
-        ).toArray()[0];
-        if (!persistedSubstream) this.ensureSubstreamIdentity("0");
-        {
-          // Before the first projection read, which caches every message:
-          // loop state written before the harness stopped persisting tool
-          // image parts would otherwise load them all, the very load that ran
-          // these objects past their memory limit.
-          const loopId = substreamLoopId(asWorkstreamId(constructedIdentity.parentId), this.externalSubstreamId());
-          const retired = await this.transcript.retireInlineToolMessageContent(loopId);
-          if (retired > 0) {
-            logWarn(this.env, "bind_loop_inline_tool_content_retired", {
-              workspace_id: constructedIdentity.workspaceId,
-              workstream_id: constructedIdentity.parentId,
-              substream_id: this.externalSubstreamId(),
-              messages: retired,
-            });
-          }
-          this.ensurePersistentLoop();
-        }
+        await this.bindHostedConversation(constructedIdentity);
       }
     });
     const initialRecovery = this.initialized;
@@ -1281,6 +1259,36 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       if (this.runtimeRecovery === attempt) this.runtimeRecovery = null;
     });
     return attempt;
+  }
+
+  /**
+   * What a hosted conversation's object does once on construction, and what
+   * `convertParentKind` does for a Thread's that becomes a Canvas's: its
+   * substream identity and its persistent loop. A retired parent's object
+   * skips this, so a converted one has to be bound when it converts.
+   */
+  private async bindHostedConversation(identity: { workspaceId: string; parentId: string }): Promise<void> {
+    const persistedSubstream = this.state.storage.sql.exec<{
+      external_substream_id: string;
+    }>(
+      `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
+    ).toArray()[0];
+    if (!persistedSubstream) this.ensureSubstreamIdentity("0");
+    // Before the first projection read, which caches every message:
+    // loop state written before the harness stopped persisting tool
+    // image parts would otherwise load them all, the very load that ran
+    // these objects past their memory limit.
+    const loopId = substreamLoopId(asWorkstreamId(identity.parentId), this.externalSubstreamId());
+    const retired = await this.transcript.retireInlineToolMessageContent(loopId);
+    if (retired > 0) {
+      logWarn(this.env, "bind_loop_inline_tool_content_retired", {
+        workspace_id: identity.workspaceId,
+        workstream_id: identity.parentId,
+        substream_id: this.externalSubstreamId(),
+        messages: retired,
+      });
+    }
+    this.ensurePersistentLoop();
   }
 
   private ensureSubstreamIdentity(substreamId: string): void {
@@ -6960,6 +6968,29 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       throughSequence,
       text: conversationAsText(range.turns),
     };
+  }
+
+  /**
+   * Rewrite this conversation's stored parent kind, for the operator
+   * conversion of a Thread that has artifacts into a Canvas in place
+   * (`services/thread-conversion-service.ts`); only `workstream` to `canvas`
+   * is admitted (`WorkstreamObjectStore.convertParentKind`). The object then
+   * does what a hosted conversation's does on construction, which a retired
+   * Thread's skipped, and arms its alarm: the Thread's alarm was cleared on
+   * every firing (see `alarm`), so the effects and wake reasons it holds wait
+   * for this. Idempotent: an object already `canvas` answers
+   * `converted: false` and is bound again, which changes nothing.
+   */
+  async convertParentKind(input: { workspaceId: string; parentId: string; from: string; to: string }): Promise<{ converted: boolean }> {
+    await this.storageReady;
+    const request = parseRpcInput(z.strictObject({
+      workspaceId: z.string().min(1), parentId: z.string().min(1), from: z.string().min(1), to: z.string().min(1),
+    }), input, "convert_parent_kind");
+    const result = this.objectStore.convertParentKind(request);
+    await this.bindHostedConversation(request);
+    this.syncAgentTimerAlarms();
+    await this.armNextAlarm();
+    return result;
   }
 
   /** Content-free operator inventory, including retired conversations. */

@@ -1,6 +1,6 @@
 /**
  * WorkspaceDO migration 147 drops the Thread-era tables nothing reads and the
- * Thread rows of the shared tables. A drop that left a trigger writing a
+ * Thread rows of the shared tables, keeping what the Thread conversion reads. A drop that left a trigger writing a
  * dropped table, or a foreign key naming one, would fail every later write to
  * the surviving table; a delete that reached a Canvas's or a Sidekick's rows,
  * or the Thread retirement inventory, would lose live state.
@@ -95,16 +95,20 @@ describe("WorkspaceDO migration 147", () => {
       expect(after.has(dropped), dropped).toBe(false);
     }
     for (const kept of ["channels", "channel_viewers", "breakouts", "breakout_viewers", "spaces", "space_viewers",
-      "parent_metadata", "parent_children", "canvas_directory", "automation_directory", "digest_schedules", "schedules"]) {
+      "parent_metadata", "parent_children", "canvas_directory", "automation_directory", "digest_schedules", "schedules",
+      // The Thread conversion reads a Thread's links to artifacts other conversations made.
+      "workspace_workstream_resource_links"]) {
       expect(after.has(kept), kept).toBe(true);
     }
-    expect([...before].filter((table) => !after.has(table))).toHaveLength(49);
+    expect([...before].filter((table) => !after.has(table))).toHaveLength(48);
     expect(all(database, "SELECT conversation, parent_kind FROM memory_digest_holders")).toEqual([
       { conversation: "canvas-conversation", parent_kind: "canvas" }]);
     expect(all(database, "SELECT conversation FROM memory_digest_holder_facts")).toEqual([
       { conversation: "canvas-conversation" }]);
     expect(all(database, "SELECT conversation FROM memory_digest_sync")).toEqual([{ conversation: "canvas-conversation" }]);
-    expect(all(database, "SELECT parent_kind FROM sidekick_conversation_attachments")).toEqual([{ parent_kind: "canvas" }]);
+    // A Thread's stays for the conversion to carry to its Canvas; retiring the Thread deletes it.
+    expect(all(database, "SELECT parent_kind FROM sidekick_conversation_attachments ORDER BY parent_kind")).toEqual([
+      { parent_kind: "canvas" }, { parent_kind: "workstream" }]);
     expect(all(database, "SELECT item_kind FROM workspace_pins ORDER BY item_kind")).toEqual([
       { item_kind: "canvas" }, { item_kind: "sidekick" }]);
     expect(all(database, "SELECT parent_kind FROM external_conversation_bindings")).toEqual([{ parent_kind: "automation" }]);

@@ -45,7 +45,7 @@ async function organizationObject(env: Env, workspaceId: WorkspaceId) {
   );
 }
 
-async function conversationObject(env: Env, workspaceId: WorkspaceId, parentId: string, substreamId: string) {
+export async function conversationObject(env: Env, workspaceId: WorkspaceId, parentId: string, substreamId: string) {
   return durableObjectStubForWorkspace(
     env, env.SUBSTREAM_AGENTS, workspaceId,
     conversationObjectName(env.AVALON_REGION, workspaceId, parentId, asSubstreamId(substreamId)),
