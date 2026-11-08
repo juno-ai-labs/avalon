@@ -102,7 +102,6 @@ interface WorkstreamComposerProps {
   annotationsEnabled?: boolean;
   /** The key the unsent draft is cached under; see `lib/draft-keys.ts`. */
   draftKey: string;
-  substreamId?: string;
   members: WorkspaceMember[];
   /**
    * People invited to the Organization who have not joined. Offered after the
@@ -192,7 +191,6 @@ export function WorkstreamComposer({
   api,
   workstream,
   draftKey,
-  substreamId = '0',
   members,
   invitees = NO_INVITEES,
   sharedInviteeEmails = NO_SHARED,
@@ -668,8 +666,8 @@ export function WorkstreamComposer({
 
       <Modal
         description={confirmationNames.length > 1
-          ? `${confirmationNames.join(', ')} are not currently participants. Would you like to add them with this message? If you do not add them, they will not be able to see the mentions or this ${substreamId === '0' ? 'thread' : 'breakout'}.`
-          : `${confirmationNames[0] ?? 'This person'} is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this ${substreamId === '0' ? 'thread' : 'breakout'}.`}
+          ? `${confirmationNames.join(', ')} are not currently participants. Would you like to add them with this message? If you do not add them, they will not be able to see the mentions or this Canvas.`
+          : `${confirmationNames[0] ?? 'This person'} is not currently a participant. Would you like to add them with this message? If you do not add them, they will not be able to see the mention or this Canvas.`}
         footer={
           <>
             <Button disabled={confirming} onClick={() => setPendingConfirmation(null)}>Cancel</Button>
