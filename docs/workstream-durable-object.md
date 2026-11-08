@@ -1,4 +1,4 @@
-# Workspace, work-stream, automation, and substream Durable Objects
+# WorkspaceDO and AgentLoopDO
 
 Rally's regional stateful hierarchy is `WorkspaceDO -> {hosted Canvas and
 Sidekick parents} -> AgentLoopDO`. There is one `WorkspaceDO` per workspace,
@@ -136,7 +136,7 @@ and retry-stable event cutoffs. Owner migration 4 supplies the monotonic counter
 | `scripts/eslint-rules/durable-object-sync-transaction.mjs` | Rejects explicit or type-resolvable Promise-returning callbacks passed to `transactionSync`, `commitRuntimeMutation`, or `commitWithRegionalEffects`. |
 | `packages/db/migrations/0043_hypersight.sql`, `0078_rename_hypersight_to_block_dashboard.sql` | Immutable historical migrations retained byte-for-byte after feature removal. They are migration ledger, not live product authority. |
 | `packages/db/migrations/0079_workstream_do_authority_cutover.sql` | Maintenance control, routes, import receipts, identity anchors, and permanent legacy-product/pin writer fences. |
-| `packages/db/migrations/0080_workstream_do_regional_effects.sql` | Legacy causally fenced notification-intent shells. A mention's replay receipt is the hosted parent's `sidekick_child_receipts` row, never a D1 row; `workspace_workstream_effect_receipts` is unwritten since 2026-11-07, dropped with the Thread-era tables. |
+| `packages/db/migrations/0080_workstream_do_regional_effects.sql` | Legacy causally fenced notification-intent shells. A mention's replay receipt is the hosted parent's `sidekick_child_receipts` row, never a D1 row; `workspace_workstream_effect_receipts` is unwritten since 2026-11-07; migration 147 left it in place and no later migration drops it. |
 | `packages/db/migrations/0081_workstream_do_full_serving.sql` | Serving-contract attestation and idempotent creation receipts (`workstream_create_receipts`, which Canvas and Sidekick creation still read); it intentionally creates no directory projection tables. |
 | `packages/db/migrations/0082_workspace_durable_object_placement_affinity.sql` | Immutable Global/regional workspace affinity projection and migration/background fallbacks. |
 | `packages/db/migrations/0083_workspace_product_do_authority.sql` | Per-workspace product import routes plus permanent D1 writer fences for the migrated activity and opportunity families. |
@@ -153,12 +153,11 @@ constructor/readiness and queueing. See [socket timing](performance-tracing.md#w
 
 Transcript writes commit a coalesced search intent through SQLite triggers. AgentLoopDO alarms publish references to the regional activity Queue; its internal preparation RPC reloads canonical text and captures links. The Queue Worker alone performs lexical indexing, shared chunking, embedding, and generation cleanup. WorkspaceDO uses retained resource revision watermarks and the same Queue. Captured link Markdown stays in the originating substream and canonical search reads enforce current parent and child access. See [text search](text-search.md) for migration and failure behavior.
 
-WorkspaceDO `searchableWorkstreamIds` is a search-readability projection, separate
-from sidebar visibility and batch actions. It includes archived/system rows and
-requires workspace scope or a participant viewer row at the matching authority
-generation. Its complete-list response has no inherited 100-ID batch cap. The
-search loader still checks current parent and private-child authority before
-returning content; the projection itself never grants access.
+Which search hits a person may see is decided live by WorkspaceDO's
+`readSearchAudience`: the searcher's audience groups, one per Canvas Chat
+`canvasReaderAllows` admits them to and one per Sidekick `sidekickAdmits`
+admits them to. Opening a hit keeps its own canonical check, so the group
+grants nothing beyond the excerpt; [text search](text-search.md) owns it.
 
 ### Ordered transcript authority
 
@@ -929,8 +928,7 @@ same `client_message_id` is checked against both canonical and pending authority
 so an ambiguous-response retry returns the same future turn ID without
 admitting another input or loop. This includes a send repeated while its mailbox
 row is still preparing: the original author's logical request is compared using
-the same hash as the final receipt, excluding per-attempt telemetry and the
-server's merge-title snapshot. The first recovery envelope is retained. A retry
+the same hash as the final receipt, excluding per-attempt telemetry. The first recovery envelope is retained. A retry
 joins the live preparation through its existing settlement waiters, then reads
 the canonical or pending receipt; it does not classify or reserve attachments a
 second time. Different content or authors under the same client message ID are
@@ -1241,9 +1239,7 @@ provider receipt are WorkspaceDO rows. They must not be copied into a child.
 The handoff is observable at each authority boundary. The child records each
 batch it queued or deferred (`substream_outbox_batch_enqueued`,
 `substream_outbox_batch_deferred`) and each envelope it dropped for size
-(`conversation_effect_oversized`); a parent records the same three
-(`parent_effect_batch_enqueued`, `parent_effect_enqueue_failed`,
-`parent_effect_oversized`); the consumer records every message's outcome
+(`conversation_effect_oversized`); the consumer records every message's outcome
 (`conversation_effect_terminal`, `conversation_effect_deferred`,
 `conversation_effect_processing_failed`) with `parent_kind`, `workstream_id`
 (the parent id), `message_id`, and `effect_kind`. Notification intent logs
@@ -1548,7 +1544,7 @@ already have committed across the object boundary.
 
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_sidebar_list_state` | The `automations` and `canvases` list waterlines each list push carries. |
-| `workspace_workstream_effect_receipts` | The Thread host's regional effect receipts, unwritten since 2026-11-07, dropped with the Thread-era tables. A conversation's effects are receipted in `sidekick_child_receipts`. |
+| `workspace_workstream_effect_receipts` | The Thread host's regional effect receipts, unwritten and unread since 2026-11-07; migration 147 did not drop it. A conversation's effects are receipted in `sidekick_child_receipts`. |
 | `channels`, `channel_viewers`, `spaces`, `space_viewers`, `breakouts`, `breakout_viewers`, `parent_*` | The retired Thread, Channel and Breakout directory and parent state, kept by migration 147 because the Thread retirement's inventory reads them; nothing else does, and they go once `retire_threads` has run in every Organization ([`workspace-retirement.md`](workspace-retirement.md)). |
 
 WorkspaceDO migration 147 dropped the Activity, suggested-work, digest,

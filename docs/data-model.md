@@ -212,7 +212,7 @@ ahead of the history it indexes. `revision_cause` stays null — this is none of
   Account → Default timezone, and no report moves it; turning **Set timezone
   automatically** back on sets `client` again. It is one column per region —
   `users` is regional — so it answers for every workspace the person belongs to
-  in that region, and a second region's row keeps its own. `syncRegionalProfile`
+  in that region, and a second region's row keeps its own. `syncRegionalProfileStatement`
   deliberately syncs `email`, `name`, and `avatar_url` and not `timezone`, so a
   zone chosen in one region does not cross to another.
 
@@ -391,6 +391,36 @@ SQL joins.
   else does ([`workspace-retirement.md`](workspace-retirement.md)). Migration
   64 dropped the Project tables, and 147 dropped the Space ledgers, the
   Thread pins, order, access and resource links, and the batch dispatches.
+- **What the Thread era left.** The shipped migrations are the map of the
+  Thread, Channel, Space and Project tables as they were; this list says only
+  what is still in the schema. WorkspaceDO migration 64 dropped the eight
+  Project tables, and migration 147 (`THREAD_ERA_TABLES_DROP_MIGRATION` in
+  `retired-workspace-schema.ts`) dropped the Space ledgers (`space_intents`,
+  `space_defaults` and its staging, `space_bootstrap`, `space_invitees`,
+  `space_reads`, `space_channel_memberships`, `workspace_space_state`), the
+  Thread pins and orders (`workspace_workstream_pins`, `workspace_pinned_order`,
+  `workspace_container_order`), `workspace_workstream_access`,
+  `conversation_access_requests`, the Channel colour and rail ledgers, the
+  batch dispatches and the import-reservation reclaim. What remains unwritten
+  are the directory tables migration 72 renamed (`channels`, `channel_viewers`,
+  `breakouts`, `breakout_viewers`, `spaces`, `space_viewers`) and the `parent_*`
+  tables of the retired Channel and Space host
+  ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)), which
+  the Thread retirement's inventory reads, and
+  `workspace_workstream_effect_receipts`, the Thread host's effect inbox. The
+  partial unique index on `spaces.system_role` that made General singular
+  stays with its table.
+- `member_personal_system_prompts` (migration 88) is each member's personal
+  system prompt for this Organization, copied into each conversation object's
+  `personal_system_prompt_copies` (its migration 72); see
+  [`personal-system-prompt.md`](personal-system-prompt.md).
+- `member_preferences` (migration 89) holds each member's display preferences;
+  see [`member-preferences.md`](member-preferences.md).
+- `workspace_pins` (migration 97) is one person's pins of every kind, keyed
+  `(user_id, item_kind, item_id)`; migration 141 admits `canvas` and
+  `sidekick`, the only kinds written now, and 147 deleted every row of the
+  Thread-era kinds the shipped CHECK still admits. It is the one source of pin
+  state; see [`pinning.md`](pinning.md).
 - `workspace_member_status` (migration 72), one row per person: their
   workspace relationship as `relationship_json` (null for someone with none or
   removed), `active`, the D1 delivery `sequence` of the last relationship event
@@ -403,13 +433,12 @@ SQL joins.
   incarnation never comes back.
 
 - Object-local `participants` records explicit participation reasons, and
-  `first_opened_at` — null until that person opens the work stream, which is
-  what makes "you were added to this and have never been here" a state the
-  sidebar can show. It is on the membership row rather than on `member_attention`
-  because the attention row does not exist for somebody who has only been added.
-  See [`workstream-markers.md`](workstream-markers.md). Viewer presence is
-  intentionally absent from durable storage.
-- Object-local `participant_transcript_turns` has a per-work-stream
+  `first_opened_at` — null until that person opens the conversation. It is on
+  the membership row rather than on `member_attention` because the attention
+  row does not exist for somebody who has only been added. The conversation
+  snapshot still carries it as `unseen` and opening settles it, but no surface
+  draws it since the Thread list's marker was deleted. Viewer presence is intentionally absent from durable storage.
+- Object-local `participant_transcript_turns` has a per-conversation
   `transcript_sequence`; the root
   `workstream.next_sequence_number` allocates ordered events. Conversation rows
   belong to a `substreams` row, with the main chat fixed at substream `0`.
@@ -417,9 +446,9 @@ SQL joins.
   keyed to their canonical turn.
 - `participant_transcript_attachments` relates a resource to one exact owning
   turn. A
-  resource can appear in multiple work streams, so projections that report
+  resource can appear in multiple conversations, so projections that report
   attachment state must use the current object's link; existence anywhere in the
-  workspace is not the relationship for the current work stream.
+  workspace is not the relationship for the current conversation.
 - WorkspaceDO `resources` holds metadata while `content_ref` points at the user-visible
   regional R2 object and `content_sha256` identifies the exact bytes selected for
   model extraction. Uploads hash before the row commits; connector hydration
@@ -467,10 +496,13 @@ SQL joins.
   is attempted is released because there are no bytes to protect; detaching one
   relationship leaves shared resource objects intact.
   WorkspaceDO `pending_attachment_reservations` is the deletion fence between a
-  draft upload and one preparing or ready work-stream input. It freezes workspace,
-  work-stream, author, input, and resource identity. Canonical
-  `workspace_workstream_resource_links` projection marks the upload attached and
-  removes the effect's exact input/resource reservations in the same transaction;
+  draft upload and one preparing or ready conversation input. It freezes workspace,
+  conversation, author, input, and resource identity. The upload is marked
+  attached, and the effect's exact input/resource reservations removed, in the
+  same transaction that records the attachment (for a Thread, the
+  `workspace_workstream_resource_links` projection did this; migration 147
+  keeps that table because `convert_threads_to_canvases` reads it and
+  `deleteRetiredThreadParent` deletes a Thread's rows);
   failed preparation uses an idempotent typed release RPC. AgentLoopDO's
   `pending_attachment_reservation_recovery` is only the cross-object recovery
   obligation, not a second resource or message authority.
@@ -479,7 +511,7 @@ SQL joins.
   resource invalidates the whole invocation and queues its JSON replay object;
   the table never contains attachment content or ephemeral image data. Every
   dependency registration, invalidation, replay, and cleanup mutation
-  carries the workspace/work-stream identity even though resource and invocation
+  carries the workspace/conversation identity even though resource and invocation
   IDs are globally unique.
   `resource_inventory_revision` holds one monotonic revision in the object.
   Local triggers advance it when resource membership, message
@@ -491,12 +523,12 @@ SQL joins.
   relationship and resource-inventory fence; WorkspaceDO owns resource metadata,
   workspace watches, and the inverted workspace index. `relationship_type` is
   constrained to `attachment`, `message_attachment`, `origin`, `generated`,
-  `inbound_email`, or `context`. The work-stream-facing
+  `inbound_email`, or `context`. The conversation-facing
   `direction` is derived from that relationship: `generated` is an `artifact`;
   every other relationship is a `source`. Direction is not stored on the shared
   resource because the same resource may be an artifact here and a source elsewhere.
-  The `origin` relationship (retired: nothing writes it since Threads went) recorded what a work stream was created from — see
-  [work-stream origin attachments](workstream-origin-attachments.md).
+  The `origin` relationship recorded what a Thread was created from; nothing
+  writes it since Threads were deleted, and stored rows keep the label.
 - `elicitation_requests` is operational human-input state tied to a run.
 
 D1 retains a `workstreams` identity/routing anchor because control tables have
@@ -624,11 +656,11 @@ column catalog; what follows is only what WorkspaceDO still holds.
   so a replayed tool receipt resolves to the wake-up its first attempt created;
   `status` moves `pending → fired` under a version guard before the run is launched,
   making a wake-up at-most-once rather than at-least-once.
-- Terminal's work-stream-specific durable rows are object-local.
+- Terminal's conversation-specific durable rows are object-local.
   `terminal_workspace` owns one generation, authority fingerprint, provider
   reconciliation identity, exclusive operation lease, lifecycle deadlines, and
   final-diff pointer per conversation: the main conversation's sandbox is the
-  work stream's, a side thread has its own, and a background agent uses the
+  parent's, a run has its own, and a background agent uses the
   one of the conversation that started it, with `operation_run_substream_id`
   naming the holder's conversation while a run from elsewhere holds the lease
   (conversation schema 63). `terminal_tasks` binds one command to one
@@ -668,7 +700,7 @@ column catalog; what follows is only what WorkspaceDO still holds.
   the Activity log it fed is retired, and migration 147 dropped
   `workspace_activity_events` and its targets, reads and pushes.
   `WorkspaceDO.workspace_workstream_effect_receipts`, the Thread host's inbox,
-  is unwritten since 2026-11-07, dropped with the Thread-era tables.
+  is unwritten since 2026-11-07; migration 147 left it in place.
 - WorkspaceDO `workstream_notification_intents` temporarily retains a bounded
   person-notification payload — a mention, or somebody added to the
   conversation — and the Sidekick run pushes (Needs input, finished;
@@ -680,8 +712,12 @@ column catalog; what follows is only what WorkspaceDO still holds.
   past that window converges on the idempotent intent ID rather than a receipt
   row. A mention commits its receipt in the same WorkspaceDO transaction as the
   intent it acknowledges; no regional D1 receipt exists for it.
-- The digest tables are gone (migration 147) except `digest_schedules`, kept
-  empty because a foreign key on `schedules` names it.
+- The Thread-era Activity log and the digests are gone: migration 147 dropped
+  `workspace_activity_events` with its targets, reads and pushes, and every
+  digest table except `digest_schedules`, kept empty because a foreign key on
+  `schedules` names it. Their shapes are in the shipped migrations. Activity as
+  it is now is `workspace_activity_items` and `workspace_activity_seen`
+  (migration 148), above.
 
 - `WorkspaceDO.connector_installations` owns a connection's unique setup attempt,
   initiating user and input digest, generation, typed registration document, and
@@ -805,7 +841,7 @@ the two in the objects; this entry exists so somebody adding a table finds them.
   and its error. The phase names are the contract's, not a `CHECK`: they are a
   product decision that will move, and SQLite cannot widen a `CHECK` in place.
 - **Regional D1 `demo_seed_receipts`** records what the seeder confirmed, one row
-  per pack action of one operation: its kind and room, the work stream and human
+  per pack action of one operation: its kind and room, the conversation and human
   turn it wrote, the run and how it settled, the elicitation a question opened,
   the resource an upload attached. It references `demo_operations` by
   `operation_id`, so a receipt cannot describe a demo no operation started, and
