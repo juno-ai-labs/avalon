@@ -673,6 +673,11 @@ and copied into the version by the capture trigger, so a swap and the
 attribution of that swap are one statement. History captured before provenance
 existed reports no author rather than an invented one, and an insert whose
 identity does not match its kind is refused outright.
+The versions route also answers `authorName` beside `author`: a member
+author's name from `users`, joined to the Organization's members, and a
+connector author's connection `display_name`, each read once per history and
+only when the history names that kind; null for an agent or system author, which
+the surfaces call Rally, and for an identity that no longer resolves.
 
 Each resource also carries a `slug`: a short alias minted by the work-stream
 address generator over the resource's own coordinates, unique per workspace
@@ -761,16 +766,20 @@ attachment reservation, since a pin usually names an already-sent resource.
 
 ## Changelog
 
-### 2026-11-08 — The artifact panel names its version and who made it
+### 2026-11-08 — A version names its member or connector author
 
-**What changed:** The panel's "Last updated" line adds "version N · <author>"
-for the current version, and both it and the Versions menu prefer the
-`authorName` the versions route now returns.
+**What changed:** `ResourceRevision` gains optional `authorName`, filled by
+`ResourceService.versions` and `.version` for member and connector authors.
 
-**Why:** design.html §2 reads "Last updated today, 10:42 · version 4 · Rally",
-and the PRD has the artifact sit in the panel "with its version" (v1-F11,
-v4-F13). The rail knew only ids for a member outside the room or a connection,
-so it said "A teammate" or the provider where a name existed.
+**Why:** The Versions menu named a member only when the person was on the
+Canvas's participant list, and an Organization-wide Canvas lists nobody, so a
+teammate's version read "A teammate" (design-conformance findings v1-F11,
+v4-F13). The client has no other way to resolve a user or connection id. The
+name sits beside `author`, not inside it, because the author variants are
+strict objects and a client older than the field would refuse the whole
+history over an unknown key. Agent and system authors carry no name: the
+product names them Rally, and a run id resolves to nothing a person reads.
+
 
 ### 2026-11-07 — `publish_resource` lands in a Canvas, and no conversation inherits a Thread's links
 

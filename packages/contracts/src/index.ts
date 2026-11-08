@@ -737,6 +737,16 @@ export const ResourceRevisionSchema = z.object({
   author: ResourceVersionAuthorSchema.nullable(),
   authorName: z.string().max(180).nullable().optional(),
   /**
+   * The name a member or connector author goes by — the person's name, the
+   * connection's display name — so a client can name someone its
+   * conversation does not list. Null for an agent or system author (the
+   * surfaces call it Rally) and for an identity that no longer resolves;
+   * absent from a server older than it. Beside `author` rather than in it,
+   * because the author variants are strict and an older client would reject
+   * the key there.
+   */
+  authorName: z.string().max(200).nullable().optional(),
+  /**
    * A cause this client does not know reads as none, so a later cause leaves
    * the history listable rather than failing the whole response, as
    * `renamed` does for a desktop build from before it.
