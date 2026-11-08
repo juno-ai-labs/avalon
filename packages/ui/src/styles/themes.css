@@ -495,7 +495,6 @@
 
   /* The reading column's width, and the identity line over a turn in it. */
   --av-cmp-feed-width: 880px;
-  --av-cmp-feed-width-wide: 940px;
   --av-cmp-feed-byline-font-size: 12px;
   --av-cmp-feed-byline-author-weight: 500;
   --av-cmp-feed-byline-time-weight: 420;
@@ -877,7 +876,6 @@
   --av-cmp-composer-send-foreground: #141414;
 
   --av-cmp-feed-width: 880px;
-  --av-cmp-feed-width-wide: 940px;
   --av-cmp-feed-byline-font-size: 12px;
   --av-cmp-feed-byline-author-weight: 500;
   --av-cmp-feed-byline-time-weight: 420;
