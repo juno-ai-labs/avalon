@@ -2803,6 +2803,74 @@ describe('useWorkstreamSocket', () => {
     });
   });
 
+  it('reads the viewer\'s own starting run as read, and another person\'s as news', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const viewerUserId = '00000000-0000-7000-8000-00000000070b';
+    const otherUserId = '00000000-0000-7000-8000-00000000070c';
+    const runRow = (requesterUserId: string) => ({
+      type: 'transcript_turn_upserted' as const,
+      sequence: 1,
+      occurredAt: '2026-11-08T12:00:00.000Z',
+      turn: {
+        transcriptSequence: 1,
+        turnId: `run-row-${requesterUserId}`,
+        entryKind: 'conversation' as const,
+        actor: 'system' as const,
+        authorUserId: null,
+        authorSnapshot: null,
+        attentionOrdinal: 5,
+        createdAtUtc: '2026-11-08T12:00:00.000Z',
+        revision: 1,
+        blocks: [{
+          type: 'text' as const, blockId: `run-row-${requesterUserId}:text:0`, blockIndex: 0, text: '', streaming: false,
+          messageType: 'automation_activation' as const,
+          structuredContent: {
+            type: 'automation_activation', schemaVersion: 1,
+            automationId: '00000000-0000-7000-8000-0000000000aa', automationName: 'fs Picker',
+            runId: '00000000-0000-7000-8000-0000000000bb', deliveryId: 'delivery-1',
+            trigger: { kind: 'manual' }, occurredAt: 1794139200000,
+            run: { state: 'pending', stepCount: 0, reply: null },
+          },
+          sidekickRun: { requesterUserId, runNumber: 7 },
+        }],
+        activityId: null,
+      },
+    });
+    const openFeed = async (workstreamId: string) => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', workstreamId], emptyTranscriptSnapshot());
+      queryClient.setQueryData(['workstream', workstreamId],
+        workstreamDetail({ id: workstreamId, latestAttentionSequenceNumber: 4, readThroughSequenceNumber: 4 }));
+      const api = socketApiWith({
+        viewerUserId,
+        getSocketTicket: vi.fn(async () => ({
+          url: `wss://api.rally.test/workstreams/${workstreamId}`,
+          ticket: 'socket-ticket',
+          protocols: socketTicketProtocols('socket-ticket'),
+        })),
+      });
+      renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+      await flushPromises();
+      const socket = FakeWebSocket.instances.at(-1)!;
+      act(() => socket.open());
+      return { queryClient, socket };
+    };
+
+    const own = await openFeed('00000000-0000-7000-8000-000000000711');
+    act(() => own.socket.message(runRow(viewerUserId)));
+    await flushPromises();
+    expect(queryDetail(own.queryClient, '00000000-0000-7000-8000-000000000711')).toMatchObject({
+      latestAttentionSequenceNumber: 5, readThroughSequenceNumber: 5, hasUnread: false,
+    });
+
+    const theirs = await openFeed('00000000-0000-7000-8000-000000000712');
+    act(() => theirs.socket.message(runRow(otherUserId)));
+    await flushPromises();
+    expect(queryDetail(theirs.queryClient, '00000000-0000-7000-8000-000000000712')).toMatchObject({
+      latestAttentionSequenceNumber: 5, readThroughSequenceNumber: 4, hasUnread: true,
+    });
+  });
+
   it('clears the mention marker on the reader\'s own newest turn, and keeps a later one', async () => {
     // The room does not store `youAreMentioned`; it derives it as
     // `latest_mention_attention_ordinal > seen_attention_ordinal`, so advancing
