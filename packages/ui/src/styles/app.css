@@ -3456,6 +3456,10 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .markdown-body h4,
 .markdown-body h5,
 .markdown-body h6 { font-size: var(--av-cmp-markdown-heading-4); font-weight: var(--av-sys-font-weight-heading); }
+/* An artifact is a document, and its headings are its strongest ink, as
+   design.html §2 draws "What moved" and "Open questions": the quiet heading is
+   the conversation's, where a reply's headings sit back from its answer. */
+.inspector-detail-document .markdown-body :is(h1, h2, h3, h4, h5, h6) { color: var(--av-sys-color-text-default); }
 
 /* Heading collapse. h2+ become a one-level accordion: the chevron hangs in the
    margin to the left of the heading, and a collapsed section keeps ~3 lines of
@@ -3976,8 +3980,11 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .markdown-table-scroll { margin: var(--space-4) -2px; overflow-x: auto; }
 .markdown-table-scroll::-webkit-scrollbar-thumb { background: var(--markdown-scrollbar-thumb); }
 .markdown-body table { border-collapse: separate; border-spacing: 2px; line-height: var(--av-cmp-markdown-table-leading); margin: 0; min-width: max(100%, calc(var(--markdown-table-columns, 1) * 140px)); table-layout: fixed; width: calc(100% - 1px); }
+/* Only the header row is shaded, in both appearances: the body cells take
+   their surface, which in dark had been the same raised grey as the header
+   and made every cell a block. */
 .markdown-body th,
-.markdown-body td { background: var(--markdown-surface); border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; }
+.markdown-body td { background: transparent; border: 0; border-radius: var(--av-sys-size-radius-xs); min-width: 120px; padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; }
 .markdown-body th { background: var(--markdown-wash); color: var(--markdown-ink); font-weight: var(--av-cmp-markdown-strong-weight); }
 .markdown-body del { color: var(--markdown-ink-muted); text-decoration-color: var(--markdown-ink-faint); }
 .markdown-body img { border-radius: var(--av-sys-size-radius-md); display: block; height: auto; margin: var(--space-4) 0; max-width: 100%; }
@@ -8395,7 +8402,7 @@ button.mark-bridge-mark:focus-visible { outline: 2px solid var(--av-sys-color-bo
 .annotation-comment { position:fixed; z-index:10000; width:292px; padding:12px; background:var(--av-sys-color-surface-elevated); color:var(--av-sys-color-text-default); border:1px solid var(--av-sys-color-border-default); border-radius:12px; box-shadow:var(--av-sys-elevation-shadow-md); cursor:default; }
 .annotation-comment button, .annotation-chip > button[aria-label^='Remove pin'] { border:0; background:transparent; color:inherit; cursor:pointer; }
 .annotation-comment .annotation-comment-remove { position:absolute; right:8px; top:6px; width:24px; height:24px; font-size:20px; }
-.annotation-comment textarea { resize:vertical; width:100%; min-height:64px; margin-top:20px; border:0; background:transparent; color:inherit; font:inherit; outline:none; }
+.annotation-comment textarea { resize:none; width:100%; min-height:64px; margin-top:20px; border:0; background:transparent; color:inherit; font:inherit; outline:none; }
 .annotation-comment .annotation-comment-send { display:block; margin-left:auto; padding:6px 10px; border-radius:6px; background:var(--av-cmp-button-primary-background); color:var(--av-cmp-button-primary-color); }
 .annotation-comment .annotation-comment-send:disabled { opacity:0.4; cursor:default; }
 .annotation-number { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; flex:none; font-size:10px; font-weight:600; border-radius:50%; background:var(--av-cmp-button-primary-background); color:var(--av-cmp-button-primary-color); }

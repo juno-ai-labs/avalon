@@ -625,6 +625,11 @@ painted without being text, `--markdown-mark` for a task box's tick and
 `--markdown-scrollbar-thumb` for the bar under a wide table — from the
 appearance's own tokens, and every element rule reads one of those.
 
+A table shades only its header row (`--markdown-wash`); body cells are
+transparent on whatever surface the table sits on, in both appearances. An
+artifact's headings (`.inspector-detail-document`) take `text-default`, the
+document's strongest ink, where a reply's headings stay `--markdown-ink-quiet`.
+
 The indirection is there because not every markdown surface sits on the
 appearance's canvas. A person's turn is drawn on a filled bubble — near-black in
 the light appearance, mid-grey in the dark one, or the sender's profile colour —
@@ -969,7 +974,7 @@ restoration are owned by [artifact annotations](artifact-annotations.md).
 
 ## Changelog
 
-### 2026-11-08 — A failed favicon lookup answers a named gateway failure
+### 2026-11-08 — A failed favicon lookup answers a named gateway failure, and a table shades only its header
 
 **What changed:** When neither candidate host resolves, `GET /favicons/:host`
 answers 502 `favicon_unavailable:<reason>` (`faviconFailureReason`): the phase
@@ -981,6 +986,15 @@ provider's message. It answered 500 `internal_error`.
 (`en.wikipe`) logged as an unexpected error with no reason, while
 `FirecrawlError` held its kind and status (CLAUDE.md, "Naming a schema
 failure": a generic code on a path that had the reason is a defect).
+
+A table's body cells are transparent, so only its header row is shaded in
+either appearance, and an artifact's headings take `text-default`.
+
+The design inspection found the dark table's body cells drawn in the same
+raised grey as its header, a block per cell, where light shaded only the header
+(v4-R2-7, v3-R2-5); and an artifact's headings in the conversation's quiet
+grey, lighter than the body under them, where design.html §2 draws them in full
+ink (v4-R2-6).
 
 **Considered and rejected:** A 404 for a Firecrawl 4xx: a 401 or 402 is this
 deployment's key, not the host.

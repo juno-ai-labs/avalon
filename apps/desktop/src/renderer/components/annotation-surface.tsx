@@ -148,6 +148,27 @@ export function AnnotationSurface(props: AnnotationSurfaceProps): React.JSX.Elem
     }
     return locator.type === 'file' ? container.querySelector('.annotation-body')?.getBoundingClientRect() ?? null : null;
   };
+  // The editor follows its selection when the document reflows under it (the
+  // panel expanded, the window resized): it was placed once, where the
+  // pointer let go, and otherwise stays at that screen position over whatever
+  // moved there. Observing the document's box rather than the window catches a
+  // panel that widens inside a window of the same size.
+  const anchorTo = useRef(resolveCommentAnchor);
+  anchorTo.current = resolveCommentAnchor;
+  const followedAnnotation = html ? undefined : current?.annotation;
+  useEffect(() => {
+    const element = root.current;
+    if (!followedAnnotation || !element || typeof ResizeObserver === 'undefined') return;
+    let initial = true;
+    const observer = new ResizeObserver(() => {
+      // The first call reports the box as it is; only a change moves the editor.
+      if (initial) { initial = false; return; }
+      const box = anchorTo.current(followedAnnotation);
+      if (box) setAnchor({ x: box.right, y: box.top - 12 });
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [followedAnnotation]);
   const offsets = (element: HTMLElement): { element: HTMLElement; start: number; end: number } | null => {
     if (text === undefined) return null;
     if (element.dataset.annotationStart !== undefined) return { element, start: Number(element.dataset.annotationStart), end: Number(element.dataset.annotationEnd) };
