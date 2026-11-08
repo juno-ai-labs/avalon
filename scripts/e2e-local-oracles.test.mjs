@@ -8,6 +8,7 @@ import {
   buildPlan,
   modelGateDecision,
   runOutcomeOracle,
+  uuidV7,
 } from "./e2e-local.mjs";
 
 // The oracles are the part of the e2e lane that can rot silently: a driver
@@ -74,4 +75,10 @@ test("a publish counts only when the Canvas lists a versioned artifact", () => {
   assert.equal(artifactOutcomeOracle(null).ok, false, "an unreadable Canvas is not a publish");
   assert.equal(artifactOutcomeOracle({ artifacts: [{ resourceId: "r", version: 1 }] }).ok, true);
   assert.equal(artifactOutcomeOracle({ artifacts: [{ resourceId: "r", version: 0 }] }).ok, false);
+});
+
+test("the lane mints UUIDv7 ids, which the telemetry contract on operationId requires", () => {
+  const id = uuidV7(0x0190_0000_0001);
+  assert.match(id, /^01900000-0001-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+  assert.notEqual(uuidV7(0x0190_0000_0001), id);
 });
