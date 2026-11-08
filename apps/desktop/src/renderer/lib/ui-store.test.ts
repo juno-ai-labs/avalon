@@ -39,8 +39,8 @@ describe('context rail state', () => {
     expect(window.localStorage.getItem('rally.sidebar-width')).toBe('306');
 
     useUiStore.getState().setSidebarWidth(900);
-    expect(useUiStore.getState().sidebarWidth).toBe(400);
-    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('400');
+    expect(useUiStore.getState().sidebarWidth).toBe(476);
+    expect(window.localStorage.getItem('rally.sidebar-width')).toBe('476');
   });
 
   it('opens the requested contextual variant and resets stale detail state', () => {
@@ -86,7 +86,7 @@ describe('sidebar width', () => {
 
   it('starts a device that never resized the sidebar at the design width', async () => {
     const { useUiStore: fresh } = await import('./ui-store');
-    expect(fresh.getState().sidebarWidth).toBe(340);
+    expect(fresh.getState().sidebarWidth).toBe(416);
   });
 
   it('keeps a width the person dragged to over the design width', async () => {

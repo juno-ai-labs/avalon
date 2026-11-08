@@ -59,8 +59,12 @@ recorded; history is not persisted separately.
 ### The sidebar
 
 One `ResizableSidebar` on the left, at the width in `useUiStore.sidebarWidth`
-(`rally.sidebar-width`; 340px, `SINGLE_SIDEBAR_DEFAULT_WIDTH`, until the person
-drags it), clamped to the shared minimum and maximum. It holds two columns:
+(`rally.sidebar-width`; 416px, `SINGLE_SIDEBAR_DEFAULT_WIDTH`, until the person
+drags it), clamped to the shared minimum and maximum. The width is the whole
+sidebar, rail included: design.html §1 and §2 draw a 76px rail beside a 340px
+list, so the default is the two added (`NAVIGATION_RAIL_WIDTH` plus
+`SIDEBAR_LIST_DEFAULT_WIDTH`), and the maximum keeps the 60px of drag room above
+the default the sidebar had before. It holds two columns:
 
 - **The rail**, a 76px column under the macOS window controls, which the main
   window centers over it per macOS version (the width is
@@ -329,22 +333,20 @@ It does not own:
 
 ## Changelog
 
-### 2026-11-08 — The Sidekicks list sorts by recent activity, with the design's Recent control
+### 2026-11-08 — The shell follows design.html: the list column, the rail and the section titles
 
-**What changed:** The Sidekicks section lists every Sidekick by what it last
-did (its newest run or change), with a **Recent** / **Name** control in the
-heading, where it was in the server's alphabetical order with no control.
+**What changed:** The sidebar's default width is the rail plus the design's
+340px list column (416px), not 340px for both.
 
-**Why:** design.html §3, the PRD's authority for every screen, draws "All
-sidekicks" sorted by recency with a "Recent ⇵" control; alphabetical rows
-beside their times read as a broken sort. The heading keeps "All Sidekicks",
-the product noun's case.
+**Why:** The PRD makes design.html the authority for every screen, and the
+design inspection (v1-F1, v4-F4) measured a 264px list that cut ordinary
+titles the design shows whole. This document said 340px for both columns, a
+number carried over from the single-column sidebar of the navigation
+redesign; the design draws 340px for the list alone, and the design wins.
 
-A rail section with a count is now named section first ("Sidekicks, 1
-waiting"); its content read "1 waiting Sidekicks".
-
-**What a future change must respect:** the order is the client's over the
-list the socket keeps, so a reorder costs no request.
+**What a future change must respect:** `sidebarWidth` is the whole sidebar,
+rail included. A width a person already dragged to is kept, so only a person
+who never resized sees the new default.
 
 ### 2026-11-08 — A long title truncates inside the pill, and a pill title can be edited in place
 
