@@ -23,7 +23,6 @@ import {
   WorkstreamSchema,
   WorkstreamWorkflowInputSchema,
   workstreamParticipantPreview,
-  DemoSeedSchema,
   type Elicitation,
   type Message,
   type User,
@@ -172,17 +171,10 @@ export const WorkstreamObjectCreateMessageInputSchema = z.object({
   slackOrigin: z.unknown().optional(),
   slackSearchAuthorization: z.unknown().optional(),
   /**
-   * Present on a demo seed action, and what decides its addressing — see
-   * `DemoSeedSchema`. Reaches the object only over its internal RPC: the
-   * message route's request schema has no such field, so nothing a client
-   * sends can carry one.
-   */
-  seed: DemoSeedSchema.optional(),
-  /**
    * A message posted for the conversation's readers that starts no run,
    * whatever addressing would decide. Sent only by the engineering bridge's
-   * `sendMessage`; like `seed`, the message route's request schema
-   * has no such field.
+   * `sendMessage`; the message route's request schema has no such
+   * field.
    */
   recordOnly: z.literal(true).optional(),
 }).superRefine(validateAnnotationAttachments).refine((value) => value.text.trim().length > 0 || value.attachmentIds.length > 0 || value.annotations?.some((a) => a.comment.trim()), {
@@ -3976,15 +3968,6 @@ export class WorkstreamObjectProductService {
       // A record-only message is posted for the conversation's readers, never
       // a request to Rally: it starts no run, whatever the room's size.
       shouldInvoke = false;
-    } else if (input.seed) {
-      // A seed action states its addressing outcome instead of being classified.
-      // A scripted assistant turn means this message starts a run; `null` means
-      // it starts none — whatever the room's size or the message's attachments
-      // would otherwise force. Admitting a human message in a multi-person room
-      // otherwise asks a *model* whether it addresses Rally, and seeding a
-      // scripted conversation cannot wait on a live guess about each line when
-      // the pack is the authority on which lines start a run.
-      shouldInvoke = input.seed.assistant !== null;
     } else if (!shouldInvoke) {
       await this.waitForEarlierInputPreparations(preparation.input_sequence);
       const activeTask = this.loops.loop()?.status === "executing";
@@ -4022,7 +4005,7 @@ export class WorkstreamObjectProductService {
     const now = preparation.created_at;
     const messageId = preparation.input_id;
     const messageText = this.withPersonalSystemPrompt(prepared.text, auth.userId,
-      input.forcedHarnessOrigin ?? (input.seed ? "demo_seed" : "human_message"));
+      input.forcedHarnessOrigin ?? "human_message");
     const transcriptMessage = await this.transcript.prepareParticipantMessage({
       turnId: messageId,
       actor: "human",
@@ -4224,7 +4207,7 @@ export class WorkstreamObjectProductService {
               auth.userId,
               ...confirmedParticipantUserIds,
             ]),
-            reason: input.forcedHarnessOrigin ?? (input.seed ? "demo_seed" : "human_message"),
+            reason: input.forcedHarnessOrigin ?? "human_message",
             parentHarnessRunId: input.parentHarnessRunId ?? null,
             expectedLatestHarnessRunId: input.expectedLatestHarnessRunId ?? null,
             expectedToolInvocationId: input.expectedToolInvocationId ?? null,
@@ -4233,9 +4216,6 @@ export class WorkstreamObjectProductService {
             telemetryJourney: input.telemetryJourney ?? null,
             slackOrigin: input.slackOrigin ?? null,
             slackSearchAuthorization: input.slackSearchAuthorization ?? null,
-            // The only carrier available: a message-started run's execution
-            // context is rebuilt from this blob at activation.
-            seed: input.seed ?? null,
           }),
           attachmentsJson: JSON.stringify(attachmentDescriptors),
           mentionsJson: JSON.stringify(mentions),

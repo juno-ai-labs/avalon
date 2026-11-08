@@ -26,9 +26,9 @@
     // distinguishable. The fetch fails either way.
     "OPENROUTER_API_KEY": "test-not-a-real-key",
     // Not credentials either: they register the Google connector, so a test
-    // can seed a Google connection — the shape a demo template holds — and a
-    // run that loads it does not fail on an unconfigured connector type. No
-    // live Google request is made; provider-boundary doubles serve health checks.
+    // can seed a Google connection and a run that loads it does not fail on an
+    // unconfigured connector type. No live Google request is made;
+    // provider-boundary doubles serve health checks.
     "CONNECTOR_CREDENTIALS_KEY": "test-connector-encryption-key-not-a-credential",
     "CONNECTOR_CREDENTIALS_KEY_VERSION": "1",
     "GOOGLE_CONNECTOR_OAUTH_CLIENT_ID": "test-not-a-real-client-id",
@@ -66,12 +66,6 @@
   // into the facet through it, and a double would prove nothing about the
   // mechanism the whole stateful design rests on.
   "worker_loaders": [{ "binding": "ARTIFACT_LOADER" }, { "binding": "CODE_LOADER" }],
-  // The real Workflow binding, so a test can hand an instance id to the same
-  // validator production runs. The preparation tests still replace it with a
-  // fake in their env: a real driver would race their hand-driven phases.
-  "workflows": [
-    { "name": "avalon-test-demo-preparation", "binding": "DEMO_PREPARATION_WORKFLOW", "class_name": "DemoPreparationWorkflow" }
-  ],
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "AgentLoopDO" },

@@ -714,7 +714,7 @@ import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
 import { activityCounts, activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_ACCESS_DENIED_STATEMENTS, WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
 import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, CANVAS_TITLE_STATUS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
-import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
+import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS, SIDEKICK_RUN_SEED_DROP_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
   HOSTED_SIDEKICK_ALARM_KINDS,
@@ -4406,6 +4406,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record the Sidekick run whose publish made a Canvas's newest version",
   // See CANVAS_LAST_WRITER_RUN_STATEMENTS and docs/canvases.md.
   statements: CANVAS_LAST_WRITER_RUN_STATEMENTS,
+  version: 154,
+  description: "drop a seeded Sidekick run's script, which demo preparation wrote",
+  // See SIDEKICK_RUN_SEED_DROP_STATEMENTS and docs/architecture.md.
+  statements: SIDEKICK_RUN_SEED_DROP_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -4846,7 +4850,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.initialized;
   }
 
-  /** Generic platform writer. Producers supply the authority basis; no demo fact is read here. */
+  /** Generic platform writer. Producers supply the authority basis. */
   async upsertImpersonationRelationships(input: unknown): Promise<{ active: number }> {
     await this.initialized;
     const request = UpsertImpersonationRelationshipsRequestSchema.parse(input);
@@ -5500,16 +5504,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async canvasCreate(input: Parameters<HostedCanvas["create"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
     return this.canvasWrite(() => canvas.create(input));
-  }
-
-  /**
-   * One viewer's Canvas list as their socket's subscribe payload carries it,
-   * without anyone present: the read a caller with no workspace socket makes
-   * (the demo readiness barrier). See `canvasSidebarRows`.
-   */
-  async canvasListFor(input: { workspaceId: string; userId: string; member: boolean }) {
-    this.assertWorkspace(input.workspaceId);
-    return canvasSidebarRows(this.state.storage.sql, { userId: input.userId, member: input.member }, new Map(), SIDEBAR_LIST_LIMIT);
   }
 
   /** A Canvas as one reader sees it; see `HostedCanvas.detail`. */
@@ -6193,10 +6187,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   async sidekickRunNow(input: Parameters<HostedSidekick["runNow"]>[0]) {
     return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runNow(input));
-  }
-
-  async sidekickRunSeeded(input: Parameters<HostedSidekick["runSeeded"]>[0]) {
-    return this.sidekickCall(input.automationId, input.workspaceId, (sidekick) => sidekick.runSeeded(input));
   }
 
   /** Rebuild a Sidekick's run rows in its shared conversation from its runs; see `HostedSidekick.replayRunRows`. */
@@ -12070,9 +12060,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // the tombstone is what says the enumeration happened —
     // `beginWorkspaceRetirement` writes it in the same call that records the
     // graph. Reading it from the row count instead confused "nothing recorded
-    // yet" with "nothing to record", so a demo with no work streams and no
-    // automations reported incomplete on the first pass and on every pass
-    // after it, and its register row could never be marked retired.
+    // yet" with "nothing to record", so a workspace with no work streams and
+    // no automations reported incomplete on the first pass and on every pass
+    // after it.
     const enumerated = readObjectRetirement(this.state.storage.sql) !== null;
     return { remaining, complete: enumerated && remaining === 0 };
   }

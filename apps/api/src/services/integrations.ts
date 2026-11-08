@@ -162,7 +162,6 @@ import { conversationObjectName, workspaceDOName } from "../durable-objects/name
 import { PERSONAL_SYSTEM_PROMPT_REASONS } from "../durable-objects/personal-system-prompt";
 import { AutomationService } from "./automation-service";
 import { ResourceService } from "./resource-service";
-import { DEMO_SEED_PROVIDER_KEY, demoSeedModelRoute, demoSeedProviderFetch } from "./demo-seed-provider";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
@@ -2862,11 +2861,6 @@ export async function runWorkstreamHarness(
   // actual authority without copying connector/resource state into the agent.
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const conversationSubstreamId = input.substreamId ?? "0";
-  // A seeded run answers its own provider requests. Only the source of model
-  // bytes changes — tools, plugins, receipts and settlement are the ordinary
-  // path below, which is what makes seeded history real history rather than
-  // rows written to look like it. See `docs/demo-workspaces.md`.
-  const seedProvider = input.seed ? demoSeedProviderFetch(input.seed) : null;
   const runStartedAtMs = Date.now();
   // The archive gate was a `WHERE` clause because the read was a statement;
   // it is a test on the row here, and the row carries the object's own column
@@ -3417,9 +3411,6 @@ export async function runWorkstreamHarness(
 
   const modelRouting = await measureStartup("model_routing_wait_ms", () => modelRoutingPreparation.get());
   startupDurations.model_routing_load_ms = modelRoutingPreparation.elapsedMs ?? 0;
-  // A seeded run is routed where the seam is: the OpenRouter client, an
-  // unbound model, no fallbacks, no Azure transport. See `demoSeedModelRoute`.
-  const seedRoute = seedProvider ? demoSeedModelRoute(modelRouting) : null;
 
   if (!runtime?.persistentLoop && await isHarnessStopped(runs, input.harnessRunId)) {
     stopController.abort("stopped_by_user");
@@ -3914,17 +3905,13 @@ export async function runWorkstreamHarness(
   try {
     outcome = await runHarness({
       config: {
-        // Bind refuses to construct a client without a key, and a seeded run
-        // never presents one anywhere; the stand-in keeps a sandbox without a
-        // key able to seed. Production always has the real one.
-        apiKey: seedProvider ? env.OPENROUTER_API_KEY || DEMO_SEED_PROVIDER_KEY : env.OPENROUTER_API_KEY,
-        primaryModel: seedRoute ? seedRoute.model : modelRouting.model,
-        fallbackModels: seedRoute ? seedRoute.fallbackModels : modelRouting.fallbackModels,
-        ...(!seedRoute && modelRouting.reasoningEffort ? { reasoningEffort: modelRouting.reasoningEffort } : {}),
+        apiKey: env.OPENROUTER_API_KEY,
+        primaryModel: modelRouting.model,
+        fallbackModels: modelRouting.fallbackModels,
+        ...(modelRouting.reasoningEffort ? { reasoningEffort: modelRouting.reasoningEffort } : {}),
         appName: "Rally",
-        ...(seedRoute ? {} : azureInferenceConfig(env)),
+        ...azureInferenceConfig(env),
         ...runLimits,
-        ...(seedProvider ? { fetch: seedProvider } : {}),
         toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
         maxCatalogTokens: runScopeLimits.maxCatalogTokens,
@@ -4175,9 +4162,9 @@ export async function runWorkstreamHarness(
       const attachmentNudge = attachmentGrounding.nudge();
       if (attachmentNudge) return attachmentNudge;
       const persistentLoop = runtime?.persistentLoop;
-      // Fixed-purpose profiles and seeded demos have their own output contract.
-      // A nonpersistent host cannot enforce a durable one-use recovery marker.
-      if (!persistentLoop || profile || input.seed) return null;
+      // Fixed-purpose profiles have their own output contract. A
+      // nonpersistent host cannot enforce a durable one-use recovery marker.
+      if (!persistentLoop || profile) return null;
       abortIfPersistentLoopStopped();
       const sidekickDefinition = input.automationRun && !input.triggerMessageId
         ? await runDefinitionPreparation.get() : null;

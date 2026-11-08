@@ -416,8 +416,7 @@
   },
   "workflows": [
     { "name": "avalon-global-connector-poll", "binding": "CONNECTOR_POLL_WORKFLOW", "class_name": "ConnectorPollWorkflow" },
-    { "name": "avalon-global-connector-event", "binding": "CONNECTOR_EVENT_WORKFLOW", "class_name": "ConnectorEventWorkflow" },
-    { "name": "avalon-global-demo-preparation", "binding": "DEMO_PREPARATION_WORKFLOW", "class_name": "DemoPreparationWorkflow" }
+    { "name": "avalon-global-connector-event", "binding": "CONNECTOR_EVENT_WORKFLOW", "class_name": "ConnectorEventWorkflow" }
   ],
   // `enabled`/`head_sampling_rate` cover Workers Logs only; automatic tracing
   // has to be asked for separately.

@@ -333,7 +333,6 @@ describe("sharing a Canvas by email address", () => {
         .bind(NEWCOMER, NEWCOMER_EMAIL, NEWCOMER),
       env.DB.prepare(`CREATE TABLE workspace_invitations (id TEXT, workspace_id TEXT, email TEXT, role TEXT,
         invited_by_user_id TEXT, expires_at TEXT, accepted_at TEXT, revoked_at TEXT, created_at TEXT)`),
-      env.DB.prepare("CREATE TABLE demo_operations (workspace_id TEXT, ready_at TEXT)"),
       env.DB.prepare(`CREATE TABLE user_login_identities (provider TEXT NOT NULL, subject TEXT NOT NULL,
         user_id TEXT NOT NULL, verified_at TEXT NOT NULL, PRIMARY KEY (provider, subject))`),
     ]);

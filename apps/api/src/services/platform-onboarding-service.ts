@@ -35,11 +35,6 @@ import {
 import { workspaceDOName } from "../durable-objects/names";
 import { BrowserSessionService } from "./browser-session-service";
 import { AuthService } from "./auth-service";
-
-import {
-  demoWorkspaceAdmission,
-  withheldDemoWorkspaceIds,
-} from "./demo-workspace-visibility";
 import { acceptInvitationForUser, declineInvitationForUser } from "./workspace-service";
 import { claimScopeInvitations } from "./scope-invitation-claims";
 import { membershipAttention } from "./workspace-attention-service";
@@ -349,17 +344,9 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     // opens the first one, and that should be the person's own Organization
     // rather than one they were shared into earlier.
     const memberships = (workspaceResult.results ?? []).map(mapWorkspace);
-    // Two workspaces a member holds but is not offered: the demo template, and a
-    // demo still being prepared. Both are withheld from the list rather than
-    // from the membership — the template's operator still maintains it, and a
-    // candidate becomes ordinary the moment it is published.
-    const withheld = await withheldDemoWorkspaceIds(
-      this.env.DB,
-      memberships.map((workspace) => workspace.id),
-    );
     return regionalDiscoverySchema.parse({
       region: this.env.AVALON_REGION,
-      workspaces: memberships.filter((workspace) => !withheld.has(workspace.id)),
+      workspaces: memberships,
       invitations: (invitationResult.results ?? []).map(mapPendingInvitation),
     });
   }
@@ -406,14 +393,6 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
     await applyRegionalPreferenceProjection(this.env, user.id, input.preference);
     await this.requirePlacementAffinity(input.workspaceId, input.placementAffinity);
     await this.requireMembership(user.id, input.workspaceId);
-    // Preparation is a real admission state, not a rendering detail: activating
-    // a candidate before it is published shows a half-seeded sidebar and lets
-    // somebody open a room the pack has not finished writing. The template is
-    // deliberately still activatable — the filter above is a discovery filter,
-    // not its security gate, and an operator maintains it by opening it.
-    if (await demoWorkspaceAdmission(this.env.DB, input.workspaceId) === "preparing") {
-      throw new ApiError(409, "demo_workspace_preparing", "This demo is still being prepared");
-    }
     await this.initializeWorkspaceObject(input.workspaceId, input.placementAffinity);
     // Activation is a read/verify plus fresh session issue. It intentionally
     // does not claim the action journal because the binding's operation may
@@ -446,15 +425,14 @@ export class RegionalOnboardingService implements RegionalIdentityBridgeBinding 
    * Create a workspace for a member who already exists in this region, with no
    * session minted for them.
    *
-   * The demo preparation's path: the presenter is a regional user, and a demo
-   * workspace is created *for* them — as its owner, through the same rows,
-   * journal, placement check and object initialization as `create` — without
-   * anybody signing in. A session here would be a login credential minted on
-   * somebody's behalf by an operator, which is not something preparation may
-   * do. Idempotent through the journal exactly as `create` is: a replay of the
-   * same operation returns to the same workspace. Engineering MCP shares this
-   * entryway, optionally committing initial members with the owner and seating
-   * them through the ordinary membership bootstrap.
+   * Engineering MCP's path: the owner is a regional user, and the workspace
+   * is created *for* them — as its owner, through the same rows, journal,
+   * placement check and object initialization as `create` — without anybody
+   * signing in. A session here would be a login credential minted on
+   * somebody's behalf by an operator, which this path may not do. Idempotent
+   * through the journal exactly as `create` is: a replay of the same operation
+   * returns to the same workspace. It optionally commits initial members with
+   * the owner and seats them through the ordinary membership bootstrap.
    */
   async createWorkspaceForMember(input: {
     operationId: string;
@@ -916,9 +894,9 @@ type RegionalActionInput = RegionalActivateInput | RegionalCreateInput | Regiona
 
 /**
  * What the onboarding journal keys an action on: the person, the operation,
- * and the workspace. Every regional action input carries these; the demo
- * preparation's create carries only these, because it has no platform identity
- * payload to hand over — the presenter is already a regional user.
+ * and the workspace. Every regional action input carries these; the
+ * engineering create carries only these, because it has no platform identity
+ * payload to hand over — the owner is already a regional user.
  */
 interface OperationReference {
   operationId: string;

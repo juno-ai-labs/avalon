@@ -425,9 +425,9 @@ async function requestedRuns(automationId: string, runIds: readonly string[]): P
   await runInDurableObject(workspace(), (_instance, state) => {
     for (const runId of runIds) {
       state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key, trigger_json, definition_revision,
-          harness_run_id, state, summary, opening_json, seed_json, run_as_user_id, coordinator_user_id, created_at, started_at,
+          harness_run_id, state, summary, opening_json, run_as_user_id, coordinator_user_id, created_at, started_at,
           completed_at, updated_at)
-        VALUES (?, ?, ?, ?, 1, ?, 'running', NULL, NULL, NULL, ?, ?, 1, 1, NULL, 1)`,
+        VALUES (?, ?, ?, ?, 1, ?, 'running', NULL, NULL, ?, ?, 1, 1, NULL, 1)`,
         automationId, runId, `activity:${runId}`, JSON.stringify({ kind: "manual", requestedByUserId: RECIPIENT }),
         `${runId}-harness`, AUTHOR, AUTHOR);
     }
