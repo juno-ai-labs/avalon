@@ -1124,8 +1124,8 @@ export const IMPORT_RESERVATION_RECLAIM_MIGRATION: readonly string[] = [
  * tables they reference so no drop has to cascade. Activity, digests,
  * suggested work, a Channel's own ledgers (messages, defaults, intents,
  * invitees, colour sync, rail ledger, message search), Thread pins and order,
- * Thread access and resource links, batch dispatches, the Thread backfill and
- * the import-reservation reclaim, and a Thread's email receipts.
+ * Thread access, batch dispatches, the Thread backfill and the
+ * import-reservation reclaim, and a Thread's email receipts.
  *
  * What stays, deliberately:
  * - `channels`, `channel_viewers`, `breakouts`, `breakout_viewers`, `spaces`,
@@ -1135,6 +1135,12 @@ export const IMPORT_RESERVATION_RECLAIM_MIGRATION: readonly string[] = [
  *   Organization where the operator has not run it yet would otherwise lose
  *   the only record of which objects to dump and close
  *   (docs/workspace-retirement.md). Their triggers stay with them.
+ * - `workspace_workstream_resource_links` and a Sidekick's attachment to a
+ *   Thread (`sidekick_conversation_attachments` rows of kind `workstream`):
+ *   a Thread that has artifacts becomes a Canvas rather than being retired
+ *   (`convert_threads_to_canvases`), and the links are how it names an
+ *   artifact another conversation made; `deleteRetiredThreadParent` deletes
+ *   both with the Thread.
  * - `digest_schedules`, emptied: `schedules.digest_schedule_id` still names it
  *   in a foreign key, and SQLite refuses every insert into `schedules` once
  *   the parent table is gone, so dropping it would need a rebuild of
@@ -1148,7 +1154,7 @@ export const IMPORT_RESERVATION_RECLAIM_MIGRATION: readonly string[] = [
  *
  * Thread rows of the shared tables go too: a Thread's or a Channel's memory
  * digest holders (their objects refuse a retired parent kind, so a digest can
- * never land), a Sidekick's attachment to a Thread, the retired pin kinds
+ * never land), the retired pin kinds
  * (the `workspace_pins` CHECK is shipped and still admits them), and a room
  * binding to a Channel or a Thread (room spawn and link were retired in C-4).
  * Nothing here fails on a row: every statement is a DROP or a DELETE.
@@ -1176,7 +1182,7 @@ export const THREAD_ERA_TABLES_DROP_MIGRATION: readonly string[] = [
     "channel_color_sync", "channel_color_sync_state", "channel_message_search_versions", "channel_rail_changes",
     "channel_sidekick_attachments", "conversation_access_requests", "thread_backfill",
     "workspace_workstream_pins", "workspace_pinned_order", "workspace_container_order", "workspace_workstream_access",
-    "workspace_workstream_resource_links", "workspace_batch_dispatch_targets", "workspace_batch_dispatches",
+    "workspace_batch_dispatch_targets", "workspace_batch_dispatches",
     "import_reservation_reclaim", "workstream_email_receipts",
   ].map((table) => `DROP TABLE IF EXISTS ${table}`),
   `DELETE FROM digest_schedules`,
@@ -1185,7 +1191,6 @@ export const THREAD_ERA_TABLES_DROP_MIGRATION: readonly string[] = [
   `DELETE FROM memory_digest_sync WHERE conversation IN (
      SELECT conversation FROM memory_digest_holders WHERE parent_kind IN ('workstream', 'space'))`,
   `DELETE FROM memory_digest_holders WHERE parent_kind IN ('workstream', 'space')`,
-  `DELETE FROM sidekick_conversation_attachments WHERE parent_kind = 'workstream'`,
   `DELETE FROM workspace_pins WHERE item_kind IN ('thread', 'channel', 'breakout', 'artifact')`,
   `DELETE FROM external_conversation_bindings WHERE target_kind = 'space' OR parent_kind = 'workstream'`,
 ];

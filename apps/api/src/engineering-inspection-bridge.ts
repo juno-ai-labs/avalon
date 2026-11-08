@@ -21,6 +21,9 @@ import {
   type DumpThreadTranscriptsResult,
   RetireThreadsResultSchema,
   type RetireThreadsResult,
+  ConvertThreadsToCanvasesInputSchema,
+  ConvertThreadsToCanvasesResultSchema,
+  type ConvertThreadsToCanvasesResult,
   type EngineeringTextResult,
   CreateEngineeringOrgInputSchema,
   CreateEngineeringOrgResultSchema,
@@ -91,6 +94,7 @@ import { auditedEngineeringWrite } from "./services/engineering-audit";
 import { setEngineeringSidekickPaused } from "./services/engineering-sidekicks";
 import { retireWorkspaceForOperator } from "./services/workspace-retirement-service";
 import { dumpThreadTranscripts, retireThreads } from "./services/thread-retirement-service";
+import { convertThreadsToCanvases } from "./services/thread-conversion-service";
 
 const WorkspaceInventoryRowSchema = z.strictObject({
   id: z.string(),
@@ -314,6 +318,33 @@ export class EngineeringInspectionBridge extends WorkerEntrypoint<Env>
         workspaceId: request.orgId, operationId, operatorSubject: trusted.subject,
       })), (result) => ({ parents: result.parents, retiredParents: result.retiredParents,
         retiredConversations: result.retiredConversations, failed: result.failed.length }));
+    });
+  }
+
+  /**
+   * Every Thread of one Organization that has an artifact, made a Canvas in
+   * place with the same id; refused, as the retirement is, until the dump
+   * covers each of their conversations. A dry run (the default) lists them
+   * and changes nothing, so it needs no confirmation and writes no audit row.
+   */
+  async convertThreadsToCanvases(input: unknown, operator: unknown): Promise<ConvertThreadsToCanvasesResult> {
+    return this.productOperation("convertThreadsToCanvases", async () => {
+      const parsed = ConvertThreadsToCanvasesInputSchema.parse(input);
+      const trusted = EngineeringOperatorSchema.parse(operator);
+      const operationId = crypto.randomUUID();
+      const run = () => convertThreadsToCanvases(this.env, {
+        workspaceId: parsed.orgId, dryRun: parsed.dryRun, operationId, operatorSubject: trusted.subject,
+      }).then((result) => ConvertThreadsToCanvasesResultSchema.parse(result));
+      if (parsed.dryRun) {
+        await this.confirmedThreadRetirement({ orgId: parsed.orgId, confirm: parsed.orgId });
+        return run();
+      }
+      const request = await this.confirmedThreadRetirement({ orgId: parsed.orgId, confirm: parsed.confirm ?? "" });
+      return auditedEngineeringWrite(this.env, trusted, {
+        action: "convert_threads_to_canvases", orgId: request.orgId, operationId,
+      }, run, (result) => ({ candidates: result.candidates.length, converted: result.converted,
+        alreadyConverted: result.alreadyConverted, failed: result.failed.length,
+        artifactsWithoutThread: result.artifactsWithoutThread }));
     });
   }
 
