@@ -7909,6 +7909,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   text-decoration: none;
 }
 .activity-row:hover { background: var(--av-sys-color-state-hover); }
+/* The row about what is open now, by the route, as a list row is marked. */
+.activity-row.is-active { background: var(--av-sys-color-surface-raised-hover); }
 .activity-row-glyph {
   align-items: center;
   background: var(--av-sys-color-surface-raised);

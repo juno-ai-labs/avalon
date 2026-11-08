@@ -94,7 +94,9 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   (`/sidekicks/new`). A guest gets neither New action. **Activity** lists the
   person's mentions, adds and Sidekick run notices newest first, each a kind
   glyph, who did what where, the preview, a time and an unseen dot, opening
-  the Canvas or the Sidekick's conversation; its action is **Mark all seen**
+  the Canvas or the Sidekick's conversation, the rows about what the route has
+  open marked as a list row is (`aria-current`, through Back and Forward
+  too); its action is **Mark all seen**
   ([`activity.md`](activity.md)). Each list has **Restart to update** when one
   is downloaded, and **Search organization** last, so it holds its place as
   the person moves between the sections.
