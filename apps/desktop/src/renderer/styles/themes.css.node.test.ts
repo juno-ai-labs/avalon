@@ -182,9 +182,6 @@ describe('token references', () => {
     // arithmetic shared by the dock, the capsule and the dividers.
     '--composer-dock-gap', '--composer-capsule-height',
     '--panel-divider-inset-top', '--panel-divider-inset-bottom',
-    // The count wheel reverses its travel when the value decreases. This is
-    // local animation geometry, independent of the selected theme.
-    '--wheel-travel',
     // The phone layout's sheet header and top-bar heights and sheet motion:
     // geometry and timing of one responsive block, the same in every theme.
     '--phone-sheet-header-height', '--phone-top-bar-height', '--phone-sheet-duration', '--phone-sheet-motion',
