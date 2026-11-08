@@ -101,7 +101,7 @@ async function recipientIntents(): Promise<{ intent_id: string; workstream_id: s
  * Deliver the conversation's effects through the real consumer, twice, then
  * send the push its mention enqueued, and return each alert.
  */
-async function pushedAlert(parentId: string): Promise<{ title: string; body: string }[]> {
+async function pushedAlert(parentId: string): Promise<{ title: string; body: string; url: string; turnId?: string; sequence?: number }[]> {
   const sendQueue = vi.spyOn(env.PUSH_DELIVERY_QUEUE!, "send") as unknown as { mock: { calls: [PushDeliveryMessage][] } };
   const delivered = await deliverChildEffects(pushEnv(), conversation(parentId));
   expect(delivered.map((envelope) => envelope.effect.kind)).toContain("mention_notification");
@@ -119,8 +119,16 @@ async function pushedAlert(parentId: string): Promise<{ title: string; body: str
   ]);
   const send = vi.fn(async (): Promise<ApnsOutcome> => ({ outcome: "sent" }));
   expect(await deliverPush(pushEnv(), sendQueue.mock.calls[0]![0], send)).toBe(true);
-  return send.mock.calls.map((call) => JSON.parse(((call as unknown[])[2] as PushPayloads).apns) as { aps: { alert: { title: string; body: string } } })
-    .map((payload) => payload.aps.alert);
+  return send.mock.calls.map((call) => JSON.parse(((call as unknown[])[2] as PushPayloads).apns) as {
+    aps: { alert: { title: string; body: string } }; rally: { url: string; turnId?: string; sequence?: number };
+  }).map((payload) => ({ ...payload.aps.alert, url: payload.rally.url,
+    ...(payload.rally.turnId === undefined ? {} : { turnId: payload.rally.turnId, sequence: payload.rally.sequence }) }));
+}
+
+/** The recipient's mention row: the message it is about and its transcript sequence. */
+async function mentionedMessage(): Promise<{ message_id: string; message_sequence: number }> {
+  return runInDurableObject(workspace(), (_instance, state) => state.storage.sql.exec<{ message_id: string; message_sequence: number }>(
+    `SELECT message_id, message_sequence FROM workspace_activity_items WHERE recipient_user_id = ? AND kind = 'mention'`, RECIPIENT).one());
 }
 
 beforeEach(async () => {
@@ -176,7 +184,12 @@ describe("a mention in a hosted conversation", () => {
     for (const userId of [AUTHOR, RECIPIENT]) await new ConversationService(TEST_ENV, auth(userId)).authorizeViewer(canvasId);
     await mention("canvas", canvasId, "canvas-mention-1");
 
-    expect(await pushedAlert(canvasId)).toEqual([{ title: "Avery mentioned you in Launch plan", body: "@Robin please review the plan" }]);
+    const alerts = await pushedAlert(canvasId);
+    const message = await mentionedMessage();
+    // It opens the Canvas at the mentioning message, in the link and beside it.
+    expect(alerts).toEqual([{ title: "Avery mentioned you in Launch plan", body: "@Robin please review the plan",
+      url: expect.stringMatching(new RegExp(`/cv/[1-9A-Za-z]+/\\?turn=${message.message_id}&sequence=${message.message_sequence}$`, "u")),
+      turnId: message.message_id, sequence: message.message_sequence }]);
   });
 
   /** An Organization-wide Sidekick, opened by `openers`, whose author then mentions the recipient. */
@@ -196,14 +209,16 @@ describe("a mention in a hosted conversation", () => {
     const automationId = await sidekickMention([AUTHOR, RECIPIENT]);
     // The title is the conversation's own snapshot, taken when it was opened,
     // before the definition named the Sidekick.
-    expect(await pushedAlert(automationId)).toEqual([{ title: "Avery mentioned you in New Sidekick", body: "@Robin please review the plan" }]);
+    expect(await pushedAlert(automationId)).toEqual([{ title: "Avery mentioned you in New Sidekick", body: "@Robin please review the plan",
+      url: expect.stringMatching(/\/sk\/[1-9A-Za-z]+\/$/u) }]);
   });
 
   it("tells a member mentioned in an Organization-wide Sidekick they never opened", async () => {
     // Nothing has read the recipient's relationship into the Organization
     // object: the delivery's reader check has to ask for it.
     const automationId = await sidekickMention([AUTHOR]);
-    expect(await pushedAlert(automationId)).toEqual([{ title: "Avery mentioned you in New Sidekick", body: "@Robin please review the plan" }]);
+    expect(await pushedAlert(automationId)).toEqual([{ title: "Avery mentioned you in New Sidekick", body: "@Robin please review the plan",
+      url: expect.stringMatching(/\/sk\/[1-9A-Za-z]+\/$/u) }]);
   });
 });
 
