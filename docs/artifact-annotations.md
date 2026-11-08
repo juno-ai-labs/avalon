@@ -43,7 +43,9 @@ The field shows only the authored comment; selected words appear in the composer
 chip after confirmation. Enter or Send keeps a nonempty comment and adds the pin
 to the composer. Confirmed comments stay visible beside their selected elements,
 including after leaving Comment mode or starting another pin. They follow scroll
-and resize; clicking a comment reopens its editor, and × removes it. Empty and
+and resize; clicking a comment reopens its editor, and × removes it. The open
+editor follows its selection too when the document reflows under it, such as
+the panel expanding, and its field does not resize. Empty and
 whitespace-only comments stay in the editor, and typing alone never adds a pin
 to the message. Dismissing an unfinished comment or starting another selection
 discards that pending pin. Accepting a message also clears unfinished selections,
@@ -329,6 +331,22 @@ ordinary uploaded fixtures. Prompt evaluations live under
 on the configured medium fallback model, separately from end-to-end tool edits.
 
 ## Changelog
+
+### 2026-11-08 — The open comment editor follows its selection when the document reflows
+
+**What changed:** `AnnotationSurface` observes the document's box while an
+editor is open and moves the editor to its selection's anchor when the box
+changes size. The editor's textarea no longer shows a resize grip.
+
+**Why:** The second design inspection (v1-R2-5) expanded the panel with an
+editor open: the table reflowed from about x 1580 to 1110 and the editor stayed
+at its old screen position over the Status column, detached from "Owner". The
+editor had been placed once, where the pointer let go, while confirmed
+comments already followed scroll and resize.
+
+**What a future change must respect:** the first observation reports the box
+as it already is and does not move the editor, so a fresh editor stays where
+the pointer let go.
 
 ### 2026-10-29 — One annotation script on every host, injected by the serving Worker
 
