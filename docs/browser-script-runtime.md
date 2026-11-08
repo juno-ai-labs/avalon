@@ -15,7 +15,8 @@ desktop realm, driver and API plugin are intact and tested, so this document
 describes them as they would run for the next profile that names the plugin.
 
 This document owns the orchestration realm and handle API. The durable
-request/answer transport remains in [desktop actions](desktop-actions.md) and
+request/answer transport remains in the desktop-action protocol
+([its retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions)) and
 the signed-in native tabs in [embedded browser](embedded-browser.md).
 
 ## Where the code lives
