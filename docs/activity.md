@@ -3,11 +3,12 @@
 Activity is one person's feed of what happened to them in Canvases and
 Sidekicks: somebody mentioned them in a Canvas's Chat or a Sidekick's
 conversation, somebody added them to a Canvas's conversation, a Sidekick run
-needs their input, or a run they asked for finished. It is the third section of
+needs their input, a run they asked for finished, or somebody else replied in
+a conversation they are in. It is the third section of
 the rail, beside Canvases and Sidekicks, in the Mac app and the browser alike.
 
-The feed is the push's own source. Each of the four events that records a
-push notification intent writes the recipient's Activity row in the same
+The feed is the push's own source. Each event that records a push
+notification intent writes the recipient's Activity row in the same
 transaction, so a person is never pushed something their feed lacks, or shown
 something they were never pushed. Whether a row has been seen is not stored on
 the row: it is derived from the read cursor the Organization already keeps for
@@ -20,7 +21,8 @@ the Canvas or Sidekick row stops being unread.
 | --- | --- |
 | `packages/contracts/src/activity.ts` | `ActivityItemSchema`, `ActivityPageSchema` (the subscribe payload's `activity` page), `WorkspaceActivityListEventSchema` (the push) and `ActivityMarkAllSeenCommandSchema` (the one command). |
 | `apps/api/src/durable-objects/workspace-activity.ts` | WorkspaceDO migration 148 (`workspace_activity_items`, `workspace_activity_seen`, the `activity` waterline), `recordActivityItem`, the one seen expression (`ACTIVITY_SEEN_SQL`) and `activityPage`. |
-| `apps/api/src/durable-objects/workspace-notification-intent-storage.ts` | The two recorders that write a row beside their intent: `recordPersonNotificationIntent` (mention, add) and `recordSidekickRunNotices` (needs input, finished). |
+| `apps/api/src/durable-objects/workspace-notification-intent-storage.ts` | The recorders that write a row beside their intent: `recordPersonNotificationIntent` (mention, add), `recordSidekickRunNotices` (needs input, finished) and `recordParentNotice` (a notice a Canvas or Sidekick records about itself: a reply). |
+| `apps/api/src/durable-objects/conversation-reply-batch.ts` | The `reply_batch` alarm entry: a conversation's replies batched, then one `new_message` intent and row per recipient. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `noteActivityMoved`, `noteActivityReadMoved`, `publishActivityList`, the `activity` page in `sidebarPayload`, and the `activity_mark_all_seen` command. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Applies the page and the push through the versioned sidebar-list receiver; sends Mark all seen. |
 | `apps/desktop/src/renderer/components/activity-sidebar-section.tsx` | The rail section: rows, the unseen count, the empty state and Mark all seen. |
@@ -43,6 +45,16 @@ returned id is the witness that this call wrote it). Who receives a row is
 exactly who receives the intent: the mentioned person, the added person, the
 requester and the Sidekick's managers for a run that needs input, the
 requester alone for a finished run.
+
+A reply (`new_message`) is recorded when its conversation's reply batch runs
+([`push-notifications.md`](push-notifications.md#a-persons-reply)), one
+intent per recipient per batch, and its row **collapses**
+(`recordCollapsedActivityItem`): while the recipient has an unseen
+`new_message` row about the same conversation, that row is brought up to the
+newest reply — its message, transcript sequence, author, preview, ordinal and
+time — and keeps its id (the first intent's); once it is seen, the next reply
+writes a new row. A busy Chat is one row, not one per message. "Unseen" there
+is `ACTIVITY_SEEN_SQL`, the page's own expression.
 
 A row names its parent (`canvas` or `automation`) and its id, the
 conversation it happened in (`"0"`, or a run's id), the mentioning message or
@@ -96,6 +108,9 @@ At list time a row is seen when any of these holds:
   rule the row stayed unseen after the person answered until they read the
   shared conversation or chose Mark all seen. A run that asks again writes a
   new row, and while it waits the earlier row reads unseen again too.
+
+A reply clears as a mention does: its ordinal is its own message's, so the
+cursor reaching it is enough, with no condition on the read's time.
 
 The second condition on a read exists because an add's or a run's ordinal is
 what already existed: a requester who had read their own request has a cursor
@@ -217,8 +232,10 @@ badge and the menu bar stay Needs attention only
   row. Guard: `workspace-activity.test.ts` (each kind produces its row through
   the production recorder).
 - **A row's id is its intent's id.** A replayed effect or retried alarm must
-  converge on one row; a fresh id per attempt would list the event twice.
-  Guard: the mention case's single-row assertion after redelivery.
+  converge on one row; a fresh id per attempt would list the event twice. A
+  collapsing kind's row keeps its first intent's id and is moved only by the
+  call that wrote a new intent. Guard: the mention case's single-row
+  assertion after redelivery; the reply batch case's one row for two replies.
 - **Seen is never written per row.** The read cursor and the one Mark all seen
   row are the only inputs, so the feed cannot disagree with the Canvas or
   Sidekick row's unread. Guard: the implicit-clear case, proved to fail with
@@ -306,6 +323,11 @@ already read, through the conversation's own `acknowledge_read`, clears a run
 that finished in between. The run cases poll: the notice is recorded by an alarm
 the object arms itself.
 
+`hosted-reply-notifications.test.ts` covers a reply's row: two replies in
+one batch are one row carrying the newest, a reply within the cooldown moves
+that row, the row clears when the cursor passes the reply, and the next reply
+after that is a new row.
+
 The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 `navigation-sidebar.test.tsx` the rows, their links, the badge, the empty state and Mark all seen, and `rail-dock-badge.test.tsx` that the dock badge leaves Activity out.
 
@@ -313,13 +335,34 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 
 | Table | Key | Columns |
 | --- | --- | --- |
-| `workspace_activity_items` | `item_id` (the intent's id) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
+| `workspace_activity_items` | `item_id` (the intent's id; a collapsed row keeps its first intent's) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`, `new_message`, `artifact_updated`, `access_request`, `access_granted`; migration 150 widened it), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms; a collapsed row's moves to its newest event), `subject_id` (what it is about beyond the parent: an artifact's resource id, an access request's id). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
 | `workspace_activity_seen` | `user_id` | `seen_through` (ms): Mark all seen. |
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
 
 ## Changelog
 
-### 2026-11-08 — A needs-input row opens the run that asked, and rows take the shared layout
+### 2026-11-08 — A needs-input row opens the run that asked, clears when it is answered, rows take the shared layout, and replies return
+
+**What changed (replies):** A person's reply in a Canvas's Chat or a
+Sidekick's shared conversation writes a `new_message` row for everyone else
+in it, through `recordParentNotice` when the conversation's reply batch runs.
+The row collapses: one unseen row per conversation per recipient, brought up
+to the newest reply. It clears as a mention does. Migration 150 widens the
+row's kind to the four kinds a hosted parent records about itself and adds
+`subject_id`. [Client half: the row's words, glyph and link, folded in at
+merge.]
+
+**Why (replies):** The owner asked on 2026-11-08 for human replies to produce
+Activity again. A row per message would bury the feed in a busy Chat;
+collapsing while unseen keeps one row that says the newest, and a new row
+after it is seen keeps what the person has already read apart from what is
+new.
+
+**Considered and rejected (replies):** A row per batch: a person who reads
+nothing for an hour would still get a row every 15 seconds of conversation.
+A per-row `seen_at` written when the cursor passes: the collapse reads seen
+through the page's own expression, so the feed and the Canvas row cannot
+disagree.
 
 **What changed:** A `needs_input` row opens the run it is about (`?run=` from
 its `runId`) rather than the Sidekick's shared conversation, and
