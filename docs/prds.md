@@ -107,6 +107,11 @@ That line is what stands between a future reader and a design that was
 deliberately abandoned, so make it unambiguous. The successor's own PRD should
 point back at what it replaced.
 
+A PRD only part of which was replaced or deleted, whether it is completed or
+still `in progress`, gets the same kind of note. The note names the goals that
+still hold, says what went and which PRD took it, and links the document that
+owns what survives, so a reader knows which half to trust.
+
 ## Completed PRDs are frozen
 
 **Once `completed` is ticked, the PRD is not edited again.** It records what was
