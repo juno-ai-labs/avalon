@@ -199,7 +199,7 @@ function hostingWorkstreamParent(
   });
 }
 
-function workspaceSyncNamespace(listable = true, mentionChannels: NotificationChannel[] = ["push", "slack_agent_dm", "email"],
+function workspaceSyncNamespace(listable = true, mentionChannels: NotificationChannel[] = ["push", "email"],
   parentKind: "canvas" | null = "canvas") {
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys = ON");
@@ -292,7 +292,7 @@ function workspaceSyncNamespace(listable = true, mentionChannels: NotificationCh
       // Every channel chosen, so each transport's path runs.
       memberPreferences: vi.fn(async () => ({
         ...DEFAULT_MEMBER_PREFERENCES,
-        notify: { ...DEFAULT_NOTIFICATION_CHANNELS, mentions: mentionChannels, added: ["push", "slack_agent_dm", "email"] },
+        notify: { ...DEFAULT_NOTIFICATION_CHANNELS, mentions: mentionChannels, added: ["push", "email"] },
       })),
     }),
   });
@@ -335,6 +335,7 @@ function regionalEnv(
   extra: {
     /** The hosted work stream parent's `receiveChildEffects`, answered by WorkspaceDO. */
     workstreamReceive?: (input: unknown) => Promise<unknown>;
+    PUSH_DELIVERY_QUEUE?: Queue;
   } = {},
 ): Env {
   const { workstreamReceive, ...bindings } = extra;
@@ -396,11 +397,9 @@ describe("a hosted parent's notification intents and their delivery", () => {
         notification_intent_id: mention.intentId,
         recipient_user_id: USER_ID,
         outcome: "delivered",
-        reason: "chosen_channels_attempted",
-        channels: "push,slack_agent_dm,email",
-        push_enqueued: false,
-        slack_outcome: "skipped",
-        email_outcome: "skipped",
+        reason: "chosen_channels_queued",
+        channels: "push,email",
+        queued: false,
       }));
     } finally {
       database.close();
@@ -422,9 +421,7 @@ describe("a hosted parent's notification intents and their delivery", () => {
         outcome: "delivered",
         reason: "no_channel_chosen",
         channels: "",
-        push_enqueued: false,
-        slack_outcome: "skipped",
-        email_outcome: null,
+        queued: false,
       }));
     } finally {
       database.close();
@@ -432,21 +429,19 @@ describe("a hosted parent's notification intents and their delivery", () => {
     }
   });
 
-  it("settles a mention whose conversation has no link, and names why Slack and email sent nothing", async () => {
+  it("queues one message per chosen sink, the email one named, and keeps the notice for them to render", async () => {
     const database = seedAuthority();
-    const workspace = workspaceSyncNamespace(true, ["push", "slack_agent_dm", "email"], null);
-    const env = regionalEnv(database, workspace);
+    const workspace = workspaceSyncNamespace(true, ["email"]);
+    const send = vi.fn<(message: unknown) => Promise<undefined>>(async () => undefined);
+    const env = regionalEnv(database, workspace, { PUSH_DELIVERY_QUEUE: createCloudflareTestBinding<Queue>({ send }) });
     try {
-      const mention = mentionEffect(":linkless");
+      const mention = mentionEffect(":email");
       record(workspace, mention);
-      const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
       await expect(processWorkstreamNotificationIntent(env, WORKSPACE_ID, mention.intentId)).resolves.toBe("delivered");
-      for (const channel of ["slack", "email"]) {
-        expect(info).toHaveBeenCalledWith(expect.objectContaining({
-          event: "workstream_notification_transport_terminal", channel, outcome: "skipped",
-          reason: "conversation_not_linkable", parent_kind: "missing",
-        }));
-      }
+      expect(send.mock.calls.map(([message]) => message)).toEqual([{ region: "global", workspaceId: WORKSPACE_ID,
+        recipientUserId: USER_ID, intentId: mention.intentId, channel: "email" }]);
+      expect(workspace.database.prepare(`SELECT state, payload_json IS NOT NULL AS kept FROM workstream_notification_intents WHERE intent_id = ?`)
+        .get(mention.intentId)).toEqual({ state: "delivered", kept: 1 });
     } finally {
       database.close();
       workspace.database.close();

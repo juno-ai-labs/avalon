@@ -303,7 +303,7 @@ preparation, and a refresh does not trigger a second authorization read before
 the provider effect. Revocation during that invocation may let it finish; the
 next creator tool checks again.
 
-The claim is scoped to adapter entry points. A few host paths need only a fresh token rather than a connection to hand an adapter — `slack-agent-service.ts` and `slack-notification-service.ts` each call `ensureFreshConnectorCredentials` directly to read a bot token — and the brand correctly does not apply to them. They get freshness, but not the mid-call recovery below, because they are not making a call an adapter would recover.
+The claim is scoped to adapter entry points. A few host paths need only a fresh token rather than a connection to hand an adapter — `slack-agent-service.ts` calls `ensureFreshConnectorCredentials` directly to read a bot token — and the brand correctly does not apply to it. It gets freshness, but not the mid-call recovery below, because it is not making a call an adapter would recover.
 
 Rotation is available to every connection a person has not disabled. The coordinator's lease claim, its credential reload, and the write that stores a rotated credential all admit any row except `disabled`, so a connection this database believes is broken is refreshed and rotated exactly like one it believes is fine, and the provider gets to say whether the belief was still true. A successful token refresh preserves status: it proves token liveness, not that every required scope is present. Reauthorization and explicit connection tests can heal authorization diagnoses; successful polls heal only polling diagnoses.
 

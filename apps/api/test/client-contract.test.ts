@@ -5,6 +5,7 @@ import { ApiError } from "../src/lib/api-error";
 import {
   clientOpensGuestWorkspaces,
   clientReadsIndividualSpaces,
+  clientReadsAccessDenials,
   clientReadsNewMessages,
   requireCurrentClientContract,
   type ClientRequestHeaders,
@@ -107,5 +108,13 @@ describe("human reply compatibility", () => {
     expect(clientReadsNewMessages(resolutionBuild)).toBe(false);
     const replyBuild = request({ origin: "app://rallywithai", "x-rally-client-contract": "11" });
     expect(clientReadsNewMessages(replyBuild)).toBe(true);
+  });
+});
+
+describe("access denial compatibility", () => {
+  it("withholds a denied request's decidedAt from builds before contract 13 and admits it from it", () => {
+    expect(clientReadsAccessDenials(request({ origin: "app://rallywithai", "x-rally-client-contract": "12" }))).toBe(false);
+    expect(clientReadsAccessDenials(request({ origin: "app://rallywithai", "x-rally-client-contract": "13" }))).toBe(true);
+    expect(clientReadsAccessDenials(request({}))).toBe(true);
   });
 });

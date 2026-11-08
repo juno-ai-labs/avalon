@@ -600,7 +600,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   /**
    * Approve or deny a waiting request, by someone who manages the Canvas's
    * people (`canvasManages`). Approving seats the requester (source
-   * `request`) and tells them; denying tells nobody.
+   * `request`) and tells them; denying tells them who declined, never the
+   * title.
    */
   async decideAccess(input: CanvasDecideAccessRequest): Promise<CanvasAccessDecision> {
     const request = parseRpcInput(CanvasDecideAccessRequestSchema, input, "canvas_decide_access");
