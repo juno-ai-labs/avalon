@@ -138,6 +138,10 @@ export function aggregateUserProjections(
       return value === null ? earliest : earliest === null ? value : Math.min(earliest, value);
     }, null),
     manualUnreadGeneration: Math.max(...effects.map((effect) => effect.manualUnreadGeneration ?? 0)),
+    lastReadAt: effects.reduce<string | null>((latest, effect) => {
+      const value = effect.lastReadAt ?? null;
+      return value === null ? latest : latest === null || value > latest ? value : latest;
+    }, null),
     latestMentionAttentionOrdinal: Math.max(...effects.map((effect) => effect.latestMentionAttentionOrdinal ?? 0)),
   };
 }

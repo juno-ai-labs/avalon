@@ -118,7 +118,14 @@ read report for the person on a Canvas or a Sidekick is accepted:
 `noteActivityReadMoved` on every report it accepts, whether or not the cursor
 moved, because a non-mention row clears on a report's time as well as its
 cursor (a run's row is updated in place, so opening the Sidekick after it
-finished reports the same cursor). The host republishes only when the person
+finished reports the same cursor). Each report is a distinct effect because
+the conversation's `directory_user` effect carries the report's time
+(`lastReadAt`, from `member_attention.last_seen_at`); without it a report at an
+unchanged cursor was byte-identical to the last one, the conversation's outbox
+reused the earlier message id, and the parent's receipt fence dropped it as a
+replay, so the row never cleared. A redelivery of one report still dedupes,
+and the parent dates the read by that time, not by when it arrived. The host
+republishes only when the person
 has Activity about that parent (`hasActivityFor`, a seek on
 `(recipient_user_id, parent_id)`), so a read of anything else costs one
 lookup.
@@ -238,7 +245,9 @@ alarm, read from a socket's subscribe answer; a finished run clears, and the
 list is sent again, on a read report at an unchanged cursor; a mention in a
 run's conversation stays unseen however far the shared conversation is read;
 a confirmed mention in a creator-only Canvas sends its person nothing until
-they are added to it. The run cases poll: the notice is recorded by an alarm
+they are added to it; and reopening the shared conversation at a cursor
+already read, through the conversation's own `acknowledge_read`, clears a run
+that finished in between. The run cases poll: the notice is recorded by an alarm
 the object arms itself.
 
 The renderer's `workspace-socket.test.tsx` covers the page and the push, and
@@ -275,7 +284,9 @@ already drives every unread, so the feed cannot disagree with the Canvas or
 Sidekick row either (the coordinator's 2026-11-08 amendment). A row lists
 only while its person may open the parent: the end-to-end pass found the
 first version withheld only the title, sending a mention's preview from a
-creator-only Canvas to someone who could not open it.
+creator-only Canvas to someone who could not open it. A read report carries
+its time, so reopening a Sidekick at the cursor already read is heard: the
+pass found such a report dropped as a duplicate and the run's row left unseen.
 
 **Considered and rejected:** Deriving the feed from each conversation's
 transcript on read, as the old feed derived replies and starts — a fan-out read

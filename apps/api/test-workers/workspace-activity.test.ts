@@ -137,13 +137,19 @@ async function sharedCanvas(): Promise<string> {
   return canvasId;
 }
 
+/** The newest attention ordinal of a parent's main conversation. */
+async function latestOrdinal(parentId: string): Promise<number> {
+  return runInDurableObject(conversation(parentId), (_instance, state) => state.storage.sql.exec<{ next: number }>(
+    `SELECT next_attention_ordinal AS next FROM workstream WHERE id = 1`).one().next - 1);
+}
+
 /** The recipient reads the Chat through its newest message, by the route's own acknowledge operation. */
-async function readThroughLatest(canvasId: string): Promise<void> {
+async function readThroughLatest(canvasId: string, parentKind: "canvas" | "automation" = "canvas"): Promise<void> {
   const latest = await runInDurableObject(conversation(canvasId), (_instance, state) => state.storage.sql.exec<{ next: number }>(
     `SELECT next_attention_ordinal AS next FROM workstream WHERE id = 1`).one().next - 1);
   const response = await conversation(canvasId).fetch("https://object.test/internal/product", {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ operation: "acknowledge_read", parentKind: "canvas", auth: auth(RECIPIENT), input: {
+    body: JSON.stringify({ operation: "acknowledge_read", parentKind, auth: auth(RECIPIENT), input: {
       readThroughSequenceNumber: latest, observedManualUnreadGeneration: 0, entrypoint: "direct",
     } }),
   });
@@ -305,6 +311,37 @@ describe("a person's Activity", () => {
     const recipient = await connect(RECIPIENT);
     // They open the Sidekick: its read report names the same cursor as before.
     await readSidekick(automationId, 2, 0);
+    await expect.poll(() => activityPushes(recipient.frames).at(-1))
+      .toMatchObject({ unseenCount: 0, items: [{ kind: "run_finished", seen: true }] });
+    recipient.socket.close(1000, "done");
+  });
+
+  it("clears a finished run when its requester reopens the shared conversation at the cursor they had already read", async () => {
+    const automationId = await activeSidekick();
+    await new ConversationService(TEST_ENV, auth(RECIPIENT)).authorizeViewer(automationId);
+    const finishing = "00000000-0000-7000-8000-0000000ac105";
+    await requestedRuns(automationId, [finishing]);
+    // Someone says something in the shared conversation, and the requester
+    // reads through it there, by the conversation's own operation.
+    const said = await conversation(automationId).fetch("https://object.test/internal/product", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "create_message", parentKind: "automation", auth: auth(AUTHOR), input: {
+        text: "Morning, everyone.", clientMessageId: "activity-reopen-1", confirmedParticipantUserIds: [], attachmentIds: [], mentions: [],
+      } }),
+    });
+    expect(said.status, await said.clone().text()).toBe(200);
+    await deliverChildEffects(TEST_ENV, conversation(automationId));
+    // The run's own row lands there too, by an alarm; the read comes after it.
+    await expect.poll(() => latestOrdinal(automationId), { timeout: RUN_SETTLE_TIMEOUT_MS }).toBe(2);
+    await readThroughLatest(automationId, "automation");
+    const cursor = await latestOrdinal(automationId);
+    await finishRun(automationId, finishing, "completed");
+    await expect.poll(() => openedActivity(RECIPIENT), { timeout: RUN_SETTLE_TIMEOUT_MS })
+      .toMatchObject({ unseenCount: 1, items: [runItem(automationId, "run_finished", finishing)] });
+    const recipient = await connect(RECIPIENT);
+    // Reopened: the second report names the same cursor, and is still heard.
+    expect(await latestOrdinal(automationId)).toBe(cursor);
+    await readThroughLatest(automationId, "automation");
     await expect.poll(() => activityPushes(recipient.frames).at(-1))
       .toMatchObject({ unseenCount: 0, items: [{ kind: "run_finished", seen: true }] });
     recipient.socket.close(1000, "done");

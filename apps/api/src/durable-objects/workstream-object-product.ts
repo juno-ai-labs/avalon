@@ -241,6 +241,7 @@ interface AttentionRow extends SqlRow {
   manual_unread_from_ordinal: number | null;
   latest_mention_attention_ordinal: number;
   version: number;
+  last_seen_at: number | null;
 }
 
 interface PartRow extends SqlRow {
@@ -1248,7 +1249,7 @@ export class WorkstreamObjectProductService {
   private attention(userId: string, root: RootRow): AttentionRow {
     return first(this.storage.sql.exec<AttentionRow>(
       `SELECT unread_tracking_start_ordinal, seen_attention_ordinal,
-              manual_unread_from_ordinal, latest_mention_attention_ordinal, version
+              manual_unread_from_ordinal, latest_mention_attention_ordinal, version, last_seen_at
          FROM member_attention WHERE user_id = ?`,
       userId,
     )) ?? {
@@ -1257,6 +1258,7 @@ export class WorkstreamObjectProductService {
       manual_unread_from_ordinal: null,
       latest_mention_attention_ordinal: 0,
       version: 0,
+      last_seen_at: null,
     };
   }
 
@@ -2916,6 +2918,7 @@ export class WorkstreamObjectProductService {
       manualUnreadFromOrdinal: attention.manual_unread_from_ordinal,
       manualUnreadGeneration: attention.version,
       latestMentionAttentionOrdinal: attention.latest_mention_attention_ordinal,
+      lastReadAt: attention.last_seen_at === null ? null : iso(attention.last_seen_at),
     };
   }
 
