@@ -1585,6 +1585,18 @@ describe("a hosted Sidekick", () => {
     void requested;
   });
 
+  it("lists what wakes a Sidekick in the run trigger vocabulary, each kind once, in the order its definition names them", async () => {
+    await createDraft();
+    await submit({ ...DEFINITION, ready: false, triggers: [
+      { type: "inbound_email" }, { type: "manual" },
+      { type: "interval", intervalSeconds: 3_600, summary: "Every hour" },
+      WEBHOOK_DEFINITION.triggers[0]!, { type: "manual" },
+    ] });
+    const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+      .items.find((candidate) => candidate.id === AUTOMATION_ID);
+    expect(item?.triggerKinds).toEqual(["inbound_email", "manual", "schedule", "external_event"]);
+  });
+
   it("tells only the requester when a run finishes, and nobody when a scheduled run does", async () => {
     await activeAutomation();
     const { requested, scheduled } = await workingRuns("b");
