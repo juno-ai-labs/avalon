@@ -89,6 +89,17 @@ export const CanvasDetailSchema = CanvasSummarySchema.extend({
   artifacts: z.array(CanvasArtifactSchema),
   /** This viewer may change who can open it (`canvasManages`). */
   canManage: z.boolean(),
+  /**
+   * The requests to open it that wait on a decision, oldest first. Present
+   * only for a viewer who decides them (`canManage`); absent for everyone
+   * else, and from a server older than access requests.
+   */
+  pendingAccessRequests: z.array(z.object({
+    userId: IdSchema,
+    name: z.string(),
+    message: z.string().nullable(),
+    requestedAt: TimestampSchema,
+  })).optional(),
 });
 export type CanvasDetail = z.infer<typeof CanvasDetailSchema>;
 
@@ -177,3 +188,44 @@ export type SidebarPinOrderRequest = z.infer<typeof SidebarPinOrderRequestSchema
 /** `PATCH /canvases/:id`: the Canvas's title. */
 export const CanvasRenameRequestSchema = z.strictObject({ title: z.string().trim().min(1).max(300) });
 export type CanvasRenameRequest = z.infer<typeof CanvasRenameRequestSchema>;
+
+/**
+ * `GET /canvases/:id/access` for a Canvas the caller cannot open: it exists
+ * in their Organization and they may ask to be let in. Never its title.
+ * `request` is their own latest request, if any: a pending one, or a denied
+ * one (which allows a new request). An id that names no Canvas of theirs is
+ * `404 canvas_not_found` instead.
+ */
+export const CanvasAccessSchema = z.strictObject({
+  access: z.literal("requestable"),
+  title: z.null(),
+  request: z.strictObject({
+    state: z.enum(["pending", "denied"]),
+    requestedAt: TimestampSchema,
+  }).nullable(),
+});
+export type CanvasAccess = z.infer<typeof CanvasAccessSchema>;
+
+/** `POST /canvases/:id/access-requests`: an optional one-line message for whoever decides. */
+export const CanvasAccessRequestSchema = z.strictObject({ message: z.string().optional() });
+export type CanvasAccessRequest = z.infer<typeof CanvasAccessRequestSchema>;
+
+/**
+ * What asking did: `pending`, a request now waits (a second ask while one
+ * waits answers the same), or `already_participant`, the Canvas already
+ * admits the caller.
+ */
+export const CanvasAccessRequestResultSchema = z.strictObject({
+  status: z.enum(["pending", "already_participant"]),
+});
+export type CanvasAccessRequestResult = z.infer<typeof CanvasAccessRequestResultSchema>;
+
+/** `POST /canvases/:id/access-requests/:userId/decision`, from a person who decides on the Canvas's participants. */
+export const CanvasAccessDecisionRequestSchema = z.strictObject({ decision: z.enum(["approve", "deny"]) });
+export type CanvasAccessDecisionRequest = z.infer<typeof CanvasAccessDecisionRequestSchema>;
+
+/** The request's state after the decision; a request someone already settled answers `canvas_access_request_settled`. */
+export const CanvasAccessDecisionSchema = z.strictObject({
+  state: z.enum(["approved", "denied"]),
+});
+export type CanvasAccessDecision = z.infer<typeof CanvasAccessDecisionSchema>;
