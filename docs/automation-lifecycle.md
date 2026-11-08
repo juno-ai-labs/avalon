@@ -1016,7 +1016,11 @@ and `run: {state, stepCount, reply}`. The row is a projection of the run's
 The client draws the row as a run, not as a message
 (`components/sidekick-run-row.tsx`, chosen in `MessageBlock` by
 `automationActivation.run`): collapsed to "Run · trigger · state · steps"
-with the reply as a two-line preview, expanding to the whole reply and **Open
+under the Sidekick's own mark (its `appearance`, from the Sidekick list),
+with the reply as a two-line preview. A manual run's trigger reads **On
+request**; each state reads as itself (Starting and Working with the working
+dot in green, Needs input in the attention colour, Failed in the danger
+colour with its reply as the reason, Stopped receding, Done plain), expanding to the whole reply and **Open
 run**, which puts `?run=<runId>` on the Sidekick's route; the screen then shows
 that run's own conversation (`parentKind: "automation"`, substream the run id)
 in place of `"0"`, with a way back that replaces the history entry, so Back

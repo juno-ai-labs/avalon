@@ -4,8 +4,9 @@ import { ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { useCollaborationSession } from '../lib/collaboration-session';
+import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
 import { orderedTranscriptMessages } from '../lib/transcript';
-import type { Message } from '../lib/types';
+import type { AutomationSummary, Message } from '../lib/types';
 import { orderedTranscriptQueryKey, useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { RelativeTime } from './relative-time';
 import { ElicitationPanel } from './workstream-blocks';
@@ -23,8 +24,10 @@ const STATE_LABEL: Record<RunState, string> = {
   stopped: 'Stopped',
 };
 
+// "On request", not "Asked": beside a state that can read Needs input, "Asked"
+// said the run had asked a question when it had not.
 const TRIGGER_LABEL: Record<RunTrigger, string> = {
-  manual: 'Asked',
+  manual: 'On request',
   schedule: 'Scheduled',
   external_event: 'Event',
   inbound_email: 'Email',
@@ -46,18 +49,22 @@ export function sidekickRunSearch(runId: string): string {
 export function SidekickRunRow({ message }: { message: Message }): React.JSX.Element | null {
   const activation = message.automationActivation;
   const run = activation?.run;
+  // The Sidekick's own mark, from the list the workspace socket keeps; the
+  // mark derived from the id while the list has not said.
+  const sidekicks = useSocketOwnedList<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
   if (!activation || !run || !activation.runId) return null;
-  const summary = [
-    `Run · ${activation.trigger ? TRIGGER_LABEL[activation.trigger] : 'Run'}`,
-    STATE_LABEL[run.state],
-    `${run.stepCount} ${run.stepCount === 1 ? 'step' : 'steps'}`,
-  ].join(' · ');
+  const appearance = sidekicks?.find((sidekick) => sidekick.id === activation.automationId)?.appearance;
+  const live = run.state === 'pending' || run.state === 'running';
   return <article aria-label={`${activation.automationName} run`} className="sidekick-run-row" data-state={run.state} id={`message-${message.id}`}>
     <details>
       <summary>
         <ChevronRight aria-hidden="true" className="disclosure-chevron" size={13} />
-        <span className="sidekick-run-row-glyph"><AutomationGlyph id={activation.automationId} /></span>
-        <span className="sidekick-run-row-summary">{summary}</span>
+        <span className="sidekick-run-row-glyph"><AutomationGlyph {...(appearance ? { appearance } : {})} id={activation.automationId} /></span>
+        <span className="sidekick-run-row-summary">
+          Run · {activation.trigger ? TRIGGER_LABEL[activation.trigger] : 'Run'} · <span className="sidekick-run-row-state">
+            {live && <span aria-hidden="true" className="sidekick-working-dot" />}{STATE_LABEL[run.state]}
+          </span> · {run.stepCount} {run.stepCount === 1 ? 'step' : 'steps'}
+        </span>
         <RelativeTime className="sidekick-run-row-time" value={message.createdAt} />
       </summary>
       {run.reply && <p className="sidekick-run-row-reply">{run.reply}</p>}
