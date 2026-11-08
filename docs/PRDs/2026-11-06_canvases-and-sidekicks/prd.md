@@ -335,6 +335,30 @@ cannot misroute.
 affordance for managers). The wizard and run separation from the earlier
 entry stands.
 
+### 2026-11-08 — Activity returns, and Threads with artifacts become Canvases
+
+**Decided:** The product gets a third rail section, Activity: each person's
+feed of what happened to them in Canvases and Sidekicks (a mention, being
+added to a Canvas, a Sidekick run that needs their input, a run they asked
+for that finished), written beside the push intent for the same event and
+cleared by the read cursor the Organization already keeps per conversation,
+or by Mark all seen. The rail dock badge and the menu bar stay Needs
+attention only. And a Thread that has artifacts is not deleted: the operator
+converts it into a Canvas in place, keeping its id, before `retire_threads`
+runs (`convert_threads_to_canvases`, dry run by default). Production held 60
+such Threads across 7 Organizations when counted.
+
+**Why:** The product owner's call after the pivot landed. Activity was
+deleted with the Threads it listed; its return is sourced from the four push
+events so the feed and push cannot disagree, and seen is derived rather than
+written per item so the feed and a Canvas row's unread never drift apart.
+Converting keeps artifact, search and memory rows reachable without
+rewriting any id-keyed table; creating new Canvases and copying was
+rejected for that reason.
+
+**Changes:** docs/activity.md, docs/workspace-retirement.md; the deploy
+order in the plan's section 9 is dump, convert, retire.
+
 ### 2026-11-07 — Anyone a Canvas admits can retitle it
 
 **Decided:** Retitling a Canvas is open to anyone the Canvas admits, as
