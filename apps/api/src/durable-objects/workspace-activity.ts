@@ -136,12 +136,18 @@ export function recordActivityItem(sql: SqlStorage, item: ActivityItemInput, now
  * `sidekick_viewer_reads` row for its parent) and `marked` (their
  * `workspace_activity_seen` row). A mention clears when the cursor reaches
  * its message; any other kind when the cursor is at or past the ordinal it
- * was written at and that read was reported after it was written. Either
- * clears when Mark all seen came after it. One expression for the page and
- * the count, so the two cannot disagree.
+ * was written at and that read was reported after it was written. A Needs
+ * input row also clears once its run has left `needs_input`: it asked for an
+ * answer, the answer came, and the run's own view where it is answered reads
+ * the run's conversation, not `"0"`, so no read report would clear it. Any
+ * row clears when Mark all seen came after it. One expression for the page
+ * and the count, so the two cannot disagree.
  */
 const ACTIVITY_SEEN_SQL = `(
   (marked.seen_through IS NOT NULL AND marked.seen_through >= item.created_at)
+  OR (item.kind = 'needs_input' AND item.parent_kind = 'automation' AND EXISTS (
+      SELECT 1 FROM sidekick_runs run
+       WHERE run.sidekick_id = item.parent_id AND run.run_id = item.run_id AND run.state <> 'needs_input'))
   OR (item.attention_ordinal IS NOT NULL AND reads.user_id IS NOT NULL
       AND reads.seen_attention_ordinal >= item.attention_ordinal
       AND (item.kind = 'mention' OR reads.updated_at >= item.created_at))
@@ -250,4 +256,19 @@ export function markAllActivitySeen(sql: SqlStorage, userId: string, now: number
      ON CONFLICT(user_id) DO UPDATE SET seen_through = MAX(seen_through, excluded.seen_through)`,
     userId, now,
   );
+}
+
+/**
+ * Who has a Needs input row about a run of this Sidekick that is waiting now,
+ * `runId` alone when given: whose Activity to send again when it stops
+ * waiting, since `ACTIVITY_SEEN_SQL` then reads the row as seen.
+ */
+export function waitingRunActivityRecipients(sql: SqlStorage, sidekickId: string, runId?: string): string[] {
+  return sql.exec<{ recipient_user_id: string }>(
+    `SELECT DISTINCT item.recipient_user_id FROM workspace_activity_items item
+       JOIN sidekick_runs run ON run.sidekick_id = item.parent_id AND run.run_id = item.run_id
+      WHERE item.kind = 'needs_input' AND item.parent_kind = 'automation' AND item.parent_id = ?1
+        AND run.state = 'needs_input' AND (?2 IS NULL OR run.run_id = ?2)`,
+    sidekickId, runId ?? null,
+  ).toArray().map((row) => row.recipient_user_id);
 }

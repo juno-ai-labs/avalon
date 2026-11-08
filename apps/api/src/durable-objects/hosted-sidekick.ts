@@ -1,6 +1,7 @@
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
 import { sidekickRowRunState } from "./sidekick-directory-sql";
+import { waitingRunActivityRecipients } from "./workspace-activity";
 import { recordSidekickRunNotices } from "./workspace-notification-intent-storage";
 import { SidekickRunNotificationSchema, type SidekickRunNotification } from "@rally/contracts/push-notifications";
 import { enqueuePushDelivery } from "../services/push-delivery-service";
@@ -1735,6 +1736,9 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const next = RUN_STATE_FROM_CONVERSATION_STATE[effect.state] ?? null;
     if (next === null) return;
     const live = !TERMINAL_RUN_STATES.has(next);
+    // Whose Needs input row about this run clears if it stops waiting, read
+    // before the update below moves it.
+    const waiting = next === "needs_input" ? [] : waitingRunActivityRecipients(this.sql, this.sidekickId, substreamId);
     // Read inside the same transaction as the update below: the state it
     // moves from is what says whether this projection is a transition.
     const before = first(this.sql.exec<{ state: RunState; summary: string | null }>(
@@ -1769,6 +1773,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       || (next === "needs_input" && before?.summary !== summary))) {
       this.host.noteDirectoryChanged(this.sidekickId, false, now);
     }
+    if (moved && before?.state === "needs_input") for (const userId of waiting) this.host.noteActivityChanged(userId);
     if (!live && moved?.completed_at === now) {
       this.noteRunFinished(moved.definition_revision, now);
       this.armRunNotice(substreamId, "run_finished", next, (effect.reply ?? effect.preview) || null, now);
@@ -2579,6 +2584,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
    * the new stop.
    */
   private stopOpenRuns(now: number): void {
+    // A stopped run no longer waits: its Needs input rows read as seen.
+    for (const userId of waitingRunActivityRecipients(this.sql, this.sidekickId)) this.host.noteActivityChanged(userId);
     this.sql.exec(
       `UPDATE sidekick_runs SET state = 'stopped', completed_at = ?, updated_at = ?
         WHERE sidekick_id = ? AND state IN ('pending', 'running', 'needs_input')`,
