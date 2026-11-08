@@ -705,9 +705,9 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
-import { activityPage, hasActivity, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
+import { activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
 import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
-import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
+import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
@@ -5408,11 +5408,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'canvases'`,
         );
         this.canvasReadersMoved.add(userId);
-        // The same read is what clears their Activity rows for this Canvas.
-        this.noteActivityReadMoved(userId);
       },
       noteCanvasDirectoryChanged: () => this.noteCanvasDirectoryMoved(),
       noteActivityChanged: (userId) => this.noteActivityMoved(userId),
+      noteActivityReadMoved: (userId, parentId) => this.noteActivityReadMoved(userId, parentId),
     };
   }
 
@@ -5660,9 +5659,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.activityRecipientsMoved.add(userId);
   }
 
-  /** A person's read of a Canvas or a Sidekick moved: their Activity, when they have any, may have cleared. */
-  private noteActivityReadMoved(userId: string): void {
-    if (hasActivity(this.state.storage.sql, userId)) this.noteActivityMoved(userId);
+  /**
+   * A read report for this person on this parent was accepted: their
+   * Activity about it, when they have any, may have cleared, whether or not
+   * the cursor itself moved (a non-mention row clears on a report accepted
+   * after it was written).
+   */
+  private noteActivityReadMoved(userId: string, parentId: string): void {
+    if (hasActivityFor(this.state.storage.sql, userId, parentId)) this.noteActivityMoved(userId);
   }
 
   /** Send each person whose Activity moved their list, on their sockets only: it is theirs alone. */
@@ -5698,12 +5702,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /** One socket's Activity, naming only the titles of what its viewer may still open. */
   private activityList(attachment: WorkspaceSocketAttachment) {
-    const viewer = viewerOf(attachment);
-    return activityPage(this.state.storage.sql, attachment.userId, SIDEBAR_LIST_LIMIT, (parentKind, parentId) => (
-      parentKind === "canvas"
-        ? this.canvasVisible(viewer, parentId) === true
-        : viewer.accessClass === "member" && this.sidekickListed(attachment.workspaceId, attachment.userId, parentId)
-    ));
+    const member = viewerOf(attachment).accessClass === "member";
+    return activityPage(this.state.storage.sql, { userId: attachment.userId, workspaceId: attachment.workspaceId, member },
+      SIDEBAR_LIST_LIMIT, SIDEBAR_SIDEKICK_LISTED_SQL,
+      (sidekickId) => writerSidekickAdmits(this.state.storage.sql, sidekickId,
+        { userId: attachment.userId, actorRole: member ? "member" : null }));
   }
 
   /** Who is in each Canvas now: the people whose foreground socket has it open. */
@@ -5809,11 +5812,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`,
         );
         this.sidekickReadersMoved.add(userId);
-        // The same read is what clears their Activity rows for this Sidekick.
-        this.noteActivityReadMoved(userId);
       },
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
       noteActivityChanged: (userId) => this.noteActivityMoved(userId),
+      noteActivityReadMoved: (userId, parentId) => this.noteActivityReadMoved(userId, parentId),
       sendRunProvision: async (message) => {
         await this.env.ACTIVITY_QUEUE.send(SidekickRunProvisionQueueMessageSchema.parse({
           kind: "sidekick_run_provision", region: this.env.AVALON_REGION, ...message,

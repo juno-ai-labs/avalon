@@ -118,8 +118,13 @@ export function recordSidekickRunNotices(
   }));
 }
 
-/** A conversation's mention or add, as its parent receives it. */
+/**
+ * A conversation's mention or add, as its hosted parent receives it: only a
+ * Canvas or a Sidekick records one (`applyChildEnvelope` refuses an envelope
+ * naming another kind before it gets here).
+ */
 export type PersonNotificationEnvelope = ConversationEffectEnvelope & {
+  parentKind: ActivityParentKind;
   effect: Extract<ConversationEffectEnvelope["effect"], { kind: "mention_notification" | "participant_notification" }>;
 };
 
@@ -176,14 +181,19 @@ export function recordPersonNotificationIntent(
   const mention = effect.kind === "mention_notification" ? effect : null;
   recordActivityItem(storage.sql, {
     itemId: effect.intentId, workspaceId: envelope.workspaceId, recipientUserId: effect.recipientUserId,
-    // The table's CHECK refuses any other kind by name, loudly.
-    kind: notificationKind, parentKind: envelope.parentKind as ActivityParentKind,
+    kind: notificationKind, parentKind: envelope.parentKind,
     parentId: envelope.parentId, substreamId: effect.substreamId ?? envelope.substreamId,
     messageId: mention?.messageId ?? null, runId: null, actorKind: "person",
     actorId: mention ? mention.authorUserId : effect.kind === "participant_notification" ? effect.actorUserId : null,
     // What the push's body says: the message, or the objective of what they were added to.
     text: mention ? mention.messageText : effect.kind === "participant_notification" ? effect.workstreamObjectiveSnapshot ?? null : null,
-    ...(mention ? { attentionOrdinal: mention.attentionOrdinal ?? null } : {}),
+    // The read cursor Activity compares against is the shared conversation's
+    // ("0"). A mention or an add in any other conversation under the parent
+    // (a Sidekick run's) has an ordinal in that conversation's own sequence,
+    // which that cursor does not measure, so it carries none and clears only
+    // by Mark all seen.
+    ...((effect.substreamId ?? envelope.substreamId) !== "0" ? { attentionOrdinal: null }
+      : mention ? { attentionOrdinal: mention.attentionOrdinal ?? null } : {}),
   }, now, noteActivity);
   return effect.intentId;
 }
