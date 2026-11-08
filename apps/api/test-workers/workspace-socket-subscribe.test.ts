@@ -20,8 +20,8 @@ import type { Env } from "../src/env";
 import { createTestEnv } from "../test/helpers/cloudflare-test";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
-let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c5000");
-const USER = asUserId("00000000-0000-7000-8000-0000000c5001");
+let WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c5100");
+const USER = asUserId("00000000-0000-7000-8000-0000000c5101");
 const CANVAS = "00000000-0000-7000-8000-0000000c50c1";
 
 function workspace(): DurableObjectStub<WorkspaceDO> {
