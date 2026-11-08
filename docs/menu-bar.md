@@ -59,13 +59,15 @@ holds — every one, not the five the menu lists. `menuBarTitle` formats it as t
 rail's badge — `99+` past two digits, nothing at zero — and it is empty while
 signed out.
 
-**It is the rail's number.** The rail's two badges and the dock badge are
+**It is the rail's number.** The rail's Canvases and Sidekicks badges are
 `useSectionCounts` in `navigation-sidebar.tsx`: Canvases counts each Canvas
 whose row is `unread`, Sidekicks each Sidekick whose row is `needsInput` or
 `unread`. Both rules are two predicates in `common/sidebar-attention.ts`, and
 `menuBarContent` calls the same two on the same two lists, read from the same
-socket frames, so the menu bar, the rail and the dock
-cannot disagree for longer than one push takes to land.
+socket frames, so the menu bar and those two rail badges cannot disagree for
+longer than one push takes to land. The dock badge is not this number: it is
+the unseen Activity count (`dockBadgeCount`), the count a push sets on the
+icon while Rally is closed ([`desktop-shell.md`](desktop-shell.md)).
 
 ### The menu
 
@@ -420,6 +422,26 @@ is reported before `app.focus`, so the application-open coalescer suppresses the
 generic Electron activation callback rather than also counting a Dock open.
 
 ## Changelog
+
+### 2026-11-08 — The dock badge leaves Needs attention for unseen Activity; the menu bar stays
+
+**What changed:** The dock badge no longer adds up the rail's Canvases and
+Sidekicks counts; it is the unseen Activity count. The menu bar's title and
+Needs attention are unchanged: the Canvases and Sidekicks rows that need
+attention.
+
+**Why:** The owner said "fix this" on 2026-11-08 for the dock badge clearing
+when an alert arrives while Rally is closed. The push badge is now the unseen
+Activity count, so the open app writes the same number, which ends the
+2026-11-07 rule that the menu, the rail and the dock are one number. The menu
+bar lists rows, and its count has to match the rows under it (the 2026-10-13
+rule), so it keeps counting them.
+
+**Considered and rejected:** Moving the menu bar to unseen Activity as well:
+its menu lists Canvases and Sidekicks, not Activity rows, so the title would
+count things the menu does not show.
+
+**Consequences:** The menu bar's title and the dock badge can differ.
 
 ### 2026-11-07 — Needs attention is what the rail counts; the Channel and Activity watches are deleted
 

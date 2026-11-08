@@ -96,7 +96,7 @@ approval tells them.
 
 ### In the client
 
-Client: a 404 on a well-formed Canvas id asks `GET /canvases/:id/access`; `requestable` draws "You don't have access to this Canvas" with Request access (one dialog opening on its optional message), "Request sent · <when>" alone, in the button's place, from the access read while pending, a denial read as no request, and 409 `canvas_access_open` read as "open it"; a restored route on a requestable Canvas stays, and the grant reopens the pane without a refresh (list row or `access_granted` row).
+Client: a 404 on a well-formed Canvas id asks `GET /canvases/:id/access`; `requestable` draws "You don't have access to this Canvas" with Request access (one dialog opening on its optional message), "Request sent · <when>" alone, in the button's place, from the access read while pending, and 409 `canvas_access_open` read as "open it"; a restored route on a requestable Canvas stays, and the grant reopens the pane without a refresh (list row or `access_granted` row). A declined request reads "Request declined · <when>" (`decidedAt`, or when it was asked from a server older than that field) with Request access offered again, since a denial allows a new request. The requester's `access_denied` Activity row, "<decider> declined your request to open a Canvas" behind the lock glyph and never naming the Canvas, opens this pane; an open pane re-reads its access when that row arrives after its access read, so it says declined without a reload.
 
 ## Invariants
 
@@ -219,6 +219,12 @@ Activity row per decider (the creator, the Organization's administrators and
 a writer Sidekick's managers), settled for all of them by one decision; an
 `access_granted` intent and row for the requester; and a request settling when
 Share adds the person or the Canvas opens to the Organization. Client: the Share panel lists `pendingAccessRequests` for deciders with the same Approve and Deny the Activity row has (`AccessDecisionActions`, held once answered), which drop under the message at narrow widths; an approval made while the panel is open joins its choice of people, and the visibility the approval moved the Canvas to replaces the panel's, so Save keeps it (a creator-only Canvas left at "Only you" would have sent `creator` and removed the person just let in). On the Activity row the buttons are named for the Canvas too, and a settled row says "You approved" to the decider (`decidedByUserId`) in the buttons' place.
+
+[Client half] The requestable pane reads a declined request as "Request
+declined · <when>" with Request access offered again, and the requester's
+`access_denied` row opens it; an open pane re-reads its access when that row
+arrives after its access read. The owner's instruction of 2026-11-08: "inform
+the person [of] a denial".
 
 **Why:** The owner asked on 2026-11-08 for the whole flow back. The
 Thread-era flow (`git show 3df4150^:apps/api/src/services/access-request-service.ts`
