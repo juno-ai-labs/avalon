@@ -6826,9 +6826,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekicks-library-controls .sidebar-search { height: auto; min-height: 44px; width: 100%; margin: 0; border-radius: var(--av-sys-size-radius-pill); padding: 12px 16px; }
 .sidekick-filters { display: flex; gap: 8px; }
 .sidekick-filters { flex-wrap: wrap; margin: 16px 0 36px; }
-.sidekick-filters button, .sidekick-view-switch button { border: 0; border-radius: var(--av-sys-size-radius-pill); background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-muted); font: inherit; padding: 8px 16px; }
-.sidekick-filters button[aria-pressed=true], .sidekick-view-switch button[aria-pressed=true] { background: var(--av-sys-color-text-default); color: var(--av-sys-color-text-on-inverse); }
-.sidekick-filters button:hover, .sidekick-view-switch button:hover { box-shadow: inset 0 0 0 1px var(--av-sys-color-border-default); }
+.sidekick-filters button { border: 0; border-radius: var(--av-sys-size-radius-pill); background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-muted); font: inherit; padding: 8px 16px; }
+.sidekick-filters button[aria-pressed=true] { background: var(--av-sys-color-text-default); color: var(--av-sys-color-text-on-inverse); }
+.sidekick-filters button:hover { box-shadow: inset 0 0 0 1px var(--av-sys-color-border-default); }
 .sidekick-results-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
 .sidekick-results-heading h2 { font-size: 18px; font-weight: 500; margin: 0; }
 .sidekick-results-heading > span { font-size: 13px; color: var(--av-sys-color-text-muted); }
@@ -6879,18 +6879,24 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-share-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .canvas-share-guests summary { cursor: pointer; font-size: 14px; }
 .canvas-share-guests .scope-sharing-panel { margin-top: 12px; }
-.sidekick-detail { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-width: 0; }
-.sidekick-navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 38px 20px 10px; border-bottom: 1px solid var(--av-sys-color-border-subtle); }
-.sidekick-back { display: inline-flex; align-items: center; gap: 4px; padding: 8px; border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); text-decoration: none; }
-.sidekick-back:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
-.sidekick-detail-body { display: grid; grid-template-columns: 340px minmax(0, 1fr); min-height: 0; }
-.sidekick-profile { overflow: auto; scrollbar-gutter: stable; border-right: 1px solid var(--av-sys-color-border-subtle); }
+/* A Sidekick open (components/sidekick-detail-layout.tsx), as design §4 and a
+   Canvas lay it out: the header and the conversation in the main column, the
+   details in a column on the right the width the profile column always had. */
+.sidekick-detail { --sidekick-details-width: 340px; display: grid; grid-template-columns: minmax(0, 1fr) var(--sidekick-details-width); grid-template-rows: auto minmax(0, 1fr); height: 100%; min-width: 0; }
+/* The wrapper spans both columns so the strip over the details still drags the
+   window; the header inside is centred on the main column alone. */
+.sidekick-detail-header { grid-column: 1 / -1; grid-row: 1; min-width: 0; }
+.sidekick-detail-header .title-pill-header { height: 64px; margin-right: var(--sidekick-details-width); }
+.sidekick-profile { border-left: 1px solid var(--av-sys-color-border-subtle); grid-column: 2; grid-row: 2; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+.sidekick-conversation { grid-column: 1; grid-row: 2; }
+/* The pill's mark is the size a Canvas's is (CanvasMark size 24). */
+.sidekick-pill-mark { display: inline-flex; height: 24px; width: 24px; }
+.sidekick-pill-mark .automation-glyph { height: 100%; width: 100%; }
 .sidekick-conversation { min-width: 0; min-height: 0; }
-.sidekick-conversation-heading { align-items: center; column-gap: 12px; display: flex; flex-wrap: wrap; padding: 24px 28px 16px; row-gap: 10px; }
-.sidekick-conversation-heading h2 { margin: 0; font-size: 16px; font-weight: 500; }
-.sidekick-conversation-heading p { margin: 6px 0 0; font-size: 13px; color: var(--av-sys-color-text-muted); }
+.sidekick-conversation-heading { align-items: center; column-gap: 12px; display: flex; flex-wrap: wrap; padding: 8px 28px 16px; row-gap: 10px; }
+/* Nothing to say above the feed: the header row collapses. */
+.sidekick-conversation-heading:empty { padding: 0; }
 .sidekick-editing-badge { background: var(--av-sys-color-surface-raised-hover); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); font-size: 12px; padding: 3px 10px; }
-.sidekick-run-back { align-items: center; background: none; border: 0; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-flex; font: inherit; font-size: 13px; gap: 2px; padding: 0; }
 .sidekick-canvas-cards { display: flex; flex-basis: 100%; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; }
 .sidekick-canvas-card { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; color: inherit; display: inline-flex; gap: 10px; padding: 8px 12px 8px 8px; text-decoration: none; }
 .sidekick-canvas-card:hover { background-image: var(--hover-layer); }
@@ -6915,7 +6921,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-run-row-open { display: inline-block; font-size: 13px; margin: 8px 0 0 49px; }
 /* A waiting run's question, answered on the row; the panel brings its own surface. */
 .sidekick-run-row-question { margin-top: 10px; }
-.sidekick-view-switch { display: none; }
 @media (max-width: 760px) {
   .sidekicks-library { padding: 56px 24px 24px; }
   .sidekicks-library-heading { flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
@@ -6928,15 +6933,14 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   .sidekicks-library { position: relative; }
   .sidekicks-library-heading .settings-close { position: absolute; right: 12px; top: 15px; }
 }
-/* Same host measurement drives layout and conversation visibility. */
+/* Same host measurement drives layout and conversation visibility: the details
+   take the conversation's place under the same header. */
 .sidekick-detail[data-compact=true] {
-  .sidekick-detail-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
-  .sidekick-profile, .sidekick-conversation { grid-area: 1 / 1; min-height: 0; }
-  .sidekick-view-switch { display: flex; gap: 4px; }
-  .sidekick-view-switch button { padding: 6px 10px; font-size: 12px; }
+  grid-template-columns: minmax(0, 1fr);
+  .sidekick-detail-header .title-pill-header { margin-right: 0; }
+  .sidekick-profile, .sidekick-conversation { grid-area: 2 / 1; }
   &[data-view=conversation] .sidekick-profile, &[data-view=details] .sidekick-conversation { visibility: hidden; pointer-events: none; }
-  .sidekick-profile { border-right: 0; }
-  .sidekick-navigation { padding-inline: 12px; }
+  .sidekick-profile { border-left: 0; }
 }
 
 .sidekick-section-list { list-style: none; margin: 0; padding: 0; }

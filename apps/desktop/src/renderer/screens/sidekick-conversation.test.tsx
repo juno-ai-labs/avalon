@@ -149,7 +149,7 @@ describe("a Sidekick's shared conversation", () => {
 
   it("shows a run's own conversation without a composer: replies go in the shared conversation", async () => {
     renderSidekick(AUTHOR, '?run=run-1');
-    expect(await screen.findByRole('heading', { name: 'Run' })).toBeInTheDocument();
+    expect(await screen.findByText('Run')).toBeInTheDocument();
     await screen.findByText('Ready to begin');
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Send message' })).toBeNull();
