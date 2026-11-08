@@ -60,7 +60,7 @@ and availability changes visible without navigation.
 
 ## Sidekick conversations and attachments
 
-A Sidekick's shared conversation uses this surface in the main window. Generated descriptions summarize instructions; ready submissions save immediately. The surface has no sidebar of its own: who is in a Canvas is the header's face pile, and a Sidekick's details are the column beside its conversation (`SidekickDetailLayout`).
+A Sidekick's shared conversation uses this surface in the main window. Generated descriptions summarize instructions; ready submissions save immediately. The surface has no sidebar of its own: who is in a Canvas is the header's face pile, and a Sidekick's details are the column to the right of its conversation (`SidekickDetailLayout`).
 
 The composer shows no running count above the input; the indicators that did
 were fed only by Threads and Channels, and
@@ -145,9 +145,15 @@ arrive after reconnect.
   hooks for one conversation, keyed by the parent id and substream. Its
   composer draft is `workstreamDraftKey` over the parent id, whichever kind of
   parent that is. `screens/canvas.tsx` renders it for a Canvas's Chat;
-  `screens/automation.tsx` renders `components/automation-header.tsx` in a sibling profile pane
-  through `SidekickDetailLayout`, with a short conversation heading over the feed with `parentKind: "automation"` and `substreamId:
-  "0"`. Tool rows are not rendered one per call: they collapse into one row per plugin, which
+  `screens/automation.tsx` renders it with `parentKind: "automation"` and
+  `substreamId: "0"` (or a run's id) through `SidekickDetailLayout`, which lays
+  a Sidekick out as design §4 does and as a Canvas is: one `TitlePillHeader`
+  over the main column (Back and Forward, the Sidekick's pill and its menu,
+  the face pile; a run's pill after the Sidekick's while `?run=` is open), the
+  conversation under it, and `components/automation-header.tsx`, the details,
+  in a 340px column on the right. Below 900px the details take the
+  conversation's place under the same header, switched by its **Sidekick
+  details** button, so the page has one header at every width. Tool rows are not rendered one per call: they collapse into one row per plugin, which
   [`plugin-activity-rows.md`](plugin-activity-rows.md) owns entirely. The
   retired automation-draft adapter kept a row per call, which is the divergence
   that made the collapse a decision worth recording rather than an obvious one.
@@ -853,6 +859,31 @@ captured pin IDs. [Artifact annotations](artifact-annotations.md) owns the
 selection and message protocol.
 
 ## Changelog
+
+### 2026-11-08 — A Sidekick open is laid out as the design and a Canvas are
+
+**What changed:** `SidekickDetailLayout` puts the conversation in the main
+column under one `TitlePillHeader` (Back and Forward, the Sidekick's glyph and
+name in a pill whose menu offers Pin, Run now and Copy link, and the face pile
+of who is here) and the details in a right-hand column. The "‹ Sidekicks"
+crumb, the "Conversation" heading and the Conversation/Details switch row are
+gone; below 900px the header's **Sidekick details** button switches to the
+details under that same header. An open run is a "Run" pill after the
+Sidekick's, which leads back.
+
+**Why:** Design §4, the PRD's authority for every screen, draws a Sidekick
+like a Canvas: conversation as the hero, details on the right. The inspection
+found it mirrored, its name in no header, and at phone width three stacked
+headers (the sheet's, the crumb row and "Conversation") that never named the
+Sidekick.
+
+**Considered and rejected:** Rendering the header inside the conversation, as
+a Canvas does: it would vanish with the conversation when the details take its
+place at narrow widths. The header reads presence from the workspace socket
+instead.
+
+**What a future change must respect:** the page keeps one header at every
+width, and the conversation stays mounted behind the details.
 
 ### 2026-11-08 — Every open of a conversation sends one read report
 

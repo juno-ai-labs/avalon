@@ -62,7 +62,7 @@ function detail(overrides: Partial<AutomationDetail> = {}): AutomationDetail {
  * is what puts the hexagon in the accessibility tree.
  */
 async function showProfile(): Promise<void> {
-  fireEvent.click(await screen.findByRole('button', { name: 'Details' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Sidekick details' }));
 }
 
 function renderScreen(client: QueryClient, entry = `/sidekicks/${SIDEKICK_ID}`) {
@@ -112,6 +112,21 @@ describe("The Sidekick's conversation composer", () => {
     expect(editAction()).toMatchObject({ checked: true });
     act(() => editAction()!.onSelect());
     await waitFor(() => expect(surfaceIntents.at(-1)).toBeUndefined());
+  });
+
+  it('names the open Sidekick in its one header, and the open run after it', async () => {
+    await open('user-1', 'member');
+    expect(await screen.findByRole('button', { name: 'Sidekick menu: Weekly changelog' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Sidekicks' })).toBeNull();
+  });
+
+  it("puts the run's pill after the Sidekick's, which leads back to the shared conversation", async () => {
+    viewer.session = { user: { id: 'user-1' }, workspace: { role: 'member' } };
+    renderScreen(new QueryClient({ defaultOptions: { queries: { retry: false } } }), `/sidekicks/${SIDEKICK_ID}?run=run-1`);
+    const back = await screen.findByRole('button', { name: /Weekly changelog/ });
+    expect(screen.getByText('Run')).toBeInTheDocument();
+    fireEvent.click(back);
+    expect(await screen.findByRole('button', { name: 'Sidekick menu: Weekly changelog' })).toBeInTheDocument();
   });
 
   it('names the window after the open Sidekick', async () => {
