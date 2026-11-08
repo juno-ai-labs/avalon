@@ -152,7 +152,7 @@ interface ActivityRow extends Record<string, SqlStorageValue> {
   substream_id: string | null; message_id: string | null; message_sequence: number | null; run_id: string | null;
   actor_kind: "person" | "rally" | "sidekick"; actor_id: string | null; preview: string | null;
   created_at: number; seen: number; unseen_count: number;
-  parent_title: string | null; title_named: number; writer_sidekick_id: string | null;
+  parent_title: string | null;
 }
 
 /** Who a page is read for: their id, their Organization, and whether they are a member rather than a guest. */
@@ -163,14 +163,17 @@ export interface ActivityViewer {
 }
 
 /**
- * One person's newest `limit` items and how many of all of theirs are
- * unseen, in one statement: the count is a window over every row before the
- * page's `LIMIT`. A parent's current title is named only while the viewer may
- * open it, decided in the same statement by the rules `canvasSidebarRows`
- * and the Sidekick list read (`sidekickListedSql`, which binds `?1` the user
- * and `?2` the Organization). The one rule SQL does not express, a Canvas
- * a Sidekick writes admitting that Sidekick's audience, is `writerAdmits`,
- * asked once per such writer and only for a title not already named.
+ * One person's newest `limit` items that they may open the parent of, and how
+ * many of those are unseen, in one statement: the count is a window over every
+ * listed row before the page's `LIMIT`. Whether the viewer may open a parent
+ * is decided in the same statement by the rules `canvasSidebarRows` and the
+ * Sidekick list read (`sidekickListedSql`, which binds `?1` the user and `?2`
+ * the Organization), and it is a filter, not a redaction: a row about a parent
+ * they cannot open sends nothing, not its preview, message or ids, and counts
+ * toward nothing. The row stays stored, so it lists once access arrives. The
+ * one rule SQL does not express, a Canvas a Sidekick writes admitting that
+ * Sidekick's audience, is `writerAdmits`, asked once per writer of a Canvas
+ * this person has Activity about, before the page is read.
  */
 export function activityPage(
   sql: SqlStorage,
@@ -179,6 +182,13 @@ export function activityPage(
   sidekickListedSql: string,
   writerAdmits: (sidekickId: string) => boolean,
 ): { unseenCount: number; items: ActivityItem[] } {
+  const admittingWriters = sql.exec<{ writer_sidekick_id: string }>(
+    `SELECT DISTINCT canvas.writer_sidekick_id
+       FROM workspace_activity_items item
+       JOIN canvas_directory canvas ON canvas.canvas_id = item.parent_id
+      WHERE item.recipient_user_id = ?1 AND item.parent_kind = 'canvas' AND canvas.writer_sidekick_id IS NOT NULL`,
+    viewer.userId,
+  ).toArray().map((row) => row.writer_sidekick_id).filter((sidekickId) => writerAdmits(sidekickId));
   const rows = sql.exec<ActivityRow>(
     `WITH mine AS (
        SELECT item.*, ${ACTIVITY_SEEN_SQL} AS seen
@@ -186,34 +196,28 @@ export function activityPage(
          LEFT JOIN sidekick_viewer_reads reads ON reads.sidekick_id = item.parent_id AND reads.user_id = item.recipient_user_id
          LEFT JOIN workspace_activity_seen marked ON marked.user_id = item.recipient_user_id
         WHERE item.recipient_user_id = ?1
+     ), listed AS (
+       SELECT mine.*, COALESCE(canvas.title, directory.title) AS parent_title
+         FROM mine
+         LEFT JOIN canvas_directory canvas ON mine.parent_kind = 'canvas' AND canvas.canvas_id = mine.parent_id
+         LEFT JOIN canvas_participants participant ON participant.canvas_id = canvas.canvas_id AND participant.user_id = ?1
+         LEFT JOIN automation_directory directory ON mine.parent_kind = 'automation' AND directory.automation_id = mine.parent_id
+        WHERE CASE
+                WHEN canvas.canvas_id IS NOT NULL THEN (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
+                  OR (?3 = 1 AND canvas.visibility = 'workspace')
+                  OR canvas.writer_sidekick_id IN (SELECT value FROM json_each(?5)))
+                WHEN directory.automation_id IS NOT NULL THEN ?3 = 1 AND ${sidekickListedSql}
+                ELSE 0 END
      )
-     SELECT mine.item_id, mine.kind, mine.parent_kind, mine.parent_id, mine.substream_id, mine.message_id,
-            mine.message_sequence, mine.run_id,
-            mine.actor_kind, mine.actor_id, mine.preview, mine.created_at, mine.seen,
-            SUM(1 - mine.seen) OVER () AS unseen_count,
-            COALESCE(canvas.title, directory.title) AS parent_title,
-            CASE
-              WHEN canvas.canvas_id IS NOT NULL THEN (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
-                OR (?3 = 1 AND canvas.visibility = 'workspace'))
-              WHEN directory.automation_id IS NOT NULL THEN ?3 = 1 AND ${sidekickListedSql}
-              ELSE 0 END AS title_named,
-            canvas.writer_sidekick_id
-       FROM mine
-       LEFT JOIN canvas_directory canvas ON mine.parent_kind = 'canvas' AND canvas.canvas_id = mine.parent_id
-       LEFT JOIN canvas_participants participant ON participant.canvas_id = canvas.canvas_id AND participant.user_id = ?1
-       LEFT JOIN automation_directory directory ON mine.parent_kind = 'automation' AND directory.automation_id = mine.parent_id
-      ORDER BY mine.created_at DESC, mine.item_id DESC
+     SELECT listed.item_id, listed.kind, listed.parent_kind, listed.parent_id, listed.substream_id, listed.message_id,
+            listed.message_sequence, listed.run_id,
+            listed.actor_kind, listed.actor_id, listed.preview, listed.created_at, listed.seen,
+            SUM(1 - listed.seen) OVER () AS unseen_count, listed.parent_title
+       FROM listed
+      ORDER BY listed.created_at DESC, listed.item_id DESC
       LIMIT ?4`,
-    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit,
+    viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(admittingWriters),
   ).toArray();
-  const writers = new Map<string, boolean>();
-  const named = (row: ActivityRow): string | null => {
-    if (row.parent_title === null) return null;
-    if (row.title_named === 1) return row.parent_title;
-    if (row.writer_sidekick_id === null) return null;
-    if (!writers.has(row.writer_sidekick_id)) writers.set(row.writer_sidekick_id, writerAdmits(row.writer_sidekick_id));
-    return writers.get(row.writer_sidekick_id) ? row.parent_title : null;
-  };
   return {
     unseenCount: rows[0]?.unseen_count ?? 0,
     items: rows.map((row) => ({
@@ -221,7 +225,7 @@ export function activityPage(
       kind: row.kind,
       parentKind: row.parent_kind,
       parentId: row.parent_id,
-      parentTitle: named(row),
+      parentTitle: row.parent_title,
       substreamId: row.substream_id,
       messageId: row.message_id,
       messageSequence: row.message_sequence,
