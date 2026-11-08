@@ -287,6 +287,29 @@ describe('the Activity section', () => {
     api.getWorkspaceMembers.mockResolvedValue([{ id: AVERY, name: 'Avery', email: 'avery@rally.test', timezone: 'UTC' }] as never);
   });
 
+  it("badges a Canvas row's glyph with the Canvas's mark, in the icon and colour chosen for it, and a Sidekick row with none", async () => {
+    useUiStore.getState().setSidebarSection('activity');
+    const client = renderSidebar(workspace, '/', page);
+    const badges = (): Array<HTMLElement | null> => within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link')
+      .map((row) => row.querySelector<HTMLElement>('.activity-row-tile .identity-tile-badge-fill'));
+    const [sidekickRow, mention] = badges();
+    expect(sidekickRow).toBeNull();
+    // Unchosen: the Canvas's default, its Chat-only layout in the hue its id gives it.
+    expect(mention).toHaveStyle({ background: 'var(--av-sys-color-project-tint-green)' });
+    expect(mention!.querySelector('svg')).toHaveClass('lucide-panels-top-left');
+    act(() => {
+      applyVersionedSidebarList(client, 'canvases', 2, [
+        canvas(CANVAS, 'Q4 revenue review', { appearance: { icon: 'flag', color: 'orange' } }),
+      ]);
+    });
+    await waitFor(() => {
+      for (const badge of badges().slice(1)) {
+        expect(badge).toHaveStyle({ background: 'var(--av-sys-color-project-tint-orange)' });
+        expect(badge!.querySelector('svg')).toHaveClass('lucide-flag');
+      }
+    });
+  });
+
   it('at phone width, keeps Activity open when its sheet closes for one of its rows', async () => {
     const width = window.innerWidth;
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });

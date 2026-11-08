@@ -143,6 +143,15 @@ export function IdentityTile({ badges, className, icon: Icon, ink, shape, size =
   </span>;
 }
 
+/**
+ * One badge at a lone badge's place on the corner of a tile that is not an
+ * `IdentityTile`, such as an Activity row's glyph, which carries the Canvas
+ * the row is about. The tile is the caller's; it must be positioned.
+ */
+export function CornerBadge({ badge }: { badge: TileBadge }): React.JSX.Element {
+  return <Badge badge={badge} bottom={-5} right={-6} />;
+}
+
 /** A shape an outline can draw: a tile's, and the triangle no object uses. */
 export type OutlineShape = TileShape | 'triangle';
 

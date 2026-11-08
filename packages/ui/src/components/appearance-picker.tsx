@@ -3,7 +3,7 @@ import { markColors, projectColorCells } from '../lib/project-palette';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { GENERATED_WORKSTREAM_ICON_KEYS, type WorkstreamAppearance, type WorkstreamAppearancePatch } from '@rally/contracts';
 import clsx from 'clsx';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { IconCatalog } from './icon-catalog';
 import { WORKSTREAM_ICON_COMPONENTS, workstreamAppearance } from './workstream-glyph';
 
@@ -44,7 +44,7 @@ function settled(choice: PendingChoice, appearance: WorkstreamAppearance | undef
  * offers the same palette as a submenu: the selection with its pending
  * previews, the save that needs no Save button, and the newest choice's error.
  */
-function useAppearanceChoice(id: string, appearance: WorkstreamAppearance | undefined, onChange: (patch: WorkstreamAppearancePatch) => Promise<void>) {
+function useAppearanceChoice(id: string, appearance: WorkstreamAppearance | undefined, onChange: (patch: WorkstreamAppearancePatch) => Promise<void>, defaults?: WorkstreamAppearance) {
   const [pending, setPending] = useState<PendingChoice[]>([]);
   const [error, setError] = useState<string | null>(null);
   const sequence = useRef(0);
@@ -59,7 +59,11 @@ function useAppearanceChoice(id: string, appearance: WorkstreamAppearance | unde
       setPending(pending.filter((choice) => !settled(choice, appearance)));
     }
   }, [appearance, pending]);
-  const selected = { icon: appearance?.icon ?? GENERATED_WORKSTREAM_ICON_KEYS[generated.iconIndex]!, color: appearance?.color ?? generated.color, ...preview };
+  // What an unchosen field shows: the caller's own default when it draws one
+  // (a Canvas's kind sketch, which is no catalog icon, and its id's hue), else
+  // the id-derived mark a Sidekick wears.
+  const fallback = defaults ?? { icon: GENERATED_WORKSTREAM_ICON_KEYS[generated.iconIndex]!, color: generated.color };
+  const selected = { icon: appearance?.icon ?? fallback.icon, color: appearance?.color ?? fallback.color, ...preview };
   const change = (patch: WorkstreamAppearancePatch): void => {
     const revision = ++sequence.current;
     setPending((current) => [...current, { revision, patch, baseline: appearance, saved: false }]);
@@ -75,7 +79,7 @@ function useAppearanceChoice(id: string, appearance: WorkstreamAppearance | unde
       }
     });
   };
-  const onOpenChange = (value: boolean): void => { open.current = value; setError(null); };
+  const onOpenChange = useCallback((value: boolean): void => { open.current = value; setError(null); }, []);
   return { selected, change, error, onOpenChange };
 }
 
@@ -133,7 +137,7 @@ export function AppearanceSubmenu({ id, appearance, label: itemLabel, icon, onCh
   </DropdownMenu.Sub>;
 }
 
-export function AppearancePicker({ id, appearance, label: triggerLabel, renderGlyph, onChange, triggerClassName, colors }: {
+export function AppearancePicker({ id, appearance, defaults, label: triggerLabel, renderGlyph, onChange, triggerClassName, colors, open, onOpenChange: setOpen }: {
   id: string;
   appearance?: WorkstreamAppearance;
   /** The trigger's accessible name, and the popup's: "Change X icon and color". */
@@ -145,18 +149,35 @@ export function AppearancePicker({ id, appearance, label: triggerLabel, renderGl
   triggerClassName?: string;
   /** False for a thread or a Breakout, whose colour is its Channel's and set by the server. */
   colors?: boolean;
+  /**
+   * What an unchosen field is drawn and selected as, for a surface whose
+   * default is not the id-derived mark: a null icon selects nothing.
+   */
+  defaults?: WorkstreamAppearance;
+  /**
+   * Opened from elsewhere too, such as a menu's **Change appearance**: the
+   * caller holds whether it is open. That menu hands focus back to its own
+   * trigger as it closes, after this has opened, so a controlled palette is
+   * closed by a press outside or Escape, not by focus leaving it.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }): React.JSX.Element {
-  const { selected, change, error, onOpenChange } = useAppearanceChoice(id, appearance, onChange);
-  return <DropdownMenu.Root onOpenChange={onOpenChange}>
+  const { selected, change, error, onOpenChange } = useAppearanceChoice(id, appearance, onChange, defaults);
+  const controlled = open !== undefined;
+  useEffect(() => { if (controlled) onOpenChange(open); }, [controlled, onOpenChange, open]);
+  return <DropdownMenu.Root {...(controlled ? { open } : {})} onOpenChange={(value) => { onOpenChange(value); setOpen?.(value); }}>
     <DropdownMenu.Trigger asChild>
       <button type="button" aria-label={triggerLabel} className={clsx('appearance-picker-trigger window-no-drag', triggerClassName)}>
         {renderGlyph(selected)}
       </button>
     </DropdownMenu.Trigger>
     <DropdownMenu.Portal>
-      <DropdownMenu.Content className="menu-content appearance-picker-popup" align="start" sideOffset={8} collisionPadding={12} aria-label={triggerLabel}>
+      <DropdownMenu.Content className="menu-content appearance-picker-popup" align="start" sideOffset={8} collisionPadding={12} aria-label={triggerLabel}
+        {...(controlled ? { onFocusOutside: (event: Event) => event.preventDefault() } : {})}>
         <AppearanceChoices change={change} colors={colors} error={error} selected={selected} />
       </DropdownMenu.Content>
     </DropdownMenu.Portal>
   </DropdownMenu.Root>;
 }
+
