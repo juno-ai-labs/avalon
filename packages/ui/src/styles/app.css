@@ -4287,8 +4287,13 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .app-shell .elicitation-option + .elicitation-option { border-top: .5px solid color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
 .app-shell .elicitation-option:has(input[type='checkbox']) { grid-template-columns: auto minmax(0, 1fr) auto; }
 .app-shell .elicitation-option:hover { background-color: transparent; background-image: linear-gradient(color-mix(in srgb, var(--av-sys-color-accent-tint) 50%, transparent) 0 100%); }
+/* The chosen answer is marked as a chosen menu item is (.icon-group-menu-check):
+   the accent, a wash behind the row, its keycap filled, and a check at its end. */
 .app-shell .elicitation-option.is-selected,
-.app-shell .elicitation-option.is-selected:hover { background: var(--av-cmp-row-background-selected); border-color: color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
+.app-shell .elicitation-option.is-selected:hover { background: var(--av-sys-color-accent-wash); border-color: color-mix(in srgb, var(--av-sys-color-text-default) 10%, transparent); }
+.app-shell .elicitation-option:has(> .elicitation-chosen) { grid-template-columns: auto minmax(0, 1fr) auto; }
+.app-shell .elicitation-chosen { color: var(--av-sys-color-accent-base); display: inline-flex; grid-column: 3; grid-row: 1; }
+.app-shell .elicitation-option.is-selected > kbd { background: var(--av-sys-color-accent-base); border-color: var(--av-sys-color-accent-base); color: var(--av-sys-color-accent-on); }
 .app-shell .elicitation-option:has(input:focus-visible) { outline: 2px solid var(--av-sys-color-text-default); outline-offset: -2px; }
 .app-shell .elicitation-option-copy { grid-column: 2; grid-row: 1; }
 .app-shell .elicitation-option-copy strong { color: var(--av-sys-color-text-default); font-size: 14px; font-weight: 400; line-height: 20px; overflow-wrap: anywhere; }

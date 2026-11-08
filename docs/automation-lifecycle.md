@@ -1930,7 +1930,9 @@ the question in the transcript, draws "● Working" and a waiting row whose
 second line is the question, and reads "On alert", "On email" or "On request"
 in Next. The inspection found a person told a Sidekick needed them with no
 way to see what it asked short of finding the run view, while the natural
-reply, typed in the shared composer, starts a new run; a Sidekick that uses
+reply, typed in the shared composer, starts a new run; the chosen answer was
+a slightly darker grey than the others (round 2, R2-14), and the run view's
+"Run" pill floated mid-header away from its Sidekick's (R2-15); a Sidekick that uses
 nothing could not be told from one whose block was hidden; and the plan's
 section 9 had recorded that "A 'Working' state on the Sidekicks home needs a
 running flag on the directory row". The flag is derived by a probe rather
