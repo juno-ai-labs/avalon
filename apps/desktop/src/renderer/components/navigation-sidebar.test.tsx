@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -261,6 +261,18 @@ describe('the Activity section', () => {
     expect(screen.getByTestId('location')).toHaveTextContent(`/canvases/${CANVAS}`);
     expect(useUiStore.getState().sidebarSection).toBe('activity');
     expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
+  });
+
+  it('marks the rows about what the route has open, not the row last clicked', () => {
+    useUiStore.getState().setSidebarSection('activity');
+    renderSidebar(workspace, `/canvases/${CANVAS}`, page);
+    const rows = within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link');
+    expect(rows.map((row) => row.getAttribute('aria-current'))).toEqual([null, 'page', 'page']);
+    cleanup();
+    // Back to the Sidekick: the highlight moves with the route.
+    renderSidebar(workspace, `/sidekicks/${SIDEKICK}`, page);
+    const back = within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link');
+    expect(back.map((row) => row.getAttribute('aria-current'))).toEqual(['page', null, null]);
   });
 
   it('says how it fills when there is nothing yet, and offers Mark all seen only with something unseen', () => {
