@@ -132,14 +132,17 @@ export function NavigationSidebar({
   // switching sections while one is open does not navigate.
   // Activity is a list of things to go to, so opening one of its rows keeps
   // it open, the next row a click away.
-  // The window's first route is the landing's, and a section home there
-  // (`/canvases`, the default landing) names no row, so the section the person
-  // left open is kept; only a Canvas or a Sidekick the route opens moves it.
-  // Read from the route rather than counted in the effect, which StrictMode
-  // runs twice.
-  const landedOn = useRef(pathname);
+  // The landing is the window's first route that belongs to a section: a
+  // launch starts at "/" and the landing redirects to `/canvases`, which is
+  // where it landed, not a navigation. A section home there names no row, so
+  // the section the person left open is kept; only a Canvas or a Sidekick the
+  // landing opens moves it. Read from the route rather than counted in the
+  // effect, which StrictMode runs twice.
+  const landedOn = useRef<string | null>(null);
   const navigated = useRef(false);
-  if (pathname !== landedOn.current) navigated.current = true;
+  if (landedOn.current === null) {
+    if (sectionForPath(pathname)) landedOn.current = pathname;
+  } else if (pathname !== landedOn.current) navigated.current = true;
   useEffect(() => {
     const opened = sectionForPath(pathname);
     const current = useUiStore.getState().sidebarSection;

@@ -278,6 +278,17 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(document.title).toBe('Lisbon tram routes · Rally'));
   });
 
+  it('leaves the naming state when naming settles without changing the title', async () => {
+    getCanvas.mockResolvedValue(detail({ title: 'Untitled Canvas', titleStatus: 'naming' }));
+    const client = renderCanvas();
+    act(() => { applyVersionedSidebarList(client, 'canvases', 1, [listRow('Untitled Canvas', { titleStatus: 'naming' })]); });
+    await screen.findByRole('button', { name: 'Canvas menu: Rally is choosing a name' });
+    // No model, or an empty answer: the server settles and keeps the title.
+    act(() => { applyVersionedSidebarList(client, 'canvases', 2, [listRow('Untitled Canvas', { titleStatus: 'settled' })]); });
+    expect(await screen.findByRole('button', { name: 'Canvas menu: Untitled Canvas' })).toBeInTheDocument();
+    await waitFor(() => expect(document.title).toBe('Untitled Canvas · Rally'));
+  });
+
   it('names the window after the open Canvas, and gives the name back on leaving', async () => {
     renderCanvas();
     await waitFor(() => expect(document.title).toBe('Q4 revenue review · Rally'));
