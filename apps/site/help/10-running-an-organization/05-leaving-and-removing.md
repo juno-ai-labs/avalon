@@ -82,14 +82,10 @@ What closing does:
 
 ## Removing someone from an Organization
 
-Settings has no button for removing a member today. The buttons on the members
-list change roles (see [Roles](01-roles.md)); taking away administrator rights
-does not remove anyone.
-
-To remove a person, write to [help@rallywith.ai](mailto:help@rallywith.ai),
-naming the Organization and the person. Two rules apply however it is done: an
-administrator cannot remove the owner, and nobody removes themselves (they
-leave instead, as above).
+An owner or administrator removes someone by suspending them: in **Settings →
+Members**, click **…** on their row and choose **Suspend**, as described in
+[Roles](01-roles.md#suspend-someone). Two rules apply: an administrator cannot
+remove the owner, and nobody removes themselves (they leave instead, as above).
 
 For someone who has not joined yet, revoke their invitation instead, as
 described in [Inviting people](02-inviting-people.md).
@@ -121,12 +117,12 @@ with them.
 ## When access to one Canvas ends
 
 Access can also end for a single Canvas, for instance when someone is taken
-out of its participants or it stops being open to the whole Organization (see
+out of its people or it stops being open to the whole Organization (see
 [Who can see what](../02-canvases/08-who-can-see-what.md)).
 
 The open window stops updating and does not try to reconnect. Rally deletes the
-copy of that Canvas it kept on the computer, and shows that the Canvas is
-unavailable, in the same words it uses for a Canvas that was deleted. The same
+copy of that Canvas it kept on the computer, and shows **You don't have access
+to this Canvas**, with **Request access** for a member who wants back in. The same
 happens for a Sidekick that is no longer shared with them. The row leaves their
 sidebar shortly afterwards.
 

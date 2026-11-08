@@ -86,7 +86,7 @@ When access ends:
 
 If a guest becomes a regular collaborator, an Organization owner or
 administrator can make them a full member: in the **Members** list in Settings,
-click **Make member** beside their name and confirm. See
+click **…** on their row, choose **Make member** and confirm. See
 [Roles: owners, administrators, members and guests](../10-running-an-organization/01-roles.md).
 
 Next: [Status dots and badges](10-status-dots-and-badges.md), so you can tell at

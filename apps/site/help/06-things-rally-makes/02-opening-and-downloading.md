@@ -51,38 +51,44 @@ The preview normally lays a see-through, slightly blurred wash over the window b
 
 ## Opening an artifact
 
-Click an artifact's card in the conversation, or in the panel on the right, and it opens with its title in the header and a row of buttons beside it:
+What Rally makes opens in the panel on the right of the Canvas, beside the
+conversation. Opening a Canvas opens its newest artifact there; click any
+artifact's card in the conversation to open that one instead.
 
-- **Open in a righthand sidebar** docks it beside the conversation (below).
-- **Open in a new window** gives it a window of its own (further below).
+At the top of the panel is the artifact's own pill, with its title, its
+version and who made it. Beside it are **Comment mode** (see
+[Comments](../02-canvases/06-comments.md)), **Expand**, which spreads the panel
+over the conversation (click it again to put it back), and **Close panel**.
+
+Click the pill for the artifact's menu:
+
+- **Download**, **Rename**, **Copy link** and, for a site, a way to open it in
+  your browser.
+- **Open in a new window** gives it a window of its own (below).
 - **Versions** shows its history, as described in [Artifacts](01-artifacts.md#versions).
-- **Archive** removes it from the Canvas. See [Resources: things you bring in](04-resources.md#archiving-a-resource) before you click it.
-- **Close resource preview** closes it.
+- **More** holds **Archive**, which removes it from the Canvas. See
+  [Resources: things you bring in](04-resources.md#archiving-a-resource)
+  before you click it.
 
-## Docking an artifact beside the conversation
-
-Sometimes you want to read a document and talk about it at the same time: "the second paragraph is too long", "swap sections three and four". The artifact sidebar keeps one artifact open on the right of the Canvas while you carry on in the conversation. It is where Rally opens what it makes, so most of the time it is already open.
-
-1. Open the artifact.
-2. Click **Open in a righthand sidebar** in its header.
-
-The artifact moves into a panel on the right, with only its title and a **Close sidebar** button above it. Drag the panel's left edge to make it wider or narrower. To close it, click **Close sidebar** or click the dimmed area.
+Drag the panel's left edge to make it wider or narrower. When the window is
+too narrow for both, the panel fills the space and the conversation waits
+behind it.
 
 This is the best way to give notes on a draft. You point at the paragraph, Rally fixes the paragraph, and nobody has to scroll up forty messages to find out which paragraph you meant.
 
 Good to know:
 
-- Rally remembers which artifact you had docked in each Canvas, on this device, and brings it back the next time you open Rally.
-- The button is greyed out for files Rally cannot show, and for sites when the live view of sites is not available to you (see [Live sites](03-live-sites.md)).
-- If you open a web link while an artifact is docked, Rally's built-in browser covers the panel. Close the browser and the artifact is back. The browser itself is covered in [Research and the built-in browser](../04-working-with-rally/02-research-and-the-web.md).
-- The docked sidebar works in the Mac app and in the web browser version.
+- Rally remembers which artifact you had open in each Canvas, on this device, and brings it back the next time you open Rally.
+- To get a closed panel back, click the Canvas's header pill and choose **Open artifact**.
+- If you open a web link while an artifact is open, Rally's built-in browser covers the panel. Close the browser and the artifact is back. The browser itself is covered in [Research and the built-in browser](../04-working-with-rally/02-research-and-the-web.md).
+- The panel works in the Mac app and in the web browser version.
 
 ## Giving an artifact its own window
 
 For a reference document you want in view all day, or a dashboard on a second monitor, pop the artifact out into a window you can move and resize like any other.
 
 1. Open the artifact.
-2. Click **Open in a new window** in its header.
+2. Click its pill and choose **Open in a new window**.
 
 What the window shows:
 

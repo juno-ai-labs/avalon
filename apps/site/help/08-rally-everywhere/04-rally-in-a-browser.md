@@ -75,27 +75,36 @@ return without creating one.
 
 Your sign-in works across all your tabs and renews itself while you use Rally.
 If you leave it alone for a long time you will be asked to sign in again.
-**Sign out** is on the first page and in the account menu, and signing out in
+**Sign out** is on the first page and **Log out** in the account menu, and signing out in
 one tab signs you out in every other tab too, which is what you want on a
 shared computer. [Signing in, signing out and Lockdown
 mode](../11-privacy-and-security/01-signing-in-and-out.md) has the details.
 
 ## Finding your way around
 
-If you have used the Mac app, the layout will look familiar: **Canvases** and
-**Sidekicks** down the left edge, with your account menu and **Settings** at
-the bottom, the list beside them, and the open Canvas or Sidekick filling the
-rest. [A tour of the window](../01-getting-started/04-a-tour-of-the-window.md)
-walks through it. On a phone, the sections sit behind a menu button instead.
+If you have used the Mac app, the layout will look familiar: **Canvases**,
+**Sidekicks** and **Activity** down the left edge, with your avatar
+(**Settings**) at the bottom, the list beside them, and the open Canvas or
+Sidekick filling the rest. [A tour of the window](../01-getting-started/04-a-tour-of-the-window.md)
+walks through it. On a phone, the sections sit behind an **Open navigation**
+button instead, and the open Canvas takes the whole screen.
 
 - **Canvases** lists the Canvases you can open. A guest with one shared Canvas
   sees little more than that Canvas, which is the point.
 - **Sidekicks** lists the Sidekicks shared with you. Guests have none.
-- The account menu has **Switch organization** and **Sign out**.
-- On a computer, a **Download the Mac app** button sits above the account menu. The Mac app is for Macs with Apple silicon. Phones and tablets do not show it.
+- **Activity** lists what happened to you, as in the Mac app; see
+  [Activity and notifications](03-notifications.md).
+- The account menu under your avatar has the same items as on the Mac,
+  including **Settings** and **Log out**.
+- On a computer, a **Download the Mac app** button sits at the foot of the
+  sidebar. The Mac app is for Macs with Apple silicon. Phones and tablets do
+  not show it.
 
-The browser version needs a reasonably wide window on a computer. If it is too
-narrow, Rally asks you to **Make this window wider**.
+To get notifications in the browser, turn on **Show notifications** under
+**Settings → Notifications → In this browser**. On an iPhone or iPad, add Rally
+to your Home Screen first (Share, then **Add to Home Screen**), open it from
+there, and turn the switch on there. Appearance, which the Mac keeps under
+**Application**, is under **Account** in the browser.
 
 Drafts you are typing survive switching to another tab and back.
 
@@ -117,15 +126,12 @@ applies, with a few exceptions:
 
 ## Sharing from the browser
 
-To bring someone else into a Canvas, click **Share** at the top right and add
-them by name, or use **Share by email** for someone outside your Organization.
-Each person you invite by email gets an invitation like the one you received.
-
-- People who have not signed in yet are listed under the form as **Guest**, and
-  you can remove them there. Someone who already uses Rally with that address
-  joins straight away and appears among the participants instead.
-- Whether you may share at all depends on your role in the Organization; see
-  [Who can see what](../02-canvases/08-who-can-see-what.md).
+To bring someone else into a Canvas, click **Share** at the top right, as on
+the Mac: choose **Specific people** and tick them, or open **Invite a guest by
+email** for someone outside your Organization, then click **Save**. Each person
+you invite by email gets an invitation like the one you received. Whether you
+may change the sharing at all depends on your role; see
+[Who can see what](../02-canvases/08-who-can-see-what.md).
 
 Next, back at the Mac: [Settings, shortcuts and making Rally
 yours](../09-settings-and-shortcuts/index.md).
