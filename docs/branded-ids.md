@@ -59,6 +59,8 @@ between them. Fan-in plumbing helpers with broad mixed-provenance call sets
 — a deliberate compromise recorded here so a later pass can push the brands
 through their callers.
 
+## Changelog
+
 ### 2026-08-29 — Transcript turn identity is explicitly opaque
 
 **What changed:** `TranscriptTurnIdSchema` is the shared contract for canonical
@@ -141,7 +143,7 @@ API; test fixtures migrated to real UUIDs because the casts validate.
 **Why:** The 2026-08-20 incident chain was id-confusion shaped: statements
 routed by the wrong authority, coordinates crossing layers as bare strings.
 During this very refactor the type checker caught a workspace id being cast
-as a conversation id in a test fixture — the mistake class, made by the tool
+as a work-stream id in a test fixture — the mistake class, made by the tool
 performing the migration, caught by the migration.
 
 **Considered and rejected:** Branding every id-like schema field in one pass —

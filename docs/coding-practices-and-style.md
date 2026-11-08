@@ -140,7 +140,7 @@ common conversions of diagnostic errors into copy in their production modules.
 
 **Why:** A router 404 sentence reached the Sidekicks rail as if it were Rally
 copy. The same exception-to-string pattern existed in adjacent navigation,
-project, conversation action, picker, and resource surfaces.
+project, work-stream action, picker, and resource surfaces.
 
 **Considered and rejected:** Filtering known server strings would preserve an
 unsafe default for the next unknown response. A repository-wide ban would also

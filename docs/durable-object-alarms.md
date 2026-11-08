@@ -47,7 +47,7 @@ selection and the event cutoffs that unchanged rows preserve.
 | `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, the opportunity/ranking product pass, and the three Space phases. Owns `refreshSchedule`. |
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a conversation's agent: `agent_timer` entries index `workstream_wakeups`, and `merge_suggestion` entries retain an incoming merged result through classification and drafting. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Adopts it for a conversation's agent: `agent_timer` entries index `workstream_wakeups`; the retired `merge_suggestion` kind is named only so a leftover entry can be recognised. Execution, external settlement, projection, realtime, and keep-alive deadlines remain derived from their owning rows or lease. |
 | `apps/api/src/durable-objects/hosted-sidekick.ts` | A hosted Sidekick's entries in `WorkspaceDO`'s store, each keyed `<sidekickId>:<key>`: `automation_schedule`, `automation_run`, `sidekick_review` (one per Sidekick, armed by run finishes; [`automation-lifecycle.md`](automation-lifecycle.md#scheduled-self-review)), `sidekick_run_row` (`<sidekickId>:<runId>`, armed by migration 135's triggers on `sidekick_runs`, handled by `projectRunRow`), `sidekick_memory_tables`, and the delegation kinds. |
 
 ### Two kinds of wake reason
@@ -311,7 +311,7 @@ other entries.
   uses the base with an explicit candidate override described under *Firing*:
   the execution and external-settlement lanes are derived reasons whose worker
   is this alarm. Two kinds
-  of call site still arm directly, and both are deliberate. A `AgentLoopDO`
+  of call site still arm directly, and both are deliberate. An `AgentLoopDO`
   arms immediately after committing a pending loop input, an unlinked execution
   receipt, or the mailbox reservation that precedes a prepared input, and
   `WorkstreamObjectStore.enqueueRegionalEffect` does the same after committing
@@ -596,7 +596,7 @@ not join on workspace ids or alarm keys within these phase rows: neither is
 emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
-A `AgentLoopDO`'s `substream_scheduled_alarm_failed` and `_stalled` rows
+An `AgentLoopDO`'s `substream_scheduled_alarm_failed` and `_stalled` rows
 name the conversation in `substream_id` beside `workstream_id`.
 `substream_alarm_idle_held` and `workspace_alarm_idle_held` name the object
 and the instant it was held to; they cannot name the lane, so read each

@@ -6,11 +6,17 @@ AI Foundry. DeepSeek, Grok, and Kimi remain configured but disabled for all
 triggers. It is an Azure-only extraction of Monad's proven reviewer workflow: OpenCode and
 OpenRouter-backed jobs are intentionally absent.
 
+**The workflow is not running.** It is checked in as
+`.github/workflows/azure-ai-reviewers.yml.disabled`, a name GitHub Actions does
+not load, so no pull request is reviewed by it; the reason it was switched off
+was not recorded. Everything below describes the workflow as it runs once the
+file is renamed back to `azure-ai-reviewers.yml`.
+
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `.github/workflows/azure-ai-reviewers.yml` | Triggers reviews, configures the five Azure models, isolates a PR checkout below Cline's workspace root, runs the Monad Cline harness, and posts each fixed-path review. |
+| `.github/workflows/azure-ai-reviewers.yml.disabled` | Triggers reviews, configures the five Azure models, isolates a PR checkout below Cline's workspace root, runs the Monad Cline harness, and posts each fixed-path review. |
 
 ## How it works
 
@@ -154,6 +160,8 @@ Foundry route does not accept.
 
 Use the Actions run for checkout, installation, endpoint-validation, provider,
 and model errors.
+
+## Changelog
 
 ### 2026-09-08 — Disable three reviewers and adjust Sol's and Terra's budgets
 
