@@ -35,9 +35,9 @@ are in
 Each call site emits next to where its cost is already known; searching for
 `emitInferenceUsage` lists them. The turn-disposition classifier's JEV calls
 are recorded as `turn_disposition_classifier` through the classifier
-diagnostic sink, and the words a suggestion carries as `suggestion_draft`
-through `runStructuredInference`; both are the Organization's, like the other
-classifier and structured activities. Two rules keep new callers metered:
+diagnostic sink, and are the Organization's, like the other classifier and
+structured activities. `suggestion_draft` stays in the activity enum for rows
+written before conversation suggestions were deleted; nothing produces it now. Two rules keep new callers metered:
 `runStructuredInference` requires an `activity`, and an agent attempt whose
 turn ID carries `:compaction:` is metered as `context_compaction`.
 
