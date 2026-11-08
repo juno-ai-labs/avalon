@@ -334,7 +334,7 @@ Three consequences follow, and each is load-bearing:
 
 Recovery is part of the contract too. A durable job that failed on authorization may be classified non-retryable — that is correct while a grant is dead — but something has to lift the ceiling once the connection is reauthorized, or the outage becomes permanent for every request that arrived during it. `redriveReauthorizedIngress` is the Slack example: a job whose connection has been written since the job last failed is re-queued, which is self-limiting because a job that fails again stamps itself newer than the connection.
 
-### Actor identity and work-stream attribution
+### Actor identity and message attribution
 
 The resolver preserves guest identity for attribution, using the role returned by
 its existing regional membership query, and a guest match is never admitted to a
@@ -419,9 +419,9 @@ Two things every connector owes a run, both settled on the descriptor rather tha
 
 ### Agent activation acknowledgement
 
-Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adapter may implement `activationAcknowledgement(invocation)` to produce a fixed provider command; `acknowledgeConnectorAgentActivation` executes that command through the adapter after durable admission and authorization, but before context gathering, model calls, or tools. This is host control-plane behavior and is never left to model output. A retry must converge on the same provider state.
+Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adapter may implement `activationAcknowledgement(invocation)` to produce a fixed provider command; `acknowledgeConnectorAgentActivation` executes that command through the adapter after durable admission and authorization, before the admitted input reaches a model call or tool. This is host control-plane behavior and is never left to model output. A retry must converge on the same provider state.
 
-The hook is deliberately optional. Slack uses an `eyes` reaction on the exact triggering message and treats Slack's `already_reacted` result as success. Its operational host logs provider-side reaction failures and continues the admitted request so a supplemental acknowledgement cannot discard user work. Linear uses a `👀` reaction only when the current activation includes a source comment. A future message-oriented Teams, Discord, or GitHub agent can opt in when it has an unambiguous source object and a lightweight reaction API. Email, file, calendar, database, and ordinary resource-webhook connectors should not acknowledge activation: they have no conversational source message, and manufacturing a reply or mutation would be noisy or misleading.
+The hook is deliberately optional. Slack builds the same two steps itself (it needs the installation's configured reaction set), placing an `eyes` reaction on a reply admitted into a Sidekick run's bound thread, and treats Slack's `already_reacted` result as success. Its operational host logs provider-side reaction failures and continues the admitted request so a supplemental acknowledgement cannot discard user work. Linear uses a `👀` reaction only when the current activation includes a source comment. A future message-oriented Teams, Discord, or GitHub agent can opt in when it has an unambiguous source object and a lightweight reaction API. Email, file, calendar, database, and ordinary resource-webhook connectors should not acknowledge activation: they have no conversational source message, and manufacturing a reply or mutation would be noisy or misleading.
 
 ### External result delivery
 
@@ -1125,8 +1125,8 @@ catalog, in
 #### Declaring what a digest may read
 
 **Nothing reads this declaration today.** The digest it was written for is
-retired, Activity carries no connector events, and no activity log row is
-written with the answer any more. The declaration is still required — the
+retired, and no connector event writes an Activity row or records the answer
+any more. The declaration is still required — the
 registry refuses a manifest without it, and `digestibility-doc.test.ts` keeps
 [`connector-digestibility.md`](connector-digestibility.md) in step — kept for a
 future surface that tells somebody about connector activity; the rules below
@@ -1594,7 +1594,7 @@ discarded pending cards and feedback and kept accepted relationships as ordinary
 attachments, with the source audience surviving as an immutable content fence
 (conversation migration 35 dropped `suggested_actions`); old suggestion event
 names stayed parse-only for rolling deploys. What survives in storage:
-`activity_suggestions` in WorkspaceDO's historical migrations, the
+`activity_suggestions` in regional D1 (`packages/db/migrations` 0001, 0014 and 0079), the
 `suggested_activity` relationship the desktop still normalizes to `attachment`
 (`apps/desktop/src/renderer/lib/api.ts`), and the `suggestion` message type the
 projection still filters. The lesson cited elsewhere

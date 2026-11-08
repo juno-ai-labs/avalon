@@ -1,24 +1,21 @@
 # Agent attachments
 
-The agent-attachment subsystem turns a file related to a work stream or an
-automation draft into model-visible data without making a filename, resource ID,
+The agent-attachment subsystem turns a file related to a conversation (a
+Canvas's Chat, a Sidekick's conversation or run) into model-visible data without making a filename, resource ID,
 cursor, or extracted byte an authorization grant. It owns the vocabulary and
 limits used at the model boundary; the original resource relationships remain
 the source of truth for display, scope, retention, and deletion.
 
-Shared contracts, lifecycle, derivatives, authorized work-stream and automation
+Shared contracts, lifecycle, derivatives, authorized conversation resource
 tools, and durable message manifests now form the runtime attachment boundary.
 Non-image bytes never enter transcript projection. A triggering image may be
 visible immediately, but its durable manifest and derivative are still the
 source of truth for retry, replay, and compaction recovery.
 
-Imported user attachments and assistant artifact files use the verified upload
-pipeline and per-turn canonical attachment relationships. Import retry reconciliation
-checks operation identity, bytes and the intended descriptor. Prepared conversation
-receipts own reservations separately from live input mailboxes; definite failures
-release holds, while canonical resource projection releases committed holds. Both
-historical roles retain model manifests. Unavailable originals remain references,
-and extracted text is labeled separately. See [the session import retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
+User attachments and assistant artifact files use the verified upload pipeline
+and per-turn canonical attachment relationships. The prepared-conversation
+import that also wrote them, with its own reservations and retry
+reconciliation, is retired; see [the session import retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
 
 ## Where the code lives
 
@@ -42,13 +39,13 @@ and extracted text is labeled separately. See [the session import retirement rec
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
 | `apps/api/src/services/attachment-model-content.ts` | Renders manifest-only non-image projection and bounded same-ID current-turn image derivatives; `normalizeModelImageBytes` applies the same format, pixel, edge and byte limits to bytes that are not a resource, for Terminal's `view_image`. |
 | `apps/api/src/services/attachment-tool-receipts.ts` | Atomically binds completed attachment results to current derivative hashes and revalidates replay dependencies. |
-| `apps/api/src/services/integrations.ts` | Current message projection, work-stream resource-tool registration, and authorization-aware receipt replay. |
+| `apps/api/src/services/integrations.ts` | Current message projection, conversation resource-tool registration, and authorization-aware receipt replay. |
 | `apps/api/src/durable-objects/agent-loop-do.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Hydrates attachment descriptors from durable participant-turn parts into ordered transcript snapshots. |
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects, and serves authorized person-facing previews from the original image/text or the reusable document derivative. |
 | `packages/contracts/src/workstream-transcript.ts` | Defines the attachment descriptor carried by a participant transcript text block. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | Maps canonical transcript descriptors back into the existing attachment-tile view model. |
-| `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, tenant-scoped receipts/object cleanup, principal-scoped checkpoints, and the monotonic work-stream inventory revision. |
+| `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, tenant-scoped receipts/object cleanup, principal-scoped checkpoints, and the monotonic conversation inventory revision. |
 | `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
 
 ### Member search projection
@@ -65,8 +62,8 @@ a list request; it never supplies or guesses a MIME filter.
 
 The same registry renders the complete model-facing explanation and the Zod
 enum. Strict schemas cover list, read, search, view, and summarize arguments and
-their exact success results. Every conversation, a work stream's and an
-automation's alike, exposes all five operations; the compiler-only variant
+their exact success results. Every conversation, a Canvas's and a Sidekick's
+alike, exposes all five operations; the compiler-only variant
 that received four is gone with the compiler.
 JSON Schema guides the provider, while the executor must parse the same strict
 Zod schema because the harness does not enforce provider-facing JSON Schema.
@@ -145,14 +142,14 @@ freezes the workspace/user-owned draft descriptors and writes
 those rows. Product records the cross-object recovery obligation before the RPC,
 so an ambiguous response is replayed rather than guessed. A failed or genuinely
 discarded preparation releases the reservation idempotently. A delivered input
-deletes its local mailbox and recovery obligation in the same SubstreamAgent
+deletes its local mailbox and recovery obligation in the same AgentLoopDO
 transaction that queues canonical projection; a direct canonical message has no
 pending recovery row. Neither path releases the workspace hold early: its
 durable common effect names the exact
 input/resource reservation, and WorkspaceDO releases only that hold in the same
 transaction that marks the upload `attached`. The Queue consumer delivers this
-publication after parent admission for every conversation, including private
-children, whose common projection the Channel's parent keeps in
+publication after parent admission for every conversation, including a
+Sidekick's run children, whose common projection the parent keeps in
 `parent_child_projections`. Publication
 checks the exact workspace, parent, input and resource reservation and its
 canonical link in the effect. Queue acknowledgement follows publication; a
@@ -160,10 +157,10 @@ replay after response loss leaves the already published resource unchanged.
 Main directory projection remains compatible with older queued effects.
 Historical resource versions and R2 references are retained throughout.
 
-### Authorized work-stream discovery and text hydration
+### Authorized conversation discovery and text hydration
 
 The right sidebar and attachment tools compose one visibility SQL boundary. It
-binds the work stream to its workspace and applies current note scope, ownership,
+binds the conversation to its workspace and applies current note scope, ownership,
 and archive state for the execution principal. The sidebar loads its displayed
 set, while model tools use bounded point, batch, aggregate, and keyset-page
 queries. A workspace principal never inherits a user's private-note view.
@@ -181,8 +178,7 @@ Main links; that arm went with Threads.)
 Its wizard, activations and background agents share this default. Each read
 uses the execution user's current conversation admission through
 `conversationToolScope`; private siblings and unrelated conversations are
-excluded. A Breakout home or attachment includes its Thread's Main resources,
-following the same rule as an ordinary Breakout. Activations and workers also
+excluded. Activations and workers also
 see the Sidekick wizard's own attachments. Resources are resolved live, not
 copied to each run: later attachments appear, and detaching a conversation,
 archiving it or losing access removes its inherited resources on subsequent
@@ -205,8 +201,8 @@ explicit and preserves shared context. Forwarding still requires an actual
 attachment in the sender's own or inherited scope; direct read permission does
 not widen that sharing gate. Terminal import and subsequent
 revocation checks use the same resolution, and artifact data tools resolve a
-supplied ID or alias before applying it. Ordinary Thread and Breakout agents
-retain their existing attachment scope.
+supplied ID or alias before applying it. A Canvas's agents keep their own
+attachment scope.
 
 Own links take precedence over inherited links. Every model-facing reader
 uses this composition: resource list/read/search/view/summary, Terminal import
@@ -215,13 +211,14 @@ replay. The sidebar continues to show its conversation's own attachments.
 
 `list_resources` returns 25 rows by default and at most 50, optionally
 filtered by one of the eight natural-language kinds. Continuations bind the
-principal, work stream, filters, size, ordering key, and an inventory
-fingerprint: `inventory:<revision>` for a Channel, `inventory:<own>/<channel>`
-for a Breakout. A Sidekick appends a SHA-256 digest of its admitted source
-conversation addresses and inventory fingerprints, keeping the cursor bounded
+principal, conversation, filters, size, ordering key, and an inventory
+fingerprint, `inventory:<revision>` (`inventoryFingerprint` in
+`workstream-resource-visibility.ts`). A conversation that inherits links — a
+Sidekick's — appends a SHA-256 digest of its admitted source conversation
+addresses and inventory fingerprints, `inventory:<revision>/<digest>`, keeping the cursor bounded
 while a scope change still invalidates it even when the old and new sources
 have equal revision numbers. Each revision is
-monotonic. SubstreamAgent advances that revision for relationship, message-
+monotonic. AgentLoopDO advances that revision for relationship, message-
 attachment, classification/content identity, and note-visibility mutations, but
 not hydration timestamps or derivative processing bookkeeping. A continuation
 compares it before and after its bounded queries, so a relevant change
@@ -261,10 +258,10 @@ The stored checkpoint contains the raw LLM summary plus the execution-principal
 key and authorized resource-inventory revision captured by an O(1) read before
 summarization. Rally runs the grouped inventory query once when rendering the
 appendix, verifies the revision there, and includes it in the conditional
-SubstreamAgent SQL statement that persists the checkpoint; for a Breakout that
-statement can fence only the Breakout's own revision (`ownInventoryRevision`),
-and a Channel change after it lands is caught by the fingerprint comparison on
-the next replay instead. Replay uses
+AgentLoopDO SQL statement that persists the checkpoint; for a conversation
+that inherits links that statement can fence only its own revision
+(`ownInventoryRevision`), and a change in a source after it lands is caught by
+the fingerprint comparison on the next replay instead. Replay uses
 the summary only for an exact scope match; attachment, detachment, deletion,
 revocation, private-note visibility, or principal changes invalidate it and fall
 back to durable transcript replay. Relevant resource IDs and consulted
@@ -274,9 +271,9 @@ the aggregate supplements that working set rather than replacing it.
 ### Automation-draft hydration
 
 There is no separate hydration path for an automation any more. An automation
-is drafted in a conversation of its own, a `SubstreamAgent` under its
+is drafted in a conversation of its own, an `AgentLoopDO` under its
 Sidekick, and attachments there are ordinary conversation attachments
-admitted, frozen, and read exactly as in a work stream. The compiler request
+admitted, frozen, and read exactly as in a Canvas's Chat. The compiler request
 that once carried up to ten draft uploads under `automation_*` wire names is
 gone with the compiler ([`automation-lifecycle.md`](automation-lifecycle.md)).
 
@@ -294,7 +291,7 @@ before the draft write; the adapter cannot resolve arbitrary URLs.
 
 The Terminal plugin reuses the same authorized resource and lifecycle boundary
 without projecting original bytes into the model. `import_resource`
-resolves one resource through current work-stream/principal visibility, streams
+resolves one resource through current conversation/principal visibility, streams
 its regional R2 original through the Worker, verifies its stored hash, and writes
 it into the current authority-fenced sandbox generation. Daytona receives no R2
 credential or signed URL. An omitted destination is deterministic beneath
@@ -304,7 +301,7 @@ states `overwrite: true`.
 `publish_resource` reads one stable nonempty regular file from the
 host-provided output directory, classifies it with the attachment MIME/kind
 registry, pre-registers the regional object in the cleanup outbox, writes R2,
-then creates and attaches a normal generated `resources` row. The work stream
+then creates and attaches a normal generated `resources` row. The conversation
 and the normalized published path derive `provider_resource_id`, so publishing
 that path again updates the document rather than duplicating it; a settled
 call's replay returns the same resource by content hash, and one recorded under
@@ -313,7 +310,7 @@ inventory revision, derivative, replay-dependency, and cleanup rules. Command
 logs and expiry diffs use the same generated-resource shape. The sandbox bridge
 itself is documented in [`terminal-workspaces.md`](terminal-workspaces.md).
 Generated Terminal publications attach with relationship `generated`, so the
-work-stream contract exposes them as `direction: artifact`. A subsequent
+conversation contract exposes them as `direction: artifact`. A subsequent
 semantic update to an existing resource advances its WorkspaceDO version rather
 than replacing the only readable state, attributed to the run that published it.
 
@@ -375,7 +372,7 @@ is a failure rather than empty success.
 
 Every uncached attempt emits one content-free
 `attachment_derivative_phase_finished` event for `source_read`, `claim`,
-`convert`, and `publish`, correlated by workspace, work stream, harness run,
+`convert`, and `publish`, correlated by workspace, conversation, harness run,
 tool call, and resource. Operators can therefore locate a slow retry phase
 without logging the filename or extracted bytes.
 
@@ -399,8 +396,8 @@ character envelope.
 
 - **Build every link reader with `createConversationResourceLinks`** (or
   `conversationResourceLinksFrom` over an injected factory), never a bare
-  resource port, or it will disagree with the rest about what a Breakout can
-  reach.
+  resource port, or it will disagree with the rest about what a Sidekick's
+  conversation can reach through the Canvases it inherits.
 
 - **`ResourceService.list`'s `resourceTypes` distinguishes absent from empty.**
   Omitted means every type, which is what the product's own listing wants; `[]`
@@ -426,7 +423,7 @@ character envelope.
   transcript, so a converter or provider cannot smuggle a response body,
   credential, or attachment instruction through an error.
 - Runtime eager projection is removed only after replacement tools exist on both
-  work-stream and automation-draft surfaces, so an intermediate deployment
+  Canvas and Sidekick conversation surfaces, so an intermediate deployment
   cannot strand a file behind a manifest the model cannot hydrate.
 - Relationship detachment removes that discovery and access path but does not
   delete shared objects. A Sidekick's direct ID read may still use an independent
@@ -499,7 +496,7 @@ character envelope.
 This module owns model-facing attachment identity, classification, derivative
 selection, hydration contracts, continuation, recovery, and compaction
 rediscovery. It depends on WorkspaceDO `resources`/notes/R2 lifecycle state,
-SubstreamAgent work-stream links/part attachments/inventory revision, the
+AgentLoopDO conversation links/part attachments/inventory revision, the
 regional R2 binding, and the harness tool loop. Cross-object reads are separate
 and version-fenced; no SQL join spans the two object databases.
 
@@ -563,12 +560,12 @@ edge or byte limit changes what that tool accepts too.
 
 ## Testing
 
-- `apps/api/test-workers/conversation-tools.test.ts` ("a Breakout's access to
-  its Channel") proves on real objects that a Breakout's links include its
-  Channel Main's, that a point lookup finds one, that the fingerprint moves when
-  the Channel attaches, and that a Channel inherits nothing from a Breakout.
-  `apps/api/test/resource-listing-visibility.test.ts` covers the Breakout's own
-  link winning a duplicate and `ownInventoryRevision`.
+- `apps/api/test-workers/conversation-tools.test.ts` (its `describe` still
+  named "a Breakout's access to its Channel") exercises the conversation tools
+  on real objects: what a Sidekick lists, attaches and posts across the Canvases
+  it reaches, and an imported site retained until access is lost.
+  `apps/api/test/resource-listing-visibility.test.ts` covers Sidekick-run and
+  worker inheritance and `ownInventoryRevision` reading either fingerprint.
 - `packages/contracts/src/attachment-contracts.test.ts` locks kind order,
   description coverage, MIME precedence, strict arguments, and exact outputs.
 - `packages/contracts/src/index.test.ts` locks structured-failure allowlisting
@@ -678,7 +675,7 @@ connector author's connection `display_name`, each read once per history and
 only when the history names that kind; null for an agent or system author, which
 the surfaces call Rally, and for an identity that no longer resolves.
 
-Each resource also carries a `slug`: a short alias minted by the work-stream
+Each resource also carries a `slug`: a short alias minted by the conversation
 address generator over the resource's own coordinates, unique per workspace
 under a partial index, with a regenerate-on-conflict allocator. It appears in
 model-facing listings beside the UUID, which remains the primary key in every
@@ -689,13 +686,13 @@ pass reads.
 
 WorkspaceDO `resource_object_deletion_outbox` owns failed, superseded, and deleted regional
 objects until bounded cleanup succeeds.
-SubstreamAgent `attachment_tool_receipts` maps completed read, search, view, and summary
+AgentLoopDO `attachment_tool_receipts` maps completed read, search, view, and summary
 receipts to the exact derivative hashes they used. A replacement or deletion
 invalidates the complete invocation and queues its JSON replay object. Receipt
 registration itself is conditional on those hashes still being current, and
 replay additionally rechecks current principal visibility; the map stores no
 excerpts, prompts, image parts, or data URIs.
-SubstreamAgent part attachments and work-stream resource links remain
+AgentLoopDO part attachments and conversation resource links remain
 relationship and visibility authorities; WorkspaceDO note scope and resource
 metadata are rechecked separately. [`data-model.md`](data-model.md) and migrations are
 authoritative.
@@ -705,7 +702,7 @@ authoritative.
 Contracts, lifecycle, and conversion execute identically in configured deployments. Cursor
 signing happens inside the Worker that handles the owning regional run. Existing
 originals and model derivatives remain in that region's R2 bucket;
-WorkspaceDO owns lifecycle/outbox rows and SubstreamAgent owns work-stream
+WorkspaceDO owns lifecycle/outbox rows and AgentLoopDO owns conversation
 relationships. Scheduled cleanup
 uses the same regional R2 binding. No new Global-plane storage or bridge payload
 is introduced by this phase.
@@ -727,7 +724,7 @@ resource bytes.
 The alias allocator derives its key the same way and for the same reason: a
 fixed `resource-slug:` prefix over the shared session secret, hashed once per
 call rather than per candidate. The separation is what keeps a resource's alias
-independent of the work-stream email address the same generator would mint from
+independent of the conversation email address the same generator would mint from
 the same coordinates — neither reveals the other. It is not secrecy for the
 alias itself, which is shown to participants and handed to the model by design;
 an alias is a label, and nothing resolves a resource by one.
@@ -993,13 +990,10 @@ not broader directory visibility.
 
 ### 2026-09-15 — Share prepared conversation file ownership
 
-Imported user attachments and assistant artifact files use the verified upload
-pipeline and per-turn canonical attachment relationships. Import retry reconciliation
-checks operation identity, bytes and the intended descriptor. Prepared conversation
-receipts own reservations separately from live input mailboxes; definite failures
-release holds, while canonical resource projection releases committed holds. Both
-historical roles retain model manifests. Unavailable originals remain references,
-and extracted text is labeled separately. See [the session import retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
+User attachments and assistant artifact files use the verified upload pipeline
+and per-turn canonical attachment relationships. The prepared-conversation
+import that also wrote them, with its own reservations and retry
+reconciliation, is retired; see [the session import retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
 
 The separate durable preparation owner prevents file holds from depending on a
 live-message mailbox that imported history never creates. Fake pending messages
@@ -1110,7 +1104,7 @@ removes as dead weight.
 
 **What changed:** The `automation_*` attachment tools, the frozen ten-resource
 manifest, and the four-operation variant the preloaded automation architect
-received are removed. An automation's conversation is a `SubstreamAgent` and
+received are removed. An automation's conversation is a `AgentLoopDO` and
 takes the work-stream attachment path unchanged.
 
 **Why:** The automation was rebuilt as a conversation parent and the standalone
@@ -1568,7 +1562,7 @@ correlation.
 
 **What changed:** WorkspaceDO now owns resource/note metadata, current original
 and derivative refs, watches, automation relationships, and R2 deletion
-outboxes. SubstreamAgent owns the work-stream link, part attachment, inventory
+outboxes. AgentLoopDO owns the work-stream link, part attachment, inventory
 revision, tool receipt, and compaction fence. Terminal and attachment services
 perform separate reads across that boundary.
 
@@ -1577,7 +1571,7 @@ one conversation is a child relationship. D1 and a cross-table join represented
 neither authority correctly.
 
 **Considered and rejected:** Copying resource metadata into each child, leaving
-a D1 projection, or joining WorkspaceDO and SubstreamAgent through the SQL
+a D1 projection, or joining WorkspaceDO and AgentLoopDO through the SQL
 compatibility port. Those approaches create stale copies or imply atomicity the
 platform cannot provide.
 

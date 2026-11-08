@@ -98,7 +98,7 @@ new browser requests through the destroyed realm.
   RPC binding is its browser access. Guard: real Electron smoke verification;
   no automated security isolation guard.
 - Native RPC parses the closed request union and pins every operation to the
-  owner's tab. It refuses recursive script actions. Guard:
+  owner's tab. It refuses any action that is not a `browser.` command, script and reset included, so a script cannot recurse. Guard:
   `browser-script-driver.test.ts`; bootstrap tests reject other tab references.
 - The runtime documentation describes the implemented subset. Changing model
   families does not change this contract. Guard: bootstrap mapping tests and
