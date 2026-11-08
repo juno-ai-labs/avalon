@@ -50,6 +50,15 @@ const KIND_SETTINGS: Record<OfferedNotificationKind, SettingDefinition> = {
   accessRequests: settings.notifyAccessRequests,
 };
 
+/** Product nouns keep their capital mid-sentence ("Sidekick runs", "pinned Canvas updates"). */
+const PRODUCT_NOUNS = new Set(['Canvas', 'Canvases', 'Sidekick', 'Sidekicks', 'Rally']);
+
+/** A setting's label as the rest of a sentence: its first word lower-cased unless it is a product noun. */
+function midSentence(label: string): string {
+  const [first = ''] = label.split(' ');
+  return PRODUCT_NOUNS.has(first) ? label : label.charAt(0).toLowerCase() + label.slice(1);
+}
+
 /**
  * Settings → Notifications → Notify me about: how each kind of Activity
  * reaches this person, on every device. Push and email always; every
@@ -108,7 +117,7 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
           <div className="settings-preference-row" key={kind}>
             <SettingCopy setting={setting} />
             <ChannelPicker
-              label={`How to tell you about ${setting.label.toLowerCase()}`}
+              label={`How to tell you about ${midSentence(setting.label)}`}
               none="Off"
               onToggle={(channel) => toggle(kind, channel)}
               options={options}
