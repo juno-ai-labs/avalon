@@ -52,7 +52,7 @@ handoff page or the Slack unfurl card.
 | --- | --- | --- |
 | **Canvas** | `/app/<region>/<organization-base58>/cv/<canvas-base58>/` | The Canvas title menu's **Copy link**, a share invitation email, a notification about a Canvas's Chat |
 | **Canvas onto an artifact** | Canvas link plus `a/<artifact-base58>/` | A detached artifact window's **Copy link**; a pinned artifact's push |
-| **Sidekick** | `/app/<region>/<organization-base58>/sk/<sidekick-base58>/` | The Sidekick header's **Copy link**, a notification about a Sidekick's conversation or one of its runs |
+| **Sidekick** | `/app/<region>/<organization-base58>/sk/<sidekick-base58>/` | The Sidekick header's **Copy link**, a notification about a Sidekick's conversation or one of its runs, a Slack App Home row |
 | **Deep link** | `rallywithai://workspace/<region>/<organization-base58>/canvases/<canvas-base58>` (plus `/artifacts/<artifact-base58>`), or `.../sidekicks/<sidekick-base58>` | The handoff page's last hop, the desktop's own navigation |
 | **Retired** | `/app/<region>/<organization>/s/...` (Space, Channel, Breakout, artifact), `/app/<region>/<organization>/i/...` (import), `/app/workspaces/<region>/<organization>/workstreams/...` (addressed Channel), `/app/workstreams/<id>` (ID-only) | Nothing; `isRetiredLinkPath` recognizes the shape. The web app's own Organization shell, `/app/workspaces/<region>/<organization>`, is not retired |
 
