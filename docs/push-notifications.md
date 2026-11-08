@@ -363,7 +363,7 @@ macOS click (`httpsLinkDeepLink`) included. A Canvas link (`/cv/<id>/`) opens
 the Canvas, which is where a reply, an access request (its Share panel lists
 the request) and a grant land; a pinned Canvas's new version links with
 `/a/<id>/` and opens the Canvas onto that artifact (`?artifact=` in the
-browser's hash route). A reply's push opens the Chat at its newest message
+hash route, on either host). A reply's push opens the Chat at its newest message
 rather than at the reply itself, because the canonical link carries no turn.
 The tab is the first of:
 

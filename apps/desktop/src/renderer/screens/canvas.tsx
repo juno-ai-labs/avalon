@@ -103,8 +103,8 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     void navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
   }, [canvas.data, location.pathname, location.search, navigate, shareRequested]);
   // A link that opens the Canvas onto one artifact arrives here as
-  // `?artifact=` (the browser host's form of the link's `/a/` segment); it
-  // becomes the route state the rail opens from, as a desktop deep link's does.
+  // `?artifact=` on both hosts (`canvasArtifactRoute`, the form of the link's
+  // `/a/` segment); it becomes the route state the rail opens from.
   const linkedArtifact = new URLSearchParams(location.search).get('artifact');
   useEffect(() => {
     if (linkedArtifact) void navigate(location.pathname, { replace: true, state: openResourceState(id, linkedArtifact) });
