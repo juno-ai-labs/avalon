@@ -170,7 +170,9 @@ posts `packages/db/seed-product.json` to each Worker's development seed route
 (`POST /dev/seed-product`), which makes the seed's two Canvases — **Q4 revenue
 review**, shared with Samantha, and **Launch plan**, open to the Organization —
 through `createCanvas`, restores their Chats' turns from the fixture, notes the
-fixture resource as Launch plan's artifact, and publishes the **Weekly
+fixture resource as Launch plan's artifact (its body, the fixture's `payloads`
+entry, stored in R2 where the resource's `content_ref` points, so the
+artifact renders), and publishes the **Weekly
 changelog** Sidekick through `createAutomation` and its definition. `seed.sql`
 anchors no conversation: the creation paths anchor and route what they make,
 as in production. The Workers must be running for the product import. The command is

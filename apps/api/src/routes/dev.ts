@@ -47,6 +47,16 @@ const seedAutomation = z.strictObject({
 
 export const SeedProductBodySchema = z.strictObject({
   workspaceId: z.string().uuid(),
+  /**
+   * Stored bodies a seeded resource's `content_ref` names, written to
+   * `PAYLOADS` before the rows, as a publish stores its bytes before its row
+   * points at them. Keys are bounded to the Organization's `seed/` prefix.
+   */
+  payloads: z.array(z.strictObject({
+    key: z.string().min(1),
+    contentType: z.string().min(1),
+    text: z.string(),
+  })),
   workspaceTables: z.record(z.string(), z.array(row)),
   automations: z.array(seedAutomation),
   canvases: z.array(z.strictObject({
@@ -113,6 +123,25 @@ devRoutes.post("/seed-product", zValidator("json", SeedProductBodySchema), async
   }
 });
 
+/**
+ * The seed's stored bodies, written where a resource's `content_ref` names
+ * them and only under the Organization's `seed/` prefix, so the route cannot
+ * overwrite a body a real write stored.
+ */
+export async function seedPayloads(
+  env: Pick<Env, "AVALON_REGION" | "PAYLOADS">,
+  workspaceId: string,
+  payloads: z.infer<typeof SeedProductBodySchema>["payloads"],
+): Promise<void> {
+  const prefix = `${env.AVALON_REGION}/${workspaceId}/seed/`;
+  for (const payload of payloads) {
+    if (!payload.key.startsWith(prefix)) {
+      throw new ApiError(422, "seed_payload_key_not_allowed", `A seed payload key must start with ${prefix}`);
+    }
+    await env.PAYLOADS.put(payload.key, payload.text, { httpMetadata: { contentType: payload.contentType } });
+  }
+}
+
 async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>) {
   const workspaceId = body.workspaceId;
   // A wiped local state means the WorkspaceDO has never learned who it is;
@@ -129,6 +158,8 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
   );
   const workspaceDatabase = withWorkspaceRuntimeDatabase(env, workspaceId);
 
+  await seedPayloads(env, workspaceId, body.payloads);
+
   const workspaceCounts: Record<string, number> = {};
   for (const [table, rows] of Object.entries(body.workspaceTables)) {
     if (!WORKSPACE_SEED_TABLES.has(table)) {
@@ -139,11 +170,16 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
       // conflict target is the id alone: OR IGNORE would also swallow
       // constraint violations, which is how a fixture mismatch once vanished
       // silently instead of failing this route loudly.
+      // A row seeded before its body existed is repaired on a re-run: its
+      // `content_ref` is filled where it is still empty, never replaced.
       const columns = Object.keys(record).filter((column) => record[column] !== null);
+      const conflict = columns.includes("content_ref")
+        ? `DO UPDATE SET content_ref = COALESCE(${table}.content_ref, excluded.content_ref)`
+        : "DO NOTHING";
       await workspaceDatabase.DB.prepare(
         `INSERT INTO ${table} (${columns.join(", ")})
          VALUES (${columns.map(() => "?").join(", ")})
-         ON CONFLICT(id) DO NOTHING`,
+         ON CONFLICT(id) ${conflict}`,
       ).bind(...columns.map((column) => record[column])).run();
     }
     workspaceCounts[table] = rows.length;
