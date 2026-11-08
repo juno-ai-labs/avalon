@@ -592,7 +592,16 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
     workstream.latestAttentionSequenceNumber,
     message.attentionSequenceNumber,
   );
-  const ownTurn = viewerUserId !== null && message.author?.id === viewerUserId;
+  // The viewer's own run, while it is starting or working, is not news to
+  // them: the room seats its requester at the row when they had read
+  // everything before it, and a client that waited for the detail's refetch
+  // flashed an unread divider and dot over the run they had just started.
+  const activation = message.automationActivation;
+  const seatedAtOwnRun = viewerUserId !== null
+    && activation?.requesterUserId === viewerUserId
+    && (activation.run?.state === 'pending' || activation.run?.state === 'running')
+    && workstream.readThroughSequenceNumber >= message.attentionSequenceNumber - 1;
+  const ownTurn = (viewerUserId !== null && message.author?.id === viewerUserId) || seatedAtOwnRun;
   const readThroughSequenceNumber = ownTurn
     ? Math.max(workstream.readThroughSequenceNumber, message.attentionSequenceNumber)
     : workstream.readThroughSequenceNumber;
