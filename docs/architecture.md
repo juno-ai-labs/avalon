@@ -763,13 +763,34 @@ events are recorded in [`telemetry.md`](telemetry.md),
 `apps/api/test-workers/meeting-notes-retirement.test.ts`.
 
 **Historical records removed in the same audit.** Dated audit and QA records
-that no living document cited were deleted rather than kept as orphans; each
-is in git at `git show e26aa66:docs/<name>.md`:
+were deleted rather than kept as documents: a dated record describes a moment,
+not the code as it stands, and the changelog entries that cite one now name it
+as text. The first is in git at `git show e26aa66:docs/<name>.md`, the rest,
+removed in a later pass the same day, at `git show 14d68b1:docs/<name>.md`:
 
 - `harness-production-qa-2026-08-22.md` — the 2026-08-22 signed-in production
   QA pass. It attempted every visible plugin and built-in skill, exercised the
   Terminal, attachment, memory, elicitation, alarm and parallel-child surfaces,
   and found five defects that were fixed in that change.
+- `terminal-production-qa-2026-08-21.md` — the 2026-08-21 production Terminal
+  plug-in pass, which found repeated Terminal calls in one run failing and a
+  write left `started` until its lease was reaped, and its 2026-08-22 and
+  2026-08-23 follow-ups through Global production acceptance and the
+  stop-recovery lease and quiescence gates. Cited by
+  [`workstream-durable-object.md`](workstream-durable-object.md)'s changelog
+  for the alarm-joins-drain fault.
+- `durable-object-self-rpc-audit-2026-08-22.md` — the audit of Durable
+  Objects that addressed themselves over RPC: twelve paths in `SubstreamAgent`
+  and `WorkspaceDO`, each a shared helper addressing an object by role, with
+  the 2026-08-24 follow-up that found a thirteenth path and a subrequest-depth
+  outage, and the 2026-08-25 follow-up that moved recognition from names to
+  ids. Cited by [`workstream-durable-object.md`](workstream-durable-object.md)'s
+  changelog.
+- `private-access-security-audit-2026-09-09.md` — the early-access security
+  audit of PR #637: verified Cloudflare configuration, email and download
+  abuse, DDoS exposure, the regressions it fixed, and its verdict to hold the
+  public launch until admission limits and bot protection existed. Cited by
+  [`private-access.md`](private-access.md).
 
 ### 2026-11-07 — The product is Canvases and Sidekicks; the native iOS client is deleted
 
