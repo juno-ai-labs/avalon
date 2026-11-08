@@ -92,6 +92,8 @@ export async function convertThreadsToCanvases(
       });
     }
   }
+  // Read again: an artifact a converted Thread only linked is a Canvas's now.
+  result.artifactsWithoutThread = (await workspace.threadConversionInventory()).artifactsWithoutThread;
   logInfo(env, "thread_conversion_pass", {
     workspace_id: workspaceId, operation_id: input.operationId, operator_subject: input.operatorSubject,
     candidates: result.candidates.length, converted: result.converted, already_converted: result.alreadyConverted,

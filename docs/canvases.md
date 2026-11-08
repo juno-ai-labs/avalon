@@ -177,14 +177,19 @@ made or linked an artifact a Canvas with the same id
 owns it). What it keeps: the id, so `artifact_registry`, search, the D1 anchor
 and the route already name the Canvas; the Thread's Main as the Chat, its
 conversation object's stored parent kind rewritten to `canvas`; its title, its
-creator (or its earliest viewer), its creation time and its last activity; its
-viewers as `added` participants; Organization visibility for a
-Workspace-scoped Thread and participants for a personal one; every artifact it
+creator (or its earliest viewer), its creation time and its last activity;
+Organization visibility for a Workspace-scoped Thread and participants for a
+personal one; as `added` participants, every viewer of a personal Thread
+(their row is what admitted them, so copying it keeps their access) and only
+the viewers marked participants of a Workspace-scoped one (anyone who merely
+listed it is admitted by the Organization visibility, and a participant row
+would outlive a later narrowing); every artifact it
 made or linked, in `canvas_artifacts`; the memory facts learned in its Main,
 renamed to the Canvas's source; and a Sidekick's attachment to its Main. What
 it does not keep: its Breakouts, retired as `retire_threads` retires them, and
 its unread state, which starts empty. Such a Canvas has no writer Sidekick and
-no last editor until its Chat next publishes.
+no last editor until its Chat next publishes. A creator who had stopped being
+one of the Thread's viewers opens the Canvas again, as its creator.
 
 ### Artifacts and versions
 

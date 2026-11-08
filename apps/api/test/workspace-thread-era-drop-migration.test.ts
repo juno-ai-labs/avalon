@@ -1,9 +1,10 @@
 /**
  * WorkspaceDO migration 147 drops the Thread-era tables nothing reads and the
- * Thread rows of the shared tables, keeping what the Thread conversion reads. A drop that left a trigger writing a
- * dropped table, or a foreign key naming one, would fail every later write to
- * the surviving table; a delete that reached a Canvas's or a Sidekick's rows,
- * or the Thread retirement inventory, would lose live state.
+ * Thread rows of the shared tables, keeping what the Thread conversion reads.
+ * A drop that left a trigger writing a dropped table, or a foreign key naming
+ * one, would fail every later write to the surviving table; a delete that
+ * reached a Canvas's or a Sidekick's rows, the Thread retirement inventory or
+ * the conversion's links, would lose live state.
  */
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";

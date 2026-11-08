@@ -366,8 +366,8 @@ resource that is an artifact through `workspace_workstream_resource_links`.
 A Channel (`spaces`) is never one. Each comes with its artifact, linked
 artifact and viewer counts and its conversations, the same ones the
 retirement inventory names. An artifact whose `workstream_id` names no
-Thread, Canvas or Sidekick is left alone and counted
-(`artifactsWithoutThread`). A dry run, the default, answers that and writes
+Thread, Canvas or Sidekick, and that no Canvas holds, is left alone and
+counted (`artifactsWithoutThread`). A dry run, the default, answers that and writes
 nothing; it also reports, per Thread, how many conversations have no dump.
 
 **The guard** is the retirement's: an apply is refused with
@@ -385,15 +385,18 @@ conversation under every candidate (Main included) has its dump.
    `created_at` = `source_created_at`; `updated_at` = `last_activity_at`;
    Organization visibility for a Workspace-scoped Thread and participants for
    a personal one; the Thread's authority generation, which its directory row
-   projected from the conversation, so the two agree), every viewer but the
-   creator as an `added` participant, and both artifact sources in
+   projected from the conversation, so the two agree), as `added`
+   participants every viewer but the creator of a personal Thread and only the
+   viewers marked participants of a Workspace-scoped one, and both artifact
+   sources in
    `canvas_artifacts`. An existing Canvas row is the resume marker and is left
    as it is. In the same call, idempotently on every pass, what other tables
    key on the Thread's Main is carried to the Canvas's names: memory facts
    learned there (source `<id>`, which opens to nobody) become `canvas:<id>`,
    with the sweep receipt the object's next sweep continues from, and every
    digest copy is marked; the Main's `authorization_locations` rows take kind
-   `canvas`, which re-projects the resources' search audiences; and a
+   `canvas`, so each location is recognised as a hosted conversation's
+   rather than a retired Thread's; and a
    Sidekick's attachment to the Main becomes one to the Canvas's Chat.
 2. **The Main's parent kind** (`AgentLoopDO.convertParentKind`): the stored
    `workstream` becomes `canvas`, and so does the envelope of every effect
@@ -806,10 +809,10 @@ so its CHECK admits `canvas`, and `beginWorkspaceRetirement` records every
 `canvas_directory` row; the walk asks the Canvas for its children through the
 hosted-parent path it already uses for a Sidekick, so each Canvas's Chat
 object is tombstoned with the Organization, and Ace's abandon confirmation
-says every Canvas and Sidekick closes. WorkspaceDO migration 147 drops 49
+says every Canvas and Sidekick closes. WorkspaceDO migration 147 drops 48
 tables (Activity, digests except `digest_schedules`, suggested work, a
-Channel's own ledgers, Thread pins and order, Thread access and resource
-links, batch dispatches, the Thread backfill, the import-reservation reclaim,
+Channel's own ledgers, Thread pins and order, Thread access (the resource
+links stay, for the conversion of 2026-11-08), batch dispatches, the Thread backfill, the import-reservation reclaim,
 `workstream_email_receipts`), the Channel-rail and Channel-colour triggers on
 the tables that survive, and the Thread rows of the shared tables. AgentLoopDO
 migration 86 drops the per-conversation `sidekick_attachments`. The memory
