@@ -3,9 +3,8 @@
 A person pins what they want to hand: a Canvas or a Sidekick. Each of the two
 sidebar sections has a **Pinned** group above its list, and the pin lives on
 the server, so the same person opening Rally on another machine finds their
-list as they left it. Thread, Channel, Breakout and artifact pins, and the
-Pinned, Threads, Channels and Artifacts sections that drew them, were removed
-at the 2026-11 cutover; the changelog below records them.
+list as they left it. Pins of the kinds before the 2026-11 cutover are
+recorded in the changelog below.
 
 A pin is **one person's opinion about one item**. Pinning tells nobody else
 anything, changes nothing about who may read the item, and does not appear on
@@ -38,8 +37,9 @@ list row's `pinnedPosition`, so nothing else answers the question.
 
 `workspace_pins(user_id, item_kind, item_id, parent_id, position, …)` is
 keyed `(user_id, item_kind, item_id)`. A Canvas or a Sidekick names no parent.
-The table still admits the retired kinds (`thread`, `channel`, `breakout`,
-`artifact`), whose rows no reader lists.
+The shipped CHECK still admits the retired kinds (`thread`, `channel`,
+`breakout`, `artifact`); WorkspaceDO migration 147 deleted every such row, and
+nothing writes one.
 
 - **Pin and unpin.** `POST /canvases/:id/pin` and `POST /sidekicks/:id/pin`
   (the client's paths; `/automations/:id/pin` is the same route) take
@@ -81,19 +81,15 @@ harmless and closes on the next reorder.
 
 ### Artifact pins
 
-An artifact pin named the Thread whose Main generated it and was listed only
-while that Main could be opened. Every Thread is retired, so no stored artifact
-pin can be listed: `GET /navigation/artifact-pins` answers an empty list, which
-the detached artifact window reads as "not pinned". A Canvas's artifact is
-reached by pinning the Canvas.
+An artifact cannot be pinned on its own: a Canvas's artifact is reached by
+pinning the Canvas. `GET /navigation/artifact-pins` stays for the detached
+artifact window, which reads its always-empty list as "not pinned".
 
-### Recent work streams
+### List order
 
-The per-viewer recency that ordered the Threads list
-(`workspace_workstream_access`) went with Threads. The Canvases list is ordered
-by the Canvas's own recent activity, newest first
-([`canvases.md`](canvases.md#in-the-client)); the Sidekicks list by title, A–Z.
-The table stays in storage, unread, with the per-Space pin tables below.
+Outside the Pinned group, the Canvases list is ordered by the Canvas's own
+recent activity, newest first ([`canvases.md`](canvases.md#in-the-client)), and
+the Sidekicks list by title, A–Z.
 
 ## Invariants
 
@@ -121,10 +117,8 @@ is this document's, for both kinds.
 
 ## Failure modes and limits
 
-- **No count limit.** The per-person cap
-  (`MAX_WORKSTREAM_PIN_PLACEMENTS_PER_USER`, 1,000 placements) counted Thread,
-  Channel and Breakout pins and does not apply to these kinds; a Canvas or
-  Sidekick pin is bounded by the items a person can open.
+- **No count limit.** A Canvas or Sidekick pin is bounded by the items a
+  person can open.
 - **A refused pin or drag reverts.** The group re-renders from what the
   server holds, which is what the person's other devices are showing.
 - **A pin whose item is gone contributes nothing.** It is not on any row; the
@@ -150,9 +144,8 @@ item_kind, position, item_id)` and indexed by item for removal
 (`workspace_pins_item_idx`). It has no foreign key, for the reason
 `space_invitees` gave: a key would make a rebuild of the item table cascade
 here. A pin whose item is gone is dropped where it is read. The older per-Space
-`workspace_workstream_pins` and `workspace_pinned_order` tables, and the Thread
-recency table `workspace_workstream_access`, stay in storage until a migration
-drops them (plan step C-7); nothing reads or writes them.
+`workspace_workstream_pins` and `workspace_pinned_order` tables and the Thread
+recency table `workspace_workstream_access` were dropped by migration 147.
 
 ## Changelog
 

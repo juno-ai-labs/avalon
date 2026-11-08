@@ -26,7 +26,7 @@ weeks ago.
 | [`packages/agent-harness/src/prompts/compaction.ts`](../packages/agent-harness/src/prompts/compaction.ts) | Pure checkpoint content renderer shared by live application and API replay. |
 | `@juno-ai/bind` (`loop/tool-loop.ts`) | Calls `needsCompaction` after a turn and `applyCompaction` at a batch boundary, then swaps in whatever transcript it is given. Bind holds no opinion about that transcript's shape. |
 | [`apps/api/src/services/integrations.ts`](../apps/api/src/services/integrations.ts) | Durability and replay: the atomic `onBindCompaction` commit, `loadWorkstreamContextCompaction`, `PersistedCompactionMessagesSchema`, and the run assembly that prepends a stored checkpoint to the fenced transcript. |
-| [`apps/api/src/services/openrouter-context-windows.ts`](../apps/api/src/services/openrouter-context-windows.ts) | Daily OpenRouter window snapshot in the shared public-metadata KV. `SubstreamAgent` reads it once into object memory and supplies it to Bind. |
+| [`apps/api/src/services/openrouter-context-windows.ts`](../apps/api/src/services/openrouter-context-windows.ts) | Daily OpenRouter window snapshot in the shared public-metadata KV. `AgentLoopDO` reads it once into object memory and supplies it to Bind. |
 | [`apps/api/src/services/workstream-resource-inventory.ts`](../apps/api/src/services/workstream-resource-inventory.ts) | Fixed-order authorized totals and natural-language attachment-kind groups appended to a live checkpoint. |
 | [`apps/api/src/durable-objects/workstream-object-schema.ts`](../apps/api/src/durable-objects/workstream-object-schema.ts) | Principal-scoped `transcript_compaction_checkpoints`, the reconnect-only `active_agent_compaction` singleton, plus the monotonic local resource-inventory revision and relationship triggers. |
 
@@ -38,7 +38,7 @@ serialized bytes. A compaction fires when that number exceeds
 `COMPACTION_FRACTION` (0.8) of the selected model's advertised window. The Global
 scheduled Worker checks the snapshot on its hourly tick. When it is missing or
 at least 24 hours old, the Worker fetches OpenRouter's `context_length` and
-writes a complete snapshot to shared KV. Each `SubstreamAgent` retains a
+writes a complete snapshot to shared KV. Each `AgentLoopDO` retains a
 successful read in object memory and supplies the windows to Bind before the
 run. It does not fetch OpenRouter's catalog during inference or re-read KV on
 later runs after a successful load. A missing snapshot or failed KV read is
@@ -101,7 +101,7 @@ with checkpoint creation without repeating the grouped aggregation.
 
 The base checkpoint is persisted without its system message or authorized
 appendix, keyed by projection, run, and compacted-through sequence in the owning
-`SubstreamAgent`'s `transcript_compaction_checkpoints`, together
+`AgentLoopDO`'s `transcript_compaction_checkpoints`, together
 with that scope, the raw summary, checkpoint-template version, model,
 before/window token counts, and the compaction's own usage and cost. Rewriting
 the exact same run/sequence event is idempotent; a later compaction appends a new
@@ -143,7 +143,7 @@ therefore replay slightly more than before, never less.
 Compaction is a first-class agent phase rather than an inference guessed from a
 pause in tokens. Bind emits `compaction_started` before authorization
 preparation and summarization, then emits `compaction_finished` only after the
-checkpoint persistence port succeeds or fails. `SubstreamAgent` immediately
+checkpoint persistence port succeeds or fails. `AgentLoopDO` immediately
 reserves one participant-safe status entry and starts its UTC activity interval.
 The atomic replacement transaction records the private checkpoint, advances the
 exact Bind generation, retains that safe entry, and closes the lifecycle.

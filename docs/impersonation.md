@@ -8,10 +8,9 @@ as the author; the audit database keeps who actually acted.
 
 Beneath it sits a workspace-scoped, directed **can impersonate** relationship
 between two members, kept by the Organization object and written by demo
-preparation. Its first surface, Sideline, an internal Electron app that sent
-one message at a time as a represented member into a Thread, was deleted on
-2026-11-06 by the Canvases and Sidekicks pivot; no surface reads the
-relationship today. The relationship, its storage and its producer stay as the
+preparation. No surface reads the relationship today: its one reader was
+deleted on 2026-11-06 with the Canvases and Sidekicks pivot (the changelog
+says what it was). The relationship, its storage and its producer stay as the
 platform primitive a later represented-action surface would build on.
 
 ## Where the code lives
@@ -29,7 +28,6 @@ platform primitive a later represented-action surface would build on.
 | `apps/desktop/src/main/index.ts`, `stored-auth.ts`                                              | The support credential stored like any Organization credential and marked by its profile's `impersonator`; dropped whenever another Organization is selected; never registered for push.                                                  |
 | `apps/desktop/src/renderer/components/support-access-setting.tsx`                               | **Allow Rally access** under Organization preferences.                                                                                                                                                                                    |
 | `apps/desktop/src/renderer/components/support-workspace-menu.tsx`, `workspace-account-menu.tsx` | A granting Organization's row in the account menu and its submenu of people; **End impersonation** in place of signing out; the account tile in the section switcher shows the staff member's avatar over its corner.                     |
-| `packages/ui/src/components/account-trigger.tsx`                                                | An account footer button that shows the staff member's avatar on the right of a support session. Sideline's sidebar was its only host; no host renders it since Sideline's removal.                                                       |
 
 ## How it works
 
@@ -40,13 +38,13 @@ roles, workspace names, or demo records. Demo preparation is one producer and
 writes every ordered pair of seated users, including self-pairs, in one
 idempotent call.
 
-Nothing reads a relationship for authority today. Sideline, the one surface
-that did, was deleted with its endpoint, its regional service and its catalog
-(see the changelog). `AuthContext.principal` keeps its `impersonation` value, and
-`SubstreamAgent` still answers `impersonation_member_revoked` for it, though no
+Nothing reads a relationship for authority today; the one surface that did
+was deleted with its endpoint, its regional service and its catalog (see the
+changelog). `AuthContext.principal` keeps its `impersonation` value, and
+`AgentLoopDO` still answers `impersonation_member_revoked` for it, though no
 caller sets it now. A surface that brings the relationship back into use
-starts from the invariants below, which record what Sideline's send path had to
-guarantee.
+starts from the invariants below, which record what that surface's send path
+had to guarantee.
 
 ### Support access
 
@@ -128,19 +126,18 @@ one.
 Every write a support session makes is also recorded, after it runs and off
 the response path, so it adds no latency: a non-GET HTTP request as
 `support_session.request` (method, path, status) from `auditSupportWrites` in
-`apps/api/src/middleware/auth.ts`, and a Channel socket command that writes
+`apps/api/src/middleware/auth.ts`, and a conversation socket command that writes
 (sending a message, editing, reacting, and the like) as
-`support_session.socket_command` from `SubstreamAgent`. Both carry the staff
+`support_session.socket_command` from `AgentLoopDO`. Both carry the staff
 member as actor, the person as target, and the session id. Reads are not
 recorded. A failed write to the audit database is logged
 (`support_action_audit_failed`) and does not fail the action; the session row
 still says who held the session.
 
 A support session looks without leaving a trace on the person's own state. It
-does not mark a Channel opened or read, does not advance or set unread
-(`acknowledge_read`, `mark_unread`, and `mark_read` batch updates succeed
-without an effect), does not record a visit in the Channel list's recency, and
-counts in nobody's presence or viewer list. The socket ticket carries the staff
+does not mark a conversation opened or read, does not advance or set unread
+(`acknowledge_read` and `mark_unread` succeed without an effect), and counts
+in nobody's presence or viewer list. The socket ticket carries the staff
 member (`imp`), and `SocketService` and `WorkspaceSocketService` pass it to the
 Durable Objects as `x-rally-socket-impersonator-id`, which store it on the
 socket. A message sent from the session still moves the person's seen marker
@@ -175,8 +172,7 @@ past it, as anyone's own message does, and analytics are unchanged.
 - A grant and a support session are audited before they exist. A write made
   from the session is audited after it, in the background, and never waits on
   or fails because of the audit database.
-- A support session leaves the person's read state, Channel recency and
-  presence alone. A new per-person mark (seen, opened, visited) checks
+- A support session leaves the person's read state and presence alone. A new per-person mark (seen, opened, visited) checks
   `impersonatorUserId` on the request or socket the same way.
 - A support session never outlives its grant. What it creates (an invitation,
   a connection) is the Organization's and stays, as anyone's would. Renewal is capped at the grant's
@@ -186,7 +182,7 @@ past it, as anyone's own message does, and analytics are unchanged.
 
 This module owns the relationship, its storage and producers, and Rally
 access. The represented person's ordinary authority remains in
-`ConversationService`, WorkspaceDO, and SubstreamAgent; a support session is
+`ConversationService`, WorkspaceDO, and AgentLoopDO; a support session is
 checked there as that person.
 
 Rally access does not use the **can impersonate** relationship: its authority is
@@ -214,11 +210,10 @@ Juno Labs each end a live session on the next request (and a revoke publishes
 its socket revocation). It also opens and ends a support session in a browser
 cookie's Organization slot, and records an audit row for a write made from
 the session and carries the staff member in its workspace socket ticket.
-`apps/api/test-workers/unseen-workstream-state.test.ts` (deleted in plan step C-2) proves in workerd that
-a support session's HTTP reads and socket do not mark a Channel opened or
-read, that a socket write command is audited, and that the socket is not a
-viewer; `durable-object-runtime.test.ts` proves its workspace socket records no
-Channel visit. `apps/desktop/src/renderer/components/support-access.test.tsx`
+The workerd proof that a support session's reads and socket leave the
+person's read state alone, that a socket write is audited and that the socket
+is not a viewer went with `unseen-workstream-state.test.ts` in plan step C-2
+and has not been replaced against a Canvas's Chat. `apps/desktop/src/renderer/components/support-access.test.tsx`
 covers the settings row's countdown and buttons and the account menu's rows,
 submenu and **End impersonation**; `src/main/workspace-directory.test.ts`
 covers how a stored support credential is told apart.
@@ -227,12 +222,10 @@ covers how a stored support credential is told apart.
 WorkspaceDO migrations and proves direction, self-pairs, idempotent setup, and
 revocation in workerd. `apps/api/test/demo-operations.test.ts` covers the
 producer's ordered pairs.
-`apps/api/test-workers/workspace-reach-changed.test.ts` (deleted in plan step C-2) proves on real sockets
-that a relationship change, and a Channel or Breakout join or leave, reaches the
-person and their operator, and nobody else. Run:
+Run:
 
 ```bash
-pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-impersonation.test.ts test-workers/workspace-reach-changed.test.ts
+pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-impersonation.test.ts
 pnpm --filter @rally/api exec vitest run test/support-access.test.ts test/demo-operations.test.ts
 ```
 

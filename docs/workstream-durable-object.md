@@ -1790,8 +1790,10 @@ migration 84 dropped the `imported_session_*` tables. What survives:
 `pending_attachment_reservation_recovery`'s foreign key names it;
 `PreparedConversationSchema` and `ImportedMessageProvenanceSchema` in
 `packages/contracts/src/substream-content.ts`, which stored transcripts and
-harness evaluations still read; and WorkspaceDO migration 119's statements in
-`retired-workspace-schema.ts`.
+harness evaluations still read; WorkspaceDO migration 119's statements in `retired-workspace-schema.ts`; and
+the `session_import.finish` / `session_import.fail` action kinds in
+`packages/contracts/src/desktop-actions.ts`, which nothing sends
+([`desktop-actions.md`](desktop-actions.md)).
 
 **`workstream-origin-attachments.md` — Work-stream origin attachments
 (retired 2026-11-07).** A work stream started from a place in a connected tool
@@ -1801,7 +1803,8 @@ bound to a connection by the host. Plan step C-2 deleted the host half
 (`workstream-origin-resource.ts` and every create path that attached one) and
 step B-8 the connector half (`ConnectorOriginLocator`,
 `describeConnectorOrigin`, `ConnectorAdapter.origin`). Stored
-`workstream_resources` rows keep their `origin` label. Its changelog is the
+`workstream_resource_links` rows in conversation-object SQLite keep
+`relationship_type = 'origin'` (`packages/contracts/src/resource-relationships.ts`). Its changelog is the
 record of why the connector names the object and only the host names the
 connection.
 

@@ -432,7 +432,7 @@ dead-letters leaves a conversation's previous title, or an archived conversation
 rows, visible to admitted readers until it is redriven; a text rewrite that
 dead-letters leaves its row omitted, because a row carries no display until it is
 rewritten. The display rewrite itself is lazy: migration 52 requeues a
-conversation's turns when its SubstreamAgent next wakes, and WorkspaceDO
+conversation's turns when its AgentLoopDO next wakes, and WorkspaceDO
 migration 47 a workspace's resources when that object does, so a conversation
 nobody opens and no alarm reaches keeps rows with no display, which search omits
 with no error and no dead letter. The patch job cannot repair those rows either,
@@ -574,25 +574,25 @@ search verification.
 ## Operations
 
 WorkspaceDO migration 33 creates `resource_search_versions`, installs resource
-write triggers, and queues existing resources. SubstreamAgent migration 42 adds
+write triggers, and queues existing resources. AgentLoopDO migration 42 adds
 `conversation_search_links`, transcript write triggers, and backfills existing
 participant turns into `durable_outbox` under `search_projection_v1`. Both use
 existing regional `ACTIVITY_QUEUE` transport with reference-only messages. The
 consumer reloads current source state and conditionally writes its revision.
 Resource watermarks survive deletion; transcript deletes publish tombstones.
-SubstreamAgent migration 52 installs the `workstream` title/archive trigger behind
+AgentLoopDO migration 52 installs the `workstream` title/archive trigger behind
 the `search_conversation_v1` channel and requeues every committed turn once so its
 lexical row is rewritten with the display attributes; WorkspaceDO migration 47
 marks every resource pending for the same rewrite. A row is omitted from results
 until its rewrite lands, so a workspace's search fills in as its objects wake and
-the Queue drains. WorkspaceDO migration 51 and SubstreamAgent migration 53 run
+the Queue drains. WorkspaceDO migration 51 and AgentLoopDO migration 53 run
 those two passes a second time, to rewrite the rows whose jobs the 2026-09-10
 version skew dead-lettered; the retry log carries no resource or turn id, so
 the affected rows could not be listed and the whole fleet re-projects instead.
 Both migrations are lazy in the same way as 47 and 52: use **Force a
 migration** for both classes in each region to make the pass complete, then
 watch the regional activity Queue drain and its dead-letter queue stay empty.
-WorkspaceDO migration 77 and SubstreamAgent migration 70 run the same two
+WorkspaceDO migration 77 and AgentLoopDO migration 70 run the same two
 passes a third time, so every lexical row written before migration 76 is
 rewritten with its `audience`. Existing semantic chunk rows keep no audience
 (see the changelog). Force both classes in each region, then confirm with a
@@ -638,13 +638,13 @@ Deploy both API Workers with their `BROWSER` binding and production Turbopuffer
 secret before running backfill. The 512/128-token policy ships with the code.
 `pnpm env:sync` forwards the development key from `.env.local`; it never copies the production key into
 development Workers. Use the existing migration tracker's **Force a
-migration** action for WorkspaceDO and SubstreamAgent in each region to wake
+migration** action for WorkspaceDO and AgentLoopDO in each region to wake
 stored objects; an untouched object does not migrate just because code deployed.
 See [Durable Object migration tracking](durable-object-migration-tracking.md).
 Verify migration reports, regional activity Queue drain and dead letters, then
 perform member searches and revocation checks. A current schema report proves
 schema application, not successful indexing. For this change the forced wake is
-what turns the display rewrite from lazy into complete: a SubstreamAgent that
+what turns the display rewrite from lazy into complete: a AgentLoopDO that
 never wakes never requeues its turns, and its conversation stays out of search.
 These deployment and fleet-backfill steps have not been run for this change.
 

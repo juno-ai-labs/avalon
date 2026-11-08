@@ -613,7 +613,7 @@ run it already made. The object must hold an accepted revision
 | **Manual** | `POST /automations/:id/run` with an `idempotency-key` header; `runNow` | `manual:<idempotencyKey>` | `sidekick_not_active` unless `active`; `sidekick_forbidden` unless the caller may manage it |
 | **Schedule** | the `automation_schedule` alarm for one schedule row; `executeSchedule` | `schedule:<scheduleId>:<plannedFor>` | skipped silently unless `active`, and unless the row's `next_due_at` has arrived: an entry that runs after a pause and resume, or an apply that kept the schedule, moved it into the future, and admitting it would start the next occurrence early; the next occurrence is computed from now and re-armed |
 | **Connector event** | the Queue consumer's `admitExternalEvent`, one message per matched registration | `occurrence:<key>` when the connector named the occurrence the event reports, else `external:<workspaceEventId>` | `sidekick_<lifecycle>` unless `active`; `sidekick_event_before_activation_boundary` when the event's sequence is at or below `effective_after_event_sequence` |
-| **Inbound email** | `resend-inbound-email-service.ts` calling `admitInboundEmail` once per delivery | `inbound_email:<resendEmailId>` | see below; the refusal is written to `inbound_email_receipts` |
+| **Inbound email** | `resend-inbound-email-service.ts` calling `admitInboundEmail` once per delivery | `inbound_email:<resendEmailId>` | see below; the refusal is written to `sidekick_email_receipts` |
 
 **Connector events** follow one regional path. The regional activity Queue
 hands a normalized event to `WorkspaceDO.ingestConnectorEvent`; a second,
@@ -721,7 +721,7 @@ workspace searches a type that has no rows. That is indistinguishable from a sea
 ingress fetches the message, resolves the sender to an active member, stores
 the payload in R2 and the email as a resource, and then calls
 `admitInboundEmail` once. The object answers a retry from
-`inbound_email_receipts` by Resend email id before deciding anything; a new
+`sidekick_email_receipts` by Resend email id before deciding anything; a new
 message is refused with `sidekick_not_active`,
 `sidekick_email_route_mismatch` (the address is not this automation's), or
 `email_sender_not_authorized` (no member matched, or a `personal` automation's
@@ -890,8 +890,11 @@ Sidekick that is not `active` refuses every write.
 `completed_at` is the latest finish. Run-outcome telemetry is keyed per
 harness run, so each activation emits its own `run_terminal`, now carrying the
 run's `automation_run_id`; a count of completions per run is a count of
-activations. A Sidekick run child forwards no effects (`forwardsChildEffect`
-is false), so a second completion sends no notification, and the Slack
+activations. The run's row in the parent (`sidekick_runs`) is moved by
+`HostedSidekick.onChildCommonProjection`, which writes `completed_at` and arms
+the run's `run_finished` notice only on the projection that moves the row into
+a finished state; a finished row is left alone unless it reopens, so a run
+that reopens and finishes again arms a second notice. The Slack
 `notify_automation_completed` preference has no sender today.
 
 ### The shared conversation
@@ -1254,8 +1257,10 @@ only for its own runs":
   and message name it), so the run's reply can say why rather than reporting a
   generic failure.
 - The Sidekick's shared Terminal files hold what runs under its delegates'
-  access wrote, so a requester's run refuses the Terminal with
-  `sidekick_requester_files_unavailable` rather than reaching them.
+  access wrote. No named refusal keeps a requester's run from them: the
+  Terminal plugin passes the requester (`runRequesterUserId`) to its resource
+  bridge, but there is no `sidekick_requester_files_unavailable` check in the
+  tree.
 - A guest on the Sidekick's list runs under their own access as a member does;
   a tool that needs an account they lack refuses by its named code.
 
@@ -1427,8 +1432,8 @@ load the Sidekick as a skill and which nothing writes now.
 | `archive` (`POST /sidekicks/:id/archive`; legacy `DELETE` remains for installed clients) | a manager | open runs stopped, stored `lifecycle = 'deleted'`, alarms cancelled, registrations replaced with `[]`; the object, conversation, and run history remain stored but become inaccessible, and `authorizeViewer` answers unauthorized and archived from then on. `deleted` is the compatibility tombstone name, not a claim that retained data was destroyed. There is no unarchive operation or archived-Sidekick browser yet. |
 
 Who may manage (`assertManager`): the author or the run-as principal; for a
-`workspace` automation also an owner or admin. Who may view (`assertViewer`,
-and `authorizeViewer` for the conversation): see
+`workspace` automation also an owner or admin. Who may view (`authorizeViewer`,
+on the shared `HostedConversation`): see
 [who a Sidekick is shared with](#who-a-sidekick-is-shared-with).
 `claimExecutionPrincipal` is installed-client compatibility for authenticated
 self-consent. Configured bindings, creator preference and human access remain
@@ -1653,10 +1658,9 @@ or the memory store the automation scope lives in.
   code**, thrown directly and surviving the RPC hop with its status: 403
   `sidekick_forbidden`, 404 `sidekick_not_found` or
   `sidekick_run_not_found`, 409 `sidekick_not_active`,
-  `sidekick_not_paused`, `sidekick_room_archived`, 422
+  `sidekick_not_paused`, 422
   `sidekick_definition_not_ready`, `sidekick_plugin_unavailable`,
-  `sidekick_workspace_connection_required`,
-  `sidekick_personal_connection_access_denied`, `sidekick_person_not_found`,
+  `sidekick_person_not_found`,
   `sidekick_resource_not_found`, `sidekick_recurrence_has_no_future`,
   `sidekick_timezone_invalid`, and the evaluator blocker codes. An identity
   mismatch is a bare `Error`, deliberately, because it is a wiring fault and not
