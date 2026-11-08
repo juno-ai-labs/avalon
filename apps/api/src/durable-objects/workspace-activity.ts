@@ -235,7 +235,9 @@ export function recordCollapsedActivityItem(sql: SqlStorage, item: ActivityItemI
  * answer, the answer came, and the run's own view where it is answered reads
  * the run's conversation, not `"0"`, so no read report would clear it. A
  * reply (`new_message`) clears as a mention does: its ordinal is its own
- * message's, which nobody read before it existed. Any
+ * message's, which nobody read before it existed. A pinned Canvas's new
+ * version (`artifact_updated`) clears on any read of the Chat after it, the
+ * rule the Canvas row's own artifact news takes. Any
  * row clears when Mark all seen came after it. One expression for the page
  * and the count, so the two cannot disagree.
  */
@@ -244,6 +246,7 @@ const ACTIVITY_SEEN_SQL = `(
   OR (item.kind = 'needs_input' AND item.parent_kind = 'automation' AND EXISTS (
       SELECT 1 FROM sidekick_runs run
        WHERE run.sidekick_id = item.parent_id AND run.run_id = item.run_id AND run.state <> 'needs_input'))
+  OR (item.kind = 'artifact_updated' AND reads.user_id IS NOT NULL AND reads.updated_at >= item.created_at)
   OR (item.attention_ordinal IS NOT NULL AND reads.user_id IS NOT NULL
       AND reads.seen_attention_ordinal >= item.attention_ordinal
       AND (item.kind IN ('mention', 'new_message') OR reads.updated_at >= item.created_at))
@@ -254,7 +257,7 @@ interface ActivityRow extends Record<string, SqlStorageValue> {
   substream_id: string | null; message_id: string | null; message_sequence: number | null; run_id: string | null;
   actor_kind: "person" | "rally" | "sidekick"; actor_id: string | null; preview: string | null;
   created_at: number; seen: number; unseen_count: number;
-  parent_title: string | null;
+  parent_title: string | null; subject_id: string | null; artifact_title: string | null;
 }
 
 /** Who a page is read for: their id, their Organization, and whether they are a member rather than a guest. */
@@ -311,8 +314,10 @@ export function activityPage(
      SELECT listed.item_id, listed.kind, listed.parent_kind, listed.parent_id, listed.substream_id, listed.message_id,
             listed.message_sequence, listed.run_id,
             listed.actor_kind, listed.actor_id, listed.preview, listed.created_at, listed.seen,
-            SUM(1 - listed.seen) OVER () AS unseen_count, listed.parent_title
+            SUM(1 - listed.seen) OVER () AS unseen_count, listed.parent_title, listed.subject_id,
+            artifact.title AS artifact_title
        FROM listed
+       LEFT JOIN resources artifact ON listed.kind = 'artifact_updated' AND artifact.id = listed.subject_id
       ORDER BY listed.created_at DESC, listed.item_id DESC
       LIMIT ?4`,
     viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(admittingWriters),
@@ -333,6 +338,9 @@ export function activityPage(
       preview: row.preview,
       createdAt: new Date(row.created_at).toISOString(),
       seen: row.seen === 1,
+      ...(row.kind === "artifact_updated"
+        ? { artifact: row.subject_id !== null && row.artifact_title !== null ? { resourceId: row.subject_id, title: row.artifact_title } : null }
+        : {}),
     } as ActivityItem)),
   };
 }

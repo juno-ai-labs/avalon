@@ -3,8 +3,9 @@
 Activity is one person's feed of what happened to them in Canvases and
 Sidekicks: somebody mentioned them in a Canvas's Chat or a Sidekick's
 conversation, somebody added them to a Canvas's conversation, a Sidekick run
-needs their input, a run they asked for finished, or somebody else replied in
-a conversation they are in. It is the third section of
+needs their input, a run they asked for finished, somebody else replied in
+a conversation they are in, or somebody published a new version in a Canvas
+they pinned. It is the third section of
 the rail, beside Canvases and Sidekicks, in the Mac app and the browser alike.
 
 The feed is the push's own source. Each event that records a push
@@ -22,6 +23,7 @@ the Canvas or Sidekick row stops being unread.
 | `packages/contracts/src/activity.ts` | `ActivityItemSchema`, `ActivityPageSchema` (the subscribe payload's `activity` page), `WorkspaceActivityListEventSchema` (the push) and `ActivityMarkAllSeenCommandSchema` (the one command). |
 | `apps/api/src/durable-objects/workspace-activity.ts` | WorkspaceDO migration 148 (`workspace_activity_items`, `workspace_activity_seen`, the `activity` waterline), `recordActivityItem`, the one seen expression (`ACTIVITY_SEEN_SQL`) and `activityPage`. |
 | `apps/api/src/durable-objects/workspace-notification-intent-storage.ts` | The recorders that write a row beside their intent: `recordPersonNotificationIntent` (mention, add), `recordSidekickRunNotices` (needs input, finished) and `recordParentNotice` (a notice a Canvas or Sidekick records about itself: a reply). |
+| `apps/api/src/durable-objects/canvas-artifact-notices.ts` | `tellCanvasPinners`: a new version in a Canvas tells its pinners, one `artifact_updated` intent and row each. |
 | `apps/api/src/durable-objects/conversation-reply-batch.ts` | The `reply_batch` alarm entry: a conversation's replies batched, then one `new_message` intent and row per recipient. |
 | `apps/api/src/durable-objects/workspace-do.ts` | `noteActivityMoved`, `noteActivityReadMoved`, `publishActivityList`, the `activity` page in `sidebarPayload`, and the `activity_mark_all_seen` command. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Applies the page and the push through the versioned sidebar-list receiver; sends Mark all seen. |
@@ -55,6 +57,12 @@ newest reply — its message, transcript sequence, author, preview, ordinal and
 time — and keeps its id (the first intent's); once it is seen, the next reply
 writes a new row. A busy Chat is one row, not one per message. "Unseen" there
 is `ACTIVITY_SEEN_SQL`, the page's own expression.
+
+A pinned Canvas's new version (`artifact_updated`) is recorded by the
+publish's note to the Canvas (`tellCanvasPinners`) and collapses the same
+way, one unseen row per Canvas per pinner: its `subject_id` is the artifact,
+which the page names as `artifact` (`resourceId` and its title now, from
+`resources`), and its actor whoever made the version.
 
 A row names its parent (`canvas` or `automation`) and its id, the
 conversation it happened in (`"0"`, or a run's id), the mentioning message or
@@ -110,7 +118,10 @@ At list time a row is seen when any of these holds:
   new row, and while it waits the earlier row reads unseen again too.
 
 A reply clears as a mention does: its ordinal is its own message's, so the
-cursor reaching it is enough, with no condition on the read's time.
+cursor reaching it is enough, with no condition on the read's time. A pinned
+Canvas's new version clears on any read of the Chat accepted after it
+(`updated_at >= created_at`), the rule `canvasSidebarRows` takes for the
+Canvas row's artifact news.
 
 The second condition on a read exists because an add's or a run's ordinal is
 what already existed: a requester who had read their own request has a cursor
@@ -326,7 +337,10 @@ the object arms itself.
 `hosted-reply-notifications.test.ts` covers a reply's row: two replies in
 one batch are one row carrying the newest, a reply within the cooldown moves
 that row, the row clears when the cursor passes the reply, and the next reply
-after that is a new row.
+after that is a new row. `canvas-artifact-notices.test.ts` covers a pinned
+Canvas's new version: a row naming the artifact for the pinner who did not
+make it, collapsing while unseen, cleared by a read of the Chat, and a new
+row after.
 
 The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 `navigation-sidebar.test.tsx` the rows, their links, the badge, the empty state and Mark all seen, and `rail-dock-badge.test.tsx` that the dock badge leaves Activity out.
@@ -351,6 +365,10 @@ to the newest reply. It clears as a mention does. Migration 150 widens the
 row's kind to the four kinds a hosted parent records about itself and adds
 `subject_id`. [Client half: the row's words, glyph and link, folded in at
 merge.]
+
+A new version in a Canvas the person pinned writes an `artifact_updated` row
+the same way, collapsing per Canvas, naming the artifact and clearing on a
+read of the Chat after it.
 
 **Why (replies):** The owner asked on 2026-11-08 for human replies to produce
 Activity again. A row per message would bury the feed in a busy Chat;
