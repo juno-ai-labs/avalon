@@ -136,6 +136,49 @@ export const RetireThreadsResultSchema = deferredZodSchema(() => z.strictObject(
 export type RetireThreadsResult = z.infer<typeof RetireThreadsResultSchema>;
 
 /**
+ * One Organization's Threads that have artifacts, each made a Canvas in place
+ * with the same id (docs/workspace-retirement.md#converting-threads-that-have-artifacts).
+ * A dry run, the default, only lists them; an apply needs `confirm` naming
+ * `orgId`, the consistency check the retirement makes.
+ */
+export const ConvertThreadsToCanvasesInputSchema = deferredZodSchema(() => z.strictObject({
+  orgId: WorkspaceIdSchema,
+  dryRun: z.boolean().default(true).describe("true (the default) lists the Threads that would become Canvases and changes nothing."),
+  confirm: z.string().optional().describe("The orgId again, typed by the operator. Required, and must equal orgId, when dryRun is false."),
+}));
+export type ConvertThreadsToCanvasesInput = z.input<typeof ConvertThreadsToCanvasesInputSchema>;
+
+export const ThreadConversionCandidateSchema = z.strictObject({
+  threadId: z.string(),
+  title: z.string(),
+  /** Artifacts the Thread's conversations made (`artifact_registry`). */
+  artifactCount: z.number().int().nonnegative(),
+  /** Artifacts another conversation made that the Thread linked. */
+  linkedArtifactCount: z.number().int().nonnegative(),
+  /** Its viewers, who become the Canvas's participants. */
+  participantCount: z.number().int().nonnegative(),
+  /** Its conversations, Main and Breakouts, and how many have no transcript dump yet. */
+  conversations: z.number().int().nonnegative(),
+  undumped: z.number().int().nonnegative(),
+});
+
+export const ConvertThreadsToCanvasesResultSchema = deferredZodSchema(() => z.strictObject({
+  region: RegionSchema,
+  orgId: WorkspaceIdSchema,
+  dryRun: z.boolean(),
+  /** Every Thread with an artifact the Organization still holds; a finished conversion reruns with none. */
+  candidates: z.array(ThreadConversionCandidateSchema),
+  /** Made a Canvas by this pass. */
+  converted: z.number().int().nonnegative(),
+  /** Already a Canvas from an interrupted earlier pass, finished by this one. */
+  alreadyConverted: z.number().int().nonnegative(),
+  failed: z.array(z.strictObject({ threadId: z.string(), substreamId: z.string().nullable(), error: z.string() })),
+  /** Artifacts whose conversation names no Thread, Canvas or Sidekick: left alone. */
+  artifactsWithoutThread: z.number().int().nonnegative(),
+}));
+export type ConvertThreadsToCanvasesResult = z.infer<typeof ConvertThreadsToCanvasesResultSchema>;
+
+/**
  * A conversation an operator reads as a user: a Canvas's Chat or a Sidekick's
  * shared conversation. `kind` is what the operator asked for; the region
  * refuses an id whose parent is the other kind (`conversation_kind_mismatch`).
@@ -510,6 +553,7 @@ export interface EngineeringInspectionRpcBinding {
   retireOrg(input: RetireEngineeringOrgInput, operator: EngineeringOperator): Promise<RetireEngineeringOrgResult>;
   dumpThreadTranscripts(input: ThreadRetirementOperationInput, operator: EngineeringOperator): Promise<DumpThreadTranscriptsResult>;
   retireThreads(input: ThreadRetirementOperationInput, operator: EngineeringOperator): Promise<RetireThreadsResult>;
+  convertThreadsToCanvases(input: ConvertThreadsToCanvasesInput, operator: EngineeringOperator): Promise<ConvertThreadsToCanvasesResult>;
   readConversation(input: ReadEngineeringConversationInput): Promise<EngineeringTextResult>;
   createOrg(input: CreateEngineeringOrgInput, operator: EngineeringOperator): Promise<CreateEngineeringOrgResult>;
   listWorkspaces(input: ListEngineeringWorkspacesInput): Promise<ListEngineeringWorkspacesResult>;

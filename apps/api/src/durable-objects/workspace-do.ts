@@ -409,6 +409,7 @@ import {
   MemoryDigestSyncMessageSchema,
   MemoryDigestSyncWorkSchema,
   completeMemoryDigestSync,
+  markMemoryDigestHolders,
   memoryDigestSyncWork,
   nextMemoryDigestSyncAt,
   publishMemoryDigestSync,
@@ -5063,16 +5064,166 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       parents: parents.map((parent) => ({
         parentKind: parent.parent_kind,
         parentId: parent.parent_id,
-        substreamIds: sql.exec<{ substream_id: string }>(
-          `SELECT '0' AS substream_id
-           UNION SELECT substream_id FROM parent_children WHERE parent_id = ?
-           UNION SELECT substream_id FROM parent_child_projections WHERE parent_id = ?
-           UNION SELECT substream_id FROM breakouts WHERE workstream_id = ?
-           ORDER BY substream_id`,
-          parent.parent_id, parent.parent_id, parent.parent_id,
-        ).toArray().map((row) => row.substream_id),
+        substreamIds: this.retiredParentSubstreamIds(parent.parent_id),
       })),
     };
+  }
+
+  /** A Thread's or Channel's conversations, as `threadRetirementInventory` names them. */
+  private retiredParentSubstreamIds(parentId: string): string[] {
+    return this.state.storage.sql.exec<{ substream_id: string }>(
+      `SELECT '0' AS substream_id
+       UNION SELECT substream_id FROM parent_children WHERE parent_id = ?
+       UNION SELECT substream_id FROM parent_child_projections WHERE parent_id = ?
+       UNION SELECT substream_id FROM breakouts WHERE workstream_id = ?
+       ORDER BY substream_id`,
+      parentId, parentId, parentId,
+    ).toArray().map((row) => row.substream_id);
+  }
+
+  /** Whether the Thread-era resource-link projection is still in the schema (an object that ran an earlier 147 dropped it). */
+  private hasThreadResourceLinks(): boolean {
+    return this.state.storage.sql.exec(
+      `SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'workspace_workstream_resource_links'`,
+    ).toArray().length > 0;
+  }
+
+  /**
+   * The Threads that become Canvases (`services/thread-conversion-service.ts`):
+   * every `channels` row whose id made an artifact (`artifact_registry`) or
+   * links one through `workspace_workstream_resource_links`. A Channel
+   * (`spaces`) is never one. With each, what the conversion keeps and the
+   * conversations under it; and the artifacts whose conversation names no
+   * Thread, Canvas or Sidekick, which nothing converts.
+   */
+  async threadConversionInventory(): Promise<{
+    candidates: {
+      threadId: string; title: string; artifactCount: number; linkedArtifactCount: number;
+      participantCount: number; substreamIds: string[];
+    }[];
+    artifactsWithoutThread: number;
+  }> {
+    await this.initialized;
+    const sql = this.state.storage.sql;
+    const linked = this.hasThreadResourceLinks()
+      ? `(SELECT COUNT(DISTINCT link.resource_id) FROM workspace_workstream_resource_links link
+           JOIN artifact_registry artifact ON artifact.resource_id = link.resource_id
+          WHERE link.workstream_id = thread.workstream_id AND artifact.workstream_id <> thread.workstream_id)`
+      : "0";
+    const rows = sql.exec<{
+      workstream_id: string; title: string; artifact_count: number; linked_count: number; participant_count: number;
+    }>(
+      `SELECT * FROM (SELECT thread.workstream_id, thread.title,
+              (SELECT COUNT(*) FROM artifact_registry artifact WHERE artifact.workstream_id = thread.workstream_id) AS artifact_count,
+              ${linked} AS linked_count,
+              (SELECT COUNT(*) FROM channel_viewers viewer WHERE viewer.workstream_id = thread.workstream_id) AS participant_count
+         FROM channels thread)
+        WHERE artifact_count > 0 OR linked_count > 0
+        ORDER BY workstream_id`,
+    ).toArray();
+    return {
+      candidates: rows.map((row) => ({
+        threadId: row.workstream_id, title: row.title, artifactCount: row.artifact_count,
+        linkedArtifactCount: row.linked_count, participantCount: row.participant_count,
+        substreamIds: this.retiredParentSubstreamIds(row.workstream_id),
+      })),
+      artifactsWithoutThread: sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM artifact_registry
+          WHERE workstream_id NOT IN (SELECT workstream_id FROM channels)
+            AND workstream_id NOT IN (SELECT canvas_id FROM canvas_directory)
+            AND workstream_id NOT IN (SELECT automation_id FROM automation_directory)`,
+      ).one().count,
+    };
+  }
+
+  /**
+   * Make the Canvas of the same id from one Thread's rows, the first step of
+   * converting it (`services/thread-conversion-service.ts`), and carry over
+   * what other tables here key on the Thread's Main as a Thread's:
+   *
+   * - its directory row: the Thread's title, creator (`channels`, else the
+   *   earliest viewer, else refused `thread_conversion_no_creator`), creation
+   *   time, last activity and authority generation (the conversation's own,
+   *   which the directory row projected); a Workspace-scoped Thread is open
+   *   to the Organization and a personal one to its participants;
+   * - every viewer as a participant, and every artifact it made or linked;
+   * - the memory facts learned in its Main, whose source names a Thread
+   *   (`<id>`) and so opens to nobody, renamed to the Canvas's
+   *   (`canvas:<id>`), with the sweep receipt the next sweep continues from;
+   * - the resource locations in its Main, which decide who reads the
+   *   artifacts in it, and a Sidekick's attachment to its Main.
+   *
+   * The Canvas's row is the resume marker: one already there is left as it
+   * is (`created: false`). The carry-over is idempotent and runs every pass,
+   * so a pass interrupted between the two finishes it.
+   */
+  async convertThreadToCanvas(input: { workspaceId: string; threadId: string; title: string }): Promise<{ created: boolean }> {
+    const canvas = await this.hostedCanvas(input.threadId, input.workspaceId);
+    return this.canvasWrite(() => {
+      const sql = this.state.storage.sql;
+      const thread = sql.exec<{
+        title: string; scope: "personal" | "workspace"; created_by_user_id: string | null;
+        source_created_at: number; last_activity_at: number; authority_generation: number;
+      }>(
+        `SELECT title, scope, created_by_user_id, source_created_at, last_activity_at, authority_generation
+           FROM channels WHERE workstream_id = ?`, input.threadId,
+      ).toArray()[0];
+      let created = false;
+      if (thread) {
+        const viewers = sql.exec<{ user_id: string; added_at: number }>(
+          `SELECT user_id, COALESCE(participant_added_at, projected_at) AS added_at FROM channel_viewers
+            WHERE workstream_id = ? ORDER BY added_at, user_id`, input.threadId,
+        ).toArray();
+        const creator = thread.created_by_user_id ?? viewers[0]?.user_id ?? null;
+        if (creator === null) {
+          throw new ApiError(409, "thread_conversion_no_creator", "This Thread names no creator and has no viewers",
+            undefined, "thread_conversion_no_creator");
+        }
+        const artifacts = sql.exec<{ resource_id: string; added_at: number }>(
+          `SELECT resource_id, MIN(added_at) AS added_at FROM (
+             SELECT resource_id, created_at AS added_at FROM artifact_registry WHERE workstream_id = ?1
+             ${this.hasThreadResourceLinks() ? `UNION ALL SELECT link.resource_id, link.projected_at
+               FROM workspace_workstream_resource_links link
+               JOIN artifact_registry artifact ON artifact.resource_id = link.resource_id
+              WHERE link.workstream_id = ?1` : ""}
+           ) GROUP BY resource_id ORDER BY resource_id`, input.threadId,
+        ).toArray();
+        created = canvas.createFromThread({
+          workspaceId: input.workspaceId, canvasId: input.threadId, title: input.title, createdByUserId: creator,
+          createdAt: thread.source_created_at, updatedAt: thread.last_activity_at,
+          visibility: thread.scope === "workspace" ? "workspace" : "participants",
+          authorityGeneration: thread.authority_generation,
+          participants: viewers.map((viewer) => ({ userId: viewer.user_id, addedAt: viewer.added_at })),
+          artifacts: artifacts.map((artifact) => ({ resourceId: artifact.resource_id, addedAt: artifact.added_at })),
+        }).created;
+      } else if (!canvas.row()) {
+        throw new ApiError(404, "thread_conversion_thread_not_found", "No Thread or Canvas has this id",
+          undefined, "thread_conversion_thread_not_found");
+      }
+      const threadSource = input.threadId;
+      const canvasSource = `canvas:${input.threadId}`;
+      this.state.storage.transactionSync(() => {
+        const facts = sql.exec(
+          `UPDATE memory_facts SET source_conversations_json = (
+             SELECT json_group_array(CASE WHEN value = ?1 THEN ?2 ELSE value END)
+               FROM json_each(memory_facts.source_conversations_json))
+            WHERE EXISTS (SELECT 1 FROM json_each(memory_facts.source_conversations_json) WHERE value = ?1)`,
+          threadSource, canvasSource,
+        ).rowsWritten;
+        sql.exec(`UPDATE OR IGNORE memory_sweep_receipts SET conversation = ? WHERE conversation = ?`, canvasSource, threadSource);
+        // A copy elsewhere may now show what the Canvas's readers can read.
+        if (facts > 0) markMemoryDigestHolders(sql);
+        sql.exec(
+          `UPDATE OR IGNORE authorization_locations SET parent_kind = 'canvas'
+            WHERE parent_id = ? AND substream_id = '0' AND parent_kind = 'workstream'`, input.threadId,
+        );
+        sql.exec(
+          `UPDATE OR IGNORE sidekick_conversation_attachments SET parent_kind = 'canvas'
+            WHERE parent_kind = 'workstream' AND parent_id = ? AND substream_id = '0'`, input.threadId,
+        );
+      });
+      return { created };
+    });
   }
 
   /**
@@ -5080,9 +5231,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * retired: its directory row and viewer rows (and a Thread's Breakout
    * directory), and its parent state in every table
    * `HOSTED_PARENT_STATE_TABLES` names that the schema still holds, so a table
-   * phase C drops first is skipped. Nothing cascades from `channels` or
-   * `spaces` any more: migration 147 dropped the pin, resource-link and access
-   * tables that referenced them. Idempotent: a second call finds nothing to
+   * phase C drops first is skipped. A Thread's resource links, which 147
+   * keeps for the Thread conversion, and a Sidekick's attachment to one of
+   * its conversations go with it; the pin and access tables 147 dropped no
+   * longer reference them. Idempotent: a second call finds nothing to
    * delete.
    */
   async deleteRetiredThreadParent(input: { parentKind: "workstream" | "space"; parentId: string }): Promise<void> {
@@ -5092,6 +5244,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       "SELECT name FROM sqlite_schema WHERE type = 'table'",
     ).toArray().map((row) => row.name));
     const parentTables = HOSTED_PARENT_STATE_TABLES.filter((table) => present.has(table));
+    const resourceLinks = present.has("workspace_workstream_resource_links");
     this.state.storage.transactionSync(() => {
       // Checked at commit, when every referencing row is gone too, so the
       // delete order among the parent tables does not matter: definition
@@ -5111,6 +5264,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       }
       for (const table of parentTables) sql.exec(`DELETE FROM "${table}" WHERE parent_id = ?`, input.parentId);
       if (input.parentKind === "workstream") {
+        // A Sidekick's attachment to one of its conversations; a converted
+        // Thread's Main was renamed to the Canvas's first.
+        sql.exec("DELETE FROM sidekick_conversation_attachments WHERE parent_kind = 'workstream' AND parent_id = ?", input.parentId);
+        if (resourceLinks) sql.exec("DELETE FROM workspace_workstream_resource_links WHERE workstream_id = ?", input.parentId);
         sql.exec("DELETE FROM breakout_viewers WHERE workstream_id = ?", input.parentId);
         sql.exec("DELETE FROM breakouts WHERE workstream_id = ?", input.parentId);
         sql.exec("DELETE FROM channel_viewers WHERE workstream_id = ?", input.parentId);

@@ -460,7 +460,7 @@ describe("Durable Objects in the Workers runtime", () => {
         // fresh object proves the drop only by not having them at the end.
         absentTables: ["external_delivery_attempts", "slack_agent_channel_allowlist", "notes", "note_transcript_segments", "note_privacy_change_outbox", "note_resource_deletion_outbox", "workspace_batch_dispatch_note_targets",
           // Dropped by migration 147 (docs/workspace-retirement.md).
-          "workspace_activity_event_targets", "workspace_activity_events", "work_opportunity_provenance_roots", "work_opportunity_snapshots", "work_opportunity_user_links", "work_opportunity_user_states", "work_opportunities", "opportunity_batch_events", "opportunity_batch_windows", "opportunity_provenance_edges", "opportunity_provenance_nodes", "suggested_work_ranking_rounds", "suggested_work_sets", "workspace_workstream_pins", "workspace_workstream_resource_links", "workspace_batch_dispatch_targets", "workspace_batch_dispatches"],
+          "workspace_activity_event_targets", "workspace_activity_events", "work_opportunity_provenance_roots", "work_opportunity_snapshots", "work_opportunity_user_links", "work_opportunity_user_states", "work_opportunities", "opportunity_batch_events", "opportunity_batch_windows", "opportunity_provenance_edges", "opportunity_provenance_nodes", "suggested_work_ranking_rounds", "suggested_work_sets", "workspace_workstream_pins", "workspace_batch_dispatch_targets", "workspace_batch_dispatches"],
       },
     ] as const;
 

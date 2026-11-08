@@ -15,6 +15,8 @@ import {
   ThreadRetirementOperationInputSchema,
   DumpThreadTranscriptsResultSchema,
   RetireThreadsResultSchema,
+  ConvertThreadsToCanvasesInputSchema,
+  ConvertThreadsToCanvasesResultSchema,
   ReadEngineeringConversationInputSchema,
   EngineeringTextResultSchema,
   EngineeringSidekickListLookupSchema,
@@ -271,6 +273,16 @@ export function createEngineeringMcpServer(env: Env, principal: AccessPrincipal)
   }, (request) => tool(principal, "retire_threads", { workspace_id: request.orgId }, async () => {
     const orgId = confirmedOrg(request);
     return RetireThreadsResultSchema.parse(await (await organizationBinding(orgId)).retireThreads(request, principal));
+  }));
+
+  server.registerTool("convert_threads_to_canvases", {
+    description: "Make every Thread of orgId that has an artifact (made in it, or linked to it) a Canvas in place, keeping its id: the Thread's conversation becomes the Canvas's Chat, its viewers its participants and its artifacts the Canvas's. Its Breakouts are retired as retire_threads retires them. dryRun (the default) only lists the candidates with their artifact, participant and undumped-conversation counts. An apply (dryRun false) needs confirm equal to orgId, and is refused (thread_retirement_dump_incomplete) unless dump_thread_transcripts has written every conversation of every candidate. Run it before retire_threads. Repeat to resume; once done it lists no candidates. Returns the candidates and counts: converted, alreadyConverted, failed with a code per Thread, and artifactsWithoutThread.",
+    inputSchema: ConvertThreadsToCanvasesInputSchema.unwrap().shape,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, (request) => tool(principal, "convert_threads_to_canvases", { workspace_id: request.orgId }, async () => {
+    const orgId = request.dryRun === false ? confirmedOrg({ orgId: request.orgId, confirm: request.confirm ?? "" }) : request.orgId;
+    return ConvertThreadsToCanvasesResultSchema.parse(
+      await (await organizationBinding(orgId)).convertThreadsToCanvases(request, principal));
   }));
 
   const conversationReadSchema = ReadEngineeringConversationInputSchema.unwrap().omit({ kind: true, conversationId: true });
