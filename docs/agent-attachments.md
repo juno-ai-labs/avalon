@@ -990,10 +990,13 @@ not broader directory visibility.
 
 ### 2026-09-15 — Share prepared conversation file ownership
 
-User attachments and assistant artifact files use the verified upload pipeline
-and per-turn canonical attachment relationships. The prepared-conversation
-import that also wrote them, with its own reservations and retry
-reconciliation, is retired; see [the session import retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
+Imported user attachments and assistant artifact files use the verified upload
+pipeline and per-turn canonical attachment relationships. Import retry reconciliation
+checks operation identity, bytes and the intended descriptor. Prepared conversation
+receipts own reservations separately from live input mailboxes; definite failures
+release holds, while canonical resource projection releases committed holds. Both
+historical roles retain model manifests. Unavailable originals remain references,
+and extracted text is labeled separately. See [session import](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
 
 The separate durable preparation owner prevents file holds from depending on a
 live-message mailbox that imported history never creates. Fake pending messages
@@ -1104,7 +1107,7 @@ removes as dead weight.
 
 **What changed:** The `automation_*` attachment tools, the frozen ten-resource
 manifest, and the four-operation variant the preloaded automation architect
-received are removed. An automation's conversation is a `AgentLoopDO` and
+received are removed. An automation's conversation is a `SubstreamAgent` and
 takes the work-stream attachment path unchanged.
 
 **Why:** The automation was rebuilt as a conversation parent and the standalone
@@ -1562,7 +1565,7 @@ correlation.
 
 **What changed:** WorkspaceDO now owns resource/note metadata, current original
 and derivative refs, watches, automation relationships, and R2 deletion
-outboxes. AgentLoopDO owns the work-stream link, part attachment, inventory
+outboxes. SubstreamAgent owns the work-stream link, part attachment, inventory
 revision, tool receipt, and compaction fence. Terminal and attachment services
 perform separate reads across that boundary.
 
@@ -1571,7 +1574,7 @@ one conversation is a child relationship. D1 and a cross-table join represented
 neither authority correctly.
 
 **Considered and rejected:** Copying resource metadata into each child, leaving
-a D1 projection, or joining WorkspaceDO and AgentLoopDO through the SQL
+a D1 projection, or joining WorkspaceDO and SubstreamAgent through the SQL
 compatibility port. Those approaches create stale copies or imply atomicity the
 platform cannot provide.
 
