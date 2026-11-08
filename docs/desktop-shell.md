@@ -181,7 +181,12 @@ mount and route change reads it and opens the sheet once.
 Every pane's header is a `TitlePillHeader`: its ancestors attached to its own
 pill as one centred glass control, and the pane's controls at the right. The
 header row is 64px in every pane. Each control at the right is a
-`TitlePillAction`, the raised circle the pills wear. A narrow pane fits its
+`TitlePillAction`, the raised circle the pills wear. The header's side
+columns never shrink below what their controls need, so a title too long for
+the space between them truncates there, with the full title as the pill's
+tooltip, rather than running over Back and Forward. A title edited in place
+is a `TitlePillTitleInput` drawn as the level's title with the level's menu
+set aside. A narrow pane fits its
 pill between the leading and trailing controls and truncates the title, and
 that layout disables the crowding shift: shifting a pill already sized by the
 grid can move it across the pane boundary. An open pill fills solid and drops
@@ -313,6 +318,25 @@ It does not own:
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
 
 ## Changelog
+
+### 2026-11-08 — A long title truncates inside the pill, and a pill title can be edited in place
+
+**What changed:** The header's grid gives its side columns their
+min-content as a floor and the pill `minmax(0, auto)`, the pill's title
+carries the full title as its tooltip, and `TitlePillTitleInput` edits a
+level's title in place.
+
+**Why:** A 300-character Canvas title (the server's limit) grew the pill's
+`auto` column past the header: it covered Back and Forward and clipped at
+the window edge. The floor keeps the pill centred while it fits and lets it
+take only the room between the sides once it does not. Renaming a Canvas
+(`canvases.md`) is the first in-place edit.
+
+**What a future change must respect:** a control in a side column has to
+keep a real min-content width, or a long title runs over it again. The
+input saves on leaving the field only when the text differs from what it
+last sent, because a refusal's notice takes focus and would otherwise send
+the refused title again.
 
 ### 2026-11-08 — Activity is the rail's third section
 

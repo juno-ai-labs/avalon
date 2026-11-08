@@ -1,5 +1,5 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
-import { IconPin, IconPinnedOff } from '@tabler/icons-react';
+import { IconPencil, IconPin, IconPinnedOff } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useId, useLayoutEffect, useState, type ReactNode, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
@@ -235,12 +235,14 @@ export function usePinWrite(
  * `RowLayout`, draggable into Pinned while unpinned, and a context menu that
  * pins or unpins it. The section supplies what the row stands for.
  */
-export function PinnableRow({ active, className, drag, motionKey, onPin, pinned, position, to, unread, ...layout }: {
+export function PinnableRow({ active, className, drag, motionKey, onPin, onRename, pinned, position, to, unread, ...layout }: {
   active: boolean;
   className: string;
   drag: React.HTMLAttributes<HTMLElement>;
   motionKey: string;
   onPin: (pinned: boolean) => void;
+  /** Offers Rename… in the row's menu; absent where the row cannot be renamed from here. */
+  onRename?: (() => void) | undefined;
   pinned: boolean;
   position: string | undefined;
   to: string;
@@ -269,6 +271,10 @@ export function PinnableRow({ active, className, drag, motionKey, onPin, pinned,
           {pinned ? <IconPinnedOff aria-hidden="true" size={15} stroke={1.8} /> : <IconPin aria-hidden="true" size={15} stroke={1.8} />}
           {pinned ? 'Unpin' : 'Pin'}
         </ContextMenu.Item>
+        {onRename && <ContextMenu.Item className="menu-item" onSelect={onRename}>
+          <IconPencil aria-hidden="true" size={15} stroke={1.8} />
+          Rename…
+        </ContextMenu.Item>}
       </ContextMenu.Content>
     </ContextMenu.Portal>
   </ContextMenu.Root>;

@@ -2,11 +2,14 @@ import { asUserId } from '@rally/contracts';
 import type { CanvasDetail } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ApiError } from '../lib/api';
+import { RENAME_CANVAS_STATE } from '../lib/canvases';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
+import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import type * as Platform from '../lib/platform';
 import { openResourceRequest } from '../lib/navigation-routes';
 import type { ConversationSurfaceProps } from './conversation-surface';
@@ -20,10 +23,11 @@ const CANVAS = '00000000-0000-7000-8000-0000000000c1';
 const getCanvas = vi.hoisted(() => vi.fn());
 const setCanvasPinned = vi.hoisted(() => vi.fn());
 const setCanvasAudience = vi.hoisted(() => vi.fn());
+const renameCanvas = vi.hoisted(() => vi.fn());
 const getWorkspaceMembers = vi.hoisted(() => vi.fn());
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({
-    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers },
+    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas },
     session: { user: { id: ME }, workspace: { id: WORKSPACE, region: 'global', role: 'member' } },
   }),
   useOptionalCollaborationSession: () => null,
@@ -60,12 +64,28 @@ function detail(overrides: Partial<CanvasDetail> = {}): CanvasDetail {
   } as CanvasDetail;
 }
 
-function renderCanvas(entry = `/canvases/${CANVAS}`): void {
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+function renderCanvas(entry: string | { pathname: string; state: unknown } = `/canvases/${CANVAS}`): QueryClient {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}>
     <Tooltip.Provider><MemoryRouter initialEntries={[entry]}>
       <Routes><Route element={<CanvasScreen />} path="/canvases/:id" /></Routes>
     </MemoryRouter></Tooltip.Provider>
   </QueryClientProvider>);
+  return client;
+}
+
+/** A row of the socket's Canvas list, as `workspace_canvas_list` carries it. */
+function listRow(title: string) {
+  return {
+    id: CANVAS, title, createdByUserId: ME, createdAt: '2026-11-07T09:00:00.000Z', updatedAt: '2026-11-07T09:30:00.000Z',
+    lastEditor: null, writerSidekickId: null, visibility: 'creator', artifactKind: null, unread: false,
+    presentUserIds: [], pinnedPosition: null, sharedWithMe: false,
+  } as never;
+}
+
+async function openMenu(title: string): Promise<void> {
+  const trigger = await screen.findByRole('button', { name: `Canvas menu: ${title}` });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
 }
 
 const lastSurface = () => surfaces.at(-1)!;
@@ -77,6 +97,8 @@ beforeEach(() => {
   getCanvas.mockReset().mockResolvedValue(detail());
   setCanvasPinned.mockReset().mockResolvedValue(undefined);
   setCanvasAudience.mockReset();
+  renameCanvas.mockReset();
+  document.title = 'Rally';
   getWorkspaceMembers.mockReset().mockResolvedValue([
     { id: ME, name: 'Adam Jones', email: 'adam@example.test', timezone: 'UTC' },
     { id: MAYA, name: 'Maya Lin', email: 'maya@example.test', timezone: 'UTC' },
@@ -135,6 +157,80 @@ describe('CanvasScreen', () => {
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
     expect(setCanvasPinned).toHaveBeenCalledWith(CANVAS, true);
+  });
+
+  it('renames the Canvas in its pill from the menu, and saves on Enter', async () => {
+    renameCanvas.mockResolvedValue(detail({ title: 'Lisbon offsite' }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename…' }));
+    const field = await screen.findByRole('textbox', { name: 'Canvas title' });
+    expect(field).toHaveValue('Q4 revenue review');
+    fireEvent.change(field, { target: { value: 'Lisbon offsite' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(renameCanvas).toHaveBeenCalledWith(CANVAS, 'Lisbon offsite');
+    expect(await screen.findByRole('button', { name: 'Canvas menu: Lisbon offsite' })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Canvas title' })).toBeNull();
+  });
+
+  it('cancels a rename on Escape without asking the server', async () => {
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename…' }));
+    const field = await screen.findByRole('textbox', { name: 'Canvas title' });
+    fireEvent.change(field, { target: { value: 'Something else' } });
+    fireEvent.keyDown(field, { key: 'Escape' });
+    expect(await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' })).toBeInTheDocument();
+    expect(renameCanvas).not.toHaveBeenCalled();
+  });
+
+  it("says why the server refused a title, and keeps the field open on what was typed", async () => {
+    renameCanvas.mockRejectedValue(new ApiError('The request is invalid: title:too_small', 400, 'canvas_rename_invalid:title:too_small'));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename…' }));
+    const field = await screen.findByRole('textbox', { name: 'Canvas title' });
+    fireEvent.change(field, { target: { value: '   ' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    const notice = await screen.findByRole('alertdialog', { name: 'The Canvas could not be renamed' });
+    expect(notice).toHaveTextContent('A Canvas needs a title');
+    expect(field).toHaveValue('   ');
+    // The notice takes focus; leaving the field for it does not send the refused title again.
+    fireEvent.blur(field);
+    expect(renameCanvas).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the server's own words for a refusal it does not name", async () => {
+    renameCanvas.mockRejectedValue(new ApiError('You no longer have access to this Canvas', 403, 'canvas_forbidden'));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename…' }));
+    const field = await screen.findByRole('textbox', { name: 'Canvas title' });
+    fireEvent.change(field, { target: { value: 'Lisbon' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(await screen.findByRole('alertdialog', { name: 'The Canvas could not be renamed' })).toHaveTextContent('You no longer have access to this Canvas');
+  });
+
+  it('opens already renaming when the sidebar row asked for it', async () => {
+    renderCanvas({ pathname: `/canvases/${CANVAS}`, state: RENAME_CANVAS_STATE });
+    expect(await screen.findByRole('textbox', { name: 'Canvas title' })).toHaveValue('Q4 revenue review');
+  });
+
+  it('follows a rename the list push carries, without refetching the Canvas', async () => {
+    const client = renderCanvas();
+    applyVersionedSidebarList(client, 'canvases', 1, [listRow('Q4 revenue review')]);
+    await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+    await waitFor(() => expect(getCanvas).toHaveBeenCalledTimes(1));
+    act(() => { applyVersionedSidebarList(client, 'canvases', 2, [listRow('t1 Lisbon chat')]); });
+    expect(await screen.findByRole('button', { name: 'Canvas menu: t1 Lisbon chat' })).toBeInTheDocument();
+    expect(getCanvas).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the window after the open Canvas, and gives the name back on leaving', async () => {
+    renderCanvas();
+    await waitFor(() => expect(document.title).toBe('Q4 revenue review · Rally'));
+    cleanup();
+    expect(document.title).toBe('Rally');
   });
 
   it('changes who can open it from Share, for a manager', async () => {

@@ -4,9 +4,10 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createRef } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { canvasRenameRequested } from '../lib/canvases';
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import { CanvasesSection } from './canvas-sidebar-section';
 
@@ -81,6 +82,24 @@ describe('CanvasesSection', () => {
     fireEvent.contextMenu(screen.getByRole('link', { name: /Launch plan/ }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Unpin' }));
     expect(setCanvasPinned).toHaveBeenCalledWith('00000000-0000-7000-8000-0000000000c1', false);
+  });
+
+  it('opens the Canvas with its title being renamed from a row’s Rename…', async () => {
+    const opened = vi.fn();
+    function Opened(): null {
+      const location = useLocation();
+      opened(location.pathname, canvasRenameRequested(location.state));
+      return null;
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    applyVersionedSidebarList(client, 'canvases', 1, [canvas('00000000-0000-7000-8000-0000000000c1', 'Launch plan')]);
+    render(<QueryClientProvider client={client}><Tooltip.Provider><MemoryRouter initialEntries={['/']}>
+      <CanvasesSection scroll={createRef()} />
+      <Routes><Route element={<Opened />} path="/canvases/:id" /><Route element={null} path="/" /></Routes>
+    </MemoryRouter></Tooltip.Provider></QueryClientProvider>);
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch plan/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename…' }));
+    await waitFor(() => expect(opened).toHaveBeenLastCalledWith('/canvases/00000000-0000-7000-8000-0000000000c1', true));
   });
 
   it('draws the sidebar skeleton until the list arrives', () => {

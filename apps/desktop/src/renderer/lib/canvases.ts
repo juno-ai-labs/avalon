@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { useOptionalCollaborationSession } from './collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from './sidebar-list-store';
-import type { RallyApi } from './api';
+import { ApiError, type RallyApi } from './api';
 import type { AutomationSummary, WorkspaceMember } from './types';
 import { useWorkspaceMembers } from './workspace-members';
 
@@ -30,6 +30,29 @@ export function openCanvasId(pathname: string): string | null {
   const id = /^\/canvases\/([^/]+)$/.exec(pathname)?.[1];
   if (id === undefined) return null;
   try { return decodeURIComponent(id); } catch { return id; }
+}
+
+/**
+ * Route state that opens a Canvas with its title already being renamed, which
+ * is how the sidebar row's Rename… hands the edit to the pill it happens in.
+ */
+export const RENAME_CANVAS_STATE = { renameCanvas: true } as const;
+
+export function canvasRenameRequested(state: unknown): boolean {
+  return typeof state === 'object' && state !== null && (state as { renameCanvas?: unknown }).renameCanvas === true;
+}
+
+/**
+ * What a refused retitle says in the pill. The server names the issue
+ * (`canvas_rename_invalid:title:<issue>`); the words for the two a person
+ * can type are here, and anything else is the server's own message.
+ */
+export function canvasRenameRefusal(error: Error): string {
+  const issue = error instanceof ApiError && error.code?.startsWith('canvas_rename_invalid:title:')
+    ? error.code.slice('canvas_rename_invalid:title:'.length) : null;
+  if (issue === 'too_small') return 'A Canvas needs a title';
+  if (issue === 'too_big') return 'That title is too long';
+  return error.message;
 }
 
 /** The Canvas as `GET /canvases/:id` answers it for this reader. */

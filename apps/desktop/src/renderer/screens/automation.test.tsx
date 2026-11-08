@@ -114,6 +114,12 @@ describe("The Sidekick's conversation composer", () => {
     await waitFor(() => expect(surfaceIntents.at(-1)).toBeUndefined());
   });
 
+  it('names the window after the open Sidekick', async () => {
+    document.title = 'Rally';
+    await open('user-1', 'member');
+    await waitFor(() => expect(document.title).toBe('Weekly changelog · Rally'));
+  });
+
   it('opens a draft already editing, since it has nothing to run yet', async () => {
     await open('user-1', 'member', { lifecycle: 'draft', status: 'draft' });
     expect(surfaceIntents.at(-1)).toBe('edit_sidekick');
