@@ -148,9 +148,12 @@ export function storedMemberPreferences(row: {
   push_json: string;
   notify_json: string;
 } | undefined): MemberPreferences {
-  if (!row) return { ...DEFAULT_MEMBER_PREFERENCES };
-  const legacy = storedPushPreferences(row.push_json);
-  const chosen = storedNotify(row.notify_json);
+  // No row reads through the same shaping as an empty one, so a person who
+  // never saved gets the same record (previous-release kinds included) as
+  // one who did.
+  const stored = row ?? { show_agent_work: 1, push_json: "{}", notify_json: "{}" };
+  const legacy = storedPushPreferences(stored.push_json);
+  const chosen = storedNotify(stored.notify_json);
   // An offered kind reads as chosen, else its default; `merges` is in the
   // record only as stored. `newThreads` and `newBreakouts` are offered and
   // read nowhere, but a desktop of the previous release requires them, so
@@ -163,7 +166,7 @@ export function storedMemberPreferences(row: {
     return [[kind, chosen[kind] ?? (legacySwitch === undefined ? [...defaults]
       : withPush(defaults, defaults.includes("push") && legacy[legacySwitch]))]];
   })) as NotificationChannels;
-  return { showAgentWork: row.show_agent_work === 1, push: mirroredPush(legacy, notify), notify };
+  return { showAgentWork: stored.show_agent_work === 1, push: mirroredPush(legacy, notify), notify };
 }
 
 /** The push switches an older client reads: each kind's from its channels, where the record has them. */

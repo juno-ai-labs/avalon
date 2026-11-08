@@ -121,7 +121,9 @@ push); `OFFERED_NOTIFICATION_KINDS` names the six Settings offers. `newThreads`,
 `newBreakouts` and `merges` are optional in `NotificationChannelsSchema` and
 absent from `DEFAULT_NOTIFICATION_CHANNELS`; the server still emits
 `newThreads` and `newBreakouts` in the record, stored or `["push"]`, for one
-release. `NOTIFICATION_KIND_FOR_PUSH` drops `thread_started`,
+release, for a person with no stored row too (the no-row read first returned
+the bare defaults, so that desktop failed to parse exactly the people who had
+never opened Settings). `NOTIFICATION_KIND_FOR_PUSH` drops `thread_started`,
 `breakout_started` and `merged`, and maps `access_request` to
 `accessRequests` and `access_granted` to `added`. [Client half: the Settings
 rows, folded in at merge.]
