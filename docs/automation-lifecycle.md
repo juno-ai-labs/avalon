@@ -393,13 +393,19 @@ then every Sidekick ([`desktop-shell.md`](desktop-shell.md)). It lists
 accessible personal and workspace Sidekicks and uses the normal desktop
 session and workspace boundary.
 
-The Sidekick profile always shows Pause/Resume, Run now, Run history, and
-**When to expect it**. Unavailable actions stay focusable with a tooltip naming
-the reason, while their callbacks remain blocked. Run now requires an active,
-runnable Sidekick; Run history is available with triggers or previous runs.
-The timing section shows **No timing details yet.** when no summaries or next
-run exist; a visible inbound email address supplies **When an email arrives**
-for legacy definitions whose implicit email trigger has no summary. The
+The Sidekick's details column shows, as design §4 draws it, Pause/Resume and
+a "⋯" menu (Run now, Run history, Copy link, Archive), then three blocks that
+are always present: **Wakes on** (one row per trigger with its mark, and the
+next run), **Uses** (the connections its runs use, with their count) and
+**Writes to** (the Canvases it writes). A block with nothing in it reads
+**Nothing yet** rather than disappearing, so "uses nothing" and "not shown"
+cannot be confused. Who it may act as follows the blocks. A draft shows no
+Pause and no delegation block: nothing runs yet, and it is finished in the
+conversation. Unavailable actions stay focusable with a tooltip naming the
+reason, while their callbacks remain blocked. Run now requires an active,
+runnable Sidekick; Run history is available with triggers or previous runs. A
+visible inbound email address supplies **When an email arrives** for legacy
+definitions whose implicit email trigger has no summary. The
 conversation remains the editing surface, without a separate guidance section.
 
 No composer shows a running Sidekick count; the `sidekick_activity`
@@ -1794,9 +1800,14 @@ run a message answers is the inference the decision log refuses. Copying the
 question onto the run row's projection: the elicitation is the run's own
 record, and its socket is already the answer path.
 
+The details column also follows the design: **Wakes on**, **Uses** and
+**Writes to** are always drawn, reading **Nothing yet** when empty, and a
+draft shows neither Pause nor the delegation block. The inspection could not
+tell a Sidekick that uses nothing from one whose block was hidden.
+
 **What a future change must respect:** the inline form answers through the
 run's conversation, never through `"0"`; it opens a socket only while its row
-says Needs input.
+says Needs input. An empty details block says so; it is never hidden.
 
 ### 2026-11-07 — The shared conversation starts runs and shows them, no Thread owns a Sidekick, and Sidekicks open in the main window
 

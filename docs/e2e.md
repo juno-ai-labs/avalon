@@ -559,7 +559,7 @@ Pass evidence: two independently selectable preset connections, exact stored cap
 
 ## PRD flow 5 — future scheduled run
 
-1. Create a Monday calendar Sidekick in a timezone with daylight-saving transitions and confirm its profile's **When to expect it** names the next run's local time.
+1. Create a Monday calendar Sidekick in a timezone with daylight-saving transitions and confirm its details' **Wakes on** names the next run's local time.
 2. Fire the workspace scheduler for that time, including one repeated alarm delivery.
 3. Confirm exactly one run and one harness run start, and the run appears as one row in the Sidekick's shared conversation.
 4. Complete the run and confirm the next run is scheduled at the correct local Monday time across the next daylight-saving boundary.

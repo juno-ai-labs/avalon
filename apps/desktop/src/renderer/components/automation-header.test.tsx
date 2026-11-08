@@ -92,30 +92,27 @@ describe('AutomationHeader', () => {
     await waitFor(() => expect(handlers.onAppearanceChange).toHaveBeenCalledWith({ icon: 'rocket' }));
   });
 
-  it('keeps Pause visible but unavailable while a draft is being set up', () => {
-    const handlers = renderHeader(draft);
+  it('offers a draft no Pause and no delegation, and says which details are still empty', () => {
+    renderHeader(draft, { delegation: <section>Delegation allowed</section> });
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('New automation');
     expect(screen.getByText('Draft')).toBeInTheDocument();
     expect(screen.getByText('Only you')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create' })).toBeNull();
-    const pause = screen.getByRole('button', { name: 'Pause' });
-    expect(pause).toHaveAttribute('aria-disabled', 'true');
-    fireEvent.click(pause);
-    expect(handlers.onPause).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+    expect(screen.queryByText('Delegation allowed')).toBeNull();
     expect(screen.queryByText('Make it work for you')).toBeNull();
     expect(screen.queryByText(/Ask for changes in the conversation/u)).toBeNull();
-    expect(screen.getByRole('heading', { name: 'When to expect it' })).toBeVisible();
-    expect(screen.getByText('No timing details yet.')).toBeVisible();
+    for (const block of ['Wakes on', 'Uses', 'Writes to']) {
+      expect(screen.getByRole('region', { name: block })).toHaveTextContent(`${block}Nothing yet`);
+    }
   });
 
-  it.each(['draft', 'deleted'] as const)('explains why %s Sidekicks cannot be paused', async (lifecycle) => {
-    renderHeader({ ...draft, lifecycle });
+  it('explains why an archived Sidekick cannot be paused', async () => {
+    renderHeader({ ...draft, lifecycle: 'deleted' });
     fireEvent.keyDown(document.body, { key: 'Tab' });
     fireEvent.focus(screen.getByRole('button', { name: 'Pause' }));
-    expect(await screen.findByRole('tooltip')).toHaveTextContent(lifecycle === 'draft'
-      ? 'Finish setting up this Sidekick in the conversation before you can pause it.'
-      : 'This Sidekick has been archived and can no longer be paused.');
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('This Sidekick has been archived and can no longer be paused.');
   });
 
   it('keeps the lifecycle control visible and inert while an action is pending', () => {
@@ -200,7 +197,7 @@ describe('AutomationHeader', () => {
     );
     expect(screen.queryByRole('button', { name: 'Apply changes' })).toBeNull();
     expect(screen.getByText('Active')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'When to expect it' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Wakes on' })).toBeVisible();
     const email = screen.getByText('weekly-changelog@automation.rallywith.ai');
     expect(email).not.toBeVisible();
     fireEvent.click(screen.getByText('Email this Sidekick'));
@@ -220,15 +217,15 @@ describe('AutomationHeader', () => {
       runnable: true,
     });
     expect(screen.getByRole('list', { name: 'Triggers' })).toHaveTextContent('When an email arrives');
-    expect(screen.queryByText('No timing details yet.')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Wakes on' })).not.toHaveTextContent('Nothing yet');
   });
 
   it('shows the next scheduled time even without current trigger summaries', () => {
     renderHeader({ ...draft, lifecycle: 'active', nextRunAt: '2026-09-08T12:00:00.000Z', triggerSummaries: [] });
-    expect(screen.getByText('When to expect it')).toBeVisible();
+    expect(screen.getByText('Wakes on')).toBeVisible();
     expect(document.querySelector('.automation-runs-next')).toHaveTextContent(/^Next /u);
     expect(screen.queryByRole('list', { name: 'Triggers' })).toBeNull();
-    expect(screen.queryByText('No timing details yet.')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Wakes on' })).not.toHaveTextContent('Nothing yet');
   });
 
   it('offers Pause on an active automation and Resume on a paused one', () => {
