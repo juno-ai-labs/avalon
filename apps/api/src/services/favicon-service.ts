@@ -1,5 +1,5 @@
 import { parse as parseDomain } from "tldts";
-import type { FirecrawlClient } from "../lib/firecrawl";
+import { FirecrawlError, type FirecrawlClient } from "../lib/firecrawl";
 import { createDeadline } from "../lib/deadline";
 
 const FAVICON_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -69,8 +69,29 @@ function transientStatus(status: number): boolean {
   return status === 0 || status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
+/** A discovery or image fetch that did not complete, so its host's favicon is unknown rather than missing. */
+export class FaviconFetchError extends Error {
+  constructor(readonly phase: "branding" | "image", hostname: string, options?: ErrorOptions) {
+    super(`favicon_${phase}_fetch_failed for ${hostname}`, options);
+    this.name = "FaviconFetchError";
+  }
+}
+
 function transientFailure(hostname: string, phase: "branding" | "image", cause?: unknown): Error {
-  return new Error(`favicon_${phase}_fetch_failed for ${hostname}`, { cause });
+  return new FaviconFetchError(phase, hostname, { cause });
+}
+
+/**
+ * Why a favicon could not be resolved, as the `favicon_unavailable:<reason>`
+ * code a caller and the log both read, or `null` for a failure this module did
+ * not anticipate: a fetch that did not complete names its phase, and a
+ * Firecrawl failure its kind and HTTP status (`firecrawl_http_400`). Neither
+ * carries the provider's message, which may quote the request.
+ */
+export function faviconFailureReason(error: unknown): string | null {
+  if (error instanceof FaviconFetchError) return `${error.phase}_fetch_failed`;
+  if (error instanceof FirecrawlError) return error.kind === "network" ? "firecrawl_network" : `firecrawl_${error.kind}_${error.status}`;
+  return null;
 }
 
 async function fetchImage(

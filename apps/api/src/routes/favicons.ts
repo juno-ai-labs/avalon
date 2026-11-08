@@ -4,7 +4,7 @@ import type { HonoAppEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { FirecrawlClient } from "../lib/firecrawl";
 import { zValidator } from "../middleware/validation";
-import { faviconHostChain, resolveFavicon } from "../services/favicon-service";
+import { faviconFailureReason, faviconHostChain, resolveFavicon } from "../services/favicon-service";
 
 export const faviconRoutes = new Hono<HonoAppEnv>();
 const FaviconParamsSchema = z.strictObject({
@@ -21,7 +21,14 @@ faviconRoutes.get("/:hostname", zValidator("param", FaviconParamsSchema), async 
     new FirecrawlClient({ apiKey }),
     fetch,
     (promise) => c.executionCtx.waitUntil(promise),
-  );
+  ).catch((error: unknown) => {
+    // The provider, or the host behind it, failed: a gateway failure that
+    // names why, never the generic 500 a request with the reason in hand
+    // would otherwise reach (CLAUDE.md, "Naming a schema failure").
+    const reason = faviconFailureReason(error);
+    if (reason === null) throw error;
+    throw new ApiError(502, `favicon_unavailable:${reason}`, "The site's icon could not be fetched");
+  });
   if (!favicon) {
     return c.body(null, 404, { "Cache-Control": "private, no-cache" });
   }

@@ -324,7 +324,12 @@ the image response headers and body. It validates the bytes as an image and
 stores either the icon or a confirmed miss in the dedicated platform-wide
 `FAVICON_CACHE`. A transient
 Firecrawl, network, rate-limit, or server failure is not negative-cached, and a
-failure for one candidate cannot discard a valid result from the other. Each KV
+failure for one candidate cannot discard a valid result from the other. When
+neither candidate resolves, the route answers 502
+`favicon_unavailable:<reason>` (`faviconFailureReason`): a discovery or image
+fetch that did not complete names its phase (`branding_fetch_failed`), and a
+Firecrawl failure its kind and status (`firecrawl_http_400`,
+`firecrawl_network`), never the provider's message. Each KV
 entry expires after 30 days; the next read fetches and overwrites it, so no stale
 generation is retained.
 
@@ -981,6 +986,13 @@ line break in prose but tables stay preformatted, since this renderer has no
 table model (2026-08-30); and every email is drawn light only, because a mail
 client cannot report the reader's appearance and strips `<style>` blocks
 (2026-10-16).
+
+The favicon route answers a provider failure as 502
+`favicon_unavailable:<reason>` where it answered 500 `internal_error`: the
+end-to-end pass found every keystroke of a partial host (`en.wikipe`) logged
+as an unexpected error with no reason, while `FirecrawlError` held its kind
+and status. A 404 for a Firecrawl 4xx was rejected because a 401 or 402 is
+this deployment's key, not the host.
 
 ### 2026-11-02 — Sidekick mention chips
 
