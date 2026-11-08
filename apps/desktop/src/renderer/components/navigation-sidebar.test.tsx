@@ -247,6 +247,9 @@ describe('the Activity section', () => {
     const rail = screen.getByRole('navigation', { name: 'Sections' });
     const activity = within(rail).getByRole('button', { name: /Activity/ });
     expect(within(activity).getByRole('img', { name: '2 unseen' })).toHaveTextContent('2');
+    // The section first, then its count.
+    expect(activity).toHaveAccessibleName('Activity, 2 unseen');
+    expect(within(rail).getByRole('button', { name: /^Sidekicks, \d+ waiting$/ })).toBeInTheDocument();
     fireEvent.click(activity);
     expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
 
