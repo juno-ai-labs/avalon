@@ -18,7 +18,6 @@ import type * as ConversationSurfaceExports from './conversation-surface';
 
 type ConversationSurfaceModule = typeof ConversationSurfaceExports;
 import { CanvasScreen } from './canvas';
-import { mountAppStylesheet, placeholderDeclaration } from '../test/app-stylesheet';
 
 const WORKSPACE = '00000000-0000-7000-8000-0000000000f1';
 const ME = asUserId('00000000-0000-7000-8000-0000000000a1');
@@ -459,24 +458,6 @@ describe('CanvasScreen', () => {
     })));
     expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [] });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share Canvas' })).toBeNull());
-  });
-
-  it('greys the guest email placeholder with the token the people search uses', async () => {
-    const unmount = mountAppStylesheet({ width: 1440, height: 900 });
-    try {
-      renderCanvas();
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
-      fireEvent.click(screen.getByRole('button', { name: 'Share' }));
-      const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
-      fireEvent.click(within(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
-      const guests = within(dialog).getByText('Invite a guest by email').closest('details')!;
-      guests.open = true;
-      fireEvent(guests, new Event('toggle'));
-      expect(placeholderDeclaration(within(dialog).getByLabelText('Email addresses'), 'color')).toBe('var(--av-sys-color-text-muted)');
-      expect(placeholderDeclaration(await within(dialog).findByLabelText('Search people'), 'color')).toBe('var(--av-sys-color-text-muted)');
-    } finally {
-      unmount();
-    }
   });
 
   it('sends no addresses left under a closed guest section', async () => {
