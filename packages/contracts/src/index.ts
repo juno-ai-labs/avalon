@@ -20,7 +20,6 @@ import { HarnessStatusSchema } from "./conversation-attention";
 export * from "./agent-communication";
 import { AgentExchangeSchema } from "./agent-communication";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
-import { DemoSeedSchema } from "./demo-seed";
 import { DesktopActionOutcomeSchema, DesktopActionRequestSchema } from "./desktop-actions";
 import {
   ActivitySourceBindingKeySchema,
@@ -56,8 +55,6 @@ export * from "./conversation-effects";
 export * from "./conversation-parent";
 export * from "./canvases";
 export * from "./activity";
-export * from "./demo-operations";
-export * from "./demo-seed";
 export * from "./identifiers";
 export * from "./impersonation";
 export * from "./support-access";
@@ -2957,6 +2954,8 @@ export const SlackSearchAuthorizationSchema = z.strictObject({
   actionToken: z.string().min(1).max(4096)
 });
 
+// Not strict: a run context stored by the removed demo seeder carries a `seed`
+// key, which this schema strips rather than refuses (docs/agent-harness.md).
 export const WorkstreamWorkflowInputSchema = z.object({
   region: RegionSchema,
   workspaceId: WorkspaceIdSchema,
@@ -3056,16 +3055,6 @@ export const WorkstreamWorkflowInputSchema = z.object({
   telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).optional(),
   slackOrigin: SlackOriginContextSchema.optional(),
   slackSearchAuthorization: SlackSearchAuthorizationSchema.optional(),
-  /**
-   * Set on a run a demo seed started. The harness answers this run's provider
-   * requests from the seed's turn instead of reaching OpenRouter, and nothing
-   * else about the run differs. Carried from the message's authorization into
-   * the execution context at activation, and from an opening message's context
-   * at initialize. A run an elicitation answer resumes is built from the answer,
-   * not from this context, so it is never seeded. Optional so every existing
-   * producer keeps parsing unchanged; `docs/demo-workspaces.md` owns it.
-   */
-  seed: DemoSeedSchema.optional(),
   reason: z.string().min(1).max(500)
 });
 export const ConnectorPollWorkflowInputSchema = z.object({
