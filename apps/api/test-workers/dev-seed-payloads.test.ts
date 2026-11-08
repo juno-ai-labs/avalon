@@ -43,6 +43,8 @@ describe("the seeded Launch plan artifact's versions", () => {
   const ARTIFACT = "00000000-0000-7000-8000-000000000041";
   /** Launch plan's creator in the fixture. */
   const SAMANTHA = "00000000-0000-7000-8000-000000000003";
+  /** The fixture's webhook connection. */
+  const CONNECTION = "00000000-0000-7000-8000-000000000061";
 
   /**
    * The fixture as the local-authority script posts it, with only Launch plan,
@@ -87,6 +89,14 @@ describe("the seeded Launch plan artifact's versions", () => {
       .map(({ version, mimeType, sizeBytes, contentAvailable, author }) => ({ version, mimeType, sizeBytes, contentAvailable, author }));
   }
 
+  /** Who `GET /resources/:id/versions` says made each version, newest first. */
+  async function authors() {
+    const reader = new ResourceService(TEST_ENV, { sessionId: `session-${SAMANTHA}`, userId: asUserId(SAMANTHA),
+      workspaceId: asWorkspaceId(WORKSPACE_ID), region: "global", role: "member" });
+    return ResourceRevisionSchema.array().parse(await reader.versions(ARTIFACT))
+      .map(({ version, author, authorName }) => ({ version, author, authorName }));
+  }
+
   /** The stored body's length in UTF-8 bytes, which is what a publish records as its size. */
   const BODY_BYTES = 770;
 
@@ -117,6 +127,24 @@ describe("the seeded Launch plan artifact's versions", () => {
     expect(await versions()).toEqual([
       { version: 2, mimeType: "text/markdown", sizeBytes: BODY_BYTES, contentAvailable: true, author: { kind: "system" } },
       { version: 1, mimeType: "text/markdown", sizeBytes: BODY_BYTES, contentAvailable: true, author: { kind: "system" } },
+    ]);
+  });
+
+  it("names a member's version by the person and a connector's by its connection, and Rally's by nobody", async () => {
+    await prepare();
+    await seedProduct(TEST_ENV, launchPlanSeed());
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", asWorkspaceId(WORKSPACE_ID))));
+    // A rename by Samantha, then a refetch by the fixture's connection, as their producers stage them.
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE resources SET title = 'Launch readiness', revision_author_kind = 'member',
+        revision_author_user_id = ?, revision_cause = 'renamed' WHERE id = ?`, SAMANTHA, ARTIFACT);
+      state.storage.sql.exec(`UPDATE resources SET title = 'Launch readiness notes', revision_author_kind = 'connector',
+        revision_author_connection_id = ?, revision_cause = 'refetched' WHERE id = ?`, CONNECTION, ARTIFACT);
+    });
+    expect(await authors()).toEqual([
+      { version: 3, author: { kind: "connector", connectionId: CONNECTION }, authorName: "Incident updates fixture" },
+      { version: 2, author: { kind: "member", userId: SAMANTHA }, authorName: "Member" },
+      { version: 1, author: { kind: "system" }, authorName: null },
     ]);
   });
 });
