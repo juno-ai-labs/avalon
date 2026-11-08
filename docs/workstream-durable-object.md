@@ -1612,7 +1612,7 @@ live state reopens a finished run (see
 | --- | --- |
 | `_sql_schema_migrations`, `object_versions` | Schema versions and the applied-migration receipts. |
 | `object_retirement` | Singleton tombstone, conversation-object schema v48; shared constant, see `WorkspaceDO`. |
-| `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. The root's `workstream_key` is the parent id and `parent_kind` (v39, default `workstream`) says which kind; `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns, never written or projected, kept because the runtime-compat triggers in `workstream-runtime-compat-schema.ts` name them inside released migration hashes. Existing main data uses local context `0`. |
+| `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. The root's `workstream_key` is the parent id and `parent_kind` (v39, default `workstream`) says which kind, written once except by `convertParentKind`, which turns a Thread's Main into a Canvas's Chat (`workstream` to `canvas` only); `origin_type`, `automation_subscription_id`, `automation_run_id`, and `planned_for` are dead columns, never written or projected, kept because the runtime-compat triggers in `workstream-runtime-compat-schema.ts` name them inside released migration hashes. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
 | `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending messages have no canonical order and enter Bind only through the persistent loop's delivery transaction. |
 | `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending inputs have neither transcript nor attention order until delivery; `starts_run = 0` marks one that lands in order but starts no run. |
@@ -1756,6 +1756,33 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-11-08 — A Thread's conversation can become a Canvas's: `convertParentKind`
+
+**What changed:** `AgentLoopDO.convertParentKind` (over
+`WorkstreamObjectStore.convertParentKind`) rewrites the stored parent kind
+from `workstream` to `canvas`, together with the `parentKind` of every
+regional effect still pending in `durable_outbox`, then binds the persistent
+loop as construction does for a hosted conversation (the constructor's block,
+now `bindHostedConversation`) and arms the alarm. Any other transition is
+refused with `conversation_parent_kind_conversion_unsupported:<from>:<to>`; an
+object already `canvas` succeeds unchanged.
+
+**Why:** The user decided on 2026-11-08 that a Thread with artifacts becomes a
+Canvas in place, keeping its id (`convert_threads_to_canvases`,
+[`workspace-retirement.md`](workspace-retirement.md#converting-threads-that-have-artifacts)).
+The object's Main is the Canvas's Chat, so only its kind has to move. The
+outbox envelopes move with it because they name the parent by kind and would
+otherwise be refused (`conversation_parent_kind_retired:workstream`) until they
+dead-letter; the effect hash covers the effect alone, so the rewrite keeps it.
+The authority row and the identity are read from SQL on every use, so nothing
+in memory needs invalidating. A Thread object skipped the loop binding on
+construction and had its alarm cleared on every firing, which is why the RPC
+does both.
+
+**What a future change must respect:** the stored kind is otherwise
+write-once. A new place that caches or copies the kind inside this object has
+to be rewritten by `convertParentKind` too.
 
 ### 2026-11-07 — The parent-kind contract names only Canvas and Sidekick
 
