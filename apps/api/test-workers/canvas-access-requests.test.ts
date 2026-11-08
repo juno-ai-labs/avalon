@@ -171,7 +171,7 @@ describe("asking to open a Canvas", () => {
     const waiting = { kind: "access_request", parentKind: "canvas", parentId: CANVAS_ID, parentTitle: "Launch plan",
       actor: { kind: "person", id: REQUESTER }, preview: "I'm picking up the launch" };
     await expect.poll(() => creator.pushes.at(-1)).toMatchObject({ unseenCount: 1, items: [{
-      ...waiting, accessRequest: { state: "pending", decidedByName: null }, seen: false }] });
+      ...waiting, accessRequest: { state: "pending", decidedByName: null, decidedByUserId: null }, seen: false }] });
     const requestIntent = (await intents("access_request")).find((intent) => intent.recipient_user_id === CREATOR)!;
     expect(await alertFor(CREATOR, requestIntent.intent_id)).toMatchObject({ title: "Robin asked to open Launch plan", body: "I'm picking up the launch" });
     // The Share panel lists it for a decider, and for nobody else.
@@ -182,8 +182,8 @@ describe("asking to open a Canvas", () => {
 
     expect(await decide("approve")).toEqual({ state: "approved" });
     await expect.poll(() => creator.pushes.at(-1)).toMatchObject({ unseenCount: 0, items: [{
-      ...waiting, accessRequest: { state: "approved", decidedByName: "Avery" }, seen: true }] });
-    expect((await openedActivity(ADMIN)).items).toMatchObject([{ kind: "access_request", accessRequest: { state: "approved", decidedByName: "Avery" }, seen: true }]);
+      ...waiting, accessRequest: { state: "approved", decidedByName: "Avery", decidedByUserId: CREATOR }, seen: true }] });
+    expect((await openedActivity(ADMIN)).items).toMatchObject([{ kind: "access_request", accessRequest: { state: "approved", decidedByName: "Avery", decidedByUserId: CREATOR }, seen: true }]);
     await runInDurableObject(workspace(), (_instance, state) => expect(state.storage.sql.exec(
       `SELECT source, added_by_user_id FROM canvas_participants WHERE canvas_id = ? AND user_id = ?`, CANVAS_ID, REQUESTER).toArray())
       .toEqual([{ source: "request", added_by_user_id: CREATOR }]));
@@ -204,7 +204,7 @@ describe("asking to open a Canvas", () => {
     expect(await decide("deny", ADMIN)).toEqual({ state: "denied" });
     expect(await intents("access_granted")).toEqual([]);
     expect((await openedActivity(REQUESTER)).items).toEqual([]);
-    expect((await openedActivity(CREATOR)).items).toMatchObject([{ kind: "access_request", accessRequest: { state: "denied", decidedByName: "Ada" }, seen: true }]);
+    expect((await openedActivity(CREATOR)).items).toMatchObject([{ kind: "access_request", accessRequest: { state: "denied", decidedByName: "Ada", decidedByUserId: ADMIN }, seen: true }]);
     expect(await workspace().canvasAccess({ workspaceId: WORKSPACE_ID, canvasId: CANVAS_ID, actor: member(REQUESTER) }))
       .toMatchObject({ request: { state: "denied" } });
     expect(await ask()).toEqual({ status: "pending" });
