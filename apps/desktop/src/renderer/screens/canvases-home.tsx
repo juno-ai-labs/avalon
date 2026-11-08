@@ -4,11 +4,11 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { CanvasMark } from '../components/canvas-mark';
-import { AvatarStack, Button, EmptyState, ErrorNotice } from '../components/primitives';
+import { AvatarStack, Button, EmptyState, ErrorNotice, TitleSkeleton } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
-import { canvasRoute, canvasRowDetail, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
+import { canvasNaming, canvasRoute, canvasRowDetail, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
 import { useCollaborationSession, useShellCapabilities } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 
@@ -66,7 +66,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     return <li key={canvas.id}>
       <span className="canvas-list-mark"><CanvasMark kind={canvas.artifactKind} size={44} /></span>
       <div className="sidekick-list-copy">
-        <h3><Link className="sidekick-list-link" to={canvasRoute(canvas.id)}>{canvas.title}</Link></h3>
+        <h3><Link className="sidekick-list-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
         <small>{canvasRowDetail(canvas, membersById, sidekicksById, currentUserId)} · <RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
       </div>
       {present.length > 0 && <span className="canvas-list-present"><AvatarStack members={present} nameTooltip={false} showTooltip={false} /><span className="canvas-live-badge">Live</span></span>}
