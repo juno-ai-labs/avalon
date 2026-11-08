@@ -37,8 +37,8 @@ apart, and the launchers are scoped by regional workspace identity so switching
 workspaces does not surface another workspace's words even if configured deployments hold
 the same workspace UUID.
 
-**New automation** caches nothing: `/automations/new` calls `POST /automations`
-and replaces itself with `/automations/:id`, so the first sentence is typed into
+**New Sidekick** caches nothing: `/sidekicks/new` calls `POST /automations`
+and replaces itself with `/sidekicks/:id`, so the first sentence is typed into
 a conversation that already has its durable id. `draft-keys.ts` still builds
 the `new-automation` keys and `draft-cache.ts` still migrates their legacy
 spellings, because a released build may have rows under them; no screen writes
@@ -46,7 +46,7 @@ them now.
 
 The same holds for the Channel composer and the Thread and Breakout screens,
 which the client cutover deleted: only the Canvas and Sidekick families are
-written. The `new-workstream` and Breakout key builders in
+written. The `new-workstream` builder and the `:substream:` suffix in
 `common/draft-keys.ts` stay, as does the legacy migration, so drafts already
 stored under them expire on the ordinary schedule rather than being deleted on
 upgrade.
@@ -183,9 +183,9 @@ accepted-send cleanup; closing the app discards them.
 
 ### What is not cached
 
-- Automation drafts under construction: the definition revisions, the
+- Sidekick drafts under construction: the definition revisions, the
   conversation, and the plugin or activity-source choices. Only the input
-  component is cached; the conversation is the automation's own substream `0`
+  component is cached; the conversation is the Sidekick's own substream `0`
   and the revisions live on its hosted Sidekick
   ([`automation-lifecycle.md`](automation-lifecycle.md)). The plugin and
   activity-source choices are cached nowhere, because they are re-derived from

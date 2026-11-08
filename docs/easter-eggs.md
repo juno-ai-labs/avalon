@@ -85,10 +85,9 @@ pane it sits in, the browser's conversation row included
 - **The Konami lap respects reduced motion.** Under
   `prefers-reduced-motion: reduce` no avatar laps, so the code does nothing.
 - **The flag comes down when the laps end.** Left up, an avatar that mounts
-  later (a new message, a switched Channel) would lap on arrival. The egg
+  later (a new message, a switched Canvas) would lap on arrival. The egg
   waits on the laps' own animations rather than a timer, so the duration lives
   in the stylesheet alone. Verified visually, no automated guard.
-  Verified visually, no automated guard.
 
 ## Boundary
 

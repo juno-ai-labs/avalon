@@ -144,6 +144,8 @@ component was rendered with rather than the one it settled on, because
 subscribing re-reads the clock and an assertion on the final value passes
 whether or not the first frame was stale.
 
+## Changelog
+
 ### 2026-11-08 — A turn's byline reads its clock time under a day divider
 
 **What changed:** The byline shows the clock time, not "7 minutes ago", and the
