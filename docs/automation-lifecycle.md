@@ -1052,7 +1052,9 @@ newest run is live (`runState`), **Paused** in amber, **Draft**, or when it
 next runs ("Runs Friday 2:00 PM", the weekday within the coming week and the
 date beyond it), else when it last ran. On the home the state is the design's
 pill (green Active and Working, amber Paused, dashed Draft) with a red **Needs
-input** badge beside the name, and the count reads "1 Sidekick". In the
+input** badge beside the name, **Next** is a schedule's next run or what wakes
+it (`triggerKinds`: "On alert", "On email", "On request", in that
+precedence), and the count reads "1 Sidekick". In the
 sidebar a row is unread as the server says (`unread`) and a row waiting on
 someone carries the dot too; every other row is listed by what it last did
 (its newest run's start, else its last change) or by name. The Sidekick a person has open does not go

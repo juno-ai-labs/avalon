@@ -511,6 +511,7 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.audience === undefined ? {} : { audience: automation.audience }),
     ...(automation.runState === undefined ? {} : { runState: automation.runState }),
     ...(automation.pendingQuestion ? { pendingQuestion: automation.pendingQuestion } : {}),
+    ...(automation.triggerKinds ? { triggerKinds: automation.triggerKinds } : {}),
   };
 }
 

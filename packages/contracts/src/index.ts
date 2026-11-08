@@ -1585,6 +1585,7 @@ export const AutomationSummarySchema = z.object({
   nextRunAt: TimestampSchema.nullable(),
   runState: z.enum(["working", "needs_input"]).nullable().optional(),
   pendingQuestion: z.string().nullable().optional(),
+  triggerKinds: z.array(z.enum(["manual", "schedule", "external_event", "inbound_email"])).optional(),
   lastRunAt: TimestampSchema.nullable(),
   updatedAt: TimestampSchema,
   /** Who it is shared with; absent from a server that predates it. */
