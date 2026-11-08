@@ -814,40 +814,12 @@ column catalog; what follows is only what WorkspaceDO still holds.
 - `audit_events` in the independent `AUDIT_DB` records security- and side-effect-relevant actions without copying
   sensitive bodies.
 
-### Demo workspaces and object retirement
+### Object retirement
 
-Five tables belong to the demo-workspace lifecycle, and they sit at three
-different authorities on purpose. [`demo-workspaces.md`](demo-workspaces.md)
-owns the three in D1 and [`workspace-retirement.md`](workspace-retirement.md)
-the two in the objects; this entry exists so somebody adding a table finds them.
+Two tables belong to closing a workspace, both in the objects;
+[`workspace-retirement.md`](workspace-retirement.md) owns them, and this entry
+exists so somebody adding a table finds them.
 
-- **Regional D1 `demo_operations`** is the preparation and the register in one
-  row per operation the operator started — company, presenter, pack version,
-  cast, the workspace once allocated, status, attempt, failed phase and
-  reason, and the instants the workspace was published (`ready_at`) and closed
-  (`retired_at`). The operation is the identity the PRD requires — repeated
-  submission resolves to the same row — and it exists before a workspace does.
-  `workspace_id` is nullable, unique, written before the workspace is created
-  so a retry reuses it, and deliberately carries no foreign key to
-  `workspaces`: D1 enforces one on the write, and the write precedes the row it
-  would reference. Discovery withholds a row with no `ready_at`, and the Demos
-  page lists every row. It is not an authorization input for retirement — that
-  gate was built and dropped; retirement is an operator action on any
-  workspace behind Ace's Access policy. It carries no `region` column for the
-  same reason `workspace_members` does not: it derives region from which
-  regional D1 it lives in.
-- **Regional D1 `demo_operation_phases`** holds one row per phase per
-  operation with its status, attempt, a small detail object the page renders
-  and its error. The phase names are the contract's, not a `CHECK`: they are a
-  product decision that will move, and SQLite cannot widen a `CHECK` in place.
-- **Regional D1 `demo_seed_receipts`** records what the seeder confirmed, one row
-  per pack action of one operation: its kind and room, the conversation and human
-  turn it wrote, the run and how it settled, the elicitation a question opened,
-  the resource an upload attached. It references `demo_operations` by
-  `operation_id`, so a receipt cannot describe a demo no operation started, and
-  it is written only after the action's outcome is confirmed — preparation
-  resumes from it and the readiness barrier generates its expected manifest
-  from it, both of which need rows that mean "done" rather than "attempted".
 - **`object_retirement`, in every gated object's own SQLite**, is one permanent
   row: the tombstone. It is not in D1 because the gate has to answer during
   constructor recovery, before anything cross-authority could be consulted.
@@ -862,7 +834,10 @@ In D1, retirement writes no table of its own: the operator door sets
 `workspaces.abandoned_at`, the column the last member leaving already writes and
 every authority read already fences on, before any object is closed.
 
-All three D1 tables arrive in one migration, `0100_demo_workspaces.sql`.
+The demo feature's three D1 tables (`demo_operations`, `demo_operation_phases`,
+`demo_seed_receipts`, from `0100_demo_workspaces.sql`) went with the feature on
+2026-11-08: `0126_drop_demo_tables.sql` drops them, and WorkspaceDO migration
+154 drops `sidekick_runs.seed_json`.
 Retirement is not deletion. Every other row stays exactly where it is; the
 tombstone is what stops anything reading or draining them.
 
@@ -1111,6 +1086,27 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-11-08 — The demo tables are dropped
+
+**What changed:** D1 migration `0126_drop_demo_tables.sql` drops
+`demo_seed_receipts`, `demo_operation_phases` and `demo_operations`, children
+first, and WorkspaceDO migration 154 drops `sidekick_runs.seed_json` with an
+in-place `DROP COLUMN`. The shipped migrations that made and rebuilt them
+(0100, 0102, 0103, 0106, 0108, 0125) are unchanged.
+
+**Why:** The owner's instruction of 2026-11-08: "remove the demo
+functionality completely". Nothing reads or writes these rows once the demo
+code is gone, and an empty shell left in D1 would let a stale query succeed
+against nothing instead of failing, the reason 0090 gave for dropping the
+legacy product tables.
+
+**What a future change must respect:** 0126 ships in a deploy after the code
+that stops reading `demo_operations`: the deploy job applies migrations before
+it deploys the Worker, and the old Worker reads the table on every regional
+discovery. The persona `users` rows a demo minted (`@persona.invalid`, no
+platform identity) are not deleted; they cannot sign in and the retired demos'
+history references them.
 
 ### 2026-11-08 — Each person's Activity is stored beside their notification intents
 
@@ -1637,7 +1633,7 @@ against; a receipt written at admission would let a run that failed count as
 seeded. The first row wins on conflict because its ids are the ones already
 handed onward.
 
-All of these rows are owned by [`demo-workspaces.md`](demo-workspaces.md).
+All of these rows are owned by `demo-workspaces.md`.
 
 **Considered and rejected:** Keeping the register and dropping only the
 foreign key — the duplicate would still have to be kept in step on every field

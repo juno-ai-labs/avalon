@@ -7,11 +7,12 @@ Organization's seven-day grant lasts. Product data keeps the represented person
 as the author; the audit database keeps who actually acted.
 
 Beneath it sits a workspace-scoped, directed **can impersonate** relationship
-between two members, kept by the Organization object and written by demo
-preparation. No surface reads the relationship today: its one reader was
-deleted on 2026-11-06 with the Canvases and Sidekicks pivot (the changelog
-says what it was). The relationship, its storage and its producer stay as the
-platform primitive a later represented-action surface would build on.
+between two members, kept by the Organization object. Nothing writes it and no
+surface reads it today: its one reader was deleted on 2026-11-06 with the
+Canvases and Sidekicks pivot, and its one producer, demo preparation, on
+2026-11-08 (the changelog says what each was). The relationship and its
+storage stay as the platform primitive a later represented-action surface
+would build on.
 
 ## Where the code lives
 
@@ -19,7 +20,6 @@ platform primitive a later represented-action surface would build on.
 | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/api/src/durable-objects/workspace-impersonation-storage.ts`                               | Directed relationship storage, exact reads, idempotent grants, and revocation.                                                                                                                                                            |
 | `apps/api/src/durable-objects/workspace-do.ts`                                                  | `upsertImpersonationRelationships`, `listImpersonationRelationships`, `authorizeImpersonation` and `revokeImpersonationRelationships`, the only way in. |
-| `apps/api/src/services/demo-preparation.ts`                                                     | Creates the complete ordered relationship set for the people seated by one demo operation.                                                                                                                                                |
 | `packages/contracts/src/impersonation.ts`                                                       | Relationship, upsert and revoke wire contracts.                                                                                                                                                                                           |
 | `packages/db/migrations/0122_support_access.sql`                                                | `support_access_grants` and `sessions.impersonator_user_id`.                                                                                                                                                                              |
 | `apps/api/src/services/support-access.ts`                                                       | Rally access: the hard-coded staff Organization, the seven-day grant, staff discovery and roster, starting a support session, `supportSessionLiveSql` (the one definition of a live support session) and `revokeSupportSessions`.         |
@@ -34,9 +34,12 @@ platform primitive a later represented-action surface would build on.
 WorkspaceDO migration 67 stores producer-scoped grants for a directed
 `impersonator_user_id` to `represented_user_id` relationship, with each grant's
 authority basis and revocation state. Producers call the WorkspaceDO writer; reads never infer an edge from
-roles, workspace names, or demo records. Demo preparation is one producer and
-writes every ordered pair of seated users, including self-pairs, in one
-idempotent call.
+roles or workspace names. There is no producer today: demo preparation, which
+wrote every ordered pair of the people it seated, self-pairs included, in one
+idempotent call, was removed on 2026-11-08. Retirement's walk still takes an
+optional `impersonationRevocation` (a workspace and an authority basis) and
+revokes that producer's edges as it closes the workspace; nothing passes one
+now that the demo branch that named `demo:<operation>` is gone.
 
 Nothing reads a relationship for authority today; the one surface that did
 was deleted with its endpoint, its regional service and its catalog (see the
@@ -150,8 +153,9 @@ past it, as anyone's own message does, and analytics are unchanged.
   inferred from proximity or membership.
 - Acting as yourself is ordinary authenticated authority, not impersonation;
   self-pairs neither gate nor audit that path.
-- Demo state is never an authorization input. Coupling the read path to the demo
-  register would turn a platform relationship into a hidden demo capability.
+- A producer's own records are never an authorization input. Coupling the
+  read path to one would turn a platform relationship into a hidden capability
+  of whatever feature produced it.
 - A represented action writes its attempt audit before it takes effect, then
   rechecks both memberships, the exact directed relationship, and the target
   under the represented person. Otherwise a represented effect could exist
@@ -220,13 +224,12 @@ covers how a stored support credential is told apart.
 
 `apps/api/test-workers/workspace-impersonation.test.ts` applies the real
 WorkspaceDO migrations and proves direction, self-pairs, idempotent setup, and
-revocation in workerd. `apps/api/test/demo-operations.test.ts` covers the
-producer's ordered pairs.
+revocation in workerd.
 Run:
 
 ```bash
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-impersonation.test.ts
-pnpm --filter @rally/api exec vitest run test/support-access.test.ts test/demo-operations.test.ts
+pnpm --filter @rally/api exec vitest run test/support-access.test.ts
 ```
 
 ## Data model
@@ -257,6 +260,28 @@ the represented person's membership are all read from D1. Clients cannot write
 relationships.
 
 ## Changelog
+
+### 2026-11-08 — Demo preparation, the relationship's producer, is removed
+
+**What changed:** Demo preparation, which wrote the complete ordered
+**can impersonate** pair set among the people it seated with
+`demo:<operation>` as the authority basis, is deleted, and so is retirement's
+lookup of the demo register that revoked those edges when a demo
+Organization closed. The relationship's storage, its four WorkspaceDO RPCs and
+the generic `impersonationRevocation` input to `beginWorkspaceRetirement`
+stay. Rally access is unchanged.
+
+**Why:** The owner's instruction of 2026-11-08: "remove the demo
+functionality completely". Only the demo-specific branches went; the
+relationship is a platform primitive that a demo was one producer of, and the
+same reasoning that kept it when Sideline went keeps it now.
+
+**Consequences:** The relationship is neither written nor read. Edges a demo
+wrote stay in their Organization's object; every live demo Organization is
+retired before this ships ([`workspace-retirement.md`](workspace-retirement.md)),
+so the old Worker revokes them on the way out. A new producer supplies its own
+authority basis and, if retirement should revoke its edges, passes it to the
+walk.
 
 ### 2026-11-06 — Sideline is deleted; the relationship stays
 

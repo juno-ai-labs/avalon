@@ -788,7 +788,8 @@ preserves the original event ID/hash/deadline, and records only fixed audit code
 The operator HTTP surface authenticates against a per-region secret map, derives
 the operator ID/role server-side, and never accepts either value from a request.
 The same code verifies a second map, `DEMO_OPERATORS_JSON`, for the `demos`
-role Ace presents to the workspace retirement route
+role Ace presents (its stored names; the code calls it `requireAceOperator`)
+to the workspace retirement route
 ([`workspace-retirement.md`](workspace-retirement.md#the-operator-door)); the
 two secrets are set and rotated independently and neither surface reads the
 other's. `requireOperatorFrom(secret)` only verifies the credential, and each

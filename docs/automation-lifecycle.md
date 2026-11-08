@@ -973,7 +973,7 @@ Input is for the wizard when its sender marked it, or when it answers
 something the wizard asked: an elicitation answer (`reason:
 "elicitation_answer"`) or a resource authorization the wizard requested
 (`reason: "resource_authorization"`). Every person's input is routed, whatever
-its reason, except a demo seed's, which scripts its own turn. A refusal lands
+its reason. A refusal lands
 the input followed by a `system` row (`sidekick-message-refused:<inputId>`,
 `{kind: "sidekick_message_refused", code, turnId}`) whose text says why.
 Because the decision is made when the loop takes the input, a message in `"0"`
