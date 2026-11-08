@@ -1758,6 +1758,11 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       (effect.reply ?? effect.preview) || null, now, next, live ? 1 : 0, this.sidekickId, substreamId, effect.state !== "idle" ? 1 : 0,
       JSON.stringify([...TERMINAL_RUN_STATES]), effect.stepCount ?? null,
     ));
+    // A run moving into or out of Needs input moves the Sidekick's sidebar
+    // row (`AUTOMATION_VIEWER_SQL` reads its runs), so the list is sent again.
+    if (moved && (before?.state === "needs_input") !== (next === "needs_input")) {
+      this.host.noteDirectoryChanged(this.sidekickId, false, now);
+    }
     if (!live && moved?.completed_at === now) {
       this.noteRunFinished(moved.definition_revision, now);
       this.armRunNotice(substreamId, "run_finished", next, (effect.reply ?? effect.preview) || null, now);

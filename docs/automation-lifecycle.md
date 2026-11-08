@@ -1073,9 +1073,15 @@ loaded into someone else's conversation, not a read of its own.
   republishes the Sidekick list to that reader's sockets alone
   (`noteViewerReadChanged`); a move of `"0"`'s latest message or of its waiting on
   input changes every reader's row and republishes to every socket.
-- **Needs input.** `needsInput` on the sidebar row is the delegation attention
-  or `"0"` waiting on input (`sidekick-directory-sql.ts`); the Sidekicks
-  sidebar section groups those rows first. A run that needs input, or
+- **Needs input.** `needsInput` on the sidebar row is the delegation
+  attention, `"0"` waiting on input, or any of the Sidekick's runs in
+  `needs_input` (`sidekick-directory-sql.ts`); the Sidekicks sidebar section
+  and the menu bar group those rows first. A run's question is asked in the
+  run, not in `"0"`, so without the run term a Sidekick waiting on an answer
+  read as Active. The run term is a probe of `sidekick_runs` under its primary
+  key's `sidekick_id` prefix, not a stored column, so no writer can leave it
+  stale; a run's projection that moves it into or out of `needs_input`
+  republishes the Sidekick list to every socket (`onChildCommonProjection`). A run that needs input, or
   finishes, is pushed to the people
   [above](#runs) name, and its row in `"0"` shows the state.
 
@@ -1775,7 +1781,9 @@ instructions and `RUN_POST_INSTRUCTION` say a run's final message is its
 row's reply. A `conversation_post` that names no conversation lands in `"0"`
 ([`conversation-tools.md`](conversation-tools.md)). A Sidekick is shared with
 a `people` list as well as its author or the Organization, and its sidebar
-row says what the viewer has not read in `"0"`. A member who is not a delegate
+row says what the viewer has not read in `"0"`, and reads Needs input while
+any of its runs waits on input (the end-to-end pass found a run asking a
+question left its Sidekick reading Active). A member who is not a delegate
 runs under their own access (migration 138 records the requester). A
 schedule's occurrence is admitted only once its `next_due_at` has arrived.
 
