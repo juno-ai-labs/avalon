@@ -22,6 +22,7 @@ const api = vi.hoisted(() => ({
   createCanvas: vi.fn(),
   setCanvasPinned: vi.fn(),
   setSidekickPinned: vi.fn(),
+  decideCanvasAccess: vi.fn(),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
 /** The workspace socket the sidebar sends Mark all seen on; only its command is used. */
@@ -372,10 +373,89 @@ describe('the Activity section', () => {
     expect(onRun.map((row) => row.getAttribute('aria-current'))).toEqual(['page', null, null]);
   });
 
+  describe('the kinds about replies, versions and access', () => {
+    const MAYA = '00000000-0000-7000-8000-0000000000b2';
+    const ARTIFACT = '00000000-0000-7000-8000-0000000000f1';
+    const base = { parentKind: 'canvas' as const, parentId: CANVAS, parentTitle: 'Q4 revenue review', substreamId: '0' as never,
+      messageId: null, messageSequence: null, runId: null, actor: { kind: 'person' as const, id: AVERY }, preview: null,
+      createdAt: '2026-11-08T09:00:00.000Z', seen: false };
+    const item = (overrides: Partial<ActivityList['items'][number]>): ActivityList['items'][number] => ({ ...base, id: 'x', kind: 'mention', ...overrides });
+
+    beforeEach(() => {
+      api.getWorkspaceMembers.mockResolvedValue([
+        { id: AVERY, name: 'Avery', email: 'avery@rally.test', timezone: 'UTC' },
+        { id: MAYA, name: 'Maya', email: 'maya@rally.test', timezone: 'UTC' },
+      ] as never);
+      api.decideCanvasAccess.mockReset().mockResolvedValue({ state: 'approved' });
+    });
+
+    async function rowsOf(items: ActivityList['items']): Promise<HTMLElement[]> {
+      useUiStore.getState().setSidebarSection('activity');
+      renderSidebar(workspace, '/', { unseenCount: items.length, items });
+      const region = screen.getByRole('region', { name: 'Activity' });
+      await waitFor(() => expect(within(region).getAllByRole('link')[0]).toHaveTextContent(/^Avery|^Maya/u));
+      return within(region).getAllByRole('link');
+    }
+
+    it('names a reply by its author and place, previews it, and opens the Chat at it or the Sidekick conversation', async () => {
+      const rows = await rowsOf([
+        item({ id: 'm1', kind: 'new_message', messageId: '00000000-0000-7000-8000-0000000000e2', messageSequence: 9, preview: 'Totals look right' }),
+        item({ id: 'm2', kind: 'new_message', preview: 'Older reply' }),
+        item({ id: 'm3', kind: 'new_message', parentKind: 'automation', parentId: SIDEKICK, parentTitle: 'Release notes', preview: 'Ship it' }),
+      ]);
+      expect(rows.map((row) => row.querySelector('.activity-row-text')?.textContent)).toEqual([
+        'Avery in Q4 revenue review', 'Avery in Q4 revenue review', 'Avery in Release notes',
+      ]);
+      expect(rows[0]).toHaveTextContent('Totals look right');
+      expect(rows.map((row) => row.getAttribute('href'))).toEqual([
+        `/canvases/${CANVAS}?turn=00000000-0000-7000-8000-0000000000e2&sequence=9`,
+        `/canvases/${CANVAS}`,
+        `/sidekicks/${SIDEKICK}`,
+      ]);
+    });
+
+    it('names a pinned Canvas\'s new version and opens the Canvas onto that artifact', async () => {
+      const rows = await rowsOf([item({ id: 'u1', kind: 'artifact_updated', artifact: { resourceId: ARTIFACT, title: 'Board deck' } })]);
+      expect(rows[0]!.querySelector('.activity-row-text')).toHaveTextContent('Avery updated Board deck in Q4 revenue review');
+      expect(rows[0]).toHaveAttribute('href', `/canvases/${CANVAS}?artifact=${ARTIFACT}`);
+    });
+
+    it('offers Approve and Deny under a pending request, each sending the decision for that requester', async () => {
+      const rows = await rowsOf([item({ id: 'r1', kind: 'access_request', preview: 'For the board review', accessRequest: { state: 'pending', decidedByName: null } })]);
+      expect(rows[0]!.querySelector('.activity-row-text')).toHaveTextContent('Avery asked to open Q4 revenue review');
+      expect(rows[0]).toHaveTextContent('For the board review');
+      expect(rows[0]).toHaveAttribute('href', `/canvases/${CANVAS}`);
+      // The buttons are beside the link, not inside it.
+      expect(within(rows[0]!).queryByRole('button')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Approve Avery' }));
+      await waitFor(() => expect(api.decideCanvasAccess).toHaveBeenCalledWith(CANVAS, AVERY, 'approve'));
+      fireEvent.click(screen.getByRole('button', { name: 'Deny Avery' }));
+      await waitFor(() => expect(api.decideCanvasAccess).toHaveBeenLastCalledWith(CANVAS, AVERY, 'deny'));
+    });
+
+    it('reads a settled request as who decided, seen, with nothing left to press', async () => {
+      const rows = await rowsOf([
+        item({ id: 'r2', kind: 'access_request', preview: 'For the board review', seen: true, accessRequest: { state: 'approved', decidedByName: 'Maya' } }),
+        item({ id: 'r3', kind: 'access_request', seen: true, accessRequest: { state: 'denied', decidedByName: 'Maya' } }),
+      ]);
+      expect(rows[0]).toHaveTextContent('Maya approved');
+      expect(rows[0]).not.toHaveTextContent('For the board review');
+      expect(rows[1]).toHaveTextContent('Maya denied');
+      expect(rows.map((row) => row.classList.contains('is-seen'))).toEqual([true, true]);
+      expect(screen.queryByRole('button', { name: /^(Approve|Deny) / })).toBeNull();
+    });
+
+    it('names who let the person in and opens the Canvas', async () => {
+      const rows = await rowsOf([item({ id: 'g1', kind: 'access_granted', actor: { kind: 'person', id: MAYA } })]);
+      expect(rows[0]!.querySelector('.activity-row-text')).toHaveTextContent('Maya let you into Q4 revenue review');
+      expect(rows[0]).toHaveAttribute('href', `/canvases/${CANVAS}`);
+    });
+  });
+
   it('says how it fills when there is nothing yet, and offers Mark all seen only with something unseen', () => {
     useUiStore.getState().setSidebarSection('activity');
     renderSidebar(workspace, '/', { unseenCount: 0, items: [] });
-    expect(screen.getByText('Nothing yet. Mentions, Canvases you are added to and Sidekick runs that need you or finish show up here.')).toBeInTheDocument();
+    expect(screen.getByText('Nothing yet. Mentions, replies, Canvases you are added to and Sidekick runs that need you or finish show up here.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark all seen' })).toBeDisabled();
   });
 
