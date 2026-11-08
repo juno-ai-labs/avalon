@@ -1063,6 +1063,19 @@ describe('resource detail content preview', () => {
     expect(loadResourceContent).toHaveBeenCalledWith(note.id, expect.any(AbortSignal));
   });
 
+  it('says an artifact whose content was never stored has nothing to show, rather than drawing a blank pane', async () => {
+    openDetail(note, vi.fn(async () => { throw new ApiError('Resource content has not been hydrated', 404, 'resource_content_unavailable'); }));
+    expect(await screen.findByText('Nothing to show yet')).toBeInTheDocument();
+    expect(screen.getByText(/Its content was never stored/u)).toBeInTheDocument();
+  });
+
+  it('says so without asking for bytes when the artifact reports no stored content', async () => {
+    const loadResourceContent = vi.fn(async () => new Blob(['never read']));
+    openDetail({ ...note, contentAvailable: false }, loadResourceContent);
+    expect(await screen.findByText('Nothing to show yet')).toBeInTheDocument();
+    expect(loadResourceContent).not.toHaveBeenCalled();
+  });
+
   it('does not offer Open in a new window for a source resource', () => {
     openDetail({ ...note, direction: 'source' }, vi.fn(async () => new Blob(['source'])));
     expect(screen.queryByRole('button', { name: 'Open in a new window' })).not.toBeInTheDocument();
