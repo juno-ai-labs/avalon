@@ -1982,6 +1982,18 @@ publish was needed. The coordinator settled the badge order as: running
 outranks the lifecycle and `runState` on the pill and the row, and the
 Needs input badge stays beside a working pill.
 
+**Considered and rejected:** a stored `running` column on the directory row,
+written on every run transition. Every writer of a run state would have had
+to keep it true, and one missed transition would leave a Sidekick Working
+for good; the probe cannot go stale.
+
+**Consequences:** `running` and `runState` may describe different runs (an
+older run working behind a finished newer one is exactly the case). The
+client keeps its `runState` fallback for one release, until every Worker
+publishes `running`. The EXISTS reads the Sidekick's run history on each
+list read; a partial index over the working states is the fix if that ever
+shows, and is deliberately not added now.
+
 ### 2026-11-08 — Retirement records: Work-stream appearance, Work-stream markers
 
 **What changed:** Nothing in the code. Two documents whose mechanism was
