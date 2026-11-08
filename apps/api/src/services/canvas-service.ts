@@ -43,6 +43,8 @@ export async function createCanvas(env: Env, input: {
     authorityGeneration: authority.generation,
     ...(input.writer ? { writer: input.writer } : {}),
     ...(input.anchored ? { anchored: true } : {}),
+    // Made with no title by a person: its opening message titles it.
+    ...(!input.title?.trim() && !input.writer ? { titleStatus: "naming" as const } : {}),
   });
   // A run's second create answers with the Canvas its first made.
   const canvasId = made.canvasId;

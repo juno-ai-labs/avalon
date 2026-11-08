@@ -152,3 +152,18 @@ export const RETIREMENT_GRAPH_CANVAS_MIGRATION: readonly string[] = [
   `DROP TABLE workspace_retirement_graph`,
   `ALTER TABLE workspace_retirement_graph_v146 RENAME TO workspace_retirement_graph`,
 ];
+
+/** The alarm kind that titles a Canvas made with no title from its opening message. */
+export const CANVAS_NAMING_ALARM_KIND = "canvas_naming";
+
+/**
+ * WorkspaceDO migration 149: whether a Canvas's title is still to come.
+ * `naming` while a Canvas made with no title waits for the title its opening
+ * message gives it, `settled` once that lands, fails, or a person retitles it.
+ * Every existing Canvas was titled already, so the default is `settled`.
+ * `docs/canvases.md` owns the mechanism.
+ */
+export const CANVAS_TITLE_STATUS_STATEMENTS: readonly string[] = [
+  `ALTER TABLE canvas_directory ADD COLUMN title_status TEXT NOT NULL DEFAULT 'settled'
+     CHECK (title_status IN ('naming', 'settled'))`,
+];
