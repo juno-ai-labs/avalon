@@ -1,6 +1,6 @@
 # Desktop and web shell
 
-The shell is everything around a pane: the navigation sidebar (a rail of two
+The shell is everything around a pane: the navigation sidebar (a rail of three
 sections beside one list), the floating title pills and their menus, and the
 one right slot a pane's artifact or attachment opens in. The Electron client
 and the browser web app mount the same shell, the desktop renderer's
@@ -10,8 +10,10 @@ and its native services. What differs by host or by guest is read from
 
 The product has two sections, **Canvases** and **Sidekicks**
 ([the Canvases and Sidekicks PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)).
-Channels, Threads, Breakouts, Activity and the Pinned and Artifacts sections
-were removed at the 2026-11 cutover; the changelog below records them.
+The rail's third section, **Activity**, is a list of things to go to rather
+than a section of the product ([`activity.md`](activity.md)). Channels,
+Threads, Breakouts, the Thread-feed Activity and the Pinned and Artifacts
+sections were removed at the 2026-11 cutover; the changelog below records them.
 
 Read this before changing the rail, a list, what a row shows, the landing, the
 routes the shell serves, or who owns the right panel.
@@ -24,9 +26,9 @@ routes the shell serves, or who owns the right panel.
 | `apps/desktop/src/renderer/screens/landing.tsx`, `lib/landing.ts` | The root route: the restorable `last-route`, else `/canvases`, once onboarding is finished. `LANDING_ROUTE`, `restorableRoute`, `RESTORED_ROUTE`, `useRestoredRouteFallback`, `useOpenLanding`. |
 | `apps/desktop/src/renderer/components/app-shell.tsx` | The shell around the routes: the sidebar, the main pane, the right slot's width, search, the dock badge, and the `last-route` and presence writes. |
 | `packages/ui/src/components/resizable-sidebar.tsx` | `ResizableSidebar`. The shell passes `collapsible={false}`: the edge resizes between `MIN_SIDEBAR_WIDTH` and `MAX_SIDEBAR_WIDTH` and never collapses. |
-| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the rail (Canvases, Sidekicks), the account menu under it, the list's header and its actions, and the phone sheet; `useSectionCounts`, the rail's counts the dock badge adds up. |
+| `apps/desktop/src/renderer/components/navigation-sidebar.tsx` | `NavigationSidebar`: the rail (Canvases, Sidekicks, Activity), the account menu under it, the list's header and its actions, and the phone sheet; `useSectionCounts`, the rail's counts, and `useRailDockBadge`, which adds up the first two. |
 | `apps/desktop/src/common/sidebar-attention.ts` | `canvasNeedsAttention` and `sidekickNeedsAttention`: what counts as needing attention, shared by `useSectionCounts` and the menu bar ([`menu-bar.md`](menu-bar.md)). |
-| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx` | `CanvasesSection` and `SidekicksSection`, and the counts their tiles carry (`useUnreadCanvasCount`, `useSidekickAttentionCount`). |
+| `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx`, `sidekick-sidebar-section.tsx`, `activity-sidebar-section.tsx` | `CanvasesSection`, `SidekicksSection` (with `useSidekickList`) and `ActivitySection` (with `useActivityList`), the three lists. |
 | `apps/desktop/src/renderer/components/navigation-rows.tsx` | The row primitives both lists draw: `RowLayout`, `SectionHeading`, `PinnedSection`, `useSectionMotion`, `PinnableRow`, `usePinWrite`, `splitPinned`, `useRowPinDrop`. |
 | `apps/desktop/src/renderer/components/rail-item.tsx` | `RailItem`: one tile of the rail, the account menu's trigger included. |
 | `apps/desktop/src/renderer/screens/canvases-home.tsx`, `canvas.tsx` | `/canvases` and `/canvases/:id` ([`canvases.md`](canvases.md#in-the-client)). |
@@ -178,7 +180,8 @@ restored route on a Canvas they may ask into stays on its Request access pane
 The removed surfaces' routes, `/channels/*`, `/spaces/*`, `/workstreams/*`,
 `/projects/*`, `/activity` and `/artifacts`, redirect to `/canvases`, so a
 stored route, a bookmark or an old link opens the Canvases home rather than a
-dead screen. A deep link that names Activity opens the Canvases section.
+dead screen. Activity has no route of its own: it is a rail section, and a deep
+link that names it opens the Canvases section.
 `/opening` is inert: a deep link that changes organization parks the pane there
 while its destination resolves. Settings opens in its own window on the desktop
 and as `/settings` in the browser.
@@ -200,7 +203,7 @@ sidebar, so the app shell provides no context there.
 
 The sidebar is a sheet behind the list's own header: the close button at the
 left, the section's title centred, its actions at the right. The rail is a row
-of tabs under it: Canvases, Sidekicks, then the account menu as a last tab
+of tabs under it: Canvases, Sidekicks, Activity, then the account menu as a last tab
 labelled Settings. While a visible pane header carries the menu button
 (`PHONE_NAVIGATION_CONTROL`), the shut sheet keeps no bar and is hidden whole;
 a screen without one keeps the sheet's header as its top bar, and closing the
@@ -352,13 +355,13 @@ It does not own:
   with a `restored_route_not_found` warning in the renderer log. A 403 is not
   treated as gone and still shows the screen's unavailable state
   ([`canvases.md`](canvases.md)).
-- **Lists not yet delivered:** both lists draw placeholder rows and both tiles
-  count nothing until the workspace socket answers.
+- **Lists not yet delivered:** each list draws placeholder rows and its tile
+  counts nothing until the workspace socket answers.
 
 ## Testing
 
 - **Desktop component tests:** `components/navigation-sidebar.test.tsx` (the
-  rail, both sections, the phone sheet), `screens/landing.test.tsx`,
+  rail, its sections, the phone sheet), `screens/landing.test.tsx`,
   `App.session-gate.test.tsx` (routes and redirects), `lib/ui-store.test.ts`
   (the stored section), `lib/browser-rail-links.test.ts`. Run with
   `pnpm --filter @rally/desktop exec vitest run <path>`.

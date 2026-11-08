@@ -3,12 +3,13 @@
 Rally is a desktop and browser workspace in which people and an agent work in
 the same durable context. It has two sections: **Canvases**, each a
 conversation (its Chat) and the artifacts it generates, and **Sidekicks**,
-natural-language automations that run on a schedule, on connector activity,
-on an inbound email, or on demand. Avalon is the internal code name and still
+natural-language automations triggered on a calendar or interval schedule, by
+connector or semantic activity, by a watched resource, a webhook or an inbound
+email, or by hand. Avalon is the internal code name and still
 appears throughout the tree.
 
 The clients are a macOS Electron app and a browser SPA. The backend is a
-regional Hono API on Cloudflare Workers, with D1, R2, Durable Objects, Queues
+Global and regional Hono API on Cloudflare Workers, with D1, R2, Durable Objects, Queues
 and Workflows; agent inference goes through OpenRouter from the server only.
 
 ## Repository
@@ -16,7 +17,7 @@ and Workflows; agent inference goes through OpenRouter from the server only.
 ```text
 apps/desktop            Electron main/preload and the React renderer both clients share
 apps/browser            Browser host for the shared renderer
-apps/api                Regional Hono Worker, its Durable Objects and runtime components
+apps/api                Global and regional Hono Worker, its Durable Objects and runtime components
 apps/site               Public site: landing page, help centre, blog, compare and trust pages
 apps/ace                Internal administration Worker
 apps/engineering-mcp    Internal engineering MCP server
@@ -26,7 +27,7 @@ packages/contracts      Shared Zod contracts
 packages/db             D1 migrations, repositories, and the explicit local seed
 packages/agent-harness  OpenRouter adapter, prompts, classifiers, and tool execution
 packages/connectors     Connector adapters (Google, GitHub, Linear, Notion, Slack, and others)
-packages/electron-network  Chromium upload transport shared by the Electron apps
+packages/electron-network  Chromium upload transport for the Electron main process
 packages/ui             Shared desktop/browser components and themes
 docs                    Product, architecture, security, and operations
 ```
@@ -64,11 +65,11 @@ pnpm package:desktop:release
 pnpm publish:desktop:release -- --dry-run
 ```
 
-`pnpm package:desktop` builds a Developer ID-signed local QA app into `apps/desktop/release/local`; `pnpm start:desktop:packaged` launches it through macOS LaunchServices against the production Rally APIs. Do not invoke `Rally.app/Contents/MacOS/Rally` directly from a sandboxed terminal. Distribution builds use `pnpm package:desktop:release`, and a live publish requires `--confirm <exact-version>`. Signing, notarization, the Stable and Faster update channels, the version policy and release retention are owned by the operations runbook. The database seed never runs in production, and packaged builds disable development authentication regardless of local environment values.
+`pnpm package:desktop` builds a Developer ID-signed local QA app into `apps/desktop/release/local`; `pnpm start:desktop:packaged` launches it through macOS LaunchServices against the production Rally APIs. Do not invoke `Rally.app/Contents/MacOS/Rally` directly from a sandboxed terminal. Distribution builds use `pnpm package:desktop:release`, and a live publish requires `--confirm <exact-version>`. Signing, notarization, the Stable and Faster update channels, the version policy and release retention are owned by the operations runbook. The local seed is never run by production startup, and packaged builds disable development authentication regardless of local environment values.
 
 ## Brand
 
-The mark is a tennis-ball seam on a sphere, drawn as one line. `scripts/generate-rally-mark.py` generates every vector copy from the seam equation, and `scripts/generate-brand-assets.py` renders the rasters; the macOS app icon is the Icon Composer asset at `apps/desktop/resources/icon.icon`. The desktop-icons document owns the pipeline; read it before changing the artwork.
+The mark is a tennis-ball seam on a sphere, drawn as one line. `scripts/generate-rally-mark.py` generates every vector copy from the seam equation, and `scripts/generate-brand-assets.py` renders the rasters; the macOS app icon is the Icon Composer asset at `apps/desktop/resources/icon.icon`. Brand primary is `#CCFF00` (volt); secondary is `#47C7FC`. The desktop-icons document owns the pipeline; read it before changing the artwork.
 
 ## Documentation
 
