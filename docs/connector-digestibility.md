@@ -2,15 +2,12 @@
 
 One row per declared activity type, for every connector Rally registers. The
 rule these answer to, and the contract that makes stating them mandatory, is in
-[`connectors.md`](connectors.md#declaring-what-a-digest-may-read); what happens
-to the answer afterwards is in
-`digests.md` (retired).
+[`connectors.md`](connectors.md#declaring-what-a-digest-may-read).
 
-**Nothing reads these answers today.** Since the digest became a list of unread
-Activity (mentions, additions, thread and breakout starts, finished runs),
-connector activity does not reach it at all. The manifests still declare every
-type, the activity log still records the answer, and this table still has to
-match them; they are kept for a future surface that tells somebody about
+**Nothing reads these answers today.** The digest they were written for is
+retired, Activity carries no connector events, and no activity log row records
+the answer any more. The manifests still declare every type and this table still
+has to match them; they are kept for a future surface that tells somebody about
 connector activity, so read "digest" below as that surface.
 
 This is a reference appendix to [`connectors.md`](connectors.md), not a second
@@ -27,9 +24,8 @@ is a review problem rather than a build one.
 
 The question each row answers is **would a person who was away for a day want
 this read back to them?** A digestible type is news. An operational type is
-still verified or polled, normalized, routed, matched against automations and
-watches, and written to the activity log — it just never interrupts anybody on
-a schedule. Most of what a provider emits is operational, and that is the normal
+still verified or polled, normalized, routed, and matched against automations
+and watches — it would just never interrupt anybody on a schedule. Most of what a provider emits is operational, and that is the normal
 case rather than a failure.
 
 ## Ashby

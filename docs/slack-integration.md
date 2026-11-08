@@ -211,15 +211,14 @@ reply is framed as evidence, not a member request
 ([`connectors.md`](connectors.md#invariants)). A Slack member Rally cannot map
 to an account still has their message recorded, under their Slack actor.
 
-How a linked member's identity reaches the conversation object is the
-**connector principal**: the ingress verifies the active `slack_user_links`
-row and active membership on the very message being delivered
-(`linkedAccount`), then marks the auth `principal: "connector"` and carries a
-`slack:{team}:{user}` correlation id in place of a session id. The object
-re-checks current membership itself and refuses a stale principal as
-`connector_member_revoked`; it does not look the correlation id up in
-`sessions`, because a Slack message is not a login and no session row exists
-for it. Nothing weaker than a link authorizes a run: a
+The reply is admitted as an external message attributed to its Slack sender
+(`deliverToRunChild`), with the matched member, if any, recorded beside it; the
+run's own authority is what continues it. `linkedAccount` still builds a
+**connector principal** (`principal: "connector"`, a `slack:{team}:{user}`
+correlation id in place of a session id) after verifying the active
+`slack_user_links` row and membership, but its one consumer now is the
+**Notifications** modal, which reads the member's id from it; no Slack path hands
+it to a conversation object. Nothing weaker than a link authorizes anything: a
 `users.lookupByEmail`-grade match credits somebody and cannot spend their
 credentials. The shared actor identity behind that mapping is
 [the connector document's](connectors.md#actor-identity-and-work-stream-attribution).
@@ -468,12 +467,11 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
 - **Attribution is not authorization.** An unlinked author's reply in a bound
   thread is recorded under their external Slack actor and authorizes nothing;
   the run keeps its coordinator.
-- **Only connector ingress sets `principal: "connector"`, and only after
-  verifying the link and membership on the message being delivered.** The
-  conversation object re-checks membership alone, so the ingress's
-  `linkedAccount` check is the link's one gate; a path that hands out the
-  marker without it has nothing behind it. Sockets never carry a connector
-  principal — every ticket issuer refuses one at the mint.
+- **Slack sets `principal: "connector"` only in `linkedAccount`, after
+  verifying the link and membership.** A conversation object that receives one
+  re-checks membership alone, so that check is the link's one gate; a path that
+  hands out the marker without it has nothing behind it. Sockets never carry a
+  connector principal — every ticket issuer refuses one at the mint.
 - **Slack starts no conversation.** Every start surface answers with
   `conversation_ingress_retired` and creates nothing; a path that started work
   from Slack would bring back a conversation with no Canvas or Sidekick parent.
@@ -609,11 +607,10 @@ not own:
   an unlinked Slack actor, the same as any unlinked member.
 - **`connector_member_revoked` on an ingress job is a race, not a state.** A
   member already removed never presents a connector principal — `linkedAccount`
-  resolves them to no link and the message runs under the workspace principal —
-  so the object's refusal is reachable only when a membership or role change
-  lands between the ingress's read and the object's re-check. The job stays
-  retryable: the retry re-reads the link and either runs at the new role or
-  answers under the workspace principal. The code is deliberately not in
+  resolves them to no link — so the object's refusal is reachable only when a
+  membership or role change lands between the ingress's read and the object's
+  re-check. The job stays retryable: the retry re-reads the link. The code is
+  deliberately not in
   `SLACK_AUTHORIZATION_ERROR_CODES` (reauthorizing Slack does not restore
   Rally membership), and it does not mark the installation `needs_reconnect` —
   one member's refusal says nothing about the workspace's grant. The same
