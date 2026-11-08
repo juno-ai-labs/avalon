@@ -156,8 +156,11 @@ unseen dot. A Canvas Chat mention opens the Chat at its message
 (`canvasTurnRoute`, from the row's `messageId` and `messageSequence`, the
 mentioning turn's transcript sequence the effect carries); a mention recorded
 before the effect carried it, and an add, open the Canvas. A row about a
-Sidekick opens its conversation, where a run's row is and an answer to it
-goes; a mention in one of its runs opens that run. Opening a row keeps the
+Sidekick opens its conversation, where a run's row is; a run that needs input
+(`runId`) and a mention in one of its runs open that run (`?run=`), where the
+question and its answer form are. Opening the run does not read the shared
+conversation, so a needs-input row stays unseen until the shared conversation
+is read or Mark all seen, the same as a mention in a run. Opening a row keeps the
 Activity section open. The rail badge is `unseenCount` ("3 unseen"). The dock
 badge and the menu bar stay Needs attention only
 ([`menu-bar.md`](menu-bar.md)); Activity does not join them.
@@ -270,6 +273,24 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
 
 ## Changelog
+
+### 2026-11-08 — A needs-input row opens the run that asked
+
+**What changed:** A `needs_input` row opens the run it is about (`?run=` from
+its `runId`) rather than the Sidekick's shared conversation.
+
+**Why:** The run is where the question and its answer form are; the shared
+conversation's composer starts a new run, so a person sent there answered
+nothing. The design is silent on Activity, so this document is the authority.
+
+**Considered and rejected:** Opening the shared conversation at the run's
+row, which now carries the question too: it reads `"0"` and clears the row,
+but a row could not be scrolled to a run's row without a sequence the item
+does not carry.
+
+**What a future change must respect:** opening the run does not read `"0"`,
+so the row stays unseen until the shared conversation is read or Mark all
+seen; a fix belongs in what seen measures, not in the route.
 
 ### 2026-11-08 — A row lists only while its person may open the parent, and every read report is heard
 
