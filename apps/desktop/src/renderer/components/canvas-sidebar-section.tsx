@@ -9,6 +9,7 @@ import { formatSidebarActivityTime } from '../lib/format';
 import { CanvasMark } from './canvas-mark';
 import { DropdownSelect, ErrorNotice, TitleSkeleton } from './primitives';
 import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, splitPinned, usePinWrite, useRowPinDrop, useSectionMotion } from './navigation-rows';
+import { SidebarListDown, usePushedListsDown } from './pushed-list-pending';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 
@@ -28,6 +29,8 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
   const { api, session } = useCollaborationSession();
   const currentUserId = session?.user.id;
   const rows = useCanvasList();
+  // A socket that cannot open would leave the placeholders up for ever.
+  const down = usePushedListsDown() && rows === undefined;
   const { membersById, sidekicksById } = useCanvasNameSources(api);
   const { pinned, rest } = useMemo(() => splitPinned(rows ?? []), [rows]);
   const pinnedIds = useMemo(() => new Set(pinned.map((row) => row.id)), [pinned]);
@@ -65,7 +68,7 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
       count={pinned.length}
       drop={drop}
       label="Pinned Canvases"
-      loading={rows === undefined}
+      loading={rows === undefined && !down}
       noun="Canvas"
       reorderable={false}
       target={targetProps}
@@ -77,7 +80,7 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
         motionKey="canvases"
         trailing={<DropdownSelect ariaLabel="Sort Canvases" icon={<ArrowDownUp aria-hidden="true" size={12} strokeWidth={1.8} />} onValueChange={(value) => setOrder(value === 'name' ? 'name' : 'recent')} options={CANVAS_ORDERS} value={order} variant="secondary" />}
       >All canvases</SectionHeading>
-      {rows === undefined && <SidebarSkeletonRows count={6} hint />}
+      {rows === undefined && (down ? <SidebarListDown noun="Canvases" /> : <SidebarSkeletonRows count={6} hint />)}
       {rows !== undefined && rest.length === 0 && pinned.length === 0 && <p className="navigation-empty">No Canvases yet.</p>}
       {sorted.map((canvas) => row(canvas))}
     </section>
