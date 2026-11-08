@@ -46,11 +46,16 @@ weekday) passes its own function and still ticks. It brings its own
 `Tooltip.Provider` rather than requiring one from the host.
 
 `MessageByline` lays down the name, the optional context label, the time and a
-settled response's total. It reads outward from the edge the turn is aligned to:
+settled response's total. Its time is the clock time (`formatTime`), and the
+feed (`MessageFeed`) draws a day divider over the first turn of each local day
+("Today", "Yesterday", a weekday, a date, through `formatDayLabel`), as
+design.html §2 draws a transcript: a full date only where a day changes. It reads outward from the edge the turn is aligned to:
 name first on the leading edge, name last on the trailing one, done by reversing
 the parts in the markup rather than with CSS ordering, so a screen reader
-announces what a sighted reader sees. The person-accent dot sits inside the name
-element, so the two travel together whichever way the line reads.
+announces what a sighted reader sees. The avatar (`initial`: Rally's "R", a
+colleague's first letter) or the person-accent dot sits inside the name
+element, so the two travel together whichever way the line reads, and the name
+is its own box so a long one ellipsizes.
 
 ## Invariants
 
@@ -138,6 +143,19 @@ pnpm --filter @rally/desktop exec vitest run \
 component was rendered with rather than the one it settled on, because
 subscribing re-reads the clock and an assertion on the final value passes
 whether or not the first frame was stale.
+
+### 2026-11-08 — A turn's byline reads its clock time under a day divider
+
+**What changed:** The byline shows the clock time, not "7 minutes ago", and the
+feed names each day above its first turn. The byline can carry an avatar.
+
+**Why:** The PRD makes design.html the authority, and §2 draws "Today" between
+hairlines and "10:42" against each name, with an "R" avatar on Rally's turn
+and a person's initial on a colleague's (v1-F9, v4-F8). A turn older than a
+week read as a full date on every line.
+
+**What a future change must respect:** the feed's divider is what dates a
+turn; a byline that grows a date again repeats it on every line.
 
 ### 2026-09-10 — One byline, one clock, one relative label
 

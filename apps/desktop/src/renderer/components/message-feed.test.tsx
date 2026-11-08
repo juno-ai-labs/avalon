@@ -129,10 +129,28 @@ describe('MessageFeed', () => {
       />,
     );
 
-    const dividers = screen.getAllByRole('separator');
+    // The day the turns were said on is a separator as well, over the first.
+    const dividers = screen.getAllByRole('separator').filter((divider) => divider.classList.contains('unread-divider'));
     expect(dividers).toHaveLength(1);
     expect(dividers[0]).toHaveTextContent('Unread messages');
     expect(dividers[0]!.closest('.virtual-message-row')).toHaveAttribute('data-index', '1');
+  });
+
+  it('names the day over the first turn of each day, and only there', () => {
+    render(
+      <MessageFeed
+        messages={[
+          message({ id: 'message-a', text: 'One.', createdAt: '2026-07-30T15:00:00.000Z' }),
+          message({ id: 'message-b', text: 'Two.', createdAt: '2026-07-30T15:05:00.000Z' }),
+          message({ id: 'message-c', text: 'Three.', createdAt: '2026-07-31T15:00:00.000Z' }),
+        ]}
+        onAnswerElicitation={answer}
+      />,
+    );
+
+    const days = screen.getAllByRole('separator').filter((divider) => divider.classList.contains('day-divider'));
+    expect(days.map((divider) => divider.closest('.virtual-message-row')?.getAttribute('data-index'))).toEqual(['0', '2']);
+    expect(days.map((divider) => divider.textContent)).toEqual(['Jul 30', 'Jul 31']);
   });
 
   it('holds system-row disclosure itself, so neither surface tracks it', () => {

@@ -55,4 +55,16 @@ describe('MessageByline', () => {
     expect(container.querySelector('.message-author-dot')).toBeNull();
     expect(container.querySelector('time')).toHaveAttribute('dateTime', at);
   });
+
+  it('leads with an avatar holding the initial it is given, inside the name', () => {
+    const { container } = render(
+      <Tooltip.Provider>
+        <MessageByline align="start" author="Rally" createdAt={at} initial="R" />
+      </Tooltip.Provider>,
+    );
+    const author = container.querySelector('header > .message-author')!;
+    expect(author.firstElementChild).toHaveClass('message-author-avatar');
+    expect(author.firstElementChild).toHaveTextContent('R');
+    expect(author.firstElementChild).toHaveAttribute('aria-hidden', 'true');
+  });
 });

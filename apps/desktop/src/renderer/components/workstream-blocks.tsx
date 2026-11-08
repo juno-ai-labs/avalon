@@ -19,7 +19,8 @@ import {
   IconWorldSearch,
   type TablerIcon,
 } from '@tabler/icons-react';
-import type { AutomationPluginActivity } from '@rally/contracts';
+import { personalColorKey, type AutomationPluginActivity } from '@rally/contracts';
+import { markColors } from '@rally/ui/lib/project-palette';
 import {
   Check,
   ChevronDown,
@@ -146,6 +147,11 @@ function personAccent(id: string): string {
  */
 function turnAccent(message: Message): string {
   return personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id);
+}
+
+/** The letter a byline's avatar holds: the first of the name, as design.html §2 draws M, T and R. */
+function initialOf(name: string): string {
+  return Array.from(name.trim())[0]?.toLocaleUpperCase() ?? '?';
 }
 
 function safeJson(value: unknown): string {
@@ -2810,10 +2816,14 @@ export function MessageBlock({
     // by hand, had already drifted from it, and could not survive the accent set
     // changing. The accent *is* a palette colour now, so there is nothing left
     // to indirect through.
+    // The bubble is the person's pastel pair (`markColors`), themed per
+    // appearance, as design.html §2 and §5 draw the reader's own turn: the
+    // saturated hue under white ink read 3.58:1 on rose.
     ...(profile ? {
       '--person-dot': personalColor(profile.color),
-      '--av-cmp-bubble-human-background': personalColor(profile.color),
-      '--av-cmp-bubble-human-foreground': personalColorInk(profile.color),
+      '--person-ink': personalColorInk(profile.color),
+      '--av-cmp-bubble-human-background': markColors(personalColorKey(profile.color)).tint,
+      '--av-cmp-bubble-human-foreground': markColors(personalColorKey(profile.color)).ink,
     } : {}),
   } as React.CSSProperties;
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
@@ -2984,12 +2994,15 @@ export function MessageBlock({
           turn that answers it only for other people makes the reader's own
           messages the one thing on screen with no time against it. */}
       <MessageByline
-        align={human ? 'end' : 'start'}
+        // design.html §2: only the reader's own turn sits on the trailing edge;
+        // a colleague's and Rally's lead with their avatar.
+        align={ownHumanMessage ? 'end' : 'start'}
+        initial={ownHumanMessage ? undefined : human ? initialOf(humanAuthorName) : automation || message.importProvenance ? undefined : 'R'}
         author={human ? humanAuthorName : message.importProvenance ? importedProvider : automation ? automationAuthor : 'Rally'}
         importedBy={message.importProvenance?.importedByName}
         contextLabel={message.importProvenance?.supersedesTurnId ? 'Updated source message' : message.contextLabel}
         createdAt={message.createdAt}
-        dot={human}
+        dot={false}
         workSummary={message.workSummary ? workSummaryLabel(message.workSummary) : undefined}
       />
       {human ? (
