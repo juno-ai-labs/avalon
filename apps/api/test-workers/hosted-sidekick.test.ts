@@ -1416,7 +1416,7 @@ describe("a hosted Sidekick", () => {
    * parent's own receipt path. No child object or loop is involved, which is
    * the point: what moves the run row and the review count is the projection.
    */
-  async function finishRuns(runIds: readonly string[], state = "completed"): Promise<void> {
+  async function finishRuns(runIds: readonly string[], state = "completed", sourceVersion = 2): Promise<void> {
     await runInDurableObject(workspaceStub(), async (instance: WorkspaceDO) => {
       for (const runId of runIds) {
         // The same bytes for the same run, so a repeat is the redelivery it claims to be.
@@ -1427,7 +1427,7 @@ describe("a hosted Sidekick", () => {
         const envelope = ConversationEffectEnvelopeSchema.parse({
           kind: "conversation_effect", contractVersion: 1, region: "global", workspaceId: WORKSPACE_ID,
           parentKind: "automation", parentId: AUTOMATION_ID, substreamId: runId, generation: 1,
-          messageId: `finish:${runId}:${state}`, partitionKey: `${AUTOMATION_ID}:${runId}`, sourceVersion: 2,
+          messageId: `finish:${runId}:${state}`, partitionKey: `${AUTOMATION_ID}:${runId}`, sourceVersion,
           requiredProjectionVersion: null, payloadHash: conversationEffectHash(effect), effect,
         });
         await instance.receiveChildEffects({ substreamId: runId, envelopes: [envelope] });
@@ -1537,6 +1537,32 @@ describe("a hosted Sidekick", () => {
     await expect.poll(runNotices, { timeout: RUN_SETTLE_TIMEOUT_MS }).toEqual([
       notice(requested, AUTHOR_ID), notice(requested, OUTSIDER_ID), notice(scheduled, AUTHOR_ID),
     ].sort((a, b) => a.payload.runId.localeCompare(b.payload.runId)));
+  });
+
+  it("lists a Sidekick under Needs input while one of its runs waits on input, and sends the list again", async () => {
+    await activeAutomation();
+    const { requested } = await workingRuns("c");
+    const row = async () => {
+      const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+        .items.find((candidate) => candidate.id === AUTOMATION_ID);
+      const waterline = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'automations'`).one().waterline);
+      return { needsInput: item?.needsInput, waterline };
+    };
+    const working = await row();
+    expect(working.needsInput).toBe(false);
+
+    // The run asks: its conversation projects Needs input, the shared one does not.
+    await finishRuns([requested], "needs_input");
+    const asking = await row();
+    expect(asking.needsInput).toBe(true);
+    expect(asking.waterline).toBeGreaterThan(working.waterline);
+
+    // Answered: the run works again, and the row leaves Needs input.
+    await finishRuns([requested], "running", 3);
+    const answered = await row();
+    expect(answered.needsInput).toBe(false);
+    expect(answered.waterline).toBeGreaterThan(asking.waterline);
   });
 
   it("tells only the requester when a run finishes, and nobody when a scheduled run does", async () => {
