@@ -435,14 +435,47 @@ export class ResourceService {
       resourceId: id,
       version: null,
     });
-    return history.items.map(toResourceRevision);
+    return this.namedAuthors(history.items.map(toResourceRevision));
   }
 
   async version(id: string, version: number): Promise<ResourceRevision> {
     await this.authorizeRead(id);
     const row = await this.loadVersion(id, version);
     if (!row) throw new ApiError(404, "resource_version_not_found", "Resource version not found");
-    return toResourceRevision(row);
+    return (await this.namedAuthors([toResourceRevision(row)]))[0]!;
+  }
+
+  /**
+   * Each version's `authorName`: a member's name, and a connection's display
+   * name, which a client cannot otherwise resolve when the person is not on
+   * the conversation's list (an Organization-wide Canvas lists nobody). An
+   * agent or system author has none; the surfaces call it Rally. One read per
+   * identity kind, and none for a history that names neither.
+   */
+  private async namedAuthors(revisions: ResourceRevision[]): Promise<ResourceRevision[]> {
+    const ids = (kind: "member" | "connector") => JSON.stringify([...new Set(revisions.flatMap((revision) =>
+      revision.author?.kind === "member" && kind === "member" ? [revision.author.userId]
+        : revision.author?.kind === "connector" && kind === "connector" ? [revision.author.connectionId] : []))]);
+    const memberIds = ids("member");
+    const connectionIds = ids("connector");
+    const [members, connections] = await Promise.all([
+      memberIds === "[]" ? [] : this.env.DB.prepare(
+        `SELECT person.id, person.name FROM users person
+           JOIN workspace_members member ON member.user_id = person.id AND member.workspace_id = ?
+          WHERE person.id IN (SELECT value FROM json_each(?))`,
+      ).bind(this.auth.workspaceId, memberIds).all<{ id: string; name: string | null }>().then((result) => result.results),
+      connectionIds === "[]" ? [] : this.env.DB.prepare(
+        `SELECT id, display_name AS name FROM connector_connections
+          WHERE workspace_id = ? AND id IN (SELECT value FROM json_each(?))`,
+      ).bind(this.auth.workspaceId, connectionIds).all<{ id: string; name: string | null }>().then((result) => result.results),
+    ]);
+    const names = new Map([...members, ...connections].map((row) => [row.id, row.name]));
+    return revisions.map((revision) => {
+      const author = revision.author;
+      const name = author?.kind === "member" ? names.get(author.userId)
+        : author?.kind === "connector" ? names.get(author.connectionId) : undefined;
+      return { ...revision, authorName: name ? truncateUtf16Safe(name, 200) : null };
+    });
   }
 
   async versionContent(
