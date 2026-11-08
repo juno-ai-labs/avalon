@@ -159,7 +159,8 @@ are canonical storage services, not authorization layers.
 - Browser orchestration scripts execute in a separate sandboxed, ephemeral
   WebContents with no Node/preload and a network/frame-denying CSP. Only closed,
   typed requests reach the pinned browser tab; browser/tab closure or run
-  termination disposes that realm. See [browser script runtime](browser-script-runtime.md).
+  termination disposes that realm. Nothing reaches the realm today
+  ([its retirement record](embedded-browser.md#2026-11-08--retirement-record-browser-script-runtime)).
 - A strict Content Security Policy allows bundled content and the configured
   regional API only.
 - Markdown treats model, member, email, and attachment text as untrusted.

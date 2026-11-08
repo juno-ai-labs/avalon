@@ -177,12 +177,51 @@ WebAuthn being off has no unit test, since a mocked `WebContentsView` cannot
 show whether Electron honors the flag. On macOS or Linux, evaluate
 `typeof PublicKeyCredential` in a guest tab and expect `'undefined'`.
 
-The model-facing orchestration realm and its handles are owned by
-[browser script runtime](browser-script-runtime.md). This browser owns the
-run-to-realm map and disposes associated realms when tabs or the browser close,
-or when the owning renderer reloads or loses its process.
+The model-facing orchestration realm and its handles, which nothing reaches
+today, are described in [the browser script runtime's retirement
+record](#2026-11-08--retirement-record-browser-script-runtime). This browser
+owns the run-to-realm map and disposes associated realms when tabs or the
+browser close, or when the owning renderer reloads or loses its process.
 
 ## Changelog
+
+### 2026-11-08 — Retirement record: Browser script runtime
+
+**What changed:** Nothing in the code. `docs/browser-script-runtime.md` was
+removed in the documentation audit; its full text and changelog are
+`git show 14d68b1:docs/browser-script-runtime.md`. It owned the model-facing
+browser tools `browser_js` and `browser_js_reset`: one persistent JavaScript
+session per run in a hidden, sandboxed `WebContentsView` (no Node or preload,
+an ephemeral partition, a CSP that denies navigation, frames and network),
+holding `cua` browser and tab handles, indexed accessibility observations,
+a documented Playwright-style locator subset, native input on the one pinned
+tab, `nodeRepl` output, and the page-side `rally.pageScript`,
+`rally.downloadFiles`, `rally.network` and `rally.load` extensions; a reset
+destroyed the realm and kept the tab and transferred handles.
+
+**Why:** Nothing reaches it. A realm is created only by an
+`{ action: 'script' }` embedded-browser command, which only the desktop
+executor sends for a `browser.script` desktop action, and nothing issues one:
+the API's `createBrowserPlugin` has no caller outside its test because
+`AGENT_PROFILES` is empty, and no desktop surface answers
+`desktop_action_requested` ([the desktop actions
+record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions)). Its one user was the ChatGPT and Claude
+session import, deleted with Threads.
+
+**Consequences:** The code survives unreached and tested:
+`packages/contracts/src/browser-runtime.ts` (the model's entry instructions,
+which still name the deleted `import_finish` and `import_fail`),
+`apps/api/src/services/desktop-actions/browser-plugin.ts`, and on the desktop
+`common/browser-script-bootstrap.ts`, `common/browser-script-protocol.ts`,
+`main/browser-script-runtime.ts`, `main/browser-script-driver.ts` and this
+browser's run-to-realm map. A feature that gives a run these tools again
+inherits from that changelog: model code runs only in the disposable realm,
+never in Electron main or Rally's renderer; native RPC is a closed union pinned
+to the owner's tab that refuses script and reset, so a script cannot recurse;
+browser tools use write receipts, since a script mixes reads and writes, and
+never ask for confirmation; and `MAX_PAGE_PARALLEL_DOWNLOADS` is written open,
+its number the team's to set. The realm's isolation has no automated guard,
+only real Electron verification.
 
 ### 2026-11-07 — A Canvas hosts the rail browser; the import window is removed
 
@@ -255,7 +294,7 @@ navigates. Tab ownership belongs here; the API cannot select another native tab.
 **Consequences:** Keep native tab and runtime lifetimes linked. Reloading or
 losing the owning renderer disposes its script realms while preserving native
 tabs; an abandoned renderer cannot leave hidden orchestration views alive. The model-facing
-subset and realm internals live in [browser script runtime](browser-script-runtime.md),
+subset and realm internals live in `browser-script-runtime.md` (retired),
 while this module continues to own signed-in tabs, input and recorded responses.
 
 ### 2026-10-01 — Turn WebAuthn off in visited pages on macOS and Linux
