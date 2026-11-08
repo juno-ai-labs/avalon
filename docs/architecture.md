@@ -86,7 +86,7 @@ docs/                      Product, architecture, security, setup, runbooks
    over that bridge. A renderer combines them with its own window focus and
    open Canvas before reporting ephemeral presence to WorkspaceDO; an open
    feed socket is never treated as attention.
-3. **`apps/api`** is a Hono application deployed as three statically imported
+2. **`apps/api`** is a Hono application deployed as three statically imported
    Cloudflare Worker graphs in each of configured deployments: the regional API plus
    private document-processing and Terminal-provider services reached through
    typed Service Bindings. Global adds a private telemetry-delivery graph and a
@@ -95,10 +95,10 @@ docs/                      Product, architecture, security, setup, runbooks
    production and consumption, Workflows, scheduling, connector execution, and
    the OpenRouter harness. The private services isolate heavyweight stateless
    SDKs without request-time module loading or another product authority.
-4. **Shared packages** contain runtime-validated contracts, database schema and
+3. **Shared packages** contain runtime-validated contracts, database schema and
    repositories, connector adapters, agent-loop code, UI primitives, and test
    fixtures. Business rules live here or in services, never in route handlers.
-5. **Internal operator Workers** sit behind Cloudflare Access and verify the
+4. **Internal operator Workers** sit behind Cloudflare Access and verify the
    signed Access assertion again in application code. Ace manages product flags;
    the migration tracker manages Durable Object schema state. Neither is a
    privileged route inside the customer API.
