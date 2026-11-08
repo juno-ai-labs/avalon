@@ -120,7 +120,6 @@ export const SLACK_WORKSPACE_OBJECT_METHODS = [
   "sweepSlackIngress",
   "slackThreadRoutable",
   "pendingSlackPrompt",
-  "rememberSlackPendingPrompt",
   "clearSlackPendingPrompt",
   "claimSlackThread",
   "releaseSlackThreadClaim",

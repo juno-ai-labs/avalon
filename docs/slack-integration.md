@@ -38,7 +38,7 @@ Rally uses one public Slack Marketplace app for two related but separate connect
 1. A **workspace installation** gives Rally a bot identity and the Slack Agent surfaces. It receives Events API deliveries and powers Agent DMs, mentions, App Home, shortcuts, `/rally`, modals, unfurls, streaming replies, and proactive automation results.
 2. An optional **personal connection** gives Rally's MCP client a Slack user token. It preserves that user's broader private-channel, DM, MPIM, canvas, visibility, and user attribution.
 
-The workspace installation is required for the in-Slack Agent experience. Personal MCP authorization is not required for it. A reply admitted into a Sidekick run's bound thread carries bounded source provenance (team, channel, thread, invocation and channel types, and any matched Rally member); its nearby-message and attachment lists are empty (`nearbyMessagesStatus: "not_applicable"`). The workspace installation also exposes bounded message search, channel/thread/message/file/user/member reads, and bot-authored message/reaction/conversation writes. Slack's Real-time Search API requires the short-lived `action_token` from a user-initiated message or app mention; the tool forwards one as hidden run authorization, never in prompts or model tool arguments, when the run carries it. No run carries one now: `slackEventSearchAuthorization`, which read it off the event, has no caller since Slack stopped starting work. Bot search covers public channels only. Other workspace reads cover conversations and files visible to the installed bot. The message shortcut can explicitly prefill a task with its selected message.
+The workspace installation is required for the in-Slack Agent experience. Personal MCP authorization is not required for it. A reply admitted into a Sidekick run's bound thread carries bounded source provenance (team, channel, thread, invocation and channel types, and any matched Rally member); its nearby-message and attachment lists are empty (`nearbyMessagesStatus: "not_applicable"`). The workspace installation also exposes bounded message search, channel/thread/message/file/user/member reads, and bot-authored message/reaction/conversation writes. Slack's Real-time Search API requires the short-lived `action_token` from a user-initiated message or app mention; the tool forwards one as hidden run authorization, never in prompts or model tool arguments, when the run carries it. No run carries one now: nothing reads it off an event since Slack stopped starting work (the reader, `slackEventSearchAuthorization`, was deleted on 2026-11-08). Bot search covers public channels only. Other workspace reads cover conversations and files visible to the installed bot. The message shortcut can explicitly prefill a task with its selected message.
 
 This split follows Slack's July 2026 Agent model. New apps use `features.agent_view`, the normal Messages tab, and threaded replies. The older `assistant_view` is not configured.
 
@@ -90,7 +90,7 @@ The canonical definition is in `docs/provider-apps.md`: zero-copy means Rally do
 
 Within that boundary, Rally may subscribe to Slack activity, retain bounded normalized trigger evidence and provenance for configured automations, fetch authorized task-specific context on demand, and preserve Slack-derived content in the Rally work that uses it. The workspace bot is in a conversation only because somebody invited it, or because a Sidekick's Slack source names that conversation and Rally joined it for that source. Rally does not join public channels on its own, and does not join a channel because Slack reports its creation. Neither an invitation nor a Sidekick-source join links the room to anything (`room_bindings_retired`). See [external conversation bindings](external-conversation-bindings.md). To support follow-ups in a Sidekick run's thread, Slack delivers `message.channels`, `message.groups` and `message.mpim` events for conversations the bot has joined because Slack offers no thread-only event filter. The regional ingress accepts human replies in a bound thread or a message event matched by an explicitly configured Slack automation source; unrelated messages are discarded before durable queueing. Normalized automation activity retains bounded trigger evidence and identifiers, not a general-purpose copy of the source conversation or file content.
 
-No prompt is retained now. `slack_agent_pending_prompts` held a denied prompt for 24 hours so a member could reply `try again`; nothing writes it since Slack stopped starting work (`rememberSlackPendingPrompt` has no caller), though the routability check still reads it and the maintenance sweep still expires its rows.
+No prompt is retained now. `slack_agent_pending_prompts` held a denied prompt for 24 hours so a member could reply `try again`; nothing writes it since Slack stopped starting work (its writer, the `rememberSlackPendingPrompt` RPC, was deleted on 2026-11-08), though the routability check still reads a row an earlier deploy left and the maintenance sweep still expires them.
 
 Follow-ups in public and private channels require the workspace bot's `channels:history` and `groups:history` scopes. Existing workspace installations must complete the Rally OAuth flow again after this feature is released. The scopes apply only to conversations the bot can access; Rally's routing and retention restrictions above remain narrower than the provider grant.
 
@@ -330,8 +330,8 @@ App Home is a personalized surface published per user. Rally publishes only for 
 - **Needs input**, present only when a listed Sidekick waits on someone
   (`needsInput`, or its newest waiting run): each row is the Sidekick's name,
   linked, and the question its waiting run asked (`pendingQuestion`), or
-  "Open it in Rally to see what it needs." when what it waits on is its
-  delegation
+  "Open it in Rally to see what it needs." when no run asked one: what it
+  waits on is its delegation, or its shared conversation waiting on input
 - **Sidekicks**: the person's Sidekick list as their sidebar has it (their own,
   the Organization's and those shared with them), drafts left out; each row is
   the name linked to the Sidekick's canonical link (`sidekickCanonicalUrl`),
@@ -655,15 +655,15 @@ not own:
 
 | Suite | Covers |
 | --- | --- |
-| `apps/api/test/slack-agent-ingress.test.ts` | Signature verification, the replay window, dedupe, the ingress job written before acknowledgement, and the manifest read from `config/provider-apps/slack.json`. |
+| `apps/api/test/slack-agent-ingress.test.ts` | Signature verification, the replay window, dedupe, the ingress job written before acknowledgement, the manifest read from `config/provider-apps/slack.json`, and App Home's blocks: the sections and labels each view names, the Needs input rows, and that no retired label or action id appears. |
 | `packages/connectors/src/slack.test.ts` | The two authorization flows kept apart, the personal identity resolved from `auth.test` when the OAuth body names nobody, that a body which does name one spends no extra call, and the stage each callback failure is attributed to. |
 | `packages/connectors/src/slack-reactions.test.ts` | Override resolution, partial inheritance, the malformed-override fallback, and an override saved with the retired working rotation. |
 | `packages/connectors/src/slack-markdown.test.ts` | Block rendering, the notification fallback, and every split rule including the reopened fence. |
-| `apps/api/test/slack-account-link.test.ts` | Both routes to a link, mint-on-click, retirement ordering and its mint-time bound, and each refusal reason. |
+| `apps/api/test/slack-account-link.test.ts` | Both routes to a link, mint-on-click, retirement ordering and its mint-time bound, each refusal reason, routing on the action id, and that a stale **Start a task** click opens nothing while a shortcut still opens the task modal. |
 | `apps/api/test/slack-connection-health.test.ts` | That a stored status diagnoses rather than gates. |
 | `apps/api/test/slack-notification-service.test.ts` | The lookup-based DM path and the cases it skips. |
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
-| `apps/api/test-workers/workspace-slack-ingress.test.ts` | The ingress spine on real workerd: admission and its dedupe, the claim lease and both settlement fences, the one-notice exhaustion episode, the maintenance sweep, thread claims, pending prompts, and the workspace identity fence. |
+| `apps/api/test-workers/workspace-slack-ingress.test.ts` | The ingress spine on real workerd: admission and its dedupe, the claim lease and both settlement fences, the one-notice exhaustion episode, the maintenance sweep, thread claims, a pending prompt an earlier deploy left, and the workspace identity fence. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/slack-agent-ingress.test.ts` — the
@@ -763,8 +763,14 @@ The list is the person's sidebar list rather than their personal Sidekicks
 only, so a Sidekick they made for the Organization, or one shared with them,
 is listed. A block action no branch names is now acknowledged and ignored
 instead of opening the task modal, so a stale view's **Start a task** opens
-nothing; the two manifest shortcuts and a bare `/rally` still open it. The
-manifest and its scopes are unchanged.
+nothing; the two manifest shortcuts and a bare `/rally` still open it. That
+acknowledgement is decided before the installation is read. The manifest and
+its scopes are unchanged. Three exports the Slack ingress no longer reaches
+went with it: `slackChannelResolutionDenial` (the copy for a prompt refused on
+channel privacy), `slackEventSearchAuthorization` (the `action_token` reader)
+and WorkspaceDO's `rememberSlackPendingPrompt` with its storage writer and
+request schema; `slack_agent_pending_prompts` and its readers stay until its
+last rows expire.
 
 **Why:** The owner's instruction of 2026-11-08: "fix App Home". The view still
 offered actions Slack now answers with "Rally no longer starts work from

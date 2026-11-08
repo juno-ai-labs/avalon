@@ -25,7 +25,6 @@ import {
   asWorkstreamId,
   SlackIngressQueueMessageSchema,
   LEGACY_LINK_ORIGINS,
-  SlackSearchAuthorizationSchema,
   asUserId,
   asWorkspaceId,
   addWorkspaceTarget,
@@ -34,7 +33,6 @@ import {
   type ExternalActor,
   type SlackOriginAttachment,
   type SlackOriginNearbyMessage,
-  type SlackSearchAuthorization,
 } from "@rally/contracts";
 import { codeShaped, describeZodIssues, isCodeShaped } from "@rally/contracts/zod-diagnostics";
 import { HttpsUrlSchema, httpsUrlSchema } from "@rally/contracts/url-schemas";
@@ -240,6 +238,13 @@ const SUPERSEDED_SLACK_INTERACTION_PREFIXES: readonly string[] = Object.freeze([
  * below compares against one form. Anything not carrying a known prefix is
  * returned unchanged and falls through as it did before.
  */
+/**
+ * The block actions that do something. Every other one — a `url` button
+ * (`rally_open_*`, **Create Sidekick**), which Slack follows itself, or a
+ * button a superseded view still shows — is acknowledged and ignored.
+ */
+const SLACK_HANDLED_BLOCK_ACTIONS: ReadonlySet<string> = new Set(["rally_connect", "rally_preferences", "rally_feedback"]);
+
 function canonicalSlackInteractionId(value: string): string {
   for (const prefix of SUPERSEDED_SLACK_INTERACTION_PREFIXES) {
     if (value.startsWith(prefix)) {
@@ -533,8 +538,6 @@ export class SlackAgentService {
       return {};
     }
 
-    const connection = await this.connectionForTeam(teamId);
-    const token = await this.botTokenForTrigger(connection);
     const action = Array.isArray(payload.actions) && payload.actions[0] && typeof payload.actions[0] === "object"
       ? payload.actions[0] as Record<string, unknown>
       : null;
@@ -550,10 +553,12 @@ export class SlackAgentService {
     // task**, `rally_start_task`) opens nothing.
     const actionId = canonicalSlackInteractionId(String(action?.action_id ?? ""));
     // Slack follows a `url` button's link itself, so the interaction it also
-    // sends needs nothing but an acknowledgement.
-    if (type === "block_actions" && actionId.startsWith("rally_open_")) return {};
+    // sends needs nothing but an acknowledgement, and neither does a stale
+    // button. Decided before the installation is read: an ack needs no token.
+    if (type === "block_actions" && !SLACK_HANDLED_BLOCK_ACTIONS.has(actionId)) return {};
     if ((type === "shortcut" || type === "message_action" || type === "block_actions") && triggerId) {
-      if (actionId === "rally_create_automation") return {};
+      const connection = await this.connectionForTeam(teamId);
+      const token = await this.botTokenForTrigger(connection);
       if (actionId === "rally_connect") {
         // No status gate. Reaching here means the bot token just opened a
         // Slack view, so the installation demonstrably works; refusing to mint
@@ -589,7 +594,6 @@ export class SlackAgentService {
         await slackApi(token, "views.open", { trigger_id: triggerId, view: feedbackModal(String(action?.value ?? "")) }, AbortSignal.timeout(1_500));
         return {};
       }
-      if (type === "block_actions") return {};
       const shortcutMessage = asRecord(payload.message);
       const sourceText = type === "message_action" && shortcutMessage.text
         ? String(shortcutMessage.text)
@@ -2414,21 +2418,6 @@ async function resolveSlackChannelType(
   }
 }
 
-function slackChannelResolutionDenial(
-  failure: Exclude<SlackPromptSource["channelResolutionFailure"], null>,
-): { text: string; reconnectRequired: boolean } {
-  if (failure === "missing_scope") {
-    return {
-      text: "Rally needs updated Slack permissions before it can start workspace tasks here. Ask a Rally workspace admin to reconnect the Slack workspace in Rally Settings, then reply `try again` in this thread. You can also connect your Rally account in App Home.",
-      reconnectRequired: true,
-    };
-  }
-  return {
-    text: "Rally couldn’t verify whether this Slack channel is public or private, so it did not start a workspace task. Reply `try again` in this thread; if this continues, ask a Rally workspace admin to test the Slack connection in Rally Settings. You can also connect your Rally account in App Home.",
-    reconnectRequired: false,
-  };
-}
-
 function modalPromptSource(value: unknown): SlackPromptSource | null {
   if (typeof value === "string" && value) {
     try {
@@ -2746,13 +2735,6 @@ function slackOriginAttachments(value: unknown): SlackOriginAttachment[] {
   return attachments;
 }
 
-function slackEventSearchAuthorization(event: Record<string, unknown>): SlackSearchAuthorization | undefined {
-  const actionToken = typeof event.action_token === "string" ? event.action_token : null;
-  if (!actionToken) return undefined;
-  const parsed = SlackSearchAuthorizationSchema.safeParse({ actionToken });
-  return parsed.success ? parsed.data : undefined;
-}
-
 function slackBoundedString(value: unknown, maximum: number): string | null {
   return typeof value === "string" && value.trim()
     ? value.trim().slice(0, maximum)
@@ -2866,9 +2848,7 @@ export const __slackAgentTesting = {
   slackAppContext,
   slackOriginAttachments,
   slackOriginNearbyMessage,
-  slackEventSearchAuthorization,
   slackEventActorUserIds,
-  slackChannelResolutionDenial,
   slackChannelType,
   linkedHome,
   unlinkedHome,

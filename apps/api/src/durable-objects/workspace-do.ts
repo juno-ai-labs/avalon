@@ -588,7 +588,6 @@ import {
   WorkspaceSlackIngressSweepRequestSchema,
   WorkspaceSlackPendingPromptClearRequestSchema,
   WorkspaceSlackPendingPromptRequestSchema,
-  WorkspaceSlackPendingPromptStoreRequestSchema,
   WorkspaceSlackThreadClaimRequestSchema,
   WorkspaceSlackThreadReleaseRequestSchema,
   WorkspaceSlackThreadRoutableRequestSchema,
@@ -607,7 +606,6 @@ import {
   type WorkspaceSlackPendingPromptClearRequest,
   type WorkspaceSlackPendingPromptRequest,
   type WorkspaceSlackPendingPromptResult,
-  type WorkspaceSlackPendingPromptStoreRequest,
   type WorkspaceSlackThreadClaimRequest,
   type WorkspaceSlackThreadClaimResult,
   type WorkspaceSlackThreadReleaseRequest,
@@ -629,7 +627,6 @@ import {
   failWorkspaceSlackIngressJob,
   recoverableWorkspaceSlackIngressJobs,
   releaseWorkspaceSlackThreadClaim,
-  rememberWorkspaceSlackPendingPrompt,
   sweepWorkspaceSlackIngress,
   workspaceSlackPendingPrompt,
   workspaceSlackThreadRoutable,
@@ -10340,17 +10337,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceSlackPendingPromptRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return workspaceSlackPendingPrompt(this.state.storage, request);
-  }
-
-  /** Retain a denied prompt so `try again` can replay it once the cause is fixed. */
-  async rememberSlackPendingPrompt(
-    input: WorkspaceSlackPendingPromptStoreRequest,
-  ): Promise<void> {
-    await this.initialized;
-    const request = WorkspaceSlackPendingPromptStoreRequestSchema.parse(input);
-    this.assertWorkspace(request.workspaceId);
-    rememberWorkspaceSlackPendingPrompt(this.state.storage, request);
-    this.refreshScheduleAfterSlackWrite(request.workspaceId);
   }
 
   /** Drop a retained prompt: the request it held has been taken or superseded. */

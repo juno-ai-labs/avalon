@@ -215,11 +215,12 @@ describe("Slack account linking", () => {
   it("opens nothing for App Home's retired Start a task button, and the task modal only for a shortcut", async () => {
     // App Home no longer carries the button, but a view published before the
     // deploy still does until the member next opens Home. Its click must not
-    // fall through to the shortcut path's task modal.
+    // fall through to the shortcut path's task modal. It is acknowledged
+    // before the installation is read, so a service with no installation at
+    // all answers it.
     for (const actionId of ["rally_start_task", "avalon_start_task"]) {
-      const database = await seededDatabase();
       const slack = stubSlack();
-      await expect(new SlackAgentService(environment(database)).processInteraction({
+      await expect(new SlackAgentService(createTestEnv({ AVALON_REGION: "global" })).processInteraction({
         ...connectClick(),
         actions: [{ action_id: actionId, type: "button" }],
       }, `retired-${actionId}`)).resolves.toEqual({});
