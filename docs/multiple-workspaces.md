@@ -143,15 +143,19 @@ revocation.
 
 A background row's trailing indicator is a count badge, the sidebar's unread
 red with white digits (`ActivityCountBadge` in `@rally/ui`), showing the
-attention read's `readerAttentionCount`: the person's unseen Activity in that
-Organization, by the rule the Activity rail's badge counts
-([`activity.md`](activity.md)). It is the number a push from that Organization
-sets on the app icon, it reads 99+ past two digits, and a zero shows nothing.
-A run waiting on the person is an unseen `needs_input` row, so it counts, and
-`waitingForYou` counts those alone. When one waits, the reason
-(`waitingReason: "needs_input"`, else `unseen`) is the badge's tooltip and part
-of the row's accessible name. The browser's organization list shows the same
-badge, read through `GET /browser/workspaces/attention` (below).
+attention read's `readerAttentionCount`: that Organization's unseen Activity,
+by the rule its Activity rail badge counts. It is the same number as that
+Organization's Activity badge and the badge its pushes set, it reads 99+ past
+two digits, and a zero shows nothing; the row's accessible name says
+"3 new in Activity". When some of those rows are Sidekick runs waiting on the
+person (`waitingForYou`, the unseen `needs_input` rows), or the strongest
+reason WorkspaceDO ranks is a mention, that is the badge's tooltip and part of
+the row's accessible name ("2 Sidekick runs waiting for your input"). A failed
+read keeps the last counts and says "Counts last updated <when>". The Mac reads
+each Organization with its stored credential; the browser, which holds none,
+reads them all through its identity cookie (`getWorkspaceAttention` on the app
+session, one shared `GET /browser/workspaces/attention` per refresh), as its
+organization list does (below).
 
 ### Switching
 
@@ -476,24 +480,30 @@ best-effort remote revocation.
 
 ## Changelog
 
-### 2026-11-08 — The account menu counts each Organization's unseen Activity
+### 2026-11-08 — The account menu counts each Organization's unseen Activity, in the browser too
 
-**What changed:** The attention read behind a background Organization's row
-(`GET /workspace/attention`, `/browser/workspaces/attention`) answers the
-person's unseen Activity there as `readerAttentionCount`, and the unseen runs
-waiting on them as `waitingForYou`, where it answered zeros.
+**What changed:** The account menu's background rows read
+`readerAttentionCount` as that Organization's unseen Activity and say so ("3
+new in Activity", "2 Sidekick runs waiting for your input"). The app session
+gains `getWorkspaceAttention`: the Mac's bridge with the stored credential, as
+before, and in the browser the identity-cookie read
+`GET /browser/workspaces/attention`, shared by one refresh's asks, so the
+browser's account menu shows counts where it showed none (its bridge refused
+every Organization but the open one).
 
-**Why:** The owner's answer of 2026-11-08 ("fix this") to the account menu's
-other-Organization counts reading zero: `attention()` summarized the Thread
-directory, which nothing writes since Threads were retired, and nothing
-replaced it.
+**Why:** The owner said "fix this" on 2026-11-08 for the account menu's
+other-Organization counts: `attention()` returned zeros once Threads were
+retired, so every row read nothing. The server now counts unseen Activity;
+the client's words still said "conversations with new activity", which no
+longer names what is counted.
 
-**Considered and rejected:** Summing each Canvas's and Sidekick's unread
-messages: a different number from the Activity rail the person sees on
-switching, and a second rule to keep in step.
+**Considered and rejected:** A browser read per Organization: the cookie
+route already answers every membership in one request.
 
-**What a future change must respect:** the count is `activityCounts`, the
-Activity page's own filter and seen rule.
+**Consequences:** The browser's onboarding rows count as holding a credential
+(`credentialStored: true`) for the attention gate, since the cookie reads
+them all. A membership whose attention the route leaves out (its read failed)
+keeps its last count under "Counts last updated".
 
 ### 2026-10-21 — Initial members through shared Organization creation
 

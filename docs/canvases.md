@@ -466,8 +466,10 @@ the rail's first section and `/canvases` the landing route
   (`CanvasAccessRequestPane`, `components/canvas-access-request.tsx`). While
   the viewer's request is pending (`request.state: 'pending'` on the access
   read, so a reload keeps it) the button gives way to
-  "Request sent · <when>" alone; a denied request reads as none and the button is
-  offered again, because a denial tells the requester nothing. A refusal such
+  "Request sent · <when>" alone; a declined request reads "Request declined
+  · <when>" with the button offered again, because a denial allows a new
+  request, and the requester's `access_denied` Activity row opens this pane
+  (canvas-access-requests.md, "In the client"). A refusal such
   as `canvas_access_request_not_member` is the app's error notice over the
   dialog. A restored route on a requestable Canvas stays, since it may be
   granted later. The grant reopens the pane into the Canvas without a

@@ -83,9 +83,12 @@ other workspaces: a global inbox is out of scope.
 Omitting `badge` would leave the previous icon count in place; `0` clears it.
 
 While Rally runs, the Mac sets the dock badge itself. `useDockBadge` sends the
-rail's count (the Canvases and Sidekicks sections' needs-attention rows) to
-main (`dock-badge:set`, `app.setBadgeCount`) on every change, once both lists
-have loaded, and clears it when the shell unmounts. Main re-applies the last count
+live unseen Activity count (`dockBadgeCount`, the Activity rail badge's
+`unseenCount`, the same count a push's badge carries) to main
+(`dock-badge:set`, `app.setBadgeCount`) on every change, once the Activity
+list has arrived, and clears it when the shell unmounts. So the badge follows
+the push payload's count while Rally is closed and the live count while it
+is open, and opening Rally keeps the number an alert left. Main re-applies the last count
 when a Rally window gains focus, since a background alert from another
 Organization sets that Organization's count. Foreground alerts leave `.badge`
 out of their presentation options, so they never replace it.
@@ -93,9 +96,11 @@ out of their presentation options, so they never replace it.
 An installed browser app (a Chrome or Edge app window, or a Home Screen app on
 iPhone and iPad) shows the same number through the Badging API. The Web Push
 payload carries it as `badge`, and `sw.js` sets it with `navigator.setAppBadge`
-(`clearAppBadge` at `0`) when the push arrives, unless a Rally tab is focused:
-the push may be for another Organization, and a Mac foreground alert leaves the
-dock badge alone too. While a tab runs, the browser bridge's
+(`clearAppBadge` at `0`) when the push arrives, unless a Rally tab is visible:
+the visible tab owns the icon with its live count, the push may be for another
+Organization, and a Mac foreground alert leaves the dock badge alone too. A
+hidden tab (a backgrounded Home Screen app) takes the push's count until it is
+shown again. While a tab runs, the browser bridge's
 `setDockBadgeCount` takes the count from `useDockBadge` the same way. The icon
 is one for every tab, so only the tab focused last writes it: focusing a tab
 (or bringing it back to visible) records it under `rally.app-badge-owner` in
@@ -408,8 +413,14 @@ macOS click (`httpsLinkDeepLink`) included. A Canvas link (`/cv/<id>/`) opens
 the Canvas, which is where a reply, an access request (its Share panel lists
 the request) and a grant land; a pinned Canvas's new version links with
 `/a/<id>/` and opens the Canvas onto that artifact (`?artifact=` in the
-hash route, on either host). A reply's push opens the Chat at its newest message
-rather than at the reply itself, because the canonical link carries no turn.
+hash route, on either host). A mention's or a reply's push links with the
+message's position, `/cv/<id>/?turn=<turn>&sequence=<n>`, and opens the Chat
+scrolled to that message: the browser's `shellLocation` and `inPlaceHash`
+read the query with `parseLinkTarget` and route `#/canvases/<id>?turn=&sequence=`
+(a query that is not a message still opens the Canvas), and on the Mac
+`httpsLinkDeepLink` carries it onto the deep link, whose intent the app
+session routes through `canvasLinkRoute` to `canvasTurnRoute`, the route a
+search result for a message opens.
 The tab is the first of:
 
 1. A tab already on that page, focused.
@@ -653,6 +664,17 @@ replies would be ten pushes and ten rows. Delaying the Queue message, as the
 Thread-era batch did: the delayed message could not carry the newest reply,
 since it was enqueued with the first. Keying the batch by conversation alone:
 a reply arriving while the batch is being sent would be deleted with it.
+
+[Client half] A mention's or a reply's push opens at its message on both
+hosts (the canonical link's `?turn=&sequence=`, routed by `shellLocation` and
+`inPlaceHash` in the browser and by `canvasLinkRoute` on the Mac). While
+Rally is open the dock badge and the installed browser app's badge are the
+live unseen Activity count (`dockBadgeCount`), not the Canvases and Sidekicks
+needs-attention rows, because the push badge is now that count and the two
+must agree; the service worker leaves the icon to any visible Rally tab
+rather than only a focused one. The owner's "fix this" of 2026-11-08, for a reply
+push opening at the newest message and for the badge clearing when an alert
+arrives while Rally is closed.
 
 **Why:** Activity returns as a feed of exactly what push tells a person
 ([`activity.md`](activity.md), the user's 2026-11-08 decision). Writing the row

@@ -218,11 +218,13 @@ clears it.
 The section lists the page newest first, each row in the shared sidebar row
 layout (`RowLayout`, as Canvas and Sidekick rows are): a tile with the kind's
 glyph (an at sign, a person added, a question, a check, a speech bubble for a
-reply, a pencilled file for a new version, a lock for an access request and an
-open lock for a grant); on the first line who (a person's name from the member
+reply, a pencilled file for a new version, a lock for an access request and
+for a declined one, and an open lock for a grant); on the first line who (a person's name from the member
 directory, or the Sidekick's), what (mentioned you in, added you to, needs your
 input, finished a run, "in" for a reply, updated <artifact> in, asked to open,
-let you into) and the title, wrapping to at most two lines before it is cut,
+let you into) and the title, or, for a declined request, "<decider> declined
+your request to open a Canvas" (the decider's name from `accessRequest.decidedByName`),
+which names no Canvas because the requester was refused it, wrapping to at most two lines before it is cut,
 so the place, which comes last and tells two rows apart, survives a long name
 or verb; the row's tooltip (`title`) holds the whole sentence. The time sits
 at the first line's end. On the second line the preview, cut to one line,
@@ -252,7 +254,11 @@ marking it would mark them all. A Canvas Chat mention opens the Chat at its mess
 (`canvasTurnRoute`, from the row's `messageId` and `messageSequence`, the
 mentioning turn's transcript sequence the effect carries), and a reply's row
 (`new_message`) the same way; a mention recorded before the effect carried it,
-an add, an access request and a grant open the Canvas, and a pinned Canvas's
+an add, an access request and a grant open the Canvas, a declined request
+(`access_denied`) opens the Canvas's id onto its requestable pane, which then
+says "Request declined" and offers Request access again (opening it reads no
+conversation, so the row stays unseen until the requester asks again or Mark
+all seen), and a pinned Canvas's
 new version (`artifact_updated`) opens it onto that artifact
 (`?artifact=<resourceId>`). A row about a
 Sidekick opens its conversation, where a run's row is, and a reply there opens
@@ -279,10 +285,13 @@ pick leaves it. Entering the section opens its top row in the pane, the row
 drawn open and its conversation reporting the read as a click would (pushed
 from the rail, replacing a Canvases-home landing at a launch with Activity stored;
 [`desktop-shell.md`](desktop-shell.md) has the navigation rule); an empty
-feed opens nothing, and nothing the feed does afterwards moves the pane. The rail badge is `unseenCount` ("3 unseen"). A push
-sets the app icon's badge to the same count (`attention()` above), and the
-running app's dock badge is the unseen Activity count, the same number a push
-carries ([`push-notifications.md`](push-notifications.md)).
+feed opens nothing, and nothing the feed does afterwards moves the pane. The rail badge is `unseenCount` ("3 unseen"). The dock
+badge, and an installed browser app's icon badge, is the same `unseenCount`
+while Rally is open (`dockBadgeCount`), the count a push sets on the icon
+while it is closed ([`push-notifications.md`](push-notifications.md)); the
+menu bar stays Needs attention only ([`menu-bar.md`](menu-bar.md)). The
+account menu counts another Organization's unseen Activity
+([`multiple-workspaces.md`](multiple-workspaces.md)).
 
 ## Invariants
 
@@ -484,6 +493,14 @@ waiting. Rows take the shared row layout, seen rows recede through text
 colour tokens rather than 45% opacity, and only the rows whose conversation
 and run the route has open are marked open. An open conversation reports a
 read again for each settled change of its turns.
+
+[Client half] The `access_denied` row reads "<decider> declined your request
+to open a Canvas" behind the lock glyph, never naming the Canvas, and opens
+its requestable pane; the dock badge and the installed browser app's badge
+are the live `unseenCount` while Rally is open (`dockBadgeCount`), so they
+agree with the push badge, which counts the same rows. The owner's
+instructions of 2026-11-08: "inform the person [of] a denial", and "fix this"
+for the badge.
 
 **Why:** The run is where the question and its answer form are; the shared
 conversation's composer starts a new run, so a person sent there answered
