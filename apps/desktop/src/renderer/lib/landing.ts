@@ -35,6 +35,16 @@ function isRestoredRoute(state: unknown): boolean {
 }
 
 /**
+ * Whether an object's read says it does not exist: a 404, or an id the server
+ * refused as malformed (`<kind>_id_invalid:id:<issue>`), which names nothing
+ * that could exist either.
+ */
+export function isNotFoundError(error: unknown): boolean {
+  return error instanceof ApiError
+    && (error.status === 404 || /^[a-z_]+_id_invalid:/u.test(error.code ?? ''));
+}
+
+/**
  * On a route the landing restored, an object that answers not found sends the
  * screen to its section home, replacing the entry, with one named log line and
  * no dialog: the Sidekick or Canvas was deleted, or the stored route came from
@@ -45,7 +55,7 @@ function isRestoredRoute(state: unknown): boolean {
 export function useRestoredRouteFallback(error: unknown, home: '/canvases' | '/sidekicks'): boolean {
   const location = useLocation();
   const navigate = useNavigate();
-  const leaving = isRestoredRoute(location.state) && error instanceof ApiError && error.status === 404;
+  const leaving = isRestoredRoute(location.state) && isNotFoundError(error);
   useEffect(() => {
     if (!leaving) return;
     logWarn('rally', 'restored_route_not_found', { route: location.pathname, home, code: (error as ApiError).code });

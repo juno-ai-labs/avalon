@@ -11,7 +11,7 @@ import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState } from '../c
 import { canvasDetailQueryKey, canvasRenameRefusal, canvasRenameRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { copyLink } from '../lib/copy-link';
 import { useDocumentTitle } from '../lib/document-title';
-import { useRestoredRouteFallback } from '../lib/landing';
+import { isNotFoundError, useRestoredRouteFallback } from '../lib/landing';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { layoutKey, readArtifactPanel } from '../lib/desktop-layout';
 import { openResourceRequest, openResourceState } from '../lib/navigation-routes';
@@ -117,7 +117,8 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   if (canvas.error && !row) {
     return <div className="screen-error-state screen-with-titlebar">
       <div className="screen-drag-strip window-drag" />
-      <ErrorNotice title="Canvas could not be opened">{canvas.error.message}</ErrorNotice>
+      {/* A malformed id names nothing that could exist, so it reads as a missing one does. */}
+      <ErrorNotice title="Canvas could not be opened">{isNotFoundError(canvas.error) ? 'This Canvas does not exist.' : canvas.error.message}</ErrorNotice>
       <EmptyState action={<Button onClick={() => void canvas.refetch()}>Try again</Button>} description="It may have been removed, or you may no longer have access." title="Canvas" />
     </div>;
   }
