@@ -66,13 +66,21 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   const leaving = useRestoredRouteFallback(unreachable ? access.error : canvas.error, '/canvases');
   // The grant opens the Canvas without a refresh: it arrives as the Canvas
   // joining this person's list, or as their `access_granted` row.
-  const granted = useActivityList()?.items.find((item) => item.kind === 'access_granted' && item.parentId === id)?.id;
+  const activityItems = useActivityList()?.items;
+  const granted = activityItems?.find((item) => item.kind === 'access_granted' && item.parentId === id)?.id;
+  // A decline arrives as the requester's `access_denied` row: the pane then
+  // reads the access again, which says declined and offers Request access.
+  const declined = activityItems?.find((item) => item.kind === 'access_denied' && item.parentId === id)?.id;
   const listed = Boolean(row);
   const refetchCanvas = canvas.refetch;
   const awaitingGrant = Boolean(canvas.error) && access.data !== undefined;
   useEffect(() => {
     if (awaitingGrant && (listed || granted)) void refetchCanvas();
   }, [awaitingGrant, granted, listed, refetchCanvas]);
+  const refetchAccess = access.refetch;
+  useEffect(() => {
+    if (awaitingGrant && declined) void refetchAccess();
+  }, [awaitingGrant, declined, refetchAccess]);
   // The access read says the viewer can open it after all: the detail's 404
   // was stale (a grant landing between the two reads), so read it again.
   const alreadyOpen = access.error instanceof ApiError && access.error.code === 'canvas_access_open';
