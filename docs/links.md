@@ -52,8 +52,9 @@ handoff page or the Slack unfurl card.
 | --- | --- | --- |
 | **Canvas** | `/app/<region>/<organization-base58>/cv/<canvas-base58>/` | The Canvas title menu's **Copy link**, a share invitation email, a notification about a Canvas's Chat |
 | **Canvas onto an artifact** | Canvas link plus `a/<artifact-base58>/` | A detached artifact window's **Copy link**; a pinned artifact's push |
+| **Canvas at a message** | Canvas link plus `?turn=<turn-uuid>&sequence=<n>` (no artifact segment) | A mention's or a reply's push and email |
 | **Sidekick** | `/app/<region>/<organization-base58>/sk/<sidekick-base58>/` | The Sidekick header's **Copy link**, a notification about a Sidekick's conversation or one of its runs, a Slack App Home row |
-| **Deep link** | `rallywithai://workspace/<region>/<organization-base58>/canvases/<canvas-base58>` (plus `/artifacts/<artifact-base58>`), or `.../sidekicks/<sidekick-base58>` | The handoff page's last hop, the desktop's own navigation |
+| **Deep link** | `rallywithai://workspace/<region>/<organization-base58>/canvases/<canvas-base58>` (plus `/artifacts/<artifact-base58>`, or `?turn=<turn-uuid>&sequence=<n>`), or `.../sidekicks/<sidekick-base58>` | The handoff page's last hop, the desktop's own navigation |
 | **Retired** | `/app/<region>/<organization>/s/...` (Space, Channel, Breakout, artifact), `/app/<region>/<organization>/i/...` (import), `/app/workspaces/<region>/<organization>/workstreams/...` (addressed Channel), `/app/workstreams/<id>` (ID-only) | Nothing; `isRetiredLinkPath` recognizes the shape. The web app's own Organization shell, `/app/workspaces/<region>/<organization>`, is not retired |
 
 `canvasCanonicalUrl`, `sidekickCanonicalUrl` and `linkCanonicalUrl` mint the
@@ -61,13 +62,19 @@ HTTPS form; `canvasDeepLink`, `sidekickDeepLink` and `linkDeepLink` the deep
 link. Each throws on anything that is not a UUID. `parseLinkTarget` reads
 either form back as a `LinkTarget` (`{ kind: "canvas" } & CanvasLinkTarget` or
 `{ kind: "sidekick" } & SidekickLinkTarget`), the HTTPS form only on an origin
-the caller names and only with no query or fragment; `parseLinkPathTarget`
-reads a path alone, with or without its trailing slash.
+the caller names and with no fragment, and with no query except a Canvas
+link's message (`turn` and `sequence`, exactly those two, on a Canvas with no
+artifact segment; `parseMessageSearch`, which the desktop intent parser reads
+the deep link's query through too); `parseLinkPathTarget` reads a path
+alone, with or without its trailing slash.
 
 A Canvas belongs to the Organization, as a Sidekick does, so both sit directly
 under the Organization segment; `cv` mirrors `sk`. The artifact segment is a
-child of the Canvas segment rather than a query, because every reader refuses a
-canonical link carrying a query.
+child of the Canvas segment rather than a query, because when it was added
+every reader refused a canonical link carrying a query. A message is a query
+(`?turn=&sequence=`) because it is not a resource of the Canvas but a place
+in its Chat, the form the renderer's `canvasTurnRoute` already used; it is
+the one query any reader takes.
 
 ### Links the server mints
 
@@ -82,7 +89,7 @@ participant emails, Slack DMs and the
 Slack task controls. A delivery about a conversation with no link is skipped
 with the named reason `conversation_not_linkable` and the parent's kind
 (`parent_kind`, `missing` for a deleted Canvas or nothing at all, so it reads
-apart from a Thread), or, in the digest and Slack task controls, sent without
+apart from a Thread), or, in the Slack task controls, sent without
 the link: Thread surfaces are gone, so a link to one would open nothing. A
 mention or an add resolves the link once (`conversationLink`) and hands it to
 both its Slack and email transports; a push resolves it after the person's
@@ -147,7 +154,8 @@ the browser opens it and the handoff page says the same.
 The web app's own Organization URL opens the app too, on `rallywith.ai` and
 `www`: `parseOrganizationShellTarget` reads
 `/app/workspaces/<region>/<organization>` with no hash or `#/`, `#/canvases/<canvas>`
-(with `?artifact=<artifact>` and nothing else) or `#/sidekicks/<sidekick>`,
+(with `?artifact=<artifact>` and nothing else, or `?turn=<turn>&sequence=<n>`
+and nothing else) or `#/sidekicks/<sidekick>`,
 ids as UUIDs, and `organizationShellDeepLink` turns it into the addressed
 `home`, `canvases` or `sidekicks` deep link. `home` lands on `#/`, where the
 landing restores this device's last route, as the web app does for the same
@@ -265,7 +273,7 @@ or who may open one (the regional API, per [`authorization.md`](authorization.md
 
 ### Deep links that have no canonical form
 
-Settings, access-request and automation deep links go through the
+Settings and automation deep links go through the
 `/open#target=` handoff, whose allowlist lives in the shared
 `desktop-deep-link-intent` contract. They address no shareable object, so they
 need neither a stable URL nor an unfurl, but every newly emitted one uses the
@@ -307,7 +315,7 @@ and the path is classified (`/app/:region/:organization/cv/:canvas`,
 | `apps/api/test-workers/canvas-hosting.test.ts` | A Canvas share's invitation email carries the Canvas link. |
 | `apps/api/test/link-title-route.test.ts` | The title route's path reading and refusals. |
 | `apps/api/test/slack-agent-ingress.test.ts` | Which shared links get a card, and the Canvas card's blocks. |
-| `apps/api/test/mention-email.test.ts`, `participant-email.test.ts`, `slack-notification-service.test.ts` | The Canvas link in each message, and a Thread mention sending nothing. |
+| `apps/api/test-workers/notice-email-sink.test.ts` | The link each kind's notice carries to its sinks. |
 | `apps/desktop/src/main/push-links.test.ts`, `deep-links.test.ts` | Universal links, the Organization URL's accepted and refused shapes, the main process's deep-link boundary, and `isRetiredDeepLink`. |
 | `apps/site/test/link-handoff.test.ts` | The handoff page's visible copy for a retired and a Canvas link. |
 | `apps/desktop/src/renderer/lib/browser-entry.test.tsx` | The web app's entry screen shows the retired copy on a Thread path and not on its own Organization shell path. |
@@ -334,6 +342,29 @@ does not open the Mac app. Push clicks use the same adapter with notification
 attribution. See [push](push-notifications.md).
 
 ## Changelog
+
+### 2026-11-08 — A Canvas link can name a message
+
+**What changed:** `CanvasLinkTarget` gains `turnId` and `sequence`. The
+canonical link carries them as `?turn=<turn-uuid>&sequence=<n>`, the deep
+link as the same query, and the web app's Organization URL as
+`#/canvases/<canvas>?turn=…&sequence=…`; `parseLinkTarget`,
+`parseDesktopDeepLinkIntent` (its canvas intent gains the two fields) and
+`parseOrganizationShellTarget` read them, through one `parseMessageSearch`.
+A mention's or a reply's push links there.
+
+**Why:** The owner's answer of 2026-11-08 ("fix this") to a reply push
+opening the conversation at its newest message instead of at the message.
+
+**Considered and rejected:** A path segment, as the artifact took: a message
+is a place in the Chat, not a resource, and the renderer already routed it as
+`?turn=&sequence=` (`canvasTurnRoute`). Base58 for the turn id: the in-app
+route and the shell hash carry UUIDs.
+
+**What a future change must respect:** the message query is accepted only on
+a Canvas link with no artifact segment, as exactly `turn` and `sequence`;
+any other query is still refused. A build before this refuses such a link
+(an older Mac opens the app without navigating).
 
 ### 2026-11-08 — The Mac app routes links as the web app does
 

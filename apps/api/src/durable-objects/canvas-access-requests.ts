@@ -5,7 +5,8 @@ import { ApiError } from "../lib/api-error";
 import { sha256 } from "../lib/crypto";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logInfo } from "../observability/logger";
-import { enqueuePushDelivery } from "../services/push-delivery-service";
+import { enqueueNotice } from "../services/push-delivery-service";
+import { chosenChannels } from "./member-preferences";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
 import { MEMORY_DIGEST_CANVAS_SIDEKICK_TRIGGERS_MIGRATION } from "./memory-digest-sync";
 import type { NoteActivity } from "./workspace-activity";
@@ -209,7 +210,7 @@ export async function requestCanvasAccess(host: CanvasAccessHost, subject: Canva
       }, now, host.noteActivityChanged),
     }));
   });
-  await enqueue(host, subject.workspaceId, recorded);
+  await enqueue(host, subject.workspaceId, "access_request", recorded);
   logInfo(host.env, "canvas_access_requested", { canvas_id: subject.canvasId, request_id: requestId, deciders: recorded.length });
 }
 
@@ -265,12 +266,14 @@ export async function settleCanvasAccessRequest(host: CanvasAccessHost, subject:
         activity: {
           parentKind: "canvas", parentId: subject.canvasId, substreamId: "0", messageId: null, runId: null,
           actorKind: "person", actorId: input.deciderUserId, text: null, subjectId: request.request_id,
+          // A denial is seen by asking again or Mark all seen, never by a read.
+          ...(notice.kind === "access_denied" ? { attentionOrdinal: null } : {}),
         },
       }, now, host.noteActivityChanged),
     }];
   });
   if (settled === null) return null;
-  await enqueue(host, subject.workspaceId, settled);
+  await enqueue(host, subject.workspaceId, notice.kind, settled);
   logInfo(host.env, "canvas_access_settled", { canvas_id: subject.canvasId, request_id: request.request_id, state: input.state });
   return input.state;
 }
@@ -284,10 +287,12 @@ export async function settleAdmittedAccessRequests(host: CanvasAccessHost, subje
   }
 }
 
-async function enqueue(host: CanvasAccessHost, workspaceId: string, intents: { recipientUserId: string; intentId: string; push: boolean }[]): Promise<void> {
+async function enqueue(host: CanvasAccessHost, workspaceId: string, kind: "access_request" | "access_granted" | "access_denied",
+  intents: { recipientUserId: string; intentId: string; push: boolean }[]): Promise<void> {
   for (const intent of intents) {
     if (!intent.push) continue;
-    await enqueuePushDelivery(host.env, { region: host.env.AVALON_REGION, workspaceId, recipientUserId: intent.recipientUserId, intentId: intent.intentId });
+    await enqueueNotice(host.env, { workspaceId, recipientUserId: intent.recipientUserId, intentId: intent.intentId },
+      chosenChannels(host.storage.sql, intent.recipientUserId, kind));
   }
 }
 

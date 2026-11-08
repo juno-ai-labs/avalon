@@ -6,7 +6,8 @@ import { z } from "zod";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import { logInfo, logWarn } from "../observability/logger";
-import { enqueuePushDelivery } from "../services/push-delivery-service";
+import { enqueueNotice } from "../services/push-delivery-service";
+import { chosenChannels } from "./member-preferences";
 import type { ScheduledAlarm, ScheduledAlarmStore } from "./scheduled-alarms";
 import type { NoteActivity } from "./workspace-activity";
 import type { ParentNotice } from "./workspace-notification-intent-protocol";
@@ -163,10 +164,9 @@ export async function sendReplyBatch(host: ReplyBatchHost, alarm: ScheduledAlarm
   }));
   for (const [index, intent] of recorded.entries()) {
     if (!intent.push) continue;
-    await enqueuePushDelivery(host.env, {
-      region: host.env.AVALON_REGION, workspaceId: parent.workspaceId,
-      recipientUserId: notices[index]!.recipientUserId, intentId: intent.intentId,
-    });
+    const recipientUserId = notices[index]!.recipientUserId;
+    await enqueueNotice(host.env, { workspaceId: parent.workspaceId, recipientUserId, intentId: intent.intentId },
+      chosenChannels(host.storage.sql, recipientUserId, "new_message"));
   }
   logInfo(host.env, "reply_batch_sent", { parent_id: batch.parentId, parent_kind: batch.parentKind,
     recipients: recorded.length, pushed: recorded.filter((intent) => intent.push).length });

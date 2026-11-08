@@ -1,4 +1,5 @@
 import {
+  ACCESS_DENIED_CLIENT_CONTRACT,
   ARTIFACT_UPDATES_CLIENT_CONTRACT,
   NEW_MESSAGES_CLIENT_CONTRACT,
   CHANNEL_MERGES_CLIENT_CONTRACT,
@@ -129,4 +130,9 @@ export function clientReadsNewMessages(header: ClientRequestHeaders): boolean {
 /** Whether the access preview may include request lifecycle fields. */
 export function clientReadsPendingAccessRequests(header: ClientRequestHeaders): boolean {
   return clientReads(header, PENDING_ACCESS_REQUESTS_CLIENT_CONTRACT);
+}
+
+/** Whether the access read may carry a denied request's `decidedAt`. */
+export function clientReadsAccessDenials(header: ClientRequestHeaders): boolean {
+  return clientReads(header, ACCESS_DENIED_CLIENT_CONTRACT);
 }

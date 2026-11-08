@@ -25,7 +25,6 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 | `apps/api/src/services/slack-agent-service.ts` | Agent sessions, App Home, interactions, unfurls, delivery. |
 | `apps/api/src/durable-objects/workspace-slack-protocol.ts` | The typed request/result contracts for the ingress spine: jobs, thread claims, pending prompts, the maintenance sweep. |
 | `apps/api/src/durable-objects/workspace-slack-storage.ts` | The SQL behind those methods, inside WorkspaceDO's own storage. |
-| `apps/api/src/services/slack-notification-service.ts` | Workspace-bot delivery of the two things Rally tells one person about a conversation: a mention, and being added to it. |
 | `apps/api/src/routes/slack.ts` | The three signed ingress routes. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Installation administration. |
 | `config/provider-apps/slack.json` | The manifest. |
@@ -662,7 +661,6 @@ not own:
 | `packages/connectors/src/slack-markdown.test.ts` | Block rendering, the notification fallback, and every split rule including the reopened fence. |
 | `apps/api/test/slack-account-link.test.ts` | Both routes to a link, mint-on-click, retirement ordering and its mint-time bound, each refusal reason, routing on the action id, and that a stale **Start a task** click opens nothing while a shortcut still opens the task modal. |
 | `apps/api/test/slack-connection-health.test.ts` | That a stored status diagnoses rather than gates. |
-| `apps/api/test/slack-notification-service.test.ts` | The lookup-based DM path and the cases it skips. |
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
 | `apps/api/test-workers/workspace-slack-ingress.test.ts` | The ingress spine on real workerd: admission and its dedupe, the claim lease and both settlement fences, the one-notice exhaustion episode, the maintenance sweep, thread claims, a pending prompt an earlier deploy left, and the workspace identity fence. |
 
@@ -800,7 +798,7 @@ sweep (`slack-unfurl-refresh.ts`) and its scheduled task are deleted, and
 `slack-workstream-card.ts` keeps only the one-time unfurl: a title link and an
 **Open in Rally** button. The unfurl reads Canvas and Sidekick links and shows
 the name only; it no longer reads Thread links. Every link Rally posts in
-Slack — DMs about a mention or an add, App Home rows — comes from
+Slack — App Home rows — comes from
 `conversationCanonicalUrl`, so it names the Canvas or the Sidekick, and a
 message about a Thread is skipped (`conversation_not_linkable`) or sent
 without its button.

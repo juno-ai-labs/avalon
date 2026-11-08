@@ -213,6 +213,19 @@ export function notificationAllows(
   return chosen !== undefined && notify[chosen].includes(channel);
 }
 
+/**
+ * The channels this person chose for a notice of this kind, read from the
+ * object's own row: what a producer recording a notice queues it for
+ * (`enqueueNotice`).
+ */
+export function chosenChannels(sql: SqlStorage, userId: string, kind: PushNotificationData["kind"]): NotificationChannel[] {
+  const row = sql.exec<{ show_agent_work: number; push_json: string; notify_json: string }>(
+    `SELECT show_agent_work, push_json, notify_json FROM member_preferences WHERE user_id = ?`, userId,
+  ).toArray()[0];
+  const notify = storedMemberPreferences(row).notify;
+  return NotificationChannelSchema.options.filter((channel) => notificationAllows(notify, kind, channel));
+}
+
 export const MemberPreferencesReadRequestSchema = z.strictObject({
   workspaceId: WorkspaceIdSchema,
   userId: IdSchema,
