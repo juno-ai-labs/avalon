@@ -1803,7 +1803,7 @@ describe('grouping tool calls by plugin', () => {
       capability: 'sheets.write', operation: 'edit',
       resource: { id: 'sheet-1', type: 'document', name: 'Creator Content Intake' },
       connectionId: '9c1f0000-0000-4000-8000-000000000001',
-      parentKind: 'workstream',
+      parentKind: 'canvas',
       parentId: '9c1f0000-0000-4000-8000-000000000002',
       substreamId: '0',
       failedToolInvocationId: 'workstream:9c1f:substream:0:loop:turn:41:tool:0',
