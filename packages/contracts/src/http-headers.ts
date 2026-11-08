@@ -61,8 +61,14 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
  * `10` reads resolution suggestions in conversation snapshots and events.
  * `11` reads human reply Activity, its preview and unread message count.
  * `12` reads pending access requests and their email delivery state in previews.
+ * `13` reads a denied access request's `decidedAt` in the Canvas access read.
  */
-export const CLIENT_CONTRACT_VERSION = 12;
+export const CLIENT_CONTRACT_VERSION = 13;
+/**
+ * First client contract that reads `CanvasAccess.request.decidedAt`. That
+ * object is strict, so an older build is served the request without it.
+ */
+export const ACCESS_DENIED_CLIENT_CONTRACT = 13;
 /** Access previews include the requester's pending and emailed state. */
 export const PENDING_ACCESS_REQUESTS_CLIENT_CONTRACT = 12;
 /** Import verification includes explicit check outcomes and parallel file downloads. */

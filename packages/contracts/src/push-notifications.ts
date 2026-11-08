@@ -1,4 +1,5 @@
 import { AutomationDeliveryTargetTypeSchema } from "./index";
+import { IdSchema } from "./identifiers";
 import { RegionSchema } from "./regions";
 import { z } from "zod";
 import { HttpsUrlSchema } from "./url-schemas";
@@ -74,17 +75,17 @@ const PushDeliveryAddressSchema = z.object({
   recipientUserId: z.string(),
 });
 /**
- * What the push queue carries: who, and a pointer to what. A mention or an
- * add names its notification intent; every other Activity row names the row
- * itself, which the consumer reads back through the Activity feed. Neither
- * carries the notification's text.
+ * What the notification queue carries: who, and a pointer to what. Every
+ * notice names its notification intent and the sink it is for: `channel`
+ * absent is the person's devices (push), `email` their inbox. Neither carries
+ * the notification's text; the consumer renders the intent once and hands it
+ * to that sink.
  *
- * An Activity row carries `channel` when it goes somewhere other than the
- * person's devices: an email, or a connector's delivery surface. Without it,
- * the message is a push.
+ * The `activityItemId` form is from before the Activity feed was retired and
+ * is only acknowledged: nothing queues it now.
  */
 export const PushDeliveryMessageSchema = z.union([
-  PushDeliveryAddressSchema.extend({ intentId: z.string() }).strict(),
+  PushDeliveryAddressSchema.extend({ intentId: z.string(), channel: z.literal("email").optional() }).strict(),
   PushDeliveryAddressSchema.extend({
     activityItemId: z.string().min(1).max(400),
     channel: AutomationDeliveryTargetTypeSchema.optional(),
@@ -106,7 +107,7 @@ export const PushNotificationDataSchema = z.object({
   url: HttpsUrlSchema,
   workspaceId: z.string(),
   region: RegionSchema,
-  turnId: z.string().uuid().optional(),
+  turnId: IdSchema.optional(),
   sequence: z.number().int().positive().optional(),
   badge: z.number().int().nonnegative().optional(),
 });
