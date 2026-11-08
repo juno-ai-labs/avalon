@@ -354,6 +354,11 @@ the rail's first section and `/canvases` the landing route
   `createdByUserId`, Shared with me `sharedWithMe`, From Sidekicks
   `writerSidekickId`. A row's second line names who is there now, else its
   last editor, else who made it.
+- **The mark** (`CanvasMark`) is a sheet tinted by the row's `artifactKind`,
+  in the project palette's pastel pair through `markColors`, the mechanism a
+  Sidekick's hexagon uses: a file violet, a site blue, an archive amber, and a
+  Canvas that is only its Chat cyan. design.html §1, §2 and §5 draw these
+  tinted marks in light and dark.
 - **Making one** is `POST /canvases`, with the "Start from a prompt" card's
   text as `prompt`; the client then opens the new Canvas, whose Chat already
   holds the prompt as the creator's message.
@@ -539,6 +544,22 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 142: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because the Thread-era resource-link table's foreign key named a Thread's directory row, which a Canvas has none of. Indexed by resource. |
 
 ## Changelog
+
+### 2026-11-08 — The Canvas screens follow design.html
+
+**What changed:** A Canvas's mark is tinted by the kind of its newest artifact.
+
+**Why:** The PRD makes design.html the authority for every screen. The mark
+was a grey tile on purpose ("a Canvas has no hue of its own, as a pinned
+artifact's tile has none"), carried over from the pinned-artifact tile; the
+design draws every Canvas sheet in a pastel pair and switches it to the dark
+pair in dark, and a column of identical grey squares could not be scanned
+(v1-F2, v4-F3, v3-G4). The hue follows the kind, not the Canvas, because a
+Canvas has no colour of its own to store; the design wins over the earlier
+reasoning.
+
+**What a future change must respect:** a mark's colours come from
+`markColors`, so both appearances stay themed by `themes.css`.
 
 ### 2026-11-08 — A Canvas made with no title is titled from its first message, and a refused retitle names its field
 
