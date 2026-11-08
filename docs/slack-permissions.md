@@ -68,7 +68,7 @@ example, `search_messages` is exposed as `slack_search_messages`.
 | `read_file` | `files.info` plus an authenticated private-file download | `files:read` | Returns metadata for an accessible file. Text files are downloaded only from trusted Slack HTTPS hosts and only up to 512 KiB; binary or larger content is omitted. |
 
 The workspace bot is in a conversation because somebody invited it (which links
-the room to a Rally Space) or because a Sidekick's Slack source names that public
+the room to nothing since Spaces and Threads were retired) or because a Sidekick's Slack source names that public
 channel and Rally joined it for the source. It does not join public channels on
 its own. Rally does not poll channel history or mirror Slack content. See
 [`external-conversation-bindings.md`](external-conversation-bindings.md). Private channels, DMs, MPIMs, and files remain limited by the bot's actual
@@ -95,18 +95,18 @@ The production manifest requests these scopes as one administrator-approved bund
 | --- | --- |
 | `app_mentions:read` | Receive `app_mention` events when someone invokes `@Rally` in a channel. |
 | `assistant:write` | Update Agent thread status and title and stream Agent output. |
-| `channels:history` | Receive public-channel follow-ups in existing Rally threads, perform bounded explicit-retry recovery, and run authorized channel/thread/context reads. Unrelated public messages are discarded before durable queueing. |
-| `channels:join` | Join the public channels a saved Sidekick's Slack source names, so the Sidekick receives their events. Such a join links no Space. |
+| `channels:history` | Receive public-channel replies in Sidekick runs' bound threads, perform bounded explicit-retry recovery, and run authorized channel/thread/context reads. Unrelated public messages are discarded before durable queueing. |
+| `channels:join` | Join the public channels a saved Sidekick's Slack source names, so the Sidekick receives their events. Such a join links nothing. |
 | `channels:manage` | Create a public channel with workspace `slack_create_conversation`. |
-| `channels:read` | Discover public channels, read conversation metadata, maintain bot membership, classify the Slack surface, list visible members, and detect a Slack Connect channel before an unfurl names a work stream. |
+| `channels:read` | Discover public channels, read conversation metadata, maintain bot membership, classify the Slack surface, list visible members, and detect a Slack Connect channel before an unfurl names a Canvas or Sidekick. |
 | `chat:write` | Post and stream Agent replies, errors, controls, proactive notifications, automation results, and workspace `slack_send_message` output. |
 | `commands` | Receive `/rally` slash commands and Slack global or message shortcuts. |
 | `files:read` | Read metadata and bounded textual content for files visible to the bot. |
-| `groups:history` | Receive private-channel follow-ups in existing Rally threads, perform bounded explicit-retry recovery, and run authorized private-channel/thread/context reads. Unrelated private messages are discarded before durable queueing. |
-| `groups:read` | Read invited private-channel metadata, list visible members, and detect an externally shared private channel before an unfurl names a work stream. It does not grant access to private channels the bot has not joined. |
+| `groups:history` | Receive private-channel replies in Sidekick runs' bound threads, perform bounded explicit-retry recovery, and run authorized private-channel/thread/context reads. Unrelated private messages are discarded before durable queueing. |
+| `groups:read` | Read invited private-channel metadata, list visible members, and detect an externally shared private channel before an unfurl names a Canvas or Sidekick. It does not grant access to private channels the bot has not joined. |
 | `groups:write` | Create a private channel with workspace `slack_create_conversation`. |
 | `im:history` | Receive Agent DM prompts and read accessible DM history. |
-| `im:read` | Discover bot-visible direct-message conversations and membership, and read a DM's conversation metadata to tell an ordinary DM from a Slack Connect DM before an unfurl names a work stream. |
+| `im:read` | Discover bot-visible direct-message conversations and membership, and read a DM's conversation metadata to tell an ordinary DM from a Slack Connect DM before an unfurl names a Canvas or Sidekick. |
 | `im:write` | Open an Agent DM for account linking, notifications, automation delivery, or workspace `slack_create_conversation`. |
 | `links:read` | Receive `link_shared` events for supported Rally URLs. Slack's own permalink for a thread Rally was summoned in is read with `chat.getPermalink`, which needs no scope of its own beyond the bot's access to that conversation. |
 | `links:write` | Attach a work-stream preview — title, status, last activity, origin — to an eligible Rally URL with `chat.unfurl`, or an anonymous card where the audience is not known to be internal. |
@@ -194,11 +194,11 @@ Event subscriptions are not additional OAuth scopes. The manifest subscribes to:
 | `file_shared` | Offer bounded file-share activity to explicitly configured automations. |
 | `group_archive` | As `channel_archive`, for a private channel. |
 | `group_left` | As `channel_left`, for a private channel. |
-| `member_joined_channel` | The bot's own join is the invitation that links the room to a Space; anyone else's triggers explicitly configured channel-membership automations. |
+| `member_joined_channel` | The bot's own join is an invitation, logged `slack_room_invitation` and linking nothing; anyone else's triggers explicitly configured channel-membership automations. |
 | `member_left_channel` | The bot's own leave suspends the room's binding; anyone else's triggers explicitly configured channel-membership automations. |
-| `message.channels` | Continue a Rally-owned public thread or offer bounded message activity to an explicitly configured automation; unmatched messages are discarded before durable queueing. |
-| `message.groups` | Continue a Rally-owned invited-private-channel thread or offer bounded activity to an authorized personal automation; unmatched messages are discarded before durable queueing. |
-| `message.im` | Receive Agent prompts and follow-ups, or offer bounded DM activity to an authorized personal automation. |
+| `message.channels` | Continue a Sidekick run's bound public thread or offer bounded message activity to an explicitly configured automation; unmatched messages are discarded before durable queueing. |
+| `message.groups` | Continue a Sidekick run's bound private-channel thread or offer bounded activity to an authorized personal automation; unmatched messages are discarded before durable queueing. |
+| `message.im` | Receive replies in a Sidekick run's bound DM thread (an unbound DM is answered that Slack starts no work), or offer bounded DM activity to an authorized personal automation. |
 | `message.mpim` | Continue a bound group-DM thread, or offer bounded activity to an explicitly configured automation; unmatched messages are discarded before durable queueing. |
 | `reaction_added` | Offer bounded emoji-reaction activity to explicitly configured automations. |
 | `reaction_removed` | Offer bounded emoji-reaction removal activity to explicitly configured automations. |

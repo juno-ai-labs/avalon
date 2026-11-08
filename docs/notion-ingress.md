@@ -3,11 +3,13 @@
 A Notion public connection accepts exactly one OAuth redirect URI and delivers
 its webhook subscription to exactly one URL, for every Notion workspace that
 installs it. Rally's personal connection to Notion's official hosted MCP server
-also uses the connector's registered redirect. Rally runs two regional Workers.
-This module is how both authorization modes, and the workspace mode's webhook,
-serve both: `notion.rallywith.ai` is bound to the Global Worker, answers the
-callback and webhook, and hands each to the region that owns the Rally
-workspace involved. Read it before changing Notion authorization, Notion webhook
+also uses the connector's registered redirect. Rally's deployments are regional
+(Global is the only one configured today, per
+[`regionalization.md`](regionalization.md)). This module is how both
+authorization modes, and the workspace mode's webhook, serve every one of them:
+`notion.rallywith.ai` is bound to the Global Worker, answers the callback and
+webhook, and hands each to the region that owns the Rally Organization
+involved. Read it before changing Notion authorization, Notion webhook
 ingestion, or anything that assumes a connector's callback is regional —
 Notion's is not.
 
@@ -23,11 +25,13 @@ boundary this module bends is defined in
 | `apps/api/src/lib/notion-ingress.ts` | The one definition of the shared host, its callback URL, and the routes it may serve. |
 | `apps/api/src/lib/region-routed-state.ts` | Builds and reads the `<region>.<entropy>` OAuth state shared with the GitHub App's setup URL. |
 | `apps/api/src/services/notion-routing-service.ts` | The Global control plane: callback dispatch, route directory writes, webhook verification and fan-out. |
-| `apps/api/src/lib/connector-registry.ts` | Builds the connector's `redirectUri` from the shared host in **both** regions. |
+| `apps/api/src/lib/connector-registry.ts` | Builds the connector's `redirectUri` from the shared host in **every** region. |
 | `packages/db/migrations/0066_shared_notion_connection_routing.sql` | The `notion_workspace_routes` directory, Global only. |
 | `packages/db/migrations/0071_notion_webhook_setup_nonces.sql` | Short-lived setup nonces and their link to the active encrypted verification token. |
 | `packages/db/migrations/0072_notion_connection_scope_split.sql` | Converts historical public-integration bot grants from personal to workspace scope without touching hosted-MCP rows. |
 | `scripts/notion-webhook-setup.mjs` | Prepares a one-time subscription URL and copies the captured token without server-side plaintext output. |
+
+## How it works
 
 ### Authorization
 
@@ -69,6 +73,8 @@ normalizes, matches the delivery against its own connections by bot ID, and
 persists the payload in its own R2. Normalized activity retains the workspace
 connection scope and has no target user; the OAuth approver is not an activity
 audience.
+
+## Invariants
 
 - **The redirect URI is identical in configured deployments.** Notion replays
   `redirect_uri` at the token exchange and rejects a mismatch, so a region that
@@ -143,7 +149,7 @@ otherwise.
 | State carries no region prefix | `401 invalid_oauth_state`; the callback still redirects to the hosted desktop handoff with `status=failed`. |
 | Delivery for a Notion workspace that has never been routed | `503 notion_route_pending`. Notion retries, by which time the OAuth callback has normally registered the route. |
 | Delivery for a Notion workspace whose every route is disabled | `{accepted, activityCount: 0}`. Disabling a Rally connection does not uninstall the integration at Notion, so a retired workspace keeps delivering forever; retrying it would spend the full retry budget on every delivery, against the subscription every customer shares. |
-| Setup challenge posted to a regional host instead of the ingress | `400 notion_setup_wrong_host`, naming the right URL. Only the ingress replicates the token, so accepting it elsewhere would answer 200 and leave the other region unable to verify anything. |
+| Setup challenge posted to a regional host instead of the ingress | `400 notion_setup_wrong_host`, naming the right URL. Only the ingress replicates the token, so accepting it elsewhere would answer 200 and leave every other region unable to verify anything. |
 | Setup nonce missing, expired, already bound to another token, or superseded | `unauthorized`; no challenge row is inserted or replaced. Preparing another URL invalidates any earlier unconsumed one. |
 | Token copy attempted before the current challenge finishes storage | The command refuses to copy. It joins the challenge to the one current consumed nonce and verifies the decrypted token against that nonce's token hash, so neither the previous subscription secret nor a partially stored replacement reaches the clipboard. |
 | Signature invalid, or signed for another integration | `invalid_signature` / `unauthorized`, before the route directory is consulted and before any payload is stored. Not before *all* D1 access: the stored verification token is read first, because verifying is what makes the delivery's workspace readable. |
@@ -180,6 +186,8 @@ only a nonce hash and that encrypted rows decrypt to the clipboard value.
 
 `notion.rallywith.ai` must exist as a custom domain on `avalon-api-global`
 before the connection is registered with Notion.
+
+## Changelog
 
 ### 2026-08-19 — The shared ingress migration returns to its deployed filename
 

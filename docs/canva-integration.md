@@ -42,7 +42,7 @@ observed designs. Discussion scans visit all thread pages and each thread's repl
 pages, preserving progress between polls. The first complete scan establishes a
 baseline. Later scans deduplicate by thread/reply identity, without relying on
 ordering or parent timestamps. Events contain identities rather than discussion
-bodies. Events are digestible under the existing owner-targeted visibility rules.
+bodies. Both event types declare `digestible: true` ([what that field still means](connector-digestibility.md)) and target the connection's owner under the ordinary visibility rules.
 
 Changing a watch target establishes a fresh baseline; it cannot reuse the old
 design’s timestamp or discussion identities.
@@ -72,7 +72,7 @@ so unresolved outcomes remain a durable settlement diagnostic.
 
 The connector uses the shared hosted MCP transport, authorization service and
 polling runner. The requester is responsible for sharing resulting content with
-the work stream. Recipients do not need separate Canva authorization to see that
+the conversation. Recipients do not need separate Canva authorization to see that
 output; ordinary Rally permissions apply. Remaining live acceptance cases are
 tracked in the PRD implementation plan.
 
