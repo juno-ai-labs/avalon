@@ -75,3 +75,16 @@ it("routes a notification link in place only in the tab's own Organization", () 
   expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, `${link}a/${uuidToBase58(artifactId)}/`))
     .toBe(`#/canvases/${canvasId}?artifact=${artifactId}`);
 });
+
+it("opens a push link at the message it names, in a new tab and in place", () => {
+  const workspaceId = metadata.workspace!.id;
+  const canvasId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const turnId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const path = `/app/global/${uuidToBase58(workspaceId)}/cv/${uuidToBase58(canvasId)}/`;
+  const route = `#/canvases/${canvasId}?turn=${turnId}&sequence=12`;
+  expect(shellLocation(path, "", `?turn=${turnId}&sequence=12`)).toBe(`/app/workspaces/global/${workspaceId}${route}`);
+  expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, `https://app.rallywith.ai${path}?turn=${turnId}&sequence=12`)).toBe(route);
+  // A query that is not a message leaves the Canvas link opening the Canvas.
+  expect(shellLocation(path, "", "?utm_source=mail")).toBe(`/app/workspaces/global/${workspaceId}#/canvases/${canvasId}`);
+  expect(shellLocation(path, "", `?turn=${turnId}&sequence=0`)).toBe(`/app/workspaces/global/${workspaceId}#/canvases/${canvasId}`);
+});

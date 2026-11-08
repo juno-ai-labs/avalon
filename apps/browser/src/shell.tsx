@@ -211,7 +211,7 @@ export default function BrowserShell(props: {
   // The desktop shell routes by hash. Rewrite a canonical link into that form
   // once, before its router first reads the location.
   useState(() => {
-    const next = shellLocation(location.pathname, location.hash);
+    const next = shellLocation(location.pathname, location.hash, location.search);
     if (next) history.replaceState(history.state, '', next);
     // A tab opened as the former Sidekicks tab carries `?surface=sidekicks`,
     // which would mount the Sidekicks window and never let its close button

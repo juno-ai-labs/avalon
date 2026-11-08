@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { uuidToBase58 } from '@rally/contracts/uuid-base58';
+import { parseDesktopDeepLinkIntent } from '@rally/contracts/desktop-deep-link-intent';
 
 import {
   acceptedDeepLink,
@@ -98,5 +99,21 @@ describe('a link to something retired with Threads', () => {
       'https://evil.example/app/workstreams/00000000-0000-7000-8000-000000000021',
       'not a url',
     ]) expect(isRetiredDeepLink(other), other).toBe(false);
+  });
+});
+
+describe('a push link to one message of a Canvas', () => {
+  it('becomes a deep link the main process accepts, carrying the message to the renderer', () => {
+    const [workspace, canvas] = [WORKSPACE_ID, WORKSTREAM_ID].map(uuidToBase58);
+    const turn = '00000000-0000-7000-8000-000000000024';
+    const deepLink = httpsLinkDeepLink(`https://rallywith.ai/app/global/${workspace}/cv/${canvas}/?turn=${turn}&sequence=12`);
+    expect(deepLink).toBe(`rallywithai://workspace/global/${workspace}/canvases/${canvas}?turn=${turn}&sequence=12`);
+    expect(acceptedDeepLink(deepLink!)).toBe(deepLink);
+    expect(parseDesktopDeepLinkIntent(deepLink!)).toMatchObject({ kind: 'canvas', canvasId: WORKSTREAM_ID, turnId: turn, sequence: 12 });
+  });
+
+  it('stays in the browser when the message is malformed', () => {
+    const [workspace, canvas] = [WORKSPACE_ID, WORKSTREAM_ID].map(uuidToBase58);
+    expect(httpsLinkDeepLink(`https://rallywith.ai/app/global/${workspace}/cv/${canvas}/?turn=not-a-turn&sequence=12`)).toBeNull();
   });
 });

@@ -60,6 +60,7 @@ export function CanvasAccessRequestPane({ access, canvasId }: { access: CanvasAc
         {pending && <p className="canvas-access-request-sent" role="status">
           Request sent · <RelativeTime format={formatRelative} value={pending.requestedAt} />
         </p>}
+        {/* A server older than `decidedAt` sends only when it was asked. */}
         {declined && <p className="canvas-access-request-sent" role="status">
           Request declined · <RelativeTime format={formatRelative} value={declined.decidedAt ?? declined.requestedAt} />
         </p>}
