@@ -3,7 +3,7 @@ import { QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import type { UpdateAccountOnboarding } from '@rally/contracts';
 import type { CookieClientSession } from '@rally/contracts/client-session';
-import { BrowserSessionSchema, BrowserWorkspacesSchema } from '@rally/contracts/browser-session';
+import { BrowserSessionSchema, BrowserWorkspaceAttentionSchema, BrowserWorkspacesSchema, type BrowserWorkspaceAttention } from '@rally/contracts/browser-session';
 import { SupportPeopleSchema, SupportWorkspacesSchema } from '@rally/contracts';
 import { z } from 'zod';
 import { IDENTITY_REGION, type Region } from '@rally/contracts/regions';
@@ -27,6 +27,20 @@ const MAC_APP_ONLY = 'Available in the Mac app.';
 
 function macAppOnly(): Promise<never> {
   return Promise.reject(new Error(MAC_APP_ONLY));
+}
+
+let attentionRead: Promise<BrowserWorkspaceAttention> | null = null;
+
+/**
+ * Every membership's attention in one identity-cookie read, shared by the
+ * account menu's per-Organization asks of one refresh: they arrive together
+ * (one `Promise.all`), so the read in flight answers all of them, and the
+ * next refresh (focus, the menu opening) reads again.
+ */
+function readBrowserAttention(): Promise<BrowserWorkspaceAttention> {
+  attentionRead ??= browserRequest(IDENTITY_REGION, '/workspaces/attention', BrowserWorkspaceAttentionSchema)
+    .finally(() => { attentionRead = null; });
+  return attentionRead;
 }
 
 /** The API for this session's Organization, kept stable across metadata refreshes. */
@@ -107,7 +121,16 @@ function BrowserSession({ region, session, onSignOut, onRevalidate }: {
     clearPendingInvitation: () => undefined,
     getOnboardingState: async () => {
       const { workspaces } = await browserRequest(IDENTITY_REGION, '/workspaces', BrowserWorkspacesSchema);
-      return { workspace: null, workspaces, invitations: [], identity: 'connected' as const };
+      // The identity cookie reads every membership's attention, so each row
+      // counts as holding a credential for the account menu's counts.
+      return { workspace: null, workspaces: workspaces.map((row) => ({ ...row, credentialStored: true })), invitations: [], identity: 'connected' as const };
+    },
+    getWorkspaceAttention: async ({ region: target, workspaceId }) => {
+      const { attention } = await readBrowserAttention();
+      const found = attention.find((row) => row.region === target && row.workspaceId === workspaceId);
+      // Left out of the answer: its read failed (`browser_workspace_attention_failed`).
+      if (!found) throw new Error('Organization attention is unavailable right now.');
+      return found.attention;
     },
     activateWorkspace: async (target, workspaceId) => { location.assign(`/app/workspaces/${target}/${workspaceId}`); },
     acceptInvitation: macAppOnly,

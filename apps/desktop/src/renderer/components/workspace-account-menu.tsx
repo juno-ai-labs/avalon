@@ -92,11 +92,12 @@ function regionLabel(region: RallyRegion): string {
 }
 
 /**
- * A background row's count is `readerAttentionCount`: the conversations unread,
- * unseen or mentioning this person, the same number as that Organization's
- * attention menu and dock badge. Zero shows nothing. When some of them are
- * waiting on this person, the strongest reason, in the order WorkspaceDO ranks
- * them, is the badge's tooltip and part of the row's accessible name.
+ * A background row's count is `readerAttentionCount`: that Organization's
+ * unseen Activity, the number its Activity rail badge and its push badge show.
+ * Zero shows nothing. When some of those rows are Sidekick runs waiting on
+ * this person (`waitingForYou`, the unseen `needs_input` rows), or the
+ * strongest reason WorkspaceDO ranks is a mention, that is the badge's tooltip
+ * and part of the row's accessible name.
  */
 function waitingLabel(attention: WorkspaceAttention): string | null {
   const count = attention.waitingForYou;
@@ -105,8 +106,8 @@ function waitingLabel(attention: WorkspaceAttention): string | null {
   return attention.waitingReason === 'mentioned'
     ? `${count} mention${plural} waiting for you`
     : attention.waitingReason === 'needs_input'
-      ? `${count} conversation${plural} waiting for your input`
-      : `${count} new conversation${plural} you have not opened`;
+      ? `${count} Sidekick run${plural} waiting for your input`
+      : `${count} new in Activity you have not seen`;
 }
 
 function IndicatorTooltip({ children, label }: { children: React.ReactElement; label: string }): React.JSX.Element {

@@ -42,8 +42,7 @@ const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNo
  * read; Sidekicks each Sidekick waiting on input or holding something unread
  * (`common/sidebar-attention.ts`, which the menu bar counts by too); Activity
  * each item this person has not seen (`docs/activity.md`). The rail draws
- * these; the dock badge adds up the first two only, as the menu bar does
- * (`docs/menu-bar.md`), so Activity never joins Needs attention.
+ * these; the dock badge is Activity's alone (`dockBadgeCount`).
  */
 export function useSectionCounts(): { counts: Record<SidebarSection, number>; complete: boolean; activity: ActivityList | undefined } {
   const canvases = useCanvasList();
@@ -60,10 +59,23 @@ export function useSectionCounts(): { counts: Record<SidebarSection, number>; co
   };
 }
 
-/** The dock badge, or an installed browser app's icon badge: the Canvases and Sidekicks counts added up, not Activity's. */
+/**
+ * The dock badge, or an installed browser app's icon badge, while Rally is
+ * open: this person's unseen Activity, the Activity rail badge's number. It is
+ * the count a push sets on the icon while Rally is closed (the push payload's
+ * `badge`, counted by the same rule after the notice was recorded), so
+ * opening Rally keeps the number an alert left there rather than replacing it
+ * with another kind of count (`docs/push-notifications.md`). Null until the
+ * Activity list has arrived: a count from no list would lower the badge the
+ * push last set.
+ */
+export function dockBadgeCount(activity: ActivityList | undefined): number | null {
+  return activity ? activity.unseenCount : null;
+}
+
 export function useRailDockBadge(): void {
-  const { counts, complete } = useSectionCounts();
-  useDockBadge(counts.canvases + counts.sidekicks, complete);
+  const count = dockBadgeCount(useActivityList());
+  useDockBadge(count ?? 0, count !== null);
 }
 
 /**
