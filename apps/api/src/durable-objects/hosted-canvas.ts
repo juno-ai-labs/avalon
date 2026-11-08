@@ -119,6 +119,10 @@ export const CanvasNoteArtifactRequestSchema = z.strictObject({
   ...Addressed,
   resourceId: IdSchema,
   editor: CanvasEditorSchema,
+  /** The Sidekick run that published, for a `sidekick` editor: the row's `lastWrittenBy`. */
+  runId: IdSchema.nullable().optional(),
+}).refine((request) => !request.runId || request.editor.kind === "sidekick", {
+  path: ["runId"], message: "only a Sidekick's publish names a run",
 });
 
 /** What an artifact is, from its resource row: a site Rally serves, an archive, or any other file. */
@@ -144,6 +148,8 @@ export interface CanvasRow extends Record<string, SqlStorageValue> {
   last_editor_id: string | null;
   writer_sidekick_id: string | null;
   writer_run_id: string | null;
+  /** The run whose publish made the newest version, a `sidekick` editor's (migration 155). */
+  last_writer_run_id: string | null;
   visibility: "creator" | "participants" | "workspace";
   authority_generation: number;
   /** `naming` while a Canvas made with no title waits for its opening message's (migration 149). */
@@ -360,7 +366,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   row(): CanvasRow | null {
     return this.sql.exec<CanvasRow>(
       `SELECT canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, last_editor_kind,
-              last_editor_id, writer_sidekick_id, writer_run_id, visibility, authority_generation, title_status
+              last_editor_id, writer_sidekick_id, writer_run_id, last_writer_run_id, visibility, authority_generation,
+              title_status
          FROM canvas_directory WHERE canvas_id = ?`,
       this.canvasId,
     ).toArray()[0] ?? null;
@@ -506,7 +513,8 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   /**
    * A publish from the Canvas's Chat, or from a run of its writer Sidekick,
    * attached this resource to the Canvas's conversation: record it among the
-   * Canvas's artifacts and move the row's recency and last editor. The first
+   * Canvas's artifacts and move the row's recency, its last editor and the
+   * run that wrote it (`lastWrittenBy`, cleared by any publish not a run's). The first
    * publish of a path is the artifact's version 1, a later one a new version
    * of it, and a publish of another path another artifact; the resource
    * versioning layer records each version, this records only which resources
@@ -524,8 +532,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
          ON CONFLICT(canvas_id, resource_id) DO NOTHING`, this.canvasId, request.resourceId, now,
       );
       this.sql.exec(
-        `UPDATE canvas_directory SET updated_at = MAX(updated_at, ?), last_editor_kind = ?, last_editor_id = ? WHERE canvas_id = ?`,
-        now, request.editor.kind, request.editor.id, this.canvasId,
+        `UPDATE canvas_directory SET updated_at = MAX(updated_at, ?), last_editor_kind = ?, last_editor_id = ?,
+                last_writer_run_id = ? WHERE canvas_id = ?`,
+        now, request.editor.kind, request.editor.id, request.runId ?? null, this.canvasId,
       );
       this.host.noteCanvasDirectoryChanged(this.canvasId);
     });
@@ -760,6 +769,7 @@ export function canvasSidebarRows(
 ): CanvasSidebarRow[] {
   const rows = sql.exec<CanvasRow & {
     participant: number; unread: number; pinned_position: number | null; artifact_type: string | null; artifact_mime: string | null;
+    written_run_id: string | null; written_run_number: number | null; written_sidekick_name: string | null;
   }>(
     `SELECT canvas.*, (participant.user_id IS NOT NULL) AS participant,
             CASE
@@ -774,7 +784,14 @@ export function canvasSidebarRows(
                    AND ${artifactNewsSql("version", "?1", "reads.updated_at")}) THEN 1
               ELSE 0 END AS unread,
             pin.position AS pinned_position,
-            newest.resource_type AS artifact_type, newest.mime_type AS artifact_mime
+            newest.resource_type AS artifact_type, newest.mime_type AS artifact_mime,
+            -- The run that wrote the newest version, by its primary key; its
+            -- number counted as the run's own row counts it (projectRunRow).
+            written.run_id AS written_run_id, written_by.title AS written_sidekick_name,
+            CASE WHEN written.run_id IS NULL THEN NULL ELSE (SELECT COUNT(*) FROM sidekick_runs earlier
+              WHERE earlier.sidekick_id = written.sidekick_id
+                AND (earlier.created_at < written.created_at
+                  OR (earlier.created_at = written.created_at AND earlier.run_id <= written.run_id))) END AS written_run_number
        FROM canvas_directory canvas
        LEFT JOIN canvas_participants participant ON participant.canvas_id = canvas.canvas_id AND participant.user_id = ?1
        LEFT JOIN sidekick_viewer_reads reads ON reads.sidekick_id = canvas.canvas_id AND reads.user_id = ?1
@@ -783,6 +800,10 @@ export function canvasSidebarRows(
        LEFT JOIN resources newest ON newest.id = (SELECT resource.id FROM canvas_artifacts artifact
            JOIN resources resource ON resource.id = artifact.resource_id
           WHERE artifact.canvas_id = canvas.canvas_id ORDER BY resource.updated_at DESC, resource.id LIMIT 1)
+       LEFT JOIN sidekick_runs written ON canvas.last_editor_kind = 'sidekick'
+             AND written.sidekick_id = canvas.last_editor_id AND written.run_id = canvas.last_writer_run_id
+       LEFT JOIN automation_directory written_by ON written_by.automation_id = written.sidekick_id
+             AND written_by.lifecycle <> 'deleted'
       WHERE canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
          OR (?2 = 1 AND canvas.visibility = 'workspace') OR canvas.writer_sidekick_id IS NOT NULL
       ORDER BY canvas.updated_at DESC, canvas.canvas_id`,
@@ -803,6 +824,11 @@ export function canvasSidebarRows(
     listed.push(CanvasSidebarRowSchema.parse({
       ...canvasSummary(row),
       artifactKind: row.artifact_type === null ? null : canvasArtifactKind(row.artifact_type, row.artifact_mime),
+      // A deleted Sidekick's run is no run to open.
+      lastWrittenBy: row.written_run_id !== null && row.written_sidekick_name !== null && row.last_editor_id !== null
+        ? { sidekickId: row.last_editor_id, runId: row.written_run_id, runNumber: row.written_run_number,
+          sidekickName: row.written_sidekick_name || "New Sidekick" }
+        : null,
       unread: row.unread === 1,
       presentUserIds: [...(present.get(row.canvas_id) ?? [])].filter((userId) => userId !== viewer.userId),
       pinnedPosition: row.pinned_position,

@@ -649,6 +649,35 @@ describe("a Canvas's artifacts", () => {
     expect(await unread(CREATOR)).toBe(false);
   });
 
+  it("names on the Canvas list the Sidekick run whose publish made the newest version, until a later one from its Chat", async () => {
+    const sidekickId = crypto.randomUUID();
+    await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: CREATOR, scope: "personal", automationId: sidekickId });
+    // Three runs, oldest first: the third is run #3.
+    const runIds = ["00000000-0000-7000-8000-0000000cbf01", "00000000-0000-7000-8000-0000000cbf02", "00000000-0000-7000-8000-0000000cbf03"];
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE automation_directory SET title = 'Weekly digest' WHERE automation_id = ?`, sidekickId);
+      runIds.forEach((runId, index) => state.storage.sql.exec(`INSERT INTO sidekick_runs(sidekick_id, run_id, occurrence_key,
+          trigger_json, definition_revision, harness_run_id, state, summary, opening_json, seed_json, run_as_user_id,
+          coordinator_user_id, created_at, started_at, completed_at, updated_at)
+        VALUES (?, ?, ?, '{"kind":"manual"}', 1, ?, 'completed', NULL, NULL, NULL, ?, ?, ?, ?, ?, ?)`,
+        sidekickId, runId, `run:${runId}`, `${runId}-harness`, CREATOR, CREATOR, index + 1, index + 1, index + 1, index + 1));
+    });
+    const run = { workspaceId: WORKSPACE_ID, parentKind: "automation" as const, parentId: sidekickId,
+      substreamId: asSubstreamId(runIds[2]!), executionPrincipal: { type: "user" as const, userId: CREATOR } };
+    const home = (await resolveTerminalPublicationHome(TEST_ENV, run, { title: "Digest" }))!;
+    const canvasId = home.parentId;
+    const lastWrittenBy = async () => (await workspace().canvasListFor({ workspaceId: WORKSPACE_ID, userId: CREATOR, member: true }))
+      .find((row) => row.id === canvasId)?.lastWrittenBy;
+    // A version of its artifact, noted as run #3's publish notes it.
+    const { resourceId } = await publish(canvasId, "digest.md", "# Digest");
+    expect(await lastWrittenBy()).toBeNull();
+    await canvasArtifactNoter(TEST_ENV, run)!(home, resourceId);
+    expect(await lastWrittenBy()).toEqual({ sidekickId, runId: runIds[2], runNumber: 3, sidekickName: "Weekly digest" });
+    // A later version from its Chat, which a person asks for, is no run's.
+    await publish(canvasId, "digest.md", "# Digest, revised");
+    expect(await lastWrittenBy()).toBeNull();
+  });
+
   it("refuses a canvas argument anywhere but a Sidekick run", async () => {
     const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });
     const { canvasId: elsewhere } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR });

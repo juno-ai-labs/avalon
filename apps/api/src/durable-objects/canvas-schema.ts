@@ -170,3 +170,18 @@ export const CANVAS_TITLE_STATUS_STATEMENTS: readonly string[] = [
   `ALTER TABLE canvas_directory ADD COLUMN title_status TEXT NOT NULL DEFAULT 'settled'
      CHECK (title_status IN ('naming', 'settled'))`,
 ];
+
+/**
+ * WorkspaceDO migration 155: the Sidekick run whose publish made a Canvas's
+ * newest version, beside its last editor, so the Canvas list names the run
+ * ("Weekly digest · run #3") and the home card opens it. `noteArtifact`
+ * writes it with every publish it records: a run's sets it, any other
+ * clears it. It is not `writer_run_id`, the run that created the Canvas: a
+ * Sidekick that writes one Canvas across runs moves this and not that. No
+ * existing row is backfilled; a Canvas a run wrote before this reads as
+ * written by no run until its next publish. `docs/canvases.md` owns it.
+ */
+export const CANVAS_LAST_WRITER_RUN_STATEMENTS: readonly string[] = [
+  `ALTER TABLE canvas_directory ADD COLUMN last_writer_run_id TEXT
+     CHECK (last_writer_run_id IS NULL OR last_editor_kind = 'sidekick')`,
+];
