@@ -70,10 +70,14 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
   // The highlight follows the route, Back and Forward included, never the row
   // last clicked: a row is open when the route has its conversation open, the
   // run included, so opening one run marks that run's row and not every row
-  // about its Sidekick.
+  // about its Sidekick. A finished run's row opens the shared conversation,
+  // because reading `"0"` is what clears it and the run's own view reads the
+  // run instead; every finished row of one Sidekick shares that address, so
+  // none is drawn open rather than all of them at once.
   const location = useLocation();
   const openRun = new URLSearchParams(location.search).get('run');
   const isOpen = (item: ActivityItem): boolean => {
+    if (item.kind === 'run_finished') return false;
     const [pathname, search = ''] = activityRoute(item).split('?');
     return pathname === location.pathname && new URLSearchParams(search).get('run') === openRun;
   };
