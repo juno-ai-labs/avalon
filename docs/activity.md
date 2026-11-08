@@ -179,10 +179,16 @@ opens it too, because a read of `"0"` is what clears that row and the run's own
 view reads the run. A run that needs input
 (`runId`) and a mention in one of its runs open that run (`?run=`), where the
 question and its answer form are. An open conversation reports a read on
-open, when its cursor moves, and once more for each new or revised turn while
-it is open and visible (`useOpenReadReport`, keyed by `transcriptTurnsKey`):
-a run's row finishing in place in front of its requester moves no cursor, and
-without that report the finished row stayed unseen while they watched it.
+open, when its cursor moves, and once more for each settled change of its
+turns while it is open and visible (`useOpenReadReport`, keyed by
+`transcriptTurnsKey`): a run's row finishing in place in front of its
+requester moves no cursor, and without that report the finished row stayed
+unseen while they watched it. Settled means a turn still live (an active
+turn, a streaming block, or one with an `assistant_turn` overlay) counts only
+once it settles, because the server revises an assistant turn on every tool's
+start and end and each report is a write; the viewer's own turns count for
+nothing, since sending one moves the cursor. Loading an older history page
+adds turns, so it owes one report at an unchanged cursor.
 Opening the run does not read the shared
 conversation, so a needs-input row stays unseen until the shared conversation
 is read or Mark all seen, the same as a mention in a run. Opening a row keeps the
@@ -308,7 +314,7 @@ its `runId`) rather than the Sidekick's shared conversation, and
 waiting. Rows take the shared row layout, seen rows recede through text
 colour tokens rather than 45% opacity, and only the rows whose conversation
 and run the route has open are marked open. An open conversation reports a
-read again for each new or revised turn.
+read again for each settled change of its turns.
 
 **Why:** The run is where the question and its answer form are; the shared
 conversation's composer starts a new run, so a person sent there answered

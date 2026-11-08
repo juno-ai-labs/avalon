@@ -6806,7 +6806,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 /* The details' pills at the home's pill size (.sidekick-status-pill, design §3
    and §4 draw both at about 13px); the base badge and the sidebar's scope badge
    are 10.5 and 9px. */
-.automation-header .badge { font-size: 13px; font-weight: 400; line-height: 18px; max-width: none; padding: 3px 10px; }
+.automation-header .badge { font-size: 13px; max-width: none; padding: 3px 10px; }
 .automation-title-more { margin-left: auto; }
 .automation-header .button { border-radius: var(--av-sys-size-radius-pill); }
 .automation-header .workstream-header-actions { width: 100%; gap: 8px; }

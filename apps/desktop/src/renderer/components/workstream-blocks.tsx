@@ -2691,7 +2691,7 @@ export function ElicitationPanel({
               <kbd aria-hidden="true">{index < 26 ? String.fromCharCode(65 + index) : index + 1}</kbd>
               {isMulti ? (
                 <span aria-hidden="true" className="elicitation-checkbox">{selected.includes(option.value) && <Check size={12} strokeWidth={3} />}</span>
-              ) : <span aria-hidden="true" className="elicitation-chosen">{selected.includes(option.value) && <Check size={15} strokeWidth={2.4} />}</span>}
+              ) : <span aria-hidden="true" className="elicitation-chosen">{selected.includes(option.value) && <Check size={15} strokeWidth={1.9} />}</span>}
             </label>
           ))}
           {allowOther && (
@@ -2727,7 +2727,7 @@ export function ElicitationPanel({
               <kbd aria-hidden="true">{options.length < 26 ? String.fromCharCode(65 + options.length) : options.length + 1}</kbd>
               {isMulti ? (
                 <span aria-hidden="true" className="elicitation-checkbox">{customSelected && <Check size={12} strokeWidth={3} />}</span>
-              ) : <span aria-hidden="true" className="elicitation-chosen">{customSelected && <Check size={15} strokeWidth={2.4} />}</span>}
+              ) : <span aria-hidden="true" className="elicitation-chosen">{customSelected && <Check size={15} strokeWidth={1.9} />}</span>}
             </div>
           )}
         </fieldset>
