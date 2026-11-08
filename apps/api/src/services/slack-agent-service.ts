@@ -29,6 +29,8 @@ import {
   asUserId,
   asWorkspaceId,
   addWorkspaceTarget,
+  sidekickCanonicalUrl,
+  type AutomationSummary,
   type ExternalActor,
   type SlackOriginAttachment,
   type SlackOriginNearbyMessage,
@@ -542,8 +544,10 @@ export class SlackAgentService {
     // connect button placed in a modal would miss its branch and fall through
     // to the shortcut path, and a handoff button would open a task modal on top
     // of the link it just followed. The action id is the button, whatever it is
-    // embedded in. The two manifest shortcuts carry no action at all and reach
-    // the task modal below by falling past every branch here.
+    // embedded in. Only the two manifest shortcuts reach the task modal below;
+    // a block action no branch names is acknowledged and does nothing, so a
+    // button a superseded view still shows (App Home's retired **Start a
+    // task**, `rally_start_task`) opens nothing.
     const actionId = canonicalSlackInteractionId(String(action?.action_id ?? ""));
     // Slack follows a `url` button's link itself, so the interaction it also
     // sends needs nothing but an acknowledgement.
@@ -585,6 +589,7 @@ export class SlackAgentService {
         await slackApi(token, "views.open", { trigger_id: triggerId, view: feedbackModal(String(action?.value ?? "")) }, AbortSignal.timeout(1_500));
         return {};
       }
+      if (type === "block_actions") return {};
       const shortcutMessage = asRecord(payload.message);
       const sourceText = type === "message_action" && shortcutMessage.text
         ? String(shortcutMessage.text)
@@ -1496,9 +1501,9 @@ export class SlackAgentService {
   }
 
   /**
-   * A task asked for from the slash command, the Start a task modal or App
-   * Home. Each once started a Rally Thread; Slack no longer creates a
-   * conversation (plan step C-2), so the person is told where work starts now.
+   * A task asked for from the slash command or a shortcut's task modal. Each
+   * once started a Rally Thread; Slack no longer creates a conversation (plan
+   * step C-2), so the person is told where work starts now.
    */
   private async startFromPrompt(
     teamId: string,
@@ -1786,15 +1791,15 @@ export class SlackAgentService {
       // still see it; `rally_connect` mints one against the click instead.
       blocks = unlinkedHome();
     } else {
-      // App Home listed the person's recent Threads; Threads are retired
-      // (plan step C-2), so it lists their Sidekicks alone.
-      const [automations, personalSlack] = await Promise.all([
+      // The person's Sidekicks, as their sidebar lists them, and what any of
+      // them waits on.
+      const [sidekicks, personalSlack] = await Promise.all([
         this.workspaceDirectory(connection.workspace_id)
           .then((workspace) => workspace.listAutomationDirectory({
             workspaceId: connection.workspace_id,
             userId: link.user_id,
           }))
-          .then((page) => ({ results: personalAutomationsForHome(page.items) })),
+          .then((page) => sidekicksForHome(page.items)),
         this.env.DB.prepare(
           `SELECT display_name, status FROM connector_connections
            WHERE workspace_id = ? AND connector_type = 'slack' AND scope = 'personal'
@@ -1803,10 +1808,8 @@ export class SlackAgentService {
         ).bind(connection.workspace_id, link.user_id, `${teamId}:%`).first<{ display_name: string; status: string }>(),
       ]);
       blocks = linkedHome(
-        this.env,
         link.name,
-        [],
-        automations.results ?? [],
+        sidekicks,
         this.env.PUBLIC_WEB_BASE_URL,
         this.env.AVALON_REGION,
         connection.workspace_id,
@@ -2515,7 +2518,7 @@ function startTaskModal(
 }
 
 function preferencesModal(notifyNeedsInput: boolean, notifyAutomationCompleted: boolean): Record<string, unknown> {
-  const options = [{ text: { type: "plain_text", text: "When a task needs input" }, value: "needs_input" }, { text: { type: "plain_text", text: "When an automation completes" }, value: "automation_completed" }];
+  const options = [{ text: { type: "plain_text", text: "When a Sidekick needs input" }, value: "needs_input" }, { text: { type: "plain_text", text: "When a Sidekick run finishes" }, value: "automation_completed" }];
   const initialOptions = options.filter((option) => option.value === "needs_input" ? notifyNeedsInput : notifyAutomationCompleted);
   return { type: "modal", callback_id: "rally_preferences_submit", title: { type: "plain_text", text: "Rally notifications" }, submit: { type: "plain_text", text: "Save" }, close: { type: "plain_text", text: "Cancel" }, blocks: [{ type: "input", optional: true, block_id: "delivery", label: { type: "plain_text", text: "Notify me in Slack" }, element: { type: "checkboxes", action_id: "value", options, ...(initialOptions.length ? { initial_options: initialOptions } : {}) } }] };
 }
@@ -2540,57 +2543,64 @@ function connectModal(link: string): Record<string, unknown> {
   ] };
 }
 
+/**
+ * What Rally does from Slack today, said once at the top of either view: a
+ * Sidekick can work from Slack, and nothing a person types to Rally in Slack
+ * starts work (`conversation_ingress_retired`).
+ */
+const SLACK_HOME_SUMMARY = "A Sidekick can work from Slack for you: it can start from Slack activity and send what it finds back here. Mentioning Rally or sending it a DM does not start work; start a Canvas or set up a Sidekick in Rally.";
+
+/**
+ * How many rows each App Home list shows. The six is the number App Home's
+ * automation list already used, carried over unchanged; it is the team's to
+ * set. It also keeps a view inside Slack's 100-block ceiling.
+ */
+const SLACK_HOME_ROW_LIMIT = 6;
+
+/** Slack's ceiling on a section's text. */
+const SLACK_SECTION_TEXT_LIMIT = 3_000;
+
 function unlinkedHome(): Record<string, unknown>[] {
   return [
     { type: "header", text: { type: "plain_text", text: "Meet Rally" } },
-    { type: "section", text: { type: "mrkdwn", text: "Start workspace-authorized tasks directly from Slack. They use only shared Rally workspace tools and remain attributed to your Slack identity. Rally uses bounded Slack activity and task-specific context for requested work and configured automations; it does not recreate Slack as a parallel inbox or searchable workspace." } },
-    { type: "section", text: { type: "mrkdwn", text: "Connect your Rally account so messages you send can run with your personal authority, use your personal connectors, and make your Slack work visible in Rally. The same step connects personal Slack tools, so Rally can search and act in Slack with your own permissions." } },
+    { type: "section", text: { type: "mrkdwn", text: SLACK_HOME_SUMMARY } },
+    { type: "section", text: { type: "mrkdwn", text: "Connect your Rally account to see your Sidekicks here, along with anything they are waiting on you for. The same step connects personal Slack tools, so Rally can search and act in Slack with your own permissions. Rally uses bounded Slack activity for the Sidekicks you set up; it does not recreate Slack as a parallel inbox or searchable workspace." } },
     // Deliberately not a `url` button: the handoff URL carries a single-use
     // challenge, and this view outlives any expiry short enough to be safe.
     { type: "actions", elements: [{ type: "button", style: "primary", text: { type: "plain_text", text: "Connect Rally" }, action_id: "rally_connect" }] },
     { type: "divider" },
-    { type: "section", text: { type: "mrkdwn", text: "*Try now*\n• Summarize this thread and propose next steps\n• Investigate this issue with workspace tools\n• Draft a status update for this channel\n\nAfter connecting: create personal automations such as “Check my Gmail every morning and send my top 3 emails here.”" } },
     { type: "context", elements: [{ type: "mrkdwn", text: "Rally Agent features require paid Slack and Rally plans." }] },
     { type: "context", elements: [{ type: "mrkdwn", text: "AI can make mistakes. Review important actions. <https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/help/|Help>" }] },
   ];
 }
 
-function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[], automations: Record<string, unknown>[], webBase: string, region: Region, workspaceId: string, personalSlack: { display_name: string; status: string } | null, administration: { teamId: string; status: string } | null): Record<string, unknown>[] {
+function linkedHome(name: string, sidekicks: AutomationSummary[], webBase: string, region: Region, workspaceId: string, personalSlack: { display_name: string; status: string } | null, administration: { teamId: string; status: string } | null): Record<string, unknown>[] {
   const automationsTarget = addWorkspaceTarget(new URL("rallywithai://automations/new"), { region, workspaceId }).toString();
   const connectionsTarget = addWorkspaceTarget(new URL("rallywithai://settings/connections"), { region, workspaceId }).toString();
+  const link = (sidekick: AutomationSummary) => `*<${sidekickCanonicalUrl(webBase, { region, workspaceId, sidekickId: sidekick.id })}|${escapeMrkdwn(sidekick.name)}>*`;
+  const waiting = sidekicks.filter(sidekickNeedsInput).slice(0, SLACK_HOME_ROW_LIMIT);
   const blocks: Record<string, unknown>[] = [
     { type: "header", text: { type: "plain_text", text: `Welcome, ${name}`.slice(0, 150) } },
+    { type: "section", text: { type: "mrkdwn", text: SLACK_HOME_SUMMARY } },
+    // `rally_create_automation` keeps the id every published view carries.
     { type: "actions", elements: [
-      { type: "button", style: "primary", text: { type: "plain_text", text: "Start a task" }, action_id: "rally_start_task" },
-      { type: "button", text: { type: "plain_text", text: "Create automation" }, url: desktopHandoffUrl(webBase, automationsTarget), action_id: "rally_create_automation" },
+      { type: "button", style: "primary", text: { type: "plain_text", text: "Create Sidekick" }, url: desktopHandoffUrl(webBase, automationsTarget), action_id: "rally_create_automation" },
       { type: "button", text: { type: "plain_text", text: "Notifications" }, action_id: "rally_preferences" },
     ] },
-    { type: "divider" },
-    { type: "header", text: { type: "plain_text", text: "Needs attention & recent tasks" } },
   ];
-  if (!tasks.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "_Nothing needs your attention right now._" } });
-  for (const task of tasks) {
-    const workstreamId = String(task.id);
-    // Minting a link is strict on purpose, but this is a list: one row that
-    // cannot produce a link must cost that row, not the whole App Home. The
-    // throw would otherwise escape `views.publish` and fail account linking.
-    // A Thread has no link now that no surface opens one, so it costs its row.
-    if (typeof task.url !== "string") {
-      logWarn(env, "slack_app_home_task_skipped", {
-        workstream_id: workstreamId,
-      });
-      continue;
+  // A Sidekick waiting on someone: its run's question when one asked, or a
+  // pointer to Rally when what it waits on is its delegation.
+  if (waiting.length) {
+    blocks.push({ type: "divider" }, { type: "header", text: { type: "plain_text", text: "Needs input" } });
+    for (const sidekick of waiting) {
+      blocks.push(section(`${link(sidekick)}\n${sidekick.pendingQuestion ? escapeMrkdwn(sidekick.pendingQuestion) : "Open it in Rally to see what it needs."}`));
     }
-    const status = task.harness_status === "needs_input"
-      ? ":warning: Needs your input"
-      : task.harness_status === "running"
-        ? ":large_green_circle: Running"
-        : `Recent · ${escapeMrkdwn(String(task.harness_status).replaceAll("_", " "))}`;
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*<${String(task.url)}|${escapeMrkdwn(String(task.title))}>*\n${status}` } });
   }
-  blocks.push({ type: "divider" }, { type: "header", text: { type: "plain_text", text: "Automations" } });
-  if (!automations.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: "Create a recurring automation—like a 9 AM stack-ranked Gmail briefing delivered to your Rally DM." } });
-  for (const automation of automations) blocks.push({ type: "section", text: { type: "mrkdwn", text: `*${escapeMrkdwn(String(automation.name))}* · ${escapeMrkdwn(String(automation.status))}\n${automation.next_run_at ? `Next run: ${escapeMrkdwn(String(automation.next_run_at))}` : "No scheduled run"}` } });
+  blocks.push({ type: "divider" }, { type: "header", text: { type: "plain_text", text: "Sidekicks" } });
+  if (!sidekicks.length) blocks.push(section("No Sidekicks yet. Create one in Rally to have it work from Slack for you."));
+  for (const sidekick of sidekicks.slice(0, SLACK_HOME_ROW_LIMIT)) {
+    blocks.push(section(`${link(sidekick)}\n${sidekickHomeState(sidekick)} · ${sidekickHomeLastRun(sidekick.lastRunAt)}`));
+  }
   blocks.push(
     { type: "divider" },
     { type: "section", text: { type: "mrkdwn", text: `*Personal Slack tools*\n${personalSlack ? `${personalSlack.status === "healthy" ? ":large_green_circle:" : ":warning:"} ${escapeMrkdwn(personalSlack.display_name)} · ${escapeMrkdwn(personalSlack.status)}` : "Not connected — connecting your Rally account normally does this too. Finish it to let Rally search and act in Slack with your own permissions."}` }, accessory: { type: "button", text: { type: "plain_text", text: personalSlack ? "Manage" : "Finish connecting" }, url: desktopHandoffUrl(webBase, connectionsTarget), action_id: "rally_open_personal_tools" } },
@@ -2604,17 +2614,33 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
   return blocks;
 }
 
-/** The personal, accepted automations App Home can act on. */
-function personalAutomationsForHome(items: unknown): Record<string, unknown>[] {
-  return z.array(AutomationSummarySchema).parse(items)
-    .filter((automation) => automation.scope === "personal" && automation.status !== "draft")
-    .slice(0, 6)
-    .map((automation) => ({
-      id: automation.id,
-      name: automation.name,
-      status: automation.status,
-      next_run_at: automation.nextRunAt,
-    }));
+/** A section of mrkdwn, cut to Slack's ceiling rather than refused by it. */
+function section(text: string): Record<string, unknown> {
+  return { type: "section", text: { type: "mrkdwn", text: text.length > SLACK_SECTION_TEXT_LIMIT ? `${text.slice(0, SLACK_SECTION_TEXT_LIMIT - 1)}…` : text } };
+}
+
+/** Waiting on someone, as the desktop's `sidekickStatus` reads it. */
+function sidekickNeedsInput(sidekick: AutomationSummary): boolean {
+  return sidekick.needsInput === true || sidekick.runState === "needs_input";
+}
+
+/** The state a Sidekick row shows, in the desktop's words for it. */
+function sidekickHomeState(sidekick: AutomationSummary): string {
+  if (sidekickNeedsInput(sidekick)) return ":warning: Needs input";
+  if (sidekick.runState === "working") return ":large_green_circle: Working";
+  return sidekick.status === "paused" ? "Paused" : "Active";
+}
+
+/** When it last ran, in the reader's own zone through Slack's date token. */
+function sidekickHomeLastRun(lastRunAt: string | null): string {
+  if (!lastRunAt) return "Not run yet";
+  const at = new Date(lastRunAt);
+  return `<!date^${Math.floor(at.getTime() / 1000)}^Last run {date_short_pretty} at {time}|Last run ${at.toISOString().slice(0, 16).replace("T", " ")} UTC>`;
+}
+
+/** The Sidekicks App Home lists: the person's sidebar list, drafts left out. */
+function sidekicksForHome(items: unknown): AutomationSummary[] {
+  return z.array(AutomationSummarySchema).parse(items).filter((sidekick) => sidekick.status !== "draft");
 }
 
 function desktopHandoffUrl(webBase: string, target: string): string {
@@ -2845,7 +2871,8 @@ export const __slackAgentTesting = {
   slackChannelResolutionDenial,
   slackChannelType,
   linkedHome,
-  personalAutomationsForHome,
+  unlinkedHome,
+  sidekicksForHome,
   slackIngressRetryable,
   slackReconnectRequired,
 };

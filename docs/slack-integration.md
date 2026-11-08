@@ -312,28 +312,41 @@ Slack and email are delivered independently, so a failure in one is retried with
 
 ### App Home
 
-App Home lists the person's Sidekicks only. App Home is a personalized control surface published per user. Rally publishes only for `app_home_opened` events whose tab is `home` and supplies Slack's current view hash to protect against stale updates.
+App Home is a personalized surface published per user. Rally publishes only for `app_home_opened` events whose tab is `home` and supplies Slack's current view hash to protect against stale updates. Both views open with the same line on what Rally does from Slack today (`SLACK_HOME_SUMMARY`): a Sidekick can work from Slack for you, starting from Slack activity and sending what it finds back; a mention or a DM does not start work.
 
 #### Unlinked
 
-- concise description of Rally and its data behavior
+- what Rally does from Slack, and what connecting adds (the person's Sidekicks
+  and what they wait on, personal Slack tools) and its data behavior
 - **Connect Rally** call to action — an action button carrying no URL, so
   publishing Home mints nothing and nothing on the published view expires
-- example prompts, including the morning Gmail briefing
-- AI fallibility notice
 - paid Slack and Rally plan disclosure
-- privacy and help links
+- AI fallibility notice, privacy and help links
 
 #### Linked member
 
-- **Start a task**, **Create automation**, and **Notifications** actions; **Start
-  a task** opens the modal whose submission is answered with the retired-ingress
-  copy
-- a **Needs attention & recent tasks** header that is always empty ("Nothing
-  needs your attention right now."), since `linkedHome` is passed no tasks now
-- recent personal Sidekicks (headed **Automations**) and next-run state
+- **Create Sidekick** (a desktop handoff to a new Sidekick; its action id stays
+  `rally_create_automation`, which published views carry) and **Notifications**
+- **Needs input**, present only when a listed Sidekick waits on someone
+  (`needsInput`, or its newest waiting run): each row is the Sidekick's name,
+  linked, and the question its waiting run asked (`pendingQuestion`), or
+  "Open it in Rally to see what it needs." when what it waits on is its
+  delegation
+- **Sidekicks**: the person's Sidekick list as their sidebar has it (their own,
+  the Organization's and those shared with them), drafts left out; each row is
+  the name linked to the Sidekick's canonical link (`sidekickCanonicalUrl`),
+  its state in the desktop's words (Needs input, Working, Paused or Active) and
+  when it last ran, in the reader's own zone through Slack's date token. With
+  none, a line says how to create one
 - explanation of optional personal Slack tools
 - privacy and support links
+
+Each list shows at most `SLACK_HOME_ROW_LIMIT` rows (six, the number the
+automation list already used; the team's to set), in the directory's order. A
+section's text is cut to Slack's 3,000-character ceiling rather than refused by
+it. App Home offers no way to start work: there is no **Start a task** button,
+and a click on one a view published before 2026-11-08 still shows opens nothing
+(a block action no branch names is acknowledged and ignored).
 
 #### Workspace admin
 
@@ -349,8 +362,9 @@ that product summary rather than reading a frozen D1 row.
 
 - Agent DM, `@Rally` in a channel, the **Start a Rally task** and **Work on
   this with Rally** shortcuts, and `/rally [request]`: answered once with the
-  retired-ingress copy above; none starts work. A reply in a thread bound to a
-  Sidekick run continues the run.
+  retired-ingress copy above; none starts work. The two shortcuts and a bare
+  `/rally` still open the task modal first, whose submission is what gets
+  that answer. A reply in a thread bound to a Sidekick run continues the run.
 - **Connect Rally**: mint a link challenge and open it in a modal whose single
   button is the desktop handoff. Not refused on a stored status; a grant that is
   really gone fails on Slack's answer.
@@ -733,6 +747,39 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-11-08 — App Home shows the product as it is: Sidekicks, what they wait on, and no way to start work
+
+**What changed:** App Home's linked view lost the **Start a task** button, the
+always-empty **Needs attention & recent tasks** header and the **Automations**
+list; the unlinked view lost its "Try now" example prompts and its claim that
+tasks start from Slack. Both now open with one line on what Rally does from
+Slack (a Sidekick can work from Slack for you; a mention or a DM does not start
+work). The linked view lists the person's Sidekicks under **Sidekicks** (name
+linked to the Sidekick, state, last run) and, only when one waits, a **Needs
+input** section with the question its run asked. **Create automation** reads
+**Create Sidekick**, and the Notifications modal's two options name Sidekicks.
+The list is the person's sidebar list rather than their personal Sidekicks
+only, so a Sidekick they made for the Organization, or one shared with them,
+is listed. A block action no branch names is now acknowledged and ignored
+instead of opening the task modal, so a stale view's **Start a task** opens
+nothing; the two manifest shortcuts and a bare `/rally` still open it. The
+manifest and its scopes are unchanged.
+
+**Why:** The owner's instruction of 2026-11-08: "fix App Home". The view still
+offered actions Slack now answers with "Rally no longer starts work from
+Slack", a section that could never fill, and the retired word for a Sidekick.
+
+**Considered and rejected:** Deleting the task modal with the button. The
+manifest's two shortcuts and a bare `/rally` still open it, and changing the
+manifest was out of scope, so it stays until they go. Keeping the old
+personal-only filter: it left out a Sidekick the person made for the
+Organization, which is theirs in every other surface.
+
+**Consequences:** `personalAutomationsForHome` became `sidekicksForHome`, and
+`linkedHome` no longer takes a task list or a logger. The Notifications modal
+still writes `slack_delivery_preferences`, which no delivery path reads; what
+it should govern is open.
 
 ### 2026-11-07 — Slack starts no conversation, binds no room and refreshes no card; its links name Canvases and Sidekicks
 

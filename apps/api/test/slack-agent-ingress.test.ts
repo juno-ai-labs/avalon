@@ -643,52 +643,92 @@ describe("Rally link unfurl card", () => {
   });
 });
 
-describe("App Home task rows", () => {
-  it("skips a row it cannot link instead of failing the whole App Home", () => {
-    const webBase = "https://with-avalon.com";
-    const workspaceId = "00000000-0000-7000-8000-000000000001";
-    const good = "019fec70-fba0-7b0e-9f7a-3dd1ef56520f";
+describe("App Home", () => {
+  const webBase = "https://rallywith.ai";
+  const workspaceId = "00000000-0000-7000-8000-000000000001";
+  const common = {
+    description: "Brief",
+    emailAddress: null,
+    scope: "personal",
+    status: "active",
+    nextRunAt: null,
+    lastRunAt: null,
+    updatedAt: "2026-11-08T00:00:00.000Z",
+  };
+  const sidekicks = (items: Record<string, unknown>[]) => __slackAgentTesting.sidekicksForHome(items);
+  const home = (items: Record<string, unknown>[]) => __slackAgentTesting.linkedHome(
+    "Ada", sidekicks(items), webBase, "global", workspaceId, null, null,
+  );
+  const texts = (blocks: Record<string, unknown>[]) => blocks.flatMap((block) => {
+    const text = (block.text as { text?: string } | undefined)?.text;
+    const elements = Array.isArray(block.elements) ? block.elements as { text?: string | { text?: string } }[] : [];
+    return [
+      ...(text ? [text] : []),
+      ...elements.map((element) => typeof element.text === "string" ? element.text : element.text?.text ?? ""),
+    ];
+  });
+  const headers = (blocks: Record<string, unknown>[]) => blocks
+    .filter((block) => block.type === "header")
+    .map((block) => (block.text as { text: string }).text);
+  // What a member reads, and every action id a view carries.
+  const retiredLabels = /Start a task|Needs attention & recent tasks|automation|Try now|Summarize this thread/iu;
+  const actionIds = (blocks: Record<string, unknown>[]) => [...JSON.stringify(blocks).matchAll(/"action_id":"([^"]+)"/gu)].map((match) => match[1]);
 
-    // Minting a link throws on a non-UUID by design. In a list that must stay
-    // a per-row cost: the throw would otherwise escape views.publish and take
-    // account linking down with it.
-    const blocks = __slackAgentTesting.linkedHome(
-      logEnv,
-      "Ada",
-      [
-        { id: "workstream-ownerless", title: "Unlinkable", harness_status: "running" },
-        { id: good, title: "Quarterly planning", harness_status: "needs_input", url: "https://with-avalon.com/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/CduMrko5vpzwph2okTVLJ" },
-      ],
-      [],
-      webBase,
-      "global",
-      workspaceId,
-      null,
-      null,
+  it("names what Rally does from Slack, the Sidekicks, and nothing it no longer offers", () => {
+    const blocks = home([{
+      ...common, id: "00000000-0000-7000-8000-00000000000e", name: "Daily <brief>", lastRunAt: "2026-11-07T09:00:00.000Z",
+    }]);
+
+    expect(headers(blocks)).toEqual(["Welcome, Ada", "Sidekicks"]);
+    expect(texts(blocks)).toContain("A Sidekick can work from Slack for you: it can start from Slack activity and send what it finds back here. Mentioning Rally or sending it a DM does not start work; start a Canvas or set up a Sidekick in Rally.");
+    expect(texts(blocks)).toContain(
+      "*<https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7Tj/|Daily &lt;brief&gt;>*\nActive · <!date^1794042000^Last run {date_short_pretty} at {time}|Last run 2026-11-07 09:00 UTC>",
     );
-
-    const rendered = JSON.stringify(blocks);
-    expect(rendered).toContain(`${webBase}/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/CduMrko5vpzwph2okTVLJ`);
-    expect(rendered).toContain("Quarterly planning");
-    expect(rendered).not.toContain("Unlinkable");
+    const actions = blocks.find((block) => block.type === "actions") as { elements: { text: { text: string }; action_id: string }[] };
+    expect(actions.elements.map((element) => [element.text.text, element.action_id])).toEqual([
+      ["Create Sidekick", "rally_create_automation"],
+      ["Notifications", "rally_preferences"],
+    ]);
+    expect(texts(blocks).join("\n")).toContain("<https://rallywith.ai/privacy|Privacy> · <https://rallywith.ai/help/|Help>");
+    expect(texts(blocks).join("\n")).not.toMatch(retiredLabels);
+    expect(actionIds(blocks)).toEqual(["rally_create_automation", "rally_preferences", "rally_open_personal_tools"]);
   });
 
-  it("leaves drafts and workspace automations out of the App Home list", () => {
-    const common = {
-      description: "Brief",
-      emailAddress: null,
-      nextRunAt: null,
-      lastRunAt: null,
-      updatedAt: "2026-08-11T00:00:00.000Z",
-      updateAvailable: false,
-    };
-    const rows = __slackAgentTesting.personalAutomationsForHome([
-      { ...common, id: "00000000-0000-7000-8000-00000000000e", name: "Daily brief", scope: "personal", status: "active" },
-      { ...common, id: "00000000-0000-7000-8000-00000000000f", name: "Half-written monitor", scope: "personal", status: "draft" },
-      { ...common, id: "00000000-0000-7000-8000-000000000010", name: "Team brief", scope: "workspace", status: "active" },
+  it("lists a waiting Sidekick's question under Needs input, and a delegation wait without one", () => {
+    const blocks = home([
+      { ...common, id: "00000000-0000-7000-8000-00000000000e", name: "Daily brief", runState: "needs_input", needsInput: true, pendingQuestion: "Which inbox should I read?" },
+      { ...common, id: "00000000-0000-7000-8000-00000000000f", name: "Revenue analyst", status: "paused", needsInput: true, pendingQuestion: null },
+      { ...common, id: "00000000-0000-7000-8000-000000000010", name: "Team digest", scope: "workspace", runState: "working" },
     ]);
 
-    expect(rows.map((row) => row.name)).toEqual(["Daily brief"]);
+    expect(headers(blocks)).toEqual(["Welcome, Ada", "Needs input", "Sidekicks"]);
+    const body = texts(blocks);
+    expect(body).toContain("*<https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7Tj/|Daily brief>*\nWhich inbox should I read?");
+    expect(body).toContain("*<https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7Tk/|Revenue analyst>*\nOpen it in Rally to see what it needs.");
+    expect(body).toContain("*<https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7Tk/|Revenue analyst>*\n:warning: Needs input · Not run yet");
+    expect(body).toContain("*<https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/sk/1111117Hxt1fAWDjN7Tm/|Team digest>*\n:large_green_circle: Working · Not run yet");
+  });
+
+  it("shows no Needs input section when nothing waits, and says so when there are no Sidekicks", () => {
+    const blocks = home([]);
+    expect(headers(blocks)).toEqual(["Welcome, Ada", "Sidekicks"]);
+    expect(texts(blocks)).toContain("No Sidekicks yet. Create one in Rally to have it work from Slack for you.");
+  });
+
+  it("leaves drafts out and keeps the Organization's Sidekicks the sidebar lists", () => {
+    expect(sidekicks([
+      { ...common, id: "00000000-0000-7000-8000-00000000000e", name: "Daily brief" },
+      { ...common, id: "00000000-0000-7000-8000-00000000000f", name: "Half-written monitor", status: "draft" },
+      { ...common, id: "00000000-0000-7000-8000-000000000010", name: "Team brief", scope: "workspace" },
+    ]).map((row) => row.name)).toEqual(["Daily brief", "Team brief"]);
+  });
+
+  it("offers the unlinked member what Rally does from Slack and no example prompts", () => {
+    const blocks = __slackAgentTesting.unlinkedHome();
+    expect(headers(blocks)).toEqual(["Meet Rally"]);
+    expect(texts(blocks)).toContain("A Sidekick can work from Slack for you: it can start from Slack activity and send what it finds back here. Mentioning Rally or sending it a DM does not start work; start a Canvas or set up a Sidekick in Rally.");
+    expect(texts(blocks).join("\n")).not.toMatch(retiredLabels);
+    expect(actionIds(blocks)).toEqual(["rally_connect"]);
   });
 });
 
