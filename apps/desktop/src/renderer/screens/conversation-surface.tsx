@@ -797,7 +797,14 @@ export function highestVisibleAttentionSequence(
  *
  * Nothing to send when no message that asks for attention is on screen, or
  * when the room already knows everything visible has been read, unless a
- * manual mark is standing, which this acknowledgement is what retires.
+ * manual mark is standing, which this acknowledgement is what retires, or
+ * this open of the conversation has not reported yet. An open always reports
+ * once, at the cursor the room already holds if nothing moved it: Activity
+ * clears a finished run's row, which is updated in place, on a report's time
+ * as well as its cursor, so a person who had read the Sidekick before its run
+ * finished would otherwise come back to a row nothing clears
+ * (`docs/activity.md`). Once per open, not per scroll, so the read path costs
+ * what it did.
  *
  * `key` is the identity of the one request allowed in flight. It carries the
  * substream because the acknowledgement does: two children of one work stream
@@ -810,6 +817,8 @@ export function conversationReadAcknowledgement(input: {
   highestVisibleSequence: number;
   viewer: Pick<WorkstreamDetail,
     'readThroughSequenceNumber' | 'manualUnreadFromSequenceNumber' | 'manualUnreadGeneration'>;
+  /** Whether this open of the conversation has already sent a report. */
+  reportedThisOpen: boolean;
 }): {
   parentId: string;
   substreamId: string;
@@ -818,16 +827,19 @@ export function conversationReadAcknowledgement(input: {
   key: string;
 } | null {
   if (input.highestVisibleSequence === 0) return null;
-  if (
-    input.highestVisibleSequence <= input.viewer.readThroughSequenceNumber
-    && input.viewer.manualUnreadFromSequenceNumber === null
-  ) return null;
+  const unchanged = input.highestVisibleSequence <= input.viewer.readThroughSequenceNumber
+    && input.viewer.manualUnreadFromSequenceNumber === null;
+  if (unchanged && input.reportedThisOpen) return null;
+  // An open's report at an unchanged cursor restates it rather than reading
+  // back to what happens to be on screen.
+  const readThroughSequenceNumber = unchanged
+    ? input.viewer.readThroughSequenceNumber : input.highestVisibleSequence;
   return {
     parentId: input.parentId,
     substreamId: input.substreamId,
-    readThroughSequenceNumber: input.highestVisibleSequence,
+    readThroughSequenceNumber,
     observedManualUnreadGeneration: input.viewer.manualUnreadGeneration,
-    key: `${input.parentId}:${input.substreamId}:${input.highestVisibleSequence}:${input.viewer.manualUnreadGeneration}`,
+    key: `${input.parentId}:${input.substreamId}:${readThroughSequenceNumber}:${input.viewer.manualUnreadGeneration}`,
   };
 }
 
@@ -1036,6 +1048,8 @@ function ConversationSurfaceContent({
   const pendingJumpAfterReconnectRef = useRef(false);
   const initialPositionedWorkstreamRef = useRef<string | null>(null);
   const readAckInFlightRef = useRef<string | null>(null);
+  // The conversation whose open has sent its one report; see `conversationReadAcknowledgement`.
+  const openReadReportedRef = useRef<string | null>(null);
   const conversationAddress = `${id}:${substreamId}`;
   const artifactPanelKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', `artifact-panel:${conversationAddress}`);
   const restoredPanelKey = useRef<string | null>(null);
@@ -1142,6 +1156,7 @@ function ConversationSurfaceContent({
     pendingJumpAfterReconnectRef.current = false;
     initialPositionedWorkstreamRef.current = null;
     readAckInFlightRef.current = null;
+    openReadReportedRef.current = null;
     setLoadingOlder(false);
     setOlderMessagesError(undefined);
   }, [conversationAddress]);
@@ -2186,10 +2201,12 @@ function ConversationSurfaceContent({
       substreamId,
       highestVisibleSequence,
       viewer: detail,
+      reportedThisOpen: openReadReportedRef.current === conversationAddress,
     });
     if (!pending) return;
     if (readAckInFlightRef.current === pending.key) return;
     readAckInFlightRef.current = pending.key;
+    openReadReportedRef.current = conversationAddress;
     void api.acknowledgeConversationRead(
       pending.parentId,
       pending.substreamId,
