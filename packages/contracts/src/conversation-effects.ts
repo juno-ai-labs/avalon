@@ -97,6 +97,13 @@ export const WorkstreamDirectoryUserEffectSchema = z.object({
   manualUnreadFromOrdinal: z.number().int().nonnegative().nullable().optional(),
   manualUnreadGeneration: z.number().int().nonnegative().optional(),
   latestMentionAttentionOrdinal: z.number().int().nonnegative().optional(),
+  /**
+   * When this person last reported a read (`member_attention.last_seen_at`).
+   * It makes each report at an unchanged cursor a distinct effect, so the
+   * parent hears it, while a redelivery of the same report still dedupes;
+   * the parent dates the read by it. Absent from an older object.
+   */
+  lastReadAt: TimestampSchema.nullable().optional(),
 });
 
 /**
