@@ -216,6 +216,9 @@ describe('token references', () => {
   const RUNTIME = [
     // Trusted SVG cursor shared by annotation preview transports.
     '--annotation-cursor', '--rail-width', '--person-accent', '--person-dot',
+    // The ink on a person's byline avatar, set per turn from PALETTE_INK
+    // beside `--person-dot`, which is its fill.
+    '--person-ink',
     // Set per glyph from PALETTE_INK, which is a decision about a fill rather
     // than about the appearance, so it cannot be a theme token.
     '--glyph-ink',

@@ -5,9 +5,6 @@ import { formatTime } from '../lib/format';
 import { Tip } from './primitives';
 import { RelativeTime } from './relative-time';
 
-/** The byline's clock time; the feed's day dividers carry the date (design.html §2). */
-const bylineTime = (value: string): string => formatTime(value);
-
 /**
  * The identity line over every turn in a feed: who said it, and when.
  *
@@ -62,7 +59,8 @@ export function MessageByline({
       )}
     </span>,
     contextLabel ? <span className="message-context-label" key="context">{contextLabel}</span> : null,
-    <RelativeTime format={bylineTime} key="time" value={createdAt} />,
+    // The clock time; the feed's day dividers carry the date (design.html §2).
+    <RelativeTime format={formatTime} key="time" value={createdAt} />,
     workSummary ? <span className="message-work-summary" key="summary">{workSummary}</span> : null,
   ];
   return (

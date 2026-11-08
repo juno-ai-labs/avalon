@@ -9,6 +9,7 @@ import type { AutomationSummary } from '../lib/types';
 import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, splitPinned, usePinWrite, useRowPinDrop, useSectionMotion } from './navigation-rows';
 import { DropdownSelect, ErrorNotice } from './primitives';
 import { RelativeTime } from './relative-time';
+import { SidebarListDown, usePushedListsDown } from './pushed-list-pending';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { AutomationGlyph } from './workstream-glyph';
 
@@ -50,6 +51,8 @@ const SIDEKICK_ORDERS = [{ value: 'recent', label: 'Recent' }, { value: 'name', 
 export function SidekicksSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
   const { api } = useCollaborationSession();
   const rows = useSidekickList();
+  // A socket that cannot open would leave the placeholders up for ever.
+  const down = usePushedListsDown() && rows === undefined;
   const waiting = useMemo(() => (rows ?? []).filter((row) => row.needsInput), [rows]);
   const { pinned, rest } = useMemo(() => splitPinned((rows ?? []).filter((row) => !row.needsInput)), [rows]);
   const [order, setOrder] = useState<SidekickOrder>('recent');
@@ -90,7 +93,7 @@ export function SidekicksSection({ scroll }: { scroll: RefObject<HTMLElement | n
       count={pinned.length}
       drop={drop}
       label="Pinned Sidekicks"
-      loading={rows === undefined}
+      loading={rows === undefined && !down}
       noun="Sidekick"
       reorderable={false}
       target={targetProps}

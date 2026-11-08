@@ -3388,9 +3388,10 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .message-author-avatar {
   background: var(--person-dot, var(--person-accent));
   border-radius: var(--av-sys-size-radius-pill);
-  color: var(--person-ink, var(--personal-ink-light));
+  color: var(--person-ink, var(--av-sys-color-palette-ink-light));
   display: inline-grid;
   flex: none;
+  /* The design's 16px avatar holds its letter at about 55% of its size. */
   font-size: 9px;
   font-weight: 600;
   height: 16px;
@@ -8043,6 +8044,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-row-unread-dot { background: var(--av-sys-color-danger-base); border-radius: 999px; flex: none; height: 8px; width: 8px; }
 .navigation-sidekick-mark { display: inline-flex; flex: none; height: 36px; width: 36px; }
 .navigation-row-live-dot { background: var(--av-sys-color-success-base); border-radius: 999px; display: inline-block; height: 7px; margin-right: 6px; vertical-align: 1px; width: 7px; }
+/* Muted on an unread row too: the dot and the bold title say it (design.html §1). */
 .navigation-row-time { color: var(--av-sys-color-text-muted); flex: none; font-size: 12px; }
 /* Activity: one row per thing that happened to this person, in the shared row
    layout (RowLayout): the kind's glyph in a tile, who did what on one line
@@ -8078,7 +8080,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-row.is-unread:not(.navigation-channel-row) .navigation-row-time { color: var(--av-sys-color-workstream-news); }
 .navigation-row-lock { color: var(--av-sys-color-text-muted); flex: none; }
 .navigation-row-detail { color: var(--av-sys-color-text-muted); flex: 1; font-size: 12.5px; line-height: 17px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.navigation-row-news { color: var(--av-sys-color-workstream-news); font-weight: 500; }
+/* The sidebar's one red, the badge's and the unread dot's (design.html §1). */
+.navigation-row-news { color: var(--av-sys-color-danger-base); font-weight: 500; }
 /* Between a breakout's thread and its Channels: the thread sits in them. */
 .navigation-row-detail-chevron { display: inline-block; margin: 0 2px; vertical-align: -2px; }
 .navigation-empty { color: var(--av-sys-color-text-muted); font-size: 13px; margin: 8px 12px; }

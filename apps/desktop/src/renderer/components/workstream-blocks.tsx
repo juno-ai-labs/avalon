@@ -2899,7 +2899,13 @@ export function MessageBlock({
         >
           {/* The same identity line every human turn carries, the reader's own
               included — see the header on the ordinary authored row below. */}
-          <MessageByline align="end" author={responseAuthor} createdAt={message.createdAt} dot />
+          <MessageByline
+            align={ownHumanResponse ? 'end' : 'start'}
+            author={responseAuthor}
+            createdAt={message.createdAt}
+            dot={false}
+            initial={ownHumanResponse ? undefined : initialOf(responseAuthor)}
+          />
           <div className="human-message-content">
             <ElicitationPanel
               elicitation={message.elicitation}

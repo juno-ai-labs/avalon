@@ -402,8 +402,9 @@ the rail's first section and `/canvases` the landing route
 - **A link to no Canvas** — a well-formed id that names nothing
   (`canvas_not_found`, 404) or a malformed one (`canvas_id_invalid:id:<issue>`,
   400) — draws the same "This Canvas does not exist." state, the pane's one
-  state (`PaneState`) with Back and Forward above it, no dialog over it and
-  nothing to try again
+  state (`PaneState`) with the shell's Back and Forward above it where the
+  host draws them (the desktop app; a browser tab has its own), no dialog over
+  it and nothing to try again
   (`isNotFoundError` in `lib/landing.ts`), and a restored route that answers
   either goes to the Canvases home. A Canvas missing from this window's list
   mounts its Chat only once the detail answers, so a link to one that does not
