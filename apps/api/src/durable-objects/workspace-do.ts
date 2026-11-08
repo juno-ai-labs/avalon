@@ -4410,6 +4410,10 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "drop a seeded Sidekick run's script, which demo preparation wrote",
   // See SIDEKICK_RUN_SEED_DROP_STATEMENTS and docs/architecture.md.
   statements: SIDEKICK_RUN_SEED_DROP_STATEMENTS,
+  version: 153,
+  description: "record the icon and colour somebody chose for a Canvas",
+  // See CANVAS_APPEARANCE_STATEMENTS and docs/canvases.md#choosing-what-a-canvas-looks-like.
+  statements: CANVAS_APPEARANCE_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5560,10 +5564,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return { canvasId: row.canvas_id, title: row.title, artifacts: canvas.artifacts() };
   }
 
-  /** Retitle a Canvas; see `HostedCanvas.rename`. */
-  async canvasRename(input: Parameters<HostedCanvas["rename"]>[0]) {
+  /** Retitle a Canvas or choose its appearance; see `HostedCanvas.update`. */
+  async canvasUpdate(input: Parameters<HostedCanvas["update"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
-    return this.canvasWrite(() => canvas.rename(input));
+    return this.canvasWrite(() => canvas.update(input));
   }
 
   /** Whether a member who cannot open a Canvas may ask to; see `HostedCanvas.access`. */

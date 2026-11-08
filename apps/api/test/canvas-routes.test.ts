@@ -53,7 +53,7 @@ describe('the Canvas routes', () => {
   });
 
   it('names the field and the reason when it refuses a retitle, and a malformed Canvas id by name', async () => {
-    const rename = vi.spyOn(CanvasService.prototype, 'rename');
+    const update = vi.spyOn(CanvasService.prototype, 'update');
     const patch = (id: string, body: unknown) => routedApp().request(`/canvases/${id}`,
       { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, env());
     for (const [title, issue] of [['', 'too_small'], ['   ', 'too_small'], ['x'.repeat(301), 'too_big']] as const) {
@@ -66,7 +66,23 @@ describe('the Canvas routes', () => {
     expect(malformed.status).toBe(400);
     expect(await malformed.json()).toEqual({ error: {
       code: 'canvas_id_invalid:id:invalid_format', message: 'This is not a Canvas id', requestId: null } });
-    expect(rename).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('passes an appearance choice to the service, and refuses one outside the catalog or a body with nothing in it, by field', async () => {
+    const update = vi.spyOn(CanvasService.prototype, 'update').mockResolvedValue({} as never);
+    const patch = (body: unknown) => routedApp().request(`/canvases/${CANVAS_ID}`,
+      { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, env());
+    await patch({ appearance: { icon: 'flag' } });
+    expect(update).toHaveBeenCalledWith(CANVAS_ID, { appearance: { icon: 'flag' } });
+    update.mockClear();
+    const unknownIcon = await patch({ appearance: { icon: 'not-an-icon' } });
+    expect(unknownIcon.status).toBe(400);
+    expect(await unknownIcon.json()).toMatchObject({ error: { code: 'canvas_rename_invalid:appearance.icon:invalid_value' } });
+    const empty = await patch({});
+    expect(empty.status).toBe(400);
+    expect(await empty.json()).toMatchObject({ error: { code: 'canvas_rename_invalid:-root-:custom' } });
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('pins and unpins through the service, and refuses an id that is not one', async () => {
