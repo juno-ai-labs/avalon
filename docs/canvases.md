@@ -417,10 +417,29 @@ the rail's first section and `/canvases` the landing route
   host draws them (the desktop app; a browser tab has its own), no dialog over
   it and nothing to try again
   (`isNotFoundError` in `lib/landing.ts`), and a restored route that answers
-  either goes to the Canvases home. A Canvas missing from this window's list
+  either goes to the Canvases home. A well-formed id that answers 404 is asked
+  about once more (`GET /canvases/:id/access`, below) before this state is
+  drawn; only an id that exists in no Organization of the viewer's draws it.
+  A Canvas missing from this window's list
   mounts its Chat only once the detail answers, so a link to one that does not
   exist raises no conversation socket failure over that state; one in the list
   opens at once, beside the detail read.
+- **A Canvas you cannot open.** When the access read answers `requestable`
+  (never the title), the pane draws "You don't have access to this Canvas"
+  with **Request access**, which opens one dialog with an optional one-line
+  message and sends `POST /canvases/:id/access-requests`
+  (`CanvasAccessRequestPane`, `components/canvas-access-request.tsx`). While
+  the viewer's request is pending (`request.state: 'pending'` on the access
+  read, so a reload keeps it) the button is disabled under
+  "Request sent · <when>"; a denied request reads as none and the button is
+  offered again, because a denial tells the requester nothing. A refusal such
+  as `canvas_access_request_not_member` is the app's error notice over the
+  dialog. A restored route on a requestable Canvas stays, since it may be
+  granted later. The grant reopens the pane into the Canvas without a
+  refresh: the screen refetches the detail when the Canvas joins this
+  person's list, or when their `access_granted` Activity row for it arrives.
+  An `already_participant` answer (added by other means meanwhile) refetches
+  at once.
 - **No connection.** A conversation socket that cannot open without the
   server saying why is the PRD's offline state, "Live edits resume when Rally
   reconnects.", never "This Canvas is unavailable"; one the server refused
@@ -468,7 +487,16 @@ the rail's first section and `/canvases` the landing route
   its waiting-shares list, which has no server route. Only addresses typed
   while the guest section is open are sent. Addresses that do not parse save
   nothing: the app's error notice says why, over the dialog, which keeps what
-  was typed.
+  was typed. For a decider, the panel opens with a **Requests** section
+  (`pendingAccessRequests` on the detail): each pending request's name,
+  message and when, with Approve and Deny (`AccessDecisionActions`, the same
+  component the `access_request` Activity row uses, over
+  `POST /canvases/:id/access-requests/:userId/decision`). A decision reads
+  the detail again, so the request leaves the list; someone approved while
+  the panel is open joins its choice of people, so a Save that follows does
+  not take back the access just given. A refusal
+  (`canvas_access_request_settled`, `canvas_access_decision_not_manager`) is
+  the app's error notice.
 - **Pinning** is `POST /canvases/:id/pin`, from the pill's menu, a row's
   context menu, or dragging a row into the section's Pinned group
   (`useRowPinDrop`). A pin lands at the end of the group: the order is
