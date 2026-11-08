@@ -32,7 +32,8 @@ import { ConversationService } from "../src/services/conversation-service";
 import { verifySocketTicket } from "../src/services/socket-service";
 import { deliverChildEffects } from "./helpers/conversation-effects";
 import { useHeldEffectQueue } from "./helpers/effect-queue-hold";
-import { useOpenRouterDouble } from "./helpers/openrouter-double";
+import { memberInputs, useOpenRouterDouble } from "./helpers/openrouter-double";
+import { responsesEvents } from "@rally/agent-harness/test-support/responses-stream";
 import { useSelectedModel } from "./helpers/selected-model";
 import { seedWorkspaceControlPlane } from "./helpers/substream-fixture";
 
@@ -61,9 +62,59 @@ async function withNamingModel<T>(run: () => Promise<T>): Promise<T> {
     delete mutable.OPENROUTER_CLASSIFIER_MODEL;
   }
 }
+/**
+ * A reply streamed in two parts, the second held until the test releases it:
+ * the stand-in for a long reply a person stops halfway through.
+ */
+const LONG_REPLY_PROMPT = "Tell me a long story.";
+/**
+ * Plain flags rather than promises: the reply's stream is read inside the
+ * conversation object, and a promise settled across the test and the object
+ * would carry one side's I/O context into the other.
+ */
+const held = { firstPartSent: false, released: false };
+function heldReply(signal: AbortSignal | undefined): Response {
+  const events = responsesEvents([
+    { choices: [{ delta: { content: "Once upon a time" }, finish_reason: null }] },
+    { choices: [{ delta: { content: ", and then THE END." }, finish_reason: null }] },
+    { choices: [{ delta: {}, finish_reason: "stop" }] },
+    { usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
+  ]);
+  // The held part, then one chunk per event, each arriving on its own read
+  // as a provider's do.
+  const split = events.findIndex((event) => JSON.stringify(event).includes("THE END"));
+  const encoder = new TextEncoder();
+  const frame = (event: unknown) => `data: ${JSON.stringify(event)}\n\n`;
+  const parts = [events.slice(0, split).map(frame).join(""), ...events.slice(split).map(frame), "data: [DONE]\n\n"];
+  let sent = 0;
+  return new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      // As `fetch` ends a real body when its request is aborted.
+      signal?.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+    },
+    async pull(controller) {
+      if (signal?.aborted) return;
+      if (sent === 1) while (!held.released) await new Promise((resolve) => setTimeout(resolve, 10));
+      // After the chunk read past the Stop, the rest waits for the request to
+      // be aborted, so a fixed loop is not raced; one that never aborts gets
+      // the rest of its reply after a while and completes it.
+      else if (sent > 1) for (let waited = 0; !signal?.aborted && waited < 2_000; waited += 10) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (sent >= parts.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(parts[sent]!));
+      if (sent === 0) held.firstPartSent = true;
+      sent += 1;
+    },
+  }), { headers: { "content-type": "text/event-stream" } });
+}
 const provider = useOpenRouterDouble((call) => namingCall(call)
   ? { say: JSON.stringify({ title: "December pricing launch" }) }
-  : { say: "Here is the plan." });
+  : call.stream && JSON.stringify(memberInputs(call)).includes(LONG_REPLY_PROMPT) ? { raw: heldReply(call.signal) }
+    : { say: "Here is the plan." });
 useSelectedModel();
 
 function auth(userId: string): AuthContext {
@@ -338,6 +389,34 @@ describe("a Canvas's title and pin order", () => {
     expect((await new CanvasService(TEST_ENV, auth(CREATOR)).detail(canvasId)).title).toBe("Launch plan, v2");
     await expect.poll(() => clientCanvasRows(creator.frames).find((row) => row.id === canvasId)?.title).toBe("Launch plan, v2");
     creator.socket.close(1000, "done");
+  });
+
+  it("ends a reply being streamed at its next chunk when a person stops it, as a stopped response", async () => {
+    held.firstPartSent = false;
+    held.released = false;
+    const { canvasId } = await new CanvasService(TEST_ENV, auth(CREATOR)).create({
+      title: "Story", prompt: { text: LONG_REPLY_PROMPT, clientMessageId: "canvas-stop-1" },
+    });
+    const chat = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(conversationObjectName("global", WORKSPACE_ID, canvasId)));
+    await expect.poll(() => held.firstPartSent, { timeout: 15_000 }).toBe(true);
+    await expect.poll(() => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ status: string }>(
+      `SELECT status FROM substream_loops WHERE id = 1`).one().status)).toBe("executing");
+    await runInDurableObject(chat, (instance) => (instance as unknown as {
+      product: { stop: (auth: AuthContext, operationId: string) => Promise<void> };
+    }).product.stop(auth(CREATOR), "00000000-0000-7000-8000-0000000cb5f0"));
+    // The rest of the reply arrives after the Stop; it must not be streamed to its end.
+    held.released = true;
+    const statuses = () => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ payload_json: string }>(
+      `SELECT payload.payload_json FROM transcript_facts fact
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        WHERE fact.fact_kind = 'assistant_turn_status'`).toArray()
+      .map((row) => (JSON.parse(row.payload_json) as { structuredContent?: { kind?: string } }).structuredContent?.kind));
+    await expect.poll(statuses, { timeout: 15_000 }).toEqual(["assistant_turn_stopped"]);
+    await expect.poll(() => runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ status: string }>(
+      `SELECT status FROM substream_loops WHERE id = 1`).one().status), { timeout: 15_000 }).toBe("idle");
+    const accepted = await runInDurableObject(chat, (_instance, state) => state.storage.sql.exec<{ payload_json: string }>(
+      `SELECT payload_json FROM transcript_payloads`).toArray().map((row) => row.payload_json).join("\n"));
+    expect(accepted).not.toContain("THE END");
   });
 
   it("titles a Canvas made with no title from its opening message, on every open list", () => withNamingModel(async () => {

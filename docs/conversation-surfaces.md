@@ -294,12 +294,12 @@ permanently wider than its box, and only `hidden` would make that a scroll range
 nothing resets. `IconButton` tooltips do not duplicate the button's accessible
 name as a second screen-reader description.
 
-A pending stop is also said in words, because the button cannot say it. Stop is
-observed at the loop's next safe step boundary — the response in flight and
-every tool it already asked for settle first, and
+A pending stop is also said in words, because the button cannot say it. A
+response still streaming ends at its next chunk, but every tool the response
+already asked for settles first, and
 [`workstream-durable-object.md`](workstream-durable-object.md) owns that
-contract — so the gap between the click and the run ending is a real wait, over
-ten seconds in the production report this came from. While a live run carries
+contract — so the gap between the click and the run ending can be a real wait,
+over ten seconds in the production report this came from. While a live run carries
 `stopRequested`, the dock draws a stopping row as the first cell of the composer
 stack, taking the field's width and the stack's own gap.
 `conversationShowsStoppingRow` is that condition, gated on a running status

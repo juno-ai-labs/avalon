@@ -620,8 +620,12 @@ The two execution boundaries are normative. A **step** is one accepted model
 response plus settlement of every tool call it already emitted. The persistent
 **loop** spans steps and alternates between executing and idle. Steer input is
 eligible after a step; queued input is eligible only after the loop reaches
-idle. Stop requests prevent another step but do not cancel an in-flight model
-request or tool effect. Ordinary work-stream Stop writes only the singleton's
+idle. Stop requests prevent another step and end a model response that is
+still streaming at its next chunk: the harness reads `stopRequested()` (the
+loop's own row) on every `stream_delta` and aborts the request, so the turn
+settles as stopped ("Response stopped before it completed") rather than
+streaming to its end. A tool effect the response already started is never
+cancelled; it settles and keeps its receipt. Ordinary work-stream Stop writes only the singleton's
 `stop_requested_at` and `stop_after_step_ordinal`; `runs.cancellation_requested_at`
 is reserved for subordinate child or generic execution cleanup and is not loop
 control. Model, permission, plugin, and tool-surface changes also take effect
@@ -1756,6 +1760,30 @@ the current root of a running conversation and filtering out settled,
 expired, or superseded executions and parent attempts. Old snapshots default to an empty list.
 
 ## Changelog
+
+### 2026-11-08 — Stop ends a streaming response at its next chunk
+
+**What changed:** The persistent loop's runtime exposes `stopRequested()`,
+and the harness's `onEvent` aborts the provider request on the first
+`stream_delta` after a Stop. The turn settles through the existing
+`settleAssistantFailure({ outcome: "stopped" })`, which writes the
+`assistant_turn_stopped` status. The rule that a Stop never cancels an
+in-flight model request is narrowed to tool effects.
+
+**Why:** The end-to-end pass stopped a long reply with no tool running; it
+streamed for about ninety seconds after Stop, the composer said "Stopping once
+the current work finishes…" throughout, and the turn ended as an ordinary
+reply. Waiting for a response nobody wants is the one wait a Stop is pressed
+to end, and an aborted stream loses only text the person asked not to get.
+
+**Considered and rejected:** Aborting on the Stop command itself, from the
+socket handler: the request and the stream live in the harness, which the
+command does not hold, and a per-chunk read of the loop row is a local SQLite
+read. Aborting during tools: an effect already started may have written, and
+its receipt is the recovery authority.
+
+**What a future change must respect:** the check runs only on `stream_delta`,
+so a Stop never aborts the harness while a tool runs.
 
 ### 2026-11-08 — A Thread's conversation can become a Canvas's: `convertParentKind`
 
