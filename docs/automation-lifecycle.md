@@ -1943,7 +1943,9 @@ of empty space, "0 steps" read as noise, the same trigger was "Manual" in one
 place and "On request" in another (R2-9 to R2-12); the sidebar and the home
 formatted `nextRunAt` in the machine's zone while the details' summary used the
 schedule's, so a Mac in UTC read "Fri 10:00 PM" beside "Every Friday at 2:00
-PM" (R2-7); and the run view's
+PM" (R2-7); the requester's own run flashed an "Unread messages" divider and
+a red dot until the detail was refetched, because the client advanced its
+read only for a turn the viewer authored (R2-6); and the run view's
 "Run" pill floated mid-header away from its Sidekick's (R2-15); a Sidekick that uses
 nothing could not be told from one whose block was hidden; and the plan's
 section 9 had recorded that "A 'Working' state on the Sidekicks home needs a
