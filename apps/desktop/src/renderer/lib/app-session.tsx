@@ -1094,7 +1094,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           navigateAppRoute('/');
         };
         if (intent.target) await runInDeepLinkWorkspace(intent.target, openAutomation);
-        else if (requireActiveWorkspace('Sign in before creating an automation.')) openAutomation();
+        else if (requireActiveWorkspace('Sign in before creating a Sidekick.')) openAutomation();
         return;
       }
       if (intent.kind === 'slack-link') {

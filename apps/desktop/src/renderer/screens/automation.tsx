@@ -350,6 +350,7 @@ function SidekickConversation({ detail, manages }: { detail: AutomationDetail; m
       onSelect: () => setEditing((current) => !current),
     }] } : {})}
     composerPlaceholder={edit ? 'Describe a change to this Sidekick…' : `Message ${name} and the team…`}
+    conversationName={name}
     // At the composer, where the mode applies, with the way out beside it;
     // Escape leaves it too.
     {...(edit ? {

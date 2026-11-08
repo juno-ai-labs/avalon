@@ -951,6 +951,12 @@ export interface ConversationSurfaceProps {
   composerMenuActions?: readonly ComposerMenuAction[];
   /** What the composer says while empty, when the host has something more specific to say. */
   composerPlaceholder?: string;
+  /**
+   * What the conversation is called where the host knows better than its
+   * stored title: a Sidekick's conversation keeps the title it was created
+   * with ("New Sidekick") while the Sidekick is renamed around it.
+   */
+  conversationName?: string;
   /** A line just over the composer for a mode the host has put it in, such as editing a Sidekick. */
   composerNotice?: React.ReactNode;
   /** Escape in an empty composer leaves that mode. */
@@ -988,6 +994,7 @@ function ConversationSurfaceContent({
   composerMenuActions: hostMenuActions,
   composerPlaceholder,
   composerNotice,
+  conversationName,
   onComposerCancel,
   withoutComposer = false,
 }: ConversationSurfaceProps): React.JSX.Element {
@@ -2388,7 +2395,7 @@ function ConversationSurfaceContent({
             <ConnectingCard
               detail="Sending is available once Rally connects"
               error={socketConnection.openingError}
-              name={detail.titleStatus === 'naming' ? null : detail.title}
+              name={conversationName ?? (detail.titleStatus === 'naming' ? null : detail.title)}
               onRetry={socketConnection.retryOpening}
               state={socketConnection.openingError
                 ? 'failed'
