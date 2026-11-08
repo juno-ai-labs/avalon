@@ -34,6 +34,7 @@ export const WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS: readonly string[] = [
     parent_id TEXT NOT NULL,
     substream_id TEXT,
     message_id TEXT,
+    message_sequence INTEGER CHECK (message_sequence IS NULL OR message_sequence > 0),
     run_id TEXT,
     actor_kind TEXT NOT NULL CHECK (actor_kind IN ('person', 'rally', 'sidekick')),
     actor_id TEXT,
@@ -71,6 +72,8 @@ export interface ActivityItemInput {
   parentId: string;
   substreamId: string | null;
   messageId: string | null;
+  /** The message's transcript sequence, where the event carries one. */
+  messageSequence?: number | null;
   runId: string | null;
   actorKind: "person" | "rally" | "sidekick";
   actorId: string | null;
@@ -113,17 +116,17 @@ export function recordActivityItem(sql: SqlStorage, item: ActivityItemInput, now
   const written = sql.exec<{ item_id: string }>(
     `INSERT INTO workspace_activity_items
        (item_id, workspace_id, recipient_user_id, kind, parent_kind, parent_id, substream_id, message_id, run_id,
-        actor_kind, actor_id, preview, attention_ordinal, created_at)
+        actor_kind, actor_id, preview, attention_ordinal, created_at, message_sequence)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
        CASE WHEN ?13 = 1 THEN ?14 ELSE COALESCE((
          SELECT json_extract(chat.effect_json, '$.latestAttentionOrdinal') FROM sidekick_child_projections chat
           WHERE chat.sidekick_id = ?6 AND chat.substream_id = '0'), 0) END,
-       ?15)
+       ?15, ?16)
      ON CONFLICT(item_id) DO NOTHING
      RETURNING item_id`,
     item.itemId, item.workspaceId, item.recipientUserId, item.kind, item.parentKind, item.parentId, item.substreamId,
     item.messageId, item.runId, item.actorKind, item.actorId, previewText(item.text),
-    item.attentionOrdinal === undefined ? 0 : 1, item.attentionOrdinal ?? null, now,
+    item.attentionOrdinal === undefined ? 0 : 1, item.attentionOrdinal ?? null, now, item.messageSequence ?? null,
   ).toArray();
   if (written.length === 1) noteActivity(item.recipientUserId);
 }
@@ -146,7 +149,7 @@ const ACTIVITY_SEEN_SQL = `(
 
 interface ActivityRow extends Record<string, SqlStorageValue> {
   item_id: string; kind: ActivityKind; parent_kind: ActivityParentKind; parent_id: string;
-  substream_id: string | null; message_id: string | null; run_id: string | null;
+  substream_id: string | null; message_id: string | null; message_sequence: number | null; run_id: string | null;
   actor_kind: "person" | "rally" | "sidekick"; actor_id: string | null; preview: string | null;
   created_at: number; seen: number; unseen_count: number;
   parent_title: string | null; title_named: number; writer_sidekick_id: string | null;
@@ -184,7 +187,8 @@ export function activityPage(
          LEFT JOIN workspace_activity_seen marked ON marked.user_id = item.recipient_user_id
         WHERE item.recipient_user_id = ?1
      )
-     SELECT mine.item_id, mine.kind, mine.parent_kind, mine.parent_id, mine.substream_id, mine.message_id, mine.run_id,
+     SELECT mine.item_id, mine.kind, mine.parent_kind, mine.parent_id, mine.substream_id, mine.message_id,
+            mine.message_sequence, mine.run_id,
             mine.actor_kind, mine.actor_id, mine.preview, mine.created_at, mine.seen,
             SUM(1 - mine.seen) OVER () AS unseen_count,
             COALESCE(canvas.title, directory.title) AS parent_title,
@@ -220,6 +224,7 @@ export function activityPage(
       parentTitle: named(row),
       substreamId: row.substream_id,
       messageId: row.message_id,
+      messageSequence: row.message_sequence,
       runId: row.run_id,
       actor: { kind: row.actor_kind, id: row.actor_id },
       preview: row.preview,

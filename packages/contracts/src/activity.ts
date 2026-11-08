@@ -42,6 +42,12 @@ export const ActivityItemSchema = z.object({
   substreamId: SubstreamIdSchema.nullable(),
   /** The mentioning message, for a mention. */
   messageId: IdSchema.nullable(),
+  /**
+   * The mentioning message's transcript sequence, which opening the Chat at
+   * it needs beside its id; null for every other kind, and for a mention
+   * recorded before the effect carried it.
+   */
+  messageSequence: z.number().int().positive().nullable(),
   /** The run, for `needs_input` and `run_finished`. */
   runId: IdSchema.nullable(),
   actor: ActivityActorSchema,

@@ -130,9 +130,12 @@ export function NavigationSidebar({
   // menu), arriving at a Canvas or a Sidekick shows its section, so the list
   // beside it holds the row that is open. Only a navigation moves it:
   // switching sections while one is open does not navigate.
+  // Activity is a list of things to go to, so opening one of its rows keeps
+  // it open, the next row a click away.
   useEffect(() => {
     const opened = sectionForPath(pathname);
-    if (opened && opened !== useUiStore.getState().sidebarSection) setSection(opened);
+    const current = useUiStore.getState().sidebarSection;
+    if (opened && opened !== current && current !== 'activity') setSection(opened);
   }, [pathname, setSection]);
   const panel = useRef<HTMLElement>(null);
   const scroll = useRef<HTMLElement | null>(null);

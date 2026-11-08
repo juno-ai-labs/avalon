@@ -12,8 +12,8 @@ import { useUiStore } from '../lib/ui-store';
 import { NavigationSidebar } from './navigation-sidebar';
 
 /*
- * The rail and its two sections, Canvases and Sidekicks, inside the real
- * sidebar, and the phone sheet the sidebar becomes at phone width.
+ * The rail and its three sections, Canvases, Sidekicks and Activity, inside
+ * the real sidebar, and the phone sheet the sidebar becomes at phone width.
  */
 
 const api = vi.hoisted(() => ({
@@ -23,6 +23,9 @@ const api = vi.hoisted(() => ({
   setSidekickPinned: vi.fn(),
 }));
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
+/** The workspace socket the sidebar sends Mark all seen on; only its command is used. */
+const socket = vi.hoisted(() => ({ markAllActivitySeen: vi.fn() }));
+vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => socket }));
 
 const ME = '00000000-0000-7000-8000-0000000000a1';
 const workspace: Workspace = {
@@ -199,12 +202,12 @@ describe('the Activity section', () => {
     unseenCount: 2,
     items: [
       { id: 'a1', kind: 'needs_input', parentKind: 'automation', parentId: SIDEKICK, parentTitle: 'Release notes', substreamId: RUN as never,
-        messageId: null, runId: RUN, actor: { kind: 'sidekick', id: SIDEKICK }, preview: 'Which environment?', createdAt: '2026-11-08T09:59:00.000Z', seen: false },
+        messageId: null, messageSequence: null, runId: RUN, actor: { kind: 'sidekick', id: SIDEKICK }, preview: 'Which environment?', createdAt: '2026-11-08T09:59:00.000Z', seen: false },
       { id: 'a2', kind: 'mention', parentKind: 'canvas', parentId: CANVAS, parentTitle: 'Q4 revenue review', substreamId: '0' as never,
-        messageId: '00000000-0000-7000-8000-0000000000e1', runId: null, actor: { kind: 'person', id: AVERY }, preview: 'Can you check the totals?',
+        messageId: '00000000-0000-7000-8000-0000000000e1', messageSequence: 42, runId: null, actor: { kind: 'person', id: AVERY }, preview: 'Can you check the totals?',
         createdAt: '2026-11-08T09:58:00.000Z', seen: false },
       { id: 'a3', kind: 'participant_added', parentKind: 'canvas', parentId: CANVAS, parentTitle: null, substreamId: '0' as never,
-        messageId: null, runId: null, actor: { kind: 'person', id: AVERY }, preview: null, createdAt: '2026-11-08T09:00:00.000Z', seen: true },
+        messageId: null, messageSequence: null, runId: null, actor: { kind: 'person', id: AVERY }, preview: null, createdAt: '2026-11-08T09:00:00.000Z', seen: true },
     ],
   };
 
@@ -228,9 +231,20 @@ describe('the Activity section', () => {
       // A Canvas the person may no longer open is not named.
       'Avery added you to a Canvas',
     ]);
-    expect(rows.map((row) => row.getAttribute('href'))).toEqual([`/sidekicks/${SIDEKICK}`, `/canvases/${CANVAS}`, `/canvases/${CANVAS}`]);
+    // A mention opens the Chat at its message; the add, which names none, opens the Canvas.
+    expect(rows.map((row) => row.getAttribute('href'))).toEqual([
+      `/sidekicks/${SIDEKICK}`,
+      `/canvases/${CANVAS}?turn=00000000-0000-7000-8000-0000000000e1&sequence=42`,
+      `/canvases/${CANVAS}`,
+    ]);
     expect(rows.map((row) => within(row).queryByRole('img', { name: 'Unseen' }) !== null)).toEqual([true, true, false]);
     expect(rows[0]).toHaveTextContent('Which environment?');
+
+    // Opening a row keeps Activity open beside it, the next row a click away.
+    fireEvent.click(rows[1]!);
+    expect(screen.getByTestId('location')).toHaveTextContent(`/canvases/${CANVAS}`);
+    expect(useUiStore.getState().sidebarSection).toBe('activity');
+    expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
   });
 
   it('says how it fills when there is nothing yet, and offers Mark all seen only with something unseen', () => {
@@ -238,5 +252,12 @@ describe('the Activity section', () => {
     renderSidebar(workspace, '/', { unseenCount: 0, items: [] });
     expect(screen.getByText('Nothing yet. Mentions, Canvases you are added to and Sidekick runs that need you or finish show up here.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark all seen' })).toBeDisabled();
+  });
+
+  it('sends Mark all seen on the workspace socket when something is unseen', () => {
+    useUiStore.getState().setSidebarSection('activity');
+    renderSidebar(workspace, '/', page);
+    fireEvent.click(screen.getByRole('button', { name: 'Mark all seen' }));
+    expect(socket.markAllActivitySeen).toHaveBeenCalledTimes(1);
   });
 });

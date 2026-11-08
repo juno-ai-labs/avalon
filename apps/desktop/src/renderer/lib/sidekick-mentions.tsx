@@ -50,7 +50,7 @@ export const SidekickMentionContext = createContext<SidekickMentionDirectory>(EM
  * where a conversation has it attached or recommends it (`SidekickMentionScope`).
  */
 export function SidekickMentionProvider({ children }: PropsWithChildren): React.JSX.Element {
-  const sidekicks = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
+  const sidekicks = useSocketOwnedList<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
   const directory = useMemo(
     () => sidekickMentionDirectory((sidekicks ?? []).filter((sidekick) => sidekick.scope === 'workspace')),
     [sidekicks],
