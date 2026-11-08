@@ -298,6 +298,26 @@ describe("a person's Activity", () => {
     expect(await openedActivity(AUTHOR)).toMatchObject({ unseenCount: 1, items: [runItem(automationId, "needs_input", asking)] });
   });
 
+  it("clears a Needs input row once its run is answered and working again, and sends the list again", async () => {
+    const automationId = await activeSidekick();
+    const asking = "00000000-0000-7000-8000-0000000ac1a1";
+    await requestedRuns(automationId, [asking]);
+    await finishRun(automationId, asking, "needs_input");
+    await expect.poll(() => openedActivity(RECIPIENT), { timeout: RUN_SETTLE_TIMEOUT_MS })
+      .toMatchObject({ unseenCount: 1, items: [runItem(automationId, "needs_input", asking)] });
+    const recipient = await connect(RECIPIENT);
+    // Answered in the run's own view: the run's conversation reports it working again, and "0" is never read.
+    const working = WorkstreamDirectoryCommonEffectSchema.parse({
+      kind: "directory_common", title: "Release notes", description: "", preview: "Thanks, carrying on.",
+      scope: "workspace", state: "running", systemKind: null, lastActivityAt: NOW, completedAt: null, archivedAt: null,
+    });
+    await workspace().receiveChildEffects({ substreamId: asSubstreamId(asking), envelopes: [
+      envelope("automation", automationId, asking, `answered:${asking}`, working, 3, null)] });
+    await expect.poll(() => activityPushes(recipient.frames).at(-1))
+      .toMatchObject({ unseenCount: 0, items: [{ kind: "needs_input", runId: asking, seen: true }] });
+    recipient.socket.close(1000, "done");
+  });
+
   it("clears a finished run on a read report at the same cursor, and sends the list again", async () => {
     const automationId = await activeSidekick();
     // The requester has read the shared conversation as far as it goes before the run finishes.
