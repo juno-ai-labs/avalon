@@ -11693,6 +11693,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     afterWaterline: number,
     diagnosticAttemptId?: string,
   ): Promise<void> {
+    // Resolved before anything else is read. This is the subscribe's one
+    // await, and a write landing during it publishes only to sockets already
+    // marked subscribed, which this one is not until the answer is sent: a
+    // sidebar or a sync log read before the await would answer with what the
+    // write replaced, and nothing would ever send this socket the change.
+    // From here to the attachment write below is synchronous, so the answer
+    // and the first push this socket can receive are read from one ledger.
+    const featureFlags = await resolveClientFeatureFlagsForSubject(this.env, {
+        userId: attachment.userId,
+        workspaceId: attachment.workspaceId,
+    });
+    this.logWorkspaceSocketHandshake(attachment, "flags_resolved", diagnosticAttemptId);
     const latest = this.latestSyncWaterline();
     const earliest = this.state.storage.sql.exec<{ waterline: number | null }>(
       `SELECT MIN(waterline) AS waterline FROM workspace_sync_events`,
@@ -11780,11 +11792,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         sidebar,
       })];
     }
-    const featureFlags = await resolveClientFeatureFlagsForSubject(this.env, {
-        userId: attachment.userId,
-        workspaceId: attachment.workspaceId,
-    });
-    this.logWorkspaceSocketHandshake(attachment, "flags_resolved", diagnosticAttemptId);
     for (const event of events) {
       socket.send(JSON.stringify(WorkspaceSocketSyncEventSchema.parse({
         ...event, conversationViews: true, featureFlags, viewerPreferences,

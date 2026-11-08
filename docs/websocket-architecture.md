@@ -131,8 +131,11 @@ content-free opening phases through the desktop reliability telemetry path.
 Its `subscribe` frame optionally carries that UUID. WorkspaceDO logs `accepted`
 with a server connection ID, then `frame_received` once per socket before
 initialization,
-`subscribe_received`, `subscribe_authorized`, `sidebar_built`, `flags_resolved`,
-and `sync_sent`. The latter phases carry both IDs. `accepted` has only the
+`subscribe_received`, `subscribe_authorized`, `flags_resolved`, `sidebar_built`,
+and `sync_sent`. The flags are resolved first because that is the subscribe's
+one await: everything the answer reads, and marking the socket subscribed,
+then happen with no await between them, so a write cannot land after the
+sidebar was read and before the socket can receive its push. The latter phases carry both IDs. `accepted` has only the
 connection ID because the room has not received the subscription yet; a
 `frame_received` without `subscribe_received` narrows the stall to initialization
 or frame validation.

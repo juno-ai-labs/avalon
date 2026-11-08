@@ -334,10 +334,29 @@ rather than to report news. That matters because a push can be missed while a
 socket is away and produce no topic at all: a Sidekick moving its
 next run time in `automation_directory` is exactly that; it advances the
 automations list and its waterline without naming a `workspace_sync` topic. A resume that missed nothing costs the
-bytes and applies nothing, since every list carries the waterline its pushes
-carry and the client's comparison drops it. Receivers must apply the sidebar
+bytes and changes nothing, since an answer at the version the client already
+holds rewrites the same rows. Receivers must apply the sidebar
 *before* the topic-waterline guard, or a resume repeating a waterline the client
 already holds would be discarded along with the state it was sent to deliver.
+
+The answer is authoritative over the client's ledgers. WorkspaceDO reads it
+after every push an earlier socket delivered, so the renderer applies its lists
+whatever its per-list ledger holds and resets each ledger to the answer's
+version, and resets its sync cursor to the answer's waterline. An answer
+*below* the ledger means the object's counters went back (its storage was
+rebuilt behind a window that stayed open); keeping the old numbers would drop
+every push and every sync event until the object climbed past them, which is a
+window that stops hearing its lists until it is reloaded. A reconnect's answer
+that moves the Sidekick list also refreshes what a list push refreshes (the
+Sidekick page's detail and runs, and the library), because it stands in for
+pushes the dropped socket missed. Presence and every unanswered conversation
+preview are sent again on the new socket once it is answered.
+
+WorkspaceDO resolves the viewer's flags, the subscribe's one await, *before*
+it reads the sidebar and the sync log, and then sends the answer and marks the
+socket subscribed with no await between. A push goes only to sockets already
+marked subscribed, so a write landing between a read and that mark would reach
+neither the answer nor the socket.
 
 That private subscribe answer also carries the complete effective client
 feature-flag object for the socket's user. The renderer applies it before the
@@ -771,6 +790,8 @@ receipt.
 | `apps/api/test-workers/workspace-socket-first-frame.test.ts`, `apps/api/test/socket-first-frame-watch.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts`; `pnpm --filter @rally/api test` | The first-frame watch, through the real accept and alarm paths: silent sockets below the reset threshold are held, logged at warn, and kept without holding the alarm, and the one that reaches it resets; a held socket is let go once a later socket speaks; with the threshold at one, a silent socket on a silent object resets it, logs, and is dropped, also while the region is closed for maintenance and after its client has already closed it; each of the three "still hearing sockets" signals alone prevents a reset, including after a hibernation wake; the ledger forgets a socket once it speaks, lets go of a judged row, and does not reset a fresh instance after a reset or an eviction; accepting pulls the alarm in. |
 | `apps/api/test-workers/message-to-output-pipeline.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Fresh message admission and its private receipt on the authenticated AgentLoopDO socket of a Canvas's Chat, stable turn identity after hibernation/resend, and the message-to-provider pipeline on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `sidebar-list-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, waterline resume, the lists ordered by their own waterlines, the local cache, and the relay between windows. |
+| `apps/api/test-workers/workspace-socket-subscribe.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-subscribe.test.ts` | A Canvas created while a `subscribe` is still answering (held inside the flag evaluation) reaches the new socket, in the answer or the push after it. |
+| `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` (`resubscribes everything on a reconnect…`) | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workspace-socket.test.tsx` | A dropped socket's replacement sends `subscribe` from the old cursor, then presence and the unanswered preview again; its answer replaces the lists even below the window's ledger, refreshes the open Sidekick page, and a push and a sync event below the old numbers then apply. |
 | `apps/api/test-workers/workspace-socket-fanout.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/workspace-socket-fanout.test.ts` | Sync topic audiences on real sockets, live and on replay; the full list is in [`websocket-architecture.md`](websocket-architecture.md#testing). |
 | `apps/api/test/workspace-realtime-service.test.ts` | `pnpm --filter @rally/api exec vitest run test/workspace-realtime-service.test.ts` | The mutation map: each write's topics and audience. |
 
@@ -810,6 +831,41 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive; there is no per-command parent RPC. See [the conversation objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-11-08 — A reconnecting window hears everything it missed, and keeps hearing
+
+**What changed:** The renderer applies the answer to each `subscribe` as
+authoritative: its lists replace the window's whatever its per-list ledger
+holds, the ledger and the sync cursor reset to the answer's numbers, and an
+answer on a reconnect that moved the Sidekick list refreshes the Sidekick
+page, its runs and the library as a push would. WorkspaceDO resolves the
+viewer's flags before it reads the answer, so nothing it sends can be older
+than the first push the socket may receive.
+
+**Why:** The owner's answer to the follow-up "after a local API restart an
+open Electron window stopped receiving live Sidekick updates until reloaded"
+was "do this". Three gaps, each enough to show it. A write landing while
+WorkspaceDO awaited the flags was in neither the answer, read before the
+await, nor any push, sent only to sockets already marked subscribed, and an
+API restart makes every window resubscribe at once against a cold object,
+when that await is longest (proved on workerd by
+`test-workers/workspace-socket-subscribe.test.ts`). A Sidekick change made
+while the socket was away arrived in the answer's list but refreshed nothing
+else, because only a push invalidated the Sidekick page. And a window kept its
+ledgers and cursor across an object whose counters had gone back, dropping
+everything below them until a reload cleared them.
+
+**Considered and rejected:** Resetting the ledgers only on
+`history_unavailable`: a list's waterline and the sync log are separate
+counters, and the answer is already the newest state the socket can know, so
+applying it unconditionally is simpler and as cheap. Refetching each
+Sidekick surface on every reconnect: a resume that missed nothing would pay
+for it.
+
+**What a future change must respect:** the subscribe answer is the one
+producer allowed to move a ledger backwards; a push never is. Nothing in
+WorkspaceDO's `subscribe` may await between reading what it answers with and
+marking the socket subscribed.
 
 ### 2026-11-08 — A page waiting on the workspace socket says when it cannot connect
 
