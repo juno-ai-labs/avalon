@@ -24,10 +24,10 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/api/src/durable-objects/canvas-schema.ts` | `WorkspaceDO` migration 139 (`canvas_directory`, `canvas_participants`, the `canvases` list waterline) and 140 (a Sidekick's conversation attachments admit a Canvas). |
 | `apps/api/src/durable-objects/hosted-conversation.ts` | `HostedConversation`: the conversation-parent contract one hosted conversation answers — authority, the viewer check, children, the children's effects, and each reader's read of `"0"`. A Canvas and a Sidekick both extend it. |
 | `apps/api/src/durable-objects/hosted-canvas.ts` | `HostedCanvas`: one Canvas's parent state inside `WorkspaceDO`, scoped to a `canvas_id` — creation, the read rule over a row (`canvasReaderAllows`), the audience, guest shares and authorization facts. |
-| `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasRename`, `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
+| `apps/api/src/durable-objects/workspace-do.ts` | The facade: `canvasCreate`, `canvasDetail`, `canvasUpdate` (the title and the appearance), `canvasSetAudience`, `hostedConversationAuthorizationFacts`, every conversation-parent method for a Canvas id, and the Canvas branch of `createScopeInvitations`, `claimScopeInvitations`, `revokeScopeInvitation` and the invitation alarms. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Conversation object migration 83: its root row admits the `canvas` parent kind. |
 | `apps/api/src/services/canvas-service.ts` | `createCanvas`: the directory row, then the Chat's object, bootstrapped and provisioned with the creator seated; `CanvasService`, the routes' service. |
-| `apps/api/src/routes/canvases.ts` | `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`. `PUT /workspace/pinned-order` (in `routes/workspace.ts`) orders a Pinned group. |
+| `apps/api/src/routes/canvases.ts` | `POST /canvases`, `GET /canvases/:id`, `PATCH /canvases/:id` (the title and the appearance), `POST /canvases/:id/audience`, `POST /canvases/:id/pin`. `PUT /workspace/pinned-order` (in `routes/workspace.ts`) orders a Pinned group. |
 | `apps/api/src/services/integrations.ts` | `canvasRunContextMessage`: the `CANVAS CONTEXT` message a run in a Canvas's Chat is given. |
 | `apps/api/src/services/terminal/authority.ts` | `resolveTerminalPublicationHome` (a Sidekick run publishes into a Canvas) and `canvasArtifactNoter` (a publish tells its Canvas). |
 | `apps/api/src/services/conversation-service.ts`, `socket-service.ts` | Opening a Canvas's Chat: admission by the Canvas, the reader seated, and a ticket whose `pk` is `canvas`. |
@@ -35,6 +35,7 @@ The product decisions are in the [Canvases and Sidekicks PRD](PRDs/2026-11-06_ca
 | `apps/desktop/src/renderer/screens/canvases-home.tsx` | `/canvases`: the home page — New Canvas, search, the filter chips, Live now and Recent, and the first-run "Start from a prompt" card. |
 | `apps/desktop/src/renderer/screens/canvas.tsx` | `/canvases/:id`: the Chat as a `canvas` conversation in `ConversationSurface`, its header (pill, people present, Share, menu), and opening the newest artifact in the right rail. |
 | `apps/desktop/src/renderer/components/canvas-share-dialog.tsx` | Share: who can open it, for a manager; the same audience read-only for anyone else; guests invited by email on Save. |
+| `apps/desktop/src/renderer/components/canvas-mark.tsx` | `CanvasMark` and `canvasMark`: the chosen icon and colour, else the kind's glyph and `canvasHue`, field by field. |
 | `apps/desktop/src/renderer/components/canvas-sidebar-section.tsx` | The Canvases sidebar section: a Pinned group and every Canvas by recent activity. |
 | `apps/desktop/src/renderer/lib/canvases.ts` | The list as the socket keeps it (`useCanvasList`), the routes, a row's second line, and creating a Canvas. |
 
@@ -197,10 +198,39 @@ only attachments has no text to read, so the Canvas stays `naming` until a
 person's text message arrives, which arms the entry again.
 
 `PATCH /canvases/:id` refuses a title that is empty, blank or over 300
-characters as `canvas_rename_invalid:title:<issue>`, and every Canvas route
+characters as `canvas_rename_invalid:title:<issue>`, an icon or colour outside
+the storable vocabulary as `canvas_rename_invalid:appearance.<field>:<issue>`,
+and a body that changes nothing (no title, and no appearance field) as
+`canvas_rename_invalid:-root-:custom`, all under the rename's released label
+with one sentence true of each, and every Canvas route
 refuses a malformed id as `canvas_id_invalid:id:<issue>`, through
 `namedZValidator`, each with a sentence the client shows; a well-formed id
 that names no Canvas is `canvas_not_found`.
+
+### Choosing what a Canvas looks like
+
+A Canvas may carry an icon and a colour somebody chose, the same two keys a
+Sidekick stores and parsed by the same `WorkstreamAppearanceSchema`
+([`automation-lifecycle.md`](automation-lifecycle.md#choosing-what-a-sidekick-looks-like)
+owns the catalog and the ring). They live on the directory row as
+`appearance_json` (migration 153), null until someone chooses, and the
+summary carries them as `appearance` on the list row, the detail and a
+Sidekick's Canvases, each field null while unchosen. An unchosen icon draws the
+sketch of the newest artifact's kind and an unchosen colour the hue the id
+gives it (`canvasHue`), so a Canvas nobody dressed looks as it always has.
+
+`PATCH /canvases/:id` with `appearance` sets them, beside or instead of a
+title, by anyone the Canvas admits, the rule renaming has, and
+`canvas_not_found` to anyone else. The choice is partial and merged field by
+field into what is stored, as a Sidekick's is, so two people picking at once
+each keep their field, and a null field goes back to the default. Choosing is
+not activity: `updated_at` stays, so the Canvas keeps its place in the recency
+list, and the write advances the `canvases` waterline, so every open list
+redraws the mark. A stored choice that no longer parses (a key retired past
+what is storable) reads as unchosen, logged
+`canvas_directory_appearance_invalid` with its field and reason
+(`parsedAppearance`, the Sidekick list's own), so one bad row never fails a
+list, and the next choice overwrites it.
 
 ### A Canvas that was a Thread
 
@@ -387,16 +417,16 @@ the rail's first section and `/canvases` the landing route
   someone other than the viewer in `presentUserIds`, Made by me is
   `createdByUserId`, Shared with me `sharedWithMe`, From Sidekicks
   `writerSidekickId`. A row's second line names who is there now, else its
-  last editor, else who made it. On a home card whose newest version a run
-  wrote, the last-editor line is that run instead, "<Sidekick> · run #N"
-  (`canvasWrittenByRun`), a link above the card's stretched title link that
-  opens the Sidekick's conversation at the run (`?run=`), in the live name
-  from the Sidekick list when the socket has it.
-- **The mark** (`CanvasMark`) is a sheet holding the row's `artifactKind`
-  glyph, in a pastel pair through `markColors`, the mechanism a Sidekick's
-  hexagon uses. The hue is the Canvas's own, stable for its id
-  (`canvasHue`, as a person's accent is chosen), since design.html §1, §2 and
-  §5 colour each Canvas individually and a Canvas stores no colour.
+  last editor, else who made it.
+- **The mark** (`CanvasMark`) is a sheet holding the chosen icon, else the
+  row's `artifactKind` glyph, in a pastel pair through `markColors`, the
+  mechanism a Sidekick's hexagon uses: the chosen colour, else the hue stable
+  for its id (`canvasHue`, as a person's accent is chosen), since design.html
+  §1, §2 and §5 colour each Canvas individually. The pill, the sidebar row,
+  the home card (beside its title, and on the paper of a Canvas that is only
+  its Chat) and a Canvas's Activity rows (a badge on the kind's glyph) draw
+  it; the pill's follows a choice from anywhere, which the list push writes
+  into the detail's cache as it writes a rename.
 - **The home page** is design.html §1's grid of cards, three to a row once the
   pane is the design's 1024px main pane, two below it, one at phone width: each
   card is a 150px shot of the Canvas, a "Live" chip with the faces of the
@@ -432,7 +462,7 @@ the rail's first section and `/canvases` the landing route
   the pane's right edge the face pile of everyone else in it now
   (`workspace_presence`, through the surface's `presentUserIds`), Share, and a
   "⋯" button (`TitlePillMenuAction`). The "⋯" and the pill's menu offer the
-  same Pin, Rename…, Share…, Copy link and Copy Canvas ID (for support, and
+  same Pin, Rename…, **Change appearance**, Share…, Copy link and Copy Canvas ID (for support, and
   kept in the offline and refused states, whose header this is), and, while
   the Canvas has an artifact, **Open artifact**, which opens the panel on the
   newest one beside the Chat, the way back to a panel the person closed; it
@@ -442,6 +472,17 @@ the rail's first section and `/canvases` the landing route
   written into the detail's cache entry once the socket has applied the list,
   so the header follows a rename without a refetch. The window is named `<title> · Rally` while it is open
   (`useDocumentTitle`, `lib/document-title.ts`).
+- **Choosing its appearance.** The mark in the pill is the Sidekick's
+  appearance palette (`AppearancePicker`, in the pill's `iconAction` slot,
+  beside its menu trigger since a button cannot hold another), and the menu's
+  **Change appearance** opens the same palette there: the picker's `open` is
+  the screen's, and a palette opened from a menu is not closed by that menu
+  handing focus back to its own trigger. Its unchosen colour selects the
+  Canvas's own hue (`defaults`) and its unchosen icon selects nothing, since
+  the kind's sketch is no catalog icon. Each click saves through
+  `PATCH /canvases/:id`, and the answered detail redraws the pill. A submenu
+  of the pill's menu was the first cut and was dropped: at phone width the
+  menu is the screen's width, so a 320px submenu beside it opened off-screen.
 - **A link to no Canvas** — a well-formed id that names nothing
   (`canvas_not_found`, 404) or a malformed one (`canvas_id_invalid:id:<issue>`,
   400) — draws the same "This Canvas does not exist." state, the pane's one
@@ -631,6 +672,13 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   the creator's open list, and refuses the retitle to someone it does not
   admit as `canvas_not_found`; it orders one viewer's pinned Canvases, keeping
   a pin the request left out after the named ones.
+- `canvas-conversation.test.ts` chooses a Canvas's icon and colour as a
+  participant and then its colour alone as the creator, read on the detail
+  and the creator's open list with the icon kept and `updatedAt` unchanged,
+  refused to someone it does not admit as `canvas_not_found`, unchosen
+  before; and reads a stored appearance outside the vocabulary as unchosen on
+  the detail and the list, repaired by the next choice. Proved to fail with
+  the appearance write dropped.
 - `canvas-conversation.test.ts` creates a Canvas twice with one `canvasId` and
   gets one Canvas and one prompt, and refuses the id to another person and an
   id another conversation holds.
@@ -640,7 +688,8 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 - `canvas-hosting.test.ts` also claims a share at sign-in for a recipient who
   had no account.
 - `apps/api/test/canvas-routes.test.ts` — the routes' validation and the guest
-  refusal.
+  refusal, an appearance outside the catalog and a body that changes nothing
+  refused by field.
 - `apps/desktop/src/renderer/lib/sidebar-list-store.test.ts` — the Canvas list
   orders by its own waterline.
 - `apps/desktop/src/renderer/screens/canvases-home.test.tsx` — the home page
@@ -651,7 +700,12 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
   `canvas` conversation under its header; the newest artifact opened when
   nothing is saved, the saved panel left to the surface's restore, the rail
   left closed with no artifact; pinning; Share for a manager and read-only for
-  anyone else.
+  anyone else; Change appearance and the pill's mark opening the palette,
+  saving through the route, the pill drawing the answer, and the pill
+  following a choice the list push carries.
+- `canvases-home.test.tsx`, `canvas-sidebar-section.test.tsx` and
+  `components/navigation-sidebar.test.tsx` (the Activity section) — each mark
+  in the chosen icon and colour, and an unchosen one in its kind and hue.
 - `apps/desktop/src/renderer/components/canvas-sidebar-section.test.tsx` — the
   section's Pinned group and rows, drag to pin, unpin, and the skeleton.
 - `apps/api/test/workstream-object-schema.test.ts` — conversation migration 83
@@ -662,7 +716,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 | Table | Keyed by | Holds |
 | --- | --- | --- |
-| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 149), and the run whose publish made the newest version (`last_writer_run_id`, migration 155). Its CHECK admits a run only beside a `sidekick` last editor, so a future writer that moves `last_editor_kind` without writing this column in the same statement fails its write. Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
+| `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 149), and the chosen icon and colour (`appearance_json`, `WorkstreamAppearanceSchema` JSON, null until chosen, migration 153). Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
 | `canvas_participants` | `(canvas_id, user_id)` | Whom its managers added (`added`), a claimed share brought (`invitation`) or an approved access request let in (`request`, migration 151). Indexed by person for "shared with me". |
 | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts`, `sidekick_viewer_reads` | `(sidekick_id, …)`, the column holding the Canvas id | The hosted conversation's children, their projections and receipts, and each reader's read of the Chat. |
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
@@ -807,8 +861,9 @@ A sketch per MIME type (an `artifactMime` on the row) is a follow-up for the
 owner.
 
 **What a future change must respect:** a mark's colours come from
-`markColors`, so both appearances stay themed by `themes.css`; a stored
-Canvas colour would replace `canvasHue`, not sit beside it.
+`markColors`, so both appearances stay themed by `themes.css`; a chosen
+Canvas colour replaces `canvasHue`, not sits beside it (now built: see the
+2026-11-08 entry on choosing a Canvas's icon and colour).
 
 ### 2026-11-08 — A Canvas made with no title is titled from its first message, and a refused retitle names its field
 

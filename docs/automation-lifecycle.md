@@ -1517,8 +1517,11 @@ the Organization's when its scope is `workspace`.
 The hexagon on the Sidekick's profile is a button, and it opens the
 appearance palette (`AppearancePicker`): the fourteen-hue colour ring above a
 scrolling icon grid, where each click saves and the popup stays open. A
-Sidekick is the one surface left that picks an appearance; a Canvas stores
-none and takes its hue from its id ([`canvases.md`](canvases.md)).
+Canvas opens the same `AppearancePicker` from the mark in its pill, or from
+the pill menu's **Change appearance** (the picker's `open` held by the
+caller), stores the same two keys, and passes its own `defaults` for what an
+unchosen field selects
+([`canvases.md`](canvases.md#choosing-what-a-canvas-looks-like)).
 
 **The catalog.** `packages/contracts/src/appearance-icons.ts` is the one icon
 catalog: 253 Lucide icons in eight sections (Planning, Docs & writing,
