@@ -12,6 +12,7 @@ import { AutomationHeader, type AutomationHeaderAction } from '../components/aut
 import { Button, EmptyState, OpeningState } from '../components/primitives';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { copyLink } from '../lib/copy-link';
+import { useDocumentTitle } from '../lib/document-title';
 import { useRestoredRouteFallback } from '../lib/landing';
 import { ConversationSurface } from './conversation-surface';
 import { SidekickDelegation, useSidekickDelegates } from '../components/sidekick-delegation';
@@ -110,6 +111,7 @@ function AutomationDetailScreen({ id }: { id: string }): React.JSX.Element {
     staleTime: 5_000,
   });
   const leaving = useRestoredRouteFallback(automation.error, '/sidekicks');
+  useDocumentTitle(automation.data ? automation.data.currentDefinition?.name ?? automation.data.name : undefined);
   const runs = useQuery({
     queryKey: ['automation-runs', id],
     queryFn: ({ signal }) => api!.getAutomationRuns(id, signal),

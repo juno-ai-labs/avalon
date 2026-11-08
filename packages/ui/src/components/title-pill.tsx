@@ -218,13 +218,70 @@ export interface TitlePillLevel {
   bridge?: Omit<MarkBridgeItem, 'key' | 'onSelect'>;
 }
 
+/**
+ * A pill's title edited in place, drawn as the level's `title` while its menu
+ * is set aside. Enter saves and Escape cancels; leaving the field saves a
+ * changed title and cancels an unchanged one, as renaming in Finder does.
+ * What a save may be is the caller's server's to say, so nothing here trims
+ * or measures it: a refused save leaves the field open on what was typed,
+ * and leaving it for the refusal's notice, which takes focus, does not send
+ * the same title again.
+ */
+export function TitlePillTitleInput({ initial, label, onCancel, onSave, pending = false }: {
+  initial: string;
+  /** The field's accessible name, e.g. `Canvas title`. */
+  label: string;
+  onCancel: () => void;
+  onSave: (title: string) => void;
+  pending?: boolean;
+}): React.JSX.Element {
+  const [value, setValue] = useState(initial);
+  const input = useRef<HTMLInputElement>(null);
+  const submitted = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    input.current?.focus({ preventScroll: true });
+    input.current?.select();
+  }, []);
+  const save = (): void => {
+    submitted.current = value;
+    onSave(value);
+  };
+  const finish = (): void => {
+    if (pending || value === submitted.current) return;
+    if (value === initial) onCancel();
+    else save();
+  };
+  return <input
+    aria-label={label}
+    className="title-pill-title-input"
+    onBlur={finish}
+    onChange={(event) => setValue(event.currentTarget.value)}
+    onKeyDown={(event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+        return;
+      }
+      if (event.key !== 'Enter' || isComposingKeyEvent(event.nativeEvent)) return;
+      event.preventDefault();
+      if (!pending) save();
+    }}
+    readOnly={pending}
+    ref={input}
+    value={value}
+  />;
+}
+
 export function TitlePill({ level, variant = 'current' }: {
   level: TitlePillLevel;
   variant?: 'current' | 'ancestor';
 }): React.JSX.Element {
+  // A title the pill truncates is still readable in full on hover.
+  const tooltip = typeof level.title === 'string' && level.title ? level.title : undefined;
   const body = <>
     <span className="title-pill-icon">{level.icon}</span>
-    <span className="title-pill-title">{level.title}</span>
+    <span className="title-pill-title" title={tooltip}>{level.title}</span>
   </>;
   const [view, setView] = useState<TitleMenuView | null>(null);
   const [direction, setDirection] = useState<'in' | 'out'>('in');
@@ -256,8 +313,9 @@ export function TitlePill({ level, variant = 'current' }: {
     ? <span
       className="title-pill-title is-crumb-root"
       onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); back(); }}
+      title={tooltip}
     >{level.title}</span>
-    : <span className="title-pill-title">{level.title}</span>;
+    : <span className="title-pill-title" title={tooltip}>{level.title}</span>;
   const crumb = view ? <>
     <IconChevronRight aria-hidden="true" className="title-pill-crumb-separator" size={13} stroke={2} />
     <span className="title-pill-title title-pill-crumb" key={view.key}>{view.label}</span>
@@ -303,7 +361,7 @@ export function TitlePill({ level, variant = 'current' }: {
           </DropdownMenu.Trigger>
           {menu}
         </DropdownMenu.Root>
-        : <span className="title-pill-title">{level.title}</span>}
+        : <span className="title-pill-title" title={tooltip}>{level.title}</span>}
     </span>;
   }
   if (level.onSelect) {

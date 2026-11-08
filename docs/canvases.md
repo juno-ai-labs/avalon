@@ -346,7 +346,22 @@ the rail's first section and `/canvases` the landing route
   so the next opening shows the newest artifact again.
 - **The header** is a `TitlePillHeader` naming the Canvas, the face pile of
   everyone else in it now (`workspace_presence`, through the surface's
-  `presentUserIds`), Share, and the pill's menu (Pin and Share).
+  `presentUserIds`), Share, and the pill's menu (Pin, Rename…, Share…, Copy
+  link). The pill's title is the detail's, and a change to the list row's
+  title (the `workspace_canvas_list` push a rename from anywhere produces) is
+  written into the detail's cache entry, so the header follows a rename
+  without a refetch. The window is named `<title> · Rally` while it is open
+  (`useDocumentTitle`, `lib/document-title.ts`).
+- **Renaming** is `PATCH /canvases/:id`, edited in the pill itself
+  (`TitlePillTitleInput`): Rename… in the pill's menu, or in a sidebar row's
+  context menu, which opens the Canvas with route state
+  (`RENAME_CANVAS_STATE`) that starts the edit. Enter saves, Escape cancels,
+  leaving the field saves a changed title. The client neither trims nor
+  measures the title: an empty or over-long one is the server's to refuse
+  (`canvas_rename_invalid:title:<issue>`), and the refusal is a notice titled
+  "The Canvas could not be renamed" (`canvasRenameRefusal`: words for
+  `too_small` and `too_big`, the server's message otherwise), with the field
+  left open on what was typed.
 - **Share** offers the three visibilities and a people picker to someone the
   detail says may manage it (`canManage`), and saves with
   `POST /canvases/:id/audience`; anyone else sees the same audience read-only.
@@ -361,9 +376,7 @@ the rail's first section and `/canvases` the landing route
 Copying a Canvas's link is the pill menu's **Copy link**, the Canvas form
 `/app/<region>/<organization>/cv/<canvas>/` ([`links.md`](links.md)); a
 detached artifact window's **Copy link** adds the artifact's segment, and a
-link with one opens the Canvas with that artifact in the rail. Not built yet,
-because nothing on the server answers it: renaming a Canvas (no route writes
-`canvas_directory.title`).
+link with one opens the Canvas with that artifact in the rail.
 
 ## Invariants
 
@@ -484,6 +497,28 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 ## Changelog
 
+### 2026-11-08 — A Canvas is renamed in its own pill, and the pill follows a rename from anywhere
+
+**What changed:** The pill's menu and a sidebar row's menu offer Rename…,
+which edits the title in the pill and saves with `PATCH /canvases/:id`. A
+change to the list row's title is written into the open Canvas's detail
+cache, and the window takes the Canvas's name.
+
+**Why:** The route shipped with the pivot (PRD decision log, 2026-11-07:
+anyone the Canvas admits may retitle it) but nothing in the renderer called
+it, and the end-to-end pass found every Canvas stuck at "Untitled Canvas".
+The same pass found the header keeping the old title after a rename made
+elsewhere until a reload: the sidebar and the home read the pushed list,
+the header read the detail, and the detail is not pushed. Writing the row's
+title through was preferred to invalidating the detail on every push, which
+costs a fetch per rename for every window that has the Canvas open.
+
+**What a future change must respect:** the list row is the pushed source of
+a Canvas's title; the detail only mirrors it. Only a change of the row's
+title is written through, because the device cache's row at mount may be
+older than a detail the server just answered. The client does not validate
+a title; the server's refusal is what the person reads.
+
 ### 2026-11-08 — A Thread that has artifacts can become a Canvas in place
 
 **What changed:** `HostedCanvas.createFromThread`, beside `create` and sharing
@@ -597,9 +632,8 @@ shares and grants has no route. The client (plan step A-12) draws a Canvas
 with the conversation layout: the Chat in `ConversationSurface` and the
 artifacts in the existing right rail, with its per-conversation restore; its
 home page and sidebar section group the socket's list on the client from the
-row's own fields, so no list route was added. No renderer code renames a
-Canvas yet, and both sidebar sections pass `reorderable={false}`, so a pin
-lands at the end of its group. Restoring someone to a Canvas's audience does
+row's own fields, so no list route was added. Both sidebar sections pass
+`reorderable={false}`, so a pin lands at the end of its group. Restoring someone to a Canvas's audience does
 not put them back in its face pile until their window says so.
 [`links.md`](links.md) owns the link form; a Canvas's id being its
 conversation's parent id is what lets a server mint the link from a
