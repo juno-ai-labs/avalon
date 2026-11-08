@@ -1620,7 +1620,7 @@ live" rule.
 
 **Why:** Plan step B-8 of the [Canvases and Sidekicks pivot](PRDs/2026-11-06_canvases-and-sidekicks/prd.md).
 Only a Thread recorded the place it started from, and plan step C-2 deleted
-every host path that asked; [`workstream-origin-attachments.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments)
+every host path that asked; [`workstream-origin-attachments.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions)
 has the history.
 
 **Considered and rejected:** Keeping the capability for a later Sidekick
@@ -4311,7 +4311,7 @@ naming the place. `describeConnectorOrigin` in the connector base is the single
 entry point, `connectorOriginFromActivity` is the derivation every connector gets
 without code, and a described `resourceType` is checked against the manifest's
 `resourceTypes`. Slack is the first implementation. What the host does with the
-answer is [`workstream-origin-attachments.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
+answer is [`workstream-origin-attachments.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions).
 
 **Why:** The behaviour shipped first as Slack-specific code in an API service —
 the host knew Slack's channel-versus-thread rule, Slack's title wording, and

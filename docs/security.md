@@ -154,7 +154,8 @@ are canonical storage services, not authorization layers.
 - The main window may drive its own browser tabs, including page script and
   DevTools commands; no other window may. Those commands act with the person's
   website sign-ins, so a script injected into the renderer would reach every site
-  signed in there. See [`desktop-actions.md`](desktop-actions.md).
+  signed in there. The desktop-action protocol that let an API agent loop ask for
+  those commands is unreached ([its retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions)).
 - Browser orchestration scripts execute in a separate sandboxed, ephemeral
   WebContents with no Node/preload and a network/frame-denying CSP. Only closed,
   typed requests reach the pinned browser tab; browser/tab closure or run

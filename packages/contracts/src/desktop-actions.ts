@@ -8,7 +8,9 @@ import { z } from "zod";
  * path. A tool records an action, the conversation's room publishes it as
  * `desktop_action_requested`, the desktop that owns the work executes it
  * through its main-process browser command path, and answers with
- * `answer_desktop_action`. `docs/desktop-actions.md` owns the protocol.
+ * `answer_desktop_action`. Nothing reaches the protocol today; its record is
+ * the desktop actions retirement record in `docs/workstream-durable-object.md`'s
+ * changelog.
  */
 
 /**

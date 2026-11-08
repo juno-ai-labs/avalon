@@ -27,7 +27,7 @@ and forks; Rally captures its flat projection and plugin/skill activation hints.
 The eval host restores configuration and isolated tool state, and allocates a fresh
 loop identity per fork. Production without checkpoint capture keeps the existing
 ledger path. (Session import, the one production producer of a prepared
-conversation, is deleted; [its retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments) is in `workstream-durable-object.md`.)
+conversation, is deleted; [its retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions) is in `workstream-durable-object.md`.)
 
 A Thread's and a Breakout's first message had its own classifier
 (`opening-message.ts`, with an evaluation under `evals/opening-message`); both
@@ -2426,7 +2426,7 @@ charter, what it has produced so far, the newest three messages and the judged
 turn. Every provider call is recorded through the classifier diagnostic sink
 under `turn_disposition_classifier`. The step never fails settlement. The
 harness also gained the `suggestion_draft` prompts, golden-hashed. The
-mechanism is owned by [`conversation-suggestions.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments);
+mechanism is owned by [`conversation-suggestions.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions);
 the question, its 0.6 threshold and its three recent messages are pinned to the
 corpus evaluation and the GEPA ablation in
 `docs/PRDs/2026-10-17_merge-and-breakout-suggestions/design.md`.
