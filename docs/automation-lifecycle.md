@@ -443,7 +443,7 @@ records where a running signal would come from.
 | `apps/api/src/services/memory-service.ts` | `resolveMemoryAccess`: a conversation whose parent is a Sidekick resolves the workspace scope and the Sidekick's own `sidekick` scope. |
 | `apps/api/src/services/sidekick-run-tools.ts` | Wizard-only run history: current-member authorization, own-run admission, canonical transcript pages and exact replay results with explicit availability. |
 | `apps/desktop/src/renderer/screens/automation.tsx`, `components/automation-header.tsx`, `screens/conversation-surface.tsx` | `/sidekicks/new` calls creation and replaces itself with `/sidekicks/:id`; that route renders the profile (the hexagon, which opens the appearance picker, plus lifecycle badge, scope, email address, Pause, Resume, Archive Sidekick, Run now, and access to the run-history dialog) beside the shared conversation surface with `parentKind: "automation"` and `substreamId: "0"` (or a run's id while `?run=` names one). The profile also says who it is shared with (`audience`), the connections it uses, and the Canvases it writes to; the conversation's heading carries those Canvases as cards that open `/canvases/:id`, and its composer offers a manager Edit Sidekick. |
-| `apps/desktop/src/renderer/components/appearance-picker.tsx` | The one icon-and-colour palette a Sidekick's hexagon opens. [`workstream-appearance.md`](workstream-appearance.md) owns it, the catalog, and the deterministic default a Sidekick nobody has chosen for still shows. |
+| `packages/ui/src/components/appearance-picker.tsx`, `icon-catalog.tsx`, `packages/contracts/src/appearance-icons.ts` | The icon-and-colour palette a Sidekick's hexagon opens (`AppearancePicker`, rendered through the desktop's `components/appearance-picker.tsx`), the `IconCatalog` grid it draws, and the one icon catalog with a model-visible description per key; see [Choosing what a Sidekick looks like](#choosing-what-a-sidekick-looks-like). |
 | `apps/desktop/src/renderer/components/workstream-glyph.tsx` | `HexagonGlyph`, the rounded hexagon a Sidekick is drawn in, taking a fill, an ink, a symbol, and an optional `HexagonMarker` — a symbol, a colour, and the sentence it means — which it cuts out of the fill along that marker's own outline, gives a hover target the size of the marker's whole box, and reports as `onMarkerHover` so the surface can say what the marker means in its own tooltip (`SIDEKICK_RUNNING_MARKER` is the only one so far); `AutomationGlyph` is that primitive filled from the Sidekick's stored appearance, or from its id where nobody has chosen. |
 | `apps/desktop/src/renderer/screens/sidekicks-library.tsx` | `SidekicksLibraryScreen`, the Sidekicks home; `SidekicksLibraryRoute`, which renders it in the main window on both hosts. |
 | `apps/desktop/src/renderer/components/sidekick-run-row.tsx` | A run's row in the shared conversation, collapsed, opening into the run's own conversation. |
@@ -1460,12 +1460,41 @@ the Organization's when its scope is `workspace`.
 
 ### Choosing what a Sidekick looks like
 
-The hexagon on the Sidekick's profile is a button, and it opens the shared
-appearance palette — the catalog, the fourteen-hue ring, and "each click saves
-and the popup stays open". The catalog, the descriptions,
-the colour vocabulary and the deterministic default all belong to
-[`workstream-appearance.md`](workstream-appearance.md); what belongs here is
-where the value lives and how it travels.
+The hexagon on the Sidekick's profile is a button, and it opens the
+appearance palette (`AppearancePicker`): the fourteen-hue colour ring above a
+scrolling icon grid, where each click saves and the popup stays open. A
+Sidekick is the one surface left that picks an appearance; a Canvas stores
+none and takes its hue from its id ([`canvases.md`](canvases.md)).
+
+**The catalog.** `packages/contracts/src/appearance-icons.ts` is the one icon
+catalog: 253 Lucide icons in eight sections (Planning, Docs & writing,
+Learning, Data & money and Build & tech at 23 each; People & talk, Places &
+nature and Life & fun at 46), which `IconCatalog` draws as section tabs over one
+scrolling grid. The picker offers the pickable keys, while the schema parses
+the storable ones, which add every key an earlier catalog offered
+(`RETIRED_APPEARANCE_ICON_KEYS`), so a retired icon keeps parsing and drawing
+and simply shows nothing selected. Colours work the same way: the picker
+offers the ring (`PROJECT_COLOR_KEYS`), the schema parses every palette key
+(`PROJECT_COLOR_KEYS_STORABLE`: the ring, the retired keys and `black`).
+**The wider list is the one that validates**, because
+`WorkstreamAppearanceSchema` runs on every read: narrowing the stored
+vocabulary to match the menu would be a read-path outage for whoever holds the
+key removed, so taking a choice off the menu is a one-line edit and taking it
+out of the vocabulary needs a migration. Colours are stored as semantic keys,
+never hex, and a glyph resolves its key to a pastel pair through `markColors`
+([`theming.md`](theming.md) owns the pair). A Sidekick nobody has chosen for
+draws the id-derived default (`generatedWorkstreamAppearance`, indexing the
+original twelve marks through `GENERATED_APPEARANCE_ICON_KEYS`).
+
+Each pickable key carries a short description of what it draws, because the
+setup chat chooses an icon too and reads the same lines, rendered once by
+`WORKSTREAM_ICON_CATALOG` (`packages/agent-harness/src/prompts/icon-catalog.ts`)
+under the picker's section headings. They are model-visible strings: plain
+words, no icon-library names, and **the drawing only, never what an icon is
+for**, since matching a mark to a Sidekick is the model's job. The exhaustive
+`Record` makes a key without a description a compile error.
+
+What follows is where the value lives and how it travels.
 
 The Sidekick's directory row stores it, in `appearance_json`, beside the title and
 the lifecycle. The authoring conversation is a child of the object that owns
@@ -1513,6 +1542,16 @@ leaves the appearance alone.
 
 A new Sidekick wears no chosen appearance until somebody picks one: it starts
 with `NULL` appearance and its glyph uses its own id-derived mark.
+
+**The run history's dots.** The run-history dialog in `automation-header.tsx`
+is the one surface that draws a run-state marker: `StatusDot`
+(`packages/ui/src/components/primitives.tsx`) in the `sys.color.workstream`
+token for the state, labelled from `statusLabel`
+(`packages/ui/src/lib/format.ts`, which also holds `WorkstreamMarkerStatus`,
+`statusDescription` and `harnessMarkerStatus`). A pending run draws
+`scheduled` under its own name, because a run that has not started is what
+somebody opened the list to find; every other surface folds `scheduled` into
+`running` through `harnessMarkerStatus`.
 
 ## Invariants
 
@@ -1913,7 +1952,40 @@ instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
 
-### 2026-11-08 — A waiting run's question is answered on its row, and the Sidekick screens follow the design
+### 2026-11-08 — Retirement records: Work-stream appearance, Work-stream markers
+
+**What changed:** Nothing in the code. Two documents whose mechanism was
+mostly deleted with the Thread client were removed in the documentation audit.
+What survives of each is shared code a Sidekick is now the only user of, so it
+is described in [Choosing what a Sidekick looks like](#choosing-what-a-sidekick-looks-like)
+above, and their retirement records are below. Each one's full text and
+changelog is `git show e26aa66:docs/<name>.md`.
+
+**`workstream-appearance.md` — Work-stream appearance (retired 2026-11-07).**
+A Channel and a Breakout had one shared icon and colour, chosen from a header
+picker on the conversation socket (`set_workstream_appearance`), and from
+2026-10-12 a Thread and its Breakouts wore their canonical Channel's colour,
+written by WorkspaceDO's `channel_color_sync` lane and the `recolor` identity
+operation. Threads, Breakouts and Channels were deleted, the colour lane and
+`recolor` with them (WorkspaceDO migration 147 dropped the lane's tables), and
+the sidebar-row reads and cache writers went with the Thread client. The icon
+catalog, its descriptions, the palette's pickable-versus-storable split, the
+picker and the id-derived default survive, and this document now owns them.
+Its changelog is the record of why the stored vocabulary is wider than the
+menu, why a person's choice outranks a generated one as a condition on the
+write, and why every choice is a merged patch.
+
+**`workstream-markers.md` — Work-stream markers (retired 2026-11-07).** One
+ranking (`workstreamMarkerStatus` over `MARKER_PRECEDENCE`: unseen, mentioned,
+running, needs input, unread, completed, stopped, failed) decided which single
+coloured dot a work-stream row showed a reader, with `failed` deliberately below
+`unread`. It went with the Thread client in plan step C-2, together with
+`attention-ranking.ts`, the work-stream header and the Threads-tab rows.
+`participants.first_opened_at` (the unseen state) remains in conversation-object
+SQLite. The vocabulary, `StatusDot`, the `sys.color.workstream` tokens and the
+run history's `scheduled` exception survive as described above.
+
+### 2026-11-08 — A waiting run's question is answered on its row, the Sidekick row says Working, and the screens follow the design
 
 **What changed:** A run waiting on input shows its question on its row in the
 shared conversation with the answer form (`SidekickRunQuestion`), which

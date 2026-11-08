@@ -300,6 +300,26 @@ version ledger.
 
 ## Changelog
 
+### 2026-11-08 — Retirement record: Starting a work stream
+
+**What changed:** Nothing in the code. `workstream-creation.md`, kept after
+its mechanism was deleted only as a record for its changelog, was removed in
+the documentation audit; its retirement record is below. Its full text and
+changelog is `git show e26aa66:docs/workstream-creation.md`.
+
+**`workstream-creation.md` — Starting a work stream (retired 2026-11-07).** A
+person started a Thread (a stored work stream) from a Channel's composer,
+through an optimistic pending row and `POST /workstreams`. The Canvases and
+Sidekicks pivot removed Threads; the composer path went with the client
+cutover (plan steps B-1 to B-6 and C-1), and step C-2 deleted
+`workstream-object-creation-service.ts`, the `HostedParent` host that
+committed the directory row, and the Slack and connector paths that created
+Threads on their own. A conversation now starts as a Canvas's Chat or a
+Sidekick's conversation, created by its parent as this document describes. D1
+`workstreams` stays as the conversation-parent anchor. Its changelog is the
+record of the optimistic hand-off, the rule that everything the response does
+not depend on still waits for it, and the email-address reservation.
+
 ### 2026-11-08 — A hosted parent batches its shared conversation's replies
 
 **What changed:** `applyChildEnvelope` adds a `new_message_notification`

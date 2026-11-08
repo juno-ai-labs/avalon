@@ -648,6 +648,39 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 ## Changelog
 
+### 2026-11-08 — Retirement records: Naming a work stream, Work-stream descriptions
+
+**What changed:** Nothing in the code. Two documents kept after their
+mechanism was deleted, only as records for their changelogs, were removed in
+the documentation audit; their retirement records are below, here because a
+Canvas's title from its opening message is the mechanism that carried Thread
+naming forward. Each one's full text and changelog is
+`git show e26aa66:docs/<name>.md`.
+
+**`workstream-naming.md` — Naming a work stream (retired 2026-11-07).** A
+Thread was created with a placeholder title and named a moment later by a model
+pass over its opening and transcript, with an icon chosen from the appearance
+catalog beside the name. Plan step C-2 deleted `workstream-naming-service.ts`,
+the harness's `prompts/workstream-name.ts` and the pass after a run. What
+survives: the `workstream_naming` model role, which titles a Canvas from the
+message that opened its Chat (`canvas-naming.ts`, described above) and titles
+pasted text (`pasted-text-service.ts`), and the `title_status` column. Its
+changelog is the record of the grace window, the provisional title and the
+injection boundary.
+
+**`workstream-descriptions.md` — Work-stream descriptions (retired
+2026-11-07).** A Thread's description started as the first line of its opening
+message and was then rewritten by a model pass after each run, behind a rest
+window, a novelty threshold and generalization guards. A Canvas and a Sidekick
+conversation carry no model-written description, so plan step C-2 deleted
+`workstream-description-service.ts` and `prompts/workstream-description.ts`;
+the `workstream_description` model role and its Flagship key
+(`agent-model-workstream-description`) were retired on 2026-11-07
+([`feature-flags.md`](feature-flags.md)). The `description_refresh_state`
+table remains in conversation-object SQLite. Its changelog is the record of
+why a proposal is repaired before it is judged and why the refresh lease
+shares the owning object's transaction.
+
 ### 2026-11-08 — The Canvas screens follow design.html, a pinned Canvas's new version tells its pinners, and members may ask to be let in
 
 **What changed (pinners):** A publish's note to its Canvas reads the

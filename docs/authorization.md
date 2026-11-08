@@ -325,7 +325,7 @@ This module owns read decisions and their derived evidence. Authentication and
 active workspace membership are established by request middleware. Agent
 execution authority is established by the host, not tool arguments. Existing
 creation, mutation, socket admission and participant admission retain their
-current authority paths. See [workstream creation](workstream-creation.md),
+current authority paths. See [hosted conversation parents](hosted-conversation-parents.md),
 [agent harness](agent-harness.md), [agent attachments](agent-attachments.md) and
 [text search](text-search.md).
 
@@ -470,6 +470,27 @@ Worker timestamps; they are not exact replication timestamps. Remove probe deplo
 after the experiment. Pair these results with mutation-to-write-ack queue events.
 
 ## Changelog
+
+### 2026-11-08 — Retirement record: Listing rules
+
+**What changed:** Nothing in the code. `listing-rules.md`, kept after its
+module was deleted only as a record for its changelog, was removed in the
+documentation audit; its retirement record is below. Its full text and
+changelog is `git show e26aa66:docs/listing-rules.md`.
+
+**`listing-rules.md` — Listing rules (retired 2026-11-07).**
+`apps/api/src/durable-objects/listing-rules.ts` held the one ladder that
+decided who may be told a Space, Channel or Breakout exists: Organization-wide
+scope admits a member and never a guest, a participant is listed what they take
+part in, a Channel is listed through a Breakout of it, and a Space through a
+Channel in it. Plan step C-2 of the Canvases and Sidekicks pivot deleted it
+once its last reader, agent memory's visibility, was re-derived from Canvas
+and Sidekick participation. What survives is the member-versus-guest half:
+`admitsOrganizationWide`, `AccessClass` and `Viewer` moved to
+`apps/api/src/services/authorization-policy.ts` beside `sidekickAdmits`, and
+scope grants' Organization-wide branch (`scope-grant-policy.ts`) reads the
+access class directly. Its changelog is the record of why a guest is never
+admitted by Organization-wide scope.
 
 ### 2026-11-07 — A conversation's read is answered by its Canvas or Sidekick alone, through one audience rule
 
