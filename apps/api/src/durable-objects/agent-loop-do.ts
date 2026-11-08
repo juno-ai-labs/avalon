@@ -1982,7 +1982,17 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
    * conversation's agent. The Sidekick's `sidekick_runs` row is authoritative;
    * this is its projection, rebuilt from that table by a replay.
    */
-  async projectSidekickRunRow(input: unknown): Promise<{ outcome: "appended" | "updated" | "unchanged" | "refused"; code: string }> {
+  async projectSidekickRunRow(input: unknown): Promise<{
+    outcome: "appended" | "updated" | "unchanged" | "refused"; code: string;
+    /**
+     * The directory effects the write enqueued, for the Sidekick that asked to
+     * apply at once: the row's attention ordinal and the requester's seat are
+     * one write here, and applied together there they are one sidebar frame.
+     * A JSON array: the RPC type of an envelope does not serialize, and the
+     * receiver parses each one as it does a delivery's.
+     */
+    envelopesJson?: string;
+  }> {
     await this.initialized;
     const request = parseRpcInput(SidekickRunRowProjectionSchema, input, "project_sidekick_run_row");
     const identity = this.objectStore.identity();
@@ -2039,7 +2049,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       ).toArray()[0]?.attention_ordinal;
       if (ordinal != null) seatReadAtOwnTurn(this.ctx.storage.sql, requester, ordinal, now);
     };
-    const result = await this.product.commitRuntimeMutation(() => {
+    const { result, envelopes } = await this.product.commitRuntimeMutationWithEffects(() => {
       const now = Date.now();
       const current = held();
       if (!current) {
@@ -2082,7 +2092,10 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       seatRequester(current.turn_id, now);
       return { outcome: "updated" as const, code: "sidekick_run_row_updated" };
     }, true, requester ? [requester] : []);
-    if (result.outcome === "appended" || result.outcome === "updated") await this.flushSemanticRealtimeOutboxBestEffort();
+    if (result.outcome === "appended" || result.outcome === "updated") {
+      await this.flushSemanticRealtimeOutboxBestEffort();
+      return { ...result, envelopesJson: JSON.stringify(envelopes) };
+    }
     return result;
   }
 
