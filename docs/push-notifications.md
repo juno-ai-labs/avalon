@@ -178,7 +178,15 @@ member the Sidekick still admits (`notificationDirectoryState`), consults
 `notificationAllows` for the kind, and links to the Sidekick
 (`conversationLink`). The title is "<Sidekick> needs your input" or
 "<Sidekick> finished / failed / stopped"; the body is the run's reply as plain
-text. Both kinds read the person's **Sidekick runs** choice (`runFinished`),
+text. For Needs input that reply is the question the run is waiting on: a
+run's conversation sends a pending elicitation's prompt as its reply
+([automation-lifecycle.md](automation-lifecycle.md#runs-in-the-shared-conversation)),
+so the push body and the Activity row's preview, which is the body's text,
+carry the question. One notice feeds both, so they cannot disagree, and the
+question is what the recipient needs to decide whether to answer now; before
+this the body was the run's last text turn, usually empty, because the asking
+is not a text turn. A run admitted with no delegate carries the delegation
+notice instead. Both kinds read the person's **Sidekick runs** choice (`runFinished`),
 so one row in Settings covers both.
 
 **Where a push links.** Every push and every mention email or Slack DM links
