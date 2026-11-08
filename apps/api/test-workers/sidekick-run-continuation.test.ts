@@ -958,5 +958,30 @@ describe("Sidekick run continuation", () => {
     const call = provider.calls[callsBefore];
     expect(call, "the answer never reached the model").toBeDefined();
     expect(text(call!.messages[0]?.content)).toContain("Revision one: ask each founder for their update.");
+
+    // The run's transcript, as its view opens it, keeps the question as the
+    // run's turn and the answer as the person's turn after it (design §4).
+    const elicitationTurns = await runInDurableObject(childStub(runId), (instance) => {
+      const transcript = (instance as unknown as { transcript: {
+        createOpeningSnapshot(input: { unreadHighWaterAttentionOrdinal: number | null }): {
+          ranges: { turns: { actor: string; transcriptSequence: number; blocks: {
+            type: string; messageType?: string; structuredContent?: Record<string, unknown> | null;
+          }[] }[] }[];
+        };
+      } }).transcript;
+      return transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null }).ranges
+        .flatMap((range) => range.turns)
+        .sort((left, right) => left.transcriptSequence - right.transcriptSequence)
+        .flatMap((turn) => turn.blocks.flatMap((block) => {
+          if (block.type !== "text" || block.messageType !== "elicitation" || !block.structuredContent) return [];
+          const content = block.structuredContent;
+          const elicitation = ("elicitation" in content ? content.elicitation : content) as { id: string; prompt: string; status: string; answer: unknown };
+          return [{ actor: turn.actor, id: elicitation.id, prompt: elicitation.prompt, status: elicitation.status, answer: elicitation.answer }];
+        }));
+    });
+    expect(elicitationTurns).toEqual([
+      { actor: "assistant", id: elicitationId, prompt: "Which founder first?", status: "open", answer: null },
+      { actor: "human", id: elicitationId, prompt: "Which founder first?", status: "answered", answer: "kb" },
+    ]);
   });
 });
