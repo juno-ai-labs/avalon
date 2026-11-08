@@ -201,7 +201,8 @@ update it in the same change.
 - [`AGENTS.md`](../AGENTS.md) (symlinked as `CLAUDE.md`) — the rule sheet AI
   coding agents read at session start.
 - [`README.md`](../README.md) — repository overview, local setup, quality
-  commands, and the desktop release process.
+  commands, and the desktop build and release commands (the release procedure
+  itself is in [`runbook.md`](runbook.md)).
 - `config/provider-apps` — the source provider manifests that
   [`provider-apps.md`](provider-apps.md) describes.
 

@@ -43,7 +43,7 @@ Before you begin see if there is one or more individual primitives that can be b
 
 Always have a platform mindset. You can always make a simple thing more complicated but never make a complex thing simpler.
 
-Prize **low latency** of opening resources (including spaces, channels, breakouts, artifacts, etc.), opening screens, switching between these, and otherwise interacting with the app or the backend. Keep an eye out for over-engineering and over-validating, trust the platform foundations to be correct and prize low latency instead of double checks. _Low latency is a goal._
+Prize **low latency** of opening resources (Canvases, Sidekicks, artifacts and the rest), opening screens, switching between these, and otherwise interacting with the app or the backend. Keep an eye out for over-engineering and over-validating, trust the platform foundations to be correct and prize low latency instead of double checks. _Low latency is a goal._
 
 ## Keeping the Legion up-to-date
 
