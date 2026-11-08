@@ -25,7 +25,7 @@ the machinery.
 | `apps/site/build/help/markdown.ts` | Renders one page body: GitHub-flavored Markdown, GitHub's HTML sanitizer, `> [!NOTE]` alerts, syntax highlighting, heading ids and anchors, table and code-block wrappers, and the plain text used by search. |
 | `apps/site/build/help/layout.ts` | The page template: header, chapters sidebar, article header for each page kind, chapter contents, previous/next links, outline, and the search dialog. |
 | `apps/site/build/help/site.ts` | Builds every output file: resolves and checks links, publishes images, writes the Markdown copies, `llms.txt`, `llms-full.txt`, `search-index.json` and `sitemap.xml`. |
-| `apps/site/worker/index.ts` | The site's only Worker code. It runs for `/help` and `/help/*` alone (`run_worker_first` in `wrangler.jsonc`): it answers `Accept: text/markdown` with the page's Markdown copy and adds the discovery headers. |
+| `apps/site/worker/index.ts` | The site's only Worker code. It runs for `/`, `/help` and `/help/*` alone (`run_worker_first` in `wrangler.jsonc`): on the homepage it sets the landing CSP (`worker/landing-csp.ts`); under `/help/` it answers `Accept: text/markdown` with the page's Markdown copy and adds the discovery headers. |
 | `apps/site/build/help/plugin.ts` | The Vite plugin: serves pages on request under `vite dev`, and emits every output during `vite build`, linking the `help` entry's hashed script and stylesheet, and naming other entries a page script loads itself (`entryMeta`, the PostHog SDK) in meta tags. |
 | `apps/site/src/help.ts`, `src/help-search.ts` | The browser script: phone menu, copy buttons, the outline's current-section marker, and search. Ranking lives in `help-search.ts` so it can be tested without a DOM. |
 | `apps/site/build/help/og.ts` | Each page's social card: a 1200×630 PNG laid out by Satori and rasterized by resvg (WebAssembly), named by a hash of its words. |
@@ -165,16 +165,18 @@ Barlow for text, Barlow Semi Condensed for display, and a monospace for labels.
   'self'` and `style-src 'self'`, so highlighting is class-based and the theme
   is set in the stylesheet. An inline `style` attribute would be blocked
   silently. Verified visually, no automated guard.
-- **The Worker runs only for `/help`.** `run_worker_first` lists `/help` and
-  `/help/*`, so the landing page, downloads and handoff pages stay pure static
-  assets with no Worker invocation. Widening it puts a script in front of pages
-  whose latency and headers were designed without one.
+- **The Worker runs only for `/help` and the homepage.** `run_worker_first`
+  lists `/`, `/help` and `/help/*`; `/` is there only so the Worker can set the
+  landing CSP, which [`landing-page-tracking.md`](landing-page-tracking.md)
+  and the Worker's own header comment own. Downloads, handoff and every other
+  page stay pure static assets with no Worker invocation. Widening it puts a
+  script in front of pages whose latency and headers were designed without one.
 - **Search and "Copy page" fetch same-origin files**, so `connect-src` includes
   `'self'` on `/help/*` only. `public/_headers` removes the global CSP there
   (`! Content-Security-Policy`) and sets a copy that differs only in
   `connect-src`; adding a second CSP instead would be enforced alongside the
-  first, and the stricter would win. Every other page keeps `connect-src` to
-  the two API origins. Change the two CSP lines together.
+  first, and the stricter would win. Every other page keeps its own
+  `connect-src` from `_headers`, or, on the homepage, from the Worker. Change the two CSP lines together.
 
 ## Boundary
 

@@ -27,7 +27,7 @@ properties without knowing which appearance is active.
 | `apps/desktop/src/renderer/lib/theme.ts` | Desktop native reporting and window synchronization adapter. |
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance setting, drawn with the shared `SegmentedControl` from `components/primitives.tsx`. |
 | `apps/desktop/src/main/theme-assets.ts` | The private cache for a remote font declared by an appearance. |
-| `packages/contracts/src/palette.ts` | The palette keys and `PALETTE_INK` — which of the two absolute inks each fill carries, and the reasoning behind the rule that picks it. Which keys an appearance or a person may hold is in `spaces.ts` and `projects.ts` (storage names kept from before the Canvases pivot), which draw from it. |
+| `packages/contracts/src/palette.ts` | The palette keys and `PALETTE_INK` — which of the two absolute inks each fill carries, and the reasoning behind the rule that picks it. Which keys a person may hold is in `projects.ts` (a storage name kept from before the Canvases pivot), which draws from it. |
 | `packages/ui/src/lib/project-palette.ts` | `markColors()`, the pastel `project-tint`/`project-ink` pair a mark of a hue is painted in, and `glyphInk()`, resolving `PALETTE_INK` to the `palette-ink` token for the fills that have no pair. `apps/desktop/src/renderer/lib/project-palette.ts` only re-exports it. |
 | `apps/desktop/src/renderer/styles/palette.css.node.test.ts` | Recomputes the table from the tokens, and pins the WCAG 2 shortfall and the APCA ties. |
 
@@ -165,10 +165,10 @@ serves it through `rally-font://`.
   60px in the one place nobody had overridden; the value that survives that
   process is the one nobody argued for.
 - **A rule that names a token is not proof the token reaches it.** Check for a
-  shorthand later in `app.css` that shadows the longhand on the same element —
-  `.sidebar-primary-actions` (`app.css:703`) names `sys.space.group.gap` and has
-  never used it, because `.sidebar-secondary-actions` sets a `margin` shorthand
-  at equal specificity further down the file.
+  shorthand later in `app.css` that shadows the longhand on the same element.
+  The case that taught it, a sidebar action row that named
+  `sys.space.group.gap` and never used it because a sibling rule's `margin`
+  shorthand at equal specificity came later, went with the old sidebar.
 - **The hover wash is layered over a control, never substituted for what it
   paints.** `app.css` spells it `--hover-layer`, a `background-image` derived
   from the token, and a hover rule sets that rather than `background`. A

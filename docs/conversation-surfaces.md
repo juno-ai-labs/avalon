@@ -833,9 +833,11 @@ sentence: the text alone passes just as well in the scroller that hides it from
 a reader who has scrolled up, which is the defect that shipped to review. Any visible
 change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
-`lib/query-client.ts`'s cache rules (observers created before the first socket row,
-unmounted before a rerender, and revisited after the default cache lifetime) are
-covered by `lib/retain-query-data.test.ts`. `workspace-socket.test.tsx` renders running labels through disconnect and
+The cache retention rules for observers created before the first socket row,
+unmounted before a rerender, or revisited after the default cache lifetime are
+`retainQueryData` in `lib/retain-query-data.ts`, called from
+`lib/workspace-socket.tsx` and `lib/use-workstream-socket.ts`, and
+`lib/retain-query-data.test.ts` covers them. `workspace-socket.test.tsx` renders running labels through disconnect and
 reconnect and protects fresh activity from a retired owner's delayed close.
 
 ## Slow model notice
