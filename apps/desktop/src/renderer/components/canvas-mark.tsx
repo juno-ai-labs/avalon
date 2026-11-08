@@ -1,28 +1,28 @@
-import type { CanvasArtifactKind, PaletteKey } from '@rally/contracts';
+import { PALETTE_RING, type CanvasArtifactKind } from '@rally/contracts';
 import { IdentityTile } from '@rally/ui/components/identity-tile';
 import { markColors } from '@rally/ui/lib/project-palette';
 import { Archive, FileText, Globe, PanelsTopLeft } from 'lucide-react';
 
+/** What the sheet holds: its newest artifact's kind, or an empty layout while it is only its Chat. */
+const KIND_ICON = { file: FileText, site: Globe, archive: Archive, chat: PanelsTopLeft } as const;
+
 /**
- * Each kind's glyph and hue. design.html §1 and §2 tint a Canvas's sheet by
- * what it holds, in the project palette's pastel pairs (a document violet, a
- * page blue, a bundle amber), and §5 switches the same marks to their dark
- * pairs; a Canvas that is only its Chat so far takes cyan.
+ * A Canvas's hue: one of the project palette's pastel hues, stable for its id,
+ * the way a person's accent is chosen from theirs. design.html §1 colours each
+ * Canvas on its own, and a Canvas stores no colour, so the id decides.
  */
-const KIND_MARK: Record<CanvasArtifactKind | 'chat', { icon: typeof FileText; hue: PaletteKey }> = {
-  file: { icon: FileText, hue: 'violet' },
-  site: { icon: Globe, hue: 'blue' },
-  archive: { icon: Archive, hue: 'amber' },
-  chat: { icon: PanelsTopLeft, hue: 'cyan' },
-};
+export function canvasHue(id: string): (typeof PALETTE_RING)[number] {
+  const hash = [...id].reduce((total, character) => total + character.charCodeAt(0), 0);
+  return PALETTE_RING[hash % PALETTE_RING.length] ?? 'cyan';
+}
 
 /**
  * A Canvas's mark: the page outline every artifact tile uses, holding what its
- * newest artifact is, or an empty layout while it has none, in that kind's
- * pastel pair, the same `markColors` a Sidekick's hexagon takes.
+ * newest artifact is, in the Canvas's own pastel pair through `markColors`, the
+ * mechanism a Sidekick's hexagon uses, so both appearances are themed. A
+ * caller with no Canvas id (a list that names none) gets the cyan pair.
  */
-export function CanvasMark({ kind, size }: { kind: CanvasArtifactKind | null; size?: number }): React.JSX.Element {
-  const mark = KIND_MARK[kind ?? 'chat'];
-  const { ink, tint } = markColors(mark.hue);
-  return <IdentityTile icon={mark.icon} ink={ink} shape="sheet" size={size} tint={tint} />;
+export function CanvasMark({ id, kind, size }: { id?: string; kind: CanvasArtifactKind | null; size?: number }): React.JSX.Element {
+  const { ink, tint } = markColors(id ? canvasHue(id) : 'cyan');
+  return <IdentityTile icon={KIND_ICON[kind ?? 'chat']} ink={ink} shape="sheet" size={size} tint={tint} />;
 }

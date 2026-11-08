@@ -363,7 +363,7 @@ describe('InspectorRail details', () => {
     expect(screen.getByText('Needs attention')).toBeVisible();
   });
 
-  const historyEntry = { title: 'Linear issue create: AVA-9', mimeType: 'text/markdown', contentAvailable: true };
+  const historyEntry = { title: 'Linear issue create: AVA-9', mimeType: 'text/markdown', contentAvailable: true, authorName: null };
   const history: ResourceVersion[] = [
     { ...historyEntry, version: 3, capturedAt: '2026-07-31T14:14:00.000Z', author: { kind: 'agent', runId: 'run-1' }, cause: 'published' },
     { ...historyEntry, version: 2, capturedAt: '2026-07-31T13:40:00.000Z', author: { kind: 'connector', connectionId: 'connection-1' }, cause: 'refetched' },
@@ -407,6 +407,28 @@ describe('InspectorRail details', () => {
     // title is hidden from the accessibility tree without leaving the DOM.
     expect(document.querySelector('.inspector-detail')).not.toBeNull();
     expect(screen.getByRole('heading', { hidden: true, name: watched.title })).toBeInTheDocument();
+  });
+
+  it('names the current version and who made it beside when it was last updated, preferring the server\'s name', () => {
+    const named: ResourceVersion[] = [
+      { ...historyEntry, version: 2, capturedAt: '2026-07-31T14:14:00.000Z', author: { kind: 'member', userId: 'user-1' }, authorName: 'Maya Lin', cause: 'published' },
+      { ...historyEntry, version: 1, capturedAt: '2026-07-31T11:02:00.000Z', author: { kind: 'agent', runId: 'run-1' }, cause: 'created' },
+    ];
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          resourceVersions={named}
+          workstream={{
+            ...workstream,
+            participants: [{ id: 'user-1', name: 'Alex', email: 'alex@example.test', timezone: 'UTC' }],
+            resources: [{ ...watched, currentVersion: 2, updatedAt: '2026-07-31T14:14:00.000Z' }],
+          }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+
+    expect(document.querySelector('.inspector-detail-updated')).toHaveTextContent(/· version 2 · Maya Lin$/u);
   });
 
   it('marks the newest version current even when the detail has not caught up', () => {
@@ -825,7 +847,7 @@ describe('resource detail content preview', () => {
 
   it('offers the resource panel actions from its title pill menu', async () => {
     const onOpenResourceVersion = vi.fn();
-    const version: ResourceVersion = { version: 1, title: note.title, mimeType: 'text/markdown', capturedAt: '2026-10-01T00:00:00.000Z', author: null, cause: null, contentAvailable: true };
+    const version: ResourceVersion = { version: 1, title: note.title, mimeType: 'text/markdown', capturedAt: '2026-10-01T00:00:00.000Z', author: null, authorName: null, cause: null, contentAvailable: true };
     render(
       <Tooltip.Provider>
         <InspectorRail

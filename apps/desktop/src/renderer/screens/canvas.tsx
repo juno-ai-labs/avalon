@@ -142,7 +142,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   // than a conversation whose socket then fails as well. One in the list opens
   // at once, beside the detail read.
   if (!row && !canvas.data) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
-  const mark = <CanvasMark kind={canvas.data?.artifacts[0]?.kind ?? row?.artifactKind ?? null} size={24} />;
+  const mark = <CanvasMark id={id} kind={canvas.data?.artifacts[0]?.kind ?? row?.artifactKind ?? null} size={24} />;
   // The pill's menu, and the header's separate "⋯" button (design.html §2), offer the same.
   const menuItems = <>
     <TitleMenuItem icon={pinned ? <IconPinnedOff aria-hidden="true" size={16} stroke={1.8} /> : <IconPin aria-hidden="true" size={16} stroke={1.8} />} onSelect={togglePin}>

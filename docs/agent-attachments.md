@@ -464,7 +464,11 @@ character envelope.
   while zero characters on both sides is the only whole-resource read.
 - A version row's author identity matches its author kind, or the write that
   would have created it aborts. A wrong attribution is worse than none, because
-  the rail renders it as fact.
+  the rail renders it as fact: in the Versions menu and in the panel's
+  "Last updated today, 10:42 · version 4 · Rally" line (design.html §2), where a
+  run or the system reads "Rally", a member or a connector the `authorName` the
+  versions route resolves (else the room's participant, or the provider), and
+  no author "Unattributed".
 - Provenance is staged on the resource row and consumed by the capture trigger,
   so the pointer swap and the account of who made it are one statement. A swap
   that stages nothing captures an unattributed version rather than inheriting
@@ -756,6 +760,17 @@ existing ten-file cap. Target read/version authorization is independent from
 attachment reservation, since a pin usually names an already-sent resource.
 
 ## Changelog
+
+### 2026-11-08 — The artifact panel names its version and who made it
+
+**What changed:** The panel's "Last updated" line adds "version N · <author>"
+for the current version, and both it and the Versions menu prefer the
+`authorName` the versions route now returns.
+
+**Why:** design.html §2 reads "Last updated today, 10:42 · version 4 · Rally",
+and the PRD has the artifact sit in the panel "with its version" (v1-F11,
+v4-F13). The rail knew only ids for a member outside the room or a connection,
+so it said "A teammate" or the provider where a name existed.
 
 ### 2026-11-07 — `publish_resource` lands in a Canvas, and no conversation inherits a Thread's links
 

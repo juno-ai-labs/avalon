@@ -716,6 +716,8 @@ interface DropdownSelectProps {
   variant?: 'primary' | 'secondary' | 'pill';
   /** Where the list opens; it flips when there is no room. */
   side?: 'top' | 'bottom';
+  /** The glyph after the value, a chevron unless the control says otherwise (a sort's ⇵). */
+  icon?: ReactNode;
 }
 
 /** Shared settings selector: bordered for primary form controls, text-only for
@@ -729,6 +731,7 @@ export function DropdownSelect({
   value,
   variant = 'primary',
   side = 'bottom',
+  icon,
 }: DropdownSelectProps): React.JSX.Element {
   return (
     <Select.Root disabled={disabled} onValueChange={onValueChange} value={value}>
@@ -738,7 +741,7 @@ export function DropdownSelect({
       >
         <Select.Value />
         <Select.Icon aria-hidden="true" className="dropdown-select-chevron">
-          <ChevronDown size={variant === 'pill' ? 13 : 15} strokeWidth={1.7} />
+          {icon ?? <ChevronDown size={variant === 'pill' ? 13 : 15} strokeWidth={1.7} />}
         </Select.Icon>
       </Select.Trigger>
       <Select.Portal>

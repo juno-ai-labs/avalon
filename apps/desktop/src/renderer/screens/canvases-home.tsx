@@ -65,7 +65,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     });
     return <li className="canvas-card" key={canvas.id}>
       <div aria-hidden="true" className="canvas-card-shot">
-        <div className="canvas-card-paper"><CanvasMark kind={canvas.artifactKind} size={44} /></div>
+        <CanvasShot id={canvas.id} kind={canvas.artifactKind} />
         {present.length > 0 && <span className="canvas-card-live"><AvatarStack members={present} nameTooltip={false} showTooltip={false} />Live</span>}
       </div>
       <div className="canvas-card-body">
@@ -105,6 +105,25 @@ export function CanvasesHomeScreen(): React.JSX.Element {
           </section>
         </>}
   </main>;
+}
+
+/**
+ * A card's shot: design.html §1's paper, sketched for what the Canvas holds,
+ * since the row carries no picture of its artifact. A document is lines under
+ * a heading, a site a page in a browser frame, an archive the board's
+ * columns, and a Canvas that is only its Chat its mark on the paper.
+ */
+function CanvasShot({ id, kind }: { id: string; kind: CanvasSidebarRow['artifactKind'] }): React.JSX.Element {
+  if (kind === 'file') {
+    return <div className="canvas-card-paper is-document"><i className="is-heading" /><i /><i className="is-short" /><i /><i className="is-shorter" /></div>;
+  }
+  if (kind === 'site') {
+    return <div className="canvas-card-paper is-site"><i className="is-bar" /><i className="is-hero" /><i className="is-short" /></div>;
+  }
+  if (kind === 'archive') {
+    return <div className="canvas-card-paper is-board">{[3, 2, 1].map((cards, column) => <span key={column}>{Array.from({ length: cards }, (_, card) => <i key={card} />)}</span>)}</div>;
+  }
+  return <div className="canvas-card-paper is-mark"><CanvasMark id={id} kind={null} size={44} /></div>;
 }
 
 /**

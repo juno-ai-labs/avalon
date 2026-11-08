@@ -1,4 +1,5 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
+import { ArrowDownUp } from 'lucide-react';
 import { useMemo, useState, type RefObject } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 
@@ -51,7 +52,7 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
       onRename={() => { void navigate(canvasRoute(canvas.id), { replace: canvas.id === open, state: RENAME_CANVAS_STATE }); }}
       pinned={position !== undefined}
       position={position}
-      tile={<CanvasMark kind={canvas.artifactKind} />}
+      tile={<CanvasMark id={canvas.id} kind={canvas.artifactKind} />}
       time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={canvas.updatedAt} />}
       title={canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}
       to={canvasRoute(canvas.id)}
@@ -74,7 +75,7 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
     <section aria-label="All canvases" className="navigation-section">
       <SectionHeading
         motionKey="canvases"
-        trailing={<DropdownSelect ariaLabel="Sort Canvases" onValueChange={(value) => setOrder(value === 'name' ? 'name' : 'recent')} options={CANVAS_ORDERS} value={order} variant="secondary" />}
+        trailing={<DropdownSelect ariaLabel="Sort Canvases" icon={<ArrowDownUp aria-hidden="true" size={12} strokeWidth={1.8} />} onValueChange={(value) => setOrder(value === 'name' ? 'name' : 'recent')} options={CANVAS_ORDERS} value={order} variant="secondary" />}
       >All canvases</SectionHeading>
       {rows === undefined && <SidebarSkeletonRows count={6} hint />}
       {rows !== undefined && rest.length === 0 && pinned.length === 0 && <p className="navigation-empty">No Canvases yet.</p>}
