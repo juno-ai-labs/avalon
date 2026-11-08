@@ -54,6 +54,7 @@ export * from "./connector-connection-card";
 export * from "./conversation-effects";
 export * from "./conversation-parent";
 export * from "./canvases";
+export * from "./activity";
 export * from "./demo-operations";
 export * from "./demo-seed";
 export * from "./identifiers";
@@ -68,6 +69,7 @@ export * from "./workstream-transcript";
 import type { AutomationSetEvaluatorRulesInputV1 } from "./automation-evaluators";
 import { ConversationParentKindSchema } from "./conversation-parent";
 import { CanvasSidebarListSchema, CanvasSummarySchema } from "./canvases";
+import { ActivityMarkAllSeenCommandSchema, ActivityPageSchema } from "./activity";
 import { RegionSchema, ConfiguredRegionSchema } from "./regions";
 
 export * from "./artifacts";
@@ -2189,6 +2191,7 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     applicationState: z.enum(["foreground", "background"]),
     foregroundWorkstreamId: WorkstreamIdSchema.nullable(),
   }),
+  ActivityMarkAllSeenCommandSchema,
 ]).superRefine((event, context) => {
   if (event.type === "set_presence"
     && event.applicationState === "background"
@@ -2265,6 +2268,11 @@ export const WorkspaceSidebarSchema = z.strictObject({
    * client reading a payload from a server that predates Canvases draws none.
    */
   canvases: CanvasSidebarListSchema.optional(),
+  /**
+   * This viewer's Activity (`docs/activity.md`). Optional, so a client
+   * reading a payload from a server that predates it draws no section.
+   */
+  activity: ActivityPageSchema.optional(),
   /**
    * Compatibility for one release: an always-empty Thread directory page and
    * notes list, which a desktop released before the Canvases and Sidekicks

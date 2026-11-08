@@ -99,7 +99,9 @@ twice. A mention is identified by its message and recipient, an add by its
 source and recipient, so a re-emission under a new message id converges on the
 one row; the same identity under another intent id or other bytes is refused
 as `notification_intent_identity_conflict`. Both kinds of parent record them,
-for any conversation under them.
+for any conversation under them. The same transaction writes the recipient's
+Activity row ([`activity.md`](activity.md)) and tells the host
+(`noteActivityChanged`), which sends that person their list after the write.
 
 ### A Sidekick
 

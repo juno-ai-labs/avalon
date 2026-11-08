@@ -393,6 +393,8 @@ export interface HostedSidekickHost {
    */
   noteViewerReadChanged(userId: string): void;
   readRelationship(workspaceId: string, userId: string): Promise<WorkspaceRelationship | null>;
+  /** See `HostedConversationHost.noteActivityChanged`. */
+  noteActivityChanged(userId: string): void;
   /** Hand a run to the activity Queue, whose consumer provisions it. */
   sendRunProvision(message: { workspaceId: string; automationId: string; runId: string }): Promise<void>;
   /** Hand a review to the activity Queue, whose consumer wakes the wizard with it. */
@@ -1835,7 +1837,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const intents = recordSidekickRunNotices(this.host.storage, {
       workspaceId: row.workspace_id, sidekickId: this.sidekickId, sourceId: `sidekick_run:${notice.runId}:${notice.kind}:${notice.occurredAt}`,
       kind: notice.kind, generation: row.authority_generation, payloadJson, payloadHash: await sha256(payloadJson), recipientUserIds,
-    }, Date.now());
+      runId: notice.runId, reply: notice.reply,
+    }, Date.now(), (userId) => this.host.noteActivityChanged(userId));
     for (const intent of intents) {
       await enqueuePushDelivery(this.env, {
         region: this.env.AVALON_REGION, workspaceId: row.workspace_id,
