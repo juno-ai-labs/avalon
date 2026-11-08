@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatRelative,
   formatSidebarActivityTime,
   formatDayLabel,
   formatDuration,
@@ -72,6 +73,17 @@ describe('presentation rules', () => {
     expect(formatSparseRelativeDate(localDate(2026, 6, 30, 9), now)).toBe('last week');
     expect(formatSparseRelativeDate(localDate(2026, 7, 1, 9), now)).toBe('last week');
     expect(formatSparseRelativeDate(localDate(2026, 6, 15, 9), now)).toBe('last month');
+  });
+});
+
+describe('formatRelative', () => {
+  it('counts whole units elapsed, as the row\'s compact age does', () => {
+    const now = new Date('2026-11-10T15:00:00.000Z');
+    // 4 hours 54 minutes ago: "4h" in the row, so "4 hours ago" beside it.
+    expect(formatSidebarActivityTime('2026-11-10T10:06:00.000Z', now)).toBe('4h');
+    expect(formatRelative('2026-11-10T10:06:00.000Z', now)).toBe('4 hours ago');
+    expect(formatRelative('2026-11-10T14:01:00.000Z', now)).toBe('59 minutes ago');
+    expect(formatRelative('2026-11-10T19:54:00.000Z', now)).toBe('in 4 hours');
   });
 });
 

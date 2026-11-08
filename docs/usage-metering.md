@@ -118,8 +118,9 @@ next, clamped to the last day of a short month, in UTC.
 | Growth | $250 a month | $125 |
 
 The weekly quota is twice the monthly price, divided by four
-(`INCLUDED_USAGE_MULTIPLIER`). The meter turns the warning colour below 20%
-left (`LOW_QUOTA_PERCENT`). Overage is priced at cost. All three are product
+(`INCLUDED_USAGE_MULTIPLIER`). Both meters, Settings' and the account menu's,
+fill in the text colour and turn the warning colour below 20% left
+(`LOW_QUOTA_PERCENT`). Overage is priced at cost. All three are product
 decisions, set in `packages/contracts/src/usage.ts`.
 
 Every workspace starts on Starter. An administrator changes the plan from the
@@ -307,6 +308,18 @@ workspace.
 - `usage_unpriced` and `usage_emit_failed` name what was not metered.
 
 ## Changelog
+
+### 2026-11-08 — The account menu's meter fills in the text colour, not the viewer's accent
+
+**What changed:** The account menu's Quota meter no longer takes the viewer's
+personal colour (`onboarding.css`); it fills like the Settings meter, and the
+warning fill below `LOW_QUOTA_PERCENT` is unchanged.
+
+**Why:** The design inspection (vis2-v3) saw a red bar at 95% beside "95% left
+till Fri 6:00 PM": a red personal colour reads as an allowance nearly used up.
+The low-quota line is the one place the meter changes tone, so the colour of
+the fill is left to say nothing else. The 2026-10 choice of the accent was a
+look, not a signal; its reasoning was not recorded beyond that.
 
 ### 2026-11-07 — Index the ledger by Sidekick
 

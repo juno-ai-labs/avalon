@@ -37,9 +37,9 @@ html[data-personal-color] {
   --av-sys-color-accent-edge: color-mix(in srgb, var(--personal-color) 30%, var(--av-sys-color-surface-canvas));
   --av-sys-color-accent-tint: color-mix(in srgb, var(--personal-color) 20%, transparent);
 }
-/* With a profile, the account menu's Quota meter fills in the reader's own
-   accent; the warning fill still wins below the low-quota line. */
-html[data-personal-color] .workspace-usage-item .meter { --av-cmp-meter-fill: var(--personal-color); }
+/* The account menu's Quota meter keeps the neutral fill every meter has, and
+   the warning fill below the low-quota line: a reader's accent can be red, and
+   a red bar at 95% left read as an allowance nearly used up. */
 .guided-onboarding { width: 100%; height: 100%; overflow: auto; background: var(--av-sys-color-surface-canvas); }
 .guided-page { min-height: 100%; width: min(100%, 1000px); margin: auto; padding: 100px 56px 70px; display: flex; flex-direction: column; align-items: center; gap: 36px; }
 .guided-page header { text-align: center; flex-shrink: 0; z-index: 1; }

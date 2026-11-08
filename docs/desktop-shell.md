@@ -117,7 +117,8 @@ It holds two columns:
   group, then every Canvas by recent activity; its action is **New Canvas**
   (`POST /canvases`, then the new Canvas's route). **Sidekicks** is **Needs
   input**, then Pinned, then every Sidekick by what it last did, or by name
-  from the heading's **Recent** control; its action is **New Sidekick**
+  from the heading's **Recent** control (the same `DropdownSelect` and ⇵
+  glyph as the Canvases list's); its action is **New Sidekick**
   (`/sidekicks/new`). A guest gets neither New action. **Activity** lists the
   person's mentions, adds and Sidekick run notices newest first, each a kind
   glyph, who did what where, the preview, a time and an unseen dot, opening
@@ -202,7 +203,11 @@ a screen without one keeps the sheet's header as its top bar, and closing the
 sheet returns that bar to the section the route belongs to, so a list the
 person only looked at does not title the screen behind it; Activity, which
 stays open after one of its rows is opened, stays when the sheet closed for
-that navigation. Opening the sheet
+that navigation. Landing on a section home by a link or a restored route, the
+shut sheet's bar names that home and carries its actions, whichever list is
+stored; the list itself, once the sheet opens, is the stored one. A pane
+header's folded "More" button sits after the pane's own controls, so a
+Canvas's header reads Share then "⋯" as it does at desktop width. Opening the sheet
 from a pane header moves focus to its close button; closing hands focus back
 to the opener, or to the visible menu button when the opener is gone
 (`useSheetOpener`). Opening anything from it closes it, as do Escape and
@@ -381,13 +386,22 @@ pane keeps the conversation's minimum (v3-R2-2), and every section home, the
 Sidekicks home as well as the Canvases home, hides its own heading at phone
 width (v4-R2-3). Back and Forward read an entry pushed around the router as
 the next one (v1-R2-6), and the Sidekicks home and the not-found states name
-the window (v4-F24).
+the window (v4-F24). Both lists' sort controls draw ⇵ (v4-R2-12), a phone
+header puts its "More" after Share (v4-R2-14), Settings' phone title starts
+at the header's edge with the sections sheet open (v4-F23), a list row's age
+and a spelled-out age count whole units alike (v4-R2-4), and the phone bar
+names the section home the route shows (v3-R2-6).
 
 **Why:** The PRD makes design.html the authority for every screen, and the
 design inspection (v1-F1, v4-F4) measured a 264px list that cut ordinary
 titles the design shows whole. This document said 340px for both columns, a
 number carried over from the single-column sidebar of the navigation
 redesign; the design draws 340px for the list alone, and the design wins.
+Round two found one Sidekick reading "4h" beside "Last run 5 hours ago": the
+compact age floored and the phrase rounded, so both now count whole units
+elapsed. The phone bar read "Activity" over the Canvases home after a link
+landed there, with the home's own heading hidden at that width, so nothing on
+screen named the page.
 design.html §3 draws "All sidekicks" sorted by recency with a "Recent ⇵"
 control; alphabetical rows beside their times read as a broken sort. The
 heading keeps "All Sidekicks", the product noun's case. The 416px sidebar

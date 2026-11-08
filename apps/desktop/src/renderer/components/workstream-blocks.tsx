@@ -1,4 +1,5 @@
 import { useReportMessageIssue } from './message-issue-dialog';
+import { primaryShortcutLabel } from '../lib/shortcut-label';
 import { MessageAnnotations } from './artifact-annotations';
 import { rehypeAnnotationSource } from '../lib/annotation-source';
 import clsx from 'clsx';
@@ -2737,7 +2738,7 @@ export function ElicitationPanel({
           <Button className="elicitation-skip" disabled={submitting} onClick={() => void skip()}>Skip</Button>
           <Button className="elicitation-submit" disabled={!canSubmit || submitting} onClick={() => void submit()}>
             {submitting ? <LoaderCircle aria-hidden="true" className="spin" size={14} /> : null}
-            Submit <kbd aria-hidden="true">⌘↵</kbd>
+            Submit <kbd aria-hidden="true">{primaryShortcutLabel({ apple: '↵', other: 'Enter' })}</kbd>
           </Button>
         </div>
       )}
