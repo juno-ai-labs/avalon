@@ -311,7 +311,10 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
    * Keep what one person has read of the shared conversation, its own
    * `directory_user` report of `member_attention`, so the sidebar row can say
    * whether they have something unread; the newest report wins. A change
-   * republishes the list to that reader alone.
+   * republishes the list to that reader alone. The row is dated by the
+   * report's own `lastReadAt` (when the person read, not when the report
+   * arrived), and each report at an unchanged cursor is a distinct effect, so
+   * reopening a conversation after a run finished clears its Activity row.
    */
   private acceptViewerRead(effect: DirectoryUserEffect, sourceVersion: number, now: number): void {
     const seen = effect.seenAttentionOrdinal ?? 0;
@@ -330,7 +333,7 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
        ON CONFLICT(sidekick_id, user_id) DO UPDATE SET source_version = excluded.source_version,
          seen_attention_ordinal = excluded.seen_attention_ordinal,
          manual_unread_from_ordinal = excluded.manual_unread_from_ordinal, updated_at = excluded.updated_at`,
-      this.parentId, effect.userId, sourceVersion, seen, manual, now,
+      this.parentId, effect.userId, sourceVersion, seen, manual, effect.lastReadAt ? Date.parse(effect.lastReadAt) : now,
     );
     if (!existing || existing.seen_attention_ordinal !== seen || existing.manual_unread_from_ordinal !== manual) {
       this.onViewerReadChanged(effect.userId);
