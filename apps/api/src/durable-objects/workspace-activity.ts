@@ -263,6 +263,7 @@ interface ActivityRow extends Record<string, SqlStorageValue> {
   created_at: number; seen: number; unseen_count: number;
   parent_title: string | null; subject_id: string | null; artifact_title: string | null;
   request_state: "pending" | "approved" | "denied" | null; request_decided_by_name: string | null;
+  request_decided_by_user_id: string | null;
 }
 
 /** Who a page is read for: their id, their Organization, and whether they are a member rather than a guest. */
@@ -326,7 +327,8 @@ export function activityPage(
             listed.message_sequence, listed.run_id,
             listed.actor_kind, listed.actor_id, listed.preview, listed.created_at, listed.seen,
             SUM(1 - listed.seen) OVER () AS unseen_count, listed.parent_title, listed.subject_id,
-            artifact.title AS artifact_title, request.state AS request_state, request.decided_by_name AS request_decided_by_name
+            artifact.title AS artifact_title, request.state AS request_state, request.decided_by_name AS request_decided_by_name,
+            request.decided_by_user_id AS request_decided_by_user_id
        FROM listed
        LEFT JOIN resources artifact ON listed.kind = 'artifact_updated' AND artifact.id = listed.subject_id
        LEFT JOIN canvas_access_requests request ON listed.kind = 'access_request' AND request.request_id = listed.subject_id
@@ -354,7 +356,9 @@ export function activityPage(
         ? { artifact: row.subject_id !== null && row.artifact_title !== null ? { resourceId: row.subject_id, title: row.artifact_title } : null }
         : {}),
       ...(row.kind === "access_request"
-        ? { accessRequest: row.request_state === null ? null : { state: row.request_state, decidedByName: row.request_decided_by_name } }
+        ? { accessRequest: row.request_state === null ? null : {
+            state: row.request_state, decidedByName: row.request_decided_by_name, decidedByUserId: row.request_decided_by_user_id,
+          } }
         : {}),
     } as ActivityItem)),
   };

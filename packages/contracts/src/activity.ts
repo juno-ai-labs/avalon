@@ -61,8 +61,15 @@ export const ActivityItemSchema = z.object({
   /**
    * For `access_request`: where the request stands now, and who decided it.
    * A settled request reads as seen. Absent from a server older than it.
+   * `decidedByUserId` lets a client say "You approved" to the decider
+   * themselves; optional, so a client reading an older server still parses,
+   * and the name stays the fallback display.
    */
-  accessRequest: z.object({ state: z.enum(["pending", "approved", "denied"]), decidedByName: z.string().nullable() }).nullable().optional(),
+  accessRequest: z.object({
+    state: z.enum(["pending", "approved", "denied"]),
+    decidedByName: z.string().nullable(),
+    decidedByUserId: IdSchema.nullable().optional(),
+  }).nullable().optional(),
   /** For `artifact_updated`: the artifact the newest version is of, which the row opens the Canvas onto. */
   artifact: z.object({ resourceId: IdSchema, title: z.string() }).nullable().optional(),
   createdAt: TimestampSchema,
