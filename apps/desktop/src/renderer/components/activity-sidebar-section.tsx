@@ -1,13 +1,14 @@
 import type { ActivityItem } from '@rally/contracts';
-import { IconAt, IconCircleCheck, IconMessageQuestion, IconUserPlus } from '@tabler/icons-react';
+import { IconAt, IconCircleCheck, IconFilePencil, IconLock, IconLockOpen, IconMessage, IconMessageQuestion, IconUserPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
-import type { ReactNode, RefObject } from 'react';
+import { Fragment, type ReactNode, type RefObject } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
 import { canvasRoute, canvasTurnRoute, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList, type ActivityList } from '../lib/sidebar-list-store';
+import { AccessDecisionActions } from './canvas-access-request';
 import { RowLayout, SectionHeading, useSectionMotion } from './navigation-rows';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
@@ -18,39 +19,71 @@ export function useActivityList(): ActivityList | undefined {
   return useSocketOwnedList<ActivityList>(SIDEBAR_LIST_QUERY_KEYS.activity).data;
 }
 
-export const ACTIVITY_EMPTY = 'Nothing yet. Mentions, Canvases you are added to and Sidekick runs that need you or finish show up here.';
+export const ACTIVITY_EMPTY = 'Nothing yet. Mentions, replies, Canvases you are added to and Sidekick runs that need you or finish show up here.';
 
-/** What happened, in the row's words; a run's own row names the Sidekick and needs no "in". */
-const VERBS: Record<ActivityItem['kind'], string> = {
-  mention: 'mentioned you in',
-  participant_added: 'added you to',
-  needs_input: 'needs your input',
-  run_finished: 'finished a run',
-};
+/**
+ * Who did what where, in the row's words. A run's own row names the Sidekick
+ * and needs no "in"; a reply is only who and where, its message the preview.
+ */
+function rowText(item: ActivityItem, who: string, where: string): ReactNode {
+  const actor = <strong>{who}</strong>;
+  const place = <strong>{where}</strong>;
+  switch (item.kind) {
+    case 'mention': return <>{actor} mentioned you in {place}</>;
+    case 'participant_added': return <>{actor} added you to {place}</>;
+    case 'needs_input': return <>{actor} needs your input</>;
+    case 'run_finished': return <>{actor} finished a run</>;
+    case 'new_message': return <>{actor} in {place}</>;
+    case 'artifact_updated': return <>{actor} updated <strong>{item.artifact?.title || 'an artifact'}</strong> in {place}</>;
+    case 'access_request': return <>{actor} asked to open {place}</>;
+    case 'access_granted': return <>{actor} let you into {place}</>;
+  }
+}
 
 const GLYPHS: Record<ActivityItem['kind'], ReactNode> = {
   mention: <IconAt aria-hidden="true" size={18} stroke={1.8} />,
   participant_added: <IconUserPlus aria-hidden="true" size={18} stroke={1.8} />,
   needs_input: <IconMessageQuestion aria-hidden="true" size={18} stroke={1.8} />,
   run_finished: <IconCircleCheck aria-hidden="true" size={18} stroke={1.8} />,
+  new_message: <IconMessage aria-hidden="true" size={18} stroke={1.8} />,
+  artifact_updated: <IconFilePencil aria-hidden="true" size={18} stroke={1.8} />,
+  access_request: <IconLock aria-hidden="true" size={18} stroke={1.8} />,
+  access_granted: <IconLockOpen aria-hidden="true" size={18} stroke={1.8} />,
 };
 
 /**
- * Where a row opens: a Canvas Chat mention at its message, any other Canvas
- * row at the Canvas, and a Sidekick row at its conversation, where a run's row
- * is. A run that needs input, and a mention in one of a Sidekick's runs, open
- * that run, where its question is. A mention recorded before it carried its
- * message's sequence opens the Canvas.
+ * The second line: the preview, except on a settled access request, which
+ * says who decided ("Maya approved", "Maya denied") in place of the message.
+ */
+function rowDetail(item: ActivityItem): string {
+  const request = item.kind === 'access_request' ? item.accessRequest : null;
+  if (request && request.state !== 'pending') return `${request.decidedByName || 'Someone'} ${request.state}`;
+  return item.preview ?? '';
+}
+
+/**
+ * Where a row opens: a Canvas Chat mention or reply at its message, a pinned
+ * Canvas's new version at the Canvas with that artifact open (`?artifact=`),
+ * any other Canvas row at the Canvas (an access request's Share panel lists
+ * it too), and a Sidekick row at its conversation, where a run's row is. A
+ * run that needs input, and a mention or reply in one of a Sidekick's runs,
+ * open that run, where its question is. A mention recorded before it carried
+ * its message's sequence opens the Canvas.
  */
 export function activityRoute(item: ActivityItem): string {
+  const message = item.kind === 'mention' || item.kind === 'new_message';
   if (item.parentKind === 'canvas') {
-    return item.kind === 'mention' && item.substreamId === '0' && item.messageId !== null && item.messageSequence !== null
-      ? canvasTurnRoute(item.parentId, item.messageId, item.messageSequence)
-      : canvasRoute(item.parentId);
+    if (message && item.substreamId === '0' && item.messageId !== null && item.messageSequence !== null) {
+      return canvasTurnRoute(item.parentId, item.messageId, item.messageSequence);
+    }
+    if (item.kind === 'artifact_updated' && item.artifact) {
+      return `${canvasRoute(item.parentId)}?artifact=${encodeURIComponent(item.artifact.resourceId)}`;
+    }
+    return canvasRoute(item.parentId);
   }
   const sidekick = `/sidekicks/${encodeURIComponent(item.parentId)}`;
   if (item.kind === 'needs_input' && item.runId !== null) return `${sidekick}${sidekickRunSearch(item.runId)}`;
-  return item.kind === 'mention' && item.substreamId !== null && item.substreamId !== '0'
+  return message && item.substreamId !== null && item.substreamId !== '0'
     ? `${sidekick}${sidekickRunSearch(item.substreamId)}`
     : sidekick;
 }
@@ -95,24 +128,30 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
     {activity === undefined && <SidebarSkeletonRows count={5} hint />}
     {activity !== undefined && activity.items.length === 0 && <p className="navigation-empty">{ACTIVITY_EMPTY}</p>}
     {activity?.items.map((item) => {
-      const run = item.kind === 'needs_input' || item.kind === 'run_finished';
       const active = isOpen(item);
-      return <Link
-        aria-current={active ? 'page' : undefined}
-        className={clsx('navigation-row activity-row', item.seen ? 'is-seen' : 'is-unread', active && 'is-active')}
-        data-motion-key={`activity:${item.id}`}
-        key={item.id}
-        to={activityRoute(item)}
-      >
-        <RowLayout
-          detail={item.preview ?? ''}
-          tile={<span className={clsx('activity-row-glyph', `is-${item.kind}`)}>{GLYPHS[item.kind]}</span>}
-          time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={item.createdAt} />}
-          title={<span className="activity-row-text"><strong>{who(item)}</strong> {VERBS[item.kind]}{!run && <> <strong>{where(item)}</strong></>}</span>}
-          unread={!item.seen}
-          unreadLabel="Unseen"
-        />
-      </Link>;
+      // Approve and Deny sit under a pending request's row, beside the link
+      // rather than in it: a link holds no buttons.
+      const deciding = item.kind === 'access_request' && item.accessRequest?.state === 'pending' && item.actor.id !== null;
+      return <Fragment key={item.id}>
+        <Link
+          aria-current={active ? 'page' : undefined}
+          className={clsx('navigation-row activity-row', item.seen ? 'is-seen' : 'is-unread', active && 'is-active')}
+          data-motion-key={`activity:${item.id}`}
+          to={activityRoute(item)}
+        >
+          <RowLayout
+            detail={rowDetail(item)}
+            tile={<span className={clsx('activity-row-glyph', `is-${item.kind}`)}>{GLYPHS[item.kind]}</span>}
+            time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={item.createdAt} />}
+            title={<span className="activity-row-text">{rowText(item, who(item), where(item))}</span>}
+            unread={!item.seen}
+            unreadLabel="Unseen"
+          />
+        </Link>
+        {deciding && <div className="activity-row-actions">
+          <AccessDecisionActions canvasId={item.parentId} label={who(item)} userId={item.actor.id!} />
+        </div>}
+      </Fragment>;
     })}
   </section>;
 }
