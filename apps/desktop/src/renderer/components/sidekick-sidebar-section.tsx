@@ -1,12 +1,13 @@
-import { useMemo, type RefObject } from 'react';
+import { useMemo, useState, type RefObject } from 'react';
 import { matchPath, useLocation } from 'react-router-dom';
 
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
+import { formatNextRun, sidekickActivityAt, sidekickStatus } from '../lib/sidekick-status';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
 import type { AutomationSummary } from '../lib/types';
 import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, splitPinned, usePinWrite, useRowPinDrop, useSectionMotion } from './navigation-rows';
-import { ErrorNotice } from './primitives';
+import { DropdownSelect, ErrorNotice } from './primitives';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
 import { AutomationGlyph } from './workstream-glyph';
@@ -16,15 +17,28 @@ export function useSidekickList(): AutomationSummary[] | undefined {
   return useSocketOwnedList<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
 }
 
-/** A Sidekick row's second line: what it is waiting on, or where it stands. */
+/**
+ * A Sidekick row's second line, the state the PRD names: the question it is
+ * waiting on, a run under way, paused, or when it next runs; else when it
+ * last ran.
+ */
 function sidekickRowState(row: AutomationSummary): React.ReactNode {
-  // The question itself, when a run asked one: the row says what it waits on.
-  if (row.needsInput) return row.pendingQuestion ?? 'Needs input';
-  if (row.status === 'paused') return 'Paused';
-  if (row.status === 'draft') return 'Draft';
-  if (row.nextRunAt) return <>Next run <RelativeTime value={row.nextRunAt} /></>;
-  return 'Active';
+  switch (sidekickStatus(row)) {
+    case 'needs_input': return row.pendingQuestion ?? 'Needs input';
+    case 'working': return <><span aria-hidden="true" className="sidekick-working-dot" />Working</>;
+    case 'paused': return <span className="sidekick-row-paused">Paused</span>;
+    case 'draft': return 'Draft';
+    case 'active':
+      if (row.nextRunAt) return `Runs ${formatNextRun(row.nextRunAt, 'long')}`;
+      if (row.lastRunAt) return <>Last run <RelativeTime value={row.lastRunAt} /></>;
+      return 'Active';
+  }
 }
+
+type SidekickOrder = 'recent' | 'name';
+
+/** design.html §3's "Recent ⇵": by what each last did, or by name. */
+const SIDEKICK_ORDERS = [{ value: 'recent', label: 'Recent' }, { value: 'name', label: 'Name' }];
 
 /**
  * The Sidekicks section: the Sidekicks waiting on information only a person
@@ -38,6 +52,10 @@ export function SidekicksSection({ scroll }: { scroll: RefObject<HTMLElement | n
   const rows = useSidekickList();
   const waiting = useMemo(() => (rows ?? []).filter((row) => row.needsInput), [rows]);
   const { pinned, rest } = useMemo(() => splitPinned((rows ?? []).filter((row) => !row.needsInput)), [rows]);
+  const [order, setOrder] = useState<SidekickOrder>('recent');
+  const sorted = useMemo(() => [...rest].sort(order === 'name'
+    ? (a, b) => a.name.localeCompare(b.name)
+    : (a, b) => sidekickActivityAt(b).localeCompare(sidekickActivityAt(a))), [order, rest]);
   const pinnedIds = useMemo(() => new Set(pinned.map((row) => row.id)), [pinned]);
   const { error: pinError, setPinned } = usePinWrite(api ? (id, next) => api.setSidekickPinned(id, next) : undefined, 'Sidekick');
   const { drop, sourceProps, targetProps } = useRowPinDrop(pinnedIds, (id) => setPinned(id, true));
@@ -55,10 +73,12 @@ export function SidekicksSection({ scroll }: { scroll: RefObject<HTMLElement | n
     pinned={options.pinned}
     position={options.position}
     tile={<span className="navigation-sidekick-mark"><AutomationGlyph {...(sidekick.appearance ? { appearance: sidekick.appearance } : {})} id={sidekick.id} /></span>}
-    time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={sidekick.lastRunAt ?? sidekick.updatedAt} />}
+    time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={sidekickActivityAt(sidekick)} />}
     title={sidekick.name}
     to={`/sidekicks/${encodeURIComponent(sidekick.id)}`}
-    unread={sidekick.unread === true}
+    // A Sidekick waiting on someone is for them to look at, as design §3
+    // draws it; the one open is being read, so its own run does not mark it.
+    unread={sidekick.id !== open && (sidekick.unread === true || sidekickStatus(sidekick) === 'needs_input')}
   />;
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Sidekick could not be pinned. Try again.</ErrorNotice>}
@@ -78,10 +98,13 @@ export function SidekicksSection({ scroll }: { scroll: RefObject<HTMLElement | n
       {pinned.map((sidekick, index) => row(sidekick, { pinned: true, position: pinnedPosition(index, pinned.length), draggable: false }))}
     </PinnedSection>
     <section aria-label="All Sidekicks" className="navigation-section">
-      <SectionHeading motionKey="sidekicks">All Sidekicks</SectionHeading>
+      <SectionHeading
+        motionKey="sidekicks"
+        trailing={<DropdownSelect ariaLabel="Sort Sidekicks" onValueChange={(value) => setOrder(value === 'name' ? 'name' : 'recent')} options={SIDEKICK_ORDERS} value={order} variant="secondary" />}
+      >All Sidekicks</SectionHeading>
       {rows === undefined && <SidebarSkeletonRows count={5} hint />}
       {rows !== undefined && rows.length === 0 && <p className="navigation-empty">No Sidekicks yet.</p>}
-      {rest.map((sidekick) => row(sidekick, { pinned: false, draggable: true }))}
+      {sorted.map((sidekick) => row(sidekick, { pinned: false, draggable: true }))}
     </section>
   </>;
 }

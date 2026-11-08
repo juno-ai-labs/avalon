@@ -10,7 +10,7 @@ import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
-import { RelativeTime } from '../components/relative-time';
+import { formatNextRun, sidekickStatus, type SidekickStatus } from '../lib/sidekick-status';
 import type { AutomationSummary } from '../lib/types';
 
 type SidekickFilter = 'all' | 'you' | 'workspace' | 'paused';
@@ -32,9 +32,25 @@ function matchesFilter(item: AutomationSummary, filter: SidekickFilter): boolean
   }
 }
 
-function statusLabel(item: AutomationSummary): string {
-  if (item.needsInput) return 'Needs input';
-  return item.status === 'draft' ? 'Draft' : item.status === 'paused' ? 'Paused' : 'Active';
+/**
+ * The Status column's pill, as design.html §3 colours it. Waiting on someone is
+ * the badge beside the name, so that row's pill says what it is otherwise.
+ */
+const STATUS_PILL: Record<SidekickStatus, string> = {
+  needs_input: 'Active',
+  working: 'Working',
+  paused: 'Paused',
+  draft: 'Draft',
+  active: 'Active',
+};
+
+function StatusPill({ item }: { item: AutomationSummary }): React.JSX.Element {
+  const status = sidekickStatus(item);
+  const tone = status === 'needs_input' ? 'active' : status;
+  return <span className={`sidekick-status-pill is-${tone}`}>
+    {status === 'working' && <span aria-hidden="true" className="sidekick-working-dot" />}
+    {STATUS_PILL[status]}
+  </span>;
 }
 
 function sharedWithLabel(item: AutomationSummary): string {
@@ -66,7 +82,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
   );
   const newSidekick = <Link className="button button-primary window-no-drag" to="/sidekicks/new"><Plus aria-hidden="true" size={16} />New Sidekick</Link>;
   return <main className="sidekicks-library">
-    <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1><p>A little help that knows how you work.</p></div><div className="sidekicks-library-actions">{newSidekick}</div></header>
+    <header className="sidekicks-library-heading window-drag"><div><h1>Sidekicks</h1><p>AI teammates your whole team can talk to.</p></div><div className="sidekicks-library-actions">{newSidekick}</div></header>
     <div className="sidekicks-library-controls">
       <SidebarSearch mode="input" aria-label="Search Sidekicks" placeholder="Search Sidekicks" value={search} onChange={(event) => setSearch(event.target.value)} />
     </div>
@@ -75,16 +91,16 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
         <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}
     </div>
     <section aria-labelledby="sidekick-results-title">
-    <div className="sidekick-results-heading"><h2 id="sidekick-results-title">{search ? 'Search results' : 'Your Sidekicks'}</h2><span role="status" aria-label="Sidekick count">{query.isSuccess ? `${items.length} Sidekicks` : ''}</span></div>
+    <div className="sidekick-results-heading"><h2 id="sidekick-results-title">{search ? 'Search results' : 'Your Sidekicks'}</h2><span role="status" aria-label="Sidekick count">{query.isSuccess ? `${items.length} ${items.length === 1 ? 'Sidekick' : 'Sidekicks'}` : ''}</span></div>
     {query.isLoading ? (socket ? <PushedListPending label="Loading Sidekicks…" noun="Sidekicks" /> : <OpeningState label="Loading Sidekicks…" />) : query.error ? <ErrorNotice occurrence={query.error}>{query.error.message}</ErrorNotice> : items.length === 0 ? <EmptyState action={query.data?.length ? undefined : newSidekick} title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
       // The row's link is its title, stretched over the whole card in CSS.
       <ul className="sidekicks-library-list sidekicks-library-rows">{items.map((item) => <li key={item.id}>
         <span className="sidekick-list-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>
-        <div className="sidekick-list-copy"><h3><Link className="sidekick-list-link" to={`/sidekicks/${item.id}`}>{item.name}</Link></h3><p>{item.description}</p></div>
+        <div className="sidekick-list-copy"><h3><Link className="sidekick-list-link" to={`/sidekicks/${item.id}`}>{item.name}</Link>{sidekickStatus(item) === 'needs_input' && <span className="sidekick-needs-input-badge">Needs input</span>}</h3><p>{item.description}</p></div>
         <dl className="sidekick-list-facts">
-          <div><dt>Status</dt><dd>{statusLabel(item)}</dd></div>
+          <div><dt>Status</dt><dd><StatusPill item={item} /></dd></div>
           <div><dt>Shared with</dt><dd>{sharedWithLabel(item)}</dd></div>
-          <div><dt>Next</dt><dd>{item.status === 'active' && item.nextRunAt ? <RelativeTime value={item.nextRunAt} /> : '—'}</dd></div>
+          <div><dt>Next</dt><dd>{item.status === 'active' && item.nextRunAt ? formatNextRun(item.nextRunAt) : '—'}</dd></div>
         </dl>
         <ChevronRight className="sidekick-list-chevron" aria-hidden="true" size={18} />
       </li>)}</ul>}

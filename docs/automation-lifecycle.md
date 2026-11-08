@@ -1038,9 +1038,17 @@ run reads (`conversation-message-opening.ts`, structured kind
 `sidekick_conversation_message`), written for the model, so the client draws it
 as the caption "Started by a message in the conversation."
 
-A Sidekick's row, in the sidebar and on the home, says **Active** while a run is
-under way, where the mockup draws **Working**: a Sidekick summary carries no
-running flag, and the row says only what its fields hold. The home reads the
+A Sidekick's row says where it stands from `AutomationSummary`
+(`lib/sidekick-status.ts`): waiting on someone (`needsInput`, with the run's
+`pendingQuestion` as the sidebar row's second line), **Working** while its
+newest run is live (`runState`), **Paused** in amber, **Draft**, or when it
+next runs ("Runs Friday 2:00 PM", the weekday within the coming week and the
+date beyond it), else when it last ran. On the home the state is the design's
+pill (green Active and Working, amber Paused, dashed Draft) with a red **Needs
+input** badge beside the name, and the count reads "1 Sidekick". In the
+sidebar a row waiting on someone carries the unread dot, every other row is
+listed by what it last did (newest run or change) or by name, and the
+Sidekick open is never drawn unread, since it is being read. The home reads the
 list the workspace socket keeps, whose sidebar read is the only one carrying
 `needsInput` and `unread`; `GET /sidekicks` serves only a tree with no
 workspace socket.
@@ -1804,6 +1812,11 @@ The details column also follows the design: **Wakes on**, **Uses** and
 **Writes to** are always drawn, reading **Nothing yet** when empty, and a
 draft shows neither Pause nor the delegation block. The inspection could not
 tell a Sidekick that uses nothing from one whose block was hidden.
+
+The rows say the state the PRD names ("working, next run, paused") from the
+`runState`, `nextRunAt` and `pendingQuestion` the server now sends, and the
+home draws design §3's pills; the "Active while a run is under way" gap the
+plan recorded is closed.
 
 **What a future change must respect:** the inline form answers through the
 run's conversation, never through `"0"`; it opens a socket only while its row
