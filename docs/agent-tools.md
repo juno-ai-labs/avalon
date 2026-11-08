@@ -733,9 +733,9 @@ Where an argument must be a specific kind of identifier, validate that at the
 schema boundary rather than letting a wrong-family value produce a confusing
 "not found" three layers down. Small models very commonly send the right-looking
 value from the wrong family — a channel id where a user id goes, a workspace id
-where a work-stream id goes.
+where a conversation (`WorkstreamId`) id goes.
 
-And when you reject, **name what you expected**: "expected a work-stream id,
+And when you reject, **name what you expected**: "expected a conversation id,
 got a workspace id" turns a dead end into a one-step correction, where "invalid
 id" leaves the model guessing. This composes with principle 3: a reference the
 model can reasonably know by name should accept the name, but anywhere the value
@@ -857,7 +857,7 @@ prefix-aware, and a `sidekick`-prefixed run gets the same sentence with **no**
 `suggestedCall` — Sidekick runs hold no Terminal, so naming that tool would
 trade one dead end for a worse one.
 
-Three further work-stream tools read a **live artifact's stored data**, and are on
+Three further `rally:workstream` tools read a **live artifact's stored data**, and are on
 this plugin rather than Terminal's deliberately: reading a poll's tally must not
 require a sandbox, and the run answering a data question is usually not the run
 that built the page.
@@ -886,7 +886,7 @@ a working outcome rather than a broken one, and points at the Terminal import fo
 reading its source. Results are the site's own data, written by its visitors, and
 are handled as untrusted content wherever they surface.
 
-The work-stream runtime now exposes five bounded content operations. The old
+The conversation runtime exposes five bounded content operations. The old
 `workstream_read` hard-capped index is replaced by
 `list_resources`, whose first call accepts an optional natural-
 language kind and whose page-ID-only continuations can exhaust more than fifty
@@ -981,7 +981,7 @@ saved tool cannot express either, so item 12 has nothing to close.
 
 The deferred `rally:terminal` plugin is the concrete file/command family that
 follows these rules. All ten tools are exposed together after plugin load and
-execute serially against one authority-fenced work-stream workspace. Model-facing
+execute serially against one authority-fenced conversation workspace. Model-facing
 names are prefixed by Bind as `terminal_<name>`. The runtime retains internal
 hashes and an exclusive mutation lease, but none of these arguments or outputs
 contains `expectedRevision`; exact file text or patch context supplies the
@@ -1070,7 +1070,7 @@ Common failures are designed as loop repairs:
 | `workspace_backup_too_large` | Remove regenerable dependency/output directories or publish large artifacts, then retry once the compressed recoverable state is at most 50 MiB. |
 | `working_tree_dirty`, `publication_conflict`, `nothing_to_publish` | Use local `git status`, check out the host-selected branch, commit intended changes, or rebase onto the selected base, then retry publication only after local state is valid. |
 | `publication_policy_denied`, publication size/path limits | Remove GitHub Actions workflow changes or split/reduce the committed change; a Terminal run cannot elevate this boundary. |
-| `publication_not_authorized`, `publication_target_closed` | Continue from an active participant run with current full repository access, or use standard `git`/`gh`; use a fresh work stream when the typed publisher's convergent PR is closed/merged. |
+| `publication_not_authorized`, `publication_target_closed` | Continue from an active participant run with current full repository access, or use standard `git`/`gh`; use a fresh conversation when the typed publisher's convergent PR is closed/merged. |
 | `command_outcome_unknown`, `tool_receipt_missing`, retryable provider failures | Retry the exact deterministic call so Rally can reconcile its durable receipt; do not invent a new command, id, or branch. |
 
 Adding or changing a Terminal tool requires this input/output/recovery registry,

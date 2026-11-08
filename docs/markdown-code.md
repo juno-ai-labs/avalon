@@ -34,7 +34,7 @@ The readers, each of which used to carry its own answer:
 | The TeX repair | `contracts/src/model-markdown.ts` (`normalizeModelMarkdown`) | Every kind of code |
 | The email block parser | `api/src/services/email-markdown.ts` (`blocksFromMarkdown`) | Fenced blocks only |
 | The email plain-text part | `api/src/services/email-markdown.ts` (`markdownToEmailText`) | Fenced blocks only |
-| The streaming splitter | `desktop/renderer/components/workstream-blocks.tsx` (`splitStreamingMarkdown`) | Fenced blocks only |
+| The streaming splitter | `desktop/src/renderer/components/workstream-blocks.tsx` (`splitStreamingMarkdown`) | Fenced blocks only |
 
 The split in that last column is deliberate, and the [boundary](#boundary) says
 why: the first four are *rewriters*, which must not touch code of any kind; the
@@ -131,7 +131,8 @@ this module's rule would trade a rendering artifact for a delivery defect.
 It does not own what any reader does with the answer:
 [`markdown-rendering.md`](markdown-rendering.md) owns the desktop renderer and
 its streaming splitter, [`model-text-normalization.md`](model-text-normalization.md)
-the TeX repair, and `digests.md` (retired) the email renderer. The citation
+the TeX repair; the email renderer has no owning document since the digest that
+introduced it was retired. The citation
 protocol that `citations.ts` holds is
 [`markdown-rendering.md`](markdown-rendering.md)'s too.
 
@@ -178,6 +179,8 @@ pnpm --filter @rally/contracts exec vitest run src/citations.test.ts src/model-m
 pnpm --filter @rally/api exec vitest run test/email-markdown.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
 ```
+
+## Changelog
 
 ### 2026-08-28 — Created, so the classifier `citations.ts` grew is the one everybody reads
 

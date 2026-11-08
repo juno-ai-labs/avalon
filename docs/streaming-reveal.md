@@ -62,7 +62,7 @@ Four paths deliberately do not pace:
 - **A hidden document.** Animation frames stop, so frames arriving while
   hidden apply whole, and going hidden flushes whatever was held. Nobody is
   watching the animation.
-- **An active-stream checkpoint.** Someone arriving at a work stream mid-turn
+- **An active-stream checkpoint.** Someone arriving at a conversation mid-turn
   gets the accumulated text at once; pacing begins with the first live delta.
 - **A failed observable attempt.** Provider retry and fallback are already
   closed once a delta is visible. The canonical failure status removes the
@@ -101,10 +101,10 @@ Four paths deliberately do not pace:
 
 ## Boundary
 
-This module owns *when received text becomes visible* on the work-stream
+This module owns *when received text becomes visible* on the conversation
 transcript, and nothing else. It does not decide what arrives —
 `createSequencedStreamDeltaBatcher` in
-`apps/api/src/services/integrations.ts` is the one batcher on the work-stream
+`apps/api/src/services/integrations.ts` is the one batcher on the conversation
 socket path and owns the wire cadence
 ([`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) says why frames
 are batched at all; `createTextDeltaBatcher` in `packages/agent-harness`
@@ -150,7 +150,7 @@ narration through a different surface and is deliberately not paced by this.
   `scripts/measure-stream-smoothness.mjs`, which plays a synthetic turn into
   the live renderer over CDP (per
   [`dev-environment.md`](dev-environment.md#what-cannot-be-verified-in-a-sandbox))
-  through an exact emulation of the work-stream wire batcher, and reports the
+  through an exact emulation of the conversation wire batcher, and reports the
   distributions this module is judged by.
 
 ## Performance and cost
@@ -169,6 +169,8 @@ that makes a per-tick commit O(reply length) again — an unmemoised markdown
 body, canonical projection depending on overlay identity, a global transcript
 sort, a segment key that churns, a `mentions` default that mints a new array per
 render — multiplies at 60 commits a second, not 8.
+
+## Changelog
 
 ### 2026-09-08 — Park pacing on the frame that drains the buffer
 

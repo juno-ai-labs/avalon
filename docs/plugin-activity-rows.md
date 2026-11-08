@@ -1,6 +1,6 @@
 # Plugin activity rows
 
-What the work-stream transcript shows in place of an agent's tool calls: one row
+What a conversation's transcript shows in place of an agent's tool calls: one row
 per plugin per uninterrupted stretch of work, saying which place Rally is working
 in and for how long — "Using Slack for 4m 02s", becoming "Used Slack for 5m 02s"
 when the plugin is done.
@@ -29,7 +29,7 @@ them.
 | `apps/desktop/src/renderer/components/primitives.tsx` | `ConnectorMark`, the one component that draws one. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Settings' provider cards and installed-connection rows, both reaching a mark from the connector's own type. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks, thinking blocks, and plugin activities out of the canonical snapshot, and marks the seam where its coverage is not contiguous; `groupPluginToolMessages` collapses the composed feed, `groupThinkingMessages` collapses the thinking left in it, and `collapseSettledWorkIntoAccordion` folds each finished stretch of a run behind the answer that reported on it, carrying the total `foldSettledWorkIntoMessages` resolved where that stretch is the whole response. `thoughtVerb` and `isThinkingEvent` are the one place the two thought rows are told apart. |
-| `apps/desktop/src/renderer/screens/workstream.tsx` | Applies the four passes in order, and is the only caller of any of them. |
+| `apps/desktop/src/renderer/screens/conversation-surface.tsx` | Applies the four passes in order, and is the only caller of any of them. |
 | `apps/desktop/src/renderer/lib/types.ts` | `WorkTotal` — the one shape a settled total has, carried by `workSummary` in a message header and by `workAccordion` on the row over the run, so the total can move between them without the two drifting apart. `WorkSpan` — when a row's work happened, carried by `workSpans`, which is what a stretch of several rows is added up by. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row; `ThinkingGlyph` draws the thinking row's brain and `ThoughtBlock` decides which of the two thought rows gets it; `WorkAccordionBlock` is the closed row a reported-on stretch becomes, and `WorkAccordionRow` draws what is inside it through those same two blocks. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | The shared elapsed-time row; its `icon` slot is what lets a plugin's mark, or the thinking row's brain, stand in for the orb. |
@@ -494,7 +494,7 @@ is the one that might have been partly unloaded, and what follows it is loaded.
 
 ## Invariants
 
-- **No tool row survives grouping in the work-stream feed.** A tool row that
+- **No tool row survives grouping in the conversation feed.** A tool row that
   resolves to no plugin is dropped rather than rendered, because the only thing
   it carries is a tool name — the thing this feature exists to hide. Rendering
   it as a fallback would put the old surface back on screen for exactly the runs
@@ -533,7 +533,7 @@ is the one that might have been partly unloaded, and what follows it is loaded.
   allocates it an ordinal and the room's unread waterline moves with it. Null
   it and no row carries it at all: `highestVisibleAttentionSequence` skips a
   null, `conversationReadAcknowledgement` never advances `seen_attention_ordinal`,
-  and the work stream keeps an unread dot that reading it cannot clear — only
+  and the conversation keeps an unread dot that reading it cannot clear — only
   sending a message clears it. The *highest* rather than the first, because one
   row stands for several messages: the divider belongs above it whenever any of
   them is unread, and acknowledging it has to acknowledge all of them.
@@ -663,7 +663,7 @@ is the one that might have been partly unloaded, and what follows it is loaded.
 
 ## Boundary
 
-This module owns the work-stream transcript's presentation of tool activity, and
+This module owns the conversation transcript's presentation of tool activity, and
 nothing else. It reads the canonical snapshot and the live overlays; it writes
 no state, requests nothing, and never changes what a run does.
 
@@ -671,7 +671,7 @@ It deliberately does **not** cover:
 
 - **Nothing else.** The automation draft wizard's feed, which used to be a
   second adapter showing one row per tool call, is gone; an automation's chat
-  is the same `SubstreamAgent` feed as a work stream's and collapses the same
+  is the same `AgentLoopDO` feed as a Canvas's and collapses the same
   way (see [`conversation-surfaces.md`](conversation-surfaces.md)).
 - **What the backend records.** Tool blocks, plugin activities, ids, and labels
   are [`workstream-durable-object.md`](workstream-durable-object.md)'s and
@@ -759,11 +759,10 @@ It deliberately does **not** cover:
   behind — which is also what keeps a live run's rows on screen.
 - **A reader who opens an accordion and scrolls away** keeps it open, because
   the flag lives in `MessageFeed`. It lasts until that component actually
-  unmounts, which is *not* every navigation: `WorkstreamScreen` stays mounted
-  across work streams and its `MessageFeed` is not keyed by work stream, so a
-  drawer opened here is still open on coming back to the same work stream. The
-  set is keyed on message ids, which are unique across work streams, so what it
-  retains is inert everywhere else. This is the lifetime the clamped system rows
+  unmounts, which need not be every navigation: `MessageFeed` in
+  `conversation-surface.tsx` is not keyed by conversation. The set is keyed on
+  message ids, which are unique across conversations, so whatever it retains
+  from another conversation is inert. This is the lifetime the clamped system rows
   already had; sharing the set did not change it.
 - No caps, quotas, or timeouts: the whole module is a pure function over a list
   that is already bounded by the transcript's own paging.
@@ -787,6 +786,8 @@ stack cannot run a real turn, so the way to get a multi-plugin transcript on
 screen is to write a hand-built `WorkstreamTranscriptSnapshot` into the
 renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
+
+## Changelog
 
 ### 2026-10-31 — A program is Rally working, not a tool Rally reached for
 

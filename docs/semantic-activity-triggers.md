@@ -25,8 +25,8 @@ the judgement is designed and evaluated.
 | `packages/agent-harness/src/semantic-trigger-gate.ts` | This decision: the state, the question, the criteria, the threshold, and the mapping to a verdict. |
 | `packages/contracts/src/index.ts` | `semanticConditionsForEventType` — the single join from an arriving event type to the conditions that gate it. |
 | `apps/api/src/durable-objects/automation-do-protocol.ts` | The verdict and plan shapes that cross the RPC boundary. |
-| `apps/api/src/durable-objects/sidekick-do.ts` | `externalEventPlan` decides whether a delivery is gated; `admitExternalEvent` enforces the verdict. Both read one private method. |
-| `apps/api/src/services/semantic-trigger-admission.ts` | The delivery's three steps: plan, judge, admit. |
+| `apps/api/src/durable-objects/hosted-sidekick.ts` | The Sidekick parent hosted in WorkspaceDO: the private `externalEventPlan` decides whether a delivery is gated; `admitExternalEvent` (reached as WorkspaceDO's `sidekickAdmitExternalEvent`) reads it and enforces the verdict. |
+| `apps/api/src/services/semantic-trigger-admission.ts` | The delivery's three steps: ask, judge, admit again with the verdict. |
 | `apps/api/src/services/classifier-diagnostics.ts` | Where every classifier's provider diagnostics go, shared with addressing. |
 | `apps/api/src/queues/activity-consumer.ts` | The external-event delivery branch that calls it. |
 
@@ -44,19 +44,23 @@ What changed is what happens between the match and the run.
 
 1. **The match becomes a delivery.** One Queue message per matched registration,
    carrying the registration, the destination and the event.
-2. **The delivery asks the object for a plan.** `externalEventAdmissionPlan`
-   applies every check admission applies — lifecycle, trigger membership, the
-   activation boundary — and then looks for `semantic_activity` triggers in the
-   accepted definition whose `deterministicPrefilter.eventType` matches the
-   event's. It answers `refuse` with an outcome code, `admit`, or `judge` with the
-   conditions to test and the connector they watch.
+2. **The delivery asks to admit, and a gated event is sent back to be judged.**
+   `admitExternalEvent` builds its plan with `externalEventPlan`, which applies
+   every admission check — lifecycle, trigger membership, the activation
+   boundary — and then looks for `semantic_activity` triggers in the accepted
+   definition whose `deterministicPrefilter.eventType` matches the event's. A
+   refusal or an ungated admission answers at once; a gated event without a
+   verdict is refused as `sidekick_semantic_condition_unjudged`, carrying a
+   `judge` with the conditions to test and the connector they watch, so no
+   separate planning call is needed.
 3. **A gated delivery judges the conditions.** `judgeSemanticTriggerConditions`
    asks JEV one Choice question per condition, stopping at the first met, and
    maps the answer to a verdict: `condition_met` above the confidence threshold
    admits; `condition_not_met`, `condition_not_judgeable`, a confidence at or
    below the threshold, and any failure to get an answer do not.
-4. **The object admits or refuses.** `admitExternalEvent` recomputes the same
-   plan, and for a gated event requires a verdict that admits. The occurrence key
+4. **The object admits or refuses.** The delivery calls `admitExternalEvent`
+   again with the verdict; it recomputes the same plan, and for a gated event
+   requires a verdict that admits. The occurrence key
    is unchanged, so a redelivery still answers from the run it already made.
 
 The question itself is three named outcomes over two named pieces of state, and
@@ -86,8 +90,8 @@ The answer is one member of a closed set, which is the shape
 Choice is for. The deciding reason is the confidence: the threshold that decides
 whether to start somebody's automation is applied to a number the provider
 computed, not to one the model wrote about its own answer.
-[`contextual-routing.md`](contextual-routing.md) records what the second kind cost
-the retired router — "a constant compared against a number the model made up
+[The Suggested context retirement record](connectors.md#2026-11-08--retirement-record-suggested-context)
+records what the second kind cost the retired router — "a constant compared against a number the model made up
 about its own answer" — and rejected raising that constant for exactly this
 reason.
 
@@ -107,7 +111,7 @@ on; it is just not where this decision is made.
   wrote it and applies nothing, and their Sidekick runs on every event of its
   type. The enforcement is in `admitExternalEvent`, not in the caller, so a new
   delivery path cannot reintroduce it by forgetting.
-- **The plan and the admission apply the same checks.** Both call
+- **Both admission calls apply the same checks.** Each calls
   `externalEventPlan`. A second copy of the lifecycle or boundary logic is how a
   caller comes to learn one answer and admission to apply another.
 - **A failure to judge refuses.** HTTP, schema, deadline and a missing credential
@@ -133,7 +137,7 @@ that crosses the RPC boundary, the threshold and the deadline this decision
 carries, and the enforcement point in `admitExternalEvent`.
 
 **Exposes:** `judgeSemanticTriggerCondition` and `judgeSemanticTriggerConditions`
-from the harness package, `externalEventAdmissionPlan` on the Sidekick object, and
+from the harness package, `admitExternalEvent` on the Sidekick parent, and
 `admitExternalEventWithSemanticGate` for a delivery path. The JEV primitives under
 `packages/agent-harness/src/jev/` are exposed for the next classifier and are
 documented in [`agent-harness.md`](agent-harness.md); they are not specific to this
@@ -150,7 +154,7 @@ selected, and TypeSafe.
   already small.
 - carry the condition in the Queue message. The criterion stays in the object
   that owns it; a delivery learns it by asking.
-- gate anything but an automation destination. A watched work-stream resource
+- gate anything but an automation destination. A watched conversation resource
   update has no written condition.
 - retry a judgement. The delivery retries as a whole, and the object is
   idempotent on the occurrence key.
@@ -165,7 +169,7 @@ selected, and TypeSafe.
 | The condition changed while the model call was in flight | Refused, `sidekick_event_before_activation_boundary` — not by the gate. See [What closes the stale-verdict window](#what-closes-the-stale-verdict-window). |
 | JEV unavailable: HTTP error, malformed response, deadline | Refused, `sidekick_semantic_classifier_unavailable`, with the provider's own failure kind on the log line. The delivery is **not** retried for this: a retry would ask the same question of the same outage. |
 | No `TYPESAFE_API_KEY` | Refused as unavailable. Hosted regions always have one (`assertEnvContract` requires it), so this is local development, where refusing is honest and admitting would reproduce the defect. |
-| A gated delivery from an older isolate, with no verdict | Refused, `sidekick_semantic_condition_unjudged`. During a rolling deploy the reverse is also possible — a new consumer calling an object that does not know the field — and there the RPC throws, the delivery retries, and the retry succeeds once the deploy completes. |
+| A gated delivery with no verdict | Refused, `sidekick_semantic_condition_unjudged`, carrying the conditions; the gated path judges them and asks again, and a caller that never judges never admits. During a rolling deploy the reverse is also possible — a new consumer calling an object that does not know the field — and there the RPC throws, the delivery retries, and the retry succeeds once the deploy completes. |
 | Several conditions on one Sidekick | Judged in order, stopping at the first met. One condition costs one call. |
 
 Two numbers, and only one of them is chosen:
