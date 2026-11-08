@@ -26,18 +26,17 @@ is on, the menu has an **Organizations** section listing each Organization you
 belong to.
 
 - A **check mark** sits beside the one you are in now.
-- A number beside another one counts the conversations with something new
-  there. Hover over it for the details, such as how many mentions are waiting
-  for you, or how many conversations are waiting for your input.
+- The other Organizations show no count of what is waiting in them yet. Rally
+  does not report that across Organizations today, so switch to one to see its
+  Canvases, Sidekicks and Activity.
 - If you belong to Organizations in different regions, each row also shows its
   region.
 
-If Rally could not fetch the latest counts, the menu says **Counts last
-updated** and how long ago, so you know the numbers may be out of date.
+If Rally could not check the other Organizations just now, the menu says **Counts last
+updated** and how long ago.
 
 There is deliberately no combined inbox across Organizations. Each one keeps
-its own activity, and the numbers are there to tell you when it is worth
-hopping over.
+its own activity.
 
 ## Switch to another Organization
 

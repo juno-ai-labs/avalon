@@ -110,7 +110,7 @@ When Rally is the app in front, the Mac's menu bar shows Rally's menus.
 | **Rally** | **About Rally**, **Check for Updates…**, **Settings…**, and the usual Mac items: **Services**, **Hide Rally**, **Hide Others**, **Show All** and **Quit Rally**. |
 | **File** | **Close Window** (<kbd>⌘</kbd> <kbd>W</kbd>). |
 | **Edit** | The standard editing commands: undo, redo, cut, copy, paste, select all. |
-| **View** | **Refresh Organization List**, reloading the window, and zooming in and out. |
+| **View** | **Refresh Organization List**, reloading the window, **Toggle Developer Tools**, zooming in and out, and **Enter Full Screen**. |
 | **Window** | The standard window commands, such as minimise. |
 | **Help** | **Rally website**, which opens rallywith.ai in your browser. |
 
