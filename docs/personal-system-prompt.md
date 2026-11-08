@@ -66,8 +66,7 @@ has refreshed since the first attempt.
   push, mention email, Slack delivery and conversation previews. Activity and
   mention effect producers remove it before truncation, so even long instructions
   cannot consume an excerpt or leave a partial envelope. Activity reads also
-  filter complete envelopes on older rows. Digest entries contain names, titles
-  and links.
+  filter complete envelopes on older rows.
   XML examples in the message body remain visible. Instruction text is
   XML-escaped so it cannot close the envelope.
 - **Blank instructions add nothing.** Attachment parts remain intact after the
@@ -98,8 +97,8 @@ effect as saving it in settings.
 durable user-role history. Desktop transcript tests cover display
 filtering; harness prompt tests cover XML formatting, escaping and compatibility
 with the shared display filter.
-`citations.test.ts`, `mention-email.test.ts`, `slack-notification-service.test.ts`,
-`push-delivery.test.ts` and `activity-push.test.ts` (deleted in plan step C-2) cover notification reduction.
+`citations.test.ts`, `mention-email.test.ts`, `slack-notification-service.test.ts`
+and `push-delivery.test.ts` cover notification reduction.
 The admission/history pipeline test uses instructions longer than the outbound
 excerpt budget and checks that Activity receives the ordinary message.
 

@@ -48,6 +48,7 @@ applying for directory review.
 The single app registers both regional OAuth callbacks:
 
 - `https://api.rallywith.ai/connections/linear/callback`
+- `https://api.with-avalon.com/connections/linear/callback`
 
 It has one webhook:
 
@@ -69,7 +70,7 @@ Authorization Code with PKCE S256, in one of two actor modes:
   authorizing Linear user, are available only to that Rally member, and may
   include private teams that user can access.
 - A **workspace** Rally connection requests `actor=app`. Its tools act as Rally,
-  are available to every member of the Rally workspace, and are limited to the
+  are available to every member of the Rally Organization, and are limited to the
   teams selected while installing the app.
 
 One public Linear app supports both. A person who wants both identities authorizes
@@ -171,7 +172,7 @@ Agent-session activation requires all of the following to pass first:
 3. A durable outbound activity outbox with stable provider activity IDs across
    retries.
 4. A deterministic `👀` source-comment acknowledgement before processing, followed
-   by an immediate thought or external work-stream URL inside ten seconds.
+   by an immediate thought or external Rally conversation URL inside ten seconds.
 5. Prompt resumption based on immutable Agent Activity history.
 6. Stop-signal propagation that halts tool and model work immediately and emits
    exactly one final response or error.

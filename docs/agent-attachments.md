@@ -18,7 +18,7 @@ checks operation identity, bytes and the intended descriptor. Prepared conversat
 receipts own reservations separately from live input mailboxes; definite failures
 release holds, while canonical resource projection releases committed holds. Both
 historical roles retain model manifests. Unavailable originals remain references,
-and extracted text is labeled separately. See [session import](session-import.md).
+and extracted text is labeled separately. See [the session import retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
 
 ## Where the code lives
 
@@ -507,8 +507,7 @@ It does not own composer upload UX or the desktop lightbox presentation; those
 remain with the composer and renderer modules. It does not turn an ID into
 authority, search arbitrary workspace content, edit documents, or transcribe
 audio/video.
-Connector-origin relationships are owned by
-[`workstream-origin-attachments.md`](workstream-origin-attachments.md), and the
+Connector-origin relationships were retired with Threads ([record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments)), and the
 generic tool execution/receipt loop is owned by
 [`agent-harness.md`](agent-harness.md).
 
@@ -1000,7 +999,7 @@ checks operation identity, bytes and the intended descriptor. Prepared conversat
 receipts own reservations separately from live input mailboxes; definite failures
 release holds, while canonical resource projection releases committed holds. Both
 historical roles retain model manifests. Unavailable originals remain references,
-and extracted text is labeled separately. See [session import](session-import.md).
+and extracted text is labeled separately. See [the session import retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
 
 The separate durable preparation owner prevents file holds from depending on a
 live-message mailbox that imported history never creates. Fake pending messages

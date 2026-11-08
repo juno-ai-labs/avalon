@@ -2751,7 +2751,7 @@ one override — a note's descending heading scale, a briefing's flat one — an
 stylesheet test asserts that neither host states any other markdown element
 styling. This document was created in the same change, because until then
 markdown rendering had no document and its history was accumulating in
-[`workstream-creation.md`](workstream-creation.md), whose scope is the create
+`workstream-creation.md` ([retirement record](hosted-conversation-parents.md#2026-11-08--retirement-record-starting-a-work-stream)), whose scope is the create
 path and explicitly not the screens a work stream is read on.
 
 **Why:** The entry below restored the list markers by naming all three containers
@@ -2811,7 +2811,7 @@ nothing took it back. The surrounding rules read as though something had — the
 set the indent a marker needs and a colour for `li::marker` — so a bulleted list
 rendered as indented paragraphs and a numbered one lost its numbers, everywhere
 markdown appears. The work-stream message bubble entry in
-[`workstream-creation.md`](workstream-creation.md) had reported this against the
+`workstream-creation.md` had reported this against the
 `tw-fade` preflight, which was wrong; that sentence is corrected in place there,
 and this entry is where the repair itself is recorded.
 

@@ -27,7 +27,7 @@ and forks; Rally captures its flat projection and plugin/skill activation hints.
 The eval host restores configuration and isolated tool state, and allocates a fresh
 loop identity per fork. Production without checkpoint capture keeps the existing
 ledger path. (Session import, the one production producer of a prepared
-conversation, is deleted; [`session-import.md`](session-import.md) records it.)
+conversation, is deleted; [its retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments) is in `workstream-durable-object.md`.)
 
 A Thread's and a Breakout's first message had its own classifier
 (`opening-message.ts`, with an evaluation under `evals/opening-message`); both
@@ -408,7 +408,7 @@ work; there is no new wait registration, alarm, or task lifecycle.
 
 No conversation is named by a model: a person titles a Canvas, and a
 Sidekick's conversations carry the Sidekick's name. The Thread naming pass is
-deleted ([`workstream-naming.md`](workstream-naming.md) keeps its record). The
+deleted ([its retirement record](canvases.md#2026-11-08--retirement-records-naming-a-work-stream-work-stream-descriptions) is in `canvases.md`). The
 `workstream_naming` model role survives for one call, the title a long pasted
 text is given (`pasted-text-service.ts`).
 
@@ -1585,7 +1585,7 @@ It does not own:
 | How to *write* a prompt in `prompts/` | [`writing-prompts.md`](writing-prompts.md) |
 | Which model each agent runs on, and the pin that overrides it | [`feature-flags.md`](feature-flags.md) |
 | Connector adapters, grants, and health semantics | [`connectors.md`](connectors.md) |
-| The create path a run is launched from | [`workstream-creation.md`](workstream-creation.md) |
+| The create path a run is launched from | [`hosted-conversation-parents.md`](hosted-conversation-parents.md), [`canvases.md`](canvases.md) |
 | Reading a captured inference record back | [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) |
 | Regional analytical inference capture and retention | [`inference-lakehouse.md`](inference-lakehouse.md) |
 
@@ -2425,7 +2425,7 @@ charter, what it has produced so far, the newest three messages and the judged
 turn. Every provider call is recorded through the classifier diagnostic sink
 under `turn_disposition_classifier`. The step never fails settlement. The
 harness also gained the `suggestion_draft` prompts, golden-hashed. The
-mechanism is owned by [`conversation-suggestions.md`](conversation-suggestions.md);
+mechanism is owned by [`conversation-suggestions.md`](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments) (retired);
 the question, its 0.6 threshold and its three recent messages are pinned to the
 corpus evaluation and the GEPA ablation in
 `docs/PRDs/2026-10-17_merge-and-breakout-suggestions/design.md`.
