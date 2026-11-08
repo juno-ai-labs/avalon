@@ -806,6 +806,45 @@ describe("a Sidekick's shared conversation", () => {
         evaluatorRules: null, submittedByRunId: null, actor: actor() });
       // Sent by the save itself, which the socket delivers as a message event.
       await expect.poll(row, { timeout: 5_000 }).toMatchObject({ name: "Haiku writer", status: "active" });
+      // It wakes on request only: no schedule, so no zone.
+      expect(row()).not.toHaveProperty("scheduleTimeZone");
+    } finally {
+      socket.close();
+    }
+  });
+
+  it("sends the Sidekick list with the zone its next scheduled run is read in", async () => {
+    const created = await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workspace",
+      automationId: AUTOMATION_ID });
+    expect(created.created).toBe(true);
+    const response = await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
+      .fetch("https://workspace.test/socket", { headers: {
+        Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": AUTHOR_ID, "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": crypto.randomUUID(),
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
+      } });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    const frames: Array<Record<string, unknown>> = [];
+    socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
+    socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+    try {
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
+      const row = () => frames.filter((frame) => frame.type === "workspace_sidebar_list" && frame.list === "automations")
+        .flatMap((frame) => frame.items as Array<{ id: string; status: string; nextRunAt: string | null; scheduleTimeZone?: string }>)
+        .filter((item) => item.id === AUTOMATION_ID).at(-1);
+      await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...DEFINITION, triggers: [
+        { type: "manual" },
+        { type: "calendar", rrule: "FREQ=WEEKLY;BYDAY=FR;BYHOUR=14;BYMINUTE=0;BYSECOND=0", timezone: "America/Los_Angeles",
+          summary: "Every Friday at 2:00 PM" },
+      ] }, evaluatorRules: null, submittedByRunId: null, actor: actor() });
+      await expect.poll(row, { timeout: 5_000 }).toMatchObject({ status: "active", scheduleTimeZone: "America/Los_Angeles" });
+      // Read in that zone, the next run is the time the schedule's summary says.
+      const next = row()!;
+      expect(new Intl.DateTimeFormat("en-US", { timeZone: next.scheduleTimeZone, weekday: "long", hour: "numeric",
+        minute: "2-digit" }).format(new Date(next.nextRunAt!))).toBe("Friday 2:00 PM");
     } finally {
       socket.close();
     }

@@ -1164,6 +1164,15 @@ loaded into someone else's conversation, not a read of its own.
   `external_event`. It reads the accepted definition, or a draft's newest
   submitted one, so the Sidekicks home can say "On alert", "On email" or "On
   request" where a schedule says when (design §3).
+- **The zone a schedule's time is read in.** The sidebar row's optional
+  `scheduleTimeZone` is the IANA zone of the schedule that comes due next,
+  the one `nextRunAt` is, as `sidekick_schedules.definition_json` resolved it
+  when the revision was accepted (the trigger's own zone, else the owner's or
+  the Organization's) (`AUTOMATION_SCHEDULE_TIME_ZONE_SQL`). It is absent
+  for an interval, which has no wall-clock time, and when there is no
+  schedule. Clients format `nextRunAt` in it, so the sidebar's "Runs Friday
+  2:00 PM", the home's Next and the details' "Every Friday at 2:00 PM" name
+  the same time whatever zone the machine is in.
 - **The requester's own run is not news to them.** A run's row turn takes an
   attention ordinal when it is appended, which read as unread to the person
   who had just pressed Run now and was looking at the Sidekick. While the run
@@ -1863,8 +1872,9 @@ shared conversation with the answer form (`SidekickRunQuestion`), which
 answers that run through the run's own conversation socket. The run view
 keeps its answer form and loses only its composer (`withoutComposer`, which
 replaced a `readOnly` flag that never stopped the form). `AutomationSummary`
-gains optional `runState`, `pendingQuestion` and `triggerKinds`
-(`AUTOMATION_RUN_STATE_SQL`, `AUTOMATION_TRIGGER_KINDS_SQL`), and the socket's
+gains optional `runState`, `pendingQuestion`, `triggerKinds` and
+`scheduleTimeZone` (`AUTOMATION_RUN_STATE_SQL`, `AUTOMATION_TRIGGER_KINDS_SQL`,
+`AUTOMATION_SCHEDULE_TIME_ZONE_SQL`), and the socket's
 Sidekick list carries `lastRunAt` (the newest run's start). A run's
 conversation sends a pending elicitation's prompt as its `preview` and
 `reply`, so the run's row, the Sidekick's sidebar row and the notice carry the
