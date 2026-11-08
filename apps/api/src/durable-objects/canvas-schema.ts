@@ -153,6 +153,9 @@ export const RETIREMENT_GRAPH_CANVAS_MIGRATION: readonly string[] = [
   `ALTER TABLE workspace_retirement_graph_v146 RENAME TO workspace_retirement_graph`,
 ];
 
+/** The title a Canvas made with no title has until its first message names it. */
+export const UNTITLED_CANVAS = "Untitled Canvas";
+
 /** The alarm kind that titles a Canvas made with no title from its opening message. */
 export const CANVAS_NAMING_ALARM_KIND = "canvas_naming";
 

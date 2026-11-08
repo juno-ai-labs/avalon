@@ -35,7 +35,7 @@ import { assertAudienceInOrganization, HostedConversation, type HostedConversati
 import { sidekickManagerAllows, sidekickReaderAllows } from "./hosted-sidekick";
 import { ScopeInvitationService } from "./scope-invitation-service";
 import { artifactNewsSql } from "./workspace-pin-storage";
-import { CANVAS_NAMING_ALARM_KIND } from "./canvas-schema";
+import { CANVAS_NAMING_ALARM_KIND, UNTITLED_CANVAS } from "./canvas-schema";
 import type { ScheduledAlarmStore } from "./scheduled-alarms";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { canvasTitleFromOpening } from "../services/canvas-naming";
@@ -251,13 +251,28 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   protected onChildProjection(substreamId: string, effect: DirectoryCommonEffect,
     prior: PriorChildProjection | null, now: number): void {
     if (substreamId !== "0") return;
-    if ((prior?.latestAttentionOrdinal ?? null) === (effect.latestAttentionOrdinal ?? null)) return;
-    this.sql.exec(`UPDATE canvas_directory SET updated_at = MAX(updated_at, ?) WHERE canvas_id = ?`, now, this.canvasId);
+    // No ordinal and ordinal 0 are both an empty Chat: the provisioning
+    // projection of a Canvas nobody has written in is not activity, so it
+    // does not move the Canvas up the recency list.
+    const before = prior?.latestAttentionOrdinal ?? 0;
+    const latest = effect.latestAttentionOrdinal ?? 0;
+    if (before === latest) return;
+    // The Chat's first message, in a Canvas a person made with no title that
+    // nobody has retitled since: it starts naming now, in this write, so an
+    // empty Canvas reads as its title rather than as a naming skeleton that
+    // waits for a message that may never come.
+    this.sql.exec(
+      `UPDATE canvas_directory
+          SET updated_at = MAX(updated_at, ?1),
+              title_status = CASE WHEN ?3 = 0 AND ?4 >= 1 AND title_status = 'settled' AND title = ?5
+                                       AND writer_sidekick_id IS NULL THEN 'naming' ELSE title_status END
+        WHERE canvas_id = ?2`,
+      now, this.canvasId, before, latest, UNTITLED_CANVAS,
+    );
     this.host.noteCanvasDirectoryChanged(this.canvasId);
-    // The Chat's first message has landed in a Canvas still waiting for a
-    // title: the naming pass reads it. Armed again by a later message before
-    // it runs, which is the same entry.
-    if ((effect.latestAttentionOrdinal ?? 0) >= 1 && this.row()?.title_status === "naming") {
+    // A Canvas waiting for a title: the naming pass reads its first message.
+    // Armed again by a later message before it runs, which is the same entry.
+    if (latest >= 1 && this.row()?.title_status === "naming") {
       this.host.alarms.schedule({ kind: CANVAS_NAMING_ALARM_KIND, key: this.canvasId, dueAt: now }, now);
     }
   }
