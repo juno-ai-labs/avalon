@@ -3847,11 +3847,19 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
     // Unread divider above the run they just started. Null for a trigger's
     // run and for rows written before the column; the next projection of the
     // run fills it. `run_number` is the run's ordinal among its Sidekick's
-    // runs, which the row reads as "Run 412" (design §4); null until a
-    // projection carries it.
+    // runs, which the row reads as "Run 412" (design §4). The rows already
+    // here are numbered in place, oldest first, so a run that finished before
+    // the column is not left a bare "Run" beside numbered ones: this
+    // conversation holds one row per run of its Sidekick, and a run id is a
+    // UUIDv7 minted when the run is created, so ordering by it is the order
+    // `projectRunRow` counts (`created_at`, then `run_id`). A run that had no
+    // row here would leave the count short; the run's next projection
+    // carries its real number and replaces it, as a replay does for all.
     statements: [
       `ALTER TABLE sidekick_run_rows ADD COLUMN requester_user_id TEXT`,
       `ALTER TABLE sidekick_run_rows ADD COLUMN run_number INTEGER CHECK (run_number IS NULL OR run_number > 0)`,
+      `UPDATE sidekick_run_rows
+          SET run_number = (SELECT COUNT(*) FROM sidekick_run_rows earlier WHERE earlier.run_id <= sidekick_run_rows.run_id)`,
     ],
   },
 ];

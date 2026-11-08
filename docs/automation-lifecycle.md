@@ -1026,7 +1026,7 @@ The client draws the row as a run, not as a message
 `automationActivation.run`): collapsed to "Run N · trigger · state · steps"
 under the Sidekick's own mark (its `appearance`, from the Sidekick list),
 with the reply as a two-line preview. N is the block's `sidekickRun.runNumber`
-(plain "Run" before a projection numbers it, or from an older server), the
+(plain "Run" from an older server), the
 trigger is its kind (the run holds no event text to quote), and the step count
 is left out until the first step. While the question form is drawn under the
 row, its disclosure points down. A manual run's trigger reads **On
@@ -1794,7 +1794,10 @@ late delivery from a superseded predicate is refused by the owner.
 Workspace migration 135 adds `sidekick_runs.step_count` and the two triggers
 that arm a run's row entry; AgentLoopDO migration 82 adds
 `sidekick_run_rows` (run, turn, state, steps, reply, `source_version`), empty
-everywhere but a Sidekick's `"0"`; migration 87 adds its `requester_user_id` and `run_number`.
+everywhere but a Sidekick's `"0"`; migration 87 adds its `requester_user_id` and `run_number`,
+and numbers the rows already there oldest first by run id (a UUIDv7, so the
+order `projectRunRow` counts), so a run that finished before the column reads
+"Run 3" rather than a bare "Run".
 
 ## Regional impact
 
@@ -1950,7 +1953,10 @@ empty summary, and the Sidekick's list was sent once waiting with no question,
 a bare "Needs input" for about a second (vis3 e2-N1). Holding the question in
 the Sidekick, or skipping a summaryless waiting run in the list's probe, was
 rejected: the projection is where the reply is chosen, and the run's own row
-read the same empty reply in that frame. The client
+read the same empty reply in that frame. Migration 87, unshipped, now also
+numbers the run rows it finds, because runs made before the column read a
+bare "Run" beside numbered ones and picked up a number only if they were
+projected again (vis3 e2-N2, b1-N2). The client
 reads its own starting or working run's row as read as it arrives, mirroring
 the requester seat.
 

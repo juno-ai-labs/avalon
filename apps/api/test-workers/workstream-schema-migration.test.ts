@@ -8,6 +8,7 @@ import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlit
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
+import { sidekickRunRowFacts } from "../src/durable-objects/sidekick-run-row";
 
 describe("work-stream schema migration in workerd", () => {
   it.each([null, 1500])("backfills archive history from a v80 root archived at %s", async (archivedAt) => {
@@ -31,6 +32,34 @@ describe("work-stream schema migration in workerd", () => {
         component: "substream_agent_do", workerVersionId: "current", now: 2000 });
       expect(state.storage.sql.exec(`SELECT title, archived_at, archive_generation FROM workstream`).one())
         .toEqual({ title: "Existing", archived_at: archivedAt, archive_generation: archivedAt === null ? 0 : 1 });
+      expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
+    });
+  });
+
+  it("numbers a populated v86 Sidekick conversation's run rows oldest first", async () => {
+    const stub = env.MIGRATION_PROBE_DO!.getByName("sidekick-run-numbers-v87");
+    await stub.ping();
+    // Three runs' rows, written in an order other than the runs' own: run ids
+    // are UUIDv7s, so their order is the order the runs were made.
+    const runs = ["0190a000-0000-7000-8000-000000000001", "0190a000-0000-7000-8000-000000000002",
+      "0190a000-0000-7000-8000-000000000003"];
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 86),
+        component: "substream_agent_do", workerVersionId: "v86", now: 1_000 });
+      for (const [index, runId] of [runs[2], runs[0], runs[1]].entries()) {
+        state.storage.sql.exec(`INSERT INTO sidekick_run_rows
+          (run_id, turn_id, state, step_count, reply, source_version, updated_at)
+          VALUES (?, ?, 'completed', 1, 'Done.', ?, ?)`, runId, `turn-${runId}`, 1_000 + index, 1_000 + index);
+      }
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      applyDurableObjectSqliteMigrations({ storage: state.storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+        component: "substream_agent_do", workerVersionId: "current", now: 2_000 });
+      const facts = sidekickRunRowFacts(state.storage.sql, runs.map((runId) => `turn-${runId}`));
+      expect(runs.map((runId) => facts.get(`turn-${runId}`)?.runNumber)).toEqual([1, 2, 3]);
+      expect(facts.get(`turn-${runs[0]}`)).toMatchObject({ state: "completed", stepCount: 1, reply: "Done.", requesterUserId: null });
       expect(state.storage.sql.exec(`PRAGMA foreign_key_check`).toArray()).toEqual([]);
     });
   });
