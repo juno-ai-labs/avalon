@@ -296,6 +296,11 @@ function SidekickHeader({ context, detail, onCopyLink, onRunNow }: {
   return <>
     {menuError && <ErrorNotice>{menuError}</ErrorNotice>}
     <TitlePillHeader
+      // A run reads as the Sidekick's pill and then the run's, side by side
+      // after Back and Forward as a Canvas and its artifact do; centred, the
+      // run's pill floated alone mid-header, apart from the Sidekick it
+      // belongs to. The shared conversation keeps its centred pill.
+      align={runId ? 'start' : 'center'}
       ancestors={ancestors}
       current={current}
       trailing={<span className="canvas-header-trailing">

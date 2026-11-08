@@ -109,7 +109,10 @@ turn finishes.
   exactly what a reader pulling away looks like, so following is armed only
   when the animation *arrives*.
 - `release()` when it opens at the reader's first unread message, so a run
-  already streaming into that work stream cannot pull them off it.
+  already streaming into that work stream cannot pull them off it. Only when
+  the transcript overflows its viewport: one that fits shows the first unread
+  message and the end together, so it opens at the end and follows, and
+  **Jump to latest** is not offered with nothing to jump to.
 - `scrollTo(top)`, through `useVirtualScrollAnchor`, to hold the reading
   position when rows are inserted above it. See
   [Holding the row on screen](#holding-the-row-on-screen).
@@ -347,6 +350,21 @@ an integration question: verify it in Electron by reopening a long Channel with
 a fresh window (the query cache keeps loaded history across Channel switches),
 sampling every visible row's position each animation frame while scrolling up,
 and checking that no row moves further than the scroll step in any frame.
+
+### 2026-11-08 — A transcript that fits opens following
+
+**What changed:** Opening at the first unread message releases the follow
+only when the transcript overflows its viewport; one that fits opens at the
+end and follows.
+
+**Why:** A Sidekick run's own view, short and with an unread anchor, drew
+**Jump to latest** over a transcript with nothing below it (round-2 review,
+R2-15): `release()` reports `atEnd` false whatever the distance, by design, so
+the button cannot be hidden from a stale measurement.
+
+**Considered and rejected:** Hiding the button whenever the transcript cannot
+scroll: content growing later fires no scroll event, so a hidden button would
+stay hidden over a reply that had grown past the fold.
 
 ### 2026-10-08 — Hold the reading row in the commit that prepends
 
