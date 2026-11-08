@@ -475,9 +475,6 @@ document per [`module-documents.md`](module-documents.md) and register it in
 - **A subsystem document may cite a PRD** for the reasoning behind a decision.
   Link to the folder's `prd.md` by its full path; the path is stable for the life
   of the PRD, so such a link does not need revisiting when the PRD advances.
-- **[`implementation-plan.md`](implementation-plan.md)** remains the phased
-  checklist for the product build as a whole. A PRD's own `plan.md` covers only
-  that PRD.
 - **A pull request implementing a PRD** links to it from the **Motivation**
   section of its description, per [`pull-requests.md`](pull-requests.md).
 
