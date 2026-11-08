@@ -126,6 +126,7 @@ import {
   WorkspaceAttentionSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceCanvasListEventSchema,
+  WorkspaceActivityListEventSchema,
   WorkspaceSidebarSchema,
   WorkspaceSocketClientEventSchema,
   WorkspaceFeatureFlagsEventSchema,
@@ -704,6 +705,7 @@ import {
   scopeConversations,
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
+import { activityPage, hasActivity, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
 import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
@@ -769,6 +771,8 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   // reads it through this object's local executor, the same predicate the
   // reap applies, as the Slack due times above are read.
   "canvas_directory", "canvas_participants",
+  // Each person's Activity: written beside a notification intent, read by the socket.
+  "workspace_activity_items", "workspace_activity_seen",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
   "workspace_impersonation_relationships",
@@ -4354,6 +4358,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "drop the Thread-era tables nothing reads, and the Thread rows of the shared tables",
   // See THREAD_ERA_TABLES_DROP_MIGRATION and docs/workspace-retirement.md.
   statements: THREAD_ERA_TABLES_DROP_MIGRATION,
+}, {
+  version: 148,
+  description: "record each person's Activity: one row per mention, add and Sidekick run notice they were sent",
+  // See WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS and docs/activity.md.
+  statements: WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5399,8 +5408,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'canvases'`,
         );
         this.canvasReadersMoved.add(userId);
+        // The same read is what clears their Activity rows for this Canvas.
+        this.noteActivityReadMoved(userId);
       },
       noteCanvasDirectoryChanged: () => this.noteCanvasDirectoryMoved(),
+      noteActivityChanged: (userId) => this.noteActivityMoved(userId),
     };
   }
 
@@ -5436,6 +5448,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return await run();
     } finally {
       this.publishCanvasList();
+      this.publishActivityList();
       await this.afterHostedWrite();
     }
   }
@@ -5631,6 +5644,68 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       { userId: attachment.userId, member: viewerOf(attachment).accessClass === "member" }, present, SIDEBAR_LIST_LIMIT);
   }
 
+  // ---------------------------------------------------------------------------
+  // Activity: each person's feed of mentions, adds and Sidekick run notices.
+  // See docs/activity.md and workspace-activity.ts.
+  // ---------------------------------------------------------------------------
+
+  /** People whose Activity moved in the current write; see `publishActivityList`. */
+  private readonly activityRecipientsMoved = new Set<string>();
+
+  /** Inside the transaction that wrote an Activity row or moved what it derives from. */
+  private noteActivityMoved(userId: string): void {
+    this.state.storage.sql.exec(
+      `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'activity'`,
+    );
+    this.activityRecipientsMoved.add(userId);
+  }
+
+  /** A person's read of a Canvas or a Sidekick moved: their Activity, when they have any, may have cleared. */
+  private noteActivityReadMoved(userId: string): void {
+    if (hasActivity(this.state.storage.sql, userId)) this.noteActivityMoved(userId);
+  }
+
+  /** Send each person whose Activity moved their list, on their sockets only: it is theirs alone. */
+  private publishActivityList(): void {
+    if (this.activityRecipientsMoved.size === 0) return;
+    const recipients = new Set(this.activityRecipientsMoved);
+    this.activityRecipientsMoved.clear();
+    const occurredAt = new Date().toISOString();
+    const waterline = this.activityListWaterline();
+    const lists = new Map<string, ReturnType<WorkspaceDO["activityList"]>>();
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed || !recipients.has(attachment.userId)) continue;
+      // One read per person and kind of access, however many sockets they hold.
+      const key = `${attachment.userId}:${viewerOf(attachment).accessClass}`;
+      const list = lists.get(key) ?? this.activityList(attachment);
+      lists.set(key, list);
+      try {
+        socket.send(JSON.stringify(WorkspaceActivityListEventSchema.parse({
+          type: "workspace_activity_list", occurredAt, waterline, ...list,
+        })));
+      } catch {
+        // A reconnect receives the whole list in the subscribe payload.
+      }
+    }
+  }
+
+  private activityListWaterline(): number {
+    return this.state.storage.sql.exec<{ waterline: number }>(
+      `SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'activity'`,
+    ).toArray()[0]?.waterline ?? 0;
+  }
+
+  /** One socket's Activity, naming only the titles of what its viewer may still open. */
+  private activityList(attachment: WorkspaceSocketAttachment) {
+    const viewer = viewerOf(attachment);
+    return activityPage(this.state.storage.sql, attachment.userId, SIDEBAR_LIST_LIMIT, (parentKind, parentId) => (
+      parentKind === "canvas"
+        ? this.canvasVisible(viewer, parentId) === true
+        : viewer.accessClass === "member" && this.sidekickListed(attachment.workspaceId, attachment.userId, parentId)
+    ));
+  }
+
   /** Who is in each Canvas now: the people whose foreground socket has it open. */
   private presentByCanvas(): Map<string, string[]> {
     const present = new Map<string, Set<string>>();
@@ -5734,8 +5809,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           `UPDATE workspace_sidebar_list_state SET waterline = waterline + 1 WHERE list = 'automations'`,
         );
         this.sidekickReadersMoved.add(userId);
+        // The same read is what clears their Activity rows for this Sidekick.
+        this.noteActivityReadMoved(userId);
       },
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
+      noteActivityChanged: (userId) => this.noteActivityMoved(userId),
       sendRunProvision: async (message) => {
         await this.env.ACTIVITY_QUEUE.send(SidekickRunProvisionQueueMessageSchema.parse({
           kind: "sidekick_run_provision", region: this.env.AVALON_REGION, ...message,
@@ -5889,6 +5967,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return await run(sidekick);
     } finally {
       this.publishSidekickList();
+      this.publishActivityList();
       await this.afterHostedWrite();
     }
   }
@@ -6506,6 +6585,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       if (presenceChanged) this.broadcastPresence();
       return;
     }
+    if (parsed.data.type === "activity_mark_all_seen") {
+      // A subscribed socket already proved who it is, and the write moves only
+      // that person's own row; the answer is their list, on every socket.
+      if (!readAttachment(socket)?.subscribed) return;
+      this.state.storage.transactionSync(() => {
+        markAllActivitySeen(this.state.storage.sql, attachment.userId, Date.now());
+        this.noteActivityMoved(attachment.userId);
+      });
+      this.publishActivityList();
+      return;
+    }
   }
 
   /** A Sidekick directory row whose stored appearance no longer parses is listed without one. */
@@ -6927,6 +7017,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             return await sidekick.runAlarm(alarm, sidekickTarget.key);
           } finally {
             this.publishSidekickList();
+            this.publishActivityList();
           }
         }
         // Suggested work's scheduler, the Personal Channel backfill and the
@@ -11356,6 +11447,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         items: this.sidekickLibrary(attachment),
       },
       canvases: { waterline: this.canvasListWaterline(), items: this.canvasList(attachment) },
+      activity: { waterline: this.activityListWaterline(), ...this.activityList(attachment) },
       // One release of compatibility for a pre-pivot desktop; see the schema.
       workstreams: { directoryWaterline: 0, items: [], stateVersions: [], nextCursor: null },
       notes: { waterline: 0, items: [], nextCursor: null },

@@ -1,0 +1,249 @@
+# Activity
+
+Activity is one person's feed of what happened to them in Canvases and
+Sidekicks: somebody mentioned them in a Canvas's Chat or a Sidekick's
+conversation, somebody added them to a Canvas's conversation, a Sidekick run
+needs their input, or a run they asked for finished. It is the third section of
+the rail, beside Canvases and Sidekicks, in the Mac app and the browser alike.
+
+The feed is the push's own source. Each of the four events that records a
+push notification intent writes the recipient's Activity row in the same
+transaction, so a person is never pushed something their feed lacks, or shown
+something they were never pushed. Whether a row has been seen is not stored on
+the row: it is derived from the read cursor the Organization already keeps for
+every conversation parent, so opening the conversation clears it exactly when
+the Canvas or Sidekick row stops being unread.
+
+## Where the code lives
+
+| Path | Responsibility |
+| --- | --- |
+| `packages/contracts/src/activity.ts` | `ActivityItemSchema`, `ActivityPageSchema` (the subscribe payload's `activity` page), `WorkspaceActivityListEventSchema` (the push) and `ActivityMarkAllSeenCommandSchema` (the one command). |
+| `apps/api/src/durable-objects/workspace-activity.ts` | WorkspaceDO migration 148 (`workspace_activity_items`, `workspace_activity_seen`, the `activity` waterline), `recordActivityItem`, the one seen expression (`ACTIVITY_SEEN_SQL`) and `activityPage`. |
+| `apps/api/src/durable-objects/workspace-notification-intent-storage.ts` | The two recorders that write a row beside their intent: `recordPersonNotificationIntent` (mention, add) and `recordSidekickRunNotices` (needs input, finished). |
+| `apps/api/src/durable-objects/workspace-do.ts` | `noteActivityMoved`, `noteActivityReadMoved`, `publishActivityList`, the `activity` page in `sidebarPayload`, and the `activity_mark_all_seen` command. |
+| `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Applies the page and the push through the versioned sidebar-list receiver; sends Mark all seen. |
+| `apps/desktop/src/renderer/components/activity-sidebar-section.tsx` | The rail section: rows, the unseen count, the empty state and Mark all seen. |
+
+## How it works
+
+### One event, one row
+
+A mention or an add reaches its hosted parent as a conversation effect, and
+`HostedConversation.applyChildEnvelope` records its intent with
+`recordPersonNotificationIntent` beside the effect's receipt
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md#a-mention-or-an-add)).
+A Sidekick run's needs-input or finished notice is recorded by the
+`sidekick_run_notice` alarm entry with `recordSidekickRunNotices`, one intent
+per recipient ([`push-notifications.md`](push-notifications.md#a-sidekick-run-that-needs-input-or-finished)).
+Both write one `workspace_activity_items` row per recipient in that
+transaction, keyed by the intent's own id, so a replayed effect or a retried
+alarm converges on one row (`INSERT … ON CONFLICT DO NOTHING RETURNING`, whose
+returned id is the witness that this call wrote it). Who receives a row is
+exactly who receives the intent: the mentioned person, the added person, the
+requester and the Sidekick's managers for a run that needs input, the
+requester alone for a finished run.
+
+A row names its parent (`canvas` or `automation`) and its id, the
+conversation it happened in (`"0"`, or a run's id), the mentioning message or
+the run, who acted (a person for a mention or an add, the Sidekick for a run
+notice), and a preview: the text the push's body carries, reduced the same way
+(`rewriteMessageAsPlainText`, then `PUSH_BODY_PREVIEW_CHARACTERS`). The title is
+not copied: `activityPage` reads it from `canvas_directory` or
+`automation_directory` at list time, and names it only when the recipient may
+still open the parent (`canvasVisible`, `sidekickListed`), so a rename after
+they were removed is never shown to them.
+
+### Seen is derived
+
+A row also stores the attention ordinal it is about. For a mention that is the
+mentioning message's own ordinal, which the conversation now carries on the
+`mention_notification` effect (`attentionOrdinal`). An add and a run notice
+name no message of their own, so they store the parent's shared
+conversation's latest attention ordinal when the row is written (the
+`latestAttentionOrdinal` of its `"0"` projection in
+`sidekick_child_projections`).
+
+At list time a row is seen when either:
+
+- the recipient's `sidekick_viewer_reads` row for that parent — the read cursor
+  the Canvas and Sidekick rows read unread from — has `seen_attention_ordinal`
+  at or past the row's ordinal, and, for a kind other than a mention, that read
+  was accepted after the row was written (`updated_at >= created_at`); or
+- their `workspace_activity_seen.seen_through`, which Mark all seen moves, is
+  at or after the row's `created_at`.
+
+The second condition on a read exists because an add's or a run's ordinal is
+what already existed: a requester who had read their own request has a cursor
+at that ordinal, and without it their finished run would arrive already seen.
+A mention's ordinal is its own message, which nobody can have read before it
+existed. `unseenCount` counts every row the same expression calls unseen, not
+only the page's.
+
+One read cursor per conversation already exists and drives unread everywhere.
+A second, per-item mark would let the feed and the Canvas row disagree — a
+Canvas read but its mention still unseen, or the reverse. The Thread-era feed
+cleared the same way, through rules over each conversation's message
+waterline; this keeps that behaviour with one join instead of a rule language.
+
+### Delivery
+
+The list's waterline is `workspace_sidebar_list_state` row `activity`, one
+monotonic counter for every person's list, advanced in the transaction of the
+write that moved a list. `noteActivityMoved` advances it and remembers the
+person; the write's wrapper (`canvasWrite`, `sidekickCall`, the Sidekick alarm
+path) then calls `publishActivityList`, which reads each remembered person's
+page once and sends `workspace_activity_list` `{occurredAt, waterline,
+unseenCount, items}` to that person's subscribed sockets and nobody else's.
+
+A list moves when a row is written, when Mark all seen is chosen, and when the
+person's read of a Canvas or a Sidekick moves: the hook that marks a Canvas or
+Sidekick reader moved (`noteCanvasReadChanged`, `noteViewerReadChanged`) also
+calls `noteActivityReadMoved`, so one read write republishes both lists to
+that one person. A person with no Activity at all is skipped there.
+
+The subscribe answer carries the page beside `automations` and `canvases`, so
+a reconnect is correct without replaying pushes; the client applies the page
+and every push through the same versioned receiver, which drops anything not
+newer than what it holds.
+
+### Mark all seen
+
+`activity_mark_all_seen` on the workspace socket writes the person's
+`workspace_activity_seen` row to now (never backwards) and is answered by the
+list push on every one of their sockets. Clicking an item sends nothing: it
+opens the conversation, whose read acknowledgement moves the cursor that
+clears it.
+
+### In the client
+
+The section lists the page newest first: the actor's avatar (a person) or the
+Sidekick's hexagon, who, what (mentioned you in, added you to, needs your
+input, finished a run), the title, the preview, a relative time and an unseen
+dot. A mention or an add opens the Canvas, or the Sidekick's conversation; a
+run notice opens the Sidekick's conversation, where its run row is and where
+an answer to it goes. The rail badge is `unseenCount` ("3 unseen"). The dock
+badge and the menu bar stay Needs attention only
+([`menu-bar.md`](menu-bar.md)); Activity does not join them.
+
+## Invariants
+
+- **A row is written in its intent's transaction, by the intent's recorder.**
+  A row written anywhere else could exist without a push, or a push without a
+  row. Guard: `workspace-activity.test.ts` (each kind produces its row through
+  the production recorder).
+- **A row's id is its intent's id.** A replayed effect or retried alarm must
+  converge on one row; a fresh id per attempt would list the event twice.
+  Guard: the mention case's single-row assertion after redelivery.
+- **Seen is never written per row.** The read cursor and the one Mark all seen
+  row are the only inputs, so the feed cannot disagree with the Canvas or
+  Sidekick row's unread. Guard: the implicit-clear case, proved to fail with
+  the read join skipped.
+- **The page and the count use one expression.** A second copy of the seen
+  rule would let the badge and the dots disagree. Guard: `ACTIVITY_SEEN_SQL`
+  is the only definition; the Mark all seen case asserts both.
+- **A list goes to its person's sockets only.** It names Canvases and
+  Sidekicks the person was told about. Guard: the mention case asserts the
+  author's socket received no Activity push.
+- **A title is named only while the person may open the parent.** Otherwise a
+  removal would still show later renames. Verified by reading the code, no
+  automated guard.
+- **The intents' reaper never touches Activity.** The intent row is a delivery
+  record with a retention; the feed is the person's. No shared delete exists.
+
+## Boundary
+
+Activity owns `workspace_activity_items`, `workspace_activity_seen` and the
+`activity` waterline. It depends on the two intent recorders to write rows, on
+`sidekick_viewer_reads` and `sidekick_child_projections`
+([`hosted-conversation-parents.md`](hosted-conversation-parents.md)) for seen,
+and on the directory tables for titles. It does not decide who is told about
+an event — the push's recipient rules do ([`push-notifications.md`](push-notifications.md))
+— and it does not send anything off the workspace socket. Both tables are in
+`WORKSPACE_TYPED_RPC_ONLY_TABLES`, so the generic WorkspaceDO SQL port refuses
+them. The menu bar and the dock badge do not read it.
+
+## Failure modes and limits
+
+- **No retention.** Rows are kept for as long as the Organization object
+  exists; nothing deletes them, including the deletion of their Canvas or
+  Sidekick (the row stays, without a title). Whether and when to prune is a
+  decision not yet made; a cap would be a number the team sets
+  ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
+- **The page is the newest `SIDEBAR_LIST_LIMIT` (250) rows.** Older rows are
+  counted in `unseenCount` but not listed; there is no paging. Mark all seen
+  clears them too.
+- **Frame size.** A full page of 250 rows with full 1,000-character previews is
+  on the order of a few hundred kilobytes, under the platform's WebSocket
+  message limit but not by a wide margin with multi-byte text. A send that
+  fails is skipped; the next subscribe carries the page.
+- **A mention recorded from an effect emitted before `attentionOrdinal`
+  existed** has no ordinal and clears only by Mark all seen.
+- **An add or a run notice whose conversation gains nothing newer** stays
+  unseen after an open that reports no new read (nothing to acknowledge); Mark
+  all seen clears it. Preferred to the alternative, a row that arrives already
+  seen.
+- **A read report delayed past a later row** can clear a non-mention row the
+  person had not looked at. The window is the Queue's delivery delay.
+- **Mark all seen while the socket is down** is not sent; the button does
+  nothing until it reconnects.
+- **An older desktop** ignores `workspace_activity_list` by type and strips
+  the subscribe payload's `activity` page.
+
+## Testing
+
+`apps/api/test-workers/workspace-activity.test.ts`, on real workerd
+(`pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts
+test-workers/workspace-activity.test.ts`): a Canvas Chat mention posted to the
+conversation object and delivered through the real consumer produces one row
+and a push on the recipient's socket only; reading the Chat through the
+conversation's `acknowledge_read` operation clears it with no Activity
+command; an add delivered to `receiveChildEffects` produces one, and Mark all
+seen clears it; a Sidekick run reaching `needs_input` reaches the requester
+and the author, and a finished run the requester only, through the notice
+alarm, read from a socket's subscribe answer. The run cases poll: the notice is
+recorded by an alarm the object arms itself.
+
+The renderer's `workspace-socket.test.tsx` covers the page and the push, and
+`activity-sidebar-section.test.tsx` the rows, the badge and Mark all seen.
+
+## Data model
+
+| Table | Key | Columns |
+| --- | --- | --- |
+| `workspace_activity_items` | `item_id` (the intent's id) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal`, `created_at` (ms). Index `(recipient_user_id, created_at DESC)`. |
+| `workspace_activity_seen` | `user_id` | `seen_through` (ms): Mark all seen. |
+| `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
+
+## Changelog
+
+### 2026-11-08 — Activity returns as a per-person feed of the four push events
+
+**What changed:** A third rail section, Activity, lists one person's mentions,
+adds and Sidekick run notices. WorkspaceDO migration 148 adds
+`workspace_activity_items` and `workspace_activity_seen` and widens the
+sidebar-list waterline's CHECK to `activity` by copying the table. The workspace
+socket carries the page on subscribe and pushes `workspace_activity_list`;
+`activity_mark_all_seen` is its one command. The `mention_notification` effect
+carries the message's `attentionOrdinal`.
+
+**Why:** The user asked on 2026-11-08 to bring the Activity section back. The
+Thread-era feed (the Activity tab of `digests.md`, retired with the Thread
+subsystems; its last version is `git show ad8baaa^:docs/digests.md`) was
+deleted at plan step B-3 with the Threads it read. It returns sourced from the
+same four events as push, written in the intent's transaction, so the feed
+cannot drift from what was pushed. Seen is derived from the read cursor that
+already drives every unread, so the feed cannot disagree with the Canvas or
+Sidekick row either (the coordinator's 2026-11-08 amendment).
+
+**Considered and rejected:** Deriving the feed from each conversation's
+transcript on read, as the old feed derived replies and starts — a fan-out read
+over every conversation on every rail open, against the low-latency goal. A
+`seen_at` column and a per-item mark command: a second read state beside the
+conversation's own. Comparing the read cursor alone for an add or a run notice:
+a requester who had read their own request would get their finished run
+already seen.
+
+**Consequences:** A new kind of person-facing event joins Activity by being
+recorded through one of the two recorders, or by calling `recordActivityItem`
+in its own intent's transaction. Retention is undecided and nothing prunes.

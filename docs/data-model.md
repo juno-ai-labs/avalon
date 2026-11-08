@@ -380,6 +380,10 @@ SQL joins.
   in `sidekick_id` ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)).
   `workspace_pins` holds each person's Canvas and Sidekick pins
   ([`pinning.md`](pinning.md)).
+- Each person's Activity is `workspace_activity_items`, one row per mention,
+  add and Sidekick run notice they were sent, keyed by its notification
+  intent's id, and `workspace_activity_seen`, their Mark all seen, in
+  `WorkspaceDO` (migration 148, [`activity.md`](activity.md#data-model)).
 - The retired Thread, Channel and Breakout state — `channels`,
   `channel_viewers`, `spaces`, `space_viewers`, `breakouts`,
   `breakout_viewers` and the `parent_*` tables — stays in `WorkspaceDO` after
@@ -1071,6 +1075,22 @@ inactive legacy tables after deploying the Worker that no longer reaps them.
 The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
+
+### 2026-11-08 — Each person's Activity is stored beside their notification intents
+
+**What changed:** WorkspaceDO migration 148 adds `workspace_activity_items`
+and `workspace_activity_seen`, and widens `workspace_sidebar_list_state`'s
+CHECK to `activity` by copying the table.
+
+**Why:** Activity returns as a per-person feed written in the transaction of
+the push intent it mirrors ([`activity.md`](activity.md)). It is WorkspaceDO
+state because the intents, the read cursors that decide seen, and the
+workspace socket that carries it all live there.
+
+**Considered and rejected:** A `seen_at` column. Seen is derived from
+`sidekick_viewer_reads` and the one Mark all seen row.
+
+**Consequences:** Nothing prunes either table; retention is an open decision.
 
 ### 2026-11-07 — Thread, Channel and Activity subsystems retired from the server
 
