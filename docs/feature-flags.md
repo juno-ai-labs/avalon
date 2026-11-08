@@ -676,10 +676,8 @@ what they do with the model they are handed:
 
 | For | Read |
 | --- | --- |
-
 | The run loop, the route plan's failure policy, the inference ledger | [`agent-harness.md`](agent-harness.md) |
 | The `model_override` column and where it is copied | [`data-model.md`](data-model.md) |
-| The cadence's other half, and what a snapshot travels with | [`meeting-notes.md`](meeting-notes.md) |
 | Why **Debug enabled** crosses no trust boundary | [`security.md`](security.md) |
 | Why `userPlatformId` is the stable per-person id | [`regionalization.md`](regionalization.md) |
 | The retired description loop's retirement record | [`workstream-durable-object.md`](workstream-durable-object.md#changelog) |

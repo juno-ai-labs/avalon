@@ -1430,7 +1430,7 @@ WorkstreamDO migration 13 stores workspace Sidekick recommendation links once pe
 
 ### 2026-09-14 — Retire built-in meeting data
 
-Workspace migration 57 purges built-in note rows and captures content-free resource deletion addresses. Conversation migration 58 removes meeting attachment snapshots. The old tables remain empty until external deletion is verified; shipped migration history remains immutable. Dictation and connector resources remain independent. See [meeting retirement](meeting-notes.md) for rollout and verification.
+Workspace migration 57 purges built-in note rows and captures content-free resource deletion addresses. Conversation migration 58 removes meeting attachment snapshots. The old tables remain empty until external deletion is verified; shipped migration history remains immutable. Dictation and connector resources remain independent. See `meeting-notes.md` (retired) for rollout and verification.
 
 ### 2026-09-13 — Rebuilding a referenced parent empties its dependents first
 

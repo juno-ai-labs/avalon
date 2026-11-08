@@ -1150,7 +1150,7 @@ Configured deployments use the existing Global delivery policy. Public-site and 
 
 ### 2026-09-14 — Fence retired meeting data before erasure
 
-Built-in meeting event producers are removed. The collector, destination delivery paths, and desktop spool discard their historical typed events, including recording lifecycle and note-summary events. Dictation capture and its microphone permissions remain independent. Keeping the historical registry shapes allows old queued envelopes to be identified and suppressed rather than replayed into analytics. See [meeting retirement](meeting-notes.md).
+Built-in meeting event producers are removed. The collector, destination delivery paths, and desktop spool discard their historical typed events, including recording lifecycle and note-summary events. Dictation capture and its microphone permissions remain independent. Keeping the historical registry shapes allows old queued envelopes to be identified and suppressed rather than replayed into analytics. See `meeting-notes.md` (retired).
 
 ### 2026-09-11 — Menu-bar events follow the menu that shrank, and stop being refused
 
