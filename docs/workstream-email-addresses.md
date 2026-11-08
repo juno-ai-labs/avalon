@@ -113,7 +113,9 @@ tombstone. Correcting it frees only the unissued inference; the owner's actual
 address becomes the permanent tombstone.
 
 An automation's address is not reconciled against Global on any read.
-`GET /automations/:id` returns what `automation_directory.email_address` holds. The address and the claim are
+`GET /automations/:id` returns what `automation_directory.email_address` holds;
+the sidebar's Sidekick rows carry `emailAddress: null` (`sidekick-directory-sql.ts`),
+so only the detail carries the address. The address and the claim are
 written in the same acceptance that reserved it, and neither is editable
 afterwards, so there is nothing for a per-read verification to catch that the
 reservation did not already settle. Both were once reconciled because the
