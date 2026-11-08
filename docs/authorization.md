@@ -661,7 +661,7 @@ can draw the Channel where it lives instead of in a flat list of rows with no
 home. That is discovery rather than admission, and the invariant above says
 what it does not carry: no read on the Space's other Channels, no participant,
 no default, no count of what the reader cannot see, and no write. The reasoning
-and the predicate are in [`spaces.md`](spaces.md#changelog).
+and the predicate are in `spaces.md` (retired).
 
 ### 2026-09-19 — A Space-derived grant is admission without discovery
 
