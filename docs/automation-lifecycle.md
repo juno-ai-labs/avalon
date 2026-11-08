@@ -1930,6 +1930,18 @@ block; the home draws design §3's pills and Next column; the wizard's tool row
 says "Used Sidekicks"; the edit chip sits at the composer with a close; New
 Sidekick reopens an existing draft. The home's row facts collapse on the
 pane's width rather than the window's (v4-R2-1, v3-R2-3).
+The answer form marks the chosen option
+with the accent (a wash, a filled keycap and a check), and a run view's header
+draws the Sidekick's pill and the run's side by side after Back and Forward
+(`align: "start"`) rather than the run's alone in the centre. The details'
+pills take the home's pill size (13px), a draft's ⋯ sits at the end of its
+pills, both menus say **Copy link**, the sort control takes the Canvases list's
+⇅, and a waiting Sidekick's sidebar row keeps its question, with the working
+dot, while a later run works (`pendingQuestion` is the newest waiting run's). `nextRunAt` is formatted in `scheduleTimeZone` when present. A run row's
+facts each stay on one line at phone width, wrapping only between them, where
+"6 steps" and "7 hours ago" broke mid-phrase (vis3 b1-R2-8). The client
+reads its own starting or working run's row as read as it arrives, mirroring
+the requester seat.
 
 **Why:** The design (§3 and §4, the PRD's authority for every screen) puts
 the question in the transcript, draws "● Working" and a waiting row whose
