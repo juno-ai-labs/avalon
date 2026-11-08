@@ -6913,6 +6913,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-run-row-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 2; display: -webkit-box; overflow: hidden; }
 .sidekick-run-row details[open] + .sidekick-run-row-preview { display: none; }
 .sidekick-run-row-open { display: inline-block; font-size: 13px; margin: 8px 0 0 49px; }
+/* A waiting run's question, answered on the row; the panel brings its own surface. */
+.sidekick-run-row-question { margin-top: 10px; }
 .sidekick-view-switch { display: none; }
 @media (max-width: 760px) {
   .sidekicks-library { padding: 56px 24px 24px; }

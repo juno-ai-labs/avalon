@@ -118,6 +118,10 @@ export interface AutomationSummary {
   pinnedPosition?: number | null;
   /** Who it is shared with; absent from a server that predates it. */
   audience?: SidekickAudience;
+  /** Its newest run's live state, when one is live; absent from a server that predates it. */
+  runState?: 'working' | 'needs_input' | null;
+  /** The question a run waiting on input asked; absent when none waits. */
+  pendingQuestion?: string | null;
 }
 
 export interface WorkstreamSummary {

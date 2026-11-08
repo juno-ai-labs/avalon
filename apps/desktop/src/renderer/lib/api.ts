@@ -509,6 +509,8 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.needsInput === undefined ? {} : { needsInput: automation.needsInput }),
     ...(automation.pinnedPosition === undefined ? {} : { pinnedPosition: automation.pinnedPosition }),
     ...(automation.audience === undefined ? {} : { audience: automation.audience }),
+    ...(automation.runState === undefined ? {} : { runState: automation.runState }),
+    ...(automation.pendingQuestion ? { pendingQuestion: automation.pendingQuestion } : {}),
   };
 }
 
