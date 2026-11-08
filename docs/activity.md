@@ -66,11 +66,14 @@ which the page names as `artifact` (`resourceId` and its title now, from
 `resources`), and its actor whoever made the version.
 
 A request to open a Canvas writes one `access_request` row per decider and,
-when approved, an `access_granted` row for the requester
-([`canvas-access-requests.md`](canvas-access-requests.md)). The request's row
-is its actions: its `subject_id` is the request, and the page names where the
-request stands (`accessRequest`: `pending`, `approved` or `denied`, and who
-decided). Neither collapses.
+when approved, an `access_granted` row for the requester, or when denied an
+`access_denied` row for them ([`canvas-access-requests.md`](canvas-access-requests.md)).
+The request's row is its actions: its `subject_id` is the request, and the
+page names where the request stands (`accessRequest`: `pending`, `approved`
+or `denied`, and who decided). A denial's row names the decider the same way;
+it lists while the Canvas exists although its recipient cannot open it, with
+`parentTitle` always null, and reads as seen once they ask again. None
+collapses.
 
 A row names its parent (`canvas` or `automation`) and its id, the
 conversation it happened in (`"0"`, or a run's id), the mentioning message or
@@ -381,7 +384,7 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 
 | Table | Key | Columns |
 | --- | --- | --- |
-| `workspace_activity_items` | `item_id` (the intent's id; a collapsed row keeps its first intent's) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`, `new_message`, `artifact_updated`, `access_request`, `access_granted`; migration 150 widened it), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms; a collapsed row's moves to its newest event), `subject_id` (what it is about beyond the parent: an artifact's resource id, an access request's id). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
+| `workspace_activity_items` | `item_id` (the intent's id; a collapsed row keeps its first intent's) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`, `new_message`, `artifact_updated`, `access_request`, `access_granted`, `access_denied`; migrations 150 and 152 widened it), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms; a collapsed row's moves to its newest event), `subject_id` (what it is about beyond the parent: an artifact's resource id, an access request's id). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
 | `workspace_activity_seen` | `user_id` | `seen_through` (ms): Mark all seen. |
 | `canvas_access_requests` | `request_id` | Read for an `access_request` row's seen and its `accessRequest` ([`canvas-access-requests.md`](canvas-access-requests.md)). |
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
