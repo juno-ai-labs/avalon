@@ -7324,7 +7324,10 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   align-items: center;
   display: grid;
   gap: 8px;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  /* The sides are never narrower than what they cannot give up, so a long title
+     truncates between them rather than running over Back and Forward; while
+     it fits, the two sides share what is left and the pill stays centred. */
+  grid-template-columns: minmax(min-content, 1fr) minmax(0, auto) minmax(min-content, 1fr);
   min-width: 0;
   padding: 0 16px;
   position: relative;
@@ -7340,7 +7343,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-pill-ancestor:nth-child(1 of .title-pill-ancestor):not(:last-child) { flex-shrink: 0; max-width: 45%; }
 .title-pill.is-ancestor,
 .title-pill.is-ancestor .title-pill-select { min-width: 0; }
-.title-pill-current { justify-self: center; min-width: 0; }
+.title-pill-current { justify-self: center; max-width: 100%; min-width: 0; }
 .title-pill-trailing { align-items: center; display: flex; gap: 8px; justify-self: end; }
 /* Crowded: the trailing buttons would come within a gap of the centred pill.
    They fold, and the pill moves left just far enough to keep that gap. */
@@ -7465,6 +7468,22 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .title-pill-menu-trigger:hover { background: var(--av-sys-color-state-hover); }
 .title-pill-icon { align-items: center; display: inline-flex; flex: none; }
 .title-pill-title { font-size: 14.5px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A title being renamed in place: the title's own type, as wide as what is typed. */
+.title-pill-title-input {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  field-sizing: content;
+  flex: 0 1 auto;
+  font: inherit;
+  max-width: 100%;
+  min-width: 4ch;
+  outline: 0;
+  padding: 0;
+}
+/* Underlined inside its own box: the title clips anything drawn outside it. */
+.title-pill-title-input:focus { box-shadow: inset 0 -1.5px 0 var(--av-sys-color-accent-base); }
 .title-pill-chevron { color: var(--av-sys-color-text-muted); flex: none; }
 /* A header's round controls (`TitlePillAction`). The phone's top bar gives
    its own actions the same circle, under the 640px query below. */

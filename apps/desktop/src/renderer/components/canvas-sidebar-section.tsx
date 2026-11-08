@@ -1,8 +1,8 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { useMemo, type RefObject } from 'react';
-import { matchPath, useLocation } from 'react-router-dom';
+import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 
-import { canvasRoute, canvasRowDetail, othersPresent, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { canvasRoute, canvasRowDetail, othersPresent, RENAME_CANVAS_STATE, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { CanvasMark } from './canvas-mark';
@@ -15,7 +15,8 @@ import { SidebarSkeletonRows } from './sidebar-skeleton';
  * The Canvases section: a Pinned group, then every Canvas by recent activity.
  * A row is the Canvas's mark and name, and a second line naming who is in it
  * now beside a green dot, or else who last changed it; an unread row is bold
- * with a red dot. A row dragged into Pinned is pinned (`POST /canvases/:id/pin`).
+ * with a red dot. A row dragged into Pinned is pinned (`POST /canvases/:id/pin`);
+ * its menu's Rename… opens the Canvas with its title pill being edited.
  */
 export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
   const { api, session } = useCollaborationSession();
@@ -27,6 +28,7 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
   const { error: pinError, setPinned } = usePinWrite(api ? (id, next) => api.setCanvasPinned(id, next) : undefined, 'Canvas');
   const { drop, sourceProps, targetProps } = useRowPinDrop(pinnedIds, (id) => setPinned(id, true));
   useSectionMotion(scroll, undefined);
+  const navigate = useNavigate();
   const open = matchPath('/canvases/:id', useLocation().pathname)?.params.id;
   const row = (canvas: CanvasSidebarRow, position?: string): React.JSX.Element => {
     const live = othersPresent(canvas, currentUserId).length > 0;
@@ -38,6 +40,8 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
       key={canvas.id}
       motionKey={`canvas:${canvas.id}`}
       onPin={(next) => { void setPinned(canvas.id, next).catch(() => undefined); }}
+      // The title is edited in the Canvas's own pill, so Rename… opens it there.
+      onRename={() => { void navigate(canvasRoute(canvas.id), { state: RENAME_CANVAS_STATE }); }}
       pinned={position !== undefined}
       position={position}
       tile={<CanvasMark kind={canvas.artifactKind} />}

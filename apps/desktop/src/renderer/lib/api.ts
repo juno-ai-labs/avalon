@@ -1198,6 +1198,11 @@ export class RallyApi {
     return this.request(`/canvases/${encodeURIComponent(id)}`, { schema: CanvasDetailSchema, signal });
   }
 
+  /** Retitle a Canvas; anyone the Canvas admits may. The server trims and bounds the title. */
+  renameCanvas(id: string, title: string): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}`, { method: 'PATCH', body: { title }, schema: CanvasDetailSchema });
+  }
+
   /** Change who can open a Canvas; its creator's, an administrator's, or its Sidekick's manager's. */
   setCanvasAudience(id: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
     return this.request(`/canvases/${encodeURIComponent(id)}/audience`, { method: 'POST', body: update, schema: CanvasDetailSchema });
