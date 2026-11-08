@@ -22,9 +22,12 @@ import { z } from "zod";
  * aggregation helpers and the Queue batching.
  */
 
+/** The most envelopes one `receiveChildEffects` call takes; a caller with more sends them in chunks. */
+export const RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES = 25;
+
 export const ReceiveChildEffectsRequestSchema = z.strictObject({
   substreamId: z.string().min(1).max(180),
-  envelopes: z.array(ConversationEffectEnvelopeSchema).min(1).max(25),
+  envelopes: z.array(ConversationEffectEnvelopeSchema).min(1).max(RECEIVE_CHILD_EFFECTS_MAX_ENVELOPES),
 });
 export type ReceiveChildEffectsRequest = z.infer<typeof ReceiveChildEffectsRequestSchema>;
 

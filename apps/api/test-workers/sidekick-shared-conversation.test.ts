@@ -29,6 +29,7 @@ import {
   ConversationEffectEnvelopeSchema,
   WorkstreamDirectoryUserEffectSchema,
   conversationEffectHash,
+  MESSAGE_MAX_CHARACTERS,
   type AutomationDraft,
 } from "@rally/contracts";
 
@@ -540,25 +541,31 @@ describe("a Sidekick's shared conversation", () => {
     await rowReaches(second.runId, "running");
     expect((await runRow(first.runId)).sidekickRun).toEqual({ requesterUserId: AUTHOR_ID, runNumber: 1 });
     expect((await runRow(second.runId)).sidekickRun).toEqual({ requesterUserId: AUTHOR_ID, runNumber: 2 });
-    // The previous release's schemas (76dc3f3), copied here unchanged but for
-    // the mention and attachment arrays, which this frame does not carry: its
+    // The previous release's schemas (76dc3f3), copied here with their
+    // imports inlined (`IdSchema` is `z.string().uuid()`, branded for the
+    // automation id; `MESSAGE_MAX_CHARACTERS`) and the mention and attachment
+    // arrays loosened, which this frame does not carry: its
     // run facts are a strict object, so a new key there would cost an older
     // desktop the whole row. The block is a plain object and strips one.
     const previousRun = z.strictObject({
       state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
       stepCount: z.number().int().nonnegative(),
-      reply: z.string().max(100_000).nullable(),
+      reply: z.string().max(MESSAGE_MAX_CHARACTERS).nullable(),
     });
     const previousActivation = z.strictObject({
       type: z.literal("automation_activation"),
       schemaVersion: z.literal(1),
-      automationId: z.string().min(1),
+      automationId: z.string().uuid().brand<"AutomationId">(),
       automationName: z.string().min(1).max(300),
-      runId: z.string().min(1),
+      runId: z.string().uuid(),
       deliveryId: z.string().min(1).max(200),
-      trigger: z.strictObject({ kind: z.enum(["manual", "schedule", "external_event", "inbound_email"]) }).strict().optional(),
+      trigger: z.strictObject({
+        kind: z.enum(["manual", "schedule", "external_event", "inbound_email"]),
+      }).strict().optional(),
       occurredAt: z.number().int().nonnegative(),
-      externalSource: z.strictObject({ provider: z.string().min(1).max(80), displayName: z.string().min(1).max(180) }).optional(),
+      externalSource: z.strictObject({
+        provider: z.string().min(1).max(80), displayName: z.string().min(1).max(180),
+      }).optional(),
       run: previousRun.optional(),
     });
     const previousTextBlock = z.object({
@@ -796,13 +803,16 @@ describe("a Sidekick's shared conversation", () => {
     }
     const unreadIn = (frames: Array<Record<string, unknown>>) => frames
       .filter((frame) => frame.type === "workspace_sidebar_list" && frame.list === "automations")
-      .map((frame) => (frame.items as Array<{ id: string; unread?: boolean }>).find((item) => item.id === AUTOMATION_ID)?.unread);
+      .map((frame) => (frame.items as Array<{ id: string; unread?: boolean }>)
+        .find((item) => item.id === AUTOMATION_ID)?.unread);
     const author = await open(AUTHOR_ID, SESSION_ID);
     const member = await open(MEMBER_ID, MEMBER_SESSION_ID);
     try {
       author.frames.length = 0;
       member.frames.length = 0;
-      const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "one-frame-run-0001" });
+      const started = await workspaceStub().sidekickRunNow({
+        ...addressed(), actor: actor(), idempotencyKey: "one-frame-run-0001",
+      });
       expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
       await rowReaches(started.runId, "running");
       // No delivery from the conversation's outbox yet: the row's write was
@@ -819,6 +829,38 @@ describe("a Sidekick's shared conversation", () => {
       author.socket.close();
       member.socket.close();
     }
+  });
+
+  it("applies a run row's effects in chunks when the conversation has more readers than one call takes", async () => {
+    await activeSidekick();
+    // Thirty more readers: the row's write reports each one's read state, so
+    // it enqueues more envelopes than one `receiveChildEffects` call takes.
+    await runInDurableObject(conversationStub(), (_instance, state) => {
+      for (let index = 0; index < 30; index += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO participants (user_id, participation_reason, status, participant_epoch, added_at, updated_at)
+           VALUES (?, 'creator', 'active', 0, 1000, 1000)`,
+          `00000000-0000-7000-8000-0000${String(index).padStart(4, "0")}c8b0`,
+        );
+      }
+    });
+    await deliverChildEffects(TEST_ENV, conversationStub());
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "chunked-run-0001" });
+    expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
+    await rowReaches(started.runId, "running");
+    // Nothing delivered from the outbox: every envelope the row's writes
+    // enqueued already has its receipt in the Sidekick.
+    const pending = await runInDurableObject(conversationStub(), (_instance, state) =>
+      state.storage.sql.exec<{ message_id: string }>(
+        `SELECT message_id FROM durable_outbox WHERE state IN ('pending', 'inflight')
+            AND json_extract(payload_json, '$.kind') = 'conversation_effect'`,
+      ).toArray().map((row) => row.message_id));
+    expect(pending.length).toBeGreaterThan(25);
+    const received = await runInDurableObject(workspaceStub(), (_instance, state) =>
+      state.storage.sql.exec<{ message_id: string }>(
+        `SELECT message_id FROM sidekick_child_receipts WHERE sidekick_id = ? AND substream_id = '0'`, AUTOMATION_ID,
+      ).toArray().map((row) => row.message_id));
+    expect(pending.filter((messageId) => !received.includes(messageId))).toEqual([]);
   });
 
   it("keeps a requester's manual unread mark when their own run's row lands", async () => {
@@ -957,7 +999,9 @@ describe("a Sidekick's shared conversation", () => {
     try {
       await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
       const row = () => frames.filter((frame) => frame.type === "workspace_sidebar_list" && frame.list === "automations")
-        .flatMap((frame) => frame.items as Array<{ id: string; status: string; nextRunAt: string | null; scheduleTimeZone?: string }>)
+        .flatMap((frame) => frame.items as Array<{
+          id: string; status: string; nextRunAt: string | null; scheduleTimeZone?: string;
+        }>)
         .filter((item) => item.id === AUTOMATION_ID).at(-1);
       await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...DEFINITION, triggers: [
         { type: "manual" },
