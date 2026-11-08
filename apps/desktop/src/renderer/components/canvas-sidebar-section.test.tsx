@@ -2,12 +2,12 @@ import { asUserId } from '@rally/contracts';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createRef } from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { canvasRenameRequested } from '../lib/canvases';
+import { canvasRenameRequested, canvasShareRequested } from '../lib/canvases';
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import { CanvasesSection } from './canvas-sidebar-section';
 
@@ -18,7 +18,7 @@ const getWorkspaceMembers = vi.hoisted(() => vi.fn());
 const socket = vi.hoisted(() => ({ current: null as null | { state: string; retry: () => void } }));
 vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => socket.current }));
 vi.mock('../lib/collaboration-session', () => ({
-  useCollaborationSession: () => ({ api: { setCanvasPinned, getWorkspaceMembers }, session: { user: { id: ME } } }),
+  useCollaborationSession: () => ({ api: { setCanvasPinned, getWorkspaceMembers }, session: { user: { id: ME }, workspace: { id: 'workspace-1', region: 'global' } } }),
 }));
 
 function canvas(id: string, title: string, overrides: Partial<CanvasSidebarRow> = {}): CanvasSidebarRow {
@@ -130,6 +130,38 @@ describe('CanvasesSection', () => {
     fireEvent.contextMenu(screen.getByRole('link', { name: /Launch plan/ }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Rename…' }));
     await waitFor(() => expect(opened).toHaveBeenLastCalledWith('/canvases/00000000-0000-7000-8000-0000000000c1', true));
+  });
+
+  it('offers the pill menu\'s Share… from a row, opening the Canvas on its Share panel', async () => {
+    const opened = vi.fn();
+    function Opened(): null {
+      const location = useLocation();
+      opened(location.pathname, canvasShareRequested(location.state));
+      return null;
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    applyVersionedSidebarList(client, 'canvases', 1, [canvas('00000000-0000-7000-8000-0000000000c1', 'Launch plan')]);
+    render(<QueryClientProvider client={client}><Tooltip.Provider><MemoryRouter initialEntries={['/']}>
+      <CanvasesSection scroll={createRef()} />
+      <Routes><Route element={<Opened />} path="/canvases/:id" /><Route element={null} path="/" /></Routes>
+    </MemoryRouter></Tooltip.Provider></QueryClientProvider>);
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Launch plan/ }));
+    expect((await screen.findAllByRole('menuitem')).map((item) => item.textContent)).toEqual(['Pin', 'Rename…', 'Share…', 'Copy link']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Share…' }));
+    await waitFor(() => expect(opened).toHaveBeenLastCalledWith('/canvases/00000000-0000-7000-8000-0000000000c1', true));
+  });
+
+  it('marks a row that arrives after the list did, so it slides in, and not the rows that were there', async () => {
+    const client = renderSection([canvas('00000000-0000-7000-8000-0000000000c1', 'Launch plan')]);
+    expect(screen.getByRole('link', { name: /Launch plan/ })).not.toHaveAttribute('data-motion-insert');
+    act(() => {
+      applyVersionedSidebarList(client, 'canvases', 2, [
+        canvas('00000000-0000-7000-8000-0000000000c2', 'Fresh one'),
+        canvas('00000000-0000-7000-8000-0000000000c1', 'Launch plan'),
+      ]);
+    });
+    expect(await screen.findByRole('link', { name: /Fresh one/ })).toHaveAttribute('data-motion-insert');
+    expect(screen.getByRole('link', { name: /Launch plan/ })).not.toHaveAttribute('data-motion-insert');
   });
 
   it('draws a placeholder for the name of a Canvas Rally is still naming', () => {

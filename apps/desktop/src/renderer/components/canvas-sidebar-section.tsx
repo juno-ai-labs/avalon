@@ -1,9 +1,12 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
+import * as ContextMenu from '@radix-ui/react-context-menu';
+import { IconLink, IconUsers } from '@tabler/icons-react';
 import { ArrowDownUp } from 'lucide-react';
-import { useMemo, useState, type RefObject } from 'react';
+import { useMemo, useRef, useState, type RefObject } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 
-import { canvasNaming, canvasRoute, canvasRowDetail, othersPresent, RENAME_CANVAS_STATE, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { canvasNaming, canvasRoute, canvasRowDetail, othersPresent, RENAME_CANVAS_STATE, SHARE_CANVAS_STATE, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { copyLink } from '../lib/copy-link';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { CanvasMark } from './canvas-mark';
@@ -40,6 +43,9 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
   const [order, setOrder] = useState<CanvasOrder>('recent');
   const sorted = useMemo(() => order === 'name' ? [...rest].sort((a, b) => a.title.localeCompare(b.title)) : rest, [order, rest]);
   const navigate = useNavigate();
+  const workspace = session?.workspace;
+  const [linkError, setLinkError] = useState<Error | null>(null);
+  const inserted = useInsertedRows(rows);
   const open = matchPath('/canvases/:id', useLocation().pathname)?.params.id;
   const row = (canvas: CanvasSidebarRow, position?: string): React.JSX.Element => {
     const live = othersPresent(canvas, currentUserId).length > 0;
@@ -53,6 +59,21 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
       onPin={(next) => { void setPinned(canvas.id, next).catch(() => undefined); }}
       // The title is edited in the Canvas's own pill, so Rename… opens it there.
       onRename={() => { void navigate(canvasRoute(canvas.id), { replace: canvas.id === open, state: RENAME_CANVAS_STATE }); }}
+      // The pill's menu, less what only an open Canvas can do: Share… opens
+      // it on its panel, and Copy link copies the same link the pill does.
+      insert={inserted.has(canvas.id)}
+      menu={<>
+        <ContextMenu.Item className="menu-item" onSelect={() => { void navigate(canvasRoute(canvas.id), { replace: canvas.id === open, state: SHARE_CANVAS_STATE }); }}>
+          <IconUsers aria-hidden="true" size={15} stroke={1.8} />Share…
+        </ContextMenu.Item>
+        {workspace && <ContextMenu.Item className="menu-item" onSelect={() => {
+          setLinkError(null);
+          copyLink({ kind: 'canvas', region: workspace.region, workspaceId: workspace.id, canvasId: canvas.id })
+            .catch((cause: unknown) => setLinkError(cause instanceof Error ? cause : new Error('The link could not be copied.')));
+        }}>
+          <IconLink aria-hidden="true" size={15} stroke={1.8} />Copy link
+        </ContextMenu.Item>}
+      </>}
       pinned={position !== undefined}
       position={position}
       tile={<CanvasMark id={canvas.id} kind={canvas.artifactKind} />}
@@ -64,6 +85,7 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
   };
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
+    {linkError && <ErrorNotice occurrence={linkError}>The link couldn’t be copied.</ErrorNotice>}
     <PinnedSection
       count={pinned.length}
       drop={drop}
@@ -85,4 +107,24 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
       {sorted.map((canvas) => row(canvas))}
     </section>
   </>;
+}
+
+/**
+ * The ids of rows that arrived after the list first did: a Canvas just made,
+ * here or by someone else, whose appearance is itself the change and so
+ * slides in (list-motion.md) rather than overprinting the row it displaces.
+ * The first list, and a row the device cache seeded, play nothing.
+ */
+function useInsertedRows(rows: readonly CanvasSidebarRow[] | undefined): ReadonlySet<string> {
+  const known = useRef<Set<string> | null>(null);
+  const inserted = useRef<Set<string>>(new Set());
+  if (rows) {
+    if (known.current === null) known.current = new Set(rows.map((row) => row.id));
+    else {
+      for (const row of rows) {
+        if (!known.current.has(row.id)) { known.current.add(row.id); inserted.current.add(row.id); }
+      }
+    }
+  }
+  return inserted.current;
 }

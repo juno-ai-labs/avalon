@@ -1530,7 +1530,7 @@ export function WorkspaceSettingsScreen({
           <div className="settings-content-scroll" inert={navigationSheetOpen}>
             {activeSection === 'account' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2><SettingLabel setting={settings.profile} /></h2><p>Your Rally identity and access in this workspace.</p></div>
+                <div className="settings-pane-heading"><h2><SettingLabel setting={settings.profile} /></h2><p>Your Rally identity and access in this Organization.</p></div>
                 <PersonalSetup variant="settings" profileDetails={(displayName) => <>
                   <span><strong>{displayName}</strong><small>{workspace.currentUser.email}</small></span>
                   <Badge className="role-badge">{guest ? 'Guest' : workspace.currentUser.role}</Badge>
@@ -1642,7 +1642,7 @@ export function WorkspaceSettingsScreen({
 
             {activeSection === 'workspace' && (
               <section aria-labelledby="settings-title" className="settings-pane">
-                <div className="settings-pane-heading"><h2>Organization preferences</h2><p>Review organization details and defaults shared by organization Sidekicks.</p></div>
+                <div className="settings-pane-heading"><h2>Organization preferences</h2><p>Review organization details and defaults shared by the Organization’s Sidekicks.</p></div>
                 <div className="settings-list-card">
                   <div className="settings-preference-row">
                     <SettingCopy setting={settings.workspaceIdentity} />
@@ -2052,7 +2052,7 @@ export function WorkspaceSettingsScreen({
                       value={connectionFilter}
                     />
                   </div>
-                  <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Organization connections expose granted capabilities to every member; organization Sidekicks use only the connections explicitly bound to them.</p>
+                  <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Organization connections expose granted capabilities to every member; an Organization’s Sidekicks use only the connections explicitly bound to them.</p>
                   <div className="provider-grid">
                     {visibleProviders.map((provider) => {
                       const mark = 'mark' in provider ? provider.mark : null;

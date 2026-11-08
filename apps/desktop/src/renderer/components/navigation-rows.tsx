@@ -237,10 +237,14 @@ export function usePinWrite(
  * `RowLayout`, draggable into Pinned while unpinned, and a context menu that
  * pins or unpins it. The section supplies what the row stands for.
  */
-export function PinnableRow({ active, className, drag, motionKey, onPin, onRename, pinned, position, to, unread, ...layout }: {
+export function PinnableRow({ active, className, drag, insert = false, menu, motionKey, onPin, onRename, pinned, position, to, unread, ...layout }: {
   active: boolean;
   className: string;
   drag: React.HTMLAttributes<HTMLElement>;
+  /** Its arrival is itself the change (a Canvas just made): it slides in, `data-motion-insert` (list-motion.md). */
+  insert?: boolean;
+  /** Items after Pin and Rename… in the row's menu, so it offers what the open item's own menu does. */
+  menu?: ReactNode;
   motionKey: string;
   onPin: (pinned: boolean) => void;
   /** Offers Rename… in the row's menu; absent where the row cannot be renamed from here. */
@@ -259,6 +263,7 @@ export function PinnableRow({ active, className, drag, motionKey, onPin, onRenam
       <Link
         aria-current={active ? 'page' : undefined}
         className={clsx('navigation-row', className, active && 'is-active', unread && 'is-unread')}
+        data-motion-insert={insert ? '' : undefined}
         data-motion-key={motionKey}
         to={to}
         {...drag}
@@ -277,6 +282,7 @@ export function PinnableRow({ active, className, drag, motionKey, onPin, onRenam
           <IconPencil aria-hidden="true" size={15} stroke={1.8} />
           Rename…
         </ContextMenu.Item>}
+        {menu}
       </ContextMenu.Content>
     </ContextMenu.Portal>
   </ContextMenu.Root>;
