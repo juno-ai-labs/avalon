@@ -164,6 +164,22 @@ shows until the person starts an email sign-in. Four choices shape it:
 The redirect URI must be registered on Google's identity OAuth client; the
 [runbook](runbook.md#provider-configuration) lists it.
 
+### Development sign-in
+
+Against a local API with `APP_ENV=development` and `RALLY_DEV_AUTH=true`, the
+signed-out entry also offers **Use local development account**, the desktop's
+button of the same name. The entry asks `GET /browser/dev/session` once, the
+first time the signed-out screen shows; it answers 204 only there and 404
+everywhere else, so production never draws the button. Choosing it sends
+`POST /browser/dev/session`, which opens `createDevelopmentIdentitySession`'s
+account (`dev@avalon.local`, the seed's Adam) as an ordinary browser cookie
+session with no Organization, and the entry continues as after an email
+sign-in, to the Organization list.
+
+A Canvas or Sidekick link's sign-in line names what it opens ("Sign in to open
+this Canvas."), and an Organization path's says "Sign in to open this
+Organization."; a link need not have been emailed to anyone.
+
 ### Connectors
 
 A member can start every connection except those whose catalog entry in
@@ -614,6 +630,26 @@ must not close a healthy socket or reject pending command receipts. Identity,
 workspace, role or access-class changes replace the client and re-admit it.
 
 ## Changelog
+
+### 2026-11-08 — A local browser can use the development account
+
+**What changed:** `GET` and `POST /browser/dev/session`, and the signed-out
+entry's **Use local development account** where the first answers 204. A
+Canvas or Sidekick link's sign-in line names what it opens.
+
+**Why:** A person with only the browser could not sign in locally: Google
+needs credentials, and development sends no email, so the browser tester read
+the code out of D1. The desktop's button already existed against
+`POST /auth/dev/session`, whose bearer tokens the browser does not use; the
+browser route registers the same identity as a cookie session. The flag is
+asked of the API rather than built into the client, because the browser bundle
+is a production Vite build even locally (`import.meta.env.DEV` is false). The
+link line said "Sign in with the email address the link was sent to.", which
+was the invitation's copy and wrong for a link copied from the app.
+
+**What a future change must respect:** both routes stay behind
+`APP_ENV=development` and `RALLY_DEV_AUTH=true`; the button's presence is the
+API's answer, never a client build flag.
 
 ### 2026-11-07 — The browser opens Canvases and Sidekicks, beside the sidebar, and forwards their routes
 
