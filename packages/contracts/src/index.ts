@@ -1583,6 +1583,8 @@ export const AutomationSummarySchema = z.object({
   scope: AutomationScopeSchema,
   status: z.enum(["draft", "active", "paused"]),
   nextRunAt: TimestampSchema.nullable(),
+  runState: z.enum(["working", "needs_input"]).nullable().optional(),
+  pendingQuestion: z.string().nullable().optional(),
   lastRunAt: TimestampSchema.nullable(),
   updatedAt: TimestampSchema,
   /** Who it is shared with; absent from a server that predates it. */

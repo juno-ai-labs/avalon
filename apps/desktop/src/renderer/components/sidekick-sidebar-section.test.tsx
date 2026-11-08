@@ -51,6 +51,12 @@ describe('SidekicksSection', () => {
     expect(within(all).getByRole('link', { name: /Revenue analyst/ })).toHaveTextContent('Paused');
   });
 
+  it("says what a waiting Sidekick asked, on its Needs input row", () => {
+    renderSection([sidekick('triage', 'Incident triage', { needsInput: true, pendingQuestion: 'Which status page gets the update?' })]);
+    const waiting = screen.getByRole('region', { name: 'Needs input' });
+    expect(within(waiting).getByRole('link', { name: /Incident triage/ })).toHaveTextContent('Which status page gets the update?');
+  });
+
   it('pins a Sidekick dragged into Pinned, and unpins from its menu', async () => {
     renderSection([sidekick('support', 'Support inbox'), sidekick('changelog', 'Weekly changelog', { pinnedPosition: 0 })]);
     const target = screen.getByRole('region', { name: 'Pinned Sidekicks' });

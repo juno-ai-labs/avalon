@@ -951,8 +951,12 @@ export interface ConversationSurfaceProps {
   composerMenuActions?: readonly ComposerMenuAction[];
   /** What the composer says while empty, when the host has something more specific to say. */
   composerPlaceholder?: string;
-  /** Draw the feed without a composer: a run's own conversation, read from its Sidekick. */
-  readOnly?: boolean;
+  /**
+   * Draw the feed without a composer: a run's own conversation, opened from
+   * its Sidekick. Only the composer goes: a question in the feed keeps its
+   * answer form, since answering it is how a waiting run continues.
+   */
+  withoutComposer?: boolean;
 }
 
 /**
@@ -979,7 +983,7 @@ function ConversationSurfaceContent({
   messageIntent,
   composerMenuActions: hostMenuActions,
   composerPlaceholder,
-  readOnly = false,
+  withoutComposer = false,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
   const detailQueryKey = useMemo(() => workstreamDetailQueryKey(id, substreamId), [id, substreamId]);
@@ -1093,7 +1097,7 @@ function ConversationSurfaceContent({
   // A read-only conversation (a run read from its Sidekick) has no composer to
   // show what lands in its draft, so a drop or a paste there would upload a
   // file nobody can see or send: it takes none.
-  const acceptFiles = readOnly ? IGNORE_FILES : attachmentDraft.addFiles;
+  const acceptFiles = withoutComposer ? IGNORE_FILES : attachmentDraft.addFiles;
   const transcriptDrop = useFileDrop(acceptFiles);
   const railDrop = useFileDrop(acceptFiles);
   // The composer does not take focus when a work stream opens, so a paste that
@@ -2515,7 +2519,7 @@ function ConversationSurfaceContent({
             || stopAcknowledgement.pendingRunId !== null
             || stopAcknowledgement.runId !== null)
             && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
-          {!readOnly && <WorkstreamComposer
+          {!withoutComposer && <WorkstreamComposer
             api={api ?? undefined}
             placeholder={composerPlaceholder ?? (parentKind === 'automation'
               ? 'Ask your Sidekick…'

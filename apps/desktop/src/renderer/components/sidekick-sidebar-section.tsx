@@ -18,7 +18,8 @@ export function useSidekickList(): AutomationSummary[] | undefined {
 
 /** A Sidekick row's second line: what it is waiting on, or where it stands. */
 function sidekickRowState(row: AutomationSummary): React.ReactNode {
-  if (row.needsInput) return 'Needs input';
+  // The question itself, when a run asked one: the row says what it waits on.
+  if (row.needsInput) return row.pendingQuestion ?? 'Needs input';
   if (row.status === 'paused') return 'Paused';
   if (row.status === 'draft') return 'Draft';
   if (row.nextRunAt) return <>Next run <RelativeTime value={row.nextRunAt} /></>;

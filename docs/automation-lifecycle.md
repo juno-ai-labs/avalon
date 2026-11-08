@@ -1014,9 +1014,20 @@ with the reply as a two-line preview, expanding to the whole reply and **Open
 run**, which puts `?run=<runId>` on the Sidekick's route; the screen then shows
 that run's own conversation (`parentKind: "automation"`, substream the run id)
 in place of `"0"`, with a way back that replaces the history entry, so Back
-leaves the Sidekick rather than reopening the run. That view is read-only
-(`readOnly`, no composer): replies to the Sidekick go in the shared
-conversation, where they start the next run. Its opening row is the prompt the
+leaves the Sidekick rather than reopening the run. That view has no composer
+(`withoutComposer`): a message to the Sidekick goes in the shared
+conversation, where it starts the next run. A question the run asked keeps its
+answer form there, because answering it is how the waiting run continues.
+
+A run waiting on input also shows its question on its row in the shared
+conversation, with the same answer form (`SidekickRunQuestion`): the row opens
+the run's own conversation socket, the one the run view opens, finds the
+newest open elicitation in that transcript, and answers it with
+`answer_elicitation` on that socket, so the answer reaches the run and not a
+new one. Only a row whose state is `needs_input` opens that socket, and it
+closes when the row moves on. Typing the answer in the shared composer instead
+would start a new run ([who answers a message](#the-shared-conversation)),
+which is why the form is on the row. Its opening row is the prompt the
 run reads (`conversation-message-opening.ts`, structured kind
 `sidekick_conversation_message`), written for the model, so the client draws it
 as the caption "Started by a message in the conversation."
@@ -1761,6 +1772,31 @@ The Sidekick authoring prompt carries no Google-specific lookup or attachment
 instructions. See [Google connector guidance](connectors.md#google).
 
 ## Changelog
+
+### 2026-11-08 — A waiting run's question is answered on its row, and the Sidekick screens follow the design
+
+**What changed:** A run waiting on input shows its question on its row in the
+shared conversation with the answer form (`SidekickRunQuestion`), which
+answers that run through the run's own conversation socket. The run view
+keeps its answer form and loses only its composer (`withoutComposer`, which
+replaced a `readOnly` flag that never stopped the form). The Needs input row
+in the sidebar reads the question (`AutomationSummary.pendingQuestion`), and
+`AutomationSummary` gains `runState`.
+
+**Why:** The design (§4, the PRD's authority for every screen) puts the
+question in the transcript. The inspection found a person told a Sidekick
+needed them with no way to see what it asked short of finding the run view,
+while the natural reply, typed in the shared composer, starts a new run.
+
+**Considered and rejected:** Answering from the shared composer: a message
+there is routed to a new run by design, and teaching admission to guess which
+run a message answers is the inference the decision log refuses. Copying the
+question onto the run row's projection: the elicitation is the run's own
+record, and its socket is already the answer path.
+
+**What a future change must respect:** the inline form answers through the
+run's conversation, never through `"0"`; it opens a socket only while its row
+says Needs input.
 
 ### 2026-11-07 — The shared conversation starts runs and shows them, no Thread owns a Sidekick, and Sidekicks open in the main window
 

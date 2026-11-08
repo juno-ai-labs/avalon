@@ -11,6 +11,7 @@ import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList, type ActivityList } from '
 import { SectionHeading, useSectionMotion } from './navigation-rows';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
+import { sidekickRunSearch } from './sidekick-run-row';
 
 /** This viewer's Activity as the workspace socket keeps it; `undefined` until it has said. */
 export function useActivityList(): ActivityList | undefined {
@@ -37,9 +38,9 @@ const GLYPHS: Record<ActivityItem['kind'], ReactNode> = {
 /**
  * Where a row opens: a Canvas Chat mention at its message, any other Canvas
  * row at the Canvas, and a Sidekick row at its conversation, where a run's row
- * is and an answer to it goes. A mention in one of a Sidekick's runs opens
- * that run. A mention recorded before it carried its message's sequence
- * opens the Canvas.
+ * is. A run that needs input, and a mention in one of a Sidekick's runs, open
+ * that run, where its question is. A mention recorded before it carried its
+ * message's sequence opens the Canvas.
  */
 export function activityRoute(item: ActivityItem): string {
   if (item.parentKind === 'canvas') {
@@ -48,8 +49,9 @@ export function activityRoute(item: ActivityItem): string {
       : canvasRoute(item.parentId);
   }
   const sidekick = `/sidekicks/${encodeURIComponent(item.parentId)}`;
+  if (item.kind === 'needs_input' && item.runId !== null) return `${sidekick}${sidekickRunSearch(item.runId)}`;
   return item.kind === 'mention' && item.substreamId !== null && item.substreamId !== '0'
-    ? `${sidekick}?run=${encodeURIComponent(item.substreamId)}`
+    ? `${sidekick}${sidekickRunSearch(item.substreamId)}`
     : sidekick;
 }
 
