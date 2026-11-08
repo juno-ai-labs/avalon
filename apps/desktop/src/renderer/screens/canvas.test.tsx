@@ -319,6 +319,34 @@ describe('CanvasScreen', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share Canvas' })).toBeNull());
   });
 
+  it('offers only guests to pick once the whole Organization can open it, and never the viewer', async () => {
+    const GUEST = asUserId('00000000-0000-7000-8000-0000000000a4');
+    const THEO = asUserId('00000000-0000-7000-8000-0000000000a3');
+    getWorkspaceMembers.mockResolvedValue([
+      { id: ME, name: 'Adam Jones', email: 'adam@example.test', timezone: 'UTC', accessClass: 'member' },
+      { id: MAYA, name: 'Maya Lin', email: 'maya@example.test', timezone: 'UTC', accessClass: 'member' },
+      { id: THEO, name: 'Theo Park', email: 'theo@example.test', timezone: 'UTC', accessClass: 'member' },
+      { id: GUEST, name: 'Gale Guest', email: 'gale@example.test', timezone: 'UTC', accessClass: 'guest' },
+    ]);
+    // Maya made it; Adam, an administrator, is managing it.
+    getCanvas.mockResolvedValue(detail({ createdByUserId: MAYA, visibility: 'participants', participantUserIds: [THEO] }));
+    setCanvasAudience.mockResolvedValue(detail({ createdByUserId: MAYA, visibility: 'workspace', participantUserIds: [GUEST] }));
+    renderCanvas();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Share Canvas' });
+    expect(await within(dialog).findByRole('checkbox', { name: 'Theo Park' })).toBeChecked();
+    expect(within(dialog).queryByRole('checkbox', { name: 'Adam Jones' })).toBeNull();
+
+    fireEvent.click(within(dialog).getByRole('radio', { name: /Everyone in the Organization/ }));
+
+    expect(within(dialog).getAllByRole('checkbox').map((box) => box.getAttribute('aria-label'))).toEqual(['Gale Guest']);
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Gale Guest' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    // Theo, a member, is in already; only the guest is sent.
+    await waitFor(() => expect(setCanvasAudience).toHaveBeenCalledWith(CANVAS, { visibility: 'workspace', userIds: [GUEST] }));
+  });
+
   it('shows the audience read-only to someone who cannot change it', async () => {
     getCanvas.mockResolvedValue(detail({ canManage: false, createdByUserId: MAYA, visibility: 'workspace' }));
     renderCanvas();
