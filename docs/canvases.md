@@ -634,7 +634,9 @@ Share button above the dialog's Save, two primary actions in one panel, and
 Everyone mode showed a people search over nothing (v1-F18, v4-R2-10, v1-R2-7).
 Offline, the pane dropped the Canvas's pill and Share for a bare Back and
 Forward and an uncircled "⋯", and one outage read three ways with two button
-styles (v1-R2-8, v4-R2-9).
+styles (v1-R2-8, v4-R2-9). The guest email field's placeholder was
+preflight's fixed grey, no theme's and 2.3:1 on the light well, so every form
+field's placeholder now takes the people search's muted token (vis3 e1-N1).
 
 Two choices the design does not settle, made in review and open to the
 owner's reversal: the hue is per Canvas from its id rather than per kind,
