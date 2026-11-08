@@ -277,10 +277,12 @@ denial sends nothing. Both are recorded with their Activity rows by
 ## What each person chooses
 
 Settings → Notifications → **Notify me about** holds, for each kind it offers
-(mentions, new messages, being added, Sidekick runs, pinned artifact
-updates), the channels it goes by: `push`, `email`, and any connector surface
-the person can be reached on (`userDelivery`, such as Slack). `newThreads`,
-`newBreakouts` and `merges` are still stored kinds but are not offered. How
+— exactly the kinds a producer records: Mentions, New messages, Being added,
+Sidekick runs, Pinned Canvas updates, Access requests
+(`OFFERED_NOTIFICATION_KINDS`) — the channels it goes by: `push`, `email`, and
+any connector surface the person can be reached on (`userDelivery`, such as
+Slack). `newThreads`, `newBreakouts` and `merges` are accepted where stored
+but are not offered, defaulted or consulted. How
 they are stored and how a save merges them is
 [`member-preferences.md`](member-preferences.md). They apply to every device;
 the device switch above them is still the device's own on/off. An empty list
