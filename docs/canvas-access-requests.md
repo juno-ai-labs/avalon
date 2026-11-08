@@ -82,9 +82,7 @@ approval tells them.
 
 ### In the client
 
-[Client half: the requestable pane, the Request access dialog, the Activity
-row's Approve and Deny, and the Share panel's Requests section, folded in at
-merge.]
+Client: a 404 on a well-formed Canvas id asks `GET /canvases/:id/access`; `requestable` draws "You don't have access to this Canvas" with Request access (one dialog opening on its optional message), "Request sent · <when>" alone, in the button's place, from the access read while pending, a denial read as no request, and 409 `canvas_access_open` read as "open it"; a restored route on a requestable Canvas stays, and the grant reopens the pane without a refresh (list row or `access_granted` row).
 
 ## Invariants
 
@@ -176,8 +174,7 @@ participant source (WorkspaceDO migration 151); an `access_request` intent and
 Activity row per decider (the creator, the Organization's administrators and
 a writer Sidekick's managers), settled for all of them by one decision; an
 `access_granted` intent and row for the requester; and a request settling when
-Share adds the person or the Canvas opens to the Organization. [Client half:
-folded in at merge.]
+Share adds the person or the Canvas opens to the Organization. Client: the Share panel lists `pendingAccessRequests` for deciders with the same Approve and Deny the Activity row has (`AccessDecisionActions`, held once answered), which drop under the message at narrow widths; an approval made while the panel is open joins its choice so Save keeps it. On the Activity row the buttons are named for the Canvas too, and a settled row says "You approved" to the decider (`decidedByUserId`) in the buttons' place.
 
 **Why:** The owner asked on 2026-11-08 for the whole flow back. The
 Thread-era flow (`git show 3df4150^:apps/api/src/services/access-request-service.ts`

@@ -114,7 +114,9 @@ export function PinnedMark({ howToPin = 'Drag a row here or right-click it to pi
 
 /**
  * One row of any of the three lists: a tile, a name with its time, and a
- * second line with an optional unread dot at its end.
+ * second line with an optional unread dot at its end. A row with nothing to
+ * say on the second line has none, and its dot sits after the time instead,
+ * so the dot never adds a line: a row is as tall seen as unseen.
  */
 export function RowLayout({ detail, tile, time, title, titleExtra, unread, unreadLabel = 'Unread' }: {
   detail: ReactNode;
@@ -126,6 +128,8 @@ export function RowLayout({ detail, tile, time, title, titleExtra, unread, unrea
   /** What the dot is called; Activity's word for it is "Unseen". */
   unreadLabel?: string;
 }): React.JSX.Element {
+  const dot = unread && <span aria-label={unreadLabel} className="navigation-row-unread-dot" role="img" />;
+  const hasDetail = detail !== null && detail !== undefined && detail !== false && detail !== '';
   return <>
     {tile}
     <span className="navigation-row-copy">
@@ -133,11 +137,12 @@ export function RowLayout({ detail, tile, time, title, titleExtra, unread, unrea
         <span className="navigation-row-title">{title}</span>
         {titleExtra}
         {time}
+        {!hasDetail && dot}
       </span>
-      <span className="navigation-row-line">
+      {hasDetail && <span className="navigation-row-line">
         <span className="navigation-row-detail">{detail}</span>
-        {unread && <span aria-label={unreadLabel} className="navigation-row-unread-dot" role="img" />}
-      </span>
+        {dot}
+      </span>}
     </span>
   </>;
 }

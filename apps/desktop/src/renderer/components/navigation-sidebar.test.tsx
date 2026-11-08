@@ -420,6 +420,30 @@ describe('the Activity section', () => {
       expect(rows[0]).toHaveAttribute('href', `/canvases/${CANVAS}?artifact=${ARTIFACT}`);
     });
 
+    it('keeps every name of the new kinds in the row and its tooltip, the place last and bold, and the dot on the first line when there is no preview', async () => {
+      const rows = await rowsOf([
+        item({ id: 'k1', kind: 'access_request', accessRequest: { state: 'pending', decidedByName: null } }),
+        item({ id: 'k2', kind: 'access_granted', actor: { kind: 'person', id: MAYA } }),
+        item({ id: 'k3', kind: 'artifact_updated', artifact: { resourceId: ARTIFACT, title: 'Board meeting readiness checklist' } }),
+      ]);
+      expect(rows.map((row) => row.getAttribute('title'))).toEqual([
+        'Avery asked to open Q4 revenue review',
+        'Maya let you into Q4 revenue review',
+        'Avery updated Board meeting readiness checklist in Q4 revenue review',
+      ]);
+      expect(rows.map((row) => [...row.querySelectorAll('.activity-row-text strong')].map((strong) => strong.textContent))).toEqual([
+        ['Avery', 'Q4 revenue review'],
+        ['Maya', 'Q4 revenue review'],
+        ['Avery', 'Board meeting readiness checklist', 'Q4 revenue review'],
+      ]);
+      // No preview: one line, holding the sentence, the time and the dot.
+      for (const row of rows) {
+        const lines = row.querySelectorAll('.navigation-row-line');
+        expect(lines).toHaveLength(1);
+        expect(within(lines[0] as HTMLElement).getByRole('img', { name: 'Unseen' })).toBeInTheDocument();
+      }
+    });
+
     it('offers Approve and Deny under a pending request, each sending the decision for that requester', async () => {
       const rows = await rowsOf([item({ id: 'r1', kind: 'access_request', preview: 'For the board review', accessRequest: { state: 'pending', decidedByName: null } })]);
       expect(rows[0]!.querySelector('.activity-row-text')).toHaveTextContent('Avery asked to open Q4 revenue review');
@@ -427,12 +451,15 @@ describe('the Activity section', () => {
       expect(rows[0]).toHaveAttribute('href', `/canvases/${CANVAS}`);
       // The buttons are beside the link, not inside it.
       expect(within(rows[0]!).queryByRole('button')).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: 'Approve Avery' }));
+      // The preview keeps its own line, with the dot at its end.
+      expect(within(rows[0]!.querySelectorAll<HTMLElement>('.navigation-row-line')[1]!).getByRole('img', { name: 'Unseen' })).toBeInTheDocument();
+      // Named for the Canvas too, so two requests from one person differ.
+      fireEvent.click(screen.getByRole('button', { name: 'Approve Avery for Q4 revenue review' }));
       await waitFor(() => expect(api.decideCanvasAccess).toHaveBeenCalledWith(CANVAS, AVERY, 'approve'));
       // Answered: both stay held until the push settles the row, so a second
       // press cannot meet this person's own answer as already settled.
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Approve Avery' })).toBeDisabled());
-      expect(screen.getByRole('button', { name: 'Deny Avery' })).toBeDisabled();
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Approve Avery for Q4 revenue review' })).toBeDisabled());
+      expect(screen.getByRole('button', { name: 'Deny Avery for Q4 revenue review' })).toBeDisabled();
       expect(api.decideCanvasAccess).toHaveBeenCalledTimes(1);
     });
 
@@ -440,20 +467,22 @@ describe('the Activity section', () => {
       api.getWorkspaceMembers.mockResolvedValue([] as never);
       useUiStore.getState().setSidebarSection('activity');
       renderSidebar(workspace, '/', { unseenCount: 1, items: [item({ id: 'r4', kind: 'access_request', accessRequest: { state: 'pending', decidedByName: null } })] });
-      fireEvent.click(await screen.findByRole('button', { name: 'Deny request' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Deny request for Q4 revenue review' }));
       await waitFor(() => expect(api.decideCanvasAccess).toHaveBeenCalledWith(CANVAS, AVERY, 'deny'));
       expect(screen.queryByRole('button', { name: /Someone/u })).toBeNull();
     });
 
-    it('reads a settled request as who decided, seen, with nothing left to press', async () => {
+    it('reads a settled request as who decided, in the buttons\' place, "You" to the decider, with nothing left to press', async () => {
       const rows = await rowsOf([
-        item({ id: 'r2', kind: 'access_request', preview: 'For the board review', seen: true, accessRequest: { state: 'approved', decidedByName: 'Maya' } }),
-        item({ id: 'r3', kind: 'access_request', seen: true, accessRequest: { state: 'denied', decidedByName: 'Maya' } }),
+        item({ id: 'r2', kind: 'access_request', preview: 'For the board review', seen: true, accessRequest: { state: 'approved', decidedByName: 'Me', decidedByUserId: ME } }),
+        item({ id: 'r3', kind: 'access_request', seen: true, accessRequest: { state: 'denied', decidedByName: 'Maya', decidedByUserId: MAYA } }),
+        // From a server older than the decider's id: the name.
+        item({ id: 'r5', kind: 'access_request', seen: true, accessRequest: { state: 'approved', decidedByName: 'Maya' } }),
       ]);
-      expect(rows[0]).toHaveTextContent('Maya approved');
-      expect(rows[0]).not.toHaveTextContent('For the board review');
-      expect(rows[1]).toHaveTextContent('Maya denied');
-      expect(rows.map((row) => row.classList.contains('is-seen'))).toEqual([true, true]);
+      expect(rows[0]).toHaveTextContent('For the board review');
+      expect(rows.map((row) => row.closest('.activity-row-group')?.querySelector('.activity-row-actions')?.textContent))
+        .toEqual(['You approved', 'Maya denied', 'Maya approved']);
+      expect(rows.map((row) => row.classList.contains('is-seen'))).toEqual([true, true, true]);
       expect(screen.queryByRole('button', { name: /^(Approve|Deny) / })).toBeNull();
     });
 
@@ -467,7 +496,7 @@ describe('the Activity section', () => {
   it('says how it fills when there is nothing yet, and offers Mark all seen only with something unseen', () => {
     useUiStore.getState().setSidebarSection('activity');
     renderSidebar(workspace, '/', { unseenCount: 0, items: [] });
-    expect(screen.getByText('Nothing yet. Mentions, replies, Canvases you are added to and Sidekick runs that need you or finish show up here.')).toBeInTheDocument();
+    expect(screen.getByText('Nothing yet. Mentions, new messages, Canvases you are added to, Sidekick runs that need you or finish, updates to Canvases you pinned and requests to open a Canvas show up here.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark all seen' })).toBeDisabled();
   });
 

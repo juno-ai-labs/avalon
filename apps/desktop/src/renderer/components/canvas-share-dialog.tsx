@@ -119,7 +119,10 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
           {membersById.get(request.userId) && <Avatar member={membersById.get(request.userId)!} size="medium" />}
           <span>
             <strong>{request.name}</strong>
-            <small>{request.message ? <>{request.message} · </> : null}<RelativeTime value={request.requestedAt} /></small>
+            <small>
+              {request.message}
+              <span className="canvas-share-request-time">{request.message ? ' · ' : null}<RelativeTime value={request.requestedAt} /></span>
+            </small>
           </span>
           <AccessDecisionActions canvasId={canvas.id} label={request.name} userId={request.userId} />
         </div>)}
