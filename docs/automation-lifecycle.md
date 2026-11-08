@@ -998,7 +998,9 @@ and `run: {state, stepCount, reply}`. The row is a projection of the run's
   calls, which the run's conversation now sends in its `directory_common`
   effect (`stepCount`) and `onChildCommonProjection` stores in
   `sidekick_runs.step_count`. `reply` is the run's last message once it has
-  stopped working (finished, or waiting on input): a run's conversation now
+  stopped working (finished, or waiting on input; a run waiting on a question
+  sends the question, the pending elicitation's prompt, in place of its last
+  message): a run's conversation now
   sends its last agent message twice in its effect: as `preview`, cut at
   1,000 UTF-16 units like every conversation's directory preview, and as
   `reply`, whole up to `MESSAGE_MAX_CHARACTERS` (a message's own ceiling).

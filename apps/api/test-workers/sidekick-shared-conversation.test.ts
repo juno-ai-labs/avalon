@@ -726,6 +726,18 @@ describe("a Sidekick's shared conversation", () => {
     expect(asking.row).toEqual({ runState: "needs_input", pendingQuestion: question, needsInput: true });
     expect(asking.lastRunAt).toBe(working.lastRunAt);
     expect(asking.waterline).toBeGreaterThan(working.waterline);
+    // The Activity row of each person it tells (the requester, and the
+    // Organization admin who manages it) carries the question as its preview.
+    await expect.poll(async () => {
+      await runDurableObjectAlarm(workspaceStub());
+      return runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{
+        recipient_user_id: string; kind: string; run_id: string; preview: string | null;
+      }>(`SELECT recipient_user_id, kind, run_id, preview FROM workspace_activity_items WHERE kind = 'needs_input'
+          ORDER BY recipient_user_id`).toArray());
+    }, { timeout: SETTLE_TIMEOUT_MS, interval: 100 }).toEqual([
+      { recipient_user_id: AUTHOR_ID, kind: "needs_input", run_id: started.runId, preview: question },
+      { recipient_user_id: ADMIN_ID, kind: "needs_input", run_id: started.runId, preview: question },
+    ]);
   });
 
   it("sends the Sidekick list with the saved name and state in the save that makes a draft active", async () => {

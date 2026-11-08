@@ -48,7 +48,8 @@ A row names its parent (`canvas` or `automation`) and its id, the
 conversation it happened in (`"0"`, or a run's id), the mentioning message or
 the run, who acted (a person for a mention or an add, the Sidekick for a run
 notice), and a preview: the text the push's body carries, reduced the same way
-(`rewriteMessageAsPlainText`, then `PUSH_BODY_PREVIEW_CHARACTERS`). The title is
+(`rewriteMessageAsPlainText`, then `PUSH_BODY_PREVIEW_CHARACTERS`); for a
+Needs input row that is the question the run waits on. The title is
 not copied: `activityPage` reads it from `canvas_directory` or
 `automation_directory` at list time, so a rename is shown as it is now.
 A row lists only while the recipient may open its parent: a row about a
