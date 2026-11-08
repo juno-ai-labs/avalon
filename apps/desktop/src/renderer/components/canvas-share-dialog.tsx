@@ -65,7 +65,9 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
   });
   const submit = (): void => {
     setInvalidEmails(null);
-    const typed = emails.split(/[\s,;]+/u).filter(Boolean);
+    // Only what the person can see is sent: addresses left under a closed
+    // guest section, with its "invited when you save" note hidden, stay put.
+    const typed = guestsOpen ? emails.split(/[\s,;]+/u).filter(Boolean) : [];
     let recipients: string[] = [];
     if (typed.length > 0) {
       const parsed = CreateScopeInvitationsSchema.shape.emails.safeParse(typed);
@@ -128,7 +130,7 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
       <p className="canvas-share-note">Separate email addresses with spaces, commas, or semicolons. They are invited when you save.</p>
     </details>}
     {invalidEmails && <ErrorNotice occurrence={invalidEmails}>Enter valid email addresses, separated by spaces, commas, or semicolons.</ErrorNotice>}
-    {save.error && <ErrorNotice occurrence={save.error}>{invite.isError ? 'Who can open it was saved, but the guests couldn’t be invited. Try again.' : save.error.message}</ErrorNotice>}
+    {save.error && <ErrorNotice occurrence={save.error}>{save.error === invite.error ? 'Who can open it was saved, but the guests couldn’t be invited. Try again.' : save.error.message}</ErrorNotice>}
     {missingPeople && <p className="canvas-share-note">Choose at least one person.</p>}
     {/* The dialog's one set of actions, at its foot, below the guest invite. */}
     <div className="canvas-share-actions">

@@ -1,6 +1,6 @@
 import type { CanvasDetail } from '@rally/contracts';
 import { TitleMenuItem, TitlePillHeader, TitlePillMenuAction, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
-import { IconLayoutSidebarRight, IconLink, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
+import { IconId, IconLayoutSidebarRight, IconLink, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -11,6 +11,8 @@ import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState, TitleSkeleton } from '../components/primitives';
 import { canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { copyLink } from '../lib/copy-link';
+import { desktopBridge } from '../lib/platform';
+import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { sidebarListApplied } from '../lib/sidebar-list-store';
 import { useDocumentTitle } from '../lib/document-title';
 import { isNotFoundError, useRestoredRouteFallback } from '../lib/landing';
@@ -83,6 +85,11 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     void navigate(`${location.pathname}${location.search}`, { replace: true, state: openResourceState(id, resourceId, { expanded: false }) });
   });
   const workspace = session?.workspace;
+  const copyCanvasId = (): void => {
+    void desktopBridge().copyText(id)
+      .then(() => reportTelemetryProductIntent({ kind: 'content_copied', contentType: 'workstream_id', resourceType: 'workstream', resourceId: id }))
+      .catch(() => undefined);
+  };
   const copyCanvasLink = (): void => {
     if (!workspace) return;
     setLinkError(null);
@@ -169,11 +176,19 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     <TitleMenuItem disabled={!workspace} icon={<IconLink aria-hidden="true" size={16} stroke={1.8} />} onSelect={copyCanvasLink}>
       Copy link
     </TitleMenuItem>
+    {/* For support, wherever the Canvas is named: the offline and refused
+        states keep this header, which replaced the bare menu that offered it. */}
+    <TitleMenuItem icon={<IconId aria-hidden="true" size={16} stroke={1.8} />} onSelect={copyCanvasId}>
+      Copy Canvas ID
+    </TitleMenuItem>
     {/* A closed panel comes back from here, onto the newest artifact: each
-        navigation onto an artifact is a request of its own, so a second one
-        reopens what was closed. Beside the Chat, as on arrival. */}
+        navigation onto an artifact is a request of its own (a new location
+        key), so a second one reopens what was closed. Beside the Chat, as on
+        arrival, and replacing the entry as arrival, Rename… and Share… do:
+        a pushed one would put a Back onto the same Canvas, whose state then
+        opened the panel again, so Back looked dead. */}
     {newestArtifact && <TitleMenuItem icon={<IconLayoutSidebarRight aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => {
-      void navigate(location.pathname, { state: openResourceState(id, newestArtifact.resourceId, { expanded: false }) });
+      void navigate(location.pathname, { replace: true, state: openResourceState(id, newestArtifact.resourceId, { expanded: false }) });
     }}>
       Open artifact
     </TitleMenuItem>}

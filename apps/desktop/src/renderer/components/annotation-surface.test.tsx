@@ -8,7 +8,7 @@ const resourceId='00000000-0000-7000-8000-0000000000a1';
 /** The per-document key the surface put in the frame's script URL. */
 const keyOf=(frame:HTMLIFrameElement):string=>/annotation-frame\.js\?key=([0-9a-f]+)/u.exec(frame.getAttribute('srcdoc')??'')?.[1]??'';
 function Observe():React.JSX.Element {const draft=useAnnotationDraft();return <><AnnotationChips /><button onClick={()=>draft?.clearAccepted(draft.pins)}>Accept message</button><output data-testid="pins">{JSON.stringify(draft?.selections.map(p=>p.annotation))}</output><output data-testid="pin-ids">{draft?.pins.map((p)=>p.id).join(',')}</output></>;}
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('annotation source picker',()=>{
   it('shows website words instead of markup in saved annotations',()=>{
     render(<MessageAnnotations content={{kind:'artifact_annotations',annotations:[{target:{resourceId,version:1,locator:{type:'element',css:'button',box:{x:0,y:0,w:1,h:1},visibleText:'Start free'}},content:{exact:'<button class="cta">Start free</button>',source:'rendered',before:'',after:'',truncated:false},comment:'Make this shorter'}]}} />);
@@ -145,8 +145,6 @@ describe('annotation source picker',()=>{
     act(()=>{for(const callback of callbacks)callback();});
     expect(editor().style.left).toBe('300px');
     expect(editor().style.top).toBe('300px');
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
   });
   it('adds a selection to the input only when Send confirms a nonempty comment',()=>{
     render(<AnnotationDraftProvider><AnnotationSurface resourceId={resourceId} version={1} name="Note.txt" mimeType="text/plain" text="Selected words" /><Observe /></AnnotationDraftProvider>);
