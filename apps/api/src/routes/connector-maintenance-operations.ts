@@ -2,14 +2,14 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { HonoAppEnv } from '../env';
 import { zValidator } from '../middleware/validation';
-import { getOperator, requireDemoOperator, requireOperatorRole } from '../telemetry/operator-auth';
+import { ACE_OPERATOR_ROLE, getOperator, requireAceOperator, requireOperatorRole } from '../telemetry/operator-auth';
 import { ConnectorMaintenanceSelectionSchema, ConnectorMaintenanceOperationSchema,
   previewConnectorMaintenance, applyConnectorMaintenance, connectorMaintenanceStatus, cancelConnectorMaintenance,
 } from '../services/connector-maintenance-service';
 
 /** Explicit operator write authority; never inferred from a read-only inspection tool. */
 export const connectorMaintenanceOperatorRoutes = new Hono<HonoAppEnv>();
-connectorMaintenanceOperatorRoutes.use('*', requireDemoOperator, requireOperatorRole('demos'));
+connectorMaintenanceOperatorRoutes.use('*', requireAceOperator, requireOperatorRole(ACE_OPERATOR_ROLE));
 const OperationParamSchema = z.strictObject({ id: z.string().uuid() });
 connectorMaintenanceOperatorRoutes.post('/preview', zValidator('json', ConnectorMaintenanceSelectionSchema), async (c) =>
   c.json(ConnectorMaintenanceOperationSchema.parse(await previewConnectorMaintenance(c.env, c.req.valid('json'), getOperator(c).operatorId))));

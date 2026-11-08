@@ -3,7 +3,7 @@
 /**
  * The retirement fence, on the objects that actually hold the writes.
  *
- * A retired demo workspace has to go quiet permanently, and "quiet" is not one
+ * A retired workspace has to go quiet permanently, and "quiet" is not one
  * check at the edge: the spike that motivated this refused a write inside
  * `AgentLoopDO`, and the outbox it stranded belonged to a Channel's parent,
  * which is now hosted by the Organization's `WorkspaceDO`.
@@ -104,7 +104,7 @@ async function refusalOf(call: () => Promise<unknown>): Promise<unknown> {
 describe("object retirement", () => {
   it("refuses a product write on a retired conversation parent", async () => {
     const { workstreamId, workspaceId, stub } = freshParent();
-    await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+    await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "operator_retirement" });
 
     const refusal = await refusalOf(() => stub.listChildren({ workspaceId, parentId: workstreamId }));
     expect((refusal as { code?: string } | undefined)?.code).toBe(RETIREMENT_REFUSAL_CODE);
@@ -125,7 +125,7 @@ describe("object retirement", () => {
     const agent = TEST_ENV.SUBSTREAM_AGENTS.get(TEST_ENV.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName(TEST_ENV.AVALON_REGION, WORKSPACE_ID, workstreamId, "0"),
     )) as DurableObjectStub<AgentLoopDO>;
-    await agent.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+    await agent.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "operator_retirement" });
     const agentRefusal = await refusalOf(() => agent.searchTurnDocumentIds({
       type: "turn_search_projection_v1",
       region: TEST_ENV.AVALON_REGION,
@@ -155,7 +155,7 @@ describe("object retirement", () => {
       expect(state.getWebSockets()).toHaveLength(1);
       // Retired from inside the object, so the client end lives in the same
       // isolate as the assertion and its close event can be awaited here.
-      await instance.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+      await instance.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "operator_retirement" });
       return closed;
     });
     expect(closeCode).toBe(1008);
@@ -164,14 +164,14 @@ describe("object retirement", () => {
   it("permits retirement and inspection after the object is retired", async () => {
     const { stub } = freshParent();
     const retiredAt = Date.now();
-    await stub.retireObject({ retiredAt, operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+    await stub.retireObject({ retiredAt, operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "operator_retirement" });
 
     // Idempotent: a resumed retirement re-runs its steps and must converge.
     await expect(stub.retireObject({
       retiredAt: retiredAt + 1_000,
       operationId: OPERATION_ID,
       actorUserId: ACTOR_ID,
-      reason: "demo_replaced",
+      reason: "operator_retirement",
     })).resolves.toBeDefined();
 
     const state = await stub.objectRetirementState();
@@ -183,7 +183,7 @@ describe("object retirement", () => {
 
   it("drops and acknowledges an effect already handed to the Queue", async () => {
     const { workstreamId, workspaceId, stub } = freshParent();
-    await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+    await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "operator_retirement" });
 
     // The envelope is well-formed and would ordinarily be applied. A throw here
     // is what leaves the Queue redelivering it forever, so the contract is a
@@ -227,7 +227,7 @@ describe("object retirement", () => {
     // Deliberately *not* through `retireObject`. That path also marks the live
     // instance, so a gate that consulted only its own memory would pass every
     // assertion in this file while a reconstructed object stayed wide open —
-    // which is the object an evicted demo workspace actually gets. Writing the
+    // which is the object an evicted retired workspace actually gets. Writing the
     // row underneath leaves the storage read as the only way to know.
     await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
       state.storage.sql.exec(
@@ -236,7 +236,7 @@ describe("object retirement", () => {
         retiredAt,
         OPERATION_ID,
         ACTOR_ID,
-        "demo_replaced",
+        "operator_retirement",
       );
       expect(readObjectRetirement(state.storage.sql)?.retiredAt).toBe(retiredAt);
       void instance;
@@ -291,7 +291,7 @@ describe("object retirement", () => {
       retiredAt: Date.now(),
       operationId: OPERATION_ID,
       actorUserId: ACTOR_ID,
-      reason: "demo_replaced",
+      reason: "operator_retirement",
     });
 
     // Counted, not drained. Draining would mean publishing from a workspace
@@ -316,7 +316,7 @@ describe("object retirement", () => {
   it("still answers after eviction, which is the state a retired workspace is in", async () => {
     const { workstreamId, workspaceId, stub } = freshParent();
     const retiredAt = Date.now();
-    await stub.retireObject({ retiredAt, operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+    await stub.retireObject({ retiredAt, operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "operator_retirement" });
 
     // A retired workspace is idle by definition, so its objects *will* be
     // evicted — and every assertion in this file up to here ran against the
@@ -336,7 +336,7 @@ describe("object retirement", () => {
       retiredAt,
       operationId: OPERATION_ID,
       actorUserId: ACTOR_ID,
-      reason: "demo_replaced",
+      reason: "operator_retirement",
     })).resolves.toMatchObject({ retired: true });
 
     // And the drop still drops. If the object throws out of its constructor
@@ -387,7 +387,7 @@ describe("object retirement", () => {
       await state.storage.setAlarm(Date.now() + 60_000);
       void instance;
     });
-    await agent.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+    await agent.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "operator_retirement" });
 
     // Eviction, then the traffic that rebuilds the object and runs recovery.
     await evictDurableObject(agent);
@@ -411,7 +411,7 @@ describe("object retirement", () => {
     const stub = TEST_ENV.WORKSPACE_DOS.get(
       TEST_ENV.WORKSPACE_DOS.idFromName(workspaceDOName(TEST_ENV.AVALON_REGION, workspaceId)),
     ) as DurableObjectStub<WorkspaceDO>;
-    await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+    await stub.retireObject({ retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "operator_retirement" });
 
     const envelope = { messageId: "00000000-0000-7000-8000-00000000de06", payloadHash: "fnv1a64:0000000000000001" };
     const children = await stub.receiveChildEffects({ substreamId: "1", envelopes: [envelope] } as never);
@@ -449,7 +449,7 @@ describe("object retirement", () => {
 
     const failures: string[] = [];
     for (const { name, stub, revoke } of targets) {
-      await stub.retireObject({ retiredAt, operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "demo_replaced" });
+      await stub.retireObject({ retiredAt, operationId: OPERATION_ID, actorUserId: ACTOR_ID, reason: "operator_retirement" });
 
       // Access revocation is permitted on every gated class because retirement
       // has to be able to close what a dead workspace still holds open. Each of
@@ -464,7 +464,7 @@ describe("object retirement", () => {
 
       // And the object has to survive being rebuilt from storage with the
       // tombstone already in it, which is the only state production ever has it
-      // in after the demo goes idle.
+      // in after the workspace goes idle.
       await evictDurableObject(stub as never);
       try {
         const state = await stub.objectRetirementState();

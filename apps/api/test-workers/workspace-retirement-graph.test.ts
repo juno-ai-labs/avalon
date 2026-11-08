@@ -49,54 +49,6 @@ function freshWorkspaceId() {
   return asWorkspaceId(`00000000-0000-7000-8000-00000000${suffix}`);
 }
 
-/**
- * The operation table, declared here because this suite's D1 starts empty.
- *
- * The walk writes its receipt on the operation that made the workspace once
- * the graph is closed, which is what the Demos page reads; a workspace with no
- * operation is retired all the same.
- */
-async function declareDemoOperations(): Promise<void> {
-  await TEST_ENV.DB.prepare(
-    `CREATE TABLE IF NOT EXISTS demo_operations (
-       operation_id TEXT PRIMARY KEY,
-       company_name TEXT NOT NULL,
-       presenter_user_id TEXT NOT NULL,
-       pack_version TEXT NOT NULL,
-       cast_json TEXT NOT NULL,
-       workspace_id TEXT UNIQUE,
-       status TEXT NOT NULL,
-       attempt INTEGER NOT NULL,
-       failed_phase TEXT,
-       error_code TEXT,
-       error_message TEXT,
-       ready_at TEXT,
-       retired_at TEXT,
-       created_at TEXT NOT NULL,
-       updated_at TEXT NOT NULL
-     )`,
-  ).run();
-}
-
-async function publishDemo(workspaceId: string): Promise<void> {
-  await declareDemoOperations();
-  await TEST_ENV.DB.prepare(
-    `INSERT INTO demo_operations
-       (operation_id, company_name, presenter_user_id, pack_version, cast_json, workspace_id,
-        status, attempt, ready_at, created_at, updated_at)
-     VALUES (?, 'Alto Capital', ?, 'v1', '{}', ?, 'ready', 1,
-             '2026-09-05T12:05:00.000Z', '2026-09-05T12:00:00.000Z', '2026-09-05T12:05:00.000Z')
-     ON CONFLICT (operation_id) DO NOTHING`,
-  ).bind(`op-${workspaceId}`, ACTOR_ID, workspaceId).run();
-}
-
-async function registerRetiredAt(workspaceId: string): Promise<string | null> {
-  const row = await TEST_ENV.DB.prepare(
-    "SELECT retired_at FROM demo_operations WHERE workspace_id = ?",
-  ).bind(workspaceId).first<{ retired_at: string | null }>();
-  return row?.retired_at ?? null;
-}
-
 function workspaceStub(workspaceId: string): DurableObjectStub<WorkspaceDO> {
   const name = workspaceDOName(TEST_ENV.AVALON_REGION, asWorkspaceId(workspaceId));
   return TEST_ENV.WORKSPACE_DOS.get(TEST_ENV.WORKSPACE_DOS.idFromName(name)) as DurableObjectStub<WorkspaceDO>;
@@ -215,7 +167,7 @@ describe("workspace retirement graph", () => {
       retiredAt: Date.now(),
       operationId: OPERATION_ID,
       actorUserId: ACTOR_ID,
-      reason: "demo_replaced",
+      reason: "operator_retirement",
     });
 
     // Both rooms and the automation, captured in one pass. An automation is a
@@ -259,7 +211,7 @@ describe("workspace retirement graph", () => {
       retiredAt: Date.now(),
       operationId: OPERATION_ID,
       actorUserId: ACTOR_ID,
-      reason: "demo_replaced",
+      reason: "operator_retirement",
     });
     // A resumed operation re-enters here. It must find the same graph rather
     // than a second, emptier one read from a directory that now refuses.
@@ -267,7 +219,7 @@ describe("workspace retirement graph", () => {
       retiredAt: Date.now() + 5_000,
       operationId: OPERATION_ID,
       actorUserId: ACTOR_ID,
-      reason: "demo_replaced",
+      reason: "operator_retirement",
     });
     expect(resumed.nodes).toEqual(first.nodes);
 
@@ -305,12 +257,9 @@ describe("workspace retirement graph", () => {
   it("reports an empty workspace closed rather than permanently unfinished", async () => {
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
-    await publishDemo(workspaceId);
-    // A demo whose preparation failed before it seeded anything has no work
-    // streams and no automations, so it records no graph rows. Reading
-    // completeness from the row count made that workspace incomplete on the
-    // first pass and on every pass after it, and its register row could never
-    // be marked retired.
+    // A workspace with no work streams and no automations records no graph
+    // rows. Reading completeness from the row count made it incomplete on
+    // the first pass and on every pass after it.
     await runInDurableObject(stub, (instance: WorkspaceDO, state) => {
       state.storage.sql.exec(
         `INSERT INTO workspace_identity
@@ -330,12 +279,11 @@ describe("workspace retirement graph", () => {
       retiredAt: Date.parse(COMPLETED_AT),
       operationId: OPERATION_ID,
       actorUserId: null,
-      reason: "demo_replaced",
+      reason: "operator_retirement",
     });
 
     expect(receipt.retiredParents).toBe(0);
     expect(receipt.complete).toBe(true);
-    expect(await registerRetiredAt(workspaceId)).toBe(COMPLETED_AT);
   });
 
   it("resumes over a parent that was retired but never receipted", async () => {
@@ -345,7 +293,6 @@ describe("workspace retirement graph", () => {
     // operator saw "incomplete, retire again" forever.
     const workspaceId = freshWorkspaceId();
     const stub = workspaceStub(workspaceId);
-    await declareDemoOperations();
     await seedDirectory(stub, workspaceId);
     const tombstone = { retiredAt: Date.now(), operationId: OPERATION_ID, actorUserId: null, reason: "operator_retirement" };
     await stub.beginWorkspaceRetirement(tombstone);

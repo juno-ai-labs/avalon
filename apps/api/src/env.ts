@@ -121,11 +121,6 @@ export interface Env {
   WEB_PUSH_SUBJECT?: string;
   CONNECTOR_POLL_WORKFLOW: Workflow;
   CONNECTOR_EVENT_WORKFLOW: Workflow;
-  /** Global-only: the demo preparation driver. Absent, the demo write routes
-   * answer 503 (`demo_preparation_unavailable`) and nothing else changes — it
-   * is not in the boot contract on purpose, because a demo tool's binding must
-   * never take a region offline. regional binds nothing; its demo routes refuse. */
-  DEMO_PREPARATION_WORKFLOW?: Workflow;
   [binding: `REGION_${string}_IDENTITY_BRIDGE`]: RegionalIdentityBridgeRpcBinding | undefined;
   [binding: `REGION_${string}_GITHUB_BRIDGE`]: GitHubRegionalBridgeRpcBinding | undefined;
   [binding: `REGION_${string}_INBOUND_EMAIL_BRIDGE`]: InboundEmailRegionalRpcBinding | undefined;
@@ -261,7 +256,9 @@ export interface Env {
    * surface. Stored as a JSON map from opaque bearer token to fixed principal. */
   TELEMETRY_OPERATORS_JSON?: string;
   /** Per-region operator credentials for the surfaces Ace calls — workspace
-   * retirement, and demo preparation — in the `demos` role. The same map
+   * retirement, access, and connector maintenance — in the `demos` role. Both
+   * names are stored ones kept from the retired demo feature
+   * (`docs/rally-rebrand-inventory.md`). The same map
    * shape as `TELEMETRY_OPERATORS_JSON`, kept as its own secret so the two
    * are set and rotated independently (`telemetry/operator-auth.ts`). */
   DEMO_OPERATORS_JSON?: string;
@@ -317,11 +314,6 @@ export interface IdentityAuthContext {
    * principal against current workspace membership instead of `sessions`;
    * see `AgentLoopDO.connectorPrincipalAuth`.
    *
-   * `"demo_seed"` is the same kind of authority for the demo seeder: it acts
-   * as a cast member who never signs in, on a workspace the seeder is
-   * preparing, and the objects verify that member's current membership the
-   * same way (`docs/demo-workspaces.md`).
-   *
    * The Space cutover's driver is the third construction of `"connector"`, and
    * for the same reason: it runs with nobody signed in, so its `sessionId` is a
    * correlation value and the objects verify the member it acts as against
@@ -344,7 +336,7 @@ export interface IdentityAuthContext {
    * context from verified token claims and never sets it, so a client cannot
    * claim a non-session path from outside.
    */
-  principal?: "connector" | "demo_seed" | "impersonation" | "resource_authorization" | "engineering";
+  principal?: "connector" | "impersonation" | "resource_authorization" | "engineering";
   /**
    * Set on a support session: the Rally staff member actually acting as
    * `userId`, read from `sessions.impersonator_user_id` with the same query that
@@ -479,7 +471,6 @@ const EnvContractSchema = z.object({
   ANALYTICS_LAKEHOUSE: binding<Pipeline>().optional(),
   CONNECTOR_POLL_WORKFLOW: binding<Workflow>(),
   CONNECTOR_EVENT_WORKFLOW: binding<Workflow>(),
-  DEMO_PREPARATION_WORKFLOW: binding<Workflow>().optional(),
 
   APP_ENV: z.enum(["development", "test", "staging", "production"]),
   AVALON_REGION: RegionSchema.refine(isConfiguredRegion),
@@ -602,8 +593,6 @@ const productionOnlyBindings = [
   { key: "ANALYTICS_LAKEHOUSE", regions: configuredRegions },
   { key: "USAGE_QUEUE", regions: configuredRegions },
   { key: "USAGE_LAKEHOUSE", regions: configuredRegions },
-  // `DEMO_PREPARATION_WORKFLOW` is deliberately absent: it drives an operator
-  // tool, and a missing binding is that tool's 503, not a region-wide fault.
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 /**

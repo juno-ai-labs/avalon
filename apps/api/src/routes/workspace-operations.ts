@@ -9,7 +9,7 @@ import { requestDeferral } from '../lib/defer';
 import { zValidator } from '../middleware/validation';
 import { publishOrganizationUsage, setWorkspacePlan } from '../services/usage-metering';
 import { retireWorkspaceForOperator } from '../services/workspace-retirement-service';
-import { getOperator, requireDemoOperator, requireOperatorRole } from '../telemetry/operator-auth';
+import { ACE_OPERATOR_ROLE, getOperator, requireAceOperator, requireOperatorRole } from '../telemetry/operator-auth';
 
 /**
  * The regional API Ace's workspaces tab talks to.
@@ -33,7 +33,7 @@ const WorkspaceParamSchema = z.strictObject({ workspaceId: z.string().uuid() });
 const RetireBodySchema = z.strictObject({ confirmWorkspaceId: z.string().uuid() });
 
 export const workspaceOperatorRoutes = new Hono<HonoAppEnv>();
-workspaceOperatorRoutes.use('*', requireDemoOperator, requireOperatorRole('demos'));
+workspaceOperatorRoutes.use('*', requireAceOperator, requireOperatorRole(ACE_OPERATOR_ROLE));
 
 workspaceOperatorRoutes.post(
   '/:workspaceId/retire',

@@ -3,7 +3,6 @@ import {
   AutomationRunReferenceV1Schema,
   AutomationScopeSchema,
   AutomationSetEvaluatorRulesInputV1Schema,
-  DemoSeedSchema,
   IdSchema,
   MESSAGE_MAX_CHARACTERS,
   PickedAppearanceSchema,
@@ -53,8 +52,8 @@ export const AutomationSubmitDefinitionRequestSchema = z.strictObject({
   submittedByRunId: IdSchema.nullable(),
   /**
    * The icon and colour the setup chat chose, written over the stored ones.
-   * Optional because only the chat has to choose: a seeded or scripted
-   * definition leaves the appearance as it is.
+   * Optional because only the chat has to choose: a scripted definition
+   * leaves the appearance as it is.
    */
   appearance: PickedAppearanceSchema.optional(),
   /**
@@ -123,23 +122,6 @@ export const AutomationRunNowRequestSchema = z.strictObject({
   idempotencyKey: z.string().min(8).max(120),
 });
 export type AutomationRunNowRequest = z.infer<typeof AutomationRunNowRequestSchema>;
-
-/**
- * A demo's request for one run whose model bytes come from its pack.
- *
- * Deliberately not a field on `AutomationRunNowRequest`: that shape is what a
- * client's `POST /sidekicks/:id/run` body reaches, and a seed there would let a
- * member write their own Sidekick's output into its run history. This shape is
- * reachable only from the demo seeder. The occurrence key comes from the pack
- * and the action, so replaying a half-finished seeding answers from the run it
- * already admitted rather than running a second briefing.
- */
-export const AutomationRunSeededRequestSchema = z.strictObject({
-  ...Addressed,
-  actor: AutomationActorSchema,
-  seed: DemoSeedSchema,
-});
-export type AutomationRunSeededRequest = z.infer<typeof AutomationRunSeededRequestSchema>;
 
 /**
  * What the caller judged a `semantic_activity` trigger's written condition to be.

@@ -64,7 +64,6 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamSocketCommandResultSchema,
   WorkstreamWorkflowInputSchema,
-  DemoSeedSchema,
   SidekickMessageIntentSchema,
   type ServerSocketEvent,
   type TranscriptRangeResult,
@@ -455,12 +454,11 @@ const ProductAuthSchema = z.strictObject({
   // `"connector"`: a connector ingress already verified the link that binds
   // this member on the message being delivered, `sessionId` is correlation
   // only, and the object verifies current membership instead — see
-  // `connectorPrincipalAuth`. `"demo_seed"`: the demo seeder acting as a cast
-  // member who never signs in, verified the same way. A provider callback
+  // `connectorPrincipalAuth`. A provider callback
   // uses `"resource_authorization"` after its state and grant are verified.
   // These are constructed only by server code; `IdentityAuthContext.principal`
   // says why.
-  principal: z.enum(["connector", "demo_seed", "impersonation", "resource_authorization", "engineering"]).optional(),
+  principal: z.enum(["connector", "impersonation", "resource_authorization", "engineering"]).optional(),
 });
 /**
  * One product operation, with the two fields every one of them carries.
@@ -3264,7 +3262,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     // this region. Before this branch existed, connector ingress synthesized a
     // session id that no `sessions` row could ever match, and every linked
     // member's Slack message died here as `session_revoked` (2026-08-22).
-    // Any non-session principal — `connector`, `demo_seed`, `impersonation`, or
+    // Any non-session principal — `connector`, `impersonation`, or
     // `resource_authorization` after a consumed provider callback — is verified by
     // membership rather than by a session row. The enum on `principal` is the
     // gate: a value added to it inherits this branch.
@@ -3300,7 +3298,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       analyticsWorkspaceId: current.analyticsWorkspaceId,
     }));
     // Who sends a message or an answer: the verified identity, still marked
-    // with the non-session path it arrived by. A Slack, support, demo-seed or
+    // with the non-session path it arrived by. A Slack, support or
     // authorization-callback write is not the member sending it, and the
     // object needs to tell (`message_sent`, the reserved resource-authorization
     // message ids).
@@ -3504,7 +3502,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         : new ApiError(500, diagnostic ?? "workstream_object_request_failed", "The thread could not be loaded");
       if (!(error instanceof ApiError)) {
         // Report schema shape, never rejected values or adapter prose. The
-        // same field code survives the RPC hop into demo preparation's status.
+        // same field code survives the RPC hop to the caller.
         logError(this.env, "workstream_product_request_failed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
           workstream_id: this.objectStore.identity()?.parentId,
@@ -3844,7 +3842,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         telemetryJourney: z.enum(["workstream_create", "substream_create", "message_send"]).nullable().optional(),
         slackOrigin: z.unknown().nullable().optional(),
         slackSearchAuthorization: z.unknown().nullable().optional(),
-        seed: DemoSeedSchema.nullable().optional(),
         agentExchange: AgentExchangeSchema.optional(),
         actorRole: z.enum(["owner", "admin", "member"]).nullable().optional(),
         intent: SidekickMessageIntentSchema.nullable().optional(),
@@ -3896,12 +3893,11 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       // resource), and is the wizard's only from a manager; anything else
       // starts a run under the Sidekick's definition with the message as its
       // opening and lands here as said to the room: the run answers in its own
-      // conversation, and its row here carries the reply. A demo seed scripts
-      // its own turn and is not routed. Whatever activates here past this
+      // conversation, and its row here carries the reply. Whatever activates here past this
       // point is the wizard's, and only such a turn loads the authoring tools.
       const sharedSidekickConversation = identity.parentKind === "automation" && externalSubstreamId === "0" && !background;
       const sender = sharedSidekickConversation && pending.actor === "human" && pending.author_user_id !== null
-        && authorization.reason !== "demo_seed" ? pending.author_user_id : null;
+        ? pending.author_user_id : null;
       if (sender !== null) {
         const opening = this.transcript.pendingTranscriptInput(pending.input_id);
         const answersWizard = authorization.reason === "elicitation_answer" || authorization.reason === "resource_authorization";
@@ -3988,9 +3984,6 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         ...(authorization.slackSearchAuthorization
           ? { slackSearchAuthorization: authorization.slackSearchAuthorization }
           : {}),
-        // Carries the seed from the message that started this run onto the
-        // run's own execution receipt, which is what the harness reads.
-        ...(authorization.seed ? { seed: authorization.seed } : {}),
         reason: authorization.reason,
       });
       const leaseOwner = uuidV7(now + 1);

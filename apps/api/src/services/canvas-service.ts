@@ -1,5 +1,5 @@
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
+import type { CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
@@ -107,11 +107,6 @@ export class CanvasService {
       mentions: [], confirmedParticipantUserIds: [], attachmentIds: [],
     });
     return { canvasId: asWorkstreamId(canvasId), turnId: receipt.turn.turnId };
-  }
-
-  /** The viewer's Canvas list, most recently active first; see `WorkspaceDO.canvasListFor`. */
-  async list(): Promise<CanvasSidebarRow[]> {
-    return (await this.workspace()).canvasListFor({ workspaceId: this.auth.workspaceId, userId: this.auth.userId, member: this.auth.role !== null });
   }
 
   async detail(canvasId: string): Promise<CanvasDetail> {
