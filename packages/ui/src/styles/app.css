@@ -6921,11 +6921,14 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-conversation-heading:empty { padding: 0; }
 /* The edit mode's chip, at the composer: default ink on the raised surface
    for contrast, with its close beside the words. */
-.sidekick-editing-badge { align-items: center; background: var(--av-sys-color-surface-raised-hover); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: inline-flex; font-size: 12px; font-weight: 500; gap: 6px; padding: 3px 4px 3px 10px; }
-.sidekick-editing-close { align-items: center; background: none; border: 0; border-radius: 999px; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-flex; padding: 2px; }
+/* Spacing in the space unit: one between the words and the close, the close's
+   side tighter than the words' so the round close sits in the pill's end. */
+.sidekick-editing-badge { align-items: center; background: var(--av-sys-color-surface-raised-hover); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: inline-flex; font-size: 12px; font-weight: 500; gap: var(--av-ref-space-unit); padding: var(--av-ref-space-unit) var(--av-ref-space-unit) var(--av-ref-space-unit) calc(var(--av-ref-space-unit) * 2.5); }
+.sidekick-editing-close { align-items: center; background: none; border: 0; border-radius: 999px; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-flex; padding: calc(var(--av-ref-space-unit) / 2); }
 .sidekick-editing-close:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
 /* A composer mode's line, just over the composer it applies to. */
-.composer-mode-notice { display: flex; margin-bottom: 6px; padding: 0 8px; }
+/* Two space units each way: inset to clear the capsule's rounded end, and apart from it. */
+.composer-mode-notice { display: flex; margin-bottom: calc(var(--av-ref-space-unit) * 2); padding: 0 calc(var(--av-ref-space-unit) * 2); }
 .sidekick-canvas-cards { display: flex; flex-basis: 100%; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; }
 .sidekick-canvas-card { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; color: inherit; display: inline-flex; gap: 10px; padding: 8px 12px 8px 8px; text-decoration: none; }
 .sidekick-canvas-card:hover { background-image: var(--hover-layer); }
@@ -7961,8 +7964,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .activity-row-text { color: var(--av-sys-color-text-subtle); font-weight: 400; }
 .activity-row-text strong { color: var(--av-sys-color-text-default); font-weight: 600; }
 /* Seen history recedes through text colours, not opacity: the title in
-   text-muted (5.2:1 light, 7.6:1 dark on the sidebar) and the second line in
-   text-disabled (3.1:1 and 4.1:1), each clear of its WCAG floor, where 45%
+   text-muted (5.12:1 light, 7.49:1 dark on the sidebar) and the second line in
+   text-disabled (3.02:1 and 4.22:1), each clear of its WCAG floor, where 45%
    opacity left the preview at 1.9:1 in light and 2.45:1 in dark. */
 .activity-row.is-seen:not(.is-active) .activity-row-text,
 .activity-row.is-seen:not(.is-active) .activity-row-text strong { color: var(--av-sys-color-text-muted); font-weight: 500; }
@@ -7971,7 +7974,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 /* The rows the route has open are drawn open, at full contrast; a gap keeps
    two of them from merging into one block. Keyboard focus is a ring, not the
    open fill, so the focused row and the open one never look alike. */
-.activity-row + .activity-row { margin-top: 2px; }
+/* Half a space unit: the least that shows two open rows as two fills rather than one block. */
+.activity-row + .activity-row { margin-top: calc(var(--av-ref-space-unit) / 2); }
 .activity-row:focus-visible { box-shadow: var(--av-sys-focus-ring-default); outline: none; }
 .navigation-row.is-unread:not(.navigation-channel-row) .navigation-row-time { color: var(--av-sys-color-workstream-news); }
 .navigation-row-lock { color: var(--av-sys-color-text-muted); flex: none; }

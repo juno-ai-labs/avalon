@@ -111,6 +111,8 @@ describe('SidekickRunRow', () => {
     expect(row).toHaveAttribute('data-state', 'failed');
     expect(row.querySelector('.sidekick-run-row-summary')).toHaveTextContent('Run · On request · Failed · 1 step');
     expect(row.querySelector('.sidekick-run-row-preview')).toHaveTextContent('The Slack connection was revoked.');
+    // The Sidekick's chosen mark (the bug it was given), not one derived from its id.
+    expect(row.querySelector('.sidekick-run-row-glyph svg.lucide-bug')).not.toBeNull();
   });
 
   it('opens no run conversation for a run that is not waiting', () => {
