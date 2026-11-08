@@ -143,7 +143,7 @@ export function createBrowserRoutes(dispatch: (request:Request, context:Context<
   // session: development with RALLY_DEV_AUTH only, which the GET answers so
   // the signed-out page knows whether to offer it. Elsewhere both are 404.
   routes.get("/dev/session",(c) => c.body(null,developmentAuthEnabled(c.env) ? 204 : 404));
-  routes.post("/dev/session",async (c) => {
+  routes.post("/dev/session",authBodyLimit,async (c) => {
     const session = await new AuthService(c.env).createDevelopmentIdentitySession();
     const cookie = await new BrowserSessionService(c.env).register(session);
     writeCookie(c,cookie.credential,cookie.expiresAt);
