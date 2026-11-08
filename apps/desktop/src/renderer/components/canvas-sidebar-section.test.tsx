@@ -164,6 +164,20 @@ describe('CanvasesSection', () => {
     expect(screen.getByRole('link', { name: /Launch plan/ })).not.toHaveAttribute('data-motion-insert');
   });
 
+  it('draws a row in the icon and colour chosen for its Canvas, and an unchosen one in its kind and own hue', () => {
+    renderSection([
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Chosen', { artifactKind: 'file', appearance: { icon: 'flag', color: 'orange' } }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Unchosen', { artifactKind: 'site', appearance: { icon: null, color: null } }),
+    ]);
+    const shape = (title: string): HTMLElement => within(screen.getByRole('link', { name: new RegExp(title) }))
+      .getByText((_content, element) => element?.classList.contains('identity-tile-shape') ?? false);
+    expect(shape('Chosen')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-orange)' });
+    expect(shape('Chosen').querySelector('svg')).toHaveClass('lucide-flag');
+    // The default: its newest artifact's kind, in the hue its id gives it.
+    expect(shape('Unchosen').querySelector('svg')).toHaveClass('lucide-globe');
+    expect(shape('Unchosen')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-emerald)' });
+  });
+
   it('draws a placeholder for the name of a Canvas Rally is still naming', () => {
     renderSection([canvas('00000000-0000-7000-8000-0000000000c1', 'Untitled Canvas', { titleStatus: 'naming' })]);
     const row = screen.getByRole('link', { name: /Rally is choosing a name/ });

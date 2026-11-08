@@ -4,7 +4,10 @@ import clsx from 'clsx';
 import { Fragment, type ReactNode, type RefObject } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
-import { canvasArtifactRoute, canvasRoute, canvasTurnRoute, useCanvasNameSources } from '../lib/canvases';
+import { CornerBadge } from '@rally/ui/components/identity-tile';
+
+import { canvasArtifactRoute, canvasRoute, canvasTurnRoute, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { canvasMark } from './canvas-mark';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList, type ActivityList } from '../lib/sidebar-list-store';
@@ -114,7 +117,21 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
   const { api, session } = useCollaborationSession();
   const activity = useActivityList();
   const { membersById, sidekicksById } = useCanvasNameSources(api);
+  const canvases = useCanvasList();
   useSectionMotion(scroll, undefined);
+  // A Canvas row's glyph carries the Canvas it is about, in the icon and
+  // colour chosen for it (else its default), read from this person's list; a
+  // Canvas missing from it (one they cannot open now) wears its default.
+  const tile = (item: ActivityItem): ReactNode => {
+    const glyph = <span className={clsx('activity-row-glyph', `is-${item.kind}`)}>{GLYPHS[item.kind]}</span>;
+    if (item.parentKind !== 'canvas') return glyph;
+    const canvas = canvases?.find((row) => row.id === item.parentId);
+    const { icon, ink, tint } = canvasMark(item.parentId, canvas?.artifactKind ?? null, canvas?.appearance);
+    return <span className="identity-tile activity-row-tile">
+      {glyph}
+      <CornerBadge badge={{ key: 'canvas', shape: 'sheet', fill: tint, ink, icon }} />
+    </span>;
+  };
   // The highlight follows the route, Back and Forward included, never the row
   // last clicked: a row is open when the route has its conversation open, the
   // run included, so opening one run marks that run's row and not every row
@@ -156,7 +173,7 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
       >
         <RowLayout
           detail={item.preview ?? ''}
-          tile={<span className={clsx('activity-row-glyph', `is-${item.kind}`)}>{GLYPHS[item.kind]}</span>}
+          tile={tile(item)}
           time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={item.createdAt} />}
           title={<span className="activity-row-text">{rowText(parts)}</span>}
           unread={!item.seen}

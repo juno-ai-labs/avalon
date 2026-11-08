@@ -57,6 +57,25 @@ beforeEach(() => {
 });
 
 describe('CanvasesHomeScreen', () => {
+  it("draws each card's title beside its Canvas's mark, in the icon and colour chosen for it, and a Chat-only shot in the same", () => {
+    renderHome(clientWith([
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Chosen', { appearance: { icon: 'flag', color: 'orange' } }),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Unchosen', { artifactKind: 'file', appearance: { icon: null, color: null } }),
+    ]));
+    const card = (title: string): HTMLElement => screen.getByRole('link', { name: title }).closest('li')!;
+    const shapes = (title: string): HTMLElement[] => [...card(title).querySelectorAll<HTMLElement>('.identity-tile-shape')];
+    // The title's mark and the Chat-only shot's.
+    expect(shapes('Chosen')).toHaveLength(2);
+    for (const shape of shapes('Chosen')) {
+      expect(shape).toHaveStyle({ background: 'var(--av-sys-color-project-tint-orange)' });
+      expect(shape.querySelector('svg')).toHaveClass('lucide-flag');
+    }
+    // Unchosen: its kind and the hue its id gives it; its shot is the document sketch.
+    expect(shapes('Unchosen')).toHaveLength(1);
+    expect(shapes('Unchosen')[0]).toHaveStyle({ background: 'var(--av-sys-color-project-tint-emerald)' });
+    expect(shapes('Unchosen')[0]!.querySelector('svg')).toHaveClass('lucide-file-text');
+  });
+
   it('lifts the Canvases people are in now into Live now and lists the rest as Recent', async () => {
     renderHome(clientWith([
       canvas('00000000-0000-7000-8000-0000000000c1', 'Q4 revenue review', { presentUserIds: [MAYA, THEO] }),

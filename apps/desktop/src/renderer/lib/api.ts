@@ -1239,6 +1239,11 @@ export class RallyApi {
     return this.request(`/canvases/${encodeURIComponent(id)}`, { method: 'PATCH', body: { title }, schema: CanvasDetailSchema });
   }
 
+  /** Choose a Canvas's icon, its colour, or both; anyone the Canvas admits may. A null field goes back to the default. */
+  setCanvasAppearance(id: string, appearance: WorkstreamAppearancePatch): Promise<CanvasDetail> {
+    return this.request(`/canvases/${encodeURIComponent(id)}`, { method: 'PATCH', body: { appearance }, schema: CanvasDetailSchema });
+  }
+
   /** Change who can open a Canvas; its creator's, an administrator's, or its Sidekick's manager's. */
   setCanvasAudience(id: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
     return this.request(`/canvases/${encodeURIComponent(id)}/audience`, { method: 'POST', body: update, schema: CanvasDetailSchema });

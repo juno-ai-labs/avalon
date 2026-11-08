@@ -68,7 +68,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
     const run = canvasWrittenByRun(canvas, sidekicksById, currentUserId);
     return <li className="canvas-card" key={canvas.id}>
       <div aria-hidden="true" className="canvas-card-shot">
-        <CanvasShot id={canvas.id} kind={canvas.artifactKind} />
+        <CanvasShot appearance={canvas.appearance} id={canvas.id} kind={canvas.artifactKind} />
         {present.length > 0 && <span className="canvas-card-live"><AvatarStack members={present} nameTooltip={false} showTooltip={false} />Live</span>}
       </div>
       <div className="canvas-card-body">
@@ -117,9 +117,14 @@ export function CanvasesHomeScreen(): React.JSX.Element {
  * A card's shot: design.html §1's paper, sketched for what the Canvas holds,
  * since the row carries no picture of its artifact. A document is lines under
  * a heading, a site a page in a browser frame, an archive the board's
- * columns, and a Canvas that is only its Chat its mark on the paper.
+ * columns, and a Canvas that is only its Chat its mark on the paper. The
+ * title beside it carries the same mark, in the icon and colour chosen for it.
  */
-function CanvasShot({ id, kind }: { id: string; kind: CanvasSidebarRow['artifactKind'] }): React.JSX.Element {
+function CanvasShot({ appearance, id, kind }: {
+  appearance: CanvasSidebarRow['appearance'];
+  id: string;
+  kind: CanvasSidebarRow['artifactKind'];
+}): React.JSX.Element {
   if (kind === 'file') {
     return <div className="canvas-card-paper is-document"><i className="is-heading" /><i /><i className="is-short" /><i /><i className="is-shorter" /></div>;
   }
@@ -129,7 +134,7 @@ function CanvasShot({ id, kind }: { id: string; kind: CanvasSidebarRow['artifact
   if (kind === 'archive') {
     return <div className="canvas-card-paper is-board">{[3, 2, 1].map((cards, column) => <span key={column}>{Array.from({ length: cards }, (_, card) => <i key={card} />)}</span>)}</div>;
   }
-  return <div className="canvas-card-paper is-mark"><CanvasMark id={id} kind={null} size={44} /></div>;
+  return <div className="canvas-card-paper is-mark"><CanvasMark appearance={appearance} id={id} kind={null} size={44} /></div>;
 }
 
 /**

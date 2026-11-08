@@ -28,6 +28,7 @@ const getCanvas = vi.hoisted(() => vi.fn());
 const setCanvasPinned = vi.hoisted(() => vi.fn());
 const setCanvasAudience = vi.hoisted(() => vi.fn());
 const renameCanvas = vi.hoisted(() => vi.fn());
+const setCanvasAppearance = vi.hoisted(() => vi.fn());
 const getWorkspaceMembers = vi.hoisted(() => vi.fn());
 const createScopeInvitations = vi.hoisted(() => vi.fn());
 const getCanvasAccess = vi.hoisted(() => vi.fn());
@@ -35,7 +36,7 @@ const requestCanvasAccess = vi.hoisted(() => vi.fn());
 const decideCanvasAccess = vi.hoisted(() => vi.fn());
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({
-    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
+    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, setCanvasAppearance, createScopeInvitations, getCanvasAccess, requestCanvasAccess, decideCanvasAccess },
     session: { user: { id: ME }, workspace: { id: WORKSPACE, region: 'global', role: 'member' } },
   }),
   useOptionalCollaborationSession: () => null,
@@ -107,6 +108,7 @@ beforeEach(() => {
   setCanvasPinned.mockReset().mockResolvedValue(undefined);
   setCanvasAudience.mockReset();
   renameCanvas.mockReset();
+  setCanvasAppearance.mockReset();
   createScopeInvitations.mockReset().mockResolvedValue({ status: 'created', invitations: [] });
   getCanvasAccess.mockReset().mockRejectedValue(new ApiError('This Canvas does not exist', 404, 'canvas_not_found'));
   requestCanvasAccess.mockReset().mockResolvedValue({ status: 'pending' });
@@ -247,6 +249,41 @@ describe('CanvasScreen', () => {
     expect(renameCanvas).toHaveBeenCalledWith(CANVAS, 'Lisbon offsite');
     expect(await screen.findByRole('button', { name: 'Canvas menu: Lisbon offsite' })).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Canvas title' })).toBeNull();
+  });
+
+  it("changes the Canvas's appearance from its menu, saving through the route and drawing the answer on the pill", async () => {
+    setCanvasAppearance.mockResolvedValue(detail({ appearance: { icon: null, color: 'orange' } }));
+    renderCanvas();
+    await openMenu('Q4 revenue review');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Change appearance' }));
+    const palette = await screen.findByRole('menu', { name: 'Change appearance' });
+    fireEvent.click(within(palette).getByRole('menuitemradio', { name: 'Orange' }));
+    expect(setCanvasAppearance).toHaveBeenCalledWith(CANVAS, { color: 'orange' });
+    // The pill's mark is the palette's own button, beside its menu.
+    const mark = screen.getByRole('button', { name: 'Change appearance', hidden: true });
+    await waitFor(() => expect(mark.querySelector('.identity-tile-shape')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-orange)' }));
+  });
+
+  it("opens the same palette from the pill's mark, beside its menu", async () => {
+    setCanvasAppearance.mockResolvedValue(detail({ appearance: { icon: 'flag', color: null } }));
+    renderCanvas();
+    await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Change appearance' }), { button: 0, ctrlKey: false });
+    const palette = await screen.findByRole('menu', { name: 'Change appearance' });
+    fireEvent.click(within(palette).getByRole('menuitemradio', { name: 'Flag' }));
+    expect(setCanvasAppearance).toHaveBeenCalledWith(CANVAS, { icon: 'flag' });
+  });
+
+  it('draws the icon and colour chosen for the Canvas on its pill, and follows a choice the list push carries', async () => {
+    getCanvas.mockResolvedValue(detail({ appearance: { icon: 'flag', color: 'orange' } }));
+    const client = renderCanvas();
+    applyVersionedSidebarList(client, 'canvases', 1, [listRow('Q4 revenue review', { appearance: { icon: 'flag', color: 'orange' } })]);
+    await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+    const pill = screen.getByRole('button', { name: 'Change appearance' });
+    await waitFor(() => expect(pill.querySelector('.identity-tile-shape svg')).toHaveClass('lucide-flag'));
+    act(() => { applyVersionedSidebarList(client, 'canvases', 2, [listRow('Q4 revenue review', { appearance: { icon: 'flag', color: 'blue' } })]); });
+    await waitFor(() => expect(pill.querySelector('.identity-tile-shape')).toHaveStyle({ background: 'var(--av-sys-color-project-tint-blue)' }));
+    expect(getCanvas).toHaveBeenCalledTimes(1);
   });
 
   it('cancels a rename on Escape without asking the server', async () => {

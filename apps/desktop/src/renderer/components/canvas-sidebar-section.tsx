@@ -76,7 +76,7 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
       </>}
       pinned={position !== undefined}
       position={position}
-      tile={<CanvasMark id={canvas.id} kind={canvas.artifactKind} />}
+      tile={<CanvasMark appearance={canvas.appearance} id={canvas.id} kind={canvas.artifactKind} />}
       time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={canvas.updatedAt} />}
       title={canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}
       to={canvasRoute(canvas.id)}
