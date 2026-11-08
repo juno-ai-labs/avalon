@@ -3137,8 +3137,9 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   .settings-menu-toggle { flex: none; }
   /* With the sections sheet open the header has one close, Settings' own:
      choosing a section or Escape shuts the sheet, so its toggle would be a
-     second × beside the first (v4-F23). */
-  .settings-menu-toggle[aria-expanded="true"] { visibility: hidden; }
+     second × beside the first (v4-F23). It leaves no room behind either, so
+     the title starts at the header's edge rather than after a gap. */
+  .settings-menu-toggle[aria-expanded="true"] { display: none; }
 }
 @media (max-width: 640px) and (prefers-reduced-motion: reduce) {
   .settings-sidebar,
@@ -4325,8 +4326,11 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .elicitation-other-option .elicitation-option-copy { gap: var(--space-2); width: 100%; }
 .elicitation-other-option .elicitation-checkbox,
 .elicitation-other-option > kbd { margin-top: 3px; }
-.elicitation-other-option input[type='text'] { background: var(--av-ref-color-neutral-6); border: 0; border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); font-size: 13px; height: 38px; outline: 0; padding: 0 var(--space-3); width: 100%; }
-.elicitation-other-option input[type='text']::placeholder { color: var(--av-ref-color-neutral-9); }
+/* The well every form field is (`.form-field`, the Share panel's): sunken,
+   hairlined, default ink and a muted placeholder, in both appearances. The
+   raw ramp step it had was the brightest surface in the dark answer form. */
+.elicitation-other-option input[type='text'] { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-default); font-size: 13px; height: 38px; outline: 0; padding: 0 var(--space-3); width: 100%; }
+.elicitation-other-option input[type='text']::placeholder { color: var(--av-sys-color-text-muted); }
 .elicitation-other-option input[type='text']:focus { box-shadow: inset 0 0 0 1px var(--av-ref-color-line-6); }
 .elicitation-text-response { background: var(--av-sys-color-surface-raised-hover); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-ref-color-neutral-14); display: block; margin-top: var(--space-3); min-height: 86px; outline: 0; padding: var(--space-3); resize: vertical; width: 100%; }
 .elicitation-text-response:focus { border-color: var(--av-ref-color-line-6); }
@@ -7571,7 +7575,9 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .icon-group.is-folded .icon-group-more { display: inline-flex; }
 @media (max-width: 640px) {
   .icon-group-actions { display: none; }
-  .icon-group-more { display: inline-flex; }
+  /* Last in the row, after the pane's own controls, so a header reads in the
+     order it does at desktop width (a Canvas's Share, then its "⋯"). */
+  .icon-group-more { display: inline-flex; order: 1; }
   /* Every pane header on a phone, a right-slot panel's included, takes the
      narrow pane's columns: the pill fills the middle and truncates. The
      columns already keep it clear of the trailing buttons, so the crowding
