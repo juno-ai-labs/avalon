@@ -281,7 +281,15 @@ id: a Web Notification with the same tag replaces the earlier one rather than
 grouping with it, so a retry replaces itself and two mentions in one channel
 both stay on screen. There is no browser counterpart to APNs `thread-id`
 grouping. A click opens the link's path and query on the worker's own origin,
-never another host, in the first of:
+never another host. Nothing in the click path reads the push's `kind`: the
+link alone decides where it lands, so every kind routes the same way, the
+macOS click (`httpsLinkDeepLink`) included. A Canvas link (`/cv/<id>/`) opens
+the Canvas, which is where a reply, an access request (its Share panel lists
+the request) and a grant land; a pinned Canvas's new version links with
+`/a/<id>/` and opens the Canvas onto that artifact (`?artifact=` in the
+browser's hash route). A reply's push opens the Chat at its newest message
+rather than at the reply itself, because the canonical link carries no turn.
+The tab is the first of:
 
 1. A tab already on that page, focused.
 2. A tab in the notification's Organization, sent the link. The page routes it

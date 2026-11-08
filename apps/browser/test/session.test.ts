@@ -70,4 +70,8 @@ it("routes a notification link in place only in the tab's own Organization", () 
   expect(inPlaceHash(`/app/workspaces/global/${workspaceId}/`, link)).toBe(`#/canvases/${canvasId}`);
   expect(inPlaceHash(`/app/workspaces/global/${other}`, link)).toBeNull();
   expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, "https://app.rallywith.ai/")).toBeNull();
+  // A pinned Canvas's new version opens the Canvas onto that artifact, in place too.
+  const artifactId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  expect(inPlaceHash(`/app/workspaces/global/${workspaceId}`, `${link}a/${uuidToBase58(artifactId)}/`))
+    .toBe(`#/canvases/${canvasId}?artifact=${artifactId}`);
 });
