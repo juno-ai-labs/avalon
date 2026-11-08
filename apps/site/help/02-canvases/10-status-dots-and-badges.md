@@ -28,6 +28,7 @@ Opening a Canvas and reading to the bottom clears its red dot and bold name.
 | **Runs Friday 2:00 PM**, or another time | Nothing is running; this is when it starts next. |
 | **Last run** and a time | It has no next run scheduled; this is when it last ran. |
 | **Paused** | Someone paused it. It does nothing until someone resumes it. |
+| **Active** | It is on, with no next run scheduled and no run yet. |
 | **Draft** | It is still being set up. |
 | Bold name and a red dot | Something new in its conversation, such as a finished run or a message from a teammate. A Sidekick under **Needs input** keeps its red dot until the question is answered. |
 

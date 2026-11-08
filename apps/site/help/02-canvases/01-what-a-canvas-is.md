@@ -111,11 +111,16 @@ and click **Send request**. The Canvas's creator and your Organization's owners
 and administrators are asked, in their Activity. The page then reads
 **Request sent** with when you asked, and the Canvas opens there by itself the
 moment someone lets you in. If they decline, nobody tells you, and you can ask
-again. Guests cannot ask: for a guest, a Canvas not shared with them reads as
-one that does not exist.
+again.
+
+Guests cannot ask: a guest who opens a Canvas link that was not shared with them sees **This
+Canvas could not be opened.** with **Only a member of the Organization can ask
+to open a Canvas**, whether or not that Canvas exists, so the page gives
+nothing away. **Try again** will not change the answer; ask whoever sent the
+link to share the Canvas with you.
 
 When Rally cannot reach its server, a Canvas you have opened before still
-shows what it last loaded, with **Rally can't reach the server right now.** and
+shows what it last loaded, with **Rally can’t reach the server right now.** and
 a **Try again** button. A message you write meanwhile stays in the message box
 as a draft; send it once Rally is connected again.
 

@@ -16,15 +16,17 @@ its mark there too, unless you tell it not to.
 
 Click the Rally mark and you get:
 
-- **Needs input**: the Sidekicks waiting for you, each with its question.
+- **Needs attention**: up to five Sidekicks and Canvases waiting for you,
+  Sidekicks that need input first, each marked **Needs input** or **Unread**.
   Click one to open it in Rally.
-- The Canvases with something new for you. Click one to open it. Long names
-  are shortened to fit.
+- **Recent Canvases**: your five most recently active Canvases. Long names are
+  shortened to fit.
 - **Open Rally**, which brings the main window forward.
 - **Quit Rally**, which quits it properly.
 
-If nothing is waiting for you, the menu says so. If you are
-signed out, it says **Sign in to Rally**. The list refreshes when you click the
+If nothing is waiting for you, it says **Nothing needs your attention**. If you
+are signed out, it says **Sign in to Rally**. The number beside the mark is the
+same count as the Dock badge. The list refreshes when you click the
 icon, so it is always current.
 
 The menu is the fastest way back into something you were working on an hour
@@ -36,12 +38,6 @@ sounds (see [Closing the window is not quitting](#closing-the-window-is-not-quit
 
 The switch is **Show Rally in the menu bar**, in **Settings → Application**
 under **Appearance**. It is on by default.
-
-> [!NOTE]
-> The description under the switch may mention a new automation or Rally's
-> suggestions. Today the menu holds what is waiting for you, **Open Rally** and
-> **Quit Rally**, and nothing more. ("Automation" is the old name for a
-> Sidekick.)
 
 If the switch is on but the mark has not appeared, Settings says "Rally could not
 add itself to the menu bar. Turn this off and on to try again, or restart Rally."
@@ -114,7 +110,7 @@ When Rally is the app in front, the Mac's menu bar shows Rally's menus.
 | **Rally** | **About Rally**, **Check for Updates…**, **Settings…**, and the usual Mac items: **Services**, **Hide Rally**, **Hide Others**, **Show All** and **Quit Rally**. |
 | **File** | **Close Window** (<kbd>⌘</kbd> <kbd>W</kbd>). |
 | **Edit** | The standard editing commands: undo, redo, cut, copy, paste, select all. |
-| **View** | The standard view commands, such as zooming in and out and entering full screen. |
+| **View** | **Refresh Organization List**, reloading the window, and zooming in and out. |
 | **Window** | The standard window commands, such as minimise. |
 | **Help** | **Rally website**, which opens rallywith.ai in your browser. |
 

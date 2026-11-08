@@ -113,18 +113,22 @@ With a tab button selected, <kbd>←</kbd> and <kbd>→</kbd> move between tabs,
 | <kbd>←</kbd> <kbd>→</kbd>, on a panel's edge | With the edge of the right-hand panel selected, <kbd>←</kbd> makes the panel wider and <kbd>→</kbd> narrower. |
 | <kbd>Return</kbd>, on a panel's edge | Put the right-hand panel back to its usual width. |
 
-Pins are reordered by dragging; there is no key for it. See
+Pinned rows keep the order they were pinned in; there is no way to reorder
+them. See
 [The Canvases list](../02-canvases/01-what-a-canvas-is.md#the-canvases-list).
 
 ## In a header pill's menu
 
-Once you have clicked a Canvas's name to open its menu:
+Once you have clicked a Canvas's or a Sidekick's header pill to open its menu:
 
 | Keys | What they do |
 | --- | --- |
 | <kbd>↑</kbd> <kbd>↓</kbd> | Move through the menu's items. |
-| <kbd>Tab</kbd> | Move through everything in the menu, including its search box and **Add** buttons. |
-| <kbd>Esc</kbd> or <kbd>←</kbd> | In a submenu such as **More**, go back to the top of the menu. At the top, <kbd>Esc</kbd> closes it. |
+| <kbd>Return</kbd> | Choose the highlighted item. |
+| <kbd>Esc</kbd> | Close the menu. |
+
+While you rename a Canvas in its pill, <kbd>Return</kbd> saves the new name and
+<kbd>Esc</kbd> leaves the old one.
 
 ## On computers other than a Mac
 

@@ -10,6 +10,14 @@ message uses a word you cannot find anywhere else in this manual, look here.
 
 ## A
 
+**Access request.** A member's request to open a Canvas that exists but was
+not shared with them. Its deciders answer with **Approve** or **Deny**. See
+[Who can see what](../02-canvases/08-who-can-see-what.md#requests-to-open-a-canvas).
+
+**Activity.** The third section of the rail: the list of what happened to you,
+such as mentions, replies, finished runs and requests to open a Canvas. See
+[Activity and notifications](../08-rally-everywhere/03-notifications.md).
+
 **Administrator.** An Organization role. Administrators manage members,
 invitations, Organization settings and the Organization's connections. Where
 this manual says "an owner or administrator", either can do it. See
@@ -108,8 +116,9 @@ Canvases shared with them, plus who is in the Organization. See
 
 ## H
 
-**Header pill.** The rounded name at the top of an open Canvas. Click it to
-rename the Canvas, copy its link and reach its other settings. See
+**Header pill.** The rounded name at the top of an open Canvas or Sidekick.
+Click it to pin, rename or share the Canvas, copy its link, and reopen its
+artifact. See
 [A tour of the window](../01-getting-started/04-a-tour-of-the-window.md#an-open-canvas).
 
 **Helper.** An extra agent Rally starts to do part of a big job side by side
@@ -185,7 +194,8 @@ from any Organization connection to the same tool. See
 [Settings → Connections](../05-connecting-your-tools/01-connections.md).
 
 **Pinned.** The group at the top of the Canvases and Sidekicks lists that holds
-what you pinned, in the order you drag it into, for you alone. See
+what you pinned, in the order you pinned it, for you alone. Pinning a Canvas
+also tells you about its new versions. See
 [What a Canvas is](../02-canvases/01-what-a-canvas-is.md#the-canvases-list).
 
 **Plugin.** A bundle of related abilities Rally loads when a request needs
@@ -202,7 +212,8 @@ the latest version, so share it with care. See
 ## R
 
 **Rail.** The narrow strip down the left edge of the window, with
-**Canvases** and **Sidekicks** at the top and **Settings** at the bottom. See
+**Canvases**, **Sidekicks** and **Activity** at the top and your avatar
+(**Settings**) at the bottom. See
 [A tour of the window](../01-getting-started/04-a-tour-of-the-window.md#the-rail).
 
 **Rally.** The app, and also the name of the AI agent that works inside it.
@@ -240,10 +251,15 @@ and shows as a row in its conversation. See
 [While Rally works](../02-canvases/04-while-rally-works.md) and
 [Talking to a Sidekick](../03-sidekicks/03-the-shared-conversation.md#run-rows).
 
+**Run state.** Where a Sidekick run stands, on its row: **Starting**,
+**Working**, **Needs input**, **Done**, **Stopped** or **Failed**. See
+[Status dots and badges](../02-canvases/10-status-dots-and-badges.md).
+
 ## S
 
-**Share.** The button at the top right of a Canvas, for adding people, inviting
-guests by email and opening the Canvas to the whole Organization. See
+**Share.** The button at the top right of a Canvas, for choosing who can open
+it, inviting guests by email, opening it to the whole Organization, and
+answering requests to open it. See
 [Who can see what](../02-canvases/08-who-can-see-what.md).
 
 **Sidekick.** An AI agent your team shares. You describe its job once, and it
@@ -261,11 +277,6 @@ it properly. A skill adds know-how, never permissions. See
 [How Rally works](../04-working-with-rally/01-how-rally-works.md).
 
 **Space.** An old name for what later became a Channel. See [Canvas](#c).
-
-**Status dot.** The coloured dot and label showing the state of a run:
-**Running**, **Needs input**, **Latest run completed**, **Latest run stopped**
-or **Needs intervention**. See
-[Status dots and badges](../02-canvases/10-status-dots-and-badges.md).
 
 **Steering.** Sending a message while Rally is in the middle of a run, so it
 changes course without starting again. Your message shows **Unseen** until

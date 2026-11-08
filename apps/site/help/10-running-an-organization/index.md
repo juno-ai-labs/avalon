@@ -24,8 +24,8 @@ The difference between an administrator and a member fits on a postcard:
 
 - Inviting people into the Organization, choosing whether they join as a member
   or an administrator, and taking back invitations nobody has used.
-- Making members into administrators, and back again, and turning a guest into
-  a full member.
+- Making members into administrators, and back again, turning a guest into
+  a full member, and suspending someone.
 - Setting the Organization's default time zone, which Organization Sidekicks use
   when they do not name one of their own.
 - Deciding where code that Rally runs in its Terminal may reach on the internet.
@@ -43,8 +43,9 @@ up the shared parts once and go back to your own work.
 ## What you will not find
 
 Better to know what is missing before you go looking for it. Rally's
-settings have no section for billing, plans or subscriptions, no single sign-on
-(SSO or SAML), and no verified email domains. People join an Organization one
+settings show the Organization's plan and weekly quota, but have no invoices
+or payment details, no single sign-on (SSO or SAML), and no verified email
+domains. People join an Organization one
 way only: by an invitation sent to their email address. If you need something
 from that list, write to [help@rallywith.ai](mailto:help@rallywith.ai) and talk
 to a person.

@@ -48,7 +48,7 @@ here.**
 ## Choosing how each kind reaches you
 
 Open **Settings → Notifications**. Under **Notify me about**, each kind has a
-row with a menu of the ways Rally can reach you:
+row with a button for each way Rally can reach you:
 
 | Row | Covers |
 | --- | --- |
@@ -59,9 +59,10 @@ row with a menu of the ways Rally can reach you:
 | **Pinned Canvas updates** | When someone makes a new version of an artifact in a Canvas you pinned. |
 | **Access requests** | When someone asks to open a Canvas whose people you manage. |
 
-Open a row's menu and tick the ways you want; the row then names them, such as
-**Push and Email**, or **Off** with none. Your choices apply on every device in
-that Organization.
+Click a button to turn that way on or off; a dark button is on. Choose any mix,
+or none. When the window is narrow, each row shows one button naming what is
+on, such as **Push and Email**, or **Off** with none; click it for a list you
+can tick. Your choices apply on every device in that Organization.
 
 - **Push** alerts every Mac and browser where you are signed in and have
   notifications on.
@@ -103,7 +104,10 @@ to your other devices.
 > "workspace". That is Rally's old word for an Organization.
 
 In a web browser the same switch sits under **In this browser**; see [Rally in
-a web browser](04-rally-in-a-browser.md).
+a web browser](04-rally-in-a-browser.md). If there is no **On this Mac** or
+**In this browser** switch at all, push notifications have not been switched on
+for your account yet, and **Push** is not offered; Activity, email and Slack
+still work.
 
 ### The number on the app icon
 

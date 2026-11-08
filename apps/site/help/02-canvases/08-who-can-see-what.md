@@ -76,8 +76,9 @@ The same request is listed under **Requests** at the top of the Canvas's
 - Once someone has answered, every decider's row says who approved or denied
   it.
 
-Guests cannot ask: to a guest, a Canvas that was not shared with them reads as
-one that does not exist.
+Guests cannot ask. A guest who opens a link to a Canvas not shared with them
+sees **This Canvas could not be opened.** with **Only a member of the
+Organization can ask to open a Canvas**, whether or not the Canvas exists.
 
 ## Canvases from a Sidekick
 
@@ -123,7 +124,7 @@ to have it on screen.
   participants are cut off, and if they had it open, it closes.
 - **Someone opens a Canvas they have lost.** A member sees **You don't have
   access to this Canvas**, without its name, and can ask to be let back in. A
-  guest sees that it does not exist.
+  guest sees **This Canvas could not be opened.**
 
 > [!IMPORTANT]
 > Taking away one route to a Canvas does not take away the other. Removing

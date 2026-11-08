@@ -3,8 +3,7 @@ title: The Settings window
 description: Open Settings, find any setting by searching, and set up your profile and time zone.
 ---
 
-Everything you can adjust in Rally is in the Settings window. It opens beside the main window rather than on top of it, so you can change
-something and watch the effect in the conversation behind.
+Everything you can adjust in Rally is in Settings.
 
 ## Opening Settings
 
@@ -14,7 +13,8 @@ There are three ways in:
   that opens settings in almost every Mac app, so your fingers may already know
   it.
 - Choose **Rally → Settings…** from the menu bar at the top of the screen.
-- Click **Settings** at the bottom of the rail, on the left edge of the window.
+- Click your avatar (**Settings**) at the bottom of the rail and choose
+  **Settings**.
 
 Some links and buttons elsewhere in Rally open Settings straight at the right
 section, so you may land in the middle of it rather than at the top.
@@ -22,8 +22,8 @@ section, so you may land in the middle of it rather than at the top.
 Settings opens in the main window, in place of whatever you had open. Close it
 and you are back where you were.
 
-Changes take effect the moment you make them. There is no **Save** button to
-forget.
+Changes take effect the moment you make them. Apart from the personal system
+prompt, which has its own **Save**, there is no button to forget.
 
 ### Closing it
 
@@ -41,21 +41,20 @@ Rally on this Mac.
 
 | Section | What you find there | More in |
 | --- | --- | --- |
-| **Account** | Your profile, your default time zone, and **Sign out of Rally**. | This page, and [Signing in, signing out and Lockdown mode](../11-privacy-and-security/01-signing-in-and-out.md) |
-| **Notifications** | Whether this Mac shows alerts, and how mentions, Needs input and finished runs reach you. | [Notifications](../08-rally-everywhere/03-notifications.md) |
-| **Organization** | The Organization's name, its default time zone, its members and invitations. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
+| **Account** | Your profile, your time zone, your personal system prompt, **Show agent work**, what Rally remembers about you, and **Sign out of Rally**. | This page, [Memory and coming back later](../04-working-with-rally/05-memory-and-coming-back-later.md) and [Signing in, signing out and Lockdown mode](../11-privacy-and-security/01-signing-in-and-out.md) |
+| **Notifications** | Whether this Mac shows alerts, and how each kind of Activity reaches you. | [Activity and notifications](../08-rally-everywhere/03-notifications.md) |
+| **Organization** | The Organization's name and default time zone, **Allow Rally access**, what Rally remembers about the Organization, the plan and weekly quota, and leaving. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
+| **Members** | Everyone in the Organization, and invitations. Indented under **Organization**. | [Roles](../10-running-an-organization/01-roles.md) and [Inviting people](../10-running-an-organization/02-inviting-people.md) |
 | **Security** | Where code Rally runs is allowed to connect. | [Organization settings](../10-running-an-organization/03-organization-settings.md) |
-| **Connections** | Every tool you or your Organization have connected, and the ones you could add. | [Settings → Connections](../05-connecting-your-tools/01-connections.md) |
-| **GitHub** | Which repositories Rally may touch. Indented under **Connections**. | [GitHub](../05-connecting-your-tools/04-github.md) |
-| **MCP tools** | The tools offered by a custom MCP server. Indented under **Connections**. | [Custom MCP server](../05-connecting-your-tools/14-custom-mcp-server.md) |
+| **Connections** | Every tool you or your Organization have connected, and the ones you could add. Each connection has a page of its own, indented under it. | [Settings → Connections](../05-connecting-your-tools/01-connections.md) |
 | **Application** | Security, privacy, appearance, the menu bar, the app icon, updates, startup and the version number. | The rest of this chapter |
 
-Not everyone sees every section, and a missing one is not a fault:
+Not everyone sees everything, and a missing piece is not a fault:
 
-- **On this Mac**, inside **Notifications**, appears only once notifications
-  on the Mac have been turned on for your account.
-- **GitHub** appears only after someone has connected GitHub, and **MCP tools**
-  only after a custom MCP server is connected.
+- **On this Mac**, inside **Notifications**, appears only where Rally can send
+  notifications.
+- A guest sees every section, but can open only **Account**, **Members** and
+  **Application**.
 
 ## Searching Settings
 
@@ -91,10 +90,8 @@ searchable.
 
 ## Your profile
 
-**Account** opens on **Profile**, which is how the rest of your Organization
-sees you. The subtitle under it still says "Your Rally identity and access in
-this workspace". Workspace is the old word for Organization; they are the same
-thing.
+**Account** opens on **Profile** ("Your Rally identity and access in this
+Organization"), which is how the rest of your Organization sees you.
 
 At the top is a preview of your avatar next to your name, your email address and
 a badge with your role in the current Organization. The email address and the
@@ -120,20 +117,33 @@ computer you sign in on.
 
 ## Your time zone
 
-Under **Account → Preferences** is **Default timezone**. Pick your time zone
-from the list.
+Under **Account → Preferences**, **Set timezone automatically** follows the
+time zone of the device you are using, so it moves when you travel. Turn it off
+to choose one yourself from **Default timezone**.
 
-Rally uses it for:
-
-- **Your Sidekicks.** When one of your personal Sidekicks runs "every weekday at
-  9" and does not name a time zone of its own, it means 9 in this one. The
-  description under the setting still calls them "personal automations", which
-  is the old name for Sidekicks. See
-  [Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md).
+Rally uses it for your Sidekicks: a new personal Sidekick that runs "every
+weekday at 9" and does not name a time zone of its own starts in this one. See
+[Triggers and schedules](../03-sidekicks/04-triggers-and-schedules.md).
 
 This is your own time zone. The Organization has a separate **Default timezone**
 under **Organization**, used for Sidekicks that belong to the whole
 Organization. That one only an administrator can change.
+
+## How Rally works for you
+
+**Account → Agent** has two settings that apply to you in this Organization:
+
+- **Personal system prompt**: instructions Rally includes with every message
+  you send, such as "Answer briefly. I work in Go and Postgres." Type them and
+  click **Save**. Nobody else sees them, and they are not shown in the
+  conversation.
+- **Show agent work**: whether conversations show Rally's thinking and its
+  tool and plugin calls. Turn it off for a quieter conversation. Requests that
+  need you, such as connecting an account, always show.
+
+Below them, **What Rally remembers about you** lists what Rally has saved to
+your memory, and lets you remove an entry. See
+[Memory and coming back later](../04-working-with-rally/05-memory-and-coming-back-later.md).
 
 ## Signing out
 

@@ -48,7 +48,7 @@ be one of the people who built Rally, and you should be getting back to work.
 
 - **Fold long answers.** Every heading in one of Rally's answers has a small
   arrow. Click it, or the heading, to fold that section down to a short preview.
-  The double arrow by the answer's header folds or unfolds the lot. See
+  See
   [Reading Rally's answers](../02-canvases/05-reading-rallys-answers.md).
 - **Copy as markdown.** Right-click any message for **Copy** (with formatting),
   **Copy as markdown** (plain text with the formatting marks, handy for pasting
@@ -69,7 +69,7 @@ be one of the people who built Rally, and you should be getting back to work.
 ## Getting around the sidebar
 
 - **Drag to pin.** Drag a Canvas or a Sidekick into the **Pinned** group at
-  the top of its list, then drag pinned rows into any order you like. See
+  the top of its list. See
   [The Canvases list](../02-canvases/01-what-a-canvas-is.md#the-canvases-list).
 - **Who is here, at a glance.** A green dot under a Canvas's name means people
   have it open right now, and the Canvases home page gathers them under **Live
@@ -77,6 +77,9 @@ be one of the people who built Rally, and you should be getting back to work.
 - **What needs you rises to the top.** Sidekicks waiting for you sit in **Needs
   input** at the top of the Sidekicks list, with their question showing. See
   [Talking to a Sidekick](../03-sidekicks/03-the-shared-conversation.md#when-the-sidekick-needs-input).
+- **Activity keeps its place.** Opening a row in **Activity** leaves the
+  Activity list open beside it, so you can work down the list one row after
+  another. See [Activity and notifications](../08-rally-everywhere/03-notifications.md).
 
 ## Making room
 
