@@ -3,6 +3,7 @@ import {
   type ConnectorOAuthProviderValue as ConnectorOAuthProvider,
 } from "./connector-oauth-providers";
 import { isDesktopDeepLinkProtocol } from "./desktop-deep-link";
+import { parseMessageSearch } from "./links";
 import {
   parseWorkspaceAddressedDeepLink,
   type WorkspaceTarget,
@@ -184,13 +185,8 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
     const canvasId = uuidFromBase58(encodedCanvasId);
     if (!target || !canvasId || extra.length) return null;
     if (childKind === undefined) {
-      if (!url.search) return { kind: "canvas", canvasId, target };
-      const turnId = url.searchParams.get("turn");
-      const sequence = url.searchParams.get("sequence");
-      return turnId !== null && UUID_PATTERN.test(turnId) && sequence !== null && /^[1-9][0-9]{0,15}$/u.test(sequence)
-        && Number.isSafeInteger(Number(sequence)) && exactKeys(url.searchParams, ["turn", "sequence"])
-        ? { kind: "canvas", canvasId, turnId, sequence: Number(sequence), target }
-        : null;
+      const message = parseMessageSearch(url.searchParams);
+      return message ? { kind: "canvas", canvasId, ...message, target } : null;
     }
     if (url.search) return null;
     const artifactId = childKind === "artifacts" && encodedArtifactId ? uuidFromBase58(encodedArtifactId) : null;
