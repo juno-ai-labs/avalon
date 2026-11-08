@@ -426,12 +426,14 @@ export const WorkspaceDepartureSchema = z.object({
   outcome: WorkspaceDepartureOutcomeSchema,
 });
 export const WorkspaceAttentionSchema = z.object({
+  /** This person's unseen `needs_input` Activity rows in the Organization: runs waiting on them. */
   waitingForYou: z.number().int().nonnegative(),
   waitingReason: z.enum(["mentioned", "needs_input", "unseen"]).nullable(),
   hasUnreadActivity: z.boolean(),
   /**
-   * Conversations (each Main and each Breakout) unread, unseen or mentioning
-   * this person: the sidebar attention menu's count, and the dock badge.
+   * This person's unseen Activity rows in the Organization, by the rule the
+   * Activity rail badge counts (`unseenCount`): the account menu's number for
+   * each Organization, and the push badge.
    */
   readerAttentionCount: z.number().int().nonnegative().default(0),
 });
@@ -1804,12 +1806,13 @@ export const DEFAULT_PUSH_PREFERENCES: PushPreferences = {
   runFinishedOthers: true,
 };
 /**
- * Where one notification can reach a person: a push to their devices, an
- * email, or any surface a connector declares for delivering to a person
- * (`userDelivery`). A new connector surface joins through
- * `AutomationDeliveryTargetTypeSchema` and needs no change here.
+ * Where one notification can reach a person: a push to their devices, or an
+ * email. Each is a sink that takes the one rendered notice
+ * (`docs/push-notifications.md`). `slack_agent_dm` is no longer offered: a
+ * stored list naming it reads without it (the lenient list below drops a
+ * channel it does not know), for one release and after.
  */
-export const NotificationChannelSchema = z.union([z.literal("push"), AutomationDeliveryTargetTypeSchema]);
+export const NotificationChannelSchema = z.enum(["push", "email"]);
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 /**
  * The kinds of Activity row a person chooses channels for. `newThreads`,
@@ -1864,9 +1867,9 @@ export const NotificationChannelsChoiceSchema = NotificationChannelsSchema
   })
   .partial();
 export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannels = {
-  mentions: ["push", "slack_agent_dm"],
+  mentions: ["push"],
   newMessages: ["push"],
-  added: ["push", "slack_agent_dm"],
+  added: ["push"],
   runFinished: ["push"],
   artifactUpdates: ["push"],
   accessRequests: ["push"],

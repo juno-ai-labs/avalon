@@ -18,9 +18,12 @@ const ERROR_PATTERN = /^[a-z0-9_-]{1,100}$/u;
 type Targeted = { target: WorkspaceTarget | null };
 
 export type DesktopDeepLinkIntent =
-  /** A Canvas, opened onto one of its artifacts when the link names one. */
-  | { kind: "canvas"; canvasId: string; artifactId?: string; target: WorkspaceTarget }
-  | { kind: "new-workstream" }
+  /**
+   * A Canvas, opened onto one of its artifacts when the link names one, or
+   * at one message of its Chat (`turnId` and `sequence`, from
+   * `?turn=<turn>&sequence=<n>`) when it names that.
+   */
+  | { kind: "canvas"; canvasId: string; artifactId?: string; turnId?: string; sequence?: number; target: WorkspaceTarget }
   /** The menu bar's request row: open the main window on this request's approve-or-decline dialog. */
   | ({ kind: "access-request"; requestId: string } & Targeted)
   | ({ kind: "settings"; section: "workspace" | "members" | "connections" | "digest" } & Targeted)
@@ -179,8 +182,17 @@ export function parseDesktopDeepLinkIntent(raw: string | URL): DesktopDeepLinkIn
   if (url.hostname === "canvases") {
     const [encodedCanvasId = "", childKind, encodedArtifactId, ...extra] = url.pathname.slice(1).split("/");
     const canvasId = uuidFromBase58(encodedCanvasId);
-    if (!target || !canvasId || url.search || extra.length) return null;
-    if (childKind === undefined) return { kind: "canvas", canvasId, target };
+    if (!target || !canvasId || extra.length) return null;
+    if (childKind === undefined) {
+      if (!url.search) return { kind: "canvas", canvasId, target };
+      const turnId = url.searchParams.get("turn");
+      const sequence = url.searchParams.get("sequence");
+      return turnId !== null && UUID_PATTERN.test(turnId) && sequence !== null && /^[1-9][0-9]{0,15}$/u.test(sequence)
+        && Number.isSafeInteger(Number(sequence)) && exactKeys(url.searchParams, ["turn", "sequence"])
+        ? { kind: "canvas", canvasId, turnId, sequence: Number(sequence), target }
+        : null;
+    }
+    if (url.search) return null;
     const artifactId = childKind === "artifacts" && encodedArtifactId ? uuidFromBase58(encodedArtifactId) : null;
     return artifactId ? { kind: "canvas", canvasId, artifactId, target } : null;
   }
