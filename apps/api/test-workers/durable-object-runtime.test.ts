@@ -1003,14 +1003,19 @@ describe("Durable Objects in the Workers runtime", () => {
       workspaceDOName("global", WORKSPACE_ID),
     ));
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
-    // Nothing stored is every default.
+    // Nothing stored is every default, plus the two kinds a desktop of the
+    // previous release still requires (`PREVIOUS_RELEASE_DEFAULTS`).
+    const defaults = {
+      ...DEFAULT_MEMBER_PREFERENCES,
+      notify: { ...DEFAULT_MEMBER_PREFERENCES.notify, newThreads: ["push"], newBreakouts: ["push"] },
+    };
     await expect(stub.memberPreferences({ workspaceId: WORKSPACE_ID, userId: USER_ID }))
-      .resolves.toEqual(DEFAULT_MEMBER_PREFERENCES);
+      .resolves.toEqual(defaults);
     await expect(stub.saveMemberPreferences({
       workspaceId: WORKSPACE_ID,
       userId: USER_ID,
       preferences: { showAgentWork: false },
-    })).resolves.toEqual({ ...DEFAULT_MEMBER_PREFERENCES, showAgentWork: false });
+    })).resolves.toEqual({ ...defaults, showAgentWork: false });
 
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
@@ -1031,7 +1036,7 @@ describe("Durable Objects in the Workers runtime", () => {
       socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
       const event = JSON.parse(String((await answer).data)) as { viewerPreferences?: unknown };
       // On the answer itself, so the first frame hides the calls without a read.
-      expect(event.viewerPreferences).toEqual({ ...DEFAULT_MEMBER_PREFERENCES, showAgentWork: false });
+      expect(event.viewerPreferences).toEqual({ ...defaults, showAgentWork: false });
     } finally {
       socket.close(1000, "test complete");
     }

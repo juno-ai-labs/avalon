@@ -111,8 +111,8 @@ const row = (notify: Record<string, unknown>, push: Record<string, unknown> = {}
 });
 
 describe("the preferences record under the previous release's schema", () => {
-  it("parses for a person with nothing set, one who set the Thread-era kinds, and one whose old switch turned one off", () => {
-    for (const stored of [row({}), row({ newThreads: ["email"], newBreakouts: [], accessRequests: [] }), row({}, { newBreakouts: false })]) {
+  it("parses for a person with no row, one with nothing set, one who set the Thread-era kinds, and one whose old switch turned one off", () => {
+    for (const stored of [undefined, row({}), row({ newThreads: ["email"], newBreakouts: [], accessRequests: [] }), row({}, { newBreakouts: false })]) {
       const record = storedMemberPreferences(stored);
       expect(MemberPreferencesSchema.safeParse(JSON.parse(JSON.stringify(record))).success).toBe(true);
     }
