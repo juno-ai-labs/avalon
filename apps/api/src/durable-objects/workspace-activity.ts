@@ -237,7 +237,9 @@ export function recordCollapsedActivityItem(sql: SqlStorage, item: ActivityItemI
  * reply (`new_message`) clears as a mention does: its ordinal is its own
  * message's, which nobody read before it existed. A pinned Canvas's new
  * version (`artifact_updated`) clears on any read of the Chat after it, the
- * rule the Canvas row's own artifact news takes. Any
+ * rule the Canvas row's own artifact news takes. A request to open a Canvas
+ * (`access_request`) stores no ordinal, so no read clears it: it is seen once
+ * it is settled, by anyone. Any
  * row clears when Mark all seen came after it. One expression for the page
  * and the count, so the two cannot disagree.
  */
@@ -247,6 +249,8 @@ const ACTIVITY_SEEN_SQL = `(
       SELECT 1 FROM sidekick_runs run
        WHERE run.sidekick_id = item.parent_id AND run.run_id = item.run_id AND run.state <> 'needs_input'))
   OR (item.kind = 'artifact_updated' AND reads.user_id IS NOT NULL AND reads.updated_at >= item.created_at)
+  OR (item.kind = 'access_request' AND EXISTS (
+      SELECT 1 FROM canvas_access_requests request WHERE request.request_id = item.subject_id AND request.state <> 'pending'))
   OR (item.attention_ordinal IS NOT NULL AND reads.user_id IS NOT NULL
       AND reads.seen_attention_ordinal >= item.attention_ordinal
       AND (item.kind IN ('mention', 'new_message') OR reads.updated_at >= item.created_at))
@@ -258,6 +262,7 @@ interface ActivityRow extends Record<string, SqlStorageValue> {
   actor_kind: "person" | "rally" | "sidekick"; actor_id: string | null; preview: string | null;
   created_at: number; seen: number; unseen_count: number;
   parent_title: string | null; subject_id: string | null; artifact_title: string | null;
+  request_state: "pending" | "approved" | "denied" | null; request_decided_by_name: string | null;
 }
 
 /** Who a page is read for: their id, their Organization, and whether they are a member rather than a guest. */
@@ -307,6 +312,12 @@ export function activityPage(
         WHERE CASE
                 WHEN canvas.canvas_id IS NOT NULL THEN (canvas.created_by_user_id = ?1 OR participant.user_id IS NOT NULL
                   OR (?3 = 1 AND canvas.visibility = 'workspace')
+                  -- An owner or administrator may open every Canvas, so a row
+                  -- about any lists for them: a request they decide on, or a
+                  -- mention in a Canvas they were never in. Their role is the
+                  -- relationship the object keeps (\`workspace_member_status\`).
+                  OR (?3 = 1 AND EXISTS (SELECT 1 FROM workspace_member_status status WHERE status.user_id = ?1 AND status.active = 1
+                    AND json_extract(status.relationship_json, '$.role') IN ('owner', 'admin')))
                   OR canvas.writer_sidekick_id IN (SELECT value FROM json_each(?5)))
                 WHEN directory.automation_id IS NOT NULL THEN ?3 = 1 AND ${sidekickListedSql}
                 ELSE 0 END
@@ -315,9 +326,10 @@ export function activityPage(
             listed.message_sequence, listed.run_id,
             listed.actor_kind, listed.actor_id, listed.preview, listed.created_at, listed.seen,
             SUM(1 - listed.seen) OVER () AS unseen_count, listed.parent_title, listed.subject_id,
-            artifact.title AS artifact_title
+            artifact.title AS artifact_title, request.state AS request_state, request.decided_by_name AS request_decided_by_name
        FROM listed
        LEFT JOIN resources artifact ON listed.kind = 'artifact_updated' AND artifact.id = listed.subject_id
+       LEFT JOIN canvas_access_requests request ON listed.kind = 'access_request' AND request.request_id = listed.subject_id
       ORDER BY listed.created_at DESC, listed.item_id DESC
       LIMIT ?4`,
     viewer.userId, viewer.workspaceId, viewer.member ? 1 : 0, limit, JSON.stringify(admittingWriters),
@@ -340,6 +352,9 @@ export function activityPage(
       seen: row.seen === 1,
       ...(row.kind === "artifact_updated"
         ? { artifact: row.subject_id !== null && row.artifact_title !== null ? { resourceId: row.subject_id, title: row.artifact_title } : null }
+        : {}),
+      ...(row.kind === "access_request"
+        ? { accessRequest: row.request_state === null ? null : { state: row.request_state, decidedByName: row.request_decided_by_name } }
         : {}),
     } as ActivityItem)),
   };

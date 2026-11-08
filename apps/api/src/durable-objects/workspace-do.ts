@@ -711,6 +711,7 @@ import {
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
 import { REPLY_BATCH_ALARM_KIND, sendReplyBatch } from "./conversation-reply-batch";
+import { CANVAS_ACCESS_REQUESTS_STATEMENTS } from "./canvas-access-requests";
 import { activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
 import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, CANVAS_TITLE_STATUS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
@@ -4391,6 +4392,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   // See NOTIFICATION_INTENTS_PARENT_NOTICES_MIGRATION, WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS,
   // docs/push-notifications.md and docs/activity.md.
   statements: [...NOTIFICATION_INTENTS_PARENT_NOTICES_MIGRATION, ...WORKSPACE_ACTIVITY_PARENT_NOTICES_STATEMENTS],
+}, {
+  version: 151,
+  description: "record members' requests to open a Canvas, and seat an approved one as a request participant",
+  // See CANVAS_ACCESS_REQUESTS_STATEMENTS and docs/canvas-access-requests.md.
+  statements: CANVAS_ACCESS_REQUESTS_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5555,6 +5561,23 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   async canvasRename(input: Parameters<HostedCanvas["rename"]>[0]) {
     const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
     return this.canvasWrite(() => canvas.rename(input));
+  }
+
+  /** Whether a member who cannot open a Canvas may ask to; see `HostedCanvas.access`. */
+  async canvasAccess(input: Parameters<HostedCanvas["access"]>[0]) {
+    return (await this.hostedCanvas(input.canvasId, input.workspaceId)).access(input);
+  }
+
+  /** Ask to open a Canvas; see `HostedCanvas.requestAccess`. */
+  async canvasRequestAccess(input: Parameters<HostedCanvas["requestAccess"]>[0]) {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    return this.canvasWrite(() => canvas.requestAccess(input));
+  }
+
+  /** Approve or deny a request to open a Canvas; see `HostedCanvas.decideAccess`. */
+  async canvasDecideAccess(input: Parameters<HostedCanvas["decideAccess"]>[0]) {
+    const canvas = await this.hostedCanvas(input.canvasId, input.workspaceId);
+    return this.canvasWrite(() => canvas.decideAccess(input));
   }
 
   /** Change who can open a Canvas; see `HostedCanvas.setAudience`. */

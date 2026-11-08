@@ -263,6 +263,17 @@ whoever the publish says edited the Canvas (Rally for its Chat, the Sidekick
 for a run) — and opens the Canvas onto the artifact (`/cv/<id>/a/<id>/`). Its
 collapse id is the Canvas's, so a newer version replaces the alert before it.
 
+### A request to open a Canvas, and its grant
+
+A member who asks to open a Canvas they cannot gives each of its deciders an
+`access_request` intent, the **Access requests** choice (`accessRequests`):
+"<requester> asked to open <Canvas>", the request's message as the body,
+linking to the Canvas, where the Share panel lists it. An approval gives the
+requester an `access_granted` intent, read through **Being added** (`added`),
+since being let in is being added: "<decider> let you into <Canvas>". A
+denial sends nothing. Both are recorded with their Activity rows by
+[`canvas-access-requests.md`](canvas-access-requests.md)'s settlement.
+
 ## What each person chooses
 
 Settings → Notifications → **Notify me about** holds, for each kind it offers
@@ -463,6 +474,8 @@ author's own pin gets nothing, the other pinner one intent and a row naming
 the artifact, the push "Avery updated Launch report in Launch" opening onto
 the artifact, Rally's next version moving that row, a read of the Chat
 clearing it, and the version after that a new row.
+`canvas-access-requests.test.ts` covers a request's push to its decider and an
+approval's push to the requester.
 `test/workspace-parent-notices-migration.test.ts` covers migration 150 over
 populated rows. `test/conversation-effect-service.test.ts` covers
 a mention whose conversation has no link: Slack and email log
@@ -513,10 +526,18 @@ minutes) from that implementation. The batch rides the existing alarm store,
 as a run notice does, and the cooldown reads the intent's own
 `delivered_at`, so no second table of alerts exists.
 
+A request to open a Canvas tells its deciders as `access_request`, and its
+approval tells the requester as `access_granted`
+([A request to open a Canvas](#a-request-to-open-a-canvas-and-its-grant)).
+
 **Why (pinned Canvases):** The owner asked for pinned Canvas updates to come
 back. The Thread-era pinned-artifact news (`artifactUpdateSql` in the
 deleted feed) was pinned artifacts; a Canvas is what is pinned now, so the
 news is a version in a pinned Canvas, by the same rule its row's unread uses.
+
+**Why (access requests):** The owner asked for the whole access request flow
+back; its notices ride the same intent and Activity row as every other kind,
+so the push consumer reads them as it reads a reply's.
 
 **Considered and rejected (replies):** One `new_message_notification` per
 recipient, as mentions are: the message's text would cross the Queue once per

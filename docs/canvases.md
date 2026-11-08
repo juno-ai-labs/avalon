@@ -119,6 +119,11 @@ and for a Canvas a Sidekick writes, that Sidekick's managers
 but does not change the audience; someone it does not admit is told it does
 not exist.
 
+A member it does not admit may ask to be let in; the request, who decides it
+and what an approval does are [`canvas-access-requests.md`](canvas-access-requests.md)'s.
+An approval adds the requester with source `request`, and an audience change
+that admits a person settles their waiting request.
+
 `canvasSetAudience` replaces the participant list with the one given and sets
 the visibility. Everyone named must be in the Organization, as a member or a
 guest (`assertAudienceInOrganization`, the check a Sidekick's audience uses;
@@ -634,7 +639,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | Table | Keyed by | Holds |
 | --- | --- | --- |
 | `canvas_directory` | `canvas_id` | The row: title, creator, times, last editor, writer Sidekick and run, visibility, authority generation, title status (`naming` until a Canvas made with no title is titled from its first message, migration 149). Indexed by recency, by writer Sidekick, and uniquely by `(writer_sidekick_id, writer_run_id)`. |
-| `canvas_participants` | `(canvas_id, user_id)` | Whom its managers added (`added`) or a claimed share brought (`invitation`). Indexed by person for "shared with me". |
+| `canvas_participants` | `(canvas_id, user_id)` | Whom its managers added (`added`), a claimed share brought (`invitation`) or an approved access request let in (`request`, migration 151). Indexed by person for "shared with me". |
 | `sidekick_children`, `sidekick_child_projections`, `sidekick_child_receipts`, `sidekick_viewer_reads` | `(sidekick_id, …)`, the column holding the Canvas id | The hosted conversation's children, their projections and receipts, and each reader's read of the Chat. |
 | `workspace_sidebar_list_state` | `list` | Gains the `canvases` waterline; the table is rebuilt to widen its CHECK. |
 | `sidekick_conversation_attachments` | `(automation_id, parent_kind, …)` | Migration 140 widens `parent_kind` to admit `canvas`. |
@@ -643,7 +648,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 ## Changelog
 
-### 2026-11-08 — The Canvas screens follow design.html, and a pinned Canvas's new version tells its pinners
+### 2026-11-08 — The Canvas screens follow design.html, a pinned Canvas's new version tells its pinners, and members may ask to be let in
 
 **What changed (pinners):** A publish's note to its Canvas reads the
 resource's newest version and, when it is news by `artifactNewsSql`, records
@@ -665,6 +670,12 @@ any entry point and cannot enqueue a push durably without a new alarm kind,
 and the versions it adds (an image edit, a refetch) are not the Canvas's
 work. Telling everyone who may open the Canvas: that is the Canvas row's
 unread; a push is for the people who asked to follow it by pinning.
+
+**What changed (access):** A member a Canvas does not admit may ask to be let
+in, and an approval seats them as a `request` participant; an audience change
+that admits them settles the request. The mechanism has its own document,
+[`canvas-access-requests.md`](canvas-access-requests.md), because its table,
+routes and settlement rules are more than this document's scope.
 
 **What changed:** A Canvas's mark is tinted, in a hue stable for its id. The
 home page draws the design's card grid, each card's shot sketching what the
