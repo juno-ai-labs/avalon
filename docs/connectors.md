@@ -1623,7 +1623,7 @@ checked the table's rows against what `createConnectorRegistry` produced; with
 no reader of the answer left, the table was kept only so that test had
 something to read, and both were deleted. What survives is the declaration itself, still
 required: each manifest's `{ digestible, operational }` partition, refused by
-`createActivityTriggers` (`packages/connectors/src/types.ts`) when a type sits
+`defineConnectorActivityTriggers` (`packages/connectors/src/types.ts`) when a type sits
 in both; `ConnectorPollingActivityStream.digestible`; the `digestible` field of
 an activity trigger descriptor, which `packages/agent-harness/src/index.ts`
 deliberately leaves out of what a model sees; and the unwritten
