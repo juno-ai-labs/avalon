@@ -57,6 +57,8 @@ export function automationSummary(
     pending_question?: string | null;
     /** `AUTOMATION_TRIGGER_KINDS_SQL`, a JSON array; absent from a read that did not ask. */
     trigger_kinds?: string | null;
+    /** `AUTOMATION_SCHEDULE_TIME_ZONE_SQL`; absent from a read that did not ask. */
+    schedule_time_zone?: string | null;
   },
   report: InvalidAppearanceReport,
 ): AutomationSummary {
@@ -81,6 +83,7 @@ export function automationSummary(
     ...(row.run_state === undefined ? {} : { runState: row.run_state }),
     ...(row.pending_question === undefined ? {} : { pendingQuestion: row.pending_question }),
     ...(row.trigger_kinds === undefined ? {} : { triggerKinds: JSON.parse(row.trigger_kinds ?? "[]") as AutomationSummary["triggerKinds"] }),
+    ...(row.schedule_time_zone == null ? {} : { scheduleTimeZone: row.schedule_time_zone }),
   };
 }
 
@@ -175,6 +178,23 @@ export const AUTOMATION_TRIGGER_KINDS_SQL = `(SELECT json_group_array(kind ORDER
           (SELECT MAX(newest.definition_revision) FROM sidekick_revisions newest
             WHERE newest.sidekick_id = directory.automation_id))
       GROUP BY kind HAVING kind IS NOT NULL)) AS trigger_kinds`;
+
+/**
+ * `schedule_time_zone` for `automationSummary`, over an `automation_directory`
+ * aliased `directory`: the zone of the schedule that comes due next, the one
+ * `next_run_at` is (`touchDirectory` takes the earliest `next_due_at`), as
+ * its stored definition resolved it when the revision was accepted (the
+ * trigger's own zone, else the owner's or the Organization's). Null for an
+ * interval, which has no wall-clock time, and when there is no schedule.
+ * Without it the sidebar and the home formatted `nextRunAt` in the machine's
+ * zone while the details read the schedule's own summary, so one schedule
+ * showed two times (vis2-v2 R2-7). The probe is bounded to this Sidekick's
+ * schedules by the primary key's prefix.
+ */
+export const AUTOMATION_SCHEDULE_TIME_ZONE_SQL = `(SELECT json_extract(schedule.definition_json, '$.timezone')
+     FROM sidekick_schedules schedule
+    WHERE schedule.sidekick_id = directory.automation_id AND schedule.next_due_at IS NOT NULL
+    ORDER BY schedule.next_due_at, schedule.schedule_id LIMIT 1) AS schedule_time_zone`;
 
 /** The live run state a run's own state contributes to its Sidekick's row (`AUTOMATION_RUN_STATE_SQL`). */
 export function sidekickRowRunState(state: string | null | undefined): "working" | "needs_input" | null {

@@ -1598,6 +1598,13 @@ export const AutomationSummarySchema = z.object({
   runState: z.enum(["working", "needs_input"]).nullable().optional(),
   pendingQuestion: z.string().nullable().optional(),
   triggerKinds: z.array(z.enum(["manual", "schedule", "external_event", "inbound_email"])).optional(),
+  /**
+   * The IANA zone the schedule behind `nextRunAt` reads its wall-clock time
+   * in, so a client formats `nextRunAt` the way the schedule's own summary
+   * says it ("Every Friday at 2:00 PM"). Absent when the next schedule is an
+   * interval, when there is no schedule, and from a server that predates it.
+   */
+  scheduleTimeZone: z.string().optional(),
   lastRunAt: TimestampSchema.nullable(),
   updatedAt: TimestampSchema,
   /** Who it is shared with; absent from a server that predates it. */
