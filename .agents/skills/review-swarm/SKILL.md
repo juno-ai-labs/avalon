@@ -314,9 +314,10 @@ module-level constant; the render function composes it with run state.
   the renderer truncates — the cap, the retained window, and that the current item
   survived. Do **not** demand a complete exact-string fixture or flag `toContain` on
   sight: substring assertions are how the injection and load-bearing-line checks are
-  written here. The ceilings in that file (under 8,000 bytes for the conversation
-  policy in `prompts/workstream.ts`, 9,000 for the automation compiler) are design constraints — a diff that
-  raises one instead of moving something out needs an explicit justification.
+  written here. The ceiling in `packages/agent-harness/src/prompts.test.ts` (under
+  8,500 bytes for the conversation policy in `prompts/workstream.ts`) is a design
+  constraint — a diff that raises it instead of moving something out needs an
+  explicit justification.
 - **Skills.** A skill is prompt content: its body is rendered verbatim into
   `# Active Skill Instructions` once loaded. Built-ins live in
   `packages/agent-harness/src/built-in-skills.ts` (`deep-research` is the reference
