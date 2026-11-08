@@ -1,4 +1,5 @@
 import { asUserId, type CanvasDetail, type CanvasVisibility } from '@rally/contracts';
+import { CreateScopeInvitationsSchema } from '@rally/contracts/scope-grants';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { IconChevronRight } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -7,13 +8,13 @@ import { canvasDetailQueryKey, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import type { WorkspaceMember } from '../lib/types';
 import { Avatar, Badge, Button, ErrorNotice, Modal } from './primitives';
-import { ScopeSharingPanel } from './scope-sharing-panel';
+import { useScopeInvitations } from './scope-sharing-panel';
 import { SidebarSearch } from './sidebar-search';
 
 const VISIBILITY_COPY: Record<CanvasVisibility, { label: string; description: string }> = {
   creator: { label: 'Only the creator', description: 'Nobody else can open it.' },
   participants: { label: 'Specific people', description: 'The people chosen below, guests among them.' },
-  workspace: { label: 'Everyone in the Organization', description: 'Every member can open it, and the guests chosen below.' },
+  workspace: { label: 'Everyone in the Organization', description: 'Every member can open it, and any guests you add.' },
 };
 
 /**
@@ -40,19 +41,39 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
   const [visibility, setVisibility] = useState<CanvasVisibility>(canvas.visibility);
   const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set(canvas.participantUserIds));
   const [search, setSearch] = useState('');
+  const [guestsOpen, setGuestsOpen] = useState(false);
+  const [emails, setEmails] = useState('');
+  const [invalidEmails, setInvalidEmails] = useState<{ emails: string } | null>(null);
   const isMember = (id: string): boolean => membersById.get(id)?.accessClass === 'member';
+  const workspaceId = session?.workspace?.id;
+  // The guest invite is part of this form: Save sends it, so the dialog has
+  // one primary action. A Canvas is shared whole (`docs/canvases.md#guests`).
+  const { invite } = useScopeInvitations({ api: api!, workspaceId: workspaceId ?? '', parentId: canvas.id, substreamId: '0',
+    target: 'workstream', listsPending: false, enabled: false });
   const save = useMutation({
-    mutationFn: async () => api!.setCanvasAudience(canvas.id, {
-      visibility,
-      // Everyone in the Organization already includes its members, so only
-      // the guests chosen are sent with it.
-      userIds: visibility === 'creator' ? [] : [...chosen].filter((id) => visibility !== 'workspace' || !isMember(id)).map(asUserId),
-    }),
-    onSuccess: (updated) => {
+    mutationFn: async (recipients: string[]) => {
+      const updated = await api!.setCanvasAudience(canvas.id, {
+        visibility,
+        // Everyone in the Organization already includes its members, so only
+        // the guests chosen are sent with it.
+        userIds: visibility === 'creator' ? [] : [...chosen].filter((id) => visibility !== 'workspace' || !isMember(id)).map(asUserId),
+      });
       queryClient.setQueryData(canvasDetailQueryKey(canvas.id), updated);
-      onDone();
+      if (recipients.length > 0) await invite.mutateAsync(recipients);
     },
+    onSuccess: onDone,
   });
+  const submit = (): void => {
+    setInvalidEmails(null);
+    const typed = emails.split(/[\s,;]+/u).filter(Boolean);
+    let recipients: string[] = [];
+    if (typed.length > 0) {
+      const parsed = CreateScopeInvitationsSchema.shape.emails.safeParse(typed);
+      if (!parsed.success) { setInvalidEmails({ emails }); return; }
+      recipients = [...new Set(parsed.data)].sort();
+    }
+    save.mutate(recipients);
+  };
   const creator = membersById.get(canvas.createdByUserId);
   if (!canvas.canManage) {
     return <div className="canvas-share">
@@ -62,6 +83,11 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
     </div>;
   }
   const needle = search.trim().toLocaleLowerCase();
+  // With the whole Organization in, only guests are left to pick, so the
+  // search shows once there is a guest to find or the person opens the guest
+  // section; an empty search over nothing is what it replaced.
+  const hasGuests = (members ?? []).some((member) => member.accessClass === 'guest' && member.id !== session?.user.id);
+  const showPeople = visibility === 'participants' || (visibility === 'workspace' && (hasGuests || guestsOpen));
   // Nobody picks themselves or the creator, who can always open it; with the
   // whole Organization in, only guests are left to choose ("the guests chosen
   // below").
@@ -79,7 +105,7 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
         <span><strong>{value === 'creator' && canvas.createdByUserId === session?.user.id ? 'Only you' : VISIBILITY_COPY[value].label}</strong><small>{VISIBILITY_COPY[value].description}</small></span>
       </label>)}
     </fieldset>
-    {visibility !== 'creator' && <section aria-label="People" className="canvas-share-people">
+    {showPeople && <section aria-label="People" className="canvas-share-people">
       <SidebarSearch aria-label="Search people" mode="input" onChange={(event) => setSearch(event.target.value)} placeholder="Search people" value={search} />
       <div aria-label="People who can open it" className="member-action-list" role="group">
         {candidates.map((member) => <label className="member-action-row" key={member.id}>
@@ -95,16 +121,19 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
         </label>)}
       </div>
     </section>}
-    {api && session?.workspace && <details className="canvas-share-guests">
+    {api && workspaceId && <details className="canvas-share-guests" onToggle={(event) => setGuestsOpen(event.currentTarget.open)}>
       <summary><IconChevronRight aria-hidden="true" className="canvas-share-guests-chevron" size={14} stroke={2} />Invite a guest by email</summary>
-      <ScopeSharingPanel api={api} listsPending={false} parentId={canvas.id} substreamId="0" target="workstream" workspaceId={session.workspace.id} />
+      <label className="form-field">Email addresses<textarea aria-label="Email addresses" disabled={save.isPending}
+        onChange={(event) => setEmails(event.target.value)} placeholder="person@example.com" rows={2} value={emails} /></label>
+      <p className="canvas-share-note">Separate email addresses with spaces, commas, or semicolons. They are invited when you save.</p>
     </details>}
-    {save.error && <ErrorNotice occurrence={save.error}>{save.error.message}</ErrorNotice>}
+    {invalidEmails && <ErrorNotice occurrence={invalidEmails}>Enter valid email addresses, separated by spaces, commas, or semicolons.</ErrorNotice>}
+    {save.error && <ErrorNotice occurrence={save.error}>{invite.isError ? 'Who can open it was saved, but the guests couldn’t be invited. Try again.' : save.error.message}</ErrorNotice>}
     {missingPeople && <p className="canvas-share-note">Choose at least one person.</p>}
     {/* The dialog's one set of actions, at its foot, below the guest invite. */}
     <div className="canvas-share-actions">
       <Button onClick={onDone}>Cancel</Button>
-      <Button className="button-primary" disabled={save.isPending || missingPeople || !api} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save'}</Button>
+      <Button className="button-primary" disabled={save.isPending || missingPeople || !api} onClick={submit}>{save.isPending ? 'Saving…' : 'Save'}</Button>
     </div>
   </div>;
 }

@@ -7009,8 +7009,52 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvas-share-people .member-action-list { max-height: 240px; overflow: auto; }
 .canvas-share-people .member-action-row input[type=checkbox] { margin-left: auto; }
 .canvas-share-actions { display: flex; gap: 8px; justify-content: flex-end; }
-.canvas-share-guests summary { cursor: pointer; font-size: 14px; }
-.canvas-share-guests .scope-sharing-panel { margin-top: 12px; }
+/* The guest invite is a disclosure drawn like the rest of the dialog: the
+   chevron the title menus use, turned down while open, and no browser marker. */
+.canvas-share-guests summary { align-items: center; border-radius: 12px; cursor: pointer; display: flex; font-size: 14px; gap: 8px; list-style: none; padding: 8px 10px; }
+.canvas-share-guests summary::-webkit-details-marker { display: none; }
+.canvas-share-guests summary:hover { background-image: var(--hover-layer); }
+.canvas-share-guests summary:focus-visible { box-shadow: var(--av-sys-focus-ring-default); outline: none; }
+.canvas-share-guests-chevron { color: var(--av-sys-color-text-muted); transition: transform 140ms; }
+.canvas-share-guests[open] .canvas-share-guests-chevron { transform: rotate(90deg); }
+/* The addresses are part of the form: Save at the foot invites them. */
+.canvas-share-guests > .form-field { padding: 4px 10px 0; }
+.canvas-share-guests > .canvas-share-note { margin: 6px 10px 0; }
+.canvas-share-guests textarea { box-sizing: border-box; color: var(--av-sys-color-text-default); font: inherit; resize: none; }
+@media (prefers-reduced-motion: reduce) { .canvas-share-guests-chevron { transition: none; } }
+
+/* A radio or a checkbox drawn from the tokens rather than the browser's own
+   accent: a ring that fills with the default ink when chosen, in both
+   appearances. Any form control can take it by class. */
+.choice-control {
+  appearance: none;
+  background: transparent;
+  /* The muted ink, not a border token: the line tokens vanish on a dark
+     dialog's raised surface. */
+  border: 1.5px solid var(--av-sys-color-text-muted);
+  display: inline-grid;
+  flex: none;
+  height: 16px;
+  margin: 2px 0 0;
+  place-content: center;
+  width: 16px;
+}
+.choice-control[type=radio] { border-radius: 50%; }
+.choice-control[type=checkbox] { border-radius: 4px; }
+.choice-control:checked { border-color: var(--av-sys-color-text-default); }
+.choice-control[type=checkbox]:checked { background: var(--av-sys-color-text-default); }
+/* A chosen radio is its ring with a dot inside, drawn without a fill behind it
+   so it sits on any surface, a dialog's raised one included. */
+.choice-control[type=radio]:checked { background: radial-gradient(circle, var(--av-sys-color-text-default) 0 3.5px, transparent 4px); }
+.choice-control[type=checkbox]:checked::before {
+  background: var(--av-sys-color-text-on-inverse);
+  clip-path: polygon(14% 52%, 0 66%, 38% 100%, 100% 22%, 86% 8%, 38% 72%);
+  content: '';
+  height: 10px;
+  width: 10px;
+}
+.choice-control:focus-visible { box-shadow: var(--av-sys-focus-ring-default); outline: none; }
+.choice-control:disabled { opacity: .55; }
 /* A Sidekick open (components/sidekick-detail-layout.tsx), as design §4 and a
    Canvas lay it out: the header and the conversation in the main column, the
    details in a column on the right the width the profile column always had. */
