@@ -602,7 +602,7 @@ operation and the preference in parallel, `begin` and `reserve` are each one
 batch, and activation, completion and eligibility run together after the
 region commits; the region refreshes a returning user in one batch and creates
 the Organization, its session row and General's anchor in one more
-([`spaces.md`](spaces.md) has General's half).
+(`spaces.md` (retired) has General's half).
 
 **Why:** Creating an organization was slower than switching to one. Most of
 the server's serial round trips read rows the same request had written or

@@ -11,9 +11,10 @@ adding feedback state to conversations.
 | --- | --- |
 | `packages/contracts/src/message-issues.ts` | Request target and durable receipt. |
 | `apps/desktop/src/renderer/components/message-issue-dialog.tsx` | One modal per feed, issue draft, and best-effort submission. |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | Shared Oopsie action, immediately after Merge when offered. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | Shared Oopsie action, first in a message's action row. |
 | `apps/api/src/routes/message-issues.ts` | Workspace-authenticated report endpoint. |
 | `apps/api/src/services/message-issue-service.ts` | Exact-conversation admission, authoritative provenance, and D1 write. |
+| `packages/db/message-issue-migrations/0002_message_issues_canvas.sql` | Admits `canvas` as a parent kind. |
 | `packages/db/message-issue-migrations/` | Dedicated `MESSAGE_ISSUES_DB` schema. |
 
 ## How it works
@@ -26,7 +27,7 @@ the page's text under every reportable message.
 
 The action opens **Something go wrong?** with **Let us know what you expected
 so we can improve Rally.** The multiline input is `ComposerInput`, including
-the same message-capsule layout as Threads and Breakouts, with only the
+the same message-capsule layout as a conversation's composer, with only the
 microphone inside the input. Attachments, model selection and the inline send
 arrow are absent. The modal omits its header close button. **Send** sits beside
 **Cancel** in the modal footer; it still
@@ -37,25 +38,25 @@ There is no delivery confirmation or retry prompt. Cancel, Escape, and outside c
 unsent draft.
 
 `POST /message-issues` uses the authenticated Organization and reporter rather
-than trusting client identity fields. Conversation reports authorize the exact
-parent and Breakout through `ConversationService`, then read the canonical turn
-from its `SubstreamAgent`. Channel-feed reports read one message through
-WorkspaceDO's Channel reach check. Channel messages do not require access to
-the Thread their merge came from, just as their feed does not.
+than trusting client identity fields. A report authorizes the exact
+conversation (a Canvas's Chat, a Sidekick's conversation or one of its runs)
+through `ConversationService.authorizeViewer`, then reads the canonical turn
+from its `AgentLoopDO`. The contract still parses a `channel` target, for an
+older client; the service refuses it as `message_issue_message_not_found`,
+because Channel feeds were deleted with Channels.
 
 Reports retain the canonical turn ID and the displayed block ID separately:
-assistant turns and their visible blocks have different identities. Thread
-reports retain the canonical Channel placement, including private-only placements.
+assistant turns and their visible blocks have different identities.
 Visible Sidekick results and opening instructions are reportable despite their
-system storage actor; internal host events are excluded. Malformed Breakout
-addresses disable reporting without throwing during rendering. The
-Breakout ID is present for a Thread's child conversation; a Sidekick run keeps
-its substream identity without being mislabeled a Breakout.
+system storage actor; internal host events are excluded. A run's report keeps
+its substream id. The `thread_id`, `breakout_id` and `channel_id` columns are
+written `NULL`.
 
 ## Invariants
 
 - The server authorizes the addressed conversation before reading provenance;
-  knowing an ID cannot create a report against a private Breakout.
+  knowing an ID cannot create a report against a conversation the reporter
+  cannot open.
 - Reports write only to `MESSAGE_ISSUES_DB`.
 - A repeated report ID with the same reporter, Organization, target and text
   returns the original receipt. Reusing it with changed content returns 409.
@@ -83,9 +84,9 @@ Closing the modal discards an unsent draft.
 
 ## Testing
 
-Run the API workerd file `test-workers/message-issues.test.ts` (deleted in plan step C-2), the cookie-adapter
+Run the API workerd file `test-workers/message-issues.test.ts`, the cookie-adapter
 regression in `test/browser-sessions.test.ts`, the renderer
-`message-issue-dialog.test.tsx`, and the existing message-action, Channel, and
+`message-issue-dialog.test.tsx`, and the existing message-action and
 composer-dictation suites. Workerd applies the checked-in issue migration to a
 real D1 binding and provisions real conversation objects. Renderer tests prove
 immediate dismissal with pending or failed delivery and modal controls; visible layout must also be inspected in the
@@ -96,7 +97,8 @@ provider; the composer suite covers final transcript delivery without one.
 
 `message_issues` stores report ID, Organization, reporter, support impersonator
 when present, session, region, canonical message, parent kind/ID, substream,
-Thread, Breakout, Channel, description, normalized request, provenance JSON, and
+the retired Thread, Breakout and Channel ids (always `NULL` now), description,
+normalized request, provenance JSON, and
 server creation time. Provenance includes author identity/type, message time,
 sequence, run and attempt IDs when present, and the visible block ID. IDs refer
 to other authorities; there are no cross-database foreign keys. The compound

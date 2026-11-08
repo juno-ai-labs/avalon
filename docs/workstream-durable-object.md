@@ -2240,7 +2240,7 @@ admitted as a read. A `conversation_merged_into` marker appended through the
 message port resolves the merge rows at or before it in the marker's own
 commit; `captureInitialSubstreamContext` resolves the breakout row on its
 cutoff turn. Both halves are owned by
-[`conversation-suggestions.md`](conversation-suggestions.md).
+`conversation-suggestions.md` (retired).
 
 **Why:** a suggestion is conversation state keyed to a turn, resolved in
 place, which a transcript row cannot be: rows accumulate, take an attention
@@ -2945,7 +2945,7 @@ beside `"workstream"` and routes those envelopes to the Space directory that
 migration 63 added, replacing the `space_directory_not_ready` refusal this
 object's effects used to meet. Nothing about the role or this class changed; the
 Organization-side authority, its tables and its invariants are
-[`spaces.md`](spaces.md).
+`spaces.md` (retired).
 
 `ChannelAccessService.applyRetraction` reads the sources that
 survived the retraction and seats each survivor under one that actually supplies
@@ -3806,7 +3806,7 @@ renamed Sidekick retains its original name in the next execution.
 Main accepts idempotent partial appearance commands on its existing socket. The
 write and receipt share the common-effect transaction, and both control and
 workspace projections carry the stored icon and color. This replaces generated-only
-identity without adding a second mutation transport. See [work-stream appearance](workstream-appearance.md).
+identity without adding a second mutation transport. See work-stream appearance (`workstream-appearance.md`, retired).
 
 ### 2026-09-08 — Review: the mark stops where the scan stopped, and an aside says what it is
 

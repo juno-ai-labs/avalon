@@ -10,7 +10,7 @@ the resumable walk that closes children before parents, what a background
 caller does when it meets a retired object, and the operator door in Ace behind
 which all of it sits.
 
-Read it before changing retirement, adding a method to any of the three gated
+Read it before changing retirement, adding a method to either of the two gated
 object classes, adding an effect receiver to one of them, or adding a Queue
 consumer, Workflow or cron pass that reaches one.
 
@@ -52,11 +52,11 @@ So `applyRetirementGate` replaces every callable method on the prototype chain,
 once, at module load. Prototype replacement rather than a proxy around the
 instance is what survives real workerd, which dispatches to ordinary own
 properties of a prototype. The two gated classes (`WorkspaceDO` and
-`SubstreamAgent`) extend `ScheduledDurableObject`,
+`AgentLoopDO`) extend `ScheduledDurableObject`,
 so the tombstone and its two entry points live there. One gate policy is
 declared per class, and each declares only its exceptions.
 
-Channel, Space and Sidekick parents have no object of their own: their state is rows in
+Canvas and Sidekick parents have no object of their own: their state is rows in
 `WorkspaceDO` ([`hosted-conversation-parents.md`](hosted-conversation-parents.md)),
 so the Organization's tombstone closes them. The gate does not wrap
 accessors — a getter is state, not a door — so a getter that does work is not
@@ -121,8 +121,9 @@ Retirement runs in this order, and the order is the design:
    is one rename away from tombstoning a parent without walking its children.
    That read is permitted on a retired parent: a pass that dies between
    retiring the parent and writing its receipt has to be able to ask again, or
-   the node stays unreceipted on every pass. Every node, a Channel's, a
-   Space's or a Sidekick's, asks `WorkspaceDO.childrenForRetirement`, which is
+   the node stays unreceipted on every pass. Every node, a Canvas's or a
+   Sidekick's (and a Thread's or a Space's recorded before they were deleted),
+   asks `WorkspaceDO.childrenForRetirement`, which is
    permitted on the already retired Organization object, and has no parent
    object to retire after its children. Each child is receipted as it closes
    (`recordRetiredChild`, into `workspace_retirement_children`), and
@@ -142,11 +143,10 @@ Retirement runs in this order, and the order is the design:
 ### Background callers
 
 Retirement leaves every D1 row in place, so the enumerators that drive the
-Queue consumers, the connector Workflow and the digest cron keep naming a
+Queue consumers and the connector Workflow keep naming a
 retired workspace, and its objects refuse them the same way on every delivery.
 A refusal is therefore **terminal for background work**: a Queue consumer
-acknowledges the message, the connector Workflow ends its instance, and the
-digest pass skips the member and moves on. Each of those callers reads
+acknowledges the message and the connector Workflow ends its instance. Each of those callers reads
 `isRetirementRefusal` — the refusal crosses an RPC boundary, so `instanceof`
 is not available, and the predicate matches the `code` the runtime preserves.
 A consumer that retried instead dead-lettered one message per retired object
@@ -156,14 +156,12 @@ as well: Ace's flag fan-out reads `workspaces` with `abandoned_at IS NULL`, and
 the access-revocation walk finds nothing beneath an object whose sockets
 retirement already closed.
 
-The effect receivers a Queue redelivers to (`receiveChildEffects` and
-`applyWorkstreamDirectoryEffects`, which no production path calls any more but
-the gate still lists) are the exception and are **dropped** in the gate
-instead: their consumers parse a `strictObject` acknowledgement and would treat
-a throw as a delivery failure, so the object answers the shape they expect. One
-read is dropped for the same reason: `WorkspaceDO.canReadWorkstream` answers
-`false` on a retired object, because nobody can read anything in a retired
-workspace and a caller can act on `false` where it cannot act on a throw.
+The effect receiver a Queue redelivers to, `receiveChildEffects`, is the
+exception and is **dropped** in the gate instead: its consumer parses a
+`strictObject` acknowledgement and would treat a throw as a delivery failure,
+so the object answers the shape it expects, naming no notification intent.
+`fetch`, the hibernated socket callbacks and `alarm` are dropped too, each
+answering in the form its caller reads.
 
 ### The operator door
 
@@ -471,8 +469,8 @@ included.
   object that could not build itself could not be read by an operator either. The
   window is a depth counter opened by `initializeDurableObject` itself rather
   than only by the constructor, because `run` is a closure the gate cannot supply
-  a receiver to and `SubstreamAgent` opens two of them in sequence.
-- **`SubstreamAgent` recovers its runtime lazily**, deliberately outside that
+  a receiver to and `AgentLoopDO` opens two of them in sequence.
+- **`AgentLoopDO` recovers its runtime lazily**, deliberately outside that
   window so a cold socket upgrade does not wait on a storage alarm round trip.
   `startRuntimeRecovery` is therefore permitted, and its attempt is a prototype
   method rather than a constructor-bound closure — a closure over the raw
@@ -549,10 +547,10 @@ first few days, because nothing had registered one — the assertion it was name
 for could not fail, and the parent-missing branch it was actually exercising is
 the one that skips the children entirely.
 
-The eviction test covers all three object classes in one case on purpose. Both
+The eviction test covers both object classes in one case on purpose. Both
 failures it exists for were category failures found one class at a time, and
-neither is visible from a single class: `WorkspaceDO` reaches a hosted Channel
-parent through its own lookup, and `SubstreamAgent` recovers after the construction window
+neither is visible from a single class: `WorkspaceDO` reaches a hosted
+parent through its own lookup, and `AgentLoopDO` recovers after the construction window
 closes, which is the case a construction-only fix does not reach.
 
 ## Operations
@@ -586,7 +584,7 @@ closes, which is the case a construction-only fix does not reach.
 
 The tombstone lives in the object rather than D1 because the gate answers during
 constructor recovery, before anything cross-authority could be consulted. Both
-tables arrive through each of the three gated classes' own append-only migration
+tables arrive through each of the two gated classes' own append-only migration
 ledger, from one shared constant, as `_internal_durable_alarms` does. There is
 no D1 table for a retirement; the door sets `workspaces.abandoned_at`, the
 column every D1 authority read already fences on, and a caller that needs more

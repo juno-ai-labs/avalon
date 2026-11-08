@@ -4176,7 +4176,7 @@ The person who picked does not wait for any of that: the route answers with the
 committed `AutomationDetail` and the screen writes it into the detail cache,
 which is a better position than the work stream's — whose receipt carries no
 payload, and which needs the two unversioned cache writers described in
-[`workstream-appearance.md`](workstream-appearance.md) to close the same gap.
+`workstream-appearance.md` (retired) to close the same gap.
 
 **A known, accepted consequence.** `enqueueDirectory` bumps
 `registration_generation`, so picking an icon while a publication tail is still
