@@ -1584,6 +1584,27 @@ describe("a hosted Sidekick", () => {
     expect(finished.waterline).toBeGreaterThan(working.waterline);
   });
 
+  it("keeps an older waiting run's question on the row while a later run works, and after it finishes", async () => {
+    await activeAutomation();
+    // `scheduled` is the newer of the two (same start, larger id).
+    const { requested, scheduled } = await workingRuns("e");
+    const row = async () => {
+      const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+        .items.find((candidate) => candidate.id === AUTOMATION_ID);
+      return { runState: item?.runState, pendingQuestion: item?.pendingQuestion, needsInput: item?.needsInput };
+    };
+    // The older run asks while the newer one works: the row reads the newer
+    // run's state with the older run's open question.
+    await finishRuns([requested], "needs_input");
+    expect(await row()).toEqual({ runState: "working", pendingQuestion: `Run ${requested} finished`, needsInput: true });
+    // The newer run finishes; the question is still open.
+    await finishRuns([scheduled], "completed");
+    expect(await row()).toEqual({ runState: null, pendingQuestion: `Run ${requested} finished`, needsInput: true });
+    // Answered: nothing waits, and the question goes.
+    await finishRuns([requested], "running", 3);
+    expect(await row()).toEqual({ runState: null, pendingQuestion: null, needsInput: false });
+  });
+
   it("lists what wakes a Sidekick in the run trigger vocabulary, each kind once, in the order its definition names them", async () => {
     await createDraft();
     await submit({ ...DEFINITION, ready: false, triggers: [
