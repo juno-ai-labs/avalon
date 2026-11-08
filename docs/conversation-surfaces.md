@@ -863,10 +863,10 @@ acknowledgement pass was rejected: it would turn every scroll into a request.
 
 **What a future change must respect:** the report is at most once per open
 (per mount and conversation address) and never reads back below the room's
-cursor. The server's effect outbox still drops a `directory_user` effect
-identical to the last one, so an unchanged-cursor report reaches the Activity
-row only once that payload carries something that differs per report; that
-half is not in this change.
+cursor. It reaches the Activity row only because the server's
+`directory_user` effect carries the report's time (`lastReadAt`, the server
+fix S10, 695611c): the effect outbox drops an effect identical to its last
+one, which is what every unchanged-cursor report was before it.
 
 ### 2026-11-07 — The surface's two hosts are a Canvas's Chat and a Sidekick's conversation; Breakouts, merge-back, suggestions and the Thread branches leave it
 

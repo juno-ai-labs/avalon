@@ -8,6 +8,7 @@ import { EmailMentionContext, emailMentionDirectory, NO_INVITEES } from "../lib/
 import { mentionLinksAsText } from "@rally/contracts/citations";
 import { useWorkspaceMembers } from "../lib/workspace-members";
 import { useVisibleReadAcknowledgement } from '../lib/use-visible-read-acknowledgement';
+import { useOpenReadReport } from '../lib/open-read-report';
 import { ConversationVisibilityContext } from '../lib/conversation-visibility';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -1048,9 +1049,8 @@ function ConversationSurfaceContent({
   const pendingJumpAfterReconnectRef = useRef(false);
   const initialPositionedWorkstreamRef = useRef<string | null>(null);
   const readAckInFlightRef = useRef<string | null>(null);
-  // The conversation whose open has sent its one report; see `conversationReadAcknowledgement`.
-  const openReadReportedRef = useRef<string | null>(null);
   const conversationAddress = `${id}:${substreamId}`;
+  const openReadReport = useOpenReadReport(conversationAddress);
   const artifactPanelKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', `artifact-panel:${conversationAddress}`);
   const restoredPanelKey = useRef<string | null>(null);
   const activeConversationAddressRef = useRef(conversationAddress);
@@ -1156,7 +1156,6 @@ function ConversationSurfaceContent({
     pendingJumpAfterReconnectRef.current = false;
     initialPositionedWorkstreamRef.current = null;
     readAckInFlightRef.current = null;
-    openReadReportedRef.current = null;
     setLoadingOlder(false);
     setOlderMessagesError(undefined);
   }, [conversationAddress]);
@@ -2201,12 +2200,12 @@ function ConversationSurfaceContent({
       substreamId,
       highestVisibleSequence,
       viewer: detail,
-      reportedThisOpen: openReadReportedRef.current === conversationAddress,
+      reportedThisOpen: openReadReport.reported(),
     });
     if (!pending) return;
     if (readAckInFlightRef.current === pending.key) return;
     readAckInFlightRef.current = pending.key;
-    openReadReportedRef.current = conversationAddress;
+    openReadReport.markReported();
     void api.acknowledgeConversationRead(
       pending.parentId,
       pending.substreamId,
@@ -2223,7 +2222,7 @@ function ConversationSurfaceContent({
     }).finally(() => {
       if (readAckInFlightRef.current === pending.key) readAckInFlightRef.current = null;
     });
-  }, [api, conversationAddress, detailQueryKey, feedFromLocalCache, id, queryClient, requestSocketSnapshot, substreamId, transcript, transcriptVirtualizer]);
+  }, [api, conversationAddress, detailQueryKey, feedFromLocalCache, id, openReadReport, queryClient, requestSocketSnapshot, substreamId, transcript, transcriptVirtualizer]);
 
   const scheduleReadAcknowledgement = useVisibleReadAcknowledgement(acknowledgeVisibleMessages);
 

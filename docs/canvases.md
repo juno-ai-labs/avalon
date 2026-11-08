@@ -349,8 +349,8 @@ the rail's first section and `/canvases` the landing route
   `presentUserIds`), Share, and the pill's menu (Pin, Rename…, Share…, Copy
   link). The pill's title is the detail's, and a change to the list row's
   title (the `workspace_canvas_list` push a rename from anywhere produces) is
-  written into the detail's cache entry, so the header follows a rename
-  without a refetch. The window is named `<title> · Rally` while it is open
+  written into the detail's cache entry once the socket has applied the list,
+  so the header follows a rename without a refetch. The window is named `<title> · Rally` while it is open
   (`useDocumentTitle`, `lib/document-title.ts`).
 - **A link to no Canvas** — a well-formed id that names nothing
   (`canvas_not_found`, 404) or a malformed one (`canvas_id_invalid:id:<issue>`,
@@ -518,10 +518,12 @@ the header read the detail, and the detail is not pushed. Writing the row's
 title through was preferred to invalidating the detail on every push, which
 costs a fetch per rename for every window that has the Canvas open.
 
-**What a future change must respect:** the list row is the pushed source of
-a Canvas's title; the detail only mirrors it. Only a change of the row's
-title is written through, because the device cache's row at mount may be
-older than a detail the server just answered. The client does not validate
+**What a future change must respect:** the row the socket applied is the
+pushed source of a Canvas's title; the detail only mirrors it. Only a change
+of the row's title is written through, and only once the socket has applied
+the list (`sidebarListApplied`): the device cache seeds the same list
+asynchronously, without the waterline ledger, and its row may be older than
+a detail the server just answered. The client does not validate
 a title; the server's refusal is what the person reads. A malformed Canvas id
 in a link reads as a missing one: it names nothing that could exist, and
 "The request is invalid" told the person less than the not-found state does.
@@ -640,8 +642,9 @@ with the conversation layout: the Chat in `ConversationSurface` and the
 artifacts in the existing right rail, with its per-conversation restore; its
 home page and sidebar section group the socket's list on the client from the
 row's own fields, so no list route was added. Both sidebar sections pass
-`reorderable={false}`, so a pin lands at the end of its group. Restoring someone to a Canvas's audience does
-not put them back in its face pile until their window says so.
+`reorderable={false}`, so a pin lands at the end of its group. Restoring
+someone to a Canvas's audience does not put them back in its face pile until
+their window says so.
 [`links.md`](links.md) owns the link form; a Canvas's id being its
 conversation's parent id is what lets a server mint the link from a
 conversation alone.

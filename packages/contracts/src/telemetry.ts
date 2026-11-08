@@ -192,7 +192,7 @@ const resourceId = z.string().uuid();
 const UUID_SOURCE = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 const messageResourceId = z.union([
   resourceId,
-  z.string().regex(new RegExp(`^workstream:${UUID_SOURCE}:substream:(?:0|${UUID_SOURCE}):loop:turn:[0-9]{1,12}$`, "u")),
+  z.string().regex(new RegExp(`^workstream:${UUID_SOURCE}:substream:(?:0|${UUID_SOURCE}):loop:turn:[0-9]+$`, "u")),
 ]);
 const uuidV7Id = z.string().uuid().refine((value) => value[14] === "7", "must be UUIDv7");
 const visibility = z.enum(["private", "public"]);

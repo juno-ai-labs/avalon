@@ -235,6 +235,20 @@ describe('CanvasScreen', () => {
     expect(getCanvas).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the detail's title over a device-cache row the socket has not confirmed", async () => {
+    getCanvas.mockResolvedValue(detail({ title: 'Renamed while closed' }));
+    const client = renderCanvas();
+    await screen.findByRole('button', { name: 'Canvas menu: Renamed while closed' });
+    // The disk seed writes the list without the waterline ledger.
+    await act(async () => {
+      client.setQueryData(['canvases'], [listRow('Q4 revenue review')]);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.getByRole('button', { name: 'Canvas menu: Renamed while closed' })).toBeInTheDocument();
+    act(() => { applyVersionedSidebarList(client, 'canvases', 1, [listRow('Renamed again')]); });
+    expect(await screen.findByRole('button', { name: 'Canvas menu: Renamed again' })).toBeInTheDocument();
+  });
+
   it('names the window after the open Canvas, and gives the name back on leaving', async () => {
     renderCanvas();
     await waitFor(() => expect(document.title).toBe('Q4 revenue review · Rally'));

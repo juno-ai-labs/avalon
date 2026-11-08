@@ -41,7 +41,7 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
       motionKey={`canvas:${canvas.id}`}
       onPin={(next) => { void setPinned(canvas.id, next).catch(() => undefined); }}
       // The title is edited in the Canvas's own pill, so Rename… opens it there.
-      onRename={() => { void navigate(canvasRoute(canvas.id), { state: RENAME_CANVAS_STATE }); }}
+      onRename={() => { void navigate(canvasRoute(canvas.id), { replace: canvas.id === open, state: RENAME_CANVAS_STATE }); }}
       pinned={position !== undefined}
       position={position}
       tile={<CanvasMark kind={canvas.artifactKind} />}
