@@ -169,7 +169,11 @@ on `/canvases` itself. A restored route carries `RESTORED_ROUTE` as its
 the screen replaces itself with its section home (`/sidekicks` or `/canvases`)
 and logs one `restored_route_not_found` line, with no dialog. The same 404 on a
 route someone opened deliberately (a click, a link) still raises the screen's
-**could not be opened** notice.
+**could not be opened** notice. A Canvas that answers 404 is first asked
+whether it exists for the viewer to request (`GET /canvases/:id/access`); only
+an id that exists in none of their Organizations counts as gone, so a
+restored route on a Canvas they may ask into stays on its Request access pane
+([`canvases.md`](canvases.md)).
 
 The removed surfaces' routes, `/channels/*`, `/spaces/*`, `/workstreams/*`,
 `/projects/*`, `/activity` and `/artifacts`, redirect to `/canvases`, so a
@@ -343,7 +347,8 @@ It does not own:
 - **No restorable route:** a device that saved none, or saved a route of a
   removed surface, lands on `/canvases`.
 - **A saved Canvas or Sidekick that is gone:** the landing reopens it, the
-  object answers 404, and the screen falls back to `/canvases` or `/sidekicks`
+  object answers 404 (for a Canvas, its access read answers 404 too), and the
+  screen falls back to `/canvases` or `/sidekicks`
   with a `restored_route_not_found` warning in the renderer log. A 403 is not
   treated as gone and still shows the screen's unavailable state
   ([`canvases.md`](canvases.md)).
@@ -368,7 +373,38 @@ It does not own:
 
 ## Changelog
 
-### 2026-11-08 — The shell follows design.html: the list column, the rail and the section titles
+### 2026-11-08 — A restored Canvas route the viewer may ask into stays, and Activity rows carry actions
+
+**What changed:** A Canvas route that answers 404 asks `GET /canvases/:id/access`
+before it is treated as gone, and `useRestoredRouteFallback` is handed that
+read's error rather than the detail's: a restored route on a Canvas that
+exists in the viewer's Organization stays on its Request access pane, and the
+pane reopens into the Canvas when the grant arrives (the Canvas joining the
+list, or its `access_granted` Activity row). Activity rows gain four kinds
+(replies, pinned Canvas updates, access requests and grants), and a pending
+access request's row is the first Activity row with controls of its own:
+Approve and Deny sit under the link, never inside it.
+
+**Why:** The owner asked on 2026-11-08 for access requests to come back as the
+whole flow, and for replies and pinned Canvas updates to notify again
+([`activity.md`](activity.md), [`canvases.md`](canvases.md)). A Canvas the
+person cannot open may be granted later, so the stored route is not stale
+state the way a deleted Canvas's is; sending them home would lose the place
+the grant is meant to open.
+
+**Considered and rejected:** Making the whole row a button group, or putting
+the buttons inside the row's link: a link that holds buttons is invalid
+markup and announces as one control. A socket command for the decision was
+dropped for the decision route, which answers its own refusal by name; the
+Activity push follows from the same write.
+
+**Consequences:** A row with controls renders as a sibling of its link
+(`.activity-row-actions`), so the spacing rule between rows covers that
+sibling too. Any new screen that opens an object which can be asked into
+should hand `useRestoredRouteFallback` the read that decides "gone", not the
+first 404.
+
+### 2026-11-08 — The shell follows design.html: the list column, the rail, the section titles and the Sidekicks list's order
 
 **What changed:** The sidebar's default width is the rail plus the design's
 340px list column (416px), not 340px for both. At phone width, closing the
