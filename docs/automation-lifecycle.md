@@ -2028,6 +2028,17 @@ written on every run transition. Every writer of a run state would have had
 to keep it true, and one missed transition would leave a Sidekick Working
 for good; the probe cannot go stale.
 
+**Considered and rejected:** keeping a run that is blocked finishing
+`completed` with a message saying what is blocked, which is what the owner
+asked to fix; a separate "blocked" run state or a parallel
+connection-wait table (the brief: reuse the elicitation primitives); resuming
+a run from the connection's OAuth completion on the server, which would make
+the connection service find every open question across run children, where
+the card that made the connection is already in the question; letting the card
+answer for any viewer it shows Connected, which loops when the viewer's own
+personal connection is not the run's (the answer resumes, the run checks
+again, and asks again).
+
 **Consequences:** `running` and `runState` may describe different runs (an
 older run working behind a finished newer one is exactly the case). The
 client keeps its `runState` fallback for one release, until every Worker

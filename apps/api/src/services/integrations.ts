@@ -8877,7 +8877,10 @@ async function openToolQuestion(
     answeredByUserId: null, createdAt: at, answeredAt: null,
     ...(question.connection ? { connection: question.connection } : {}),
   };
-  const halted = { output: { elicitationId: id }, summary: "Requested human input", providerOperationId: id, halt: "needs_input" as const };
+  const summary = question.connection
+    ? `Asked for the ${question.connection.connectorId} ${question.connection.scope} connection`
+    : "Requested human input";
+  const halted = { output: { elicitationId: id }, summary, providerOperationId: id, halt: "needs_input" as const };
   // The replay check used to be a read of its own in front of the batch,
   // because the batch could not both ask and act. It is the operation's
   // first statement now, so a retried receipt is answered by the write

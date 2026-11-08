@@ -562,13 +562,23 @@ and generation. Polling never takes a mutation lease or extends retention. A
 failed lookup preserves the last successful observation and records
 `provider_unavailable`; it does not record a lost sandbox.
 
-**No periodic check runs now.** The per-conversation alarm that read
-`terminal_provider_observation.next_observe_at`, asked Daytona and settled the
-answer was part of the Thread host and was deleted with it (plan step C-2); a
-Canvas's or a Sidekick's conversation arms none. `next_observe_at` is still
-computed and stored when a read is reserved, and the state API still reports
-it. A sandbox's provider state is read back at acquisition and through
-Daytona's signed webhooks below (`refreshTerminalProviderObservation`).
+**The periodic check is the conversation's own alarm entry.** The object that
+holds the sandbox row (a Canvas's Chat, or a Sidekick's conversation, whose
+sandbox its runs reuse) keeps one `terminal_observation` entry in its
+`ScheduledAlarmStore`, keyed `sandbox`, due at
+`terminal_provider_observation.next_observe_at`
+(`WorkstreamTerminalStorage.nextProviderObservationAt`; a sandbox never observed
+is due at once). `AgentLoopDO.syncTerminalObservationAlarm` reconciles the entry
+inside the transaction of every Terminal write, and on each alarm pass so a
+sandbox opened before this entry existed is picked up; with no open sandbox
+(none, or `expired`), or once the conversation is archived, it removes the
+entry. When the entry runs, `observeDueTerminalSandbox` asks Daytona through
+`refreshTerminalProviderObservation`, whose reservation moves `next_observe_at`
+before the provider call, and the entry is re-armed there, so a failing
+provider waits a full interval rather than looping. A failed check is logged as
+`terminal_provider_observation_failed` with its code and recorded on the row as
+`provider_unavailable`. Acquisition and Daytona's signed webhooks below read the
+provider state back as well.
 
 The observation deadline is **not** in the directory. The directory's Terminal
 deadline is the lifecycle one alone — warm stop, archive, expiry, a live claim —
@@ -580,8 +590,9 @@ sandbox (and one in any state other than stopped or archived,
 `TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS`) and ten minutes for a stopped or
 archived one (`TERMINAL_STOPPED_SANDBOX_OBSERVATION_INTERVAL_MS`, a number the
 team set, recorded in the changelog), chosen from Rally's lifecycle intent when
-the read is reserved. With nothing polling, a missed webhook leaves the view
-stale until the next acquisition or webhook rather than for one interval. The state API exposes `providerObservation` with `observedAt`,
+the read is reserved; both are the team's numbers, carried unchanged from the
+Thread host's check. A missed webhook therefore leaves the view stale for at
+most one interval. The state API exposes `providerObservation` with `observedAt`,
 `nextObserveAt`, recovery verdict, and error code; its existing `state` field
 remains Rally's lifecycle intent. Callers must not present the intent as a
 fresh Daytona observation.
@@ -1336,6 +1347,31 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-11-08 — The periodic provider check comes back as a conversation alarm entry
+
+**What changed:** A conversation holding a Terminal sandbox arms a
+`terminal_observation` entry at `next_observe_at` and, when it runs, observes
+the sandbox and re-arms; `nextProviderObservationAt` is back in the storage.
+Canvas and Sidekick conversations are observed, at the recorded intervals (60
+seconds working, 10 minutes stopped or archived).
+
+**Why:** The owner, on the check that went with the Thread host (23169936c,
+11e82d0ff): "bring this back as it was". Without it nothing polled a sandbox,
+and a missed Daytona webhook left its state stale until the next acquisition.
+
+**Considered and rejected:** the old derived alarm candidate
+(`nextDerivedAlarmCandidates`), which the brief replaced with an entry in the
+existing `ScheduledAlarmStore` the way `reply_batch` and `sidekick_run_notice`
+work, giving the check its own retry gate; observing from the workspace
+schedule, which would put the deadline back in the directory and make every
+check a directory write. The Thread host observed only Threads ("a Sidekick's
+conversation has never been observed"); a Sidekick's sandbox is now observed
+too, because the owner named both parents.
+
+**Consequences:** The entry is reconciled from the observation row, so any
+writer of that row re-arms the check without knowing the entry exists, and
+deleting the sandbox row removes it.
 
 ### 2026-10-23 — Retry observation without repeating a Terminal command
 
