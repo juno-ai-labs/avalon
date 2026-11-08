@@ -1758,13 +1758,14 @@ expired, or superseded executions and parent attempts. Old snapshots default to 
 
 ## Changelog
 
-### 2026-11-08 — Retirement records: Conversation suggestions, Session import, Work-stream origin attachments
+### 2026-11-08 — Retirement records: Conversation suggestions, Session import, Work-stream origin attachments, Desktop actions
 
-**What changed:** Nothing in the code. Three documents kept after their
-mechanism was deleted, only as records for their changelogs, were removed in
-the documentation audit; their retirement records are below, here because what
-each left behind is conversation-object state. Each one's full text and
-changelog is `git show e26aa66:docs/<name>.md`.
+**What changed:** Nothing in the code. Four documents kept after their
+mechanism was deleted, or after it stopped being reached, were removed in the
+documentation audit; their retirement records are below, here because what
+each left behind is conversation-object state. The first three documents' full
+text and changelog is `git show e26aa66:docs/<name>.md`; the fourth's, deleted
+in a later pass the same day, is `git show 14d68b1:docs/desktop-actions.md`.
 
 **`conversation-suggestions.md` — Conversation suggestions (retired
 2026-11-07).** After a Thread's or a Breakout's run settled, a turn-disposition
@@ -1793,7 +1794,7 @@ migration 84 dropped the `imported_session_*` tables. What survives:
 harness evaluations still read; WorkspaceDO migration 119's statements in `retired-workspace-schema.ts`; and
 the `session_import.finish` / `session_import.fail` action kinds in
 `packages/contracts/src/desktop-actions.ts`, which nothing sends
-([`desktop-actions.md`](desktop-actions.md)).
+(the desktop actions record below).
 
 **`workstream-origin-attachments.md` — Work-stream origin attachments
 (retired 2026-11-07).** A work stream started from a place in a connected tool
@@ -1807,6 +1808,44 @@ step B-8 the connector half (`ConnectorOriginLocator`,
 `relationship_type = 'origin'` (`packages/contracts/src/resource-relationships.ts`). Its changelog is the
 record of why the connector names the object and only the host names the
 connection.
+
+**`desktop-actions.md` — Desktop actions (retired 2026-11-08).** The protocol
+by which an agent loop on the API asked the conversation creator's own Rally
+desktop to act in its embedded browser: a tool called the run's
+`desktopAction` executor, `AgentLoopDO.requestDesktopAction` recorded a
+`desktop_actions` row keyed by `(run_id, tool_call_id)`, published
+`desktop_action_requested` on the conversation socket and waited in memory,
+and the desktop ran the action on one pinned tab and answered with
+`answer_desktop_action`; only the creator's answer was accepted
+(`answersDesktopActions`), the first answer won, and crash repair re-entered
+the `reenterable` browser tools against the durable row. It was built for the
+conversation importer (#1058) and had no other user. It is retired because
+nothing reaches it: `AGENT_PROFILES` in
+`apps/api/src/services/agent-profiles.ts` is empty, a run is handed the
+`desktopAction` authority only through a profile's `plugins`
+(`integrations.ts`), `createBrowserPlugin` has no caller outside
+`apps/api/test/desktop-action-tools.test.ts`, and no file under
+`apps/desktop/src` or `packages/ui/src` handles `desktop_action_requested` or
+sends `answer_desktop_action`. What survives, all unreached: the
+`desktop_actions` table (`workstream-object-schema.ts`,
+`workstream-desktop-action-storage.ts`); the two socket frames in
+`packages/contracts/src/index.ts`; the action union, result schemas, failure
+codes, `StoredRef` and the dead `session_import.*` kinds in
+`packages/contracts/src/desktop-actions.ts`; `requestDesktopAction`,
+`answerDesktopAction`, `answersDesktopActions` and `offerPendingDesktopActions`
+in `agent-loop-do.ts`; `desktopAction` in `runtime/local-authorities.ts`; the
+browser tools in `services/desktop-actions/browser-plugin.ts`; and the desktop
+executor, page-script wrapper, store and outline in
+`apps/desktop/src/common/desktop-actions/`, which the equally unreached browser
+script runtime drives ([browser script runtime](browser-script-runtime.md)).
+A feature that revives it inherits four decisions from its changelog: only the
+conversation's creator answers unless the feature states whose desktop may act;
+an action is recorded before it is published and answered at most once, its
+answer stored before it is used; stored bytes stay on the desktop and only
+handles reach the API and the model; and, by product decision, neither page
+content nor network bodies are redacted and the tab may go to any site, the
+boundary being the one tab. The Workers proof of the creator-only rule went
+with the import suite and was never replaced.
 
 ### 2026-11-08 — Stop ends a streaming response at its next chunk
 

@@ -15,7 +15,7 @@ source of truth for retry, replay, and compaction recovery.
 User attachments and assistant artifact files use the verified upload pipeline
 and per-turn canonical attachment relationships. The prepared-conversation
 import that also wrote them, with its own reservations and retry
-reconciliation, is retired; see [the session import retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
+reconciliation, is retired; see [the session import retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions).
 
 ## Where the code lives
 
@@ -504,7 +504,7 @@ It does not own composer upload UX or the desktop lightbox presentation; those
 remain with the composer and renderer modules. It does not turn an ID into
 authority, search arbitrary workspace content, edit documents, or transcribe
 audio/video.
-Connector-origin relationships were retired with Threads ([record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments)), and the
+Connector-origin relationships were retired with Threads ([record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions)), and the
 generic tool execution/receipt loop is owned by
 [`agent-harness.md`](agent-harness.md).
 
@@ -996,7 +996,7 @@ checks operation identity, bytes and the intended descriptor. Prepared conversat
 receipts own reservations separately from live input mailboxes; definite failures
 release holds, while canonical resource projection releases committed holds. Both
 historical roles retain model manifests. Unavailable originals remain references,
-and extracted text is labeled separately. See [session import](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments).
+and extracted text is labeled separately. See [session import](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions).
 
 The separate durable preparation owner prevents file holds from depending on a
 live-message mailbox that imported history never creates. Fake pending messages

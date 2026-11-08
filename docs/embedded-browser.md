@@ -121,9 +121,10 @@ as Google Chrome.
 
 The browser owns local website state, navigation, page inspection, and page
 input. The Rally renderer owns the controls and layout; it cannot receive a
-`WebContents` or an arbitrary IPC channel. An API agent loop reaches the browser
-through [desktop actions](desktop-actions.md): a typed request on the
-conversation's socket that the window's renderer executes through this same
+`WebContents` or an arbitrary IPC channel. The one way an API agent loop could
+reach the browser is the desktop-action protocol
+([its retirement record](workstream-durable-object.md#2026-11-08--retirement-records-conversation-suggestions-session-import-work-stream-origin-attachments-desktop-actions)): a typed request on the
+conversation's socket that the desktop executes through this same
 `command()` path, on one tab, never through another page controller. Tool
 receipts and retry policy stay with the harness. Every run is wired a
 desktop-action executor (`agent-loop-do.ts`), but the one plugin that uses it,
@@ -295,7 +296,7 @@ creation and keep Fetch and XHR bodies, cleared on a new document, and a
 parked tab is unthrottled.
 
 **Why:** The agent-to-desktop boundary this document planned now exists as
-[desktop actions](desktop-actions.md), and its first user clicks where a
+`desktop-actions.md` (retired), and its first user clicks where a
 screenshot shows something. `capturePage` returns device pixels while
 `sendInputEvent` takes DIPs, so on a high-density display every click landed at
 twice the coordinates. A collapsed tab stalled the agent whenever a dialog —
