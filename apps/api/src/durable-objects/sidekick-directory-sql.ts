@@ -55,6 +55,8 @@ export function automationSummary(
     /** `AUTOMATION_RUN_STATE_SQL`; absent from a read that did not ask. */
     run_state?: "working" | "needs_input" | null;
     pending_question?: string | null;
+    /** `AUTOMATION_RUNNING_SQL`; absent from a read that did not ask. */
+    running?: number;
     /** `AUTOMATION_TRIGGER_KINDS_SQL`, a JSON array; absent from a read that did not ask. */
     trigger_kinds?: string | null;
     /** `AUTOMATION_SCHEDULE_TIME_ZONE_SQL`; absent from a read that did not ask. */
@@ -81,6 +83,7 @@ export function automationSummary(
     ...(row.unread === undefined ? {} : { unread: row.unread === 1 }),
     ...(row.needs_input === undefined ? {} : { needsInput: row.needs_input === 1 }),
     ...(row.run_state === undefined ? {} : { runState: row.run_state }),
+    ...(row.running === undefined ? {} : { running: row.running === 1 }),
     ...(row.pending_question === undefined ? {} : { pendingQuestion: row.pending_question }),
     ...(row.trigger_kinds === undefined ? {} : { triggerKinds: JSON.parse(row.trigger_kinds ?? "[]") as AutomationSummary["triggerKinds"] }),
     ...(row.schedule_time_zone == null ? {} : { scheduleTimeZone: row.schedule_time_zone }),
@@ -143,6 +146,19 @@ export const AUTOMATION_RUN_STATE_SQL = `CASE WHEN latest_run.state IN ('pending
    (SELECT waiting.summary FROM sidekick_runs waiting
      WHERE waiting.sidekick_id = directory.automation_id AND waiting.state = 'needs_input'
      ORDER BY waiting.created_at DESC, waiting.run_id DESC LIMIT 1) AS pending_question`;
+
+/**
+ * `running` for `automationSummary`, over an `automation_directory` aliased
+ * `directory`: whether any run of the Sidekick is working now, queued or
+ * running, whichever run is newest. `run_state` reads the newest run alone,
+ * so an older run still working behind a finished newer one read as idle;
+ * the row and the Sidekicks home read Working from this instead (the owner,
+ * 2026-11-08: "add this"). The states are the ones `sidekickRowRunState`
+ * calls working, so every transition that moves this already sends the list
+ * again. Bounded to this Sidekick's runs by the primary key's prefix.
+ */
+export const AUTOMATION_RUNNING_SQL = `EXISTS (SELECT 1 FROM sidekick_runs live
+     WHERE live.sidekick_id = directory.automation_id AND live.state IN ('pending', 'running')) AS running`;
 
 /**
  * The join `AUTOMATION_RUN_STATE_SQL` reads for the run state: the newest
