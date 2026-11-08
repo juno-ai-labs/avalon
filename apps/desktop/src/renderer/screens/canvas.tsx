@@ -1,5 +1,5 @@
 import type { CanvasDetail } from '@rally/contracts';
-import { TitleMenuItem, TitlePillHeader, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
+import { TitleMenuItem, TitlePillHeader, TitlePillMenuAction, TitlePillTitleInput, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { IconLink, IconPencil, IconPin, IconPinnedOff, IconUsers } from '@tabler/icons-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
@@ -143,6 +143,21 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   // at once, beside the detail read.
   if (!row && !canvas.data) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
   const mark = <CanvasMark kind={canvas.data?.artifacts[0]?.kind ?? row?.artifactKind ?? null} size={24} />;
+  // The pill's menu, and the header's separate "⋯" button (design.html §2), offer the same.
+  const menuItems = <>
+    <TitleMenuItem icon={pinned ? <IconPinnedOff aria-hidden="true" size={16} stroke={1.8} /> : <IconPin aria-hidden="true" size={16} stroke={1.8} />} onSelect={togglePin}>
+      {pinned ? 'Unpin' : 'Pin'}
+    </TitleMenuItem>
+    <TitleMenuItem disabled={!api} icon={<IconPencil aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => { setRenameError(null); setRenaming(true); }}>
+      Rename…
+    </TitleMenuItem>
+    <TitleMenuItem disabled={!canvas.data} icon={<IconUsers aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => setSharing(true)}>
+      Share…
+    </TitleMenuItem>
+    <TitleMenuItem disabled={!workspace} icon={<IconLink aria-hidden="true" size={16} stroke={1.8} />} onSelect={copyCanvasLink}>
+      Copy link
+    </TitleMenuItem>
+  </>;
   // Edited from the title the pill shows, so not before there is one to show.
   const level = (): TitlePillLevel => renaming && (canvas.data || row) ? {
     // Set aside while the title is edited, so a click in the field is not a press of the menu.
@@ -161,20 +176,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     icon: mark,
     title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
     label: naming ? 'Canvas menu: Rally is choosing a name' : `Canvas menu: ${title}`,
-    menu: <>
-      <TitleMenuItem icon={pinned ? <IconPinnedOff aria-hidden="true" size={16} stroke={1.8} /> : <IconPin aria-hidden="true" size={16} stroke={1.8} />} onSelect={togglePin}>
-        {pinned ? 'Unpin' : 'Pin'}
-      </TitleMenuItem>
-      <TitleMenuItem disabled={!api} icon={<IconPencil aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => { setRenameError(null); setRenaming(true); }}>
-        Rename…
-      </TitleMenuItem>
-      <TitleMenuItem disabled={!canvas.data} icon={<IconUsers aria-hidden="true" size={16} stroke={1.8} />} onSelect={() => setSharing(true)}>
-        Share…
-      </TitleMenuItem>
-      <TitleMenuItem disabled={!workspace} icon={<IconLink aria-hidden="true" size={16} stroke={1.8} />} onSelect={copyCanvasLink}>
-        Copy link
-      </TitleMenuItem>
-    </>,
+    menu: menuItems,
   };
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Canvas could not be pinned. Try again.</ErrorNotice>}
@@ -189,12 +191,14 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
           return member ? [member] : [];
         });
         return <TitlePillHeader
+          align="start"
           current={level()}
           trailing={<span className="canvas-header-trailing">
             {present.length > 0 && <span aria-label={`${present.length} ${present.length === 1 ? 'person' : 'people'} here`} className="canvas-header-present" role="group">
               <AvatarStack currentUserId={session?.user.id ?? null} members={present} presentUserIds={context.presentUserIds} />
             </span>}
             <Button className="canvas-share-button" disabled={!canvas.data} onClick={() => setSharing(true)}>Share</Button>
+            <span className="canvas-header-more"><TitlePillMenuAction label="Canvas actions">{menuItems}</TitlePillMenuAction></span>
           </span>}
         />;
       }}

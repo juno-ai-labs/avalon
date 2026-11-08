@@ -163,6 +163,14 @@ describe('CanvasScreen', () => {
     expect(setCanvasPinned).toHaveBeenCalledWith(CANVAS, true);
   });
 
+  it('pins the Canvas from the header\'s separate actions button too', async () => {
+    renderCanvas();
+    const trigger = await screen.findByRole('button', { name: 'Canvas actions' });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin' }));
+    expect(setCanvasPinned).toHaveBeenCalledWith(CANVAS, true);
+  });
+
   it('renames the Canvas in its pill from the menu, and saves on Enter', async () => {
     renameCanvas.mockResolvedValue(detail({ title: 'Lisbon offsite' }));
     renderCanvas();

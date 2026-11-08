@@ -467,9 +467,15 @@ export function TitlePillLeading(): React.JSX.Element | null {
  * width it also carries `PhoneHeader`: the menu button leads the ancestors,
  * and the app-wide actions lead the folded "More" menu.
  */
-export function TitlePillHeader({ actions, ancestors = [], className, current, tooltipSide, trailing }: {
+export function TitlePillHeader({ actions, align = 'center', ancestors = [], className, current, tooltipSide, trailing }: {
   /** Round buttons ahead of `trailing`, folded into a "More" dropdown at phone width. */
   actions?: readonly IconGroupAction[];
+  /**
+   * `start` puts the pill right after the leading controls (Back and Forward),
+   * as design.html §2 draws a Canvas's header; the trailing controls then keep
+   * their place at the right edge whatever the pane's width.
+   */
+  align?: 'center' | 'start';
   ancestors?: readonly TitlePillLevel[];
   className?: string;
   current: TitlePillLevel;
@@ -489,9 +495,11 @@ export function TitlePillHeader({ actions, ancestors = [], className, current, t
   const headerRef = useRef<HTMLElement>(null);
   const currentRef = useRef<HTMLDivElement>(null);
   const trailingRef = useRef<HTMLDivElement>(null);
-  const { crowded, shift } = useTrailingCrowded(headerRef, currentRef, trailingRef, shownActions?.filter((action) => !action.alwaysVisible).length ?? 0);
+  const measured = useTrailingCrowded(headerRef, currentRef, trailingRef, shownActions?.filter((action) => !action.alwaysVisible).length ?? 0);
+  // A start-aligned pill has its own column, which already keeps it clear of the trailing row.
+  const { crowded, shift } = align === 'start' ? { crowded: false, shift: 0 } : measured;
   return <header
-    className={clsx('title-pill-header window-drag', crowded && 'is-crowded', className)}
+    className={clsx('title-pill-header window-drag', crowded && 'is-crowded', align === 'start' && 'is-start', className)}
     ref={headerRef}
     style={shift ? { '--title-pill-shift': `${shift}px` } as React.CSSProperties : undefined}
   >
@@ -608,6 +616,25 @@ export function TitlePillAction({ children, label, onClick, tooltipSide }: {
   children: ReactNode; label: string; onClick: () => void; tooltipSide?: TooltipSide | undefined;
 }): React.JSX.Element {
   return <IconButton className="title-pill-action" label={label} onClick={onClick} tooltipSide={tooltipSide}>{children}</IconButton>;
+}
+
+/**
+ * A header's "⋯" button: a `TitlePillAction` that opens a menu of
+ * `TitleMenuItem`s, for a pane whose actions sit apart from its pill.
+ */
+export function TitlePillMenuAction({ children, label, tooltipSide }: {
+  children: ReactNode; label: string; tooltipSide?: TooltipSide | undefined;
+}): React.JSX.Element {
+  return <DropdownMenu.Root>
+    <DropdownMenu.Trigger asChild>
+      <IconButton className="title-pill-action" label={label} tooltipSide={tooltipSide}><Ellipsis aria-hidden="true" size={16} /></IconButton>
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content align="end" className="menu-content title-pill-menu" collisionPadding={TITLE_MENU_COLLISION_PADDING} sideOffset={8}>
+        {children}
+      </DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Root>;
 }
 
 /** A row of square actions under the menu's header, the most used things done to it. */
