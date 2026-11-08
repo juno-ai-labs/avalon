@@ -273,9 +273,11 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     const row = this.row();
     if (!row || row.title_status !== "naming") return;
     const [opening] = await createMessageObjectPort(this.env, row.workspace_id, this.canvasId)
-      .saidMessages({ messageTypes: { include: ["text"] }, order: "oldest", limit: 1 });
+      .saidMessages({ messageTypes: { include: ["text"] }, order: "oldest", limit: 1, peopleOnly: true });
+    // A first message of attachments alone says nothing to title from; the
+    // Canvas waits, and a person's next text message arms the entry again.
     if (!opening) return;
-    const title = opening.author_type === "agent" ? null : await canvasTitleFromOpening(this.env, {
+    const title = await canvasTitleFromOpening(this.env, {
       workspaceId: row.workspace_id, canvasId: this.canvasId, userId: opening.author_user_id, opening: opening.text_content,
     });
     this.host.storage.transactionSync(() => {

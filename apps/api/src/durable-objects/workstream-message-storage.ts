@@ -298,6 +298,8 @@ export class WorkstreamMessageStorage {
     limit: number;
     /** Only messages at or after this instant, for a windowed read. */
     since?: number | null;
+    /** Only what people said, for a read that names what a person asked. */
+    peopleOnly?: boolean;
   }): MessageRow[] {
     const types = messageTypePredicate(input.messageTypes, "part.message_type");
     const rows = this.sql.exec<MessageRow>(
@@ -305,10 +307,12 @@ export class WorkstreamMessageStorage {
          FROM canonical_conversation_turn_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND ${types.sql}
           AND trim(COALESCE(part.content, '')) <> ''
+          AND (? = 0 OR part.author_type = 'member')
           AND (? IS NULL OR part.created_at >= ?)
         ORDER BY part.sequence_number ${input.order === "newest" ? "DESC" : "ASC"}
         LIMIT ?`,
       ...types.params,
+      input.peopleOnly ? 1 : 0,
       input.since ?? null,
       input.since ?? null,
       input.limit,

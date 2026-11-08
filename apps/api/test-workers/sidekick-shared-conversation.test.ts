@@ -682,8 +682,8 @@ describe("a Sidekick's shared conversation", () => {
       // The wizard's save: the definition, then Create, in one call.
       await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...DEFINITION, name: "Haiku writer" },
         evaluatorRules: null, submittedByRunId: null, actor: actor() });
-      // Sent by the save itself; no alarm or later refresh is waited for.
-      expect(row()).toMatchObject({ name: "Haiku writer", status: "active" });
+      // Sent by the save itself, which the socket delivers as a message event.
+      await expect.poll(row, { timeout: 5_000 }).toMatchObject({ name: "Haiku writer", status: "active" });
     } finally {
       socket.close();
     }
