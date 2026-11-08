@@ -92,6 +92,35 @@ describe('planListMotion', () => {
     expect(passed.shifters.map((shifter) => shifter.key)).toEqual(['heading', 'a']);
   });
 
+  it('sends the row that changed group out and back, and shifts the row it passed in the group it joined', () => {
+    // Leaving Needs input: v2 was alone under its heading, which goes; it
+    // lands below t3, the newest row of the recent list. Either row alone
+    // explains the swap, and the one that crossed the headings is the mover.
+    const before = new Map([['needs', { top: 0 }], ['v2', { top: 48 }], ['pinned', { top: 96 }], ['all', { top: 144 }],
+      ['t3', { top: 192 }], ['n', { top: 240 }]]);
+    const leaving = planListMotion(before, [
+      { key: 'pinned', top: 0, hold: true }, { key: 'all', top: 48, hold: true },
+      { key: 't3', top: 96 }, { key: 'v2', top: 144 }, { key: 'n', top: 192 },
+    ]);
+    expect(leaving.movers).toEqual([{ key: 'v2', fromX: 0, fromY: -96 }]);
+    expect(leaving.shifters.map((shifter) => [shifter.key, shifter.fromY])).toEqual([['pinned', 96], ['all', 96], ['t3', 96], ['n', 48]]);
+    // Entering it: the same row crosses back above the headings, and t3
+    // shifts up into the slot it left rather than leaving the frame.
+    const entering = planListMotion(
+      new Map([['pinned', { top: 0 }], ['all', { top: 48 }], ['t3', { top: 96 }], ['v2', { top: 144 }], ['n', { top: 192 }]]),
+      [{ key: 'needs', top: 0, hold: true }, { key: 'v2', top: 48 }, { key: 'pinned', top: 96, hold: true },
+        { key: 'all', top: 144, hold: true }, { key: 't3', top: 192 }, { key: 'n', top: 240 }],
+    );
+    expect(entering.movers).toEqual([{ key: 'v2', fromX: 0, fromY: 96 }]);
+    expect(entering.shifters.map((shifter) => [shifter.key, shifter.fromY])).toEqual([['pinned', -96], ['all', -96], ['t3', -96], ['n', -48]]);
+  });
+
+  it('keeps the longest run first, and among the longest the heaviest', () => {
+    expect(longestIncreasingRun([1, 0, 2], [3, 4, 3])).toEqual([1, 2]);
+    expect(longestIncreasingRun([1, 0, 2], [4, 3, 3])).toEqual([0, 2]);
+    expect(longestIncreasingRun([1, 0, 2, 3], [9, 1, 1, 1])).toEqual([0, 2, 3]);
+  });
+
   it('ranks each scope on its own, so a block moving past another shifts as one', () => {
     // Two projects with two members each, the second project dragged above
     // the first: nothing changed place within either, so nothing leaves.
