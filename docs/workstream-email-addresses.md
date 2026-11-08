@@ -96,7 +96,8 @@ nothing for a pause, an archive, or a delete to write here.
 
 An automation reserves its address
 exactly once, inside acceptance, through `reserveAutomation`, and stores the
-issued value in its own one-row `automation_email_route` table. Whether mail is
+issued value in its `automation_directory.email_address` column (WorkspaceDO,
+written by `HostedSidekick` in the acceptance's transaction). Whether mail is
 accepted is decided by the agent when the mail arrives, from its own lifecycle
 and acceptance rows, so no separate gate can disagree with what actually happens
 to the message.
@@ -112,9 +113,7 @@ tombstone. Correcting it frees only the unissued inference; the owner's actual
 address becomes the permanent tombstone.
 
 An automation's address is not reconciled against Global on any read.
-`GET /automations/:id` returns what `automation_email_route` holds, and the
-sidebar's automation rows carry no address at all — `automation_directory` is
-content-free, so `emailAddress` is `null` there. The address and the claim are
+`GET /automations/:id` returns what `automation_directory.email_address` holds. The address and the claim are
 written in the same acceptance that reserved it, and neither is editable
 afterwards, so there is nothing for a per-read verification to catch that the
 reservation did not already settle. Both were once reconciled because the

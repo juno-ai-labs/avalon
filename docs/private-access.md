@@ -204,8 +204,7 @@ wording and launch checklist. The content modules in the path table are the
 editable landing/email definitions. Personal outreach, profile research and
 onboarding demos remain separate launch work.
 
-Intake and downloads no longer depend on the completed Channel cutover row.
-Their own origin, rate, and credential checks still apply.
+Intake and downloads have their own origin, rate, and credential checks.
 Successful intake responses do not distinguish duplicates, but explicit email
 failures can reveal acknowledgement state during a provider outage. A future
 durable acknowledgement dispatcher can remove that distinction without silently
