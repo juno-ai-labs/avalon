@@ -115,11 +115,12 @@ function activityPushes(frames: Frame[]): ActivityFrame[] {
 }
 
 /** The author's message mentioning the recipient, sent the way the Worker sends it. */
-async function mention(parentKind: "canvas" | "automation", parentId: string, clientMessageId: string): Promise<void> {
+async function mention(parentKind: "canvas" | "automation", parentId: string, clientMessageId: string,
+  confirmedParticipantUserIds: string[] = []): Promise<void> {
   const response = await conversation(parentId).fetch("https://object.test/internal/product", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ operation: "create_message", parentKind, auth: auth(AUTHOR), input: {
-      text: "@Robin please review the plan", clientMessageId, confirmedParticipantUserIds: [], attachmentIds: [],
+      text: "@Robin please review the plan", clientMessageId, confirmedParticipantUserIds, attachmentIds: [],
       mentions: [{ type: "person", userId: RECIPIENT, connectorType: null, displayName: "Robin", startOffset: 0, endOffset: 6 }],
     } }),
   });
@@ -214,6 +215,22 @@ describe("a person's Activity", () => {
     await runInDurableObject(workspace(), (_instance, state) => expect(state.storage.sql.exec<{ n: number }>(
       `SELECT COUNT(*) AS n FROM workspace_activity_items`).one().n).toBe(1));
     for (const { socket } of [author, recipient]) socket.close(1000, "done");
+  });
+
+  it("sends nothing about a mention in a Canvas its person cannot open, and lists it once they can", async () => {
+    // Only its creator may open it: the confirmed mention seats nobody.
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: AUTHOR, title: "Private plan" });
+    await mention("canvas", canvasId, "activity-private-1", [RECIPIENT]);
+    await deliverChildEffects(TEST_ENV, conversation(canvasId));
+    await runInDurableObject(workspace(), (_instance, state) => expect(state.storage.sql.exec<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM workspace_activity_items WHERE recipient_user_id = ?`, RECIPIENT).one().n).toBe(1));
+    expect(await openedActivity(RECIPIENT)).toEqual({ waterline: expect.any(Number), unseenCount: 0, items: [] });
+
+    await workspace().canvasSetAudience({ workspaceId: WORKSPACE_ID, canvasId, actor: { userId: AUTHOR, actorRole: "member" },
+      update: { visibility: "participants", userIds: [RECIPIENT] } });
+    expect(await openedActivity(RECIPIENT)).toMatchObject({ unseenCount: 1, items: [{
+      kind: "mention", parentId: canvasId, parentTitle: "Private plan", preview: "@Robin please review the plan", seen: false,
+    }] });
   });
 
   it("clears a mention when its reader reads the Chat past it, with no Activity command", async () => {

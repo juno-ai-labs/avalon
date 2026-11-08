@@ -50,15 +50,20 @@ the run, who acted (a person for a mention or an add, the Sidekick for a run
 notice), and a preview: the text the push's body carries, reduced the same way
 (`rewriteMessageAsPlainText`, then `PUSH_BODY_PREVIEW_CHARACTERS`). The title is
 not copied: `activityPage` reads it from `canvas_directory` or
-`automation_directory` at list time, and names it only when the recipient may
-still open the parent, so a rename after they were removed is never shown to
-them. The page, its title rule and the unseen count are one statement: the
-count is a window over every row before the page's `LIMIT`, and the title
-rule is the one `canvasSidebarRows` and the Sidekick list
+`automation_directory` at list time, so a rename is shown as it is now.
+A row lists only while the recipient may open its parent: a row about a
+Canvas or Sidekick they cannot open is left out of the page and the count
+whole, not sent with its title withheld, because its preview, message id and
+sequence are the parent's content. A confirmed mention in a creator-only
+Canvas seats nobody and its push is skipped `recipient_not_listable`, yet its
+row is recorded; it stays stored and lists once the person is let in. The
+page, its access filter and the unseen count are one statement: the count is
+a window over every listed row before the page's `LIMIT`, and the filter is
+the rule `canvasSidebarRows` and the Sidekick list
 (`SIDEBAR_SIDEKICK_LISTED_SQL`) already take, joined. Only a Canvas a
 Sidekick writes, whose audience includes that Sidekick's, is decided in code
-(`writerSidekickAdmits`), once per writer and only for a title not already
-named.
+(`writerSidekickAdmits`), asked once per writer of a Canvas the person has
+Activity about before the page is read, and passed into the statement.
 
 ### Seen is derived
 
@@ -166,9 +171,11 @@ badge and the menu bar stay Needs attention only
 - **A list goes to its person's sockets only.** It names Canvases and
   Sidekicks the person was told about. Guard: the mention case asserts the
   author's socket received no Activity push.
-- **A title is named only while the person may open the parent.** Otherwise a
-  removal would still show later renames. Verified by reading the code, no
-  automated guard.
+- **A row lists only while the person may open the parent.** Otherwise a
+  mention in a Canvas they were never let into, or one they were removed
+  from, would send them its preview and ids. Guard: the creator-only Canvas
+  case asserts the subscribe answer holds no row and counts nothing, then
+  lists it once the person is added.
 - **The intents' reaper never touches Activity.** The intent row is a delivery
   record with a retention; the feed is the person's. No shared delete exists.
 
@@ -188,7 +195,7 @@ them. The menu bar and the dock badge do not read it.
 
 - **No retention.** Rows are kept for as long as the Organization object
   exists; nothing deletes them, including the deletion of their Canvas or
-  Sidekick (the row stays, without a title). Whether and when to prune is a
+  Sidekick (the row stays stored and no longer lists). Whether and when to prune is a
   decision not yet made; a cap would be a number the team sets
   ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
 - **The page is the newest `SIDEBAR_LIST_LIMIT` (250) rows.** Older rows are
@@ -229,8 +236,9 @@ seen clears it; a Sidekick run reaching `needs_input` reaches the requester
 and the author, and a finished run the requester only, through the notice
 alarm, read from a socket's subscribe answer; a finished run clears, and the
 list is sent again, on a read report at an unchanged cursor; a mention in a
-run's conversation stays unseen however far the shared conversation is read.
-The run cases poll: the notice is recorded by an alarm the object arms
+run's conversation stays unseen however far the shared conversation is read;
+a confirmed mention in a creator-only Canvas sends its person nothing until
+they are added to it. The run cases poll: the notice is recorded by an alarm the object arms
 itself.
 
 The renderer's `workspace-socket.test.tsx` covers the page and the push, and
@@ -264,7 +272,10 @@ deleted at plan step B-3 with the Threads it read. It returns sourced from the
 same four events as push, written in the intent's transaction, so the feed
 cannot drift from what was pushed. Seen is derived from the read cursor that
 already drives every unread, so the feed cannot disagree with the Canvas or
-Sidekick row either (the coordinator's 2026-11-08 amendment).
+Sidekick row either (the coordinator's 2026-11-08 amendment). A row lists
+only while its person may open the parent: the end-to-end pass found the
+first version withheld only the title, sending a mention's preview from a
+creator-only Canvas to someone who could not open it.
 
 **Considered and rejected:** Deriving the feed from each conversation's
 transcript on read, as the old feed derived replies and starts — a fan-out read
