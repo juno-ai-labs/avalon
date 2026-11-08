@@ -75,9 +75,11 @@ drags it), clamped to the shared minimum and maximum. It holds two columns:
   (`rally.sidebar-section`, default `canvases`); a value stored before the
   cutover (`channels`, `threads`, `pinned`, `artifacts`) reads as the default,
   and `activity` opens Activity again. Arriving at a Canvas or a Sidekick moves
-  the rail to its section (Activity excepted); a window that lands on a section
-  home, as `/canvases` is the default landing, keeps the stored choice, and only
-  a later navigation to a home moves it. Each section carries a red count (`RailBadge`; nothing at zero,
+  the rail to its section (Activity excepted). The window's landing is its
+  first route that belongs to a section, so a launch's redirect from `/` to
+  `/canvases` is the landing and not a navigation; landing on a section home
+  keeps the stored choice, and only a later navigation to a home moves it.
+  Each section carries a red count (`RailBadge`; nothing at zero,
   `99+` past two digits): **Canvases**, each Canvas holding something this
   person has not read; **Sidekicks**, each Sidekick that needs input or holds
   something unread; **Activity**, every item this person has not seen
@@ -337,9 +339,10 @@ the window edge. The floor keeps the pill centred while it fits and lets it
 take only the room between the sides once it does not. Renaming a Canvas
 (`canvases.md`) is the first in-place edit.
 
-A reload also lost a stored Sidekicks section: the landing's
-`/canvases` moved the rail to Canvases on every launch. The window's first
-route now moves it only when it names a Canvas or a Sidekick.
+A launch or a reload also lost a stored Sidekicks section: the landing's
+`/canvases` moved the rail to Canvases every time. The landing, the window's
+first route that belongs to a section (after the redirect from `/`), now
+moves it only when it names a Canvas or a Sidekick.
 
 **What a future change must respect:** a control in a side column has to
 keep a real min-content width, or a long title runs over it again. The

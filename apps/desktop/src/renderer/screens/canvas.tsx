@@ -86,18 +86,23 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   // refetch. Only a change, and only once the socket has applied the list:
   // the device cache seeds the list too, asynchronously and without the
   // ledger, and its row may be older than the detail the server just answered.
-  // The naming state moves with it: Rally's title for a Canvas made without
-  // one lands as exactly such a change.
+  // The naming state moves the same way, and on its own: naming can settle
+  // and leave the title as it was (no model, an empty answer).
   const rowTitle = row?.title;
   const rowTitleStatus = row?.titleStatus;
-  const seenRowTitle = useRef(rowTitle);
+  const seenRow = useRef({ title: rowTitle, titleStatus: rowTitleStatus });
   useEffect(() => {
-    if (seenRowTitle.current === rowTitle) return;
-    seenRowTitle.current = rowTitle;
+    const seen = seenRow.current;
+    if (seen.title === rowTitle && seen.titleStatus === rowTitleStatus) return;
+    seenRow.current = { title: rowTitle, titleStatus: rowTitleStatus };
     if (rowTitle === undefined || !sidebarListApplied(queryClient, 'canvases')) return;
-    queryClient.setQueryData<CanvasDetail>(canvasDetailQueryKey(id), (cached) => cached && cached.title !== rowTitle
-      ? { ...cached, title: rowTitle, ...(rowTitleStatus ? { titleStatus: rowTitleStatus } : {}) }
-      : cached);
+    queryClient.setQueryData<CanvasDetail>(canvasDetailQueryKey(id), (cached) => {
+      if (!cached || (cached.title === rowTitle && cached.titleStatus === rowTitleStatus)) return cached;
+      const next: CanvasDetail = { ...cached, title: rowTitle };
+      if (rowTitleStatus) next.titleStatus = rowTitleStatus;
+      else delete next.titleStatus;
+      return next;
+    });
   }, [id, queryClient, rowTitle, rowTitleStatus]);
   const title = canvas.data?.title ?? row?.title ?? '';
   const naming = canvasNaming(canvas.data ?? row);

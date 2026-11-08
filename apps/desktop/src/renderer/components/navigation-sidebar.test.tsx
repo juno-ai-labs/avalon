@@ -3,7 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CollaborationSessionProvider } from '../lib/collaboration-session';
@@ -50,7 +50,7 @@ function Location(): React.JSX.Element {
   return <div data-testid="location">{useLocation().pathname}</div>;
 }
 
-function renderSidebar(person: Workspace = workspace, route = '/', activity?: ActivityList, strict = false): void {
+function renderSidebar(person: Workspace = workspace, route = '/', activity?: ActivityList, strict = false, landing = false): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (activity) applyVersionedSidebarList(client, 'activity', 1, activity);
   applyVersionedSidebarList(client, 'canvases', 1, [
@@ -71,7 +71,11 @@ function renderSidebar(person: Workspace = workspace, route = '/', activity?: Ac
           onOpenSearch={vi.fn()}
           workspace={person}
         />
-        <Routes><Route element={<Location />} path="*" /></Routes>
+        <Routes>
+          {/* The app's landing: a launch starts at "/" and is sent to the Canvases home. */}
+          {landing && <Route element={<Navigate replace to="/canvases" />} path="/" />}
+          <Route element={<Location />} path="*" />
+        </Routes>
       </MemoryRouter>
     </CollaborationSessionProvider>
   </Tooltip.Provider></QueryClientProvider>;
@@ -192,6 +196,13 @@ describe('the Canvases and Sidekicks sections', () => {
     useUiStore.getState().setSidebarSection('sidekicks');
     renderSidebar(workspace, '/canvases', undefined, true);
     expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
+    expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+  });
+
+  it('keeps the section left open across a launch the landing redirects to the Canvases home', () => {
+    useUiStore.getState().setSidebarSection('sidekicks');
+    renderSidebar(workspace, '/', undefined, true, true);
+    expect(screen.getByTestId('location')).toHaveTextContent('/canvases');
     expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
   });
 

@@ -349,6 +349,18 @@ function hasGeneratedArtifactPreview(resource: WorkstreamResource): boolean {
 }
 
 /**
+ * An artifact with no stored content: the server says so up front
+ * (`contentAvailable: false`) or answers its read `resource_content_unavailable`.
+ * Said, rather than left as a pane holding only its last-updated line.
+ */
+function UnstoredContent(): React.JSX.Element {
+  return <EmptyState
+    description="Its content was never stored, so there is nothing to show. A new version from Rally or an upload will appear here."
+    title="Nothing to show yet"
+  />;
+}
+
+/**
  * What the resource says, under what the record says about it.
  *
  * The rail's detail used to be metadata only — type, direction, version, remove —
@@ -362,18 +374,6 @@ function hasGeneratedArtifactPreview(resource: WorkstreamResource): boolean {
  * reader, and a stored document is a file. Rewriting its bytes would show
  * somebody something their document does not say.
  */
-/**
- * An artifact with no stored content: the server says so up front
- * (`contentAvailable: false`) or answers its read `resource_content_unavailable`.
- * Said, rather than left as a pane holding only its last-updated line.
- */
-function UnstoredContent(): React.JSX.Element {
-  return <EmptyState
-    description="Its content was never stored, so there is nothing to show. A new version from Rally or an upload will appear here."
-    title="Nothing to show yet"
-  />;
-}
-
 function ResourceContentPreview({ loadResourceContent, resource }: {
   loadResourceContent: NonNullable<InspectorRailProps['loadResourceContent']>;
   resource: WorkstreamResource;
