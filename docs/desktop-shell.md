@@ -107,8 +107,9 @@ It holds two columns:
   restored from this device or opened by a link, is kept, and so is anything
   navigated to before the list arrived; a link that names Activity
   (`rallywithai://activity`) selects the section, which then opens the row the
-  same way, after an Organization change from the Canvases home it gives the
-  pane in place of `/opening`. The first list after entering decides: an
+  same way; after an Organization change it first gives the pane the Canvases
+  home in place of `/opening`, which the top row then replaces. The first list
+  after entering decides: an
   empty feed opens nothing, a navigation made before it arrived stands, and
   rows arriving, Mark all seen and other clicks never move the pane until the
   section is left and entered again. In the phone sheet the
