@@ -118,7 +118,6 @@ update it in the same change.
 | [`deep-link-failures.md`](deep-link-failures.md) | What a person sees when Rally refuses a deep link: why the message leaves the renderer for an always-on-top window of its own, which window a connector completion is actually delivered to, why the signed-out case stays inline on the sign-in screen, and the singleton window's message ownership. Read before changing how a refused link is surfaced, adding a message to the deep-link handler, or adding another desktop window. |
 | [`assumptions.md`](assumptions.md) | Low-level ambiguities resolved without changing the product contract. Add to it when you make such a call. |
 | [`potential-bugs.md`](potential-bugs.md) | Things that look wrong, or that nothing proves are right, with the specific evidence that would settle each one. Not a defect list — a defect gets fixed or filed. Add an entry when you find a question you cannot answer without leaving the change you are in; delete it when it is answered. |
-| [`implementation-plan.md`](implementation-plan.md) | The phased build checklist and its current state. |
 
 ## Agent, connectors, and integrations
 
