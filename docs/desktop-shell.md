@@ -135,7 +135,9 @@ It holds two columns:
 
 Every row in the lists is one layout (`RowLayout`): an `IdentityTile`
 (`packages/ui/src/components/identity-tile.tsx`), a name with a time, and a
-second line with the unread dot at its end. A tile is a shape in the object's
+second line with the unread dot at its end. A row with nothing for the second
+line has none, and its dot sits after the time, so a row is as tall unread as
+read. A tile is a shape in the object's
 pastel pair with its glyph, and can carry small badges on its corner, each in
 a ring painted the row's own background (`--tile-ring`) so it reads as cut out
 of the tile on a plain, hovered or selected row. A badge can carry one smaller
@@ -401,9 +403,14 @@ markup and announces as one control. A socket command for the decision was
 dropped for the decision route, which answers its own refusal by name; the
 Activity push follows from the same write.
 
-**Consequences:** A row with controls renders as a sibling of its link
-(`.activity-row-actions`), so the spacing rule between rows covers that
-sibling too. Any new screen that opens an object which can be asked into
+**Consequences:** A row with controls is a group (`.activity-row-group`)
+holding its link and, under it, the controls (`.activity-row-actions`); the
+group owns the open and hover fill, so the controls sit inside the row, and
+the spacing rule between rows covers groups too. Settling replaces the
+controls with a line as tall as they were, so the list does not move under
+the pointer. `RowLayout` puts the unread dot after the time when a row has no
+second line, rather than on an otherwise empty one: a dot that added a line
+made a row change height when it was read. Any new screen that opens an object which can be asked into
 should hand `useRestoredRouteFallback` the read that decides "gone", not the
 first 404.
 

@@ -442,11 +442,12 @@ the rail's first section and `/canvases` the landing route
 - **A Canvas you cannot open.** When the access read answers `requestable`
   (never the title), the pane draws "You don't have access to this Canvas"
   with **Request access**, which opens one dialog with an optional one-line
-  message and sends `POST /canvases/:id/access-requests`
+  message (the dialog opens on its field) and sends
+  `POST /canvases/:id/access-requests`
   (`CanvasAccessRequestPane`, `components/canvas-access-request.tsx`). While
   the viewer's request is pending (`request.state: 'pending'` on the access
-  read, so a reload keeps it) the button is disabled under
-  "Request sent · <when>"; a denied request reads as none and the button is
+  read, so a reload keeps it) the button gives way to
+  "Request sent · <when>" alone; a denied request reads as none and the button is
   offered again, because a denial tells the requester nothing. A refusal such
   as `canvas_access_request_not_member` is the app's error notice over the
   dialog. A restored route on a requestable Canvas stays, since it may be
@@ -506,7 +507,9 @@ the rail's first section and `/canvases` the landing route
   nothing: the app's error notice says why, over the dialog, which keeps what
   was typed. For a decider, the panel opens with a **Requests** section
   (`pendingAccessRequests` on the detail): each pending request's name,
-  message and when, with Approve and Deny (`AccessDecisionActions`, the same
+  message and when (the time never breaks across lines), with Approve and
+  Deny, which drop to a line of their own where the message would be
+  squeezed (`AccessDecisionActions`, the same
   component the `access_request` Activity row uses, over
   `POST /canvases/:id/access-requests/:userId/decision`). A decision reads
   the detail again, so the request leaves the list; someone approved while

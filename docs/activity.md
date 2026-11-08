@@ -205,16 +205,27 @@ reply, a pencilled file for a new version, a lock for an access request and an
 open lock for a grant); on the first line who (a person's name from the member
 directory, or the Sidekick's), what (mentioned you in, added you to, needs your
 input, finished a run, "in" for a reply, updated <artifact> in, asked to open,
-let you into) and the title, cut to one line, with the time at its end; on the
-second the preview, cut to one line, with the unseen dot. A settled access
-request's second line says who decided ("Maya approved", "Maya denied") in
-place of the message, and the row is seen. A pending one has Approve and Deny
-under it, beside the link rather than in it (a link holds no buttons), sending
+let you into) and the title, wrapping to at most two lines before it is cut,
+so the place, which comes last and tells two rows apart, survives a long name
+or verb; the row's tooltip (`title`) holds the whole sentence. The time sits
+at the first line's end. On the second line the preview, cut to one line,
+with the unseen dot; a row with no preview has no second line, and its dot
+sits after the time, so a row is as tall unseen as seen. An access request is
+a group: its link, and under it, inside the same open and hover fill, Approve
+and Deny (a link holds no buttons), sending
 `POST /canvases/:id/access-requests/:userId/decision` for the row's Canvas
 (`parentId`) and requester (`actor.id`) through `AccessDecisionActions`, the
-component the Share panel's Requests section uses; the Activity push that the
-same write produces is what settles the row, and a refusal is the app's error
-notice. A seen row recedes through one text
+component the Share panel's Requests section uses. The buttons are named for
+the requester and the Canvas ("Approve Maya for Launch plan"), so several
+requests from one person differ; in the phone sheet they take the shared
+control height. The Activity push that the same write produces is what
+settles the row, and a refusal is the app's error notice. Settled, who
+decided takes the buttons' place on a line as tall as they were, so the list
+does not move: "You approved" or "You denied" to the decider themselves
+(`accessRequest.decidedByUserId` against the session user), "Maya approved"
+or "Maya denied" to the others, or the name alone from a server older than the
+id. The message stays the preview, and the row is seen. With nothing listed,
+the section names every kind it carries. A seen row recedes through one text
 colour for both lines (`text-muted`, 5.12:1 in light and 7.49:1 in dark) and a
 lighter title weight, never through opacity, so every line of it clears 4.5:1. The rows the route has open (the same conversation, and the
 same run when one is open) are drawn open at full contrast; keyboard focus is
@@ -380,8 +391,7 @@ in it, through `recordParentNotice` when the conversation's reply batch runs.
 The row collapses: one unseen row per conversation per recipient, brought up
 to the newest reply. It clears as a mention does. Migration 150 widens the
 row's kind to the four kinds a hosted parent records about itself and adds
-`subject_id`. [Client half: the row's words, glyph and link, folded in at
-merge.]
+`subject_id`. Client: rows for `new_message` ("<author> in <place>", opens the message via `canvasTurnRoute` or the conversation), `artifact_updated` ("<author> updated <artifact> in <Canvas>", opens `?artifact=`), `access_request` ("<name> asked to open <Canvas>", Approve and Deny under the link in one group through `AccessDecisionActions`, held once answered, named for the requester and the Canvas; settled, "You approved" or "<decider> approved/denied" takes their place at their height, seen) and `access_granted` ("<decider> let you into <Canvas>"), each with its own glyph. The sentence wraps to two lines with its tooltip holding all of it, and a row with no preview keeps its dot on the first line. `ActivityItem.accessRequest` gains an optional `decidedByUserId`, read from `canvas_access_requests.decided_by_user_id`, so the decider is told "You" rather than their own name; optional so an older client parses the page, and the name stays the display for everyone else.
 
 A new version in a Canvas the person pinned writes an `artifact_updated` row
 the same way, collapsing per Canvas, naming the artifact and clearing on a

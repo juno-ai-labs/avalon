@@ -19,25 +19,38 @@ export function useActivityList(): ActivityList | undefined {
   return useSocketOwnedList<ActivityList>(SIDEBAR_LIST_QUERY_KEYS.activity).data;
 }
 
-export const ACTIVITY_EMPTY = 'Nothing yet. Mentions, replies, Canvases you are added to and Sidekick runs that need you or finish show up here.';
+export const ACTIVITY_EMPTY = 'Nothing yet. Mentions, new messages, Canvases you are added to, Sidekick runs that need you or finish, updates to Canvases you pinned and requests to open a Canvas show up here.';
+
+/** A run of the row's sentence: plain words, or a name drawn bold. */
+type RowPart = string | { strong: string };
 
 /**
  * Who did what where, in the row's words. A run's own row names the Sidekick
  * and needs no "in"; a reply is only who and where, its message the preview.
+ * The same parts draw the row and spell its tooltip, so the full sentence is
+ * recoverable when the row's two lines cut it.
  */
-function rowText(item: ActivityItem, who: string, where: string): ReactNode {
-  const actor = <strong>{who}</strong>;
-  const place = <strong>{where}</strong>;
+function rowParts(item: ActivityItem, who: string, where: string): RowPart[] {
+  const actor = { strong: who };
+  const place = { strong: where };
   switch (item.kind) {
-    case 'mention': return <>{actor} mentioned you in {place}</>;
-    case 'participant_added': return <>{actor} added you to {place}</>;
-    case 'needs_input': return <>{actor} needs your input</>;
-    case 'run_finished': return <>{actor} finished a run</>;
-    case 'new_message': return <>{actor} in {place}</>;
-    case 'artifact_updated': return <>{actor} updated <strong>{item.artifact?.title || 'an artifact'}</strong> in {place}</>;
-    case 'access_request': return <>{actor} asked to open {place}</>;
-    case 'access_granted': return <>{actor} let you into {place}</>;
+    case 'mention': return [actor, ' mentioned you in ', place];
+    case 'participant_added': return [actor, ' added you to ', place];
+    case 'needs_input': return [actor, ' needs your input'];
+    case 'run_finished': return [actor, ' finished a run'];
+    case 'new_message': return [actor, ' in ', place];
+    case 'artifact_updated': return [actor, ' updated ', { strong: item.artifact?.title || 'an artifact' }, ' in ', place];
+    case 'access_request': return [actor, ' asked to open ', place];
+    case 'access_granted': return [actor, ' let you into ', place];
   }
+}
+
+function rowText(parts: RowPart[]): ReactNode {
+  return parts.map((part, index) => typeof part === 'string' ? part : <strong key={index}>{part.strong}</strong>);
+}
+
+function rowSentence(parts: RowPart[]): string {
+  return parts.map((part) => typeof part === 'string' ? part : part.strong).join('');
 }
 
 const GLYPHS: Record<ActivityItem['kind'], ReactNode> = {
@@ -52,13 +65,12 @@ const GLYPHS: Record<ActivityItem['kind'], ReactNode> = {
 };
 
 /**
- * The second line: the preview, except on a settled access request, which
- * says who decided ("Maya approved", "Maya denied") in place of the message.
+ * Who settled an access request, where its Approve and Deny were: "You
+ * approved" to the decider themselves, "Maya denied" to everyone else.
  */
-function rowDetail(item: ActivityItem): string {
-  const request = item.kind === 'access_request' ? item.accessRequest : null;
-  if (request && request.state !== 'pending') return `${request.decidedByName || 'Someone'} ${request.state}`;
-  return item.preview ?? '';
+function settledText(request: NonNullable<ActivityItem['accessRequest']>, viewerId: string | undefined): string {
+  const decider = request.decidedByUserId && request.decidedByUserId === viewerId ? 'You' : request.decidedByName || 'Someone';
+  return `${decider} ${request.state}`;
 }
 
 /**
@@ -96,7 +108,7 @@ export function activityRoute(item: ActivityItem): string {
  * header clears the rest. `docs/activity.md` owns the model.
  */
 export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | null> }): React.JSX.Element {
-  const { api } = useCollaborationSession();
+  const { api, session } = useCollaborationSession();
   const activity = useActivityList();
   const { membersById, sidekicksById } = useCanvasNameSources(api);
   useSectionMotion(scroll, undefined);
@@ -129,29 +141,41 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
     {activity !== undefined && activity.items.length === 0 && <p className="navigation-empty">{ACTIVITY_EMPTY}</p>}
     {activity?.items.map((item) => {
       const active = isOpen(item);
-      // Approve and Deny sit under a pending request's row, beside the link
-      // rather than in it: a link holds no buttons.
-      const deciding = item.kind === 'access_request' && item.accessRequest?.state === 'pending' && item.actor.id !== null;
-      return <Fragment key={item.id}>
-        <Link
-          aria-current={active ? 'page' : undefined}
-          className={clsx('navigation-row activity-row', item.seen ? 'is-seen' : 'is-unread', active && 'is-active')}
-          data-motion-key={`activity:${item.id}`}
-          to={activityRoute(item)}
-        >
-          <RowLayout
-            detail={rowDetail(item)}
-            tile={<span className={clsx('activity-row-glyph', `is-${item.kind}`)}>{GLYPHS[item.kind]}</span>}
-            time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={item.createdAt} />}
-            title={<span className="activity-row-text">{rowText(item, who(item), where(item))}</span>}
-            unread={!item.seen}
-            unreadLabel="Unseen"
-          />
-        </Link>
-        {deciding && <div className="activity-row-actions">
-          <AccessDecisionActions canvasId={item.parentId} label={membersById.get(item.actor.id!)?.name || undefined} userId={item.actor.id!} />
-        </div>}
-      </Fragment>;
+      const parts = rowParts(item, who(item), where(item));
+      const request = item.kind === 'access_request' && item.actor.id !== null ? item.accessRequest : null;
+      const row = <Link
+        aria-current={active ? 'page' : undefined}
+        className={clsx('navigation-row activity-row', item.seen ? 'is-seen' : 'is-unread', active && 'is-active')}
+        data-motion-key={request ? undefined : `activity:${item.id}`}
+        title={rowSentence(parts)}
+        to={activityRoute(item)}
+      >
+        <RowLayout
+          detail={item.preview ?? ''}
+          tile={<span className={clsx('activity-row-glyph', `is-${item.kind}`)}>{GLYPHS[item.kind]}</span>}
+          time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={item.createdAt} />}
+          title={<span className="activity-row-text">{rowText(parts)}</span>}
+          unread={!item.seen}
+          unreadLabel="Unseen"
+        />
+      </Link>;
+      if (!request) return <Fragment key={item.id}>{row}</Fragment>;
+      // A request's Approve and Deny sit under its link rather than in it (a
+      // link holds no buttons), inside one group that owns the row's fill. On
+      // settling, who decided takes the buttons' place on a line as tall as
+      // they were, so the list does not move under the pointer.
+      return <div
+        className={clsx('activity-row-group', item.seen ? 'is-seen' : 'is-unread', active && 'is-active')}
+        data-motion-key={`activity:${item.id}`}
+        key={item.id}
+      >
+        {row}
+        <div className="activity-row-actions">
+          {request.state === 'pending'
+            ? <AccessDecisionActions canvasId={item.parentId} canvasTitle={item.parentTitle ?? undefined} label={membersById.get(item.actor.id!)?.name || undefined} userId={item.actor.id!} />
+            : <p className="activity-row-settled">{settledText(request, session?.user.id)}</p>}
+        </div>
+      </div>;
     })}
   </section>;
 }
