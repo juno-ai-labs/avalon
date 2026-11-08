@@ -12,7 +12,7 @@ import { BrowserGoogleStartedSchema, BrowserSessionSchema, BrowserWorkspaceAtten
 import { browserRequest, BrowserApiError } from "./transport";
 import { scheduleSessionDeadline } from "./session-timer";
 
-import { isRetiredLinkPath, parseLinkPathTarget } from "@rally/contracts/links";
+import { RETIRED_LINK_MESSAGE, isRetiredLinkPath, parseLinkPathTarget } from "@rally/contracts/links";
 
 import { UuidV7Schema } from "@rally/contracts/telemetry";
 import { OrganizationNameSuggestionSchema, WorkspaceIdSchema, parseArtifactSiteOpenPath } from "@rally/contracts";
@@ -69,7 +69,6 @@ type Proof = { region: string; challengeId: string; credential: string; redempti
  */
 
 /** What the entry screen says for a link to something deleted with Channels and Threads. */
-const RETIRED_LINK_COPY = "This link is to something that no longer exists. Rally replaced Channels, Threads and Breakouts with Canvases.";
 
 export function BrowserBoot(): React.JSX.Element {
   return <main className="onboarding-shell entry"><div className="boot-mark" role="status" aria-label="Opening Rally"><RallyMark /></div></main>;
@@ -509,7 +508,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
       {session && !proof ? <>
         <h1>Your organizations</h1>
         <p className="signed-in-identity">Signed in as {session.user.email}</p>
-        {retiredLink && <p className="entry-lead" role="status">{RETIRED_LINK_COPY}</p>}
+        {retiredLink && <p className="entry-lead" role="status">{RETIRED_LINK_MESSAGE}</p>}
         {workspaces === null ? <p className="entry-lead" role="status">{destination ? "Opening the link…" : "Loading your organizations…"}</p>
           : workspaces.length ? <nav className="signin-choice-list" aria-label="Organizations">{workspaces.map((workspace) => {
             const count = activity?.userId === session.user.id ? activity.counts.get(`${workspace.region}:${workspace.id}`) ?? 0 : 0;
@@ -523,7 +522,7 @@ export function BrowserEntry({ renderCollaboration }: { renderCollaboration?: (r
         <button className="text-button onboarding-signout" disabled={busy} onClick={() => { void signOut(); }} type="button">Sign out</button>
       </> : <>
         <h1>{proof ? "Confirm your sign-in" : challenge ? "Check your email" : "Welcome to Rally"}</h1>
-        <p>{proof ? "Continue to what was shared with you." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : linkKind === "canvas" ? "Sign in to open this Canvas." : linkKind === "sidekick" ? "Sign in to open this Sidekick." : destination ? "Sign in to open this Organization." : siteTarget ? "Sign in to open this site." : retiredLink ? RETIRED_LINK_COPY : "Your team, your work, and Rally. All in one place."}</p>
+        <p>{proof ? "Continue to what was shared with you." : challenge ? iosStandalone() ? `Enter the code sent to ${email}.` : `Enter the code sent to ${email}, or open the sign-in link in that email.` : linkKind === "canvas" ? "Sign in to open this Canvas." : linkKind === "sidekick" ? "Sign in to open this Sidekick." : destination ? "Sign in to open this Organization." : siteTarget ? "Sign in to open this site." : retiredLink ? RETIRED_LINK_MESSAGE : "Your team, your work, and Rally. All in one place."}</p>
         {!proof && !challenge && !emailChosen ? <>
           <Button className="button-primary signin-button" type="button" disabled={busy || checking} onClick={() => { void continueWithGoogle(); }}><ConnectorMark mark="google" />Continue with Google</Button>
           <Button className="button-secondary signin-button" type="button" disabled={busy || checking} onClick={() => setEmailChosen(true)}><Mail aria-hidden="true" size={16} />Continue with email</Button>

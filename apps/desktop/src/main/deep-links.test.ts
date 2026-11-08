@@ -80,8 +80,6 @@ describe('a link to something retired with Threads', () => {
       'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/workstreams/00000000-0000-7000-8000-000000000021',
       'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/spaces/1111117Hxt1fAWDjN7TX/channels/1111117Hxt1fAWDjN7TY',
       'avalon://workstreams/00000000-0000-7000-8000-000000000021',
-      'https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY',
-      'https://www.rallywith.ai/app/workspaces/global/00000000-0000-7000-8000-000000000019/workstreams/00000000-0000-7000-8000-000000000021',
     ]) {
       expect(isRetiredDeepLink(retired), retired).toBe(true);
       expect(acceptedDeepLink(retired), retired).toBeNull();
@@ -94,6 +92,8 @@ describe('a link to something retired with Threads', () => {
       'rallywithai://workspace/global/1111117Hxt1fAWDjN7TW/sidekicks/1111117Hxt1fAWDjN7TX',
       'rallywithai://settings/connections',
       'rallywithai://notes/abc',
+      // Retired HTTPS links stay in the browser, which says so itself.
+      'https://rallywith.ai/app/global/1111117Hxt1fAWDjN7TW/s/1111117Hxt1fAWDjN7TX/c/1111117Hxt1fAWDjN7TY',
       'https://rallywith.ai/app/workspaces/global/00000000-0000-7000-8000-000000000019',
       'https://evil.example/app/workstreams/00000000-0000-7000-8000-000000000021',
       'not a url',

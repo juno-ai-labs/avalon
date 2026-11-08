@@ -88,7 +88,8 @@ reads `GET /browser/workspaces/attention` and gives each row with new activity a
 count badge ([multiple workspaces](multiple-workspaces.md#the-account-menus-directory)). Workspace roots mount the shell,
 and canonical Canvas and Sidekick links activate the addressed workspace and
 open in it. A retired Space, Channel, Breakout or Thread link opens nothing:
-the entry says "This link is to something that no longer exists" above the
+the entry says `RETIRED_LINK_MESSAGE` (`@rally/contracts/links`, the sentence
+the desktop's deep-link error window shows too) above the
 list, or in place of the sign-in line. A copied link reaches here from the site's handoff
 page, whose **Continue in browser** keeps the path and swaps the host
 ([`links.md`](links.md#the-handoff-page)). A guest sees no setup or onboarding view.
