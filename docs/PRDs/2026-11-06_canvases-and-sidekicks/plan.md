@@ -276,3 +276,34 @@ targets inside them changed. Code defects the audit found and did not fix are
 in the slice reports (dead exports in the Slack and connector services, stale
 comments naming deleted documents, `#CEDC00` hard-coded where the brand is
 `#CCFF00`, two Workers proofs lost with deleted test files).
+
+**Recorded after the owner's four instructions of 2026-11-08.** (1) "When
+opening the first activity on top should be auto selected and that should be
+shown in the panels" and "Stay in activity sidebar": entering Activity opens
+its top row in the pane (a rail pick pushes, a launch onto the Canvases home
+replaces once the first list arrives, an empty feed opens nothing, nothing
+re-applies while the person stays in Activity), and only a rail pick leaves
+Activity; two paths that moved the rail off it without a pick (closing the
+phone sheet without a navigation, the `rallywithai://activity` deep link) are
+closed. The implementer's reading, open to the owner: a launch that restores
+this device's last Canvas or Sidekick keeps it rather than opening the top
+row. (2) "Sync up the electron app path routing to match the browser one":
+the two hosts already share the renderer's router; the Mac app now lands an
+artifact link as `?artifact=` like the web, shows the web's retired-link
+sentence from one shared constant, and opens the web app's Organization URL
+(`/app/workspaces/<region>/<id>` with an optional Canvas or Sidekick hash) as
+a universal link through a new `home` intent. Left for the owner: Settings is
+a route in the browser tab and a window on the Mac (matching means dropping
+the window), and the Mac app is associated only with `rallywith.ai` and
+`www`, so a URL copied from `app.rallywith.ai` still opens in the browser
+until an association file is served there and the entitlement added, which
+changes signing and the release. (3) "Remove documents from docs/ that are
+depreciated": desktop-actions, browser-script-runtime, connector-digestibility
+(and the test that read it), meeting-notes and the three dated audit records
+are retired into records in their owners; the dead code they described
+(the desktop-action protocol, the browser plugin and realm, the digestibility
+helpers and column, four meeting-cleanup RPCs) is listed in the pruning
+report for removal. (4) "Deprecate all stale PRDs in the prd folder": fifteen
+`state.md` files carry a supersession, partial or abandoned note (docs/prds.md
+now allows the partial kind), and the implementation brief's contract names
+Activity again as a per-person list.
