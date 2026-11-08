@@ -39,7 +39,8 @@ self.addEventListener("activate", (event) => {
 
 // The installed app's icon shows the push's count, as APNs sets the Mac badge
 // while Rally is closed: the person's unseen Activity in the push's
-// Organization, after this notice was recorded. A visible Rally tab owns the
+// Organization, after this notice was recorded. A visible Rally app tab (an
+// /app/ path; a signed-out tab at / owns nothing) owns the
 // icon with its live count (the browser bridge's `setDockBadgeCount`), so the
 // push leaves it alone: the push may be for another Organization. A hidden tab,
 // such as a backgrounded Home Screen app, takes the push's count until it is
@@ -48,7 +49,7 @@ self.addEventListener("activate", (event) => {
 async function setBadge(count) {
   if (typeof count !== "number" || !("setAppBadge" in self.navigator)) return;
   const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-  if (windows.some((client) => client.visibilityState === "visible")) return;
+  if (windows.some((client) => client.visibilityState === "visible" && new URL(client.url).pathname.startsWith("/app/"))) return;
   try {
     await (count > 0 ? self.navigator.setAppBadge(count) : self.navigator.clearAppBadge());
   } catch {
