@@ -148,13 +148,6 @@ export const AutomationActivationV1Schema = z.strictObject({
     state: z.enum(["pending", "running", "needs_input", "completed", "failed", "stopped"]),
     stepCount: z.number().int().nonnegative(),
     reply: z.string().max(MESSAGE_MAX_CHARACTERS).nullable(),
-    /**
-     * The person whose own request started the run, or null for a trigger's.
-     * While the run is pending or running the row is not news to them: the
-     * conversation has already seated them at it, and a client mirrors that
-     * rather than marking it unread. Absent from a server that predates it.
-     */
-    requesterUserId: IdSchema.nullable().optional(),
   }).optional(),
 });
 export type AutomationActivationV1 = z.infer<typeof AutomationActivationV1Schema>;

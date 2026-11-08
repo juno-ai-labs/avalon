@@ -2056,10 +2056,11 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         if (!prepared) throw new Error("sidekick_run_row_turn_unprepared");
         const appended = this.messages.appendPreparedMessage(prepared);
         this.ctx.storage.sql.exec(
-          `INSERT INTO sidekick_run_rows (run_id, turn_id, state, step_count, reply, source_version, updated_at, requester_user_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO sidekick_run_rows
+             (run_id, turn_id, state, step_count, reply, source_version, updated_at, requester_user_id, run_number)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           request.runId, appended.messageId, request.state, request.stepCount, request.reply, request.version, now,
-          request.requesterUserId ?? null,
+          request.requesterUserId ?? null, request.runNumber ?? null,
         );
         seatRequester(appended.messageId, now);
         return { outcome: "appended" as const, code: "sidekick_run_row_appended" };
@@ -2067,11 +2068,14 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
       if (current.source_version > request.version && !request.replay) return { outcome: "unchanged" as const, code: "sidekick_run_row_stale" };
       const changed = this.ctx.storage.sql.exec(
         `UPDATE sidekick_run_rows SET state = ?, step_count = ?, reply = ?, source_version = ?, updated_at = ?,
-                requester_user_id = ?
-          WHERE run_id = ? AND (state IS NOT ? OR step_count IS NOT ? OR reply IS NOT ? OR requester_user_id IS NOT ?)
+                requester_user_id = ?, run_number = COALESCE(?, run_number)
+          WHERE run_id = ? AND (state IS NOT ? OR step_count IS NOT ? OR reply IS NOT ? OR requester_user_id IS NOT ?
+            OR run_number IS NOT COALESCE(?, run_number))
           RETURNING run_id`,
         request.state, request.stepCount, request.reply, request.version, now, request.requesterUserId ?? null,
+        request.runNumber ?? null,
         request.runId, request.state, request.stepCount, request.reply, request.requesterUserId ?? null,
+        request.runNumber ?? null,
       ).toArray().length > 0;
       if (!changed) return { outcome: "unchanged" as const, code: "sidekick_run_row_unchanged" };
       if (content && content.turnId === current.turn_id) {
