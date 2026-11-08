@@ -123,7 +123,8 @@ for the same boundaries within one renderer, while other slices keep their
 existing global local-epoch behavior. This uses the existing entries store
 without a schema upgrade; metadata rows have an empty scope outside user rows.
 
-Three slices are read today, and the next surface that wants to paint before its
+Three slices are listed below; the fourth, `resource-image-preview`, is
+[`attachment-preview-cache.md`](attachment-preview-cache.md)'s. The next surface that wants to paint before its
 answer arrives defines another. The `directory` slice, which held the Channel
 and Thread directory, is no longer read or written (2026-11 cutover); rows a
 device wrote before stay on disk, unread, until the workspace's rows are
@@ -132,7 +133,7 @@ cleared.
 | Slice | Key | Subject | Holds |
 | --- | --- | --- | --- |
 | `canvas-directory` | `canvas-directory` | `canvas-directory` | The Canvases list (`workspace_canvas_list` rows) and the Sidekicks list, each only once the socket has applied it in the writing session; an absent list seeds nothing. |
-| `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a private child's inherited context. |
+| `conversation` | `<parentId>:<substreamId>` | `<parentId>` | The `WorkstreamDetail` the header and composer read, the transcript trimmed to its opening ranges, and a child conversation's inherited context. |
 | `usage` | `usage` | `usage` | The last `OrganizationUsage` answer, the plan, the share of the week's quota left, the reset instant and the month's overage, and `fetchedAt`, the time it arrived. |
 
 The store is best-effort by construction, like the draft cache beside it: every
