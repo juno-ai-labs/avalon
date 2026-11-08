@@ -241,6 +241,10 @@ const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
   "workspace_sync_events",
   "channels",
   "workspace_workstream_effect_receipts",
+  // A retired Thread's artifact links, kept by migration 147 only for the
+  // Thread-to-Canvas conversion, which reads them through the object's own
+  // storage; `deleteRetiredThreadParent` deletes each Thread's rows.
+  "workspace_workstream_resource_links",
   "channel_viewers",
   // Hosted Channel and Space parents (WorkspaceDO migration 72). Every row is
   // read and written by `HostedParent` through the object's own storage,
