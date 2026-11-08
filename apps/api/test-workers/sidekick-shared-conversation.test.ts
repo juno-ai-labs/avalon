@@ -317,8 +317,8 @@ async function storedRowContent(runId: string): Promise<string | null> {
   ).one().content);
 }
 
-/** The run's first activation, once it has ended. */
-async function runSettled(runId: string): Promise<void> {
+/** The run's `activations`th activation (its first by default), once it has ended. */
+async function runSettled(runId: string, activations = 1): Promise<void> {
   await expect.poll(() => runInDurableObject(conversationStub(runId), (_instance, state) => {
     try {
       return state.storage.sql.exec<{ terminal: number }>(
@@ -327,14 +327,7 @@ async function runSettled(runId: string): Promise<void> {
     } catch {
       return 0;
     }
-  }), { timeout: SETTLE_TIMEOUT_MS, interval: 100 }).toBe(1);
-}
-
-/** The run's second activation, the one an answer resumes, once it has ended. */
-async function runSettled2(runId: string): Promise<void> {
-  await expect.poll(() => runInDurableObject(conversationStub(runId), (_instance, state) => state.storage.sql.exec<{ terminal: number }>(
-    `SELECT COUNT(*) AS terminal FROM runs WHERE execution_context_json IS NOT NULL AND terminalized_at IS NOT NULL`,
-  ).one().terminal), { timeout: SETTLE_TIMEOUT_MS, interval: 100 }).toBe(2);
+  }), { timeout: SETTLE_TIMEOUT_MS, interval: 100 }).toBe(activations);
 }
 
 beforeEach(async () => {
@@ -998,7 +991,8 @@ describe("a Sidekick's shared conversation", () => {
           input: { answer: "4.3" } }),
       });
       expect(answered.status, await answered.clone().text()).toBe(200);
-      await runSettled2(started.runId);
+      // The second activation is the one the answer resumes.
+      await runSettled(started.runId, 2);
       await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
       await rowReaches(started.runId, "completed");
       await expect.poll(() => rows().at(-1), { timeout: 5_000 }).toMatchObject({ needsInput: false });

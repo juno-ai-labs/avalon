@@ -1,6 +1,7 @@
 import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight } from 'lucide-react';
+import { useCallback } from 'react';
 import { Link } from 'react-router-dom';
 
 import { useCollaborationSession } from '../lib/collaboration-session';
@@ -47,15 +48,18 @@ export function sidekickRunLabel(runNumber: number | null | undefined): string {
  * cached transcript alive while the run view stands in for it.
  */
 export function useSidekickRunNumber(sidekickId: string, runId: string | null): number | null {
+  // Stable while the run is, so the query reruns it only when the cached
+  // transcript changes rather than on every render of the header.
+  const select = useCallback((snapshot: WorkstreamTranscriptSnapshot | undefined) => (runId
+    ? orderedTranscriptMessages(snapshot, sidekickId)
+      .find((message) => message.automationActivation?.runId === runId)?.automationActivation?.runNumber ?? null
+    : null), [runId, sidekickId]);
   return useQuery<WorkstreamTranscriptSnapshot | undefined, Error, number | null>({
     queryKey: orderedTranscriptQueryKey(sidekickId),
     queryFn: () => undefined,
     enabled: false,
     staleTime: Number.POSITIVE_INFINITY,
-    select: (snapshot) => (runId
-      ? orderedTranscriptMessages(snapshot, sidekickId)
-        .find((message) => message.automationActivation?.runId === runId)?.automationActivation?.runNumber ?? null
-      : null),
+    select,
   }).data ?? null;
 }
 

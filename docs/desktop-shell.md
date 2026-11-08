@@ -358,6 +358,10 @@ It does not own:
   (the stored section), `lib/browser-rail-links.test.ts`. Run with
   `pnpm --filter @rally/desktop exec vitest run <path>`.
 - **A guest in the shell:** `lib/browser-collaboration.test.tsx`.
+- **Which phone rule wins:** `screens/workspace-settings.test.tsx` mounts the
+  real stylesheet at 390px with `test/app-stylesheet.ts` and reads the
+  computed `display` of Settings' sections toggle, which the shell's
+  `.app-shell .sidebar-menu-toggle` once overrode into a second ×.
 - **Window behaviour:** whether the rail, lists and panes are visible and placed
   correctly is checked in a real window under Xvfb, per
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
@@ -393,8 +397,7 @@ and a spelled-out age count whole units alike (v4-R2-4), and the phone bar
 names the section home the route shows (v3-R2-6). In the third round the
 rule that hides Settings' sections toggle under the open sheet is keyed on
 `.app-shell`, because the shell's later `.app-shell .sidebar-menu-toggle`
-drew it again as a second × beside Settings' own (b1-N1); a renderer test
-now runs the real stylesheet's cascade at 390px to hold it.
+drew it again as a second × beside Settings' own (b1-N1).
 
 **Why:** The PRD makes design.html the authority for every screen, and the
 design inspection (v1-F1, v4-F4) measured a 264px list that cut ordinary

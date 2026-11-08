@@ -1796,8 +1796,12 @@ that arm a run's row entry; AgentLoopDO migration 82 adds
 `sidekick_run_rows` (run, turn, state, steps, reply, `source_version`), empty
 everywhere but a Sidekick's `"0"`; migration 87 adds its `requester_user_id` and `run_number`,
 and numbers the rows already there oldest first by run id (a UUIDv7, so the
-order `projectRunRow` counts), so a run that finished before the column reads
-"Run 3" rather than a bare "Run".
+order `projectRunRow` counts). No shipped build has `sidekick_run_rows`, so in
+production that backfill finds an empty table; it serves only objects that ran
+an intermediate build of this change. A finished run is never projected again
+on its own, so a row the backfill numbered short (a run with no row) is
+repaired only by the operator RPC `replayRunRows`, which rebuilds every row
+with its real number.
 
 ## Regional impact
 
@@ -1950,10 +1954,7 @@ answer and the resume it lets in, a run's conversation still says needs_input
 with no question pending, and its projection now says the question it was
 answered on: read as the last reply, a run that had said nothing yet sent an
 empty summary, and the Sidekick's list was sent once waiting with no question,
-a bare "Needs input" for about a second (vis3 e2-N1). Holding the question in
-the Sidekick, or skipping a summaryless waiting run in the list's probe, was
-rejected: the projection is where the reply is chosen, and the run's own row
-read the same empty reply in that frame. Migration 87, unshipped, now also
+a bare "Needs input" for about a second (vis3 e2-N1). Migration 87, unshipped, now also
 numbers the run rows it finds, because runs made before the column read a
 bare "Run" beside numbered ones and picked up a number only if they were
 projected again (vis3 e2-N2, b1-N2). The client
@@ -2008,22 +2009,14 @@ parses the new frame with that release's schemas.
 **Considered and rejected:** Answering from the shared composer: a message
 there is routed to a new run by design, and teaching admission to guess which
 run a message answers is the inference the decision log refuses. Copying the
-question onto the run row's projection: the elicitation is the run's own
-record, and its socket is already the answer path.
-
-The details column also follows the design: **Wakes on**, **Uses** and
-**Writes to** are always drawn, reading **Nothing yet** when empty, and a
-draft shows neither Pause nor the delegation block. The inspection could not
-tell a Sidekick that uses nothing from one whose block was hidden.
-
-The rows say the state the PRD names ("working, next run, paused") from the
-`runState`, `nextRunAt` and `pendingQuestion` the server now sends, and the
-home draws design §3's pills; the "Active while a run is under way" gap the
-plan recorded is closed.
-
-The wizard's tool row says "Used Sidekicks" (the `rally:sidekicks` plugin's
-group keeps its stored key), the edit chip sits at the composer with a close,
-and New Sidekick reopens an existing draft.
+question onto the run row's projection as a second source: sending the prompt
+as the run's reply puts it in the summary every reader already takes. A
+storage column, or a new alarm armed by a trigger on `sidekick_runs` state,
+for the republish: every state change already passes one of the three inline
+sites, and the list republish is one statement in the same transaction. Holding an answered run's question in the Sidekick, or skipping a waiting
+run with no summary in the list's probe (vis3 e2-N1): the projection is where
+the reply is chosen, and the run's own row read the same empty reply in that
+frame.
 
 **What a future change must respect:** the inline form answers through the
 run's conversation, never through `"0"`; it opens a socket only while its row
