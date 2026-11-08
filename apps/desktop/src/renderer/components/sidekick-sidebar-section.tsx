@@ -1,5 +1,6 @@
 import { ArrowDownUp } from 'lucide-react';
 import { useMemo, useState, type RefObject } from 'react';
+import { ArrowDownUp } from 'lucide-react';
 import { matchPath, useLocation } from 'react-router-dom';
 
 import { useCollaborationSession } from '../lib/collaboration-session';
@@ -26,7 +27,14 @@ export function useSidekickList(): AutomationSummary[] | undefined {
  */
 function sidekickRowState(row: AutomationSummary): React.ReactNode {
   switch (sidekickStatus(row)) {
-    case 'needs_input': return row.pendingQuestion ?? 'Needs input';
+    // The question comes from the newest waiting run, which need not be the
+    // newest run: one still asking while a later one works reads Working
+    // with that question, the dot from the newest run and the words from
+    // the waiting one.
+    case 'needs_input': return <>
+      {row.runState === 'working' && <span aria-hidden="true" className="sidekick-working-dot" />}
+      {row.pendingQuestion ?? 'Needs input'}
+    </>;
     case 'working': return <><span aria-hidden="true" className="sidekick-working-dot" />Working</>;
     case 'paused': return <span className="sidekick-row-paused">Paused</span>;
     case 'draft': return 'Draft';

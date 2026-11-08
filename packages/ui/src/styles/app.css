@@ -6803,11 +6803,15 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .automation-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .automation-title-line h1 { width: 100%; margin: 0 0 12px; font-size: 24px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .automation-description { margin-top: 16px; color: var(--av-sys-color-text-subtle); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
-.automation-header .badge { padding: 3px 9px; }
+/* The details' pills at the home's pill size (.sidekick-status-pill, design §3
+   and §4 draw both at about 13px); the base badge and the sidebar's scope badge
+   are 10.5 and 9px. */
+.automation-header .badge { font-size: 13px; font-weight: 400; line-height: 18px; max-width: none; padding: 3px 10px; }
+.automation-title-more { margin-left: auto; }
 .automation-header .button { border-radius: var(--av-sys-size-radius-pill); }
 .automation-header .workstream-header-actions { width: 100%; gap: 8px; }
 .automation-header .workstream-header-actions > .button { flex: 1; justify-content: center; }
-.automation-lifecycle.is-draft { border-style: dashed; color: var(--av-sys-color-text-muted); }
+.automation-lifecycle.is-draft { background: transparent; border: 1px dashed var(--av-sys-color-border-default); color: var(--av-sys-color-text-muted); }
 .automation-lifecycle.is-active { background: var(--av-sys-color-success-wash, transparent); color: var(--av-sys-color-success-strong); }
 .automation-lifecycle.is-paused { background: var(--av-sys-color-warning-wash); color: var(--av-sys-color-warning-soft); }
 .automation-header-details { display: flex; flex-direction: column; gap: 24px; }
@@ -7113,6 +7117,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-run-row summary { align-items: center; cursor: pointer; display: flex; gap: 8px; list-style: none; }
 .sidekick-run-row summary::-webkit-details-marker { display: none; }
 .sidekick-run-row details[open] .disclosure-chevron { transform: rotate(90deg); }
+/* A waiting run's question is drawn open under its row, so its disclosure
+   points down with it rather than saying the row is collapsed. */
+.sidekick-run-row:has(> .sidekick-run-row-question) .disclosure-chevron { transform: rotate(90deg); }
 .sidekick-run-row-glyph { display: inline-flex; flex: none; height: 20px; width: 20px; }
 .sidekick-run-row-summary { font-size: 13px; font-weight: 500; }
 /* Each state reads as itself: a live run carries the working dot, a waiting

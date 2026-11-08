@@ -614,6 +614,13 @@ export interface Message {
       stepCount: number;
       reply: string | null;
     };
+    /**
+     * Who started the run (null for a trigger's) and its ordinal among its
+     * Sidekick's runs (null until numbered), from the row's block
+     * (`sidekickRun`); absent from a server that predates them.
+     */
+    requesterUserId?: string | null;
+    runNumber?: number | null;
   };
   /**
    * Durable Object events and D1 transcript rows have independent sequence
