@@ -4,9 +4,9 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
-import type * as Transcript from '../lib/transcript';
 import type { Message } from '../lib/types';
 import type * as UseWorkstreamSocket from '../lib/use-workstream-socket';
+import { transcriptOverlaysQueryKey, type TranscriptOverlay } from '../lib/transcript';
 import { SidekickRunRow } from './sidekick-run-row';
 
 const SIDEKICK = '00000000-0000-7000-8000-0000000000aa';
@@ -14,7 +14,6 @@ const RUN = '00000000-0000-7000-8000-0000000000bb';
 
 const answerElicitation = vi.hoisted(() => vi.fn());
 const socketOpenedFor = vi.hoisted(() => vi.fn());
-const runTranscript = vi.hoisted(() => ({ messages: [] as unknown[] }));
 
 vi.mock('../lib/collaboration-session', () => ({ useCollaborationSession: () => ({ api: {} }) }));
 vi.mock('../lib/use-workstream-socket', async (importOriginal) => ({
@@ -23,11 +22,6 @@ vi.mock('../lib/use-workstream-socket', async (importOriginal) => ({
     socketOpenedFor(parentId, substreamId);
     return { answerElicitation };
   },
-}));
-// The run's transcript as its socket would have written it.
-vi.mock('../lib/transcript', async (importOriginal) => ({
-  ...await importOriginal<typeof Transcript>(),
-  orderedTranscriptMessages: () => runTranscript.messages,
 }));
 
 function runRow(state: 'needs_input' | 'running' | 'failed', reply = ''): Message {
@@ -54,16 +48,24 @@ function renderRow(message: Message): void {
     id: SIDEKICK, name: 'Incident triage', description: '', scope: 'you', status: 'active', updatedAt: '2026-11-08T09:00:00.000Z',
     appearance: { icon: 'bug', color: 'amber' },
   }]);
-  client.setQueryData(['substream-ordered-transcript', SIDEKICK, RUN], { ranges: [] });
+  // The question as the run's socket leaves it after \`elicitation_created\`
+  // or a reconnect restoring \`openElicitations\`: an overlay, with no
+  // canonical turn yet.
+  client.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(SIDEKICK, RUN), [question]);
   render(<QueryClientProvider client={client}><MemoryRouter><SidekickRunRow message={message} /></MemoryRouter></QueryClientProvider>);
 }
 
-beforeEach(() => {
-  answerElicitation.mockReset().mockResolvedValue(undefined);
-  socketOpenedFor.mockReset();
-  runTranscript.messages = [{
-    id: 'question',
+const question: TranscriptOverlay = {
+  identity: { type: 'elicitation', elicitationId: 'elicitation-1' },
+  provenance: { source: 'socket_event', eventType: 'elicitation_created', eventSequence: 3 },
+  position: { afterTranscriptSequence: 0, eventSequence: 3 },
+  message: {
+    id: 'elicitation:elicitation-1',
+    workstreamId: SIDEKICK,
+    authorType: 'agent',
     messageType: 'elicitation',
+    text: '',
+    createdAt: '2026-11-08T10:00:00.000Z',
     elicitation: {
       id: 'elicitation-1',
       prompt: 'Which fruit, apple or pear?',
@@ -71,7 +73,12 @@ beforeEach(() => {
       options: [{ value: 'apple', label: 'Apple' }, { value: 'pear', label: 'Pear' }],
       status: 'open',
     },
-  }];
+  } as Message,
+};
+
+beforeEach(() => {
+  answerElicitation.mockReset().mockResolvedValue(undefined);
+  socketOpenedFor.mockReset();
 });
 
 describe('SidekickRunRow', () => {
@@ -83,6 +90,19 @@ describe('SidekickRunRow', () => {
     fireEvent.click(within(row).getByRole('radio', { name: /Pear/ }));
     fireEvent.click(within(row).getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(answerElicitation).toHaveBeenCalledWith('elicitation-1', 'pear', undefined));
+    // Answered here, it closes at once, before the run's row moves on: no
+    // second Submit can reach the room.
+    expect(within(row).queryByText('Which fruit, apple or pear?')).toBeNull();
+    expect(answerElicitation).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the question again when the room refuses the answer', async () => {
+    answerElicitation.mockRejectedValue(new Error('elicitation_response_idempotency_conflict'));
+    renderRow(runRow('needs_input'));
+    const row = screen.getByRole('article', { name: 'Incident triage run' });
+    fireEvent.click(within(row).getByRole('radio', { name: /Pear/ }));
+    fireEvent.click(within(row).getByRole('button', { name: 'Submit' }));
+    expect(await within(row).findByText('Which fruit, apple or pear?')).toBeVisible();
   });
 
   it('names a run started on request as such, and a failed run with its reason in its own colour', () => {

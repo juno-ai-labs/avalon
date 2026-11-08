@@ -1593,7 +1593,7 @@ describe('Organization settings', () => {
 
     const notionCard = (await screen.findByText('Notion')).closest('article');
     expect(notionCard).not.toBeNull();
-    expect(screen.getByText(/organization automations use only the connections explicitly bound to them/iu)).toBeVisible();
+    expect(screen.getByText(/organization Sidekicks use only the connections explicitly bound to them/iu)).toBeVisible();
     const personalButton = await enabledConnectAction(notionCard!, 'Connect for me');
     fireEvent.click(personalButton);
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenCalledWith(

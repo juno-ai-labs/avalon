@@ -262,7 +262,7 @@ function ContextContent({
               </dd>
             </div>
           )}
-          <div><dt>Created by</dt><dd>{workstream.createdBy?.name ?? 'Automation'}</dd></div>
+          <div><dt>Created by</dt><dd>{workstream.createdBy?.name ?? 'Sidekick'}</dd></div>
           <div><dt>Created</dt><dd>{formatDateTime(workstream.createdAt)}</dd></div>
           <div><dt>Last activity</dt><dd><RelativeTime value={workstream.lastActivityAt} /></dd></div>
           {/* Everything past this point describes how the work stream is wired

@@ -1,11 +1,12 @@
 import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
-import { orderedTranscriptMessages } from '../lib/transcript';
+import { answerConversationElicitation } from '../lib/conversation-elicitation';
+import { composeTranscript, orderedTranscriptMessages, transcriptOverlaysQueryKey, type TranscriptOverlay } from '../lib/transcript';
 import type { AutomationSummary, Message } from '../lib/types';
 import { orderedTranscriptQueryKey, useWorkstreamSocket } from '../lib/use-workstream-socket';
 import { RelativeTime } from './relative-time';
@@ -70,8 +71,11 @@ export function SidekickRunRow({ message }: { message: Message }): React.JSX.Ele
       {run.reply && <p className="sidekick-run-row-reply">{run.reply}</p>}
       <Link className="sidekick-run-row-open" to={{ search: sidekickRunSearch(activation.runId) }}>Open run</Link>
     </details>
-    {run.reply && <p aria-hidden="true" className="sidekick-run-row-preview">{run.reply}</p>}
-    {run.state === 'needs_input' && <SidekickRunQuestion runId={activation.runId} sidekickId={activation.automationId} />}
+    {run.state === 'needs_input'
+      // A waiting run's reply is its question; the answer form says it once
+      // it arrives, and the reply stands in until then.
+      ? <SidekickRunQuestion fallback={run.reply} runId={activation.runId} sidekickId={activation.automationId} />
+      : run.reply && <p aria-hidden="true" className="sidekick-run-row-preview">{run.reply}</p>}
   </article>;
 }
 
@@ -84,26 +88,39 @@ export function SidekickRunRow({ message }: { message: Message }): React.JSX.Ele
  * the row says Needs input, so a shared conversation holds at most the
  * sockets of the runs waiting in it.
  */
-function SidekickRunQuestion({ sidekickId, runId }: { sidekickId: string; runId: string }): React.JSX.Element | null {
+function SidekickRunQuestion({ fallback, sidekickId, runId }: { fallback: string | null; sidekickId: string; runId: string }): React.JSX.Element | null {
   const { api } = useCollaborationSession();
+  const queryClient = useQueryClient();
   const connection = useWorkstreamSocket(api, sidekickId, Boolean(api), 'active_workstream', undefined, true, runId);
-  // Socket-owned: the connection writes the run's transcript here, and this
-  // observer only keeps the entry alive and re-renders when it lands.
+  // Socket-owned, both: the connection writes the run's transcript and the
+  // overlays its `elicitation_created` and `elicitation_answered` events
+  // carry. These observers keep the entries alive and re-render when they
+  // land; the question is read from the two composed, as the run's own view
+  // reads it, so one restored only as an overlay shows, and an answer given
+  // here or by anyone else closes it at once.
   const transcript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
     queryKey: orderedTranscriptQueryKey(sidekickId, runId),
     queryFn: () => undefined,
     enabled: false,
     staleTime: Number.POSITIVE_INFINITY,
   });
+  const overlays = useQuery<TranscriptOverlay[]>({
+    queryKey: transcriptOverlaysQueryKey(sidekickId, runId),
+    queryFn: () => [],
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
   // A run waits on one question at a time; the newest open one is it.
-  const question = orderedTranscriptMessages(transcript.data, sidekickId)
+  const question = composeTranscript(orderedTranscriptMessages(transcript.data, sidekickId), overlays.data ?? [])
     .filter((message) => message.messageType === 'elicitation' && message.elicitation?.status === 'open')
     .at(-1)?.elicitation;
-  if (!question) return null;
+  if (!question) return fallback ? <p aria-hidden="true" className="sidekick-run-row-preview">{fallback}</p> : null;
   return <div className="sidekick-run-row-question">
     <ElicitationPanel
       elicitation={question}
-      onAnswer={(answer, customResponse) => connection.answerElicitation(question.id, answer, customResponse)}
+      onAnswer={(answer, customResponse) => answerConversationElicitation({
+        queryClient, parentId: sidekickId, substreamId: runId, connection, elicitationId: question.id, answer, customResponse,
+      })}
     />
   </div>;
 }

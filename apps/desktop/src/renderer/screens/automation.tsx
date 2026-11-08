@@ -2,7 +2,7 @@ import { ErrorNotice } from '../components/primitives';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { PanelRight, Pencil } from 'lucide-react';
+import { PanelRight, Pencil, X } from 'lucide-react';
 import { IconHistory, IconLink, IconPin, IconPinnedOff, IconPlayerPlay } from '@tabler/icons-react';
 import { TitleMenuItem, TitlePillHeader, type TitlePillLevel } from '@rally/ui/components/title-pill';
 import { CanvasMark } from '../components/canvas-mark';
@@ -66,6 +66,14 @@ function NewAutomationScreen(): React.JSX.Element {
   const { api } = useCollaborationSession();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
+  // A draft already in this person's list is the one New Sidekick reopens:
+  // drafts are theirs alone ("Only you") until saved, and a second one,
+  // named "New Sidekick" like the first, was indistinguishable from it. The
+  // list is the workspace socket's; without a socket there is no list to ask.
+  const socket = useOptionalWorkspaceSocket();
+  const rows = useSidekickList();
+  const listKnown = !socket || rows !== undefined;
+  const draft = rows?.find((row) => row.status === 'draft');
   // One request per visit, held in a ref rather than started by the effect
   // directly: React mounts an effect twice in development, and a request
   // started by the first run and abandoned by its cleanup would create an
@@ -73,21 +81,21 @@ function NewAutomationScreen(): React.JSX.Element {
   // the re-run simply waits on it.
   const creation = useRef<Promise<{ automationId: string }> | null>(null);
   useEffect(() => {
-    if (!api) return;
+    if (!api || !listKnown) return;
     let mounted = true;
-    creation.current ??= api.createAutomation();
+    creation.current ??= draft ? Promise.resolve({ automationId: draft.id }) : api.createAutomation();
     creation.current
       .then(({ automationId }) => {
         if (mounted) void navigate(`/sidekicks/${automationId}`, { replace: true });
       })
       .catch((cause: unknown) => {
         if (!mounted) return;
-        setError(cause instanceof Error ? cause.message : 'The automation could not be created.');
+        setError(cause instanceof Error ? cause.message : 'The Sidekick could not be created.');
       });
     return () => {
       mounted = false;
     };
-  }, [api, error, navigate]);
+  }, [api, draft, error, listKnown, navigate]);
   if (error) {
     return (
       <div className="screen-error-state screen-with-titlebar">
@@ -342,6 +350,15 @@ function SidekickConversation({ detail, manages }: { detail: AutomationDetail; m
       onSelect: () => setEditing((current) => !current),
     }] } : {})}
     composerPlaceholder={edit ? 'Describe a change to this Sidekick…' : `Message ${name} and the team…`}
+    // At the composer, where the mode applies, with the way out beside it;
+    // Escape leaves it too.
+    {...(edit ? {
+      composerNotice: <span className="sidekick-editing-badge" role="status">
+        <Pencil aria-hidden="true" size={13} />Editing this Sidekick
+        <button aria-label="Stop editing this Sidekick" className="sidekick-editing-close" onClick={() => setEditing(false)} type="button"><X aria-hidden="true" size={13} /></button>
+      </span>,
+      onComposerCancel: () => setEditing(false),
+    } : {})}
     key="shared"
     messageIntent={edit ? 'edit_sidekick' : undefined}
     parentId={detail.id}
@@ -349,7 +366,6 @@ function SidekickConversation({ detail, manages }: { detail: AutomationDetail; m
     // Always an element: the surface's grid gives its first row to the header,
     // and an empty one keeps the feed in the row that scrolls.
     renderHeader={() => <header className="sidekick-conversation-heading">
-      {edit && <span className="sidekick-editing-badge" role="status">Editing this Sidekick</span>}
       {canvases.length > 0 && <ul aria-label="Canvases it made" className="sidekick-canvas-cards">
         {canvases.map((canvas) => <li key={canvas.id}><Link className="sidekick-canvas-card" to={canvasRoute(canvas.id)}>
           <CanvasMark kind={null} size={28} />
