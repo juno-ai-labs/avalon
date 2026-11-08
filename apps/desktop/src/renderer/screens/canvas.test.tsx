@@ -309,7 +309,7 @@ describe('CanvasScreen', () => {
       getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: null });
     });
 
-    it('offers Request access with an optional message, then says when it was sent and holds the button', async () => {
+    it('offers Request access with an optional message, opening on the message, then says when it was sent in the button\'s place', async () => {
       renderCanvas();
       expect(await screen.findByText("You don't have access to this Canvas")).toBeInTheDocument();
       expect(getCanvasAccess).toHaveBeenCalledWith(CANVAS, expect.anything());
@@ -320,12 +320,13 @@ describe('CanvasScreen', () => {
       getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: { state: 'pending', requestedAt: new Date().toISOString() } });
       fireEvent.click(screen.getByRole('button', { name: 'Request access' }));
       const dialog = await screen.findByRole('dialog', { name: 'Request access' });
+      await waitFor(() => expect(within(dialog).getByRole('textbox', { name: 'Message (optional)' })).toHaveFocus());
       fireEvent.change(within(dialog).getByRole('textbox', { name: 'Message (optional)' }), { target: { value: '  For the board review  ' } });
       fireEvent.click(within(dialog).getByRole('button', { name: 'Send request' }));
 
       await waitFor(() => expect(requestCanvasAccess).toHaveBeenCalledWith(CANVAS, 'For the board review'));
       expect(await screen.findByRole('status')).toHaveTextContent('Request sent · just now');
-      expect(screen.getByRole('button', { name: 'Request access' })).toBeDisabled();
+      expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
       expect(screen.queryByRole('dialog')).toBeNull();
     });
 
@@ -340,7 +341,7 @@ describe('CanvasScreen', () => {
       getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: { state: 'pending', requestedAt: '2026-11-08T09:00:00.000Z' } });
       renderCanvas();
       expect(await screen.findByRole('status')).toHaveTextContent(/^Request sent · /u);
-      expect(screen.getByRole('button', { name: 'Request access' })).toBeDisabled();
+      expect(screen.queryByRole('button', { name: 'Request access' })).toBeNull();
       cleanup();
 
       getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: { state: 'denied', requestedAt: '2026-11-08T09:00:00.000Z' } });

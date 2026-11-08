@@ -1,6 +1,6 @@
 import type { CanvasAccess } from '@rally/contracts';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { canvasAccessDecisionRefusal, canvasAccessQueryKey, canvasDetailQueryKey } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
@@ -13,8 +13,8 @@ import { RelativeTime } from './relative-time';
  * A Canvas that exists in this person's Organization but does not admit them
  * (`GET /canvases/:id/access` answered `requestable`): the pane says so,
  * without its title, and offers Request access, one dialog with an optional
- * message. While their request is pending the button stays disabled under
- * "Request sent · <when>"; a denied request reads as none, because a denial
+ * message. While their request is pending the button gives way to
+ * "Request sent · <when>" alone; a denied request reads as none, because a denial
  * tells the requester nothing (`docs/canvases.md`, "A Canvas you cannot open").
  * The grant reopens the pane into the Canvas on its own: the screen refetches
  * the Canvas when it appears in the list or an `access_granted` row arrives.
@@ -24,6 +24,8 @@ export function CanvasAccessRequestPane({ access, canvasId }: { access: CanvasAc
   const queryClient = useQueryClient();
   const [asking, setAsking] = useState(false);
   const [message, setMessage] = useState('');
+  // The dialog is there to type the message, so it opens on the field.
+  const field = useRef<HTMLInputElement>(null);
   const send = useMutation({
     mutationFn: (text: string) => api!.requestCanvasAccess(canvasId, text.trim() || undefined),
     onSuccess: async (result) => {
@@ -51,7 +53,7 @@ export function CanvasAccessRequestPane({ access, canvasId }: { access: CanvasAc
   return <>
     <PaneState
       action={<div className="canvas-access-request-actions">
-        <Button className="button-primary" disabled={!api || pending !== null || send.isPending} onClick={() => setAsking(true)}>Request access</Button>
+        {pending === null && <Button className="button-primary" disabled={!api || send.isPending} onClick={() => setAsking(true)}>Request access</Button>}
         {pending && <p className="canvas-access-request-sent" role="status">
           Request sent · <RelativeTime format={formatRelative} value={pending.requestedAt} />
         </p>}
@@ -69,6 +71,7 @@ export function CanvasAccessRequestPane({ access, canvasId }: { access: CanvasAc
           {send.isPending ? 'Sending…' : 'Send request'}
         </Button>
       </>}
+      initialFocusRef={field}
       onOpenChange={(open) => { if (!open) close(); }}
       open={asking}
       title="Request access"
@@ -82,6 +85,7 @@ export function CanvasAccessRequestPane({ access, canvasId }: { access: CanvasAc
             if (event.key === 'Enter' && !event.nativeEvent.isComposing) send.mutate(message);
           }}
           placeholder="Why you'd like to open it"
+          ref={field}
           type="text"
           value={message}
         />
@@ -101,8 +105,15 @@ export function CanvasAccessRequestPane({ access, canvasId }: { access: CanvasAc
  * decider settled it first, or this person no longer manages the Canvas)
  * names itself through the error notice.
  */
-export function AccessDecisionActions({ canvasId, label, userId }: {
+export function AccessDecisionActions({ canvasId, canvasTitle, label, userId }: {
   canvasId: string;
+  /**
+   * The Canvas asked for, where a list holds requests for several, so each
+   * request's buttons have a name of their own ("Approve Maya Lin for Launch
+   * plan") when one person asks for more than one. The Share panel is one
+   * Canvas's and leaves it out.
+   */
+  canvasTitle?: string | undefined;
   /**
    * Who asked, for the buttons' accessible names ("Approve Maya Lin"); while
    * their name is not known yet the buttons are "Approve request" and
@@ -120,7 +131,7 @@ export function AccessDecisionActions({ canvasId, label, userId }: {
   // Answered: both stay disabled until the push or the read replaces this
   // row, so a second press cannot meet the person's own answer as "settled".
   const held = !api || decide.isPending || decide.isSuccess;
-  const who = label ?? 'request';
+  const who = `${label ?? 'request'}${canvasTitle ? ` for ${canvasTitle}` : ''}`;
   return <div className="access-decision-actions">
     <Button aria-label={`Deny ${who}`} disabled={held} onClick={() => decide.mutate('deny')}>Deny</Button>
     <Button aria-label={`Approve ${who}`} className="button-primary" disabled={held} onClick={() => decide.mutate('approve')}>Approve</Button>
