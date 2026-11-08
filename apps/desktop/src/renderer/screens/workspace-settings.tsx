@@ -1633,7 +1633,6 @@ export function WorkspaceSettingsScreen({
             {activeSection === 'notifications' && api && (
               <NotificationChannelSettings
                 api={api}
-                connections={connections.data ?? []}
                 email={session?.user.email ?? null}
                 pushAvailable={featureFlags.data?.pushNotificationsEnabled === true}
                 workspaceId={workspace.id}

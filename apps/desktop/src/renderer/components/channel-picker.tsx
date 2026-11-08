@@ -2,7 +2,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Check, ChevronDown } from 'lucide-react';
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
-/** One place something can be sent: push, email, a connector's surface, a Channel. */
+/** One place something can be sent: push or email. */
 export interface ChannelOption {
   id: string;
   label: string;
@@ -24,9 +24,8 @@ const ROW_GAP = 20;
 /**
  * Choose any number of `options` for one row of settings: a toggle button for
  * each while they all fit beside the row's words, and one menu of checkboxes
- * once they do not. The row is measured, not the window, because the number
- * of options grows with the connectors a person has, and every row decides
- * for itself.
+ * once they do not. The row is measured, not the window, because every row
+ * decides for itself.
  */
 export function ChannelPicker({ label, options, selected, onToggle, none, disabled = false }: {
   /** Names the group for assistive technology: "How to tell you about mentions". */
@@ -121,7 +120,7 @@ export function ChannelPicker({ label, options, selected, onToggle, none, disabl
   );
 }
 
-/** "Push", "Push and Slack", "Push, Email and Slack". */
+/** "Push", "Push and Email", "Push, Email and SMS". */
 export function joinLabels(labels: readonly string[]): string {
   if (labels.length <= 1) return labels[0] ?? '';
   return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
