@@ -7,7 +7,7 @@ import { ApiError } from "../lib/api-error";
 import { workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
-import { UNTITLED_CANVAS } from "./canvas-service";
+import { UNTITLED_CANVAS } from "../durable-objects/canvas-schema";
 import { conversationObject, retiredConversationKey } from "./thread-retirement-service";
 
 /**

@@ -9,9 +9,7 @@ import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { bootstrapWorkstreamRuntimeEnvironment, provisionWorkstreamObject } from "./workstream-runtime-database";
-
-/** The title a Canvas has until someone names it. */
-export const UNTITLED_CANVAS = "Untitled Canvas";
+import { UNTITLED_CANVAS } from "../durable-objects/canvas-schema";
 
 /**
  * Bring a Canvas into existence with its Chat open and no artifacts.
@@ -43,8 +41,8 @@ export async function createCanvas(env: Env, input: {
     authorityGeneration: authority.generation,
     ...(input.writer ? { writer: input.writer } : {}),
     ...(input.anchored ? { anchored: true } : {}),
-    // Made with no title by a person: its opening message titles it.
-    ...(!input.title?.trim() && !input.writer ? { titleStatus: "naming" as const } : {}),
+    // Made with no title, it is "Untitled Canvas", settled, until its first
+    // message starts naming it (`HostedCanvas.onChildProjection`).
   });
   // A run's second create answers with the Canvas its first made.
   const canvasId = made.canvasId;
