@@ -791,6 +791,47 @@ activity, and no notification. Its one appearance outside its own
 conversation is its row in the Sidekick's shared conversation
 ([runs in the shared conversation](#runs-in-the-shared-conversation)).
 
+### A run a missing connection or grant blocks
+
+A run that a missing connection or missing access stops asks for it and waits
+in `needs_input`; it does not finish `completed` with the work undone. The
+activation prompt (`prompts/workstream.ts`, "Executing a Sidekick activation")
+tells the model to ask, and the ask is the ordinary elicitation path
+([`agent-harness.md`](agent-harness.md#elicitation)), so nothing about the
+waiting state is new:
+
+- **A connection.** A run holds `get_connector_connection_state` and
+  `show_connector_connection` (until 2026-11-08 only a Canvas or a Sidekick's
+  shared conversation did). In a run the second is
+  `AVALON_RUN_SHOW_CONNECTOR_CONNECTION_TOOL_DEFINITION`: same name and input,
+  a write with a provider key, and an executor (`openToolQuestion` in
+  `integrations.ts`, which `request_elicitation` shares) that opens one
+  elicitation owned by that tool call and halts the loop on it. The question
+  says "Connect *name* so this run can continue." (the catalog's `label`,
+  "for the Organization" for a workspace scope), offers **Continue**
+  (`CONNECTION_QUESTION_CONTINUE_ANSWER`) and **Decline**, and carries the
+  card's selection as `Elicitation.connection`. The question panel, on the run's
+  row in the shared conversation and in the run's view, draws the connection
+  card above the options; connecting there answers Continue for the person
+  (`ConnectorConnectionCard.onNewlyConnected`, which fires only on a change
+  from not connected to connected while the card is open, so a viewer whose
+  own connection already existed does not answer it by opening it).
+- **A grant or access only a person can give** (a file shared with the run's
+  account, a permission on the provider): the model asks with
+  `request_elicitation`, naming what to grant, with a continue and a decline
+  option.
+
+While it waits, the run's row shows the question, the Sidekick's list row reads
+Needs input with that question (`AUTOMATION_RUN_STATE_SQL`), and the
+`sidekick_run_notice` entry records the Activity `needs_input` row and pushes
+the run's requester and the Sidekick's managers
+([`push-notifications.md`](push-notifications.md#a-sidekick-run-that-needs-input-or-finished)).
+An answer resumes the same run: on Continue the model checks the connection
+again (a resumed activation loads the connections as they are now) and does
+the work; on Decline, or when no tool can ask (an activation whose answers go
+to an agent holds neither), it ends with one final message saying what is
+blocked and how to recover, and the run is `completed` with that reply.
+
 ### Continuing a run
 
 Input to a run child continues the run. The Sidekick's alarm starts a run's
@@ -1774,7 +1815,7 @@ instruction body.
 | `apps/desktop/src/renderer/components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The play cut out of the hexagon with its own mask, its hover target, and the sentence it reports. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event matched to every destination once, whatever the Queue redelivers; the occurrence a connector named; stale registration effects refused. |
 | `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, the connector vocabulary an authoring rule is held to — and the boundary between the two predicate spellings, which is where a change that let the model's `matching` reach a stored column would fail. |
-| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd with the effect queue held, so the run row still reads finished while the continuation runs: input to a completed run continuing it with `automationRun`, the run-as principal (changed since the run started) and the revision accepted since, with the continuation note last; paused, archived and unknown runs refused with their codes, both inputs landed, and the run continuing after a resume; two concurrent replies both reaching the model as the continued run; a finished row reopened only by a newer projection, a stale completion not closing it, repeated complete and reopen cycles, `idle` not reopening, and a paused Sidekick not reopening; an elicitation answer keeping the run's context, and the run's transcript keeping the question turn with the answer turn after it. |
+| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd with the effect queue held, so the run row still reads finished while the continuation runs: input to a completed run continuing it with `automationRun`, the run-as principal (changed since the run started) and the revision accepted since, with the continuation note last; paused, archived and unknown runs refused with their codes, both inputs landed, and the run continuing after a resume; two concurrent replies both reaching the model as the continued run; a finished row reopened only by a newer projection, a stale completion not closing it, repeated complete and reopen cycles, `idle` not reopening, and a paused Sidekick not reopening; an elicitation answer keeping the run's context, and the run's transcript keeping the question turn with the answer turn after it; a run a missing connection blocks asking for it with the card's selection on the question, waiting in `needs_input` with the Sidekick row reading Needs input and the question, resuming on Continue to find the connection made, and ending `completed` on Decline. |
 | `apps/api/test/run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation; a continuation acting through a `completed` or `failed` row and a `stopped` one that stopped before the approval, and refused for a stop after it or a paused Sidekick. |
 | `apps/api/test/model-protocol-transcript.test.ts` | `pnpm --filter @rally/api test` | Among the transcript projection cases: a bound-thread reply in a run child rendered as labelled evidence and never as a member request, in the transcript and in the live admission projection, and the continuation note's wording. |
 | `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | A Sidekick's conversation resolving the workspace scope and its own `sidekick` scope. |

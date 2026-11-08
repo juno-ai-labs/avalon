@@ -10,7 +10,7 @@ import {
   type ConnectorResourceAuthorizationRequest,
 } from '@rally/contracts';
 import { Check, AlertTriangle, LoaderCircle, Minus, Plug } from 'lucide-react';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { useUpdateStatus } from '../lib/use-downloaded-update';
 import { useOptionalCollaborationSession, type CollaborationSessionValue, type ConnectorSetupCapability } from '../lib/collaboration-session';
@@ -266,9 +266,16 @@ export function connectorConnectionCardProvider(
  * connector-card primitive while keeping Rally's own tokens and trusted
  * connector catalog.
  */
-export function ConnectorConnectionCard({ latchedConnected = false, onConnected, request }: {
+export function ConnectorConnectionCard({ latchedConnected = false, onConnected, onNewlyConnected, request }: {
   latchedConnected?: boolean;
   onConnected?: (selectionKey: string) => void;
+  /**
+   * Called once when the connection this card shows goes from not connected to
+   * connected while the card is open, and never for one connected when it
+   * opened: a question this card answers must not answer itself for a viewer
+   * whose own connection was already there.
+   */
+  onNewlyConnected?: () => void;
   request: ConnectorConnectionCardInput;
 }): React.JSX.Element | null {
   const collaboration = useOptionalCollaborationSession();
@@ -278,6 +285,7 @@ export function ConnectorConnectionCard({ latchedConnected = false, onConnected,
     <ResolvedConnectorConnectionCard
       latchedConnected={latchedConnected}
       onConnected={onConnected}
+      onNewlyConnected={onNewlyConnected}
       provider={provider}
       request={request}
       collaboration={collaboration}
@@ -286,9 +294,10 @@ export function ConnectorConnectionCard({ latchedConnected = false, onConnected,
   );
 }
 
-function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provider, request, collaboration, setup }: {
+function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, onNewlyConnected, provider, request, collaboration, setup }: {
   latchedConnected: boolean;
   onConnected?: (selectionKey: string) => void;
+  onNewlyConnected?: (() => void) | undefined;
   provider: OAuthConnectorProviderCatalogEntry;
   request: ConnectorConnectionCardInput;
   collaboration: CollaborationSessionValue;
@@ -329,6 +338,18 @@ function ResolvedConnectorConnectionCard({ latchedConnected, onConnected, provid
   useEffect(() => {
     if (liveConnected) onConnected?.(selectionKey);
   }, [liveConnected, onConnected, selectionKey]);
+  // Seen not connected (with the list loaded) while this card is open.
+  const sawMissing = useRef(false);
+  useEffect(() => {
+    if (connections === undefined) return;
+    if (!liveConnected) {
+      sawMissing.current = true;
+      return;
+    }
+    if (!sawMissing.current) return;
+    sawMissing.current = false;
+    onNewlyConnected?.();
+  }, [connections, liveConnected, onNewlyConnected]);
   const awaiting = pendingConnectorOAuth?.source === 'conversation'
     && pendingConnectorOAuth.provider === provider.provider
     && pendingConnectorOAuth.connectorId === request.connectorId

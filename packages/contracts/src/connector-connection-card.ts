@@ -13,30 +13,34 @@ export type ConnectorConnectionCardScope = (typeof ConnectorConnectionCardScopes
  */
 export const ConnectorConnectionCardCatalog = {
   "google-mail-calendar": {
+    label: "Gmail and Google Calendar",
     capabilityPrefixes: ["gmail.", "calendar."],
     iconName: "google",
     providerType: "google",
     scopes: ["personal"],
   },
   "google-drive": {
+    label: "Google Drive",
     capabilityPrefixes: ["drive.", "docs.", "sheets."],
     iconName: "google-drive",
     providerType: "google",
     scopes: ["personal", "workspace"],
   },
-  github: { capabilityPrefixes: [], iconName: "github", providerType: "github", scopes: ["personal", "workspace"] },
-  apollo: { capabilityPrefixes: [], iconName: "apollo", providerType: "apollo", scopes: ["personal"] },
-  ashby: { capabilityPrefixes: [], iconName: "ashby", providerType: "ashby", scopes: ["personal"] },
-  canva: { capabilityPrefixes: [], iconName: "canva", providerType: "canva", scopes: ["personal"] },
+  github: { label: "GitHub", capabilityPrefixes: [], iconName: "github", providerType: "github", scopes: ["personal", "workspace"] },
+  apollo: { label: "Apollo", capabilityPrefixes: [], iconName: "apollo", providerType: "apollo", scopes: ["personal"] },
+  ashby: { label: "Ashby", capabilityPrefixes: [], iconName: "ashby", providerType: "ashby", scopes: ["personal"] },
+  canva: { label: "Canva", capabilityPrefixes: [], iconName: "canva", providerType: "canva", scopes: ["personal"] },
   // Personal only, like Ashby and Granola: the workspace scope is an
   // administrator pasting a key into Settings, which is not something a card in
   // a transcript can offer a participant.
-  fireflies: { capabilityPrefixes: [], iconName: "fireflies", providerType: "fireflies", scopes: ["personal"] },
-  granola: { capabilityPrefixes: [], iconName: "granola", providerType: "granola", scopes: ["personal"] },
-  linear: { capabilityPrefixes: [], iconName: "linear", providerType: "linear", scopes: ["personal", "workspace"] },
-  slack: { capabilityPrefixes: [], iconName: "slack", providerType: "slack", scopes: ["personal", "workspace"] },
-  notion: { capabilityPrefixes: [], iconName: "notion", providerType: "notion", scopes: ["personal", "workspace"] },
+  fireflies: { label: "Fireflies", capabilityPrefixes: [], iconName: "fireflies", providerType: "fireflies", scopes: ["personal"] },
+  granola: { label: "Granola", capabilityPrefixes: [], iconName: "granola", providerType: "granola", scopes: ["personal"] },
+  linear: { label: "Linear", capabilityPrefixes: [], iconName: "linear", providerType: "linear", scopes: ["personal", "workspace"] },
+  slack: { label: "Slack", capabilityPrefixes: [], iconName: "slack", providerType: "slack", scopes: ["personal", "workspace"] },
+  notion: { label: "Notion", capabilityPrefixes: [], iconName: "notion", providerType: "notion", scopes: ["personal", "workspace"] },
 } as const satisfies Record<string, {
+  /** The name a question asking for this connection says, in product case. */
+  label: string;
   capabilityPrefixes: readonly string[];
   iconName: string;
   providerType: string;
@@ -44,6 +48,13 @@ export const ConnectorConnectionCardCatalog = {
 }>;
 
 export type ConnectorConnectionCardId = keyof typeof ConnectorConnectionCardCatalog;
+
+/**
+ * The answer to a question a connection answers (`Elicitation.connection`)
+ * that says the connection is made. The question's card sends it for the
+ * person when the connection it shows becomes connected.
+ */
+export const CONNECTION_QUESTION_CONTINUE_ANSWER = "continue";
 export type ConnectorConnectionCardIconName = (typeof ConnectorConnectionCardCatalog)[ConnectorConnectionCardId]["iconName"];
 
 export const ConnectorConnectionCardIds = Object.keys(ConnectorConnectionCardCatalog) as [
