@@ -1,5 +1,4 @@
 import { truncateUtf16Safe } from "@rally/contracts/text";
-import { PUSH_BODY_PREVIEW_CHARACTERS } from "@rally/contracts/push-notifications";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
@@ -78,6 +77,8 @@ export interface CanvasAccessSubject {
   workspaceId: string;
   title: string;
   creatorUserId: string;
+  /** Whoever manages the Sidekick that writes the Canvas, when one does: they manage its audience too. */
+  writerManagerUserIds: readonly string[];
   generation: number;
 }
 
@@ -90,26 +91,33 @@ interface RequestRow extends Record<string, SqlStorageValue> {
   created_at: number;
 }
 
+/**
+ * A name a notice carries is cut where a mention's author name is
+ * (`authorNameSnapshot`, `z.string().max(300)` in conversation-effects.ts).
+ */
+export const NAME_SNAPSHOT_CHARACTERS = 300;
+
 /** A person's name as the Organization knows them, for a notice that names them. */
 async function personName(env: Env, workspaceId: string, userId: string): Promise<string> {
   const person = await env.DB.prepare(
     `SELECT person.name FROM users person JOIN workspace_members member ON member.user_id = person.id AND member.workspace_id = ?
       WHERE person.id = ?`,
   ).bind(workspaceId, userId).first<{ name: string | null }>();
-  return truncateUtf16Safe(person?.name || "Someone", 180);
+  return truncateUtf16Safe(person?.name || "Someone", NAME_SNAPSHOT_CHARACTERS);
 }
 
 /**
  * Who is told a request waits: the people the 2026-11-07 decision lets manage
- * a Canvas's participants — its creator, and the Organization's owners and
- * administrators — who are active, never the requester. A writer Sidekick's
- * managers may also decide (`canvasManages`) but are not told.
+ * a Canvas's participants — its creator, the Organization's owners and
+ * administrators, and a writer Sidekick's managers — who are active, never
+ * the requester. Who may decide is `canvasManages`, the same people.
  */
 async function deciders(env: Env, subject: CanvasAccessSubject, requesterUserId: string): Promise<string[]> {
   const rows = await workspaceRegionalDatabase(env).prepare(
     `SELECT user_id FROM workspace_members
-      WHERE workspace_id = ? AND status = 'active' AND (user_id = ? OR role IN ('owner', 'admin'))`,
-  ).bind(subject.workspaceId, subject.creatorUserId).all<{ user_id: string }>();
+      WHERE workspace_id = ? AND status = 'active'
+        AND (user_id = ? OR user_id IN (SELECT value FROM json_each(?)) OR role IN ('owner', 'admin'))`,
+  ).bind(subject.workspaceId, subject.creatorUserId, JSON.stringify(subject.writerManagerUserIds)).all<{ user_id: string }>();
   return [...new Set(rows.results.map((row) => row.user_id))].filter((userId) => userId !== requesterUserId).sort();
 }
 
@@ -138,12 +146,14 @@ export function pendingAccessRequests(sql: SqlStorage, canvasId: string): { user
   ).toArray().map((row) => ({ userId: row.user_id, name: row.requester_name, message: row.message, requestedAt: new Date(row.created_at).toISOString() }));
 }
 
-/** The message as stored: trimmed, cut to the push's preview length, and none when empty. */
+/**
+ * The message as stored: trimmed, and none when empty. Its length is the
+ * contract's (`CanvasAccessRequestSchema`); the Activity row's preview is
+ * reduced from it as every preview is (`recordActivityItem`).
+ */
 function storedMessage(message: string | undefined): string | null {
   const trimmed = message?.trim() ?? "";
-  if (trimmed === "") return null;
-  const characters = Array.from(trimmed);
-  return characters.length > PUSH_BODY_PREVIEW_CHARACTERS ? characters.slice(0, PUSH_BODY_PREVIEW_CHARACTERS).join("") : trimmed;
+  return trimmed === "" ? null : trimmed;
 }
 
 /**

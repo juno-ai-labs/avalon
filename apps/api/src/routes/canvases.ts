@@ -24,8 +24,9 @@ import { CanvasService } from "../services/canvas-service";
 const idParam = z.object({ id: IdSchema });
 /** A malformed Canvas id is refused by name (`canvas_id_invalid:id:…`), a well-formed missing one is `canvas_not_found`. */
 const canvasIdParam = namedZValidator("canvas_id", "This is not a Canvas id")("param", idParam);
-const requesterParam = namedZValidator("canvas_id", "This is not a Canvas id or a person's id")("param",
-  z.object({ id: IdSchema, userId: UserIdSchema }));
+/** The person a decision is about, refused under its own label (`canvas_access_requester:userId:…`). */
+const requesterParam = namedZValidator("canvas_access_requester", "This is not a person's id")("param",
+  z.object({ userId: UserIdSchema }));
 
 /**
  * A Canvas: create one (with no artifacts, and optionally its first prompt),
@@ -62,9 +63,11 @@ canvasRoutes.post("/:id/access-requests", canvasIdParam, namedZValidator("canvas
   "An access request carries at most a message")("json", CanvasAccessRequestSchema), async (c) =>
   c.json(CanvasAccessRequestResultSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
     .requestAccess(c.req.valid("param").id, c.req.valid("json")))));
-canvasRoutes.post("/:id/access-requests/:userId/decision", requesterParam, namedZValidator("canvas_access_decision",
+canvasRoutes.post("/:id/access-requests/:userId/decision", canvasIdParam, requesterParam, namedZValidator("canvas_access_decision",
   "A decision is approve or deny")("json", CanvasAccessDecisionRequestSchema), async (c) => {
-  const { id, userId } = c.req.valid("param");
+  // Each validator checks its own part of the path; the Canvas id was checked by the first.
+  const id = c.req.param("id");
+  const { userId } = c.req.valid("param");
   return c.json(CanvasAccessDecisionSchema.parse(await new CanvasService(c.env, getWorkspaceAuth(c))
     .decideAccess(id, userId, c.req.valid("json").decision)));
 });

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { IdSchema, UserIdSchema, WorkstreamIdSchema } from "./identifiers";
+import { PUSH_BODY_PREVIEW_CHARACTERS } from "./notification-text";
 
 /**
  * A Canvas is a conversation first: its id is the parent id of its
@@ -206,8 +207,12 @@ export const CanvasAccessSchema = z.strictObject({
 });
 export type CanvasAccess = z.infer<typeof CanvasAccessSchema>;
 
-/** `POST /canvases/:id/access-requests`: an optional one-line message for whoever decides. */
-export const CanvasAccessRequestSchema = z.strictObject({ message: z.string().optional() });
+/**
+ * `POST /canvases/:id/access-requests`: an optional one-line message for
+ * whoever decides, bounded by what its push and Activity row carry
+ * (`PUSH_BODY_PREVIEW_CHARACTERS`), so nothing is stored that is never shown.
+ */
+export const CanvasAccessRequestSchema = z.strictObject({ message: z.string().max(PUSH_BODY_PREVIEW_CHARACTERS).optional() });
 export type CanvasAccessRequest = z.infer<typeof CanvasAccessRequestSchema>;
 
 /**

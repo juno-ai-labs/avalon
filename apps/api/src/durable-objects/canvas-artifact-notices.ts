@@ -9,6 +9,7 @@ import type { NoteActivity } from "./workspace-activity";
 import type { ParentNotice } from "./workspace-notification-intent-protocol";
 import { recordParentNotice } from "./workspace-notification-intent-storage";
 import { isArtifactNewsCause } from "./workspace-pin-storage";
+import { NAME_SNAPSHOT_CHARACTERS } from "./canvas-access-requests";
 
 /** What telling a Canvas's pinners needs from the Organization object that holds it. */
 export interface CanvasArtifactNoticeHost {
@@ -39,16 +40,16 @@ async function versionAuthor(env: Env, sql: SqlStorage, workspaceId: string, ver
       `SELECT person.name FROM users person JOIN workspace_members member ON member.user_id = person.id AND member.workspace_id = ?
         WHERE person.id = ?`,
     ).bind(workspaceId, version.author_user_id).first<{ name: string | null }>();
-    return { kind: "person", id: version.author_user_id, name: truncateUtf16Safe(person?.name || "Someone", 180) };
+    return { kind: "person", id: version.author_user_id, name: truncateUtf16Safe(person?.name || "Someone", NAME_SNAPSHOT_CHARACTERS) };
   }
   if (version.author_kind === "connector" && version.author_connection_id) {
     const connection = await env.DB.prepare(`SELECT display_name AS name FROM connector_connections WHERE workspace_id = ? AND id = ?`)
       .bind(workspaceId, version.author_connection_id).first<{ name: string | null }>();
-    return { kind: "rally", id: null, name: truncateUtf16Safe(connection?.name || "A connection", 180) };
+    return { kind: "rally", id: null, name: truncateUtf16Safe(connection?.name || "A connection", NAME_SNAPSHOT_CHARACTERS) };
   }
   if (editor.kind === "sidekick" && editor.id) {
     const sidekick = sql.exec<{ title: string }>(`SELECT title FROM automation_directory WHERE automation_id = ?`, editor.id).toArray()[0];
-    return { kind: "sidekick", id: editor.id, name: sidekick?.title || "A Sidekick" };
+    return { kind: "sidekick", id: editor.id, name: truncateUtf16Safe(sidekick?.title || "A Sidekick", NAME_SNAPSHOT_CHARACTERS) };
   }
   return { kind: "rally", id: null, name: "Rally" };
 }
