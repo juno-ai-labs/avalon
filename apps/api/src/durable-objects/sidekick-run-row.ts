@@ -39,8 +39,8 @@ export function sidekickRunRowText(state: SidekickRunRowState, reply: string | n
 export function sidekickRunRowFacts(sql: SqlStorage, turnIds: readonly string[]): Map<string, SidekickRunRowFacts> {
   if (turnIds.length === 0) return new Map();
   return new Map(sql.exec<{
-    turn_id: string; state: SidekickRunRowState; step_count: number; reply: string | null; requester_user_id: string | null;
-    run_number: number | null;
+    turn_id: string; state: SidekickRunRowState; step_count: number; reply: string | null;
+    requester_user_id: string | null; run_number: number | null;
   } & Record<string, SqlStorageValue>>(
     `SELECT turn_id, state, step_count, reply, requester_user_id, run_number FROM sidekick_run_rows
       WHERE turn_id IN (SELECT value FROM json_each(?))`,
