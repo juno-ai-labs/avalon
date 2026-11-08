@@ -9,6 +9,7 @@ import {
   linkDeepLink,
   parseLinkPathTarget,
   parseLinkTarget,
+  parseOrganizationShellTarget,
   sidekickCanonicalUrl,
   sidekickDeepLink,
 } from "./links";
@@ -58,6 +59,30 @@ describe("Canvas links", () => {
     expect(deepLink).toBe(`rallywithai://workspace/enterprise/${ENCODED_WORKSPACE_ID}/canvases/${ENCODED_CANVAS_ID}/artifacts/${uuidToBase58(ARTIFACT_ID)}`);
     expect(parseLinkTarget(deepLink, { webBaseUrl: WEB_BASE_URL })).toEqual({ kind: "canvas", ...target });
     expect(parseDesktopDeepLinkIntent(deepLink)).toEqual({ kind: "canvas", canvasId: CANVAS_ID, artifactId: ARTIFACT_ID, target: ORGANIZATION });
+  });
+
+  it("carries the message a Canvas opens at through every form", () => {
+    const turnId = "00000000-0000-7000-8000-0000000000b1";
+    const target = { ...CANVAS, turnId, sequence: 42 };
+    const url = canvasCanonicalUrl(WEB_BASE_URL, target);
+    expect(url).toBe(`https://rallywith.ai/app/enterprise/${ENCODED_WORKSPACE_ID}/cv/${ENCODED_CANVAS_ID}/?turn=${turnId}&sequence=42`);
+    expect(parseLinkTarget(url, { webBaseUrl: WEB_BASE_URL })).toEqual({ kind: "canvas", ...target });
+    const deepLink = canvasDeepLink(target);
+    expect(deepLink).toBe(`rallywithai://workspace/enterprise/${ENCODED_WORKSPACE_ID}/canvases/${ENCODED_CANVAS_ID}?turn=${turnId}&sequence=42`);
+    expect(parseLinkTarget(deepLink, { webBaseUrl: WEB_BASE_URL })).toEqual({ kind: "canvas", ...target });
+    expect(parseDesktopDeepLinkIntent(deepLink)).toEqual({ kind: "canvas", canvasId: CANVAS_ID, turnId, sequence: 42, target: ORGANIZATION });
+    const shell = `${WEB_BASE_URL}/app/workspaces/enterprise/${WORKSPACE_ID}#/canvases/${CANVAS_ID}?turn=${turnId}&sequence=42`;
+    expect(parseOrganizationShellTarget(shell, { webBaseUrl: WEB_BASE_URL })).toEqual({ kind: "canvas", ...target });
+    // Half a position, a second key, an artifact beside it or a bad sequence reads as no link.
+    for (const query of [`?turn=${turnId}`, `?sequence=42`, `?turn=${turnId}&sequence=0`, `?turn=${turnId}&sequence=4.2`,
+      `?turn=nope&sequence=42`, `?turn=${turnId}&sequence=42&extra=1`]) {
+      expect(parseLinkTarget(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/cv/${ENCODED_CANVAS_ID}/${query}`, { webBaseUrl: WEB_BASE_URL })).toBeNull();
+      expect(parseDesktopDeepLinkIntent(`rallywithai://workspace/enterprise/${ENCODED_WORKSPACE_ID}/canvases/${ENCODED_CANVAS_ID}${query}`)).toBeNull();
+    }
+    expect(parseLinkTarget(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/cv/${ENCODED_CANVAS_ID}/a/${uuidToBase58(ARTIFACT_ID)}/?turn=${turnId}&sequence=42`, { webBaseUrl: WEB_BASE_URL })).toBeNull();
+    expect(parseLinkTarget(`${WEB_BASE_URL}/app/enterprise/${ENCODED_WORKSPACE_ID}/sk/${ENCODED_SIDEKICK_ID}/?turn=${turnId}&sequence=42`, { webBaseUrl: WEB_BASE_URL })).toBeNull();
+    expect(() => canvasCanonicalUrl(WEB_BASE_URL, { ...CANVAS, turnId })).toThrow();
+    expect(() => canvasDeepLink({ ...CANVAS, artifactId: ARTIFACT_ID, turnId, sequence: 1 })).toThrow();
   });
 
   it("reads a path with or without its trailing slash, and nothing longer or undecodable", () => {

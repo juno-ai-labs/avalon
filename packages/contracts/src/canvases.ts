@@ -206,8 +206,8 @@ export type CanvasRenameRequest = z.infer<typeof CanvasRenameRequestSchema>;
  * `GET /canvases/:id/access` for a Canvas the caller cannot open: it exists
  * in their Organization and they may ask to be let in. Never its title.
  * `request` is their own latest request, if any: a pending one, or a denied
- * one (which allows a new request). An id that names no Canvas of theirs is
- * `404 canvas_not_found` instead.
+ * one (which allows a new request), with when it was declined. An id that
+ * names no Canvas of theirs is `404 canvas_not_found` instead.
  */
 export const CanvasAccessSchema = z.strictObject({
   access: z.literal("requestable"),
@@ -215,6 +215,8 @@ export const CanvasAccessSchema = z.strictObject({
   request: z.strictObject({
     state: z.enum(["pending", "denied"]),
     requestedAt: TimestampSchema,
+    /** When it was declined; null while pending. Absent from a server older than it. */
+    decidedAt: TimestampSchema.nullable().optional(),
   }).nullable(),
 });
 export type CanvasAccess = z.infer<typeof CanvasAccessSchema>;

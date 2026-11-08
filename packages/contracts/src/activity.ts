@@ -13,9 +13,9 @@ import { IdSchema, SubstreamIdSchema } from "./identifiers";
  * What happened: a mention of me, me being added, a run that needs my input,
  * a run I asked for finished, a person's reply in a conversation I am in, a
  * new version in a Canvas I pinned, somebody asking to open a Canvas I
- * decide on, and my own request being let in.
+ * decide on, my own request being let in, and my own request being declined.
  */
-export const ActivityKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished", "new_message", "artifact_updated", "access_request", "access_granted"]);
+export const ActivityKindSchema = z.enum(["mention", "participant_added", "needs_input", "run_finished", "new_message", "artifact_updated", "access_request", "access_granted", "access_denied"]);
 export type ActivityKind = z.infer<typeof ActivityKindSchema>;
 
 /** Where it happened: a Canvas, or a Sidekick (`automation`, its storage name). */
@@ -40,7 +40,8 @@ export const ActivityItemSchema = z.object({
   /**
    * The Canvas's or Sidekick's title now, read at list time; null when the
    * recipient may no longer open it or it is gone, so a title they can no
-   * longer read is never named to them.
+   * longer read is never named to them. Always null for `access_denied`: the
+   * requester was refused the Canvas, so the row names only its id.
    */
   parentTitle: z.string().max(300).nullable(),
   /** The conversation it happened in: `"0"` for the Chat or shared conversation, a run's id for a run. */
@@ -60,7 +61,9 @@ export const ActivityItemSchema = z.object({
   preview: z.string().nullable(),
   /**
    * For `access_request`: where the request stands now, and who decided it.
-   * A settled request reads as seen. Absent from a server older than it.
+   * A settled request reads as seen. For `access_denied`: the declined
+   * request, `state: "denied"`, and who declined it. Absent from a server
+   * older than it.
    * `decidedByUserId` lets a client say "You approved" to the decider
    * themselves; optional, so a client reading an older server still parses,
    * and the name stays the fallback display.

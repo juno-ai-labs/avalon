@@ -91,12 +91,24 @@ export const PushDeliveryMessageSchema = z.union([
   }).strict(),
 ]);
 export type PushDeliveryMessage = z.infer<typeof PushDeliveryMessageSchema>;
+/**
+ * What a push carries for the client that opens it. `url` is the canonical
+ * link it opens: for a `mention` or a `new_message`, the Canvas link with the
+ * message's position (`?turn=<id>&sequence=<n>`, `canvasCanonicalUrl`).
+ * `turnId` and `sequence` repeat that position for a client that routes
+ * without reading the link; `badge` is the count the alert sets on the app
+ * icon (the person's unseen Activity in the Organization, after this notice
+ * was recorded). All three are optional: absent from a server older than them.
+ */
 export const PushNotificationDataSchema = z.object({
   v: z.literal(1),
-  kind: z.enum(["mention", "new_message", "participant_added", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated", "needs_input", "access_request", "access_granted"]),
+  kind: z.enum(["mention", "new_message", "participant_added", "thread_started", "breakout_started", "run_finished", "merged", "artifact_updated", "needs_input", "access_request", "access_granted", "access_denied"]),
   url: HttpsUrlSchema,
   workspaceId: z.string(),
   region: RegionSchema,
+  turnId: z.string().uuid().optional(),
+  sequence: z.number().int().positive().optional(),
+  badge: z.number().int().nonnegative().optional(),
 });
 export type PushNotificationData = z.infer<typeof PushNotificationDataSchema>;
 
