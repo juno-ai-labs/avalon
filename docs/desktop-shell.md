@@ -390,7 +390,11 @@ the window (v4-F24). Both lists' sort controls draw ⇵ (v4-R2-12), a phone
 header puts its "More" after Share (v4-R2-14), Settings' phone title starts
 at the header's edge with the sections sheet open (v4-F23), a list row's age
 and a spelled-out age count whole units alike (v4-R2-4), and the phone bar
-names the section home the route shows (v3-R2-6).
+names the section home the route shows (v3-R2-6). In the third round the
+rule that hides Settings' sections toggle under the open sheet is keyed on
+`.app-shell`, because the shell's later `.app-shell .sidebar-menu-toggle`
+drew it again as a second × beside Settings' own (b1-N1); a renderer test
+now runs the real stylesheet's cascade at 390px to hold it.
 
 **Why:** The PRD makes design.html the authority for every screen, and the
 design inspection (v1-F1, v4-F4) measured a 264px list that cut ordinary

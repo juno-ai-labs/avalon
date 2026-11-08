@@ -68,6 +68,10 @@ export default defineConfig({
         test: {
           name: 'renderer',
           environment: 'jsdom',
+          // Vite hands every stylesheet to a test as an empty string unless it
+          // is included here. `app.css` is, so `test/app-stylesheet.ts` can
+          // mount the real cascade into jsdom; nothing imports it otherwise.
+          css: { include: [/app\.css/u] },
           setupFiles: ['./src/renderer/test/setup.ts'],
           include: ['./src/renderer/**/*.test.{ts,tsx}'],
           ...shared,

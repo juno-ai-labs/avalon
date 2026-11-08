@@ -3138,8 +3138,10 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   /* With the sections sheet open the header has one close, Settings' own:
      choosing a section or Escape shuts the sheet, so its toggle would be a
      second × beside the first (v4-F23). It leaves no room behind either, so
-     the title starts at the header's edge rather than after a gap. */
-  .settings-menu-toggle[aria-expanded="true"] { display: none; }
+     the title starts at the header's edge rather than after a gap. Keyed on
+     `.app-shell` so it outranks the shell's `.app-shell .sidebar-menu-toggle
+     { display: inline-grid }`, which comes later in this file. */
+  .app-shell .settings-menu-toggle[aria-expanded="true"] { display: none; }
 }
 @media (max-width: 640px) and (prefers-reduced-motion: reduce) {
   .settings-sidebar,
