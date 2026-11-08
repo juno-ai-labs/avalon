@@ -2826,6 +2826,11 @@ export async function runWorkstreamHarness(
         code: string;
       }): { turnId: string; transcriptSequence: number } | null
         | Promise<{ turnId: string; transcriptSequence: number } | null>;
+      /**
+       * Whether a person has asked this loop to stop. Read on every streamed
+       * chunk, so it is the loop's own row, read in the object that holds it.
+       */
+      stopRequested(): boolean;
       settleStep(input: {
         loopId: string;
         executionId: string;
@@ -4416,6 +4421,13 @@ export async function runWorkstreamHarness(
     findCompletedToolResult: (toolCallId, inputHash, policyIdentity) => findCompletedToolResult(toolCallId, inputHash, policyIdentity),
     resolveToolEffectIntentId: toolEffectIntents.resolve,
     onEvent: async (event: HarnessEvent) => {
+      // A Stop ends the response being streamed at its next chunk, so the
+      // turn settles as stopped ("Response stopped before it completed")
+      // rather than streaming to its end. Only while the model streams: a tool
+      // the response already started is left to settle and keep its receipt.
+      if (runtime?.persistentLoop && event.type === "stream_delta" && runtime.persistentLoop.stopRequested()) {
+        stopController.abort("stopped_by_user");
+      }
       if (!runtime?.persistentLoop) {
         const state = await runs.run({ runId: input.harnessRunId });
         if (state?.status === "cancelled" || state?.cancellation_requested_at) {
