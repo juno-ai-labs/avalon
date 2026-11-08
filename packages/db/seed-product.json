@@ -1,6 +1,13 @@
 {
-  "comment": "Product-authority seed fixtures. seed.sql owns only the regional control plane (users, workspaces, members); everything here belongs to a Durable Object and is written through the Worker's own paths by `pnpm db:open-authority` via POST /dev/seed-product: two Canvases (made by createCanvas, their Chats restored from these turns) and one Sidekick (createAutomation, its definition submitted and applied). Keeping these as data rather than SQL is what lets the legacy D1 product tables be dropped.",
+  "comment": "Product-authority seed fixtures. seed.sql owns only the regional control plane (users, workspaces, members); everything here belongs to a Durable Object and is written through the Worker's own paths by `pnpm db:open-authority` via POST /dev/seed-product: two Canvases (made by createCanvas, their Chats restored from these turns) and one Sidekick (createAutomation, its definition submitted and applied). `payloads` are the stored bodies a resource's `content_ref` names, written before the rows. Keeping these as data rather than SQL is what lets the legacy D1 product tables be dropped.",
   "workspaceId": "00000000-0000-7000-8000-000000000002",
+  "payloads": [
+    {
+      "key": "global/00000000-0000-7000-8000-000000000002/seed/launch-readiness.md",
+      "contentType": "text/markdown; charset=utf-8",
+      "text": "# Pricing launch readiness\n\n**Launch date:** December 3\n\n## What has to be true before we announce\n\n| Gate | Owner | Status |\n| --- | --- | --- |\n| Billing migrates annual plans to the new prices | Billing | In progress |\n| Help center pages for the new plans are live | Docs | Drafted |\n| Support has the new macros and a refund playbook | Support | Not started |\n\n## Steps\n\n1. Freeze the price table on November 24.\n2. Run the annual-plan migration in staging, then production, by November 28.\n3. Publish the help center pages on December 2, unlisted.\n4. Announce on December 3 at 9:00 AM Pacific, after the three gates above are green.\n\n## Open questions\n\n- Do existing monthly customers keep their price for one more cycle?\n- Who signs off on the announcement copy?\n"
+    }
+  ],
   "workspaceTables": {
     "connector_connections": [
       {
@@ -29,8 +36,8 @@
         "provider": "fixture",
         "provider_resource_id": "launch-readiness",
         "title": "Launch readiness notes",
-        "mime_type": "text/plain",
-        "content_ref": null,
+        "mime_type": "text/markdown",
+        "content_ref": "global/00000000-0000-7000-8000-000000000002/seed/launch-readiness.md",
         "canonical_url": null,
         "metadata_json": "{}",
         "last_hydrated_at": "2026-07-31T19:39:00.000Z",
