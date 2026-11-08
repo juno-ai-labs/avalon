@@ -30,6 +30,8 @@ describe('longestIncreasingRun', () => {
     expect(longestIncreasingRun([3, 2, 0, 1])).toEqual([2, 3]);
     expect(longestIncreasingRun([])).toEqual([]);
     expect(longestIncreasingRun([5])).toEqual([0]);
+    // A middle swap: of two equal runs, the one patience sorting kept.
+    expect(longestIncreasingRun([0, 2, 1, 3])).toEqual([0, 2, 3]);
   });
 });
 
