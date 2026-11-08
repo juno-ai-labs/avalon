@@ -42,7 +42,7 @@ observed designs. Discussion scans visit all thread pages and each thread's repl
 pages, preserving progress between polls. The first complete scan establishes a
 baseline. Later scans deduplicate by thread/reply identity, without relying on
 ordering or parent timestamps. Events contain identities rather than discussion
-bodies. Both event types declare `digestible: true` ([what that field still means](connector-digestibility.md)) and target the connection's owner under the ordinary visibility rules.
+bodies. Both event types declare `digestible: true` ([what that field still means](connectors.md#declaring-what-a-digest-may-read)) and target the connection's owner under the ordinary visibility rules.
 
 Changing a watch target establishes a fresh baseline; it cannot reuse the old
 design’s timestamp or discussion identities.
