@@ -26,7 +26,7 @@ This is the team's decision, not a conclusion of this survey; the reasoning
 behind it was not recorded here.
 
 [`domain-migration.md`](domain-migration.md) owns the hostnames, the deep-link
-scheme, and the work-stream email domain, and is the authority on all three.
+scheme, and the conversation email domain, and is the authority on all three.
 This document defers to it for those and covers everything else.
 
 Counts are occurrences across tracked files (`git ls-files`), taken at the
@@ -64,7 +64,7 @@ below from being read as bigger than it is.
 
 | Surface | Canonical form | Avalon form still present, and why |
 | --- | --- | --- |
-| npm packages | `@rally/api`, `@rally/contracts`, `@rally/db`, `@rally/desktop`, `@rally/agent-harness`, `@rally/connectors`, `@rally/site`, `@rally/ace`, `@rally/migration-tracker`, `@rally/release-retention` | none |
+| npm packages | `@rally/api`, `@rally/browser`, `@rally/contracts`, `@rally/db`, `@rally/desktop`, `@rally/agent-harness`, `@rally/connectors`, `@rally/electron-network`, `@rally/engineering-mcp`, `@rally/ui`, `@rally/site`, `@rally/ace`, `@rally/migration-tracker`, `@rally/release-retention` | none |
 | Public hostnames | `rallywith.ai` and its nine subdomains | ten `with-avalon.com` hostnames still served — [`domain-migration.md`](domain-migration.md) owns the retirement conditions |
 | Product HTTP headers | `x-rally-*`, read through `readRallyHeader` | `x-avalon-*` accepted as superseded prefixes (31 occurrences, 9 files) |
 | Desktop bundle | `appId: ai.rallywith.desktop`, `productName: Rally` | none |
@@ -72,7 +72,7 @@ below from being read as bigger than it is.
 | Renderer origin | `app://rallywithai` | `app://avalon` still admitted by `ALLOWED_ORIGINS` (50 occurrences) |
 | Telemetry envelope | Rally identifiers | superseded Avalon identifiers still parsed |
 | Desktop userData / session dirs | `rally-data` and the canonical userData path | superseded directories adopted once at launch |
-| GitHub App and provider request identity | `Rally With AI`, Rally request metadata, and `Rally Agent` commits | existing and new work-stream head refs remain `avalon/<slug>`; the prefix is stored and visible on GitHub, so moving it requires an explicit compatibility plan that continues accepting in-flight refs |
+| GitHub App and provider request identity | `Rally With AI`, Rally request metadata, and `Rally Agent` commits | existing and new Terminal branch head refs remain `avalon/<slug>` (`repository-selection.ts`); the prefix is stored and visible on GitHub, so moving it requires an explicit compatibility plan that continues accepting in-flight refs |
 
 Everything in that table is a *deliberate* Avalon reference. It is compatibility
 surface with a documented retirement condition, not rename debt.
@@ -273,7 +273,8 @@ The work-stream system prompt opened `You are Avalon`, so the agent introduced
 itself by the code name, in its own voice, to every user in every work stream.
 
 Five prompts said it outright and now say Rally: the work-stream system prompt,
-Control Tower and the end-of-meeting summarizer in `meeting-notes-service.ts`,
+Control Tower and the end-of-meeting summarizer in `meeting-notes-service.ts`
+(since deleted with meeting notes),
 the automation architect in `prompts/automation-compiler.ts` (since deleted with
 the first automation object), and the read-only sub-agent in `integrations.ts`. The prompt bodies moved with them — the
 addressing classifier, work-opportunity admission and ranking, the Bind
@@ -313,7 +314,8 @@ the four Slack connector labels moved earlier, in the Slack cut-over.
 **Not section 9, and deliberately left here:** the API error strings surfaced
 in the client UI. Those are user-facing copy the public-site pass did not reach,
 and they are section 7's remainder rather than this section's. The digest email
-(`digest-email-content.ts`), once listed here too, now says Rally.
+(`digest-email-content.ts`, since deleted with the digest), once listed here
+too, said Rally before it went.
 
 The two **person-notification** emails — `participant-` and
 `mention-email-service.ts` — have moved, along with configured deployments'
@@ -402,7 +404,7 @@ agents; this is the record of what each step left behind.
 | Spaces | A **Project** became a **Space** and grew in scope. | None: `projects` was retired with its mechanism (its retirement record is in [`architecture.md`](architecture.md)). |
 | Channels | A **Work stream** became a **Channel**; a **Substream** became a **Breakout**. | `workstream`, `substream`. |
 | Navigation redesign ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) | A **Space** became a **Channel**, and a **Channel** became a **Thread**. | `spaces` held Channels; `channels` and `workstream` held Threads. |
-| Canvases and Sidekicks ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)) | A **Thread**, a **Channel** and a **Breakout** became nothing: they were deleted, not renamed. The product is two sections, **Canvases** and **Sidekicks**. | A Canvas id is a `workstream` id (`WorkstreamId`, `artifact_registry.workstream_id`, `artifact_state.workstream_id`); a Canvas's Chat is substream `"0"`; a Sidekick is an `automation`; the conversation Durable Object, renamed from `SubstreamAgent` to `AgentLoopDO`, keeps its `SUBSTREAM_AGENTS` binding and `workstream:<parent>:substream:<id>:loop` object names, since those are identities. Client names such as `WorkstreamDetail`, `useWorkstreamSocket` and `WorkstreamComposer` stay. The `spaces`, `channels` and Thread tables stay in storage. A few readers left over from plan step C-2 still query `channels` and `spaces` (`memory-digest-sync.ts`, `search-authorization-universe.ts`, `workspace-conversation-view.ts`, `workspace-do.ts`, `workspace-memory-facts-storage.ts` and `engineering-inspection-bridge.ts`); the tables are dropped once those readers go. |
+| Canvases and Sidekicks ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)) | A **Thread**, a **Channel** and a **Breakout** became nothing: they were deleted, not renamed. The product is two sections, **Canvases** and **Sidekicks**. | A Canvas id is a `workstream` id (`WorkstreamId`, `artifact_registry.workstream_id`, `artifact_state.workstream_id`); a Canvas's Chat is substream `"0"`; a Sidekick is an `automation`; the conversation Durable Object, renamed from `SubstreamAgent` to `AgentLoopDO`, keeps its `SUBSTREAM_AGENTS` binding and `workstream:<parent>:substream:<id>:loop` object names, since those are identities. Client names such as `WorkstreamDetail`, `useWorkstreamSocket` and `WorkstreamComposer` stay. The `spaces`, `channels` and Thread tables stay in storage. A few readers left over from plan step C-2 still query `channels` and `spaces` or keep triggers on them (`memory-digest-sync.ts`, `workspace-conversation-view.ts`, `workspace-do.ts` and `workspace-memory-facts-storage.ts`); the tables are dropped once those readers go. |
 
 ## What this inventory does not settle
 
