@@ -58,6 +58,12 @@ export const CanvasSummarySchema = z.object({
   /** The Sidekick that writes this Canvas, when a run made it. */
   writerSidekickId: IdSchema.nullable(),
   visibility: CanvasVisibilitySchema,
+  /**
+   * `naming` while a Canvas made with no title waits for the title its
+   * opening message gives it; `settled` after, or once a person retitles it.
+   * Absent from an older Worker, and reads as `settled`.
+   */
+  titleStatus: z.enum(["naming", "settled"]).optional(),
 });
 export type CanvasSummary = z.infer<typeof CanvasSummarySchema>;
 

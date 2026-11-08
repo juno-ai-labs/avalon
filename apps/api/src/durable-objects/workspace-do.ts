@@ -706,7 +706,7 @@ import {
   type ScopedConversation,
 } from "./workspace-sidekick-conversation-storage";
 import { activityPage, hasActivityFor, markAllActivitySeen, WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS } from "./workspace-activity";
-import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
+import { CANVAS_ARTIFACTS_STATEMENTS, CANVAS_NAMING_ALARM_KIND, CANVAS_SCHEMA_STATEMENTS, CANVAS_SIDEKICK_PINS_STATEMENTS, CANVAS_TITLE_STATUS_STATEMENTS, SIDEKICK_ATTACHMENTS_ADMIT_CANVAS_STATEMENTS, RETIREMENT_GRAPH_CANVAS_MIGRATION } from "./canvas-schema";
 import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas, writerSidekickAdmits, type CanvasRow, type HostedCanvasHost } from "./hosted-canvas";
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
@@ -1027,7 +1027,7 @@ const RETIRED_ALARM_KINDS: ReadonlySet<string> = new Set([
  */
 const WORKSPACE_DISPATCHED_ALARM_KINDS: ReadonlySet<string> = new Set([
   ...HOSTED_SIDEKICK_ALARM_KINDS, ...RETIRED_ALARM_KINDS, ...WORKSPACE_SCHEDULE_ALARM_KINDS,
-  SCOPE_INVITATION_INDEX_ALARM, SCOPE_INVITATION_DELIVERY_ALARM, SCHEDULE_BOOTSTRAP_ALARM_KIND,
+  SCOPE_INVITATION_INDEX_ALARM, SCOPE_INVITATION_DELIVERY_ALARM, SCHEDULE_BOOTSTRAP_ALARM_KIND, CANVAS_NAMING_ALARM_KIND,
 ]);
 
 function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTargetKind {
@@ -4373,6 +4373,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   description: "record each person's Activity: one row per mention, add and Sidekick run notice they were sent",
   // See WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS and docs/activity.md.
   statements: WORKSPACE_ACTIVITY_SCHEMA_STATEMENTS,
+}, {
+  version: 149,
+  description: "record whether a Canvas made with no title still waits for its opening message's title",
+  // See CANVAS_TITLE_STATUS_STATEMENTS and docs/canvases.md.
+  statements: CANVAS_TITLE_STATUS_STATEMENTS,
 }];
 
 function conversationToolEntry(conversation: {
@@ -5411,6 +5416,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return {
       env: this.env,
       storage: this.state.storage,
+      alarms: this.scheduledAlarms,
       readRelationship: (workspaceId, userId) => this.readRelationship(workspaceId, userId),
       noteRelationship: (relationship) => this.noteRelationship(relationship),
       noteCanvasReadChanged: (userId) => {
@@ -7038,6 +7044,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         if (RETIRED_ALARM_KINDS.has(alarm.kind)) return;
         // A Canvas's share deliveries and lookup rows. One a retired Thread or
         // Channel armed has no parent left to deliver for.
+        // A Canvas made with no title, titled from its opening message.
+        if (alarm.kind === CANVAS_NAMING_ALARM_KIND) {
+          await this.canvasWrite(async () => (await this.canvasParent(alarm.key))?.nameFromOpening());
+          return;
+        }
         if (alarm.kind === SCOPE_INVITATION_INDEX_ALARM) {
           await (await this.canvasParent(alarm.key))?.indexPendingInvitations();
           return;

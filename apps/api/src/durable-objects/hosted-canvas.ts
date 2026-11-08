@@ -35,6 +35,10 @@ import { assertAudienceInOrganization, HostedConversation, type HostedConversati
 import { sidekickManagerAllows, sidekickReaderAllows } from "./hosted-sidekick";
 import { ScopeInvitationService } from "./scope-invitation-service";
 import { artifactNewsSql } from "./workspace-pin-storage";
+import { CANVAS_NAMING_ALARM_KIND } from "./canvas-schema";
+import type { ScheduledAlarmStore } from "./scheduled-alarms";
+import { createMessageObjectPort } from "../runtime/message-port";
+import { canvasTitleFromOpening } from "../services/canvas-naming";
 
 /** Who is asking: their id and, for a member, their Organization role; a guest has none. */
 export const CanvasActorSchema = z.strictObject({
@@ -55,6 +59,8 @@ export const CanvasCreateRequestSchema = z.strictObject({
    * that made it. It starts out open to whoever the Sidekick is shared with.
    */
   writer: z.strictObject({ sidekickId: IdSchema, runId: IdSchema }).optional(),
+  /** `naming` for a Canvas made with no title, which its opening message titles. */
+  titleStatus: z.enum(["naming", "settled"]).optional(),
   /**
    * The id already has a D1 anchor: a caller-minted id another conversation
    * may hold. Only a replay of this creator's own Canvas is answered then.
@@ -114,10 +120,14 @@ export interface CanvasRow extends Record<string, SqlStorageValue> {
   writer_run_id: string | null;
   visibility: "creator" | "participants" | "workspace";
   authority_generation: number;
+  /** `naming` while a Canvas made with no title waits for its opening message's (migration 149). */
+  title_status: "naming" | "settled";
 }
 
 /** What a hosted Canvas needs from the Organization object that holds it. */
 export interface HostedCanvasHost extends HostedConversationHost {
+  /** The Organization object's alarm entries; the naming pass is one. */
+  alarms: ScheduledAlarmStore;
   /** Inside the transaction that changed one person's read of a Canvas's Chat: their Canvas list, sent only to them. */
   noteCanvasReadChanged(userId: string): void;
   noteRelationship(relationship: WorkspaceRelationship): void;
@@ -148,6 +158,7 @@ export function canvasSummary(row: CanvasRow): CanvasSummary {
     lastEditor: row.last_editor_kind ? { kind: row.last_editor_kind, id: row.last_editor_id } : null,
     writerSidekickId: row.writer_sidekick_id,
     visibility: row.visibility,
+    titleStatus: row.title_status,
   });
 }
 
@@ -243,6 +254,38 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     if ((prior?.latestAttentionOrdinal ?? null) === (effect.latestAttentionOrdinal ?? null)) return;
     this.sql.exec(`UPDATE canvas_directory SET updated_at = MAX(updated_at, ?) WHERE canvas_id = ?`, now, this.canvasId);
     this.host.noteCanvasDirectoryChanged(this.canvasId);
+    // The Chat's first message has landed in a Canvas still waiting for a
+    // title: the naming pass reads it. Armed again by a later message before
+    // it runs, which is the same entry.
+    if ((effect.latestAttentionOrdinal ?? 0) >= 1 && this.row()?.title_status === "naming") {
+      this.host.alarms.schedule({ kind: CANVAS_NAMING_ALARM_KIND, key: this.canvasId, dueAt: now }, now);
+    }
+  }
+
+  /**
+   * Title a Canvas made with no title from the message that opened its Chat
+   * (`canvasTitleFromOpening`), through the write a retitle makes, so the
+   * list and the detail move together. Only while it is still `naming`: a
+   * person who retitled it first settled it, and their title stands. A model
+   * that answers nothing settles it as it is, rather than leaving it waiting.
+   */
+  async nameFromOpening(): Promise<void> {
+    const row = this.row();
+    if (!row || row.title_status !== "naming") return;
+    const [opening] = await createMessageObjectPort(this.env, row.workspace_id, this.canvasId)
+      .saidMessages({ messageTypes: { include: ["text"] }, order: "oldest", limit: 1 });
+    if (!opening) return;
+    const title = opening.author_type === "agent" ? null : await canvasTitleFromOpening(this.env, {
+      workspaceId: row.workspace_id, canvasId: this.canvasId, userId: opening.author_user_id, opening: opening.text_content,
+    });
+    this.host.storage.transactionSync(() => {
+      const settled = this.sql.exec(
+        `UPDATE canvas_directory SET title = COALESCE(?, title), title_status = 'settled', updated_at = ?
+          WHERE canvas_id = ? AND title_status = 'naming' RETURNING canvas_id`,
+        title, Date.now(), this.canvasId,
+      ).toArray().length === 1;
+      if (settled) this.host.noteCanvasDirectoryChanged(this.canvasId);
+    });
   }
 
   /** What resource and search authorization decide a Canvas reader from (`canvasAdmits`). */
@@ -274,7 +317,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   row(): CanvasRow | null {
     return this.sql.exec<CanvasRow>(
       `SELECT canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at, last_editor_kind,
-              last_editor_id, writer_sidekick_id, writer_run_id, visibility, authority_generation
+              last_editor_id, writer_sidekick_id, writer_run_id, visibility, authority_generation, title_status
          FROM canvas_directory WHERE canvas_id = ?`,
       this.canvasId,
     ).toArray()[0] ?? null;
@@ -319,7 +362,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
       this.insertRow({
         workspaceId: request.workspaceId, title: request.title, createdByUserId: request.createdByUserId,
         createdAt: now, updatedAt: now, writer: request.writer ?? null, visibility: "creator",
-        authorityGeneration: request.authorityGeneration,
+        authorityGeneration: request.authorityGeneration, titleStatus: request.titleStatus ?? "settled",
       });
       return { created: true, canvasId: this.canvasId };
     });
@@ -340,7 +383,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
         if (existing.workspace_id !== request.workspaceId) throw notFound();
         return { created: false };
       }
-      this.insertRow({ ...request, writer: null });
+      this.insertRow({ ...request, writer: null, titleStatus: "settled" });
       for (const participant of request.participants) {
         if (participant.userId === request.createdByUserId) continue;
         this.sql.exec(
@@ -363,13 +406,14 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
   private insertRow(row: {
     workspaceId: string; title: string; createdByUserId: string; createdAt: number; updatedAt: number;
     writer: { sidekickId: string; runId: string } | null; visibility: CanvasRow["visibility"]; authorityGeneration: number;
+    titleStatus: CanvasRow["title_status"];
   }): void {
     this.sql.exec(
       `INSERT INTO canvas_directory (canvas_id, workspace_id, title, created_by_user_id, created_at, updated_at,
-         last_editor_kind, last_editor_id, writer_sidekick_id, writer_run_id, visibility, authority_generation)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`,
+         last_editor_kind, last_editor_id, writer_sidekick_id, writer_run_id, visibility, authority_generation, title_status)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
       this.canvasId, row.workspaceId, row.title, row.createdByUserId, row.createdAt, row.updatedAt,
-      row.writer?.sidekickId ?? null, row.writer?.runId ?? null, row.visibility, row.authorityGeneration,
+      row.writer?.sidekickId ?? null, row.writer?.runId ?? null, row.visibility, row.authorityGeneration, row.titleStatus,
     );
     this.host.noteCanvasDirectoryChanged(this.canvasId);
   }
@@ -466,7 +510,9 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     const row = this.assertCanvas(request.workspaceId, request.canvasId);
     if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
     this.host.storage.transactionSync(() => {
-      this.sql.exec(`UPDATE canvas_directory SET title = ?, updated_at = ? WHERE canvas_id = ?`, request.title, Date.now(), this.canvasId);
+      // A person's title settles it, so a naming pass still in flight leaves it alone.
+      this.sql.exec(`UPDATE canvas_directory SET title = ?, title_status = 'settled', updated_at = ? WHERE canvas_id = ?`,
+        request.title, Date.now(), this.canvasId);
       this.host.noteCanvasDirectoryChanged(this.canvasId);
     });
     return this.detail({ workspaceId: request.workspaceId, canvasId: request.canvasId, actor: request.actor });
