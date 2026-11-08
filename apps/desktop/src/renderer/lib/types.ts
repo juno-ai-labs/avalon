@@ -689,6 +689,13 @@ export interface Message {
    */
   workAccordion?: WorkTotal & { rows: Message[] };
   elicitation?: ElicitationData;
+  /**
+   * On an answered question's own row (the asker's turn): the person's answer
+   * has its own row after it, so this row draws the question alone. Without
+   * it, until the answer's turn lands, the row draws the answer under the
+   * question.
+   */
+  elicitationAnswerFollows?: boolean;
 }
 
 export interface BackgroundTask {
