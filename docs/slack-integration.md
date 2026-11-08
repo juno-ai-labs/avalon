@@ -221,7 +221,7 @@ correlation id in place of a session id) after verifying the active
 it to a conversation object. Nothing weaker than a link authorizes anything: a
 `users.lookupByEmail`-grade match credits somebody and cannot spend their
 credentials. The shared actor identity behind that mapping is
-[the connector document's](connectors.md#actor-identity-and-work-stream-attribution).
+[the connector document's](connectors.md#actor-identity-and-message-attribution).
 
 ### Agent sessions and delivery
 
@@ -249,10 +249,10 @@ work.
 In a conversation Slack marks as not threadable, Rally never posts into a
 thread: results are posted at the top level.
 
-The `slack_agent_sessions` rows the Thread path wrote stay in storage, and
-nothing reads or writes them: routing is the binding's. A **feedback** modal
-opened from an old Thread card is refused on submit ("This task is no longer
-available."), since the task it rated was a Thread. A person who joins an
+The `slack_agent_sessions` rows the retired Thread path wrote stay in storage,
+and nothing reads or writes them: routing is the binding's. A **feedback** modal
+opened from an old task card is refused on submit ("This task is no longer
+available."), since the task it rated no longer exists. A person who joins an
 organization still has their Slack identity found by verified email and
 recorded in the connector directory; nothing is seated on a session any more.
 The persisted Rally run is canonical: a Slack delivery failure never rewrites a
@@ -265,7 +265,7 @@ bound Sidekick run's thread (`slack-agent-service.ts`): it places the
 acknowledgement emoji (`eyes` by default), or the stopped emoji
 (`octagonal_sign`) when the Sidekick is paused, and never removes anything. The
 outcome reactions and their swap through `slack_agent_sessions.reaction_current`
-went with the Thread delivery path. Reaction sets resolve most-specific-wins:
+went with the retired task delivery path. Reaction sets resolve most-specific-wins:
 the built-in defaults, then a workspace override on the installation's
 `config_json`. Slack exposes no way to check that an emoji name exists before
 using it, so a name it rejects with `invalid_name` falls back to Rally's own
@@ -312,8 +312,7 @@ Slack and email are delivered independently, so a failure in one is retried with
 
 ### App Home
 
-App Home lists the person's Sidekicks only; the Thread rows are gone with
-Threads. App Home is a personalized control surface published per user. Rally publishes only for `app_home_opened` events whose tab is `home` and supplies Slack's current view hash to protect against stale updates.
+App Home lists the person's Sidekicks only. App Home is a personalized control surface published per user. Rally publishes only for `app_home_opened` events whose tab is `home` and supplies Slack's current view hash to protect against stale updates.
 
 #### Unlinked
 
@@ -367,8 +366,7 @@ Every link Rally posts is a Canvas's or a Sidekick's canonical link,
 `link_shared` only for the registered unfurl domain, so a link must be on that
 domain, with the id in its path, to be unfurled at all; `rallywithai://` links
 pasted by a member never produce an event and cannot be previewed. A
-notification about a Thread, which has no link now, is not sent, and the task
-controls Thread replies carried went with the Thread delivery path.
+notification about a conversation with no Canvas or Sidekick link is not sent.
 
 Every other web button uses an allowlisted HTTPS-to-desktop handoff carrying the
 installation's region/workspace target. Canvas and Sidekick IDs may cross that boundary;
@@ -458,8 +456,8 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
   `needs_reconnect` still reaches Slack and fails on Slack's answer; only a
   *disabled* installation is refused, because disabling clears the credentials and
   drops the row from `connectionForTeam`.
-- **The acknowledgement reaction is added by the host control plane after
-  admission and authorization but before context gathering**, and
+- **The acknowledgement reaction is added by the host control plane once a
+  reply is admitted into a bound run's thread**, never by model output, and
   `already_reacted` is a successful retry.
 - **Rally's reaction writer never removes a reaction.** It places one emoji on
   an admitted reply (`remove: null`); removing whatever it found there would
@@ -532,7 +530,7 @@ not own:
 | The registration and its secrets | [`provider-apps.md`](provider-apps.md) |
 | The zero-copy definition this obeys | [`provider-apps.md`](provider-apps.md#the-zero-copy-connector-boundary) |
 | Connector-wide adapter rules and health semantics | [`connectors.md`](connectors.md) |
-| The shared actor-identity resolution behind attribution | [`connectors.md`](connectors.md#actor-identity-and-work-stream-attribution) |
+| The shared actor-identity resolution behind attribution | [`connectors.md`](connectors.md#actor-identity-and-message-attribution) |
 | The unfurl card, its audience rules, and the refresh sweep | [`links.md`](links.md) |
 | Frozen automation delivery targets | [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) |
 | The configured deployment boundary the shared ingress sits on | [`regionalization.md`](regionalization.md) |
