@@ -62,8 +62,8 @@ a window over every listed row before the page's `LIMIT`, and the filter is
 the rule `canvasSidebarRows` and the Sidekick list
 (`SIDEBAR_SIDEKICK_LISTED_SQL`) already take, joined. Only a Canvas a
 Sidekick writes, whose audience includes that Sidekick's, is decided in code
-(`writerSidekickAdmits`), asked once per writer of a Canvas the person has
-Activity about before the page is read, and passed into the statement.
+(`writerSidekickAdmits`), asked once per Sidekick that writes a Canvas
+before the page is read, and passed into the statement.
 
 ### Seen is derived
 
@@ -195,8 +195,8 @@ them. The menu bar and the dock badge do not read it.
 
 - **No retention.** Rows are kept for as long as the Organization object
   exists; nothing deletes them, including the deletion of their Canvas or
-  Sidekick (the row stays stored and no longer lists). Whether and when to prune is a
-  decision not yet made; a cap would be a number the team sets
+  Sidekick (the row stays stored and no longer lists). Whether and when to
+  prune is a decision not yet made; a cap would be a number the team sets
   ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
 - **The page is the newest `SIDEBAR_LIST_LIMIT` (250) rows.** Older rows are
   counted in `unseenCount` but not listed; there is no paging. Mark all seen
@@ -238,8 +238,8 @@ alarm, read from a socket's subscribe answer; a finished run clears, and the
 list is sent again, on a read report at an unchanged cursor; a mention in a
 run's conversation stays unseen however far the shared conversation is read;
 a confirmed mention in a creator-only Canvas sends its person nothing until
-they are added to it. The run cases poll: the notice is recorded by an alarm the object arms
-itself.
+they are added to it. The run cases poll: the notice is recorded by an alarm
+the object arms itself.
 
 The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 `navigation-sidebar.test.tsx` the rows, their links, the badge, the empty state and Mark all seen, and `rail-dock-badge.test.tsx` that the dock badge leaves Activity out.

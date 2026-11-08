@@ -60,12 +60,12 @@ describe('the Canvas routes', () => {
       const response = await patch(CANVAS_ID, { title });
       expect(response.status).toBe(400);
       expect(await response.json()).toEqual({ error: {
-        code: `canvas_rename_invalid:title:${issue}`, message: `The request is invalid: title:${issue}`, requestId: null } });
+        code: `canvas_rename_invalid:title:${issue}`, message: 'A Canvas title needs 1 to 300 characters other than spaces at either end', requestId: null } });
     }
     const malformed = await patch('not-a-canvas', { title: 'Launch plan' });
     expect(malformed.status).toBe(400);
     expect(await malformed.json()).toEqual({ error: {
-      code: 'canvas_id_invalid:id:invalid_format', message: 'The request is invalid: id:invalid_format', requestId: null } });
+      code: 'canvas_id_invalid:id:invalid_format', message: 'This is not a Canvas id', requestId: null } });
     expect(rename).not.toHaveBeenCalled();
   });
 

@@ -172,8 +172,9 @@ export interface ActivityViewer {
  * they cannot open sends nothing, not its preview, message or ids, and counts
  * toward nothing. The row stays stored, so it lists once access arrives. The
  * one rule SQL does not express, a Canvas a Sidekick writes admitting that
- * Sidekick's audience, is `writerAdmits`, asked once per writer of a Canvas
- * this person has Activity about, before the page is read.
+ * Sidekick's audience, is `writerAdmits`, asked once per Sidekick that
+ * writes a Canvas, before the page is read: bounded by those Sidekicks, not
+ * by the person's rows.
  */
 export function activityPage(
   sql: SqlStorage,
@@ -183,11 +184,7 @@ export function activityPage(
   writerAdmits: (sidekickId: string) => boolean,
 ): { unseenCount: number; items: ActivityItem[] } {
   const admittingWriters = sql.exec<{ writer_sidekick_id: string }>(
-    `SELECT DISTINCT canvas.writer_sidekick_id
-       FROM workspace_activity_items item
-       JOIN canvas_directory canvas ON canvas.canvas_id = item.parent_id
-      WHERE item.recipient_user_id = ?1 AND item.parent_kind = 'canvas' AND canvas.writer_sidekick_id IS NOT NULL`,
-    viewer.userId,
+    `SELECT DISTINCT writer_sidekick_id FROM canvas_directory WHERE writer_sidekick_id IS NOT NULL`,
   ).toArray().map((row) => row.writer_sidekick_id).filter((sidekickId) => writerAdmits(sidekickId));
   const rows = sql.exec<ActivityRow>(
     `WITH mine AS (

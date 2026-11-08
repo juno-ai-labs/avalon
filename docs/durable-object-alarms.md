@@ -584,7 +584,11 @@ In Workers Logs, select the `WorkspaceDO` namespace and filter
 `event = workspace_scheduled_alarm_work_completed` with
 `crossed_recovery_horizon = true`. Group by `slowest_phase` and then
 `slowest_alarm_kind`; the latter is present only when the slowest phase is a
-stored target. Open the enclosing invocation or trace to see the ordered phase
+stored target. A stored target's kind is named when `runScheduledAlarm`
+dispatches it (`WORKSPACE_DISPATCHED_ALARM_KINDS`, built from the
+dispatcher's own constants) and is `unknown` otherwise; a hand-kept copy of
+that list once fell behind and logged every Sidekick run notice as
+`unknown`. Open the enclosing invocation or trace to see the ordered phase
 rows and Cloudflare's automatic binding spans beneath the custom phase span. If
 multiple phases tie at the maximum millisecond duration, the summary names the
 first one that completed; inspect the completion rows to see every tied phase.

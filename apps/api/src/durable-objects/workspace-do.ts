@@ -711,6 +711,7 @@ import { canvasesWrittenBy, canvasReaderAllows, canvasSidebarRows, HostedCanvas,
 import { HOSTED_SIDEKICK_SCHEMA_STATEMENTS, SIDEKICK_REVIEW_SCHEMA_STATEMENTS, SIDEKICK_RUN_ROW_SCHEMA_STATEMENTS, SIDEKICK_AUDIENCE_SCHEMA_STATEMENTS, SIDEKICK_RUN_REQUESTER_SCHEMA_STATEMENTS } from "./hosted-sidekick-schema";
 import {
   HostedSidekick,
+  HOSTED_SIDEKICK_ALARM_KINDS,
   hostedSidekickAlarmTarget,
   sidekickReaderAllows,
   skillSource,
@@ -1018,6 +1019,15 @@ const SCHEDULE_BOOTSTRAP_ALARM_KIND = "schedule_bootstrap";
  */
 const RETIRED_ALARM_KINDS: ReadonlySet<string> = new Set([
   "product", "personal_channel_backfill", PARTICIPANT_PROJECTION_ALARM, PARTICIPANT_MIGRATION_ALARM,
+]);
+
+/**
+ * Every stored kind `runScheduledAlarm` handles, which its phase lines name;
+ * any other logs as `unknown`.
+ */
+const WORKSPACE_DISPATCHED_ALARM_KINDS: ReadonlySet<string> = new Set([
+  ...HOSTED_SIDEKICK_ALARM_KINDS, ...RETIRED_ALARM_KINDS, ...WORKSPACE_SCHEDULE_ALARM_KINDS,
+  SCOPE_INVITATION_INDEX_ALARM, SCOPE_INVITATION_DELIVERY_ALARM, SCHEDULE_BOOTSTRAP_ALARM_KIND,
 ]);
 
 function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTargetKind {
@@ -7006,7 +7016,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<ScheduledAlarmOutcome> {
     return this.instrumentWorkspaceAlarmPhase(
       "stored_target",
-      observableWorkspaceScheduledAlarmKind(alarm.kind),
+      observableWorkspaceScheduledAlarmKind(alarm.kind, WORKSPACE_DISPATCHED_ALARM_KINDS),
       async () => {
         const workspaceId = this.workspaceId();
         if (!workspaceId) return;
