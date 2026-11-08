@@ -11,7 +11,7 @@
 >
 > Conventions for this folder: [`../../prds.md`](../../prds.md).
 
-Rally is an AI-native workplace for doing work with Rally and with shared AI agents, organized around two shared homes rather than direct messages, search, or a global inbox: Canvases, where people and Rally make things together, and Sidekicks, the agents people share. Its visible hierarchy is Organizations, then the Canvases and Sidekicks inside them.
+Rally is an AI-native workplace for doing work with Rally and with shared AI agents, organized around two shared homes rather than direct messages, search, or a global inbox: Canvases, where people and Rally make things together, and Sidekicks, the agents people share. Activity, the third section beside them, is each person's own list of what happened in the Canvases and Sidekicks they take part in; it is not an inbox anyone writes to. Its visible hierarchy is Organizations, then the Canvases and Sidekicks inside them.
 
 ## Product contract
 
@@ -28,7 +28,7 @@ Rally is an AI-native workplace for doing work with Rally and with shared AI age
 - Rally is inherent in every Canvas's conversation. It is never shown as a removable participant.
 - Viewing does not create participation. Creating, posting, answering an elicitation, or being explicitly added does. An impersonation-aware surface may perform a participant action under an active workspace-scoped **can impersonate** relationship while retaining audit attribution to the initiating operator. The relationship is independent of demo status; the surface still applies the represented participant's ordinary authorization and availability rules.
 - Every run is a child of its Sidekick's shared conversation. A scheduled run is admitted at its due time; Rally does not pre-open a run merely because a future occurrence exists.
-- Rally has no Channels, Threads, Breakouts, Activity feed, routing suggestions or digests. Connected activities either trigger Sidekick work or enrich an explicitly watched resource, nothing else; Rally has no feed of connector activity.
+- Rally has no Channels, Threads, Breakouts, routing suggestions or digests. Activity is a per-person list of mentions, new messages, being added, Sidekick runs, pinned Canvas updates and access requests, cleared by reading; it carries no connector activity. Connected activities either trigger Sidekick work or enrich an explicitly watched resource, nothing else; Rally has no feed of connector activity.
 - Structured elicitation appears in a Canvas's conversation and in a Sidekick's conversation.
 - The agent uses typed, authorized tools. An ordinary run may load
   the Terminal plugin and execute bounded file/command operations inside one
