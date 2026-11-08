@@ -6744,7 +6744,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .automation-header .workstream-header-actions { width: 100%; gap: 8px; }
 .automation-header .workstream-header-actions > .button { flex: 1; justify-content: center; }
 .automation-lifecycle.is-draft { border-style: dashed; color: var(--av-sys-color-text-muted); }
-.automation-lifecycle.is-active { background: var(--av-sys-color-success-wash, transparent); color: var(--av-sys-color-success-base); }
+.automation-lifecycle.is-active { background: var(--av-sys-color-success-wash, transparent); color: var(--av-sys-color-success-strong); }
 .automation-lifecycle.is-paused { background: var(--av-sys-color-warning-wash); color: var(--av-sys-color-warning-soft); }
 .automation-header-details { display: flex; flex-direction: column; gap: 24px; }
 .sidekick-profile-section { border-top: 1px solid var(--av-sys-color-border-subtle); padding-top: 20px; min-width: 0; }
@@ -6869,7 +6869,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 /* design.html §3's status pills: green Active and Working (with its dot), amber
    Paused, a dashed Draft; and the red Needs input badge beside the name. */
 .sidekick-status-pill { align-items: center; border-radius: var(--av-sys-size-radius-pill); display: inline-flex; font-size: 13px; gap: 6px; padding: 3px 10px; }
-.sidekick-status-pill.is-active, .sidekick-status-pill.is-working { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-base); }
+/* success-strong on the wash: success-base read 3.96:1 there in light. */
+.sidekick-status-pill.is-active, .sidekick-status-pill.is-working { background: var(--av-sys-color-success-wash); color: var(--av-sys-color-success-strong); }
 .sidekick-status-pill.is-paused { background: var(--av-sys-color-warning-wash); color: var(--av-sys-color-warning-soft); }
 .sidekick-status-pill.is-draft { border: 1px dashed var(--av-sys-color-border-default); color: var(--av-sys-color-text-muted); }
 .sidekick-working-dot { background: var(--av-sys-color-success-base); border-radius: 999px; display: inline-block; flex: none; height: 8px; margin-right: 5px; width: 8px; }
@@ -6918,7 +6919,13 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-conversation-heading { align-items: center; column-gap: 12px; display: flex; flex-wrap: wrap; padding: 8px 28px 16px; row-gap: 10px; }
 /* Nothing to say above the feed: the header row collapses. */
 .sidekick-conversation-heading:empty { padding: 0; }
-.sidekick-editing-badge { background: var(--av-sys-color-surface-raised-hover); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-muted); font-size: 12px; padding: 3px 10px; }
+/* The edit mode's chip, at the composer: default ink on the raised surface
+   for contrast, with its close beside the words. */
+.sidekick-editing-badge { align-items: center; background: var(--av-sys-color-surface-raised-hover); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: inline-flex; font-size: 12px; font-weight: 500; gap: 6px; padding: 3px 4px 3px 10px; }
+.sidekick-editing-close { align-items: center; background: none; border: 0; border-radius: 999px; color: var(--av-sys-color-text-muted); cursor: pointer; display: inline-flex; padding: 2px; }
+.sidekick-editing-close:hover { background-image: var(--hover-layer); color: var(--av-sys-color-text-default); }
+/* A composer mode's line, just over the composer it applies to. */
+.composer-mode-notice { display: flex; margin-bottom: 6px; padding: 0 8px; }
 .sidekick-canvas-cards { display: flex; flex-basis: 100%; flex-wrap: wrap; gap: 8px; list-style: none; margin: 0; padding: 0; }
 .sidekick-canvas-card { align-items: center; border: 1px solid var(--av-sys-color-border-default); border-radius: 12px; color: inherit; display: inline-flex; gap: 10px; padding: 8px 12px 8px 8px; text-decoration: none; }
 .sidekick-canvas-card:hover { background-image: var(--hover-layer); }
@@ -6940,7 +6947,7 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    Done is the plain row. */
 .sidekick-run-row-state { align-items: center; display: inline-flex; }
 .sidekick-run-row[data-state=needs_input] .sidekick-run-row-summary { color: var(--av-sys-color-workstream-news); }
-.sidekick-run-row[data-state=pending] .sidekick-run-row-state, .sidekick-run-row[data-state=running] .sidekick-run-row-state { color: var(--av-sys-color-success-base); }
+.sidekick-run-row[data-state=pending] .sidekick-run-row-state, .sidekick-run-row[data-state=running] .sidekick-run-row-state { color: var(--av-sys-color-success-strong); }
 .sidekick-run-row[data-state=failed] { border-color: var(--av-sys-color-danger-edge); }
 .sidekick-run-row[data-state=failed] .sidekick-run-row-state { color: var(--av-sys-color-danger-base); }
 .sidekick-run-row[data-state=stopped] .sidekick-run-row-summary { color: var(--av-sys-color-text-muted); }

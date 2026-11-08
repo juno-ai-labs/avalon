@@ -76,9 +76,9 @@ export function SidekicksSection({ scroll }: { scroll: RefObject<HTMLElement | n
     time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={sidekickActivityAt(sidekick)} />}
     title={sidekick.name}
     to={`/sidekicks/${encodeURIComponent(sidekick.id)}`}
-    // A Sidekick waiting on someone is for them to look at, as design §3
-    // draws it; the one open is being read, so its own run does not mark it.
-    unread={sidekick.id !== open && (sidekick.unread === true || sidekickStatus(sidekick) === 'needs_input')}
+    // The server's unread, as the Canvas rows take it; a Sidekick waiting on
+    // someone also carries the dot, as design §3 draws it.
+    unread={sidekick.unread === true || sidekickStatus(sidekick) === 'needs_input'}
   />;
   return <>
     {pinError && <ErrorNotice occurrence={pinError}>The Sidekick could not be pinned. Try again.</ErrorNotice>}

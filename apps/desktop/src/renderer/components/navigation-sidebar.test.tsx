@@ -258,9 +258,10 @@ describe('the Activity section', () => {
       // A Canvas the person may no longer open is not named.
       'Avery added you to a Canvas',
     ]);
-    // A mention opens the Chat at its message; the add, which names none, opens the Canvas.
+    // A run that needs input opens that run, where its question is; a mention
+    // opens the Chat at its message; the add, which names none, opens the Canvas.
     expect(rows.map((row) => row.getAttribute('href'))).toEqual([
-      `/sidekicks/${SIDEKICK}`,
+      `/sidekicks/${SIDEKICK}?run=${RUN}`,
       `/canvases/${CANVAS}?turn=00000000-0000-7000-8000-0000000000e1&sequence=42`,
       `/canvases/${CANVAS}`,
     ]);

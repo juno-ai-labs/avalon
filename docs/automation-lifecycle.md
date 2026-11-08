@@ -956,10 +956,13 @@ gets the delegation tools alone.
 Sidekick** in its actions menu, a checkbox entry (`ComposerMenuAction.checked`)
 that switches the composer into marking every message `intent:
 "edit_sidekick"` until it is switched off; the composer then reads "Describe a
-change to this Sidekick…" and the conversation's heading says **Editing this
-Sidekick**. Off, a manager's message is unmarked and asks the Sidekick for a
+change to this Sidekick…" and carries an **Editing this Sidekick** chip over
+its toolbar, where the mode applies, with a close that switches it off, as
+Escape in the empty composer does. Off, a manager's message is unmarked and asks the Sidekick for a
 run like anyone else's. A draft opens with the edit on, because it has nothing
-to run yet. Nobody else is offered the entry (`viewerManagesSidekick`: its
+to run yet. **New Sidekick** reopens the draft already in the person's list
+rather than creating a second one with the same placeholder name; a draft is
+theirs alone until it is saved. Nobody else is offered the entry (`viewerManagesSidekick`: its
 author, the person it runs as, or an Organization owner or administrator for an
 Organization Sidekick), and the server refuses the mark from them all the same.
 
@@ -1050,9 +1053,12 @@ next runs ("Runs Friday 2:00 PM", the weekday within the coming week and the
 date beyond it), else when it last ran. On the home the state is the design's
 pill (green Active and Working, amber Paused, dashed Draft) with a red **Needs
 input** badge beside the name, and the count reads "1 Sidekick". In the
-sidebar a row waiting on someone carries the unread dot, every other row is
-listed by what it last did (newest run or change) or by name, and the
-Sidekick open is never drawn unread, since it is being read. The home reads the
+sidebar a row is unread as the server says (`unread`) and a row waiting on
+someone carries the dot too; every other row is listed by what it last did
+(its newest run's start, else its last change) or by name. The Sidekick a person has open does not go
+unread from the run they started because the server seats their read cursor
+at the run row it writes, not because the client hides it: a teammate's
+message in `"0"` while a run view is open must still show. The home reads the
 list the workspace socket keeps, whose sidebar read is the only one carrying
 `needsInput` and `unread`; `GET /sidekicks` serves only a tree with no
 workspace socket.
@@ -1821,6 +1827,10 @@ The rows say the state the PRD names ("working, next run, paused") from the
 `runState`, `nextRunAt` and `pendingQuestion` the server now sends, and the
 home draws design §3's pills; the "Active while a run is under way" gap the
 plan recorded is closed.
+
+The wizard's tool row says "Used Sidekicks" (the `rally:sidekicks` plugin's
+group keeps its stored key), the edit chip sits at the composer with a close,
+and New Sidekick reopens an existing draft.
 
 **What a future change must respect:** the inline form answers through the
 run's conversation, never through `"0"`; it opens a socket only while its row

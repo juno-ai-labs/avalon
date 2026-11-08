@@ -68,7 +68,6 @@ import {
   optimisticMentionRendering,
   orderedTranscriptMessages,
   removeTranscriptOverlay,
-  setTranscriptElicitationState,
   transcriptCoverageAdvanced,
   transcriptOverlaysQueryKey,
   type TranscriptOverlay,
@@ -95,6 +94,7 @@ import {
 } from '../lib/use-workstream-socket';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { patchCachedWorkstreamViewerState, workstreamDetailQueryKey } from '../lib/workstreams-cache';
+import { answerConversationElicitation } from '../lib/conversation-elicitation';
 import type { ElicitationData, HarnessRunMetadata, HarnessStatus, Message, Participant, PendingOpening, ResourceVersion, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, RunStopAcknowledgement, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { ConnectingCard, ConnectingCardSlot } from '../components/connecting-card';
@@ -951,6 +951,10 @@ export interface ConversationSurfaceProps {
   composerMenuActions?: readonly ComposerMenuAction[];
   /** What the composer says while empty, when the host has something more specific to say. */
   composerPlaceholder?: string;
+  /** A line just over the composer for a mode the host has put it in, such as editing a Sidekick. */
+  composerNotice?: React.ReactNode;
+  /** Escape in an empty composer leaves that mode. */
+  onComposerCancel?: () => void;
   /**
    * Draw the feed without a composer: a run's own conversation, opened from
    * its Sidekick. Only the composer goes: a question in the feed keeps its
@@ -983,6 +987,8 @@ function ConversationSurfaceContent({
   messageIntent,
   composerMenuActions: hostMenuActions,
   composerPlaceholder,
+  composerNotice,
+  onComposerCancel,
   withoutComposer = false,
 }: ConversationSurfaceProps): React.JSX.Element {
   const annotationDraft = useAnnotationDraft();
@@ -1094,7 +1100,7 @@ function ConversationSurfaceContent({
   const workspaceId = session?.workspace?.id ?? 'unbound';
   const workspaceRegion = session?.workspace?.region ?? 'global';
   const attachmentDraft = useFileAttachments(api, conversationDraftKey(workspaceRegion, workspaceId, parentKind, id, substreamId));
-  // A read-only conversation (a run read from its Sidekick) has no composer to
+  // A conversation without a composer (a run opened from its Sidekick) has none to
   // show what lands in its draft, so a drop or a paste there would upload a
   // file nobody can see or send: it takes none.
   const acceptFiles = withoutComposer ? IGNORE_FILES : attachmentDraft.addFiles;
@@ -1944,41 +1950,10 @@ function ConversationSurfaceContent({
     answer: string | string[] | null,
     customResponse?: string,
   ): Promise<void> => {
-    queryClient.setQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey, (current) =>
-      current ? setTranscriptElicitationState(current, elicitationId, {
-        status: 'answered',
-        answer,
-      }) : current);
-    const previous = queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId))
-      ?.find((overlay) => overlay.identity.type === 'elicitation'
-        && overlay.identity.elicitationId === elicitationId);
-    queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) =>
-      (current ?? []).map((overlay) => overlay.identity.type === 'elicitation'
-        && overlay.identity.elicitationId === elicitationId
-        && overlay.message.elicitation
-        ? {
-            ...overlay,
-            message: {
-              ...overlay.message,
-              elicitation: { ...overlay.message.elicitation, status: 'answered', answer },
-            },
-          }
-        : overlay));
-    try {
-      await socketConnection.answerElicitation(elicitationId, answer, customResponse);
-      requestSocketSnapshot();
-    } catch (error) {
-      queryClient.setQueryData<WorkstreamTranscriptSnapshot>(transcriptQueryKey, (current) =>
-        current ? setTranscriptElicitationState(current, elicitationId, {
-          status: 'open',
-          answer: null,
-        }) : current);
-      if (previous) {
-        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id, substreamId), (current) =>
-          upsertTranscriptOverlay(current, previous));
-      }
-      throw error;
-    }
+    await answerConversationElicitation({
+      queryClient, parentId: id, substreamId, connection: socketConnection, elicitationId, answer, customResponse,
+    });
+    requestSocketSnapshot();
   };
 
   const sendMessage = async (
@@ -2519,7 +2494,11 @@ function ConversationSurfaceContent({
             || stopAcknowledgement.pendingRunId !== null
             || stopAcknowledgement.runId !== null)
             && <RunStopAcknowledgement settled={stopAcknowledgement.runId !== null} />}
+          {/* Over the composer rather than inside it: the capsule's grid has
+              no row for a line of its own. */}
+          {!withoutComposer && composerNotice && <div className="composer-mode-notice">{composerNotice}</div>}
           {!withoutComposer && <WorkstreamComposer
+            {...(onComposerCancel ? { onCancel: onComposerCancel } : {})}
             api={api ?? undefined}
             placeholder={composerPlaceholder ?? (parentKind === 'automation'
               ? 'Ask your Sidekick…'
