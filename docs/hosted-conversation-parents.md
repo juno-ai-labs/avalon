@@ -87,8 +87,8 @@ transaction that writes the envelope's receipt, and `receiveChildEffects`
 names the intent back in `notificationIntentIds`. The activity consumer then
 delivers it with `processWorkstreamNotificationIntent`, which decides at that
 moment whether the person is still a member, may still open the Canvas or
-Sidekick, and is not the author, and sends push, Slack or email as they chose
-([`push-notifications.md`](push-notifications.md)). Recording asks none of
+Sidekick, and is not the author, and queues the notice for each sink they
+chose, push or email ([`push-notifications.md`](push-notifications.md#sinks)). Recording asks none of
 those questions, so a removal between the message and the delivery is still
 honoured.
 

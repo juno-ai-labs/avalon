@@ -1,6 +1,8 @@
 import { notifyOps } from "../observability/ops-slack-notifier";
 import { asWorkspaceId, WorkspaceAttentionSchema } from "@rally/contracts";
 import { PushDeliveryMessageSchema, type PushDeliveryMessage } from "@rally/contracts/push-notifications";
+import { zodDiagnosticCode } from "@rally/contracts/zod-diagnostics";
+import { ZodError } from "zod";
 import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import type { WorkspaceDO } from "../durable-objects/workspace-do";
@@ -157,7 +159,9 @@ export async function consumePushDeliveryQueue(batch: MessageBatch<unknown>, env
       logWarn(env, "push_delivery_failed", {
         message_id: message.id,
         channel: (message.body as { channel?: unknown } | null)?.channel ?? "push",
-        code: error instanceof ApiError ? error.code : error instanceof Error ? error.name : "unknown_error",
+        // A malformed body names the field it failed on.
+        code: error instanceof ApiError ? error.code : error instanceof ZodError ? zodDiagnosticCode(error, "push_delivery_message")
+          : error instanceof Error ? error.name : "unknown_error",
         permanent,
       });
       // A provider that refused the message outright will refuse it again.

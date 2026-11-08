@@ -434,6 +434,12 @@ Push.
 
 ## Operations and release
 
+An email sink without its Resend key or sender answers
+`notification_email_unavailable` (retryable), so its queue messages retry
+until the dead-letter queue takes them: a non-empty dead-letter queue is the
+signal, as for every queue here. Outside production the sink sends nothing
+and logs `notification_email_skipped` with `transport_disabled_for_environment`.
+
 Set `APNS_AUTH_KEY` and `APNS_KEY_ID` separately on both regional API Workers.
 For browsers, set `WEB_PUSH_VAPID_PUBLIC_KEY` (base64url uncompressed P-256
 point), the secret `WEB_PUSH_VAPID_PRIVATE_KEY` (base64url `d` of the same key)
