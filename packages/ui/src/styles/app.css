@@ -3266,6 +3266,11 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .unread-divider::before,
 .unread-divider::after { background: var(--av-sys-color-accent-tint); content: ''; flex: 1; height: 1px; }
 .unread-divider span { flex: 0 0 auto; }
+/* design.html §2's "Today": the day a run of turns was said on, in the muted
+   byline type between hairlines, so each byline carries only its clock time. */
+.day-divider { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: var(--av-cmp-feed-byline-font-size); gap: var(--space-3); margin: var(--space-2) 0 var(--space-4); }
+.day-divider::before,
+.day-divider::after { background: var(--av-sys-color-border-default); content: ''; flex: 1; height: 1px; }
 .transcript-column { margin: 0 auto; max-width: var(--av-cmp-feed-width); min-height: 100%; padding: var(--space-8) var(--space-8) 150px; }
 .transcript-history-control {
   align-items: center;
@@ -3365,6 +3370,25 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
   font-weight: var(--av-cmp-feed-byline-author-weight);
   gap: var(--space-1);
 }
+/* The flex row cannot ellipsize a bare text node, so the name is its own box
+   ("Samantha L" was cut with no ellipsis at 360px, v3-G6). */
+.message-author-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* design.html §2's 16px avatar before a colleague's name and Rally's "R". A
+   person's takes their colour and its ink; Rally's is the inverted pair. */
+.message-author-avatar {
+  background: var(--person-dot, var(--person-accent));
+  border-radius: var(--av-sys-size-radius-pill);
+  color: var(--person-ink, var(--personal-ink-light));
+  display: inline-grid;
+  flex: none;
+  font-size: 9px;
+  font-weight: 600;
+  height: 16px;
+  line-height: 1;
+  place-items: center;
+  width: 16px;
+}
+.agent-message .message-author-avatar { background: var(--av-sys-color-text-default); color: var(--av-sys-color-text-on-inverse); }
 /* The time and a settled response's total are the same kind of thing — meta
    about the message, not part of it — so they share one rule rather than two
    that have to be kept equal by hand. Same size as the name: the line is one
@@ -5383,12 +5407,12 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   line-height: 1.62;
 }
 
-/* This is the declaration that decides which side a turn lands on. Every
-   person's turn sits on the right — the signed-in person's, a coworker's, and
-   one relayed in by a connector — so the transcript reads as people on one side
-   and Rally on the other. Who sent it is carried by the header, never by the
-   side: do not add an exception that moves a turn based on its author, or the
-   same transcript renders differently for each person reading it. */
+/* This is the declaration that decides which side a turn lands on. The
+   reader's own turn sits on the right in its bubble; a colleague's, like
+   Rally's, sits on the left as plain text under its avatar (design.html §2,
+   which replaced "every person on the right": a reader could not tell their own
+   turn from a colleague's by place). The same transcript therefore reads from
+   each person's own side, as a messaging app's does. */
 .human-message {
   /* The bubble's corner, named once and read three times: the bubble draws it,
      and the identity line above and the action row below both stop where it
@@ -5600,6 +5624,14 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .human-message .message-actions .message-start-substream {
   padding-inline-end: 0;
 }
+
+/* A colleague's turn: leading edge, no fill (design.html §2). */
+.human-message.coworker-message { margin-left: 0; }
+.human-message.coworker-message > header { justify-content: flex-start; padding-inline-end: 0; }
+.human-message.coworker-message .human-message-content { align-items: flex-start; }
+.human-message.coworker-message .message-actions { padding-inline-end: 0; }
+.human-message.coworker-message .message-attachments { justify-content: start; margin-left: 0; }
+.workstream-screen .coworker-message .human-message-bubble { background: transparent; color: var(--av-sys-color-text-default); padding: 0; }
 
 .human-message .message-author-dot {
   background: var(--person-dot, var(--person-accent));

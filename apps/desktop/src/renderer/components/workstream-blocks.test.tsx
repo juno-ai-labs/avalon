@@ -400,14 +400,13 @@ describe('MessageBlock human identity', () => {
     const otherAccent = other.style.getPropertyValue('--person-accent');
     expect(own).toHaveAttribute('data-profile-color', 'violet');
     expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-sys-color-project-violet)');
-    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--personal-ink-light)');
-    // `violet` takes white ink and `lime` black, so the repaint has to move the
-    // foreground as well as the fill. A pair on the same side of PALETTE_INK
-    // would let a bubble that never re-inked pass this.
+    // The bubble is the hue's pastel pair, so a repaint moves both its fill and its ink.
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-background')).toBe('var(--av-sys-color-project-tint-violet)');
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--av-sys-color-project-ink-violet)');
     view.rerender(<MemberPresentationContext.Provider value={new Map([['user-adam', { ...profile, color: 'lime', revision: 2 }]])}>{rows}</MemberPresentationContext.Provider>);
     expect(screen.getByLabelText('Message from Alex Rivera')).toBe(own);
     expect(own.style.getPropertyValue('--person-dot')).toBe('var(--av-sys-color-project-lime)');
-    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--personal-ink-dark)');
+    expect(own.style.getPropertyValue('--av-cmp-bubble-human-foreground')).toBe('var(--av-sys-color-project-ink-lime)');
     expect(other.style.getPropertyValue('--person-accent')).toBe(otherAccent);
     expect(other).not.toHaveAttribute('data-profile-color');
   });
@@ -585,8 +584,9 @@ describe('MessageBlock human identity', () => {
     // The same three parts a coworker's turn carries, in the same order: the
     // reader's own messages are not the one row in the feed with no time
     // against them.
-    expect(screen.getByText('Adam')).toHaveClass('message-author');
-    expect(own.querySelector('.message-author-dot')).toBeInTheDocument();
+    expect(screen.getByText('Adam').closest('.message-author')).toBeInTheDocument();
+    // design.html §2: the reader's own turn carries no avatar; its bubble is theirs.
+    expect(own.querySelector('.message-author-avatar')).toBeNull();
     expect(own.querySelector('time')).toHaveAttribute('dateTime', baseMessage.createdAt);
   });
 
@@ -606,8 +606,7 @@ describe('MessageBlock human identity', () => {
     expect(screen.getByText('Expanded by Rally from suggested work'))
       .toHaveClass('message-context-label');
     expect(screen.getByLabelText('Message from Adam')).toHaveClass('own-human-message');
-    expect(screen.getByText('Adam')).toHaveClass('message-author');
-    expect(document.querySelector('.message-author-dot')).toBeInTheDocument();
+    expect(screen.getByText('Adam').closest('.message-author')).toBeInTheDocument();
   });
 
   it('shows compact identity for a coworker prompt', () => {
@@ -618,9 +617,13 @@ describe('MessageBlock human identity', () => {
     };
     render(<MessageBlock {...actions} currentUserId="user-adam" message={coworkerMessage} />);
 
-    expect(screen.getByLabelText('Message from Sam')).toHaveClass('coworker-message');
-    expect(screen.getByText('Sam')).toHaveClass('message-author');
-    expect(document.querySelector('.message-author-dot')).toBeInTheDocument();
+    const row = screen.getByLabelText('Message from Sam');
+    expect(row).toHaveClass('coworker-message');
+    // A colleague leads with their avatar, on the leading edge (design.html §2).
+    const header = row.querySelector('header')!;
+    expect(header.firstElementChild).toHaveClass('message-author');
+    expect(header.querySelector('.message-author-avatar')).toHaveTextContent('S');
+    expect(screen.getByText('Sam')).toHaveClass('message-author-name');
   });
 
   it('shows an externally attributed Slack member as a coworker rather than Rally', () => {
@@ -640,7 +643,7 @@ describe('MessageBlock human identity', () => {
     render(<MessageBlock {...actions} currentUserId="user-adam" message={externalMessage} />);
 
     expect(screen.getByLabelText('Message from Taylor · Slack')).toHaveClass('coworker-message');
-    expect(screen.getByText('Taylor · Slack')).toHaveClass('message-author');
+    expect(screen.getByText('Taylor · Slack')).toHaveClass('message-author-name');
     expect(screen.queryByText('Rally')).not.toBeInTheDocument();
   });
 
@@ -653,13 +656,10 @@ describe('MessageBlock human identity', () => {
     expect(attachment?.nextElementSibling).toHaveClass('message-actions');
   });
 
-  it('ends human identity headers with the author after optional context', () => {
-    render(<MessageBlock {...actions} message={{ ...baseMessage, contextLabel: 'Expanded by Rally' }} />);
+  it('ends the reader\'s own identity header with the author after optional context', () => {
+    render(<MessageBlock {...actions} currentUserId="user-adam" message={{ ...baseMessage, contextLabel: 'Expanded by Rally' }} />);
     const header = screen.getByLabelText('Message from Adam').querySelector('header')!;
     expect(header.lastElementChild).toHaveClass('message-author');
-    // The dot travels inside the name rather than beside it, so the pair reads
-    // as one part and cannot be separated by the context label.
-    expect(header.querySelector('.message-author')?.firstElementChild).toHaveClass('message-author-dot');
     expect(header.querySelector('.message-context-label')?.nextElementSibling).toBe(header.lastElementChild);
   });
 

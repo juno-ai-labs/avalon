@@ -217,13 +217,16 @@ A resource panel closes when the conversation's resources no longer list it
 copy (`feedFromLocalCache`) may predate the artifact, and closing on it shut a
 Canvas's newly opened artifact on a first visit.
 
-Human message dots and bubble backgrounds resolve the sender's current account
-color from the live member-presentation context. The same resolution applies
+Human message dots, avatars and bubble backgrounds resolve the sender's current account
+color from the live member-presentation context. The reader's own bubble is the
+color's pastel pair (`markColors`: `project-tint-<key>` under
+`project-ink-<key>`), themed per appearance, as design.html §2 and §5 draw it; the
+saturated hue under white ink read 3.58:1 on rose (v3-G3). The same resolution applies
 to answered elicitations and optimistic answers attributed to the current user.
 Profile changes repaint already-loaded turns without rewriting transcript data.
-The fill comes straight from the palette — `sys.color.project.<key>`, resolved
+The dot and avatar fill come straight from the palette — `sys.color.project.<key>`, resolved
 through `personalColorKey()` so a retired accent name follows its replacement —
-and the ink from `PALETTE_INK`. There is no per-accent component token in
+and the avatar's ink from `PALETTE_INK`. There is no per-accent component token in
 between: the `cmp.member-message.*` roles that used to restate the fill and ink
 by hand drifted from the palette and could not survive the accent set changing,
 so the feed reads the palette directly. Contrast is still not inferred at render;
@@ -618,8 +621,10 @@ surface has to be added to both lists, or a send made of that attachment alone
 goes out with no in-flight cue. Every
 turn's identity line is `MessageByline`, one component for the assistant's turn,
 a colleague's, the reader's own and a settled elicitation answer, so the name and
-the time carry one size and one pair of greys whoever is speaking; what tells
-speakers apart is the accent on the dot. The line reads outward from the edge the
+the time carry one size and one pair of greys whoever is speaking. Only the
+reader's own turn sits on the trailing edge, in its bubble; a colleague's sits on
+the leading edge as plain text under a 16px avatar holding their initial, and
+Rally's carries an "R" avatar (design.html §2). The line reads outward from the edge the
 turn is aligned to — name first on the leading edge, name last on the trailing
 one — laid out in markup rather than by CSS ordering, so a screen reader
 announces what a sighted reader sees. The username ends at the bubble-radius
@@ -631,9 +636,8 @@ The assistant turn is the leading-edge case: the author name (`Rally`, or
 `Automation` on an automation turn), an optional context label, the time, an
 optional work summary. Section controls live beside each heading in the body.
 The byline starts on
-the same vertical as the response body and the action row beneath it: the turn
-has no avatar, so nothing sits left of the name and nothing reserves space for
-one.
+the same vertical as the response body and the action row beneath it, its "R"
+avatar first.
 
 Finished assistant turns also share the action row. Copy and export remain
 local actions; **Speak** uses the regional authenticated stream documented in

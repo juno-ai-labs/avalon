@@ -2,7 +2,9 @@ import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { AttachmentPreview } from './attachments';
 import type { CitationContext } from './markdown-citations';
+import { formatDayLabel } from '../lib/format';
 import type { Message } from '../lib/types';
+import { RelativeTime } from './relative-time';
 import { MessageBlock, type RowDisclosure } from './workstream-blocks';
 
 /**
@@ -272,6 +274,9 @@ export function MessageFeed({
   };
   const row = (message: Message, index: number): React.JSX.Element => (
     <div className="message-arrival-layer" data-arrival-id={message.id} data-arrival-kind={message.messageType}>
+      {startsDay(messages[index - 1], message) && (
+        <div className="day-divider" role="separator"><RelativeTime format={formatDayLabel} value={message.createdAt} /></div>
+      )}
       {index === firstUnreadIndex && (
         <div className="unread-divider" role="separator"><span>Unread messages</span></div>
       )}
@@ -346,4 +351,16 @@ export function MessageFeed({
       })}
     </div>
   );
+}
+
+/**
+ * Whether a row is the first of its local day, so the feed names the day above
+ * it ("Today", "Yesterday", a weekday, a date) and each byline carries only the
+ * clock time, as design.html §2 draws the transcript.
+ */
+function startsDay(previous: Message | undefined, message: Message): boolean {
+  if (!previous) return true;
+  const a = new Date(previous.createdAt);
+  const b = new Date(message.createdAt);
+  return a.getFullYear() !== b.getFullYear() || a.getMonth() !== b.getMonth() || a.getDate() !== b.getDate();
 }
