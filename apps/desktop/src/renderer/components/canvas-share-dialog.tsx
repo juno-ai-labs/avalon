@@ -2,12 +2,14 @@ import { asUserId, type CanvasDetail, type CanvasVisibility } from '@rally/contr
 import { CreateScopeInvitationsSchema } from '@rally/contracts/scope-grants';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { IconChevronRight } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { canvasDetailQueryKey, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import type { WorkspaceMember } from '../lib/types';
+import { AccessDecisionActions } from './canvas-access-request';
 import { Avatar, Badge, Button, ErrorNotice, Modal } from './primitives';
+import { RelativeTime } from './relative-time';
 import { useScopeInvitations } from './scope-sharing-panel';
 import { SidebarSearch } from './sidebar-search';
 
@@ -44,6 +46,15 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
   const [guestsOpen, setGuestsOpen] = useState(false);
   const [emails, setEmails] = useState('');
   const [invalidEmails, setInvalidEmails] = useState<{ emails: string } | null>(null);
+  // Someone approved from the Requests section (or anywhere) while this form
+  // is open joins the list as the detail is read again; they join the choice
+  // too, so Save does not take back the access just given.
+  const seenParticipants = useRef(canvas.participantUserIds);
+  useEffect(() => {
+    const added = canvas.participantUserIds.filter((id) => !seenParticipants.current.includes(id));
+    seenParticipants.current = canvas.participantUserIds;
+    if (added.length > 0) setChosen((current) => new Set([...current, ...added]));
+  }, [canvas.participantUserIds]);
   const isMember = (id: string): boolean => membersById.get(id)?.accessClass === 'member';
   const workspaceId = session?.workspace?.id;
   // The guest invite is part of this form: Save sends it, so the dialog has
@@ -99,7 +110,21 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
     && (needle === '' || `${member.name} ${member.email}`.toLocaleLowerCase().includes(needle)));
 
   const missingPeople = visibility === 'participants' && chosen.size === 0;
+  const requests = canvas.pendingAccessRequests ?? [];
   return <div className="canvas-share">
+    {requests.length > 0 && <section aria-label="Requests" className="canvas-share-requests">
+      <h3 className="canvas-share-heading">Requests</h3>
+      <div className="member-action-list" role="list">
+        {requests.map((request) => <div className="member-action-row canvas-share-request" key={request.userId} role="listitem">
+          {membersById.get(request.userId) && <Avatar member={membersById.get(request.userId)!} size="medium" />}
+          <span>
+            <strong>{request.name}</strong>
+            <small>{request.message ? <>{request.message} · </> : null}<RelativeTime value={request.requestedAt} /></small>
+          </span>
+          <AccessDecisionActions canvasId={canvas.id} label={request.name} userId={request.userId} />
+        </div>)}
+      </div>
+    </section>}
     <fieldset className="canvas-share-options">
       <legend className="sr-only">Who can open it</legend>
       {(['creator', 'participants', 'workspace'] as const).map((value) => <label className="canvas-share-option" key={value}>
