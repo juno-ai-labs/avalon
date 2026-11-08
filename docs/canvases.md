@@ -340,9 +340,15 @@ the rail's first section and `/canvases` the landing route
   per-conversation panel restore (`artifact-panel:<canvas id>:0` in
   `lib/desktop-layout.ts`) are the conversation surface's own. With nothing
   saved there, the screen opens the newest artifact of `GET /canvases/:id`
-  through `openResourceState` (`lib/navigation-routes.ts`), the route state a
-  pinned artifact's row also uses; with no artifact, the rail stays closed
-  on the conversation's empty state. Closing the panel clears what was saved,
+  beside the Chat, through `openResourceState` (`lib/navigation-routes.ts`)
+  with `expanded: false`; a link naming an artifact opens it expanded, as a
+  pinned artifact's row does. The surface does not close a requested panel
+  on the device cache's copy of the conversation, which may list none of its
+  artifacts. An artifact whose content was never stored
+  (`contentAvailable: false`, or a read answering
+  `resource_content_unavailable`) says "Nothing to show yet" in the panel.
+  With no artifact, the rail stays closed on the conversation's empty
+  state. Closing the panel clears what was saved,
   so the next opening shows the newest artifact again.
 - **The header** is a `TitlePillHeader` naming the Canvas, the face pile of
   everyone else in it now (`workspace_presence`, through the surface's
@@ -527,7 +533,11 @@ of the row's title is written through, and only once the socket has applied
 the list (`sidebarListApplied`): the device cache seeds the same list
 asynchronously, without the waterline ledger, and its row may be older than
 a detail the server just answered. The client does not validate
-a title; the server's refusal is what the person reads. A malformed Canvas id
+a title; the server's refusal is what the person reads. The newest artifact
+a Canvas opens on arrival opens beside its Chat: it opened expanded, through
+the same request a deliberate artifact link makes, and on a first visit the
+device cache's empty copy of the conversation closed it again, so the tester
+met no panel, then a maximized one after a reload. A malformed Canvas id
 in a link reads as a missing one: it names nothing that could exist, and
 "The request is invalid" told the person less than the not-found state does.
 

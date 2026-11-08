@@ -11,7 +11,7 @@ import { RENAME_CANVAS_STATE } from '../lib/canvases';
 import { layoutKey, writeLayout } from '../lib/desktop-layout';
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import type * as Platform from '../lib/platform';
-import { openResourceRequest } from '../lib/navigation-routes';
+import { expandRequest, openResourceRequest } from '../lib/navigation-routes';
 import type { ConversationSurfaceProps } from './conversation-surface';
 import { CanvasScreen } from './canvas';
 
@@ -42,12 +42,12 @@ vi.mock('../lib/platform', async (importOriginal) => ({
 
 // The conversation is its own surface with its own sockets; this file is about
 // what the Canvas hands it: the parent, the header, and the artifact to open.
-const surfaces = vi.hoisted(() => [] as Array<{ props: ConversationSurfaceProps; requested: string | null }>);
+const surfaces = vi.hoisted(() => [] as Array<{ props: ConversationSurfaceProps; requested: string | null; expanded: boolean }>);
 vi.mock('./conversation-surface', () => ({
   ConversationOpeningSkeleton: ({ label }: { label: string }) => <p>{label}</p>,
   ConversationSurface: (props: ConversationSurfaceProps) => {
     const location = useLocation();
-    surfaces.push({ props, requested: openResourceRequest(location.state)?.resourceId ?? null });
+    surfaces.push({ props, requested: openResourceRequest(location.state)?.resourceId ?? null, expanded: expandRequest(location) !== null });
     return <div>{props.renderHeader?.({ presentUserIds: [ME, MAYA] } as never)}</div>;
   },
 }));
@@ -116,9 +116,11 @@ describe('CanvasScreen', () => {
     expect(await screen.findByRole('group', { name: '1 person here' })).toBeInTheDocument();
   });
 
-  it('opens the newest artifact when the Canvas has none saved open', async () => {
+  it('opens the newest artifact beside the Chat when the Canvas has none saved open', async () => {
     renderCanvas();
     await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b2'));
+    // Nobody asked for it, so it does not cover the conversation they opened.
+    expect(lastSurface().expanded).toBe(false);
   });
 
   it('restores the artifact panel the Canvas had open, rather than the newest', async () => {
@@ -140,6 +142,7 @@ describe('CanvasScreen', () => {
   it('opens the artifact a link names rather than the newest', async () => {
     renderCanvas(`/canvases/${CANVAS}?artifact=00000000-0000-7000-8000-0000000000b1`);
     await waitFor(() => expect(lastSurface().requested).toBe('00000000-0000-7000-8000-0000000000b1'));
+    expect(lastSurface().expanded).toBe(true);
     await waitFor(() => expect(getCanvas).toHaveBeenCalled());
     expect(surfaces.some((surface) => surface.requested === '00000000-0000-7000-8000-0000000000b2')).toBe(false);
   });

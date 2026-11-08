@@ -24,12 +24,14 @@ export function expandRequest(location: { key: string; state: unknown }): string
 
 /**
  * A navigation that opens a conversation (a Canvas's Chat) onto one of its
- * artifacts: the conversation opens that artifact's panel once it is on screen.
+ * artifacts: the conversation opens that artifact's panel once it is on screen,
+ * expanded over the conversation unless `expanded` is false, which opens it
+ * beside, as an artifact opened from the transcript does.
  */
-export function openResourceState(conversationId: string, resourceId: string): {
-  openExpanded: true; openResource: { conversationId: string; resourceId: string };
+export function openResourceState(conversationId: string, resourceId: string, { expanded = true }: { expanded?: boolean } = {}): {
+  openExpanded?: true; openResource: { conversationId: string; resourceId: string };
 } {
-  return { ...OPEN_EXPANDED, openResource: { conversationId, resourceId } };
+  return { ...(expanded ? OPEN_EXPANDED : {}), openResource: { conversationId, resourceId } };
 }
 
 /** The artifact a navigation asked a conversation to open, or null when it asked for none. */
