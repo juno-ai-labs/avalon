@@ -7254,7 +7254,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     // then has nothing left to judge.
     if (alarm.kind === RETIRED_MERGE_SUGGESTION_ALARM_KIND) return;
     if (alarm.kind === TERMINAL_OBSERVATION_ALARM_KIND) {
-      await this.observeDueTerminalSandbox();
+      // An entry left behind by a conversation archived, or a sandbox expired,
+      // since it was armed observes nothing; the sync below removes it.
+      if (this.nextTerminalObservationAt() !== null) await this.observeDueTerminalSandbox();
       // The check moved `next_observe_at` before it crossed the provider
       // boundary, whatever the provider answered; this re-arms the entry there.
       this.state.storage.transactionSync(() => this.syncTerminalObservationAlarm());
