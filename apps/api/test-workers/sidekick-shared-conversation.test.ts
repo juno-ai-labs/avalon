@@ -657,6 +657,38 @@ describe("a Sidekick's shared conversation", () => {
     expect(await unread(MEMBER_ID)).toBe(false);
   });
 
+  it("sends the Sidekick list with the saved name and state in the save that makes a draft active", async () => {
+    const created = await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workspace",
+      automationId: AUTOMATION_ID });
+    expect(created.created).toBe(true);
+    const response = await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
+      .fetch("https://workspace.test/socket", { headers: {
+        Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": AUTHOR_ID, "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": crypto.randomUUID(),
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
+      } });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    const frames: Array<Record<string, unknown>> = [];
+    socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
+    socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+    try {
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
+      const row = () => frames.filter((frame) => frame.type === "workspace_sidebar_list" && frame.list === "automations")
+        .flatMap((frame) => frame.items as Array<{ id: string; name: string; status: string }>)
+        .filter((item) => item.id === AUTOMATION_ID).at(-1);
+      // The wizard's save: the definition, then Create, in one call.
+      await workspaceStub().sidekickSaveDefinition({ ...addressed(), draft: { ...DEFINITION, name: "Haiku writer" },
+        evaluatorRules: null, submittedByRunId: null, actor: actor() });
+      // Sent by the save itself; no alarm or later refresh is waited for.
+      expect(row()).toMatchObject({ name: "Haiku writer", status: "active" });
+    } finally {
+      socket.close();
+    }
+  });
+
   it("sends a reader's own read of the shared conversation only to that reader's sockets", async () => {
     await activeSidekick();
     async function open(userId: string, sessionId: string) {
