@@ -72,12 +72,14 @@ Payload bodies remove the generated personal-system-prompt envelope, then
 reduce Markdown formatting and Rally's internal citation and person-mention
 references to readable plain text before carrying the first
 1,000 Unicode code points with an ellipsis when shortened, fitted further to
-Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` to the
-directory `attention` read's `readerAttentionCount`, which is `0` today: it
-summarized the Thread directory, and a Canvas's and a Sidekick's unread are
-read on their own list rows and are not summarized there yet, so a push clears
-the icon count rather than holding up a retired Thread's. A send from one
-workspace does not sum other workspaces: a global inbox is out of scope.
+Apple's 4,096-byte ceiling. Every alert also sets APNs `badge` (and the Web
+Push payload's `badge`, and `rally.badge` in the data) to the `attention`
+read's `readerAttentionCount`: the person's unseen Activity in that
+Organization, read when the message is sent, so the notice's own row, recorded
+before it was queued, is in it ([`activity.md`](activity.md)). An alert that
+arrives while Rally is closed therefore sets the icon to what the Activity rail
+will show, rather than clearing it. A send from one workspace does not sum
+other workspaces: a global inbox is out of scope.
 Omitting `badge` would leave the previous icon count in place; `0` clears it.
 
 While Rally runs, the Mac sets the dock badge itself. `useDockBadge` sends the
@@ -571,6 +573,12 @@ one message per sink retries each on its own, and Resend's idempotency key
 makes an email retry one email. Rendering per sink: each sink would carry its
 own copy of each kind's words. Skipping demo personas' `.invalid` addresses
 in the email sink: the demo personas are being removed this round.
+
+**Also this round — the badge is the unseen Activity count.** Every push's
+badge is `attention().readerAttentionCount`, now the person's unseen Activity
+in the Organization rather than the zero it answered since Threads were
+retired; the data carries it too, as `badge`. Why: the owner's "fix this" for
+the dock badge clearing when an alert arrives while Rally is closed.
 
 **What a future change must respect:** a kind's words live in `renderNotice`
 only; a sink never branches on kind except for its own transport's needs
