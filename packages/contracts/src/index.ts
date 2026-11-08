@@ -121,8 +121,8 @@ type WorkspaceTargetRegion
 export {
 LEGACY_LINK_ORIGINS,LINK_PATH_PREFIX,RETIRED_LINK_MESSAGE,
 canvasCanonicalUrl,canvasDeepLink,isRetiredLinkPath,linkCanonicalUrl,linkDeepLink,
-parseLinkPathTarget,parseLinkTarget,sidekickCanonicalUrl,sidekickDeepLink,
-type CanvasLinkTarget,type LinkTarget,type SidekickLinkTarget
+organizationShellDeepLink,parseLinkPathTarget,parseLinkTarget,parseOrganizationShellTarget,sidekickCanonicalUrl,sidekickDeepLink,
+type CanvasLinkTarget,type LinkTarget,type OrganizationShellTarget,type SidekickLinkTarget
 } from "./links";
 export { uuidFromBase58, uuidToBase58 } from "./uuid-base58";
 
