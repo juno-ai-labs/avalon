@@ -364,6 +364,13 @@ one person's read or pins push to that person alone.
 [`canvases.md`](canvases.md#the-canvas-list) owns its rows. The Sidekick list
 is `workspace_sidebar_list` with `list: "automations"`.
 
+Each person's Activity rides `workspace_activity_list`
+`{occurredAt, waterline, unseenCount, items}`, with `activity` as an optional
+key of the subscribe payload's sidebar and its own `activity` waterline. It is
+sent only to the one person whose list moved: a row recorded for them, their
+read of a Canvas or a Sidekick, or their `activity_mark_all_seen` command,
+which the push answers. [`activity.md`](activity.md) owns it.
+
 Neither list has a REST fetcher behind it for a socket-holding client.
 WorkspaceDO re-sends the affected list whole whenever it writes one of its
 rows, so the batch is the only load and the push is the only refresh, which is
@@ -796,6 +803,28 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive; there is no per-command parent RPC. See [the conversation objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-11-08 — The workspace socket carries each person's Activity
+
+**What changed:** The subscribe payload's sidebar gains an optional
+`activity` page beside `automations` and `canvases`; `workspace_activity_list`
+pushes one person's page to that person's sockets only; the socket accepts
+`activity_mark_all_seen`, answered by that push. The waterline is
+`workspace_sidebar_list_state` row `activity` (migration 148).
+
+**Why:** Activity returns as a per-person feed (the user's 2026-11-08
+decision, [`activity.md`](activity.md)), and the workspace socket is where every
+sidebar list already arrives, versioned against its connect payload. Its own
+event type, as the Canvas list's, because a released client ignores an event
+type it does not know and fails a discriminator value it does not know.
+
+**Considered and rejected:** A per-item `activity_mark_seen` command. Seen is
+derived from the conversation's read cursor, so opening an item already clears
+it, and a second command would be a second read state.
+
+**Consequences:** A person's Activity is never broadcast: every send is read
+for and addressed to its one recipient. A new command on this socket must be
+safe for an older server to ignore, which an unknown type is.
 
 ### 2026-11-07 — The sockets carry Canvases and Sidekicks; the Thread listing and the Channel control socket go
 

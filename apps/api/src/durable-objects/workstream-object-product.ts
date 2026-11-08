@@ -3071,6 +3071,7 @@ export class WorkstreamObjectProductService {
               authorNameSnapshot: authorLabel,
               workstreamTitleSnapshot: title,
               messageText: notificationMessageExcerpt(delivery.text),
+              attentionOrdinal: delivery.attentionOrdinal,
               occurredAt,
             },
           });
@@ -4428,6 +4429,7 @@ export class WorkstreamObjectProductService {
             authorNameSnapshot: people.get(auth.userId)?.name ?? "Workspace member",
             workstreamTitleSnapshot: truncateUtf16Safe(current.title, 500),
             messageText: notificationMessageExcerpt(prepared.text),
+            attentionOrdinal: write.attentionOrdinal,
             occurredAt,
           },
         }));
