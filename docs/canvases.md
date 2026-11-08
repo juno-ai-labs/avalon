@@ -243,6 +243,16 @@ since a viewer last read the Chat makes the Canvas's row unread to them, by
 the rule a pinned artifact's news uses (a republish or replacement, not their
 own or one made on their behalf).
 
+By the same rule, a new version tells everyone who **pinned** the Canvas:
+the note reads the resource's newest version and, when it is news, records
+one `artifact_updated` intent and Activity row per pinner other than its
+author (`tellCanvasPinners`), whose push opens the Canvas onto that artifact
+([`push-notifications.md`](push-notifications.md#a-pinned-canvass-new-version)).
+Only a version whose publish notes the Canvas does: one written by another
+producer (an image edit, a connector refetch) tells nobody until the next
+publish of the Canvas, which covers what the pinner cares about here, the
+Canvas's own work.
+
 ### From a Sidekick run
 
 A Sidekick run (a child of the Sidekick, whose substream id is the run id)
@@ -556,6 +566,11 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 - `apps/api/test/authorization-policy.test.ts` — `audienceAdmits`,
   `canvasAdmits` and `canvasManages`.
+- `apps/api/test-workers/canvas-artifact-notices.test.ts` — on real workerd:
+  a version noted to a Canvas tells the pinner who did not make it and not
+  its author, its row collapses while unseen and clears on a read of the
+  Chat, and the push opens onto the artifact. Proved to fail with the
+  author's exclusion removed.
 - `apps/api/test-workers/canvas-hosting.test.ts` — on real workerd: a new
   Canvas opens to its creator alone; a participant opens it and does not
   manage it; an administrator opens and manages a private one; an
@@ -628,7 +643,28 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 
 ## Changelog
 
-### 2026-11-08 — The Canvas screens follow design.html
+### 2026-11-08 — The Canvas screens follow design.html, and a pinned Canvas's new version tells its pinners
+
+**What changed (pinners):** A publish's note to its Canvas reads the
+resource's newest version and, when it is news by `artifactNewsSql`, records
+an `artifact_updated` intent and a collapsing Activity row for every pinner
+of the Canvas but the version's author (`tellCanvasPinners`), and enqueues
+their pushes, which open the Canvas onto the artifact. `noteArtifact` is
+async for it. [Client half: the Activity row's words and its `?artifact=`
+link, folded in at merge.]
+
+**Why (pinners):** The owner asked on 2026-11-08 for pinned Canvas updates
+to come back: Settings offered **Pinned artifact updates** with no producer
+since the pinned-artifact feed was deleted with Threads. The note is where a
+publish meets its Canvas, and the news rule is the one the Canvas row's
+unread already takes, so the two cannot disagree about what is news.
+
+**Considered and rejected (pinners):** Recording from the resource-version
+ledger's drain, which every producer passes: it runs as a microtask outside
+any entry point and cannot enqueue a push durably without a new alarm kind,
+and the versions it adds (an image edit, a refetch) are not the Canvas's
+work. Telling everyone who may open the Canvas: that is the Canvas row's
+unread; a push is for the people who asked to follow it by pinning.
 
 **What changed:** A Canvas's mark is tinted, in a hue stable for its id. The
 home page draws the design's card grid, each card's shot sketching what the

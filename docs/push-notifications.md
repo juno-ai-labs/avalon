@@ -196,7 +196,8 @@ through `conversationCanonicalUrl`: a mention or Needs input in a Canvas's
 Chat opens the Canvas, and a Sidekick's conversation or a finished run opens
 the Sidekick. A reply opens its Canvas or Sidekick, at the newest message (the
 canonical link has no message form; the Activity row carries the turn and its
-sequence for that). A conversation with neither — a retired Thread or Breakout — has
+sequence for that), and a pinned Canvas's new version opens the Canvas onto
+that artifact. A conversation with neither — a retired Thread or Breakout — has
 no link, and its delivery is skipped with the reason
 `conversation_not_linkable` rather than sent to open nothing. A push
 resolves that link once per intent, through `conversationLink`, and only after
@@ -243,6 +244,24 @@ as a run notice's is (an active member the parent still admits), consults
 `notificationAllows`, and says "<author> in <Canvas or Sidekick>" with the
 message as plain text. Its collapse id is the conversation's, so a newer
 reply replaces the alert before it.
+
+### A pinned Canvas's new version
+
+A new version of one of a Canvas's artifacts tells everyone who pinned the
+Canvas (`workspace_pins`, kind `canvas`) except whoever made it or had it made
+(the version's `author_user_id` and `on_behalf_of_user_id`): `artifact_updated`,
+the **Pinned Canvas updates** choice (`artifactUpdates`). Which versions are
+news is the rule the Canvas row's own artifact unread takes
+(`artifactNewsSql`): version 2 on, a republish or a replacement, so a new
+artifact's first version tells nobody. The publish's note to its Canvas
+(`HostedCanvas.noteArtifact`) reads the resource's newest version and records
+one intent and Activity row per pinner (`tellCanvasPinners`,
+`canvas-artifact-notices.ts`), then enqueues each push; a publish noted twice
+records nothing twice. The push says "<author> updated <artifact> in
+<Canvas>" — the author a member's name, a connection's display name, or
+whoever the publish says edited the Canvas (Rally for its Chat, the Sidekick
+for a run) — and opens the Canvas onto the artifact (`/cv/<id>/a/<id>/`). Its
+collapse id is the Canvas's, so a newer version replaces the alert before it.
 
 ## What each person chooses
 
@@ -439,6 +458,11 @@ whose push says "Avery in Launch plan"; a person the replies mention and their
 author get nothing; a reply within the cooldown is recorded `skipped` and moves
 the row, and one after it pushes again; a reply after the row was read is a
 new row; and Rally's reply makes no batch at all.
+`canvas-artifact-notices.test.ts` covers a pinned Canvas's new version: its
+author's own pin gets nothing, the other pinner one intent and a row naming
+the artifact, the push "Avery updated Launch report in Launch" opening onto
+the artifact, Rally's next version moving that row, a read of the Chat
+clearing it, and the version after that a new row.
 `test/workspace-parent-notices-migration.test.ts` covers migration 150 over
 populated rows. `test/conversation-effect-service.test.ts` covers
 a mention whose conversation has no link: Slack and email log
@@ -477,6 +501,10 @@ four from `ParentNoticeSchema`. Settings offers only the kinds a producer
 records (`member-preferences.md`). [Client half: the push deep links, folded
 in at merge.]
 
+A pinned Canvas's new version tells its pinners as `artifact_updated`
+([A pinned Canvas's new version](#a-pinned-canvass-new-version)), recorded by
+the publish's note to the Canvas and pushed onto the artifact.
+
 **Why (replies):** The owner asked on 2026-11-08 that human replies produce
 Activity and push again. The Thread-era reply batch went with Activity's
 sweep (plan step C-2), so Settings offered **New messages** and nothing ever
@@ -484,6 +512,11 @@ sent one. The batch and cooldown keep the team's numbers (15 seconds, two
 minutes) from that implementation. The batch rides the existing alarm store,
 as a run notice does, and the cooldown reads the intent's own
 `delivered_at`, so no second table of alerts exists.
+
+**Why (pinned Canvases):** The owner asked for pinned Canvas updates to come
+back. The Thread-era pinned-artifact news (`artifactUpdateSql` in the
+deleted feed) was pinned artifacts; a Canvas is what is pinned now, so the
+news is a version in a pinned Canvas, by the same rule its row's unread uses.
 
 **Considered and rejected (replies):** One `new_message_notification` per
 recipient, as mentions are: the message's text would cross the Queue once per
