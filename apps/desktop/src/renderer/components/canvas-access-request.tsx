@@ -14,10 +14,12 @@ import { RelativeTime } from './relative-time';
  * (`GET /canvases/:id/access` answered `requestable`): the pane says so,
  * without its title, and offers Request access, one dialog with an optional
  * message. While their request is pending the button gives way to
- * "Request sent · <when>" alone; a denied request reads as none, because a denial
- * tells the requester nothing (`docs/canvases.md`, "A Canvas you cannot open").
- * The grant reopens the pane into the Canvas on its own: the screen refetches
- * the Canvas when it appears in the list or an `access_granted` row arrives.
+ * "Request sent · <when>" alone. A declined request reads "Request declined
+ * · <when>" with Request access offered again, since a denial allows a new
+ * request (`docs/canvas-access-requests.md`, "In the client"). The grant
+ * reopens the pane into the Canvas on its own: the screen refetches the
+ * Canvas when it appears in the list or an `access_granted` row arrives, and
+ * re-reads the access when an `access_denied` row does.
  */
 export function CanvasAccessRequestPane({ access, canvasId }: { access: CanvasAccess; canvasId: string }): React.JSX.Element {
   const { api } = useCollaborationSession();
@@ -45,6 +47,7 @@ export function CanvasAccessRequestPane({ access, canvasId }: { access: CanvasAc
     },
   });
   const pending = access.request?.state === 'pending' ? access.request : null;
+  const declined = access.request?.state === 'denied' ? access.request : null;
   const close = (): void => {
     if (send.isPending) return;
     send.reset();
@@ -57,10 +60,15 @@ export function CanvasAccessRequestPane({ access, canvasId }: { access: CanvasAc
         {pending && <p className="canvas-access-request-sent" role="status">
           Request sent · <RelativeTime format={formatRelative} value={pending.requestedAt} />
         </p>}
+        {declined && <p className="canvas-access-request-sent" role="status">
+          Request declined · <RelativeTime format={formatRelative} value={declined.decidedAt ?? declined.requestedAt} />
+        </p>}
       </div>}
       description={pending
         ? 'The people who manage it have been asked. It opens here once someone lets you in.'
-        : 'Ask the people who manage it to let you in.'}
+        : declined
+          ? 'Someone who manages it declined. You can ask again.'
+          : 'Ask the people who manage it to let you in.'}
       title="You don't have access to this Canvas"
     />
     <Modal

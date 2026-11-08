@@ -35,6 +35,7 @@ describe("the web app's Organization URL", () => {
     ['on its landing hash', `${organization}#/`, { kind: 'home', target }],
     ['on a Canvas', `${organization}#/canvases/${canvas}`, { kind: 'canvas', canvasId: canvas, target }],
     ['on a Canvas onto an artifact', `${organization}#/canvases/${canvas}?artifact=${artifact}`, { kind: 'canvas', canvasId: canvas, artifactId: artifact, target }],
+    ['on a Canvas at one message', `${organization}#/canvases/${canvas}?turn=${artifact}&sequence=4`, { kind: 'canvas', canvasId: canvas, turnId: artifact, sequence: 4, target }],
     ['on a Sidekick', `${organization}#/sidekicks/${canvas}`, { kind: 'sidekick', sidekickId: canvas, target }],
   ])('opens the app %s', (_name, url, intent) => {
     const deepLink = httpsLinkDeepLink(url);
@@ -49,7 +50,6 @@ describe("the web app's Organization URL", () => {
   it.each([
     ['another hash route', `${organization}#/settings?section=connections`],
     ['the Canvases list hash', `${organization}#/canvases`],
-    ['a Canvas turn', `${organization}#/canvases/${canvas}?turn=${artifact}&sequence=4`],
     ['an artifact beside another query key', `${organization}#/canvases/${canvas}?artifact=${artifact}&turn=1`],
     ['an artifact that is not an id', `${organization}#/canvases/${canvas}?artifact=notes`],
     ['a Sidekick run', `${organization}#/sidekicks/${canvas}?run=${artifact}`],
