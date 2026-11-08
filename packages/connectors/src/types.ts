@@ -69,12 +69,11 @@ function humanizeActivityEventType(eventType: string): string {
  * back to them?** A pull request opened, yes. The eleven check runs it started,
  * no.
  *
- * The paused contextual-routing surface retains this as a prior for a future
- * re-enable: an operational type starts at a higher confidence bar before it
- * can be offered as context (`docs/contextual-routing.md`). A workspace's own
- * acceptances overrule it, and a connector that classifies nothing as
- * digestible is read as having drawn no line rather than as having said no —
- * so answer the digest question here and nothing else.
+ * The retired contextual-routing surface read this as a prior, and was wrong
+ * to treat it as a verdict (its retirement record in `docs/connectors.md`). A
+ * connector that classifies nothing as digestible is read as having drawn no
+ * line rather than as having said no — so answer the digest question here and
+ * nothing else.
  */
 export interface ConnectorActivityTypePartition {
   /** Read back to a person in their digest. */
