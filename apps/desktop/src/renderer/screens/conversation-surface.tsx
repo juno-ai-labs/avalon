@@ -818,10 +818,10 @@ export function highestVisibleAttentionSequence(
  * clears a finished run's row, which is updated in place, on a report's time
  * as well as its cursor, so a person who had read the Sidekick before its run
  * finished would otherwise come back to a row nothing clears
- * (`docs/activity.md`). For the same reason a new or revised turn while the
- * conversation is open owes one more: a run's row finishing in place in front
- * of its requester moves no cursor. Once per open and per change of its
- * turns, never per scroll, so the read path costs what it did.
+ * (`docs/activity.md`). For the same reason each settled change of its turns
+ * while the conversation is open owes one more: a run's row finishing in place
+ * in front of its requester moves no cursor. Once per open and per settled
+ * change (a streaming reply owes one, when it settles), never per scroll.
  *
  * `key` is the identity of the one request allowed in flight. It carries the
  * substream because the acknowledgement does: two children of one work stream
@@ -1448,9 +1448,16 @@ function ConversationSurfaceContent({
   // Streaming reveal changes only presentation overlays, potentially once per
   // painted frame. Keep the canonical flatten/dedupe/sort outside that clock:
   // it changes only when the durable snapshot or author projection changes.
-  // Declared here, after the snapshot it is keyed by: a new or revised turn
-  // owes a fresh report at an unchanged cursor (`useOpenReadReport`).
-  const openReadReport = useOpenReadReport(conversationAddress, transcriptTurnsKey(orderedTranscript.data));
+  // Declared here, after the snapshot and overlays it is keyed by: a settled
+  // change of the turns owes a fresh report at an unchanged cursor
+  // (`useOpenReadReport`, `transcriptTurnsKey`).
+  const liveTurnIds = useMemo(() => new Set((transcriptOverlays.data ?? []).flatMap((overlay) =>
+    overlay.identity.type === 'assistant_turn' ? [overlay.identity.turnId] : [])), [transcriptOverlays.data]);
+  const settledTurnsKey = useMemo(
+    () => transcriptTurnsKey(orderedTranscript.data, liveTurnIds, session?.user.id ?? null),
+    [liveTurnIds, orderedTranscript.data, session?.user.id],
+  );
+  const openReadReport = useOpenReadReport(conversationAddress, settledTurnsKey);
   const canonicalTranscript = useMemo(() => orderedTranscriptMessages(
     orderedTranscript.data,
     id,
@@ -2176,6 +2183,9 @@ function ConversationSurfaceContent({
       // A transcript that fits its viewport shows the first unread message
       // and the end at once: there is nowhere to hold the reader, and a
       // released follow would offer Jump to latest with nothing to jump to.
+      // `scrollHeight` here is the virtualizer's total, from estimated heights
+      // for rows not yet measured, so a transcript near the viewport's height
+      // can be read either way; the next scroll corrects `atEnd`.
       const fits = element !== null && element.scrollHeight - element.clientHeight < TRANSCRIPT_END_SLACK;
       if (anchorIndex !== null && !fits) {
         // Opened at the first unread message rather than at the end, so the

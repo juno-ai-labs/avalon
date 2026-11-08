@@ -99,8 +99,11 @@ export interface ListMotionPlan {
 export function longestIncreasingRun(sequence: readonly number[], weights?: readonly number[]): number[] {
   const size = sequence.length;
   // tree[i] holds the best (heaviest) run ending at a rank in its range: its
-  // weight and the position it ends at. A tie goes to the later position, as
-  // patience sorting's did, so the unweighted answer is the one it gave.
+  // weight and the position it ends at. A tie is stored for the later
+  // position, and read for the lower rank (the query walks from high ranges to
+  // low, and `>=` lets the lower one take it), which is the run patience
+  // sorting gave: in a middle swap, [0, 2, 1, 3], the row that rose is kept
+  // and the one that fell is the mover.
   const treeWeight = new Array<number>(size + 1).fill(0);
   const treeEnd = new Array<number>(size + 1).fill(-1);
   const predecessor = new Array<number>(size).fill(-1);
@@ -111,7 +114,7 @@ export function longestIncreasingRun(sequence: readonly number[], weights?: read
     let weight = 0;
     let end = -1;
     for (let node = rank; node > 0; node -= node & -node) {
-      if (treeWeight[node]! > weight) { weight = treeWeight[node]!; end = treeEnd[node]!; }
+      if (treeWeight[node]! > 0 && treeWeight[node]! >= weight) { weight = treeWeight[node]!; end = treeEnd[node]!; }
     }
     total[index] = weight + (weights?.[index] ?? 1);
     predecessor[index] = end;

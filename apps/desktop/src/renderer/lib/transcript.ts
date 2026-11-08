@@ -315,20 +315,35 @@ export function upsertTranscriptMessage(messages: Message[] | undefined, message
 }
 
 /**
- * What the snapshot's turns are, as one comparable key: the newest revision
- * of each transcript sequence, counted and summed. A new turn or a revised one
- * (a run's row updated in place) changes it; a re-delivery, a reconnect or a
- * streaming overlay does not. Revisions only rise, so the sum cannot return to
- * an earlier key.
+ * What the snapshot's settled turns are, as one comparable key: the newest
+ * revision of each settled transcript sequence, counted and summed. A turn
+ * that settles, or a settled one revised in place (a run's row), changes it;
+ * a re-delivery, a reconnect or a streaming overlay does not. A turn still
+ * live is left out until it settles: the server revises an assistant turn on
+ * every tool's start and end, and each change of this key is a read report (an
+ * HTTP call, a Durable Object write and a list republish), so a reply owes one
+ * report when it settles, not one per tool. Live is an active turn, a turn
+ * with a block still streaming, or one `liveTurnIds` names (its
+ * `assistant_turn` overlay). The viewer's own turns are left out too: sending
+ * one already moves their cursor. Loading an older page adds turns, so it owes
+ * one report at an unchanged cursor.
  */
-export function transcriptTurnsKey(snapshot: WorkstreamTranscriptSnapshot | undefined): string {
+export function transcriptTurnsKey(
+  snapshot: WorkstreamTranscriptSnapshot | undefined,
+  liveTurnIds: ReadonlySet<string> = new Set(),
+  viewerUserId: string | null = null,
+): string {
   if (!snapshot) return '';
+  const active = new Set(snapshot.activeTurns.map((turn) => turn.turnId));
   const revisions = new Map<number, number>();
-  const note = (turn: { transcriptSequence: number; revision: number }): void => {
-    revisions.set(turn.transcriptSequence, Math.max(revisions.get(turn.transcriptSequence) ?? 0, turn.revision));
-  };
-  for (const range of snapshot.ranges) range.turns.forEach(note);
-  snapshot.activeTurns.forEach(note);
+  for (const range of snapshot.ranges) {
+    for (const turn of range.turns) {
+      if (active.has(turn.turnId) || liveTurnIds.has(turn.turnId)
+        || turn.blocks.some((block) => 'streaming' in block && block.streaming === true)
+        || (viewerUserId !== null && turn.actor === 'human' && turn.authorUserId === viewerUserId)) continue;
+      revisions.set(turn.transcriptSequence, Math.max(revisions.get(turn.transcriptSequence) ?? 0, turn.revision));
+    }
+  }
   let sum = 0;
   for (const revision of revisions.values()) sum += revision;
   return `${revisions.size}:${sum}`;

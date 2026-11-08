@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { formatNextRun, sidekickNext } from './sidekick-status';
 
@@ -33,7 +33,13 @@ describe('formatNextRun', () => {
   });
 
   it('falls back to the machine\'s zone without a zone, or with one it does not know', () => {
-    const machine = formatNextRun(next, 'long', now);
-    expect(formatNextRun(next, 'long', now, 'Not/AZone')).toBe(machine);
+    // The machine's zone pinned, so the fallback is checked against a literal.
+    vi.stubEnv('TZ', 'Asia/Tokyo');
+    try {
+      expect(formatNextRun(next, 'long', now)).toMatch(/^Saturday,? 7:00\sAM$/);
+      expect(formatNextRun(next, 'long', now, 'Not/AZone')).toMatch(/^Saturday,? 7:00\sAM$/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
