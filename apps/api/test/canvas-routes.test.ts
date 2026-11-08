@@ -52,6 +52,23 @@ describe('the Canvas routes', () => {
     expect(setAudience).not.toHaveBeenCalled();
   });
 
+  it('names the field and the reason when it refuses a retitle, and a malformed Canvas id by name', async () => {
+    const rename = vi.spyOn(CanvasService.prototype, 'rename');
+    const patch = (id: string, body: unknown) => routedApp().request(`/canvases/${id}`,
+      { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, env());
+    for (const [title, issue] of [['', 'too_small'], ['   ', 'too_small'], ['x'.repeat(301), 'too_big']] as const) {
+      const response = await patch(CANVAS_ID, { title });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: {
+        code: `canvas_rename_invalid:title:${issue}`, message: `The request is invalid: title:${issue}`, requestId: null } });
+    }
+    const malformed = await patch('not-a-canvas', { title: 'Launch plan' });
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ error: {
+      code: 'canvas_id_invalid:id:invalid_format', message: 'The request is invalid: id:invalid_format', requestId: null } });
+    expect(rename).not.toHaveBeenCalled();
+  });
+
   it('pins and unpins through the service, and refuses an id that is not one', async () => {
     const pin = vi.spyOn(CanvasService.prototype, 'pin').mockResolvedValue(undefined);
     expect((await routedApp().request(`/canvases/${CANVAS_ID}/pin`, json({ pinned: true }), env())).status).toBe(204);
