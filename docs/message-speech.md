@@ -83,13 +83,13 @@ context, and restores the button.
 This module owns on-demand playback of an existing assistant message. It does
 not create a durable audio resource; the agent's `generate_audio` tool and
 resource lifecycle are documented in [`agent-attachments.md`](agent-attachments.md).
-It borrows the plain-text Markdown reduction owned by the digest/email renderer
-(`digests.md` (retired)), asking it to drop link addresses, but neither
+It borrows the plain-text Markdown reduction of the email renderer
+(`markdownToEmailText` in `apps/api/src/services/email-markdown.ts`), asking it to drop link addresses, but neither
 changes stored markdown nor owns how it is displayed; that remains
 [`markdown-rendering.md`](markdown-rendering.md).
 
 The route is REST because a person explicitly requests one potentially large
-response body. It does not join the work-stream socket or Durable Object path;
+response body. It does not join the conversation socket or Durable Object path;
 [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md) owns that transport
 decision.
 
@@ -173,6 +173,8 @@ stream backpressure and keeps only the current provider reader plus one
 prefetched provider promise. That prefetch can synthesize one chunk a person
 later stops before hearing; prefetching the entire response was rejected because
 its abandoned cost grows with message length.
+
+## Changelog
 
 ### 2026-10-17 — Speak reads a link's name and not its address
 

@@ -503,8 +503,8 @@ otherwise: the loader compiles what it is given, the deadline ends a loop
   wizard tests through `sidekick_tool_test`.
 - **Who may read a saved tool's code on the profile.** Everyone who can read
   the Sidekick can read it today, a guest included only from the Sidekick's
-  own people list (`sidekickReaderAllows`); Sidekicks no longer have an owning
-  Thread.
+  own people list (`sidekickReaderAllows`); no Sidekick has an owning
+  conversation since Threads were retired.
 
 ## Changelog
 
