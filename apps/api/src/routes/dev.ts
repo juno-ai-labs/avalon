@@ -142,7 +142,95 @@ export async function seedPayloads(
   }
 }
 
-async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>) {
+/**
+ * The seed's Organization rows, upserted by id. Null-valued keys are omitted
+ * so column defaults apply, and the conflict target is the id alone: OR
+ * IGNORE would also swallow constraint violations, which is how a fixture
+ * mismatch once vanished silently instead of failing this route loudly.
+ * A resource goes through `seedResource`, which owns its versions.
+ */
+export async function seedWorkspaceTables(
+  env: Env,
+  workspaceId: string,
+  body: Pick<z.infer<typeof SeedProductBodySchema>, "payloads" | "workspaceTables">,
+): Promise<Record<string, number>> {
+  const workspaceDatabase = withWorkspaceRuntimeDatabase(env, workspaceId);
+  const counts: Record<string, number> = {};
+  for (const [table, rows] of Object.entries(body.workspaceTables)) {
+    if (!WORKSPACE_SEED_TABLES.has(table)) {
+      throw new ApiError(422, "seed_table_not_allowed", `Table ${table} is not seedable`);
+    }
+    for (const record of rows) {
+      if (table === "resources") {
+        await seedResource(workspaceDatabase.DB, record, body.payloads);
+        continue;
+      }
+      const columns = Object.keys(record).filter((column) => record[column] !== null);
+      await workspaceDatabase.DB.prepare(
+        `INSERT INTO ${table} (${columns.join(", ")})
+         VALUES (${columns.map(() => "?").join(", ")})
+         ON CONFLICT(id) DO NOTHING`,
+      ).bind(...columns.map((column) => record[column])).run();
+    }
+    counts[table] = rows.length;
+  }
+  return counts;
+}
+
+/**
+ * One seeded resource, written the way a publish writes one: its size is its
+ * stored body's (`metadata_json.size`, which the versions route reports as
+ * `sizeBytes`), and its first version names who made it through the
+ * `revision_author_*` staging columns the capture trigger reads.
+ *
+ * A re-run repairs what an older seed wrote. Its row takes the fixture's
+ * type, body and size where they differ — an update the capture trigger
+ * records as a version, so the update runs only when something differs:
+ * an unconditional one would add a version on every re-run, which is how
+ * the local Launch plan grew five identical ones. Then the resource's
+ * history is repaired in place, since every version of a seeded resource is
+ * the seed's own: a stack seeded before the fixture said `text/markdown`
+ * otherwise keeps listing `text/plain`, size 0 and no author for each old
+ * version, and the client draws those as raw source.
+ */
+async function seedResource(
+  database: D1Database,
+  fixture: z.infer<typeof row>,
+  payloads: z.infer<typeof SeedProductBodySchema>["payloads"],
+): Promise<void> {
+  const body = payloads.find((payload) => payload.key === fixture.content_ref);
+  const metadata = JSON.parse(String(fixture.metadata_json ?? "{}")) as Record<string, unknown>;
+  const record: z.infer<typeof row> = {
+    ...fixture,
+    metadata_json: JSON.stringify(body ? { ...metadata, size: new TextEncoder().encode(body.text).byteLength } : metadata),
+  };
+  const columns = Object.keys(record).filter((column) => record[column] !== null);
+  await database.prepare(
+    `INSERT INTO resources (${columns.join(", ")})
+     VALUES (${columns.map(() => "?").join(", ")})
+     ON CONFLICT(id) DO UPDATE SET
+       mime_type = excluded.mime_type,
+       content_ref = COALESCE(resources.content_ref, excluded.content_ref),
+       metadata_json = excluded.metadata_json,
+       revision_author_kind = excluded.revision_author_kind,
+       revision_cause = 'replaced'
+     WHERE resources.mime_type IS NOT excluded.mime_type
+        OR (resources.content_ref IS NULL AND excluded.content_ref IS NOT NULL)
+        OR resources.metadata_json IS NOT excluded.metadata_json`,
+  ).bind(...columns.map((column) => record[column])).run();
+  await database.prepare(
+    `UPDATE resource_versions
+        SET mime_type = ?2, metadata_json = ?3, content_ref = COALESCE(content_ref, ?4),
+            author_kind = COALESCE(author_kind, ?5)
+      WHERE resource_id = ?1
+        AND (mime_type IS NOT ?2 OR metadata_json IS NOT ?3
+          OR (content_ref IS NULL AND ?4 IS NOT NULL)
+          OR (author_kind IS NULL AND ?5 IS NOT NULL))`,
+  ).bind(record.id, record.mime_type ?? null, record.metadata_json, record.content_ref ?? null,
+    record.revision_author_kind ?? null).run();
+}
+
+export async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>) {
   const workspaceId = body.workspaceId;
   // A wiped local state means the WorkspaceDO has never learned who it is;
   // production teaches it at onboarding, the dev seed teaches it here.
@@ -156,34 +244,9 @@ async function seedProduct(env: Env, body: z.infer<typeof SeedProductBodySchema>
     workspaceId,
     fallbackWorkspacePlacementAffinity(env.AVALON_REGION),
   );
-  const workspaceDatabase = withWorkspaceRuntimeDatabase(env, workspaceId);
-
   await seedPayloads(env, workspaceId, body.payloads);
 
-  const workspaceCounts: Record<string, number> = {};
-  for (const [table, rows] of Object.entries(body.workspaceTables)) {
-    if (!WORKSPACE_SEED_TABLES.has(table)) {
-      throw new ApiError(422, "seed_table_not_allowed", `Table ${table} is not seedable`);
-    }
-    for (const record of rows) {
-      // Null-valued keys are omitted so column defaults apply, and the
-      // conflict target is the id alone: OR IGNORE would also swallow
-      // constraint violations, which is how a fixture mismatch once vanished
-      // silently instead of failing this route loudly.
-      // A row seeded before its body existed is repaired on a re-run: its
-      // `content_ref` is filled where it is still empty, never replaced.
-      const columns = Object.keys(record).filter((column) => record[column] !== null);
-      const conflict = columns.includes("content_ref")
-        ? `DO UPDATE SET content_ref = COALESCE(${table}.content_ref, excluded.content_ref)`
-        : "DO NOTHING";
-      await workspaceDatabase.DB.prepare(
-        `INSERT INTO ${table} (${columns.join(", ")})
-         VALUES (${columns.map(() => "?").join(", ")})
-         ON CONFLICT(id) ${conflict}`,
-      ).bind(...columns.map((column) => record[column])).run();
-    }
-    workspaceCounts[table] = rows.length;
-  }
+  const workspaceCounts = await seedWorkspaceTables(env, workspaceId, body);
 
   const automations = [];
   for (const automation of body.automations) {
