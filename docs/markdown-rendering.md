@@ -666,7 +666,7 @@ measure — because that is a property of the surface. It may not restyle a
 markdown element, and it paints by re-pointing the group rather than by naming
 an element. No surface takes a heading exemption today: the two that did, a
 note's page (headings 22/17/14) and the meeting briefing's rail (every level at
-15px), went with built-in notes ([`meeting-notes.md`](meeting-notes.md)), and
+15px), went with built-in notes ([their retirement record](architecture.md#2026-11-08--retirement-records-spaces-space-access-sources-projects-the-implementation-plan-meeting-notes)), and
 compact resource rows no longer contain a markdown glance.
 
 A heading exemption is written as `<host> .markdown-body :is(h1, …)`, naming

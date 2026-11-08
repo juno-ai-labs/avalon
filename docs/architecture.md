@@ -660,12 +660,14 @@ access and no-egress symbolication.
 
 ## Changelog
 
-### 2026-11-08 — Retirement records: Spaces, Space access sources, Projects, the implementation plan
+### 2026-11-08 — Retirement records: Spaces, Space access sources, Projects, the implementation plan, Meeting notes
 
-**What changed:** Nothing in the code. Four documents that had been kept
+**What changed:** Nothing in the code. Five documents that had been kept
 after their mechanism was deleted, only as records for their changelogs, were
 removed in the documentation audit; their retirement records are below. Each
-one's full text and changelog is in git as `git show e26aa66:docs/<name>.md`.
+one's full text and changelog is in git as `git show e26aa66:docs/<name>.md`,
+except the meeting notes record's, removed in a later pass the same day, which
+is `git show 14d68b1:docs/meeting-notes.md`.
 
 **`spaces.md` — Spaces (retired 2026-11-07).** A Space, shown as a Channel
 after the navigation redesign, grouped an Organization's Threads (the stored
@@ -726,6 +728,39 @@ Notion app registrations, the human acceptance pass) are operational work
 tracked elsewhere. What Rally is, is the implementation brief PRD
 (`docs/PRDs/2026-08-05_avalon-implementation-brief/`); how it is built, is
 this document.
+
+**`meeting-notes.md` — Meeting notes retirement (feature retired 2026-09-14;
+document removed 2026-11-08).** Built-in meeting recording, Notes and Control
+Tower were removed and their data erased, rather than their entry point hidden,
+because hiding left stored content and backend writers in place; composer
+dictation, its microphone permissions and transcription transport, and the
+Granola and Fireflies integrations stayed. The document described the cleanup
+and recorded its production checkpoint of 2026-09-15: workspace schema 58
+completed on all 16 workspace objects, conversation migration 58 on all 6,693
+conversation objects, every note file and attributable search, authorization
+and inference record removed, with copies the available mechanisms could not
+erase named as such (13 PostHog lifecycle events, historical Iceberg snapshots,
+30 days of Durable Object point-in-time recovery), so the checkpoint is not a
+completed physical erasure. It is retired because the procedure it owned is
+finished: what runs now is migration code and fences, each owned elsewhere,
+and four internal RPCs (`retiredMeetingInventory`,
+`purgeMeetingSearchAuthorization`, `purgeMeetingNoteObjects`,
+`finalizeMeetingRetirement` in `workspace-do.ts`) that nothing in the tree
+calls. What survives: `apps/api/src/durable-objects/meeting-notes-retirement.ts`
+and `applyMeetingRetirementMigrations`, which every WorkspaceDO cold start runs.
+Workspace migration 57 cleared note content and kept content-free ids and
+object addresses in `retired_meeting_resources`, which still fences stale
+writers and retired ids out of search registration and publication. A
+temporary empty relation brackets migration 57 alone for adopted schemas that
+lack `automation_resources`, because 57 had shipped and its hash could not
+change. Workspace migration 58 drops the feature tables only once its guard
+finds R2 deletion and search-key cleanup complete, and it is committed apart
+from 57 because the guard's rollback would otherwise undo the retirement. The
+telemetry, analytics and inference fences that discard historical meeting
+events are recorded in [`telemetry.md`](telemetry.md),
+[`analytics-lakehouse.md`](analytics-lakehouse.md) and
+[`inference-lakehouse.md`](inference-lakehouse.md). The real workerd proof is
+`apps/api/test-workers/meeting-notes-retirement.test.ts`.
 
 **Historical records removed in the same audit.** Dated audit and QA records
 that no living document cited were deleted rather than kept as orphans; each

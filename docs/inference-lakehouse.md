@@ -437,7 +437,7 @@ Configured deployments share the existing inference archive policy. Records and 
 
 ### 2026-09-14 — Fence retired meeting data before erasure
 
-The meeting-note retirement consumer recognizes the historical `meeting_notes` source, writes a content-free tombstone, and erases its raw payload before acknowledging a replay. It repeats deletion when the tombstone already exists so interruption between receipt and erasure cannot preserve the bytes. This fence prevents queued retired feature records from restoring catalog copies; ordinary inference remains unchanged. Catalog snapshots and provider-held copies require separate verification. See [meeting retirement](meeting-notes.md).
+The meeting-note retirement consumer recognizes the historical `meeting_notes` source, writes a content-free tombstone, and erases its raw payload before acknowledging a replay. It repeats deletion when the tombstone already exists so interruption between receipt and erasure cannot preserve the bytes. This fence prevents queued retired feature records from restoring catalog copies; ordinary inference remains unchanged. Catalog snapshots and provider-held copies require separate verification. See `meeting-notes.md` (retired).
 
 ### 2026-09-04 — Structured child inference carries its full address
 
