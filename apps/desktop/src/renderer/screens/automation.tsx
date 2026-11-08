@@ -21,6 +21,7 @@ import { useDocumentTitle } from '../lib/document-title';
 import { useRestoredRouteFallback } from '../lib/landing';
 import { ConversationSurface } from './conversation-surface';
 import { SidekickDelegation, useSidekickDelegates } from '../components/sidekick-delegation';
+import { sidekickRunLabel, useSidekickRunNumber } from '../components/sidekick-run-row';
 
 /**
  * One route host for automations.
@@ -285,8 +286,10 @@ function SidekickHeader({ context, detail, onCopyLink, onRunNow }: {
       }}>Copy link</TitleMenuItem>
     </>,
   };
+  // The run's pill names it as the row it was opened from does ("Run 6").
+  const runLabel = sidekickRunLabel(useSidekickRunNumber(detail.id, runId));
   const current: TitlePillLevel = runId
-    ? { key: `run:${runId}`, icon: <IconHistory aria-hidden="true" size={16} stroke={1.8} />, title: 'Run', label: 'Run' }
+    ? { key: `run:${runId}`, icon: <IconHistory aria-hidden="true" size={16} stroke={1.8} />, title: runLabel, label: runLabel }
     : sidekickLevel;
   // Back to the shared conversation replaces the history entry, so Back
   // leaves the Sidekick rather than reopening the run.
