@@ -474,7 +474,7 @@ export class ResourceService {
       const author = revision.author;
       const name = author?.kind === "member" ? names.get(author.userId)
         : author?.kind === "connector" ? names.get(author.connectionId) : undefined;
-      return { ...revision, authorName: name ? truncateUtf16Safe(name, 200) : null };
+      return { ...revision, authorName: name ? truncateUtf16Safe(name, 180) : null };
     });
   }
 

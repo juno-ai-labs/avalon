@@ -1,5 +1,5 @@
 import { readCompletionVerificationSnapshot } from "./completion-verification-storage";
-import { startReadCursorAtLatest } from "./member-attention";
+import { seatReadAtOwnTurn } from "./member-attention";
 import { projectConversationView } from "@rally/contracts/conversation-view";
 import { ConversationViewDeliverySchema, ConversationViewJobSchema, ConversationViewProjectionSchema, completeConversationViewDelivery, nextConversationViewAt, publishConversationViews } from "./conversation-view-projection";
 import { zodDiagnosticCode, describeZodIssues } from "@rally/contracts/zod-diagnostics";
@@ -2022,15 +2022,22 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     // stored turn (conversation_read, gap-fill, a conversation as text) sees
     // what the row shows, not only the transcript that joins the row in.
     const content = existing ? await this.sidekickRunRowContent(existing.turn_id, text) : null;
-    // The row's write moves the conversation's latest attention ordinal. While
-    // the run works, the person whose request started it has that ordinal
-    // read, in the same write, so the Sidekick they are looking at does not
-    // turn unread for what they asked for. A finished or waiting run is news
-    // to them, and stays unread like any other reply.
+    // The row's turn takes an attention ordinal when it is appended. While
+    // the run works, the person whose request started it has that turn read,
+    // in the same write, when they had read everything before it, so the
+    // Sidekick they are looking at does not turn unread for what they asked
+    // for, and a teammate's message stays unread to them. Updates move no
+    // ordinal; they seat the same turn, which repairs a seat the append
+    // missed. A finished or waiting run is news to them, and stays unread
+    // like any other reply.
     const requester = request.requesterUserId && (request.state === "pending" || request.state === "running")
       ? request.requesterUserId : null;
-    const seatRequester = (now: number) => {
-      if (requester) startReadCursorAtLatest(this.ctx.storage.sql, requester, now, false);
+    const seatRequester = (turnId: string, now: number) => {
+      if (!requester) return;
+      const ordinal = this.ctx.storage.sql.exec<{ attention_ordinal: number | null }>(
+        `SELECT attention_ordinal FROM participant_transcript_turns WHERE turn_id = ?`, turnId,
+      ).toArray()[0]?.attention_ordinal;
+      if (ordinal != null) seatReadAtOwnTurn(this.ctx.storage.sql, requester, ordinal, now);
     };
     const result = await this.product.commitRuntimeMutation(() => {
       const now = Date.now();
@@ -2043,7 +2050,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
           request.runId, appended.messageId, request.state, request.stepCount, request.reply, request.version, now,
         );
-        seatRequester(now);
+        seatRequester(appended.messageId, now);
         return { outcome: "appended" as const, code: "sidekick_run_row_appended" };
       }
       if (current.source_version > request.version && !request.replay) return { outcome: "unchanged" as const, code: "sidekick_run_row_stale" };
@@ -2072,7 +2079,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         }
       }
       this.transcript.reviseParticipantTurnInTransaction(current.turn_id, now);
-      seatRequester(now);
+      seatRequester(current.turn_id, now);
       return { outcome: "updated" as const, code: "sidekick_run_row_updated" };
     }, true, requester ? [requester] : []);
     if (result.outcome === "appended" || result.outcome === "updated") await this.flushSemanticRealtimeOutboxBestEffort();

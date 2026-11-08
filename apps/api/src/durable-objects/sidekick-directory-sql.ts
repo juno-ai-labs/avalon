@@ -122,19 +122,26 @@ export const AUTOMATION_VIEWER_SQL = `CASE
  *
  * The run state is the newest run's live state: `working` while it is queued
  * or running, `needs_input` while it waits, and null once it has finished or
- * when there is no run. The pending question is what the newest run waiting
- * on input is waiting on: its summary, which for a run that asked is the
+ * when there is no run. The pending question is what that same run waits on,
+ * only while it waits: its summary, which for a run that asked is the
  * question it asked (`commonEffect` sends the open elicitation's prompt as a
  * waiting run's reply), and for a run admitted with no delegate is that
- * notice. Both probes walk `sidekick_runs_history_idx` from the newest row.
+ * notice. An older run still waiting raises `needs_input` alone.
  */
-export const AUTOMATION_RUN_STATE_SQL = `(SELECT CASE WHEN latest.state IN ('pending', 'running') THEN 'working'
-          WHEN latest.state = 'needs_input' THEN 'needs_input' END
-     FROM sidekick_runs latest WHERE latest.sidekick_id = directory.automation_id
-    ORDER BY latest.created_at DESC, latest.run_id DESC LIMIT 1) AS run_state,
-   (SELECT asked.summary FROM sidekick_runs asked
-     WHERE asked.sidekick_id = directory.automation_id AND asked.state = 'needs_input'
-     ORDER BY asked.created_at DESC, asked.run_id DESC LIMIT 1) AS pending_question`;
+export const AUTOMATION_RUN_STATE_SQL = `CASE WHEN latest_run.state IN ('pending', 'running') THEN 'working'
+          WHEN latest_run.state = 'needs_input' THEN 'needs_input' END AS run_state,
+   CASE WHEN latest_run.state = 'needs_input' THEN latest_run.summary END AS pending_question`;
+
+/**
+ * The join `AUTOMATION_RUN_STATE_SQL` reads: the newest run, found by one
+ * probe of `sidekick_runs_history_idx` and read by its primary key, so the
+ * state and the question always describe the same run.
+ */
+export const AUTOMATION_RUN_STATE_JOINS = `LEFT JOIN sidekick_runs latest_run
+     ON latest_run.sidekick_id = directory.automation_id
+    AND latest_run.run_id = (SELECT newest.run_id FROM sidekick_runs newest
+                              WHERE newest.sidekick_id = directory.automation_id
+                              ORDER BY newest.created_at DESC, newest.run_id DESC LIMIT 1)`;
 
 /**
  * `trigger_kinds` for `automationSummary`, over an `automation_directory`
@@ -147,7 +154,7 @@ export const AUTOMATION_RUN_STATE_SQL = `(SELECT CASE WHEN latest.state IN ('pen
  * can say "On alert", "On email" or "On request" where a schedule would say
  * when. A trigger type this server does not map is left out.
  */
-export const AUTOMATION_TRIGGER_KINDS_SQL = `(SELECT json_group_array(kind) FROM (
+export const AUTOMATION_TRIGGER_KINDS_SQL = `(SELECT json_group_array(kind ORDER BY first_named) FROM (
      SELECT CASE json_extract(named.value, '$.type')
               WHEN 'manual' THEN 'manual'
               WHEN 'inbound_email' THEN 'inbound_email'
@@ -160,7 +167,7 @@ export const AUTOMATION_TRIGGER_KINDS_SQL = `(SELECT json_group_array(kind) FROM
         AND revision.definition_revision = COALESCE(directory.accepted_definition_revision,
           (SELECT MAX(newest.definition_revision) FROM sidekick_revisions newest
             WHERE newest.sidekick_id = directory.automation_id))
-      GROUP BY kind HAVING kind IS NOT NULL ORDER BY first_named)) AS trigger_kinds`;
+      GROUP BY kind HAVING kind IS NOT NULL)) AS trigger_kinds`;
 
 /** The live run state a run's own state contributes to its Sidekick's row (`AUTOMATION_RUN_STATE_SQL`). */
 export function sidekickRowRunState(state: string | null | undefined): "working" | "needs_input" | null {
