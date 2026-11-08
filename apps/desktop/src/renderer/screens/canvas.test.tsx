@@ -363,6 +363,16 @@ describe('CanvasScreen', () => {
       expect(await screen.findByText("You don't have access to this Canvas")).toBeInTheDocument();
     });
 
+    it('reads the Canvas again when the access read says it is open already', async () => {
+      getCanvasAccess.mockRejectedValue(new ApiError('You can already open this Canvas', 409, 'canvas_access_open'));
+      getCanvas.mockRejectedValueOnce(notFound()).mockResolvedValue(detail());
+      renderCanvas();
+      await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+      expect(getCanvas).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText("You don't have access to this Canvas")).toBeNull();
+      expect(screen.queryByText('This Canvas could not be opened.')).toBeNull();
+    });
+
     it('opens into the Canvas when it joins the list, without a refresh', async () => {
       const client = renderCanvas();
       await screen.findByText("You don't have access to this Canvas");
