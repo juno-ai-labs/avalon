@@ -5,8 +5,8 @@ rule these answer to, and the contract that makes stating them mandatory, is in
 [`connectors.md`](connectors.md#declaring-what-a-digest-may-read).
 
 **Nothing reads these answers today.** The digest they were written for is
-retired, Activity carries no connector events, and no activity log row records
-the answer any more. The manifests still declare every type and this table still
+retired, and no connector event writes an Activity row or records the answer
+any more. The manifests still declare every type and this table still
 has to match them; they are kept for a future surface that tells somebody about
 connector activity, so read "digest" below as that surface.
 

@@ -125,9 +125,11 @@ input. The Rally renderer owns the controls and layout; it cannot receive a
 through [desktop actions](desktop-actions.md): a typed request on the
 conversation's socket that the window's renderer executes through this same
 `command()` path, on one tab, never through another page controller. Tool
-receipts and retry policy stay with the harness. Only an agent profile's run
-is given a desktop-action executor, and since the session-import profile was
-removed no profile exists, so no run reaches the rail browser today.
+receipts and retry policy stay with the harness. Every run is wired a
+desktop-action executor (`agent-loop-do.ts`), but the one plugin that uses it,
+the browser plugin, reaches a run only through an agent profile
+(`integrations.ts`), and since the session-import profile was removed no
+profile exists, so no run reaches the rail browser today.
 
 The browser supplies the signed-in page and its primitives — page script
 (`evaluate`), the accessibility tree (`snapshot`), a screenshot sized in DIPs so
