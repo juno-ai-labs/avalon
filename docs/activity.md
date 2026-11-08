@@ -299,23 +299,6 @@ its `runId`) rather than the Sidekick's shared conversation.
 conversation's composer starts a new run, so a person sent there answered
 nothing. The design is silent on Activity, so this document is the authority.
 
-**Considered and rejected:** Opening the shared conversation at the run's
-row, which now carries the question too: it reads `"0"` and clears the row,
-but a row could not be scrolled to a run's row without a sequence the item
-does not carry.
-
-Rows take the shared row layout, seen rows recede through text colour tokens
-rather than 45% opacity (which left a seen preview at 1.9:1 in light and
-2.45:1 in dark), and only the rows whose conversation and run the route has
-open are marked open: opening a Sidekick marked every row about it, which read
-as a multi-selection.
-
-**What a future change must respect:** opening the run does not read `"0"`,
-so the row stays unseen until the shared conversation is read or Mark all
-seen; a fix belongs in what seen measures, not in the route.
-A seen row's colours are tokens chosen for contrast; dimming a row by
-opacity is how this failed before.
-
 ### 2026-11-08 — A row lists only while its person may open the parent, and every read report is heard
 
 **What changed:** `activityPage` filters out, from the page and the unseen
