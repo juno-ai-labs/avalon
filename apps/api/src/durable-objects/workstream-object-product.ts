@@ -46,6 +46,7 @@ import {
   type WorkstreamId,
 } from "@rally/contracts";
 import type { AddressingContextMessage, PromptMessage } from "@rally/agent-harness";
+import type { ConversationEffectEnvelope } from "@rally/contracts/conversation-effects";
 import { stripPersonalSystemPrompt, truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 
@@ -5214,6 +5215,19 @@ export class WorkstreamObjectProductService {
      */
     alsoReporting: readonly string[] = [],
   ): Promise<T> {
+    return (await this.commitRuntimeMutationWithEffects(mutate, affectsDirectory, alsoReporting)).result;
+  }
+
+  /**
+   * {@link commitRuntimeMutation}, also answering the directory effects the
+   * write enqueued, for a caller that is the parent and applies them itself
+   * (their receipts make the Queue's later copy a no-op).
+   */
+  async commitRuntimeMutationWithEffects<T>(
+    mutate: (sql: SqlStorage) => T,
+    affectsDirectory: boolean,
+    alsoReporting: readonly string[] = [],
+  ): Promise<{ result: T; envelopes: ConversationEffectEnvelope[] }> {
     const committed = await this.objectStore.commitWithRegionalEffects(
       mutate,
       () => {
@@ -5229,7 +5243,7 @@ export class WorkstreamObjectProductService {
         ];
       },
     );
-    return committed.result;
+    return { result: committed.result, envelopes: committed.envelopes };
   }
 
   /**
