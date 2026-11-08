@@ -16,7 +16,7 @@ import { isNotFoundError, useRestoredRouteFallback } from '../lib/landing';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { layoutKey, readArtifactPanel } from '../lib/desktop-layout';
 import { openResourceRequest, openResourceState } from '../lib/navigation-routes';
-import { ConversationSurface } from './conversation-surface';
+import { ConversationOpeningSkeleton, ConversationSurface } from './conversation-surface';
 
 /**
  * `/canvases/:id`: a Canvas open. Its Chat, the `canvas`-kind conversation
@@ -124,6 +124,11 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
       <EmptyState action={<Button onClick={() => void canvas.refetch()}>Try again</Button>} description="It may have been removed, or you may no longer have access." title="Canvas" />
     </div>;
   }
+  // A Canvas this window has not seen in its list is opened once its detail
+  // answers, so a link to one that does not exist draws the state above rather
+  // than a conversation whose socket then fails as well. One in the list opens
+  // at once, beside the detail read.
+  if (!row && !canvas.data) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
   const mark = <CanvasMark kind={canvas.data?.artifacts[0]?.kind ?? row?.artifactKind ?? null} size={24} />;
   // Edited from the title the pill shows, so not before there is one to show.
   const level = (): TitlePillLevel => renaming && (canvas.data || row) ? {

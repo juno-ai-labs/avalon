@@ -44,6 +44,7 @@ vi.mock('../lib/platform', async (importOriginal) => ({
 // what the Canvas hands it: the parent, the header, and the artifact to open.
 const surfaces = vi.hoisted(() => [] as Array<{ props: ConversationSurfaceProps; requested: string | null }>);
 vi.mock('./conversation-surface', () => ({
+  ConversationOpeningSkeleton: ({ label }: { label: string }) => <p>{label}</p>,
   ConversationSurface: (props: ConversationSurfaceProps) => {
     const location = useLocation();
     surfaces.push({ props, requested: openResourceRequest(location.state)?.resourceId ?? null });
@@ -218,6 +219,19 @@ describe('CanvasScreen', () => {
     getCanvas.mockRejectedValue(error);
     renderCanvas('/canvases/not-a-canvas');
     expect(await screen.findByRole('alertdialog', { name: 'Canvas could not be opened' })).toHaveTextContent('This Canvas does not exist.');
+    // Its conversation never opened, so no socket failure is raised over it.
+    expect(surfaces).toHaveLength(0);
+  });
+
+  it('opens a Canvas in the list at once, beside its detail read', async () => {
+    getCanvas.mockReturnValue(new Promise(() => undefined));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    applyVersionedSidebarList(client, 'canvases', 1, [listRow('Q4 revenue review')]);
+    render(<QueryClientProvider client={client}><Tooltip.Provider><MemoryRouter initialEntries={[`/canvases/${CANVAS}`]}>
+      <Routes><Route element={<CanvasScreen />} path="/canvases/:id" /></Routes>
+    </MemoryRouter></Tooltip.Provider></QueryClientProvider>);
+    expect(await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' })).toBeInTheDocument();
+    expect(surfaces.length).toBeGreaterThan(0);
   });
 
   it('opens already renaming when the sidebar row asked for it', async () => {
