@@ -195,7 +195,11 @@ mount and route change reads it and opens the sheet once.
 ### Title pills
 
 Every pane's header is a `TitlePillHeader`: its ancestors attached to its own
-pill as one centred glass control, and the pane's controls at the right. The
+pill as one centred glass control, and the pane's controls at the right. A
+Canvas passes `align="start"` (design.html §2): the pill follows Back and
+Forward and may run up to the controls, which keep the right edge however wide
+the pane is. At phone width no header draws Back and Forward; the pill needs
+the room, and the phone has its own way back. The
 header row is 64px in every pane. Each control at the right is a
 `TitlePillAction`, the raised circle the pills wear. The header's side
 columns never shrink below what their controls need, so a title too long for
@@ -341,6 +345,8 @@ It does not own:
 340px list column (416px), not 340px for both. At phone width, closing the
 sheet returns its bar to the open screen's section (v3-G5): the bar had kept
 naming the last list looked at, "Activity" over the Canvases home.
+`TitlePillHeader` takes `align="start"` for a Canvas's header (v1-F8), and a
+phone's headers drop Back and Forward (v3-G6).
 
 **Why:** The PRD makes design.html the authority for every screen, and the
 design inspection (v1-F1, v4-F4) measured a 264px list that cut ordinary

@@ -386,10 +386,12 @@ the rail's first section and `/canvases` the landing route
   With no artifact, the rail stays closed on the conversation's empty
   state. Closing the panel clears what was saved,
   so the next opening shows the newest artifact again.
-- **The header** is a `TitlePillHeader` naming the Canvas, the face pile of
-  everyone else in it now (`workspace_presence`, through the surface's
-  `presentUserIds`), Share, and the pill's menu (Pin, Rename…, Share…, Copy
-  link). The pill's title is the detail's, and a change to the list row's
+- **The header** is a `TitlePillHeader` naming the Canvas, drawn `align="start"`
+  as design.html §2 lays it out: the pill right after Back and Forward, then at
+  the pane's right edge the face pile of everyone else in it now
+  (`workspace_presence`, through the surface's `presentUserIds`), Share, and a
+  "⋯" button (`TitlePillMenuAction`). The "⋯" and the pill's menu offer the
+  same Pin, Rename…, Share… and Copy link; a phone keeps only the pill's. The pill's title is the detail's, and a change to the list row's
   title (the `workspace_canvas_list` push a rename from anywhere produces) is
   written into the detail's cache entry once the socket has applied the list,
   so the header follows a rename without a refetch. The window is named `<title> · Rally` while it is open
@@ -558,6 +560,7 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 **What changed:** A Canvas's mark is tinted by the kind of its newest
 artifact. The home page draws the design's card grid with a Live chip, its
 copy is the design's, and the sidebar's list is "All canvases" with a sort.
+The header puts the pill at the left with a separate "⋯" button.
 
 **Why:** The PRD makes design.html the authority for every screen. The mark
 was a grey tile on purpose ("a Canvas has no hue of its own, as a pinned
