@@ -1346,6 +1346,99 @@ describe('WorkspaceSocketProvider', () => {
       .toEqual([expect.objectContaining({ name: 'Newer still' })]);
   });
 
+  it('resubscribes everything on a reconnect and applies what the new socket sends, even from an object rebuilt behind it', async () => {
+    vi.useFakeTimers();
+    const queryClient = new QueryClient();
+    const automationId = '00000000-0000-7000-8000-000000000005';
+    const parentId = '00000000-0000-7000-8000-000000000020';
+    queryClient.setQueryData(['automation', automationId], { id: automationId });
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    // A conversation preview the window asked for and has not been answered.
+    function Preview(): null {
+      const { requestConversationView } = useWorkspaceSocket();
+      useEffect(() => requestConversationView(parentId, '0', () => undefined), [requestConversationView]);
+      return null;
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider region="global"
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <Preview />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const sidekick = (name: string) => ({
+      id: automationId, name, description: 'Every Monday', emailAddress: null, scope: 'workspace',
+      status: 'active', nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T19:00:00.000Z',
+    });
+    const answer = (waterline: number, listWaterline: number, name: string, reason: string) => ({
+      type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000017', waterline,
+      occurredAt: '2026-08-17T20:00:00.000Z', topics: [], reason, conversationViews: true,
+      sidebar: {
+        automations: { waterline: listWaterline, items: [sidekick(name)] },
+        canvases: { waterline: listWaterline, items: [] },
+        activity: { waterline: listWaterline, unseenCount: 0, items: [] },
+      },
+    });
+    const pushSidekicks = (socket: FakeWebSocket, waterline: number, name: string) => socket.message({
+      type: 'workspace_sidebar_list', occurredAt: '2026-08-17T20:01:00.000Z',
+      list: 'automations', waterline, items: [sidekick(name)],
+    });
+    const sentFrames = (socket: FakeWebSocket) => socket.send.mock.calls
+      .map(([frame]) => String(frame)).filter((frame) => frame !== 'ping')
+      .map((frame) => JSON.parse(frame) as Record<string, unknown>);
+
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+    act(() => first.message(answer(40, 30, 'Monday brief', 'resume')));
+    act(() => pushSidekicks(first, 31, 'Monday brief, renamed'));
+    expect(queryClient.getQueryData(['automations'])).toEqual([expect.objectContaining({ name: 'Monday brief, renamed' })]);
+    expect(sentFrames(first).map((frame) => frame.type)).toEqual(['subscribe', 'set_presence', 'conversation_view']);
+    // The page has read again since that push.
+    queryClient.setQueryData(['automation', automationId], { id: automationId });
+    expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(false);
+
+    // The API restarts: the transport drops without a close code of its own.
+    act(() => first.close(1006));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    await flushPromises();
+    const second = FakeWebSocket.instances[1]!;
+    act(() => second.open());
+    expect(sentFrames(second)).toEqual([expect.objectContaining({ type: 'subscribe', afterWaterline: 40 })]);
+
+    // The object came back with its counters behind what this window holds,
+    // as a local API restarted over rebuilt state does. Its answer is what
+    // the object holds now, so it replaces the lists rather than losing to
+    // the window's older ledger.
+    act(() => second.message(answer(3, 2, 'Rebuilt brief', 'history_unavailable')));
+    expect(queryClient.getQueryData(['automations'])).toEqual([expect.objectContaining({ name: 'Rebuilt brief' })]);
+    // Every subscription the window held is sent again on the new socket.
+    expect(sentFrames(second).map((frame) => frame.type)).toEqual(['subscribe', 'set_presence', 'conversation_view']);
+    expect(sentFrames(second).find((frame) => frame.type === 'conversation_view')).toMatchObject({ parentId, substreamId: '0' });
+    // The answer moved the Sidekick list, standing in for a push the dropped
+    // socket missed, so the open Sidekick page reads again.
+    expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(true);
+
+    // And the live updates keep coming: a push below the old ledger's 31,
+    // and a topic below the old log's 40, each apply.
+    act(() => pushSidekicks(second, 3, 'Live after the restart'));
+    expect(queryClient.getQueryData(['automations'])).toEqual([expect.objectContaining({ name: 'Live after the restart' })]);
+    queryClient.setQueryData(['workspace'], { id: 'workspace' });
+    act(() => second.message({
+      type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000018', waterline: 4,
+      occurredAt: '2026-08-17T20:02:00.000Z', topics: ['workspace_profile'], reason: 'change',
+    }));
+    expect(queryClient.getQueryState(['workspace'])?.isInvalidated).toBe(true);
+    queryClient.clear();
+  });
+
   it('applies the subscribe answer\'s Activity page, then only a newer push, and sends Mark all seen', async () => {
     const queryClient = new QueryClient();
     const getWorkspaceSocketTicket = vi.fn(async () => ({

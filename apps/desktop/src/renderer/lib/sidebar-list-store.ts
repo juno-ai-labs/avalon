@@ -68,28 +68,42 @@ interface SidebarListItems {
 /**
  * Replace one list if this version is newer than the one already applied.
  *
- * Returns whether it was applied, which is what the tests assert on: a dropped
- * duplicate and an applied update are otherwise indistinguishable from outside.
+ * `authoritative` is for the answer to a socket's own `subscribe`, which is
+ * applied whatever the ledger holds and resets it to the answer's version.
+ * Every push the window applied came on a socket before this one, and the
+ * object read this answer after sending them, so an answer older than the
+ * ledger means the object's counters went back (its storage was rebuilt, as a
+ * local API restart over reset state does). Holding the ledger then would drop
+ * every push until the counter climbed past it — a window that stops hearing
+ * its lists until it is reloaded. An answer at the ledger's own version
+ * rewrites the same rows, which React Query's structural sharing turns into
+ * no change at all.
+ *
+ * Returns whether the version moved, which is what the tests assert on and
+ * what tells the caller the list has news: a dropped duplicate, an answer at
+ * the version already held, and an applied update are otherwise
+ * indistinguishable from outside.
  */
 export function applyVersionedSidebarList<K extends SidebarList>(
   queryClient: QueryClient,
   list: K,
   waterline: number,
   items: SidebarListItems[K],
+  { authoritative = false }: { authoritative?: boolean } = {},
 ): boolean {
   pinWaterlineLedger(queryClient);
-  const waterlines = queryClient.getQueryData<Partial<Record<SidebarList, number>>>(
+  const applied = queryClient.getQueryData<Partial<Record<SidebarList, number>>>(
     SIDEBAR_LIST_WATERLINES_KEY,
-  ) ?? {};
+  )?.[list];
   // Seeded at -1 rather than 0: a workspace that has never written either table
   // is served waterline 0, and that first list still has to apply.
-  if (waterline <= (waterlines[list] ?? -1)) return false;
+  if (!authoritative && waterline <= (applied ?? -1)) return false;
   queryClient.setQueryData<Partial<Record<SidebarList, number>>>(
     SIDEBAR_LIST_WATERLINES_KEY,
     (current = {}) => ({ ...current, [list]: waterline }),
   );
   queryClient.setQueryData<SidebarListItems[K]>(SIDEBAR_LIST_QUERY_KEYS[list], items);
-  return true;
+  return applied !== waterline;
 }
 
 /**
