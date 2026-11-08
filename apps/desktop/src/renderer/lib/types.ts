@@ -124,6 +124,8 @@ export interface AutomationSummary {
   pendingQuestion?: string | null;
   /** What wakes it, each kind once in definition order; absent from a server that predates it. */
   triggerKinds?: Array<'manual' | 'schedule' | 'external_event' | 'inbound_email'>;
+  /** The IANA zone `nextRunAt` is read in (its schedule's); absent for an interval, no schedule, or an older server. */
+  scheduleTimeZone?: string;
 }
 
 export interface WorkstreamSummary {
