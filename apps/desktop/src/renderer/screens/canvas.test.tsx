@@ -229,7 +229,10 @@ describe('CanvasScreen', () => {
   ])('says the Canvas does not exist for %s', async (_case, error) => {
     getCanvas.mockRejectedValue(error);
     renderCanvas('/canvases/not-a-canvas');
-    expect(await screen.findByRole('alertdialog', { name: 'Canvas could not be opened' })).toHaveTextContent('This Canvas does not exist.');
+    // One in-pane state: no dialog over it, and nothing to try again.
+    expect(await screen.findByText('This Canvas does not exist.')).toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     // Its conversation never opened, so no socket failure is raised over it.
     expect(surfaces).toHaveLength(0);
   });

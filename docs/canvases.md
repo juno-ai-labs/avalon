@@ -401,12 +401,20 @@ the rail's first section and `/canvases` the landing route
   (`useDocumentTitle`, `lib/document-title.ts`).
 - **A link to no Canvas** — a well-formed id that names nothing
   (`canvas_not_found`, 404) or a malformed one (`canvas_id_invalid:id:<issue>`,
-  400) — draws the same "This Canvas does not exist." state
+  400) — draws the same "This Canvas does not exist." state, the pane's one
+  state (`PaneState`) with Back and Forward above it, no dialog over it and
+  nothing to try again
   (`isNotFoundError` in `lib/landing.ts`), and a restored route that answers
   either goes to the Canvases home. A Canvas missing from this window's list
   mounts its Chat only once the detail answers, so a link to one that does not
   exist raises no conversation socket failure over that state; one in the list
   opens at once, beside the detail read.
+- **No connection.** A conversation socket that cannot open without the
+  server saying why is the PRD's offline state, "Live edits resume when Rally
+  reconnects.", never "This Canvas is unavailable"; one the server refused
+  names the Canvas and keeps its reason behind Connection details. While the
+  Organization socket cannot open, the sidebar says so in place of its
+  placeholder rows (`SidebarListDown`).
 - **Naming.** While a row or the detail says `titleStatus: 'naming'` (a
   Canvas made with no title, waiting for the title its opening message gives
   it), the pill, the sidebar row and the home card draw the `TitleSkeleton`
@@ -571,6 +579,7 @@ Canvas holds, with a Live chip; its copy is the design's, and the sidebar's
 list is "All canvases" with a sort. The header puts the pill at the left with
 a separate "⋯" button. The Share panel draws its controls from the tokens and
 offers only guests to pick when the whole Organization can open the Canvas.
+A missing Canvas and an unreachable one are each one in-pane state.
 
 **Why:** The PRD makes design.html the authority for every screen. The mark
 was a grey tile on purpose ("a Canvas has no hue of its own, as a pinned
@@ -583,7 +592,10 @@ v4-F2), and the header centred the pill, hung its menu off the chevron only,
 and moved Share when the artifact panel opened (v1-F8). The Share panel drew
 the browser's blue radios and a raw disclosure marker, set its actions above
 the guest invite, and listed members, the viewer among them, to pick when
-every member was already in (v1-F18, v1-F19, v4-F14, v3-G9).
+every member was already in (v1-F18, v1-F19, v4-F14, v3-G9). A missing
+Canvas raised a dialog over a pane that said something else and offered Try
+again for what does not exist, and a blocked connection blamed the Canvas
+under endless placeholders (v1-F20, v4-F12, v4-F12b).
 
 Two choices the design does not settle, made in review and open to the
 owner's reversal: the hue is per Canvas from its id rather than per kind,

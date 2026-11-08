@@ -19,3 +19,7 @@ a { color: inherit; }
 .browser-conversation { display: flex; flex: 1; min-width: 0; min-height: 0; }
 /* The boot screen as the shell's loading fallback fills the row it sits in. */
 .browser-conversation > .entry { flex: 1; height: auto; }
+/* So do "Rally can't connect" and the fatal screen: a flex child of this row
+   shrinks to its card otherwise, and centring it then centres it in itself,
+   leaving the card at the window's left edge (v4-F0). */
+.browser-conversation > :is(.service-setup-screen, .fatal-error-screen) { flex: 1; }

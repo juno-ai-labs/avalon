@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { CanvasMark } from '../components/canvas-mark';
+import { PaneState } from '../components/pane-state';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState, TitleSkeleton } from '../components/primitives';
 import { canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
@@ -130,12 +131,13 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   };
   if (leaving) return <OpeningState label="Opening Canvases…" />;
   if (canvas.error && !row) {
-    return <div className="screen-error-state screen-with-titlebar">
-      <div className="screen-drag-strip window-drag" />
-      {/* A malformed id names nothing that could exist, so it reads as a missing one does. */}
-      <ErrorNotice title="Canvas could not be opened">{isNotFoundError(canvas.error) ? 'This Canvas does not exist.' : canvas.error.message}</ErrorNotice>
-      <EmptyState action={<Button onClick={() => void canvas.refetch()}>Try again</Button>} description="It may have been removed, or you may no longer have access." title="Canvas" />
-    </div>;
+    // One in-pane state, never a dialog over it (canvases.md). A malformed id
+    // names nothing that could exist, so it reads as a missing one does, and
+    // there is nothing to try again.
+    if (isNotFoundError(canvas.error)) {
+      return <PaneState description="It may have been removed, or the link may be wrong." title="This Canvas does not exist." />;
+    }
+    return <PaneState action={<Button onClick={() => void canvas.refetch()}>Try again</Button>} description={canvas.error.message} title="This Canvas could not be opened." />;
   }
   // A Canvas this window has not seen in its list is opened once its detail
   // answers, so a link to one that does not exist draws the state above rather

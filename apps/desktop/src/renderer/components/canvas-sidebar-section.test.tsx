@@ -2,7 +2,7 @@ import { asUserId } from '@rally/contracts';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createRef } from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,6 +15,8 @@ const ME = asUserId('00000000-0000-7000-8000-0000000000a1');
 const MAYA = asUserId('00000000-0000-7000-8000-0000000000a2');
 const setCanvasPinned = vi.hoisted(() => vi.fn());
 const getWorkspaceMembers = vi.hoisted(() => vi.fn());
+const socket = vi.hoisted(() => ({ current: null as null | { state: string; retry: () => void } }));
+vi.mock('../lib/workspace-socket', () => ({ useOptionalWorkspaceSocket: () => socket.current }));
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({ api: { setCanvasPinned, getWorkspaceMembers }, session: { user: { id: ME } } }),
 }));
@@ -37,6 +39,7 @@ function renderSection(rows: CanvasSidebarRow[] | null, at = '/'): QueryClient {
 }
 
 beforeEach(() => {
+  socket.current = null;
   setCanvasPinned.mockReset().mockResolvedValue(undefined);
   getWorkspaceMembers.mockReset().mockResolvedValue([{ id: MAYA, name: 'Maya Lin', email: 'maya@example.test', timezone: 'UTC' }]);
 });
@@ -77,6 +80,18 @@ describe('CanvasesSection', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Name' }));
 
     expect(titles()).toEqual([expect.stringContaining('Acme follow-up'), expect.stringContaining('Q4 revenue review')]);
+  });
+
+  it('says the list waits on a connection that could not open, rather than drawing placeholders for ever', () => {
+    socket.current = { state: 'unavailable', retry: vi.fn() };
+    renderSection(null);
+    expect(screen.getByRole('status')).toHaveTextContent('Rally can’t connect. Your Canvases appear once it does.');
+    expect(screen.getByRole('region', { name: 'Pinned Canvases' })).not.toHaveAttribute('aria-busy');
+
+    socket.current = { state: 'connecting', retry: vi.fn() };
+    cleanup();
+    renderSection(null);
+    expect(screen.queryByText(/Rally can’t connect/)).toBeNull();
   });
 
   it('pins a Canvas dragged into Pinned', async () => {

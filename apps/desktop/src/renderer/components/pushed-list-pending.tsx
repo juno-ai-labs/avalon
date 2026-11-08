@@ -25,3 +25,17 @@ export function PushedListPending({ label, noun }: {
   }
   return <OpeningState label={label} />;
 }
+
+/**
+ * Whether the Organization socket that fills the pushed lists has failed to
+ * open: placeholders would then wait for ever, so a list says so instead.
+ */
+export function usePushedListsDown(): boolean {
+  const socket = useOptionalWorkspaceSocket();
+  return Boolean(socket && (socket.state === 'reconnecting' || socket.state === 'unavailable'));
+}
+
+/** The sidebar's line in place of its placeholder rows while the socket is down. */
+export function SidebarListDown({ noun }: { noun: string }): React.JSX.Element {
+  return <p className="navigation-empty" role="status">{`Rally can’t connect. Your ${noun} appear once it does.`}</p>;
+}

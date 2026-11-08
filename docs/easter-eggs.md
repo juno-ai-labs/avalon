@@ -56,7 +56,9 @@ state, or a workspace activation fails. It says two things:
   sign-in, for example).
 
 Both offer **Sign out** and **Try again**. The screen names no region, endpoint
-or configuration file: the person who sees it cannot act on those.
+or configuration file: the person who sees it cannot act on those. It fills the
+pane it sits in, the browser's conversation row included
+(`apps/browser/src/styles.css`), so its card is centred in the window.
 
 ## Invariants
 
@@ -126,6 +128,13 @@ desktop and web.
   itself are verified in a real window.
 
 ## Changelog
+
+### 2026-11-08 — The browser centres the "can't connect" card
+
+**What changed:** In the browser the screen takes the whole conversation row.
+
+**Why:** It is a flex child of that row and shrank to its card, so centring it
+centred the card in itself and left it at the window's left edge (v4-F0).
 
 ### 2026-10-23 — Document created, with three eggs and a smaller "can't connect" screen
 
