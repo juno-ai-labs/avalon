@@ -561,7 +561,7 @@ export function orderedTranscriptMessages(
               : {}),
             ...(imported.success ? { importProvenance: imported.data } : {}),
             ...draftProposedFields(structured),
-            ...automationActivationFields(structured),
+            ...automationActivationFields(structured, block.sidekickRun),
             ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
           };
         }
@@ -2876,6 +2876,7 @@ function draftProposedFields(
  */
 function automationActivationFields(
   structured: Record<string, unknown>,
+  sidekickRun?: { requesterUserId: string | null; runNumber: number | null },
 ): Pick<Message, 'automationActivation'> | Record<string, never> {
   if (structured['type'] !== 'automation_activation') return {};
   const parsed = AutomationActivationV1Schema.safeParse(structured);
@@ -2887,6 +2888,7 @@ function automationActivationFields(
       runId: parsed.data.runId,
       ...(parsed.data.trigger ? { trigger: parsed.data.trigger.kind } : {}),
       ...(parsed.data.run ? { run: parsed.data.run } : {}),
+      ...(sidekickRun ? { requesterUserId: sidekickRun.requesterUserId, runNumber: sidekickRun.runNumber } : {}),
     },
   };
 }

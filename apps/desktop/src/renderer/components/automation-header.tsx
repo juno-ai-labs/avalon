@@ -70,7 +70,7 @@ export function sidekickAudienceLabel(automation: Pick<AutomationDetail, 'audien
 
 function runTriggerLabel(run: AutomationRun): string {
   switch (run.triggerType) {
-    case 'manual': return 'Manual';
+    case 'manual': return 'On request';
     case 'schedule': return 'Scheduled';
     case 'external_event': return 'Event';
     case 'inbound_email': return 'Email';
@@ -174,6 +174,40 @@ export function AutomationHeader({
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [showRunHistory, setShowRunHistory] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
+  // A draft has no Pause beside it, so the menu sits at the end of the
+  // title's pills rather than alone on a row of its own.
+  const moreMenu = (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <IconButton label="More Sidekick actions"><Ellipsis size={16} /></IconButton>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
+          <MenuActionItem disabled={Boolean(runDisabledReason)} disabledReason={runDisabledReason} onSelect={onRunNow} tooltipSide="right">
+            <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
+          </MenuActionItem>
+          <MenuActionItem disabled={Boolean(historyDisabledReason)} disabledReason={historyDisabledReason} onSelect={() => setShowRunHistory(true)} tooltipSide="right">
+            <History size={14} /> Run history
+          </MenuActionItem>
+          <DropdownMenu.Item className="menu-item" onSelect={() => {
+            setCopyFailed(false);
+            void onCopyLink().catch(() => setCopyFailed(true));
+          }}>
+            <Copy size={14} /> Copy link
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator className="menu-separator" />
+          <DropdownMenu.Item
+            className="menu-item menu-item-danger"
+            disabled={pending !== null}
+            onSelect={() => setConfirmingArchive(true)}
+          >
+            <Archive size={14} />
+            {automation.lifecycle === 'draft' ? 'Archive draft' : 'Archive Sidekick'}
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
   return (
     <div className="automation-header">
       <span className="sidekick-profile-glyph">
@@ -194,56 +228,28 @@ export function AutomationHeader({
                 {lifecycleLabel[automation.lifecycle]}
               </Badge>
               <Badge className="scope-badge">{sidekickAudienceLabel(automation)}</Badge>
+              {isDraft && <span className="automation-title-more">{moreMenu}</span>}
             </div>
-            <div className="automation-description">
+            {(description || error || copyFailed) && <div className="automation-description">
               {description}
               {error && <ErrorNotice>{error}</ErrorNotice>}
               {copyFailed && <ErrorNotice>The Sidekick link could not be copied.</ErrorNotice>}
-            </div>
+            </div>}
           </div>
         </div>
-        <div className="workstream-header-actions window-no-drag">
+        {!isDraft && <div className="workstream-header-actions window-no-drag">
           {/* A draft has nothing running to pause; it is finished in the conversation. */}
-          {!isDraft && <Button disabledReason={disabledReason} onClick={isPaused ? onResume : onPause}>
+          <Button disabledReason={disabledReason} onClick={isPaused ? onResume : onPause}>
             {isPaused ? <Play aria-hidden="true" size={14} /> : <CirclePause aria-hidden="true" size={14} />}
             {pending === 'pause' ? 'Pausing…' : pending === 'resume' ? 'Resuming…' : isPaused ? 'Resume' : 'Pause'}
-          </Button>}
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <IconButton label="More Sidekick actions"><Ellipsis size={16} /></IconButton>
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-                <MenuActionItem disabled={Boolean(runDisabledReason)} disabledReason={runDisabledReason} onSelect={onRunNow} tooltipSide="right">
-                  <Play size={14} /> {pending === 'run' ? 'Starting…' : 'Run now'}
-                </MenuActionItem>
-                <MenuActionItem disabled={Boolean(historyDisabledReason)} disabledReason={historyDisabledReason} onSelect={() => setShowRunHistory(true)} tooltipSide="right">
-                  <History size={14} /> Run history
-                </MenuActionItem>
-                <DropdownMenu.Item className="menu-item" onSelect={() => {
-                  setCopyFailed(false);
-                  void onCopyLink().catch(() => setCopyFailed(true));
-                }}>
-                  <Copy size={14} /> Copy sidekick link
-                </DropdownMenu.Item>
-                <DropdownMenu.Separator className="menu-separator" />
-                <DropdownMenu.Item
-                  className="menu-item menu-item-danger"
-                  disabled={pending !== null}
-                  onSelect={() => setConfirmingArchive(true)}
-                >
-                  <Archive size={14} />
-                  {automation.lifecycle === 'draft' ? 'Archive draft' : 'Archive Sidekick'}
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-          <ArchiveAutomationDialog
-            onClose={() => setConfirmingArchive(false)}
-            onConfirm={onArchive}
-            target={confirmingArchive ? { name, status: automation.lifecycle } : null}
-          />
-        </div>
+          </Button>
+          {moreMenu}
+        </div>}
+        <ArchiveAutomationDialog
+          onClose={() => setConfirmingArchive(false)}
+          onConfirm={onArchive}
+          target={confirmingArchive ? { name, status: automation.lifecycle } : null}
+        />
       </div>
       <div className="automation-header-details">
         <section aria-labelledby="sidekick-wakes-on" className="sidekick-profile-section">

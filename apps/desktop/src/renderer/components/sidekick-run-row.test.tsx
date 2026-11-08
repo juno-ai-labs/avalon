@@ -115,6 +115,14 @@ describe('SidekickRunRow', () => {
     expect(row.querySelector('.sidekick-run-row-glyph svg.lucide-bug')).not.toBeNull();
   });
 
+  it('names the run by its number and leaves out the step count until its first step', () => {
+    const starting = runRow('running');
+    starting.automationActivation = { ...starting.automationActivation!, runNumber: 412, run: { state: 'pending', stepCount: 0, reply: null } };
+    renderRow(starting);
+    const row = screen.getByRole('article', { name: 'Incident triage run' });
+    expect(row.querySelector('.sidekick-run-row-summary')).toHaveTextContent(/^Run 412 · On request · Starting$/);
+  });
+
   it('opens no run conversation for a run that is not waiting', () => {
     renderRow(runRow('running'));
     expect(socketOpenedFor).not.toHaveBeenCalled();

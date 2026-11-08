@@ -264,7 +264,7 @@ describe('AutomationHeader', () => {
     const onCopyLink = vi.fn<() => Promise<void>>(async () => { throw new Error('denied'); });
     renderHeader(draft, { onCopyLink });
     fireEvent.pointerDown(screen.getByRole('button', { name: 'More Sidekick actions' }), { button: 0, ctrlKey: false });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy sidekick link' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy link' }));
     expect(await screen.findByText('The Sidekick link could not be copied.')).toBeVisible();
     expect(onCopyLink).toHaveBeenCalledOnce();
   });
