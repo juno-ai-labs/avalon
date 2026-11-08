@@ -282,7 +282,7 @@ Sidekick runs, Pinned Canvas updates, Access requests
 (`OFFERED_NOTIFICATION_KINDS`) — the channels it goes by: `push`, `email`, and
 any connector surface the person can be reached on (`userDelivery`, such as
 Slack). `newThreads`, `newBreakouts` and `merges` are accepted where stored
-but are not offered, defaulted or consulted. How
+but are never offered or consulted. How
 they are stored and how a save merges them is
 [`member-preferences.md`](member-preferences.md). They apply to every device;
 the device switch above them is still the device's own on/off. An empty list
