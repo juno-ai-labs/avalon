@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
+import { mountAppStylesheet } from '../test/app-stylesheet';
 import type { Message } from '../lib/types';
 import type * as UseWorkstreamSocket from '../lib/use-workstream-socket';
 import { transcriptOverlaysQueryKey, type TranscriptOverlay } from '../lib/transcript';
@@ -121,6 +122,23 @@ describe('SidekickRunRow', () => {
     renderRow(starting);
     const row = screen.getByRole('article', { name: 'Incident triage run' });
     expect(row.querySelector('.sidekick-run-row-summary')).toHaveTextContent(/^Run 412 · On request · Starting$/);
+  });
+
+  it('keeps each fact of a narrow row on one line, wrapping only between them', () => {
+    const unmount = mountAppStylesheet({ width: 390, height: 844 });
+    try {
+      const finished = runRow('running', 'Done.');
+      finished.automationActivation = { ...finished.automationActivation!, runNumber: 6, run: { state: 'completed', stepCount: 6, reply: 'Done.' } };
+      renderRow(finished);
+      const row = screen.getByRole('article', { name: 'Incident triage run' });
+      for (const fact of ['Run 6', 'On request', 'Done', '6 steps']) {
+        expect(getComputedStyle(within(row).getByText(fact)).whiteSpace).toBe('nowrap');
+      }
+      expect(getComputedStyle(row.querySelector('.sidekick-run-row-summary')!).whiteSpace).not.toBe('nowrap');
+      expect(getComputedStyle(row.querySelector('.sidekick-run-row-time')!).whiteSpace).toBe('nowrap');
+    } finally {
+      unmount();
+    }
   });
 
   it('opens no run conversation for a run that is not waiting', () => {

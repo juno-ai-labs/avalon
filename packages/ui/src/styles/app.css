@@ -7124,6 +7124,9 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-run-row:has(> .sidekick-run-row-question) .disclosure-chevron { transform: rotate(90deg); }
 .sidekick-run-row-glyph { display: inline-flex; flex: none; height: 20px; width: 20px; }
 .sidekick-run-row-summary { font-size: 13px; font-weight: 500; }
+/* A narrow row wraps between facts, never inside one ("6 / steps"), and the
+   age keeps its words together beside them (b1-R2-8). */
+.sidekick-run-row-fact, .sidekick-run-row-time { white-space: nowrap; }
 /* Each state reads as itself: a live run carries the working dot, a waiting
    one and a failed one are in the attention colour, a stopped one recedes.
    Done is the plain row. */

@@ -65,11 +65,14 @@ export function SidekickRunRow({ message }: { message: Message }): React.JSX.Ele
           {/* design §4: "Run 412 · <what woke it>". The run carries its
               trigger's kind, not the event's text, so the kind is what it
               says. A count of no steps says nothing yet, so it waits for the
-              first. */}
-          <span className="sidekick-run-row-name">{activation.runNumber ? `Run ${activation.runNumber}` : 'Run'}</span>
-          {activation.trigger && <> · {TRIGGER_LABEL[activation.trigger]}</>} · <span className="sidekick-run-row-state">
+              first. Each fact is its own unbroken span, so a narrow row
+              wraps between facts ("· 6 steps") rather than inside one. */}
+          <span className="sidekick-run-row-fact sidekick-run-row-name">{activation.runNumber ? `Run ${activation.runNumber}` : 'Run'}</span>
+          {activation.trigger && <> · <span className="sidekick-run-row-fact">{TRIGGER_LABEL[activation.trigger]}</span></>}
+          {' · '}<span className="sidekick-run-row-fact sidekick-run-row-state">
             {live && <span aria-hidden="true" className="sidekick-working-dot" />}{STATE_LABEL[run.state]}
-          </span>{run.stepCount > 0 && <> · {run.stepCount} {run.stepCount === 1 ? 'step' : 'steps'}</>}
+          </span>
+          {run.stepCount > 0 && <> · <span className="sidekick-run-row-fact">{run.stepCount} {run.stepCount === 1 ? 'step' : 'steps'}</span></>}
         </span>
         <RelativeTime className="sidekick-run-row-time" value={message.createdAt} />
       </summary>
