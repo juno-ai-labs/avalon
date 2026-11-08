@@ -14,6 +14,7 @@ import { ApiError } from '../lib/api';
 import type { Workspace, WorkspaceInvitation } from '../lib/types';
 import { WorkspaceSettingsScreen } from './workspace-settings';
 import { CollaborationSessionProvider } from '../lib/collaboration-session';
+import { mountAppStylesheet } from '../test/app-stylesheet';
 
 const api = vi.hoisted(() => ({
   createWorkspaceInvitation: vi.fn(),
@@ -176,13 +177,17 @@ function renderSettings(
 ): void {
   client.setQueryData(['account-onboarding', 'adam@example.com'], { eligible: false, introduced: true, revision: 1, presentation: null });
   render(
-    <Tooltip.Provider>
-      <QueryClientProvider client={client}>
-        <CollaborationSessionProvider api={api as never} host={sessionHost.current} session={null}>
-          <AccountOnboardingGate><WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} /></AccountOnboardingGate>
-        </CollaborationSessionProvider>
-      </QueryClientProvider>
-    </Tooltip.Provider>,
+    // The in-window route mounts the screen inside `AppShell`, whose root is
+    // `.app-shell`; the shell's phone rules are keyed on that ancestor.
+    <div className="app-shell">
+      <Tooltip.Provider>
+        <QueryClientProvider client={client}>
+          <CollaborationSessionProvider api={api as never} host={sessionHost.current} session={null}>
+            <AccountOnboardingGate><WorkspaceSettingsScreen standaloneWindow={standaloneWindow} workspace={nextWorkspace} /></AccountOnboardingGate>
+          </CollaborationSessionProvider>
+        </QueryClientProvider>
+      </Tooltip.Provider>
+    </div>,
   );
 }
 
@@ -477,6 +482,22 @@ describe('Organization settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open settings sections' }));
     expect(sheet).toHaveClass('is-mobile-open');
+  });
+
+  it('draws one close on a phone while the sections sheet is open, and the menu toggle once it shuts', async () => {
+    const unmount = mountAppStylesheet({ width: 390, height: 844 });
+    try {
+      renderSettings();
+      // By its label: once it is not drawn it has left the accessibility tree.
+      const toggle = await screen.findByLabelText('Close settings sections');
+      expect(getComputedStyle(toggle).display).toBe('none');
+      expect(getComputedStyle(screen.getByRole('button', { name: 'Close settings' })).display).not.toBe('none');
+
+      fireEvent.click(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', { name: 'Organization' }));
+      expect(getComputedStyle(screen.getByRole('button', { name: 'Open settings sections' })).display).toBe('inline-grid');
+    } finally {
+      unmount();
+    }
   });
 
   it('makes the page inert under the open phone sheet and shuts it on Escape', async () => {
