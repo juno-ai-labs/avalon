@@ -692,9 +692,70 @@ describe("a Sidekick's shared conversation", () => {
     expect(await conversationStub().projectSidekickRunRow({
       ...addressed(), runId: started.runId, automationName: "Release notes", triggerKind: "manual",
       createdAt: held, state: "running", stepCount: 1, reply: null, version: held + 1, requesterUserId: AUTHOR_ID,
-    })).toEqual({ outcome: "updated", code: "sidekick_run_row_updated" });
+    })).toMatchObject({ outcome: "updated", code: "sidekick_run_row_updated" });
     await deliverChildEffects(TEST_ENV, conversationStub());
     expect(await unread(AUTHOR_ID)).toBe(true);
+  });
+
+  it("sends the requester's list once with their own run's row read, before the Queue brings its effects", async () => {
+    await activeSidekick();
+    const latest = () => runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{ latest: number }>(
+      `SELECT next_attention_ordinal - 1 AS latest FROM workstream WHERE id = 1`).one().latest);
+    const read = async (userId: string) => {
+      const response = await conversationStub().fetch("https://object.test/internal/product", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "acknowledge_read", parentKind: "automation", auth: auth(userId),
+          input: { readThroughSequenceNumber: await latest(), observedManualUnreadGeneration: 0 } }),
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      await deliverChildEffects(TEST_ENV, conversationStub());
+    };
+    await say(MEMBER_ID, "Morning, everyone.", "one-frame-0001");
+    await deliverChildEffects(TEST_ENV, conversationStub());
+    await read(AUTHOR_ID);
+    await read(MEMBER_ID);
+    async function open(userId: string, sessionId: string) {
+      const response = await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", WORKSPACE_ID)))
+        .fetch("https://workspace.test/socket", { headers: {
+          Upgrade: "websocket", "x-rally-workspace-id": WORKSPACE_ID, "x-rally-placement-affinity": "wnam",
+          "x-rally-user-id": userId, "x-rally-session-id": sessionId,
+          "x-rally-socket-ticket-id": crypto.randomUUID(),
+          "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1000) + 60),
+        } });
+      expect(response.status).toBe(101);
+      const socket = response.webSocket!;
+      socket.accept();
+      const frames: Array<Record<string, unknown>> = [];
+      socket.addEventListener("message", (event) => { frames.push(JSON.parse(String(event.data)) as Record<string, unknown>); });
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      await expect.poll(() => frames.some((frame) => frame.type === "workspace_sync"), { timeout: 5_000 }).toBe(true);
+      return { socket, frames };
+    }
+    const unreadIn = (frames: Array<Record<string, unknown>>) => frames
+      .filter((frame) => frame.type === "workspace_sidebar_list" && frame.list === "automations")
+      .map((frame) => (frame.items as Array<{ id: string; unread?: boolean }>).find((item) => item.id === AUTOMATION_ID)?.unread);
+    const author = await open(AUTHOR_ID, SESSION_ID);
+    const member = await open(MEMBER_ID, MEMBER_SESSION_ID);
+    try {
+      author.frames.length = 0;
+      member.frames.length = 0;
+      const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "one-frame-run-0001" });
+      expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
+      await rowReaches(started.runId, "running");
+      // No delivery from the conversation's outbox yet: the row's write was
+      // applied where the Sidekick asked for it. Its other reader sees it
+      // unread; the requester never sees their own run's row unread.
+      await expect.poll(() => unreadIn(member.frames).at(-1), { timeout: 5_000 }).toBe(true);
+      expect(unreadIn(author.frames).length).toBeGreaterThan(0);
+      expect(unreadIn(author.frames).every((unread) => unread === false)).toBe(true);
+      // The Queue's copies arrive afterwards and change nothing anyone sees.
+      await deliverChildEffects(TEST_ENV, conversationStub());
+      expect(unreadIn(author.frames).every((unread) => unread === false)).toBe(true);
+      expect(unreadIn(member.frames).at(-1)).toBe(true);
+    } finally {
+      author.socket.close();
+      member.socket.close();
+    }
   });
 
   it("keeps a requester's manual unread mark when their own run's row lands", async () => {

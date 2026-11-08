@@ -76,7 +76,7 @@ import { externalEventOpening } from "../lib/external-event-opening";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { parseRpcInput } from "../lib/rpc-input";
 import { uuidV7 } from "../lib/uuid-v7";
-import { logInfo, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { ConversationAuthorizationRequestSchema, type ConversationAuthorizationRequest } from "../services/authorization-policy";
 import { validateDraftEvaluatorRules } from "../services/external-event-evaluator";
 import {
@@ -127,7 +127,7 @@ import {
   type SidekickRunContinuation,
   type SidekickSkillReadRequest,
 } from "./automation-do-protocol";
-import type { DirectoryCommonEffect } from "./conversation-parent-object";
+import { ReceiveChildEffectsRequestSchema, type DirectoryCommonEffect } from "./conversation-parent-object";
 import { sidekickAudienceAllows } from "./sidekick-audience";
 import { SCHEDULED_ALARM_RETRY_BASE_MS, scheduledAlarmRetryDelay, type ScheduledAlarm, type ScheduledAlarmOutcome, type ScheduledAlarmStore } from "./scheduled-alarms";
 import { conversationIdOf } from "./workspace-sidekick-conversation-storage";
@@ -1921,6 +1921,29 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const written = await conversation.projectSidekickRunRow(projection);
     if (written.outcome === "refused") {
       logWarn(this.env, "sidekick_run_row_refused", { ...this.logFields(), run_id: runId, code: written.code });
+    }
+    // The write's directory effects, applied here at once rather than when
+    // the Queue brings them one by one: the row's new attention ordinal
+    // (`directory_common`) and the requester's seat at it (`directory_user`)
+    // are one write in the conversation, and applied one per delivery they
+    // were two sidebar frames, the first of which lit the requester's own
+    // row unread for a moment (vis2-v2 R2-6). The receipts make the Queue's
+    // copies no-ops; an effect for another region is left to the Queue.
+    const envelopes = (written.envelopesJson ? JSON.parse(written.envelopesJson) as { region?: unknown }[] : [])
+      .filter((envelope) => envelope.region === this.env.AVALON_REGION);
+    if (envelopes.length > 0) {
+      const request = ReceiveChildEffectsRequestSchema.safeParse({ substreamId: "0", envelopes });
+      if (!request.success) {
+        logWarn(this.env, "sidekick_run_row_effects_deferred", { ...this.logFields(), run_id: runId,
+          code: zodDiagnosticCode(request.error, "sidekick_run_row_effects") ?? "sidekick_run_row_effects_invalid" });
+        return;
+      }
+      try {
+        this.receiveChildEffects(request.data);
+      } catch (error) {
+        logWarn(this.env, "sidekick_run_row_effects_deferred", { ...this.logFields(), run_id: runId,
+          code: diagnosticErrorCode(error, "sidekick_run_row_effects_failed") });
+      }
     }
   }
 
