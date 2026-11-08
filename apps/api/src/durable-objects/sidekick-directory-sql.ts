@@ -52,6 +52,9 @@ export function automationSummary(
     /** The viewer's read state of the shared conversation (`AUTOMATION_VIEWER_SQL`); sidebar reads only. */
     unread?: number;
     needs_input?: number;
+    /** `AUTOMATION_RUN_STATE_SQL`; absent from a read that did not ask. */
+    run_state?: "working" | "needs_input" | null;
+    pending_question?: string | null;
   },
   report: InvalidAppearanceReport,
 ): AutomationSummary {
@@ -73,6 +76,8 @@ export function automationSummary(
     }),
     ...(row.unread === undefined ? {} : { unread: row.unread === 1 }),
     ...(row.needs_input === undefined ? {} : { needsInput: row.needs_input === 1 }),
+    ...(row.run_state === undefined ? {} : { runState: row.run_state }),
+    ...(row.pending_question === undefined ? {} : { pendingQuestion: row.pending_question }),
   };
 }
 
@@ -107,6 +112,31 @@ export const AUTOMATION_VIEWER_SQL = `CASE
           OR EXISTS (SELECT 1 FROM sidekick_runs waiting
                       WHERE waiting.sidekick_id = directory.automation_id AND waiting.state = 'needs_input')
         THEN 1 ELSE 0 END AS needs_input`;
+
+/**
+ * `run_state` and `pending_question` for `automationSummary`, over an
+ * `automation_directory` aliased `directory`.
+ *
+ * The run state is the newest run's live state: `working` while it is queued
+ * or running, `needs_input` while it waits, and null once it has finished or
+ * when there is no run. The pending question is what the newest run waiting
+ * on input is waiting on: its summary, which for a run that asked is the
+ * question it asked (`commonEffect` sends the open elicitation's prompt as a
+ * waiting run's reply), and for a run admitted with no delegate is that
+ * notice. Both probes walk `sidekick_runs_history_idx` from the newest row.
+ */
+export const AUTOMATION_RUN_STATE_SQL = `(SELECT CASE WHEN latest.state IN ('pending', 'running') THEN 'working'
+          WHEN latest.state = 'needs_input' THEN 'needs_input' END
+     FROM sidekick_runs latest WHERE latest.sidekick_id = directory.automation_id
+    ORDER BY latest.created_at DESC, latest.run_id DESC LIMIT 1) AS run_state,
+   (SELECT asked.summary FROM sidekick_runs asked
+     WHERE asked.sidekick_id = directory.automation_id AND asked.state = 'needs_input'
+     ORDER BY asked.created_at DESC, asked.run_id DESC LIMIT 1) AS pending_question`;
+
+/** The live run state a run's own state contributes to its Sidekick's row (`AUTOMATION_RUN_STATE_SQL`). */
+export function sidekickRowRunState(state: string | null | undefined): "working" | "needs_input" | null {
+  return state === "pending" || state === "running" ? "working" : state === "needs_input" ? "needs_input" : null;
+}
 
 /** The joins `AUTOMATION_VIEWER_SQL` reads, for the viewer bound to `?1`. */
 export const AUTOMATION_VIEWER_JOINS = `LEFT JOIN sidekick_viewer_reads reads

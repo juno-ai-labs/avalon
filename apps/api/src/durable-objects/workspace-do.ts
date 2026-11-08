@@ -28,6 +28,7 @@ import {
   AUTOMATION_AUDIENCE_SQL,
   AUTOMATION_VIEWER_JOINS,
   SIDEBAR_SIDEKICK_LISTED_SQL,
+  AUTOMATION_RUN_STATE_SQL,
   AUTOMATION_VIEWER_SQL,
   type AutomationDirectoryRow,
   type InvalidAppearanceReport,
@@ -11440,10 +11441,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private listSidebarAutomations(workspaceId: string, userId: string, limit = SIDEBAR_LIST_LIMIT): AutomationSummary[] {
     // The viewer's own Sidekicks, the Organization's, and those shared with
     // them, each with what they have not read in its shared conversation.
-    return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_count: number; unread: number; needs_input: number; pinned_position: number | null }>(
+    return this.state.storage.sql.exec<AutomationDirectoryRow & { shared_count: number; unread: number; needs_input: number;
+      run_state: "working" | "needs_input" | null; pending_question: string | null; last_run_at: number | null;
+      pinned_position: number | null }>(
       `SELECT directory.automation_id, directory.loadable, directory.appearance_json, directory.lifecycle,
               directory.scope, directory.title, directory.description,
               directory.next_run_at, directory.projected_at, ${AUTOMATION_AUDIENCE_SQL}, ${AUTOMATION_VIEWER_SQL},
+              ${AUTOMATION_RUN_STATE_SQL},
+              -- When the newest run started, as the library read says it: a
+              -- run waiting on input dates its row by when it began, not by
+              -- the last time the Sidekick's definition moved.
+              (SELECT MAX(created_at) FROM sidekick_runs WHERE sidekick_id = directory.automation_id) AS last_run_at,
               pin.position AS pinned_position
          FROM automation_directory directory
          ${AUTOMATION_VIEWER_JOINS}

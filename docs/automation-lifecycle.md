@@ -1122,6 +1122,39 @@ loaded into someone else's conversation, not a read of its own.
   republishes the Sidekick list to every socket (`onChildCommonProjection`).
   A run that needs input, or finishes, is pushed to the people
   [above](#runs) name, and its row in `"0"` shows the state.
+- **Run state and the waiting question.** The sidebar row's `runState` is the
+  newest run's live state: `working` while it is queued or running,
+  `needs_input` while it waits, null once it finished or when there is no
+  run; `pendingQuestion` is the summary of the newest run waiting on input
+  (`AUTOMATION_RUN_STATE_SQL`, two probes walking `sidekick_runs_history_idx`
+  from the newest row). `nextRunAt` was already the next scheduled
+  occurrence. Both are optional so a server that predates them still parses.
+  The sidebar row's `lastRunAt` is when the newest run started, as the
+  library read already said; the socket's list sent none, so a row waiting
+  on input was dated by the last move of the Sidekick's definition.
+  A run that asks a question says it: while its conversation holds a pending
+  elicitation, its `directory_common` effect sends the elicitation's prompt
+  as `preview` and `reply` in place of the last agent text, because the
+  asking is an elicitation turn, not a text turn, and the last reply was
+  whatever came before the question. So the summary, the run's row in
+  `"0"`, the Sidekick's row and the Needs input notice all carry the
+  question. A run admitted with no delegate waits on the delegation notice,
+  which is its summary. The list is sent again to every socket when a run is
+  admitted (`createRun`), when a pending run is stopped by a pause, and when a
+  projection moves a run between working, waiting and finished, or brings a
+  waiting run's question; a working run's steps and progress text do not
+  move the row, and they change on every tool call, so they send nothing.
+- **The requester's own run is not news to them.** A run's row write moves
+  `"0"`'s latest attention ordinal, which read as unread to the person who
+  had just pressed Run now and was looking at the Sidekick. While the run is
+  queued or running, `projectSidekickRunRow` gives the person whose request
+  started it (`requester_user_id`, else a manual trigger's
+  `requestedByUserId`) that ordinal in the same write
+  (`startReadCursorAtLatest`, as a participant who seats themselves is
+  seated), and reports their read with the write even when they are not an
+  active participant (`commitRuntimeMutation`'s `alsoReporting`). A finished
+  or waiting run is news, and stays unread to them like any reply. The seat
+  drops a manual unread mark they had set, as seating does.
 
 ### Who a run acts as
 

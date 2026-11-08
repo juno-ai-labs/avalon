@@ -2852,8 +2852,17 @@ export class WorkstreamObjectProductService {
         `SELECT COUNT(*) AS steps FROM participant_transcript_blocks WHERE block_kind = 'tool'`,
       ).one().steps)
       : undefined;
+    // A run waiting on a question says the question: it is what the run's
+    // row, its Sidekick's row and the Needs input notice show, and the asking
+    // is not a text turn, so the last reply would be whatever came before it.
+    const question = sidekickRun
+      ? this.storage.sql.exec<{ prompt: string }>(
+        `SELECT prompt FROM elicitation_requests WHERE status = 'pending'
+          ORDER BY created_at DESC, elicitation_id DESC LIMIT 1`,
+      ).toArray()[0]?.prompt
+      : undefined;
     const preview = sidekickRun
-      ? this.storage.sql.exec<{ content: string | null }>(
+      ? question ?? this.storage.sql.exec<{ content: string | null }>(
         `SELECT content FROM canonical_conversation_turn_details
           WHERE author_type = 'agent' AND message_type = 'text' ORDER BY sequence_number DESC LIMIT 1`,
       ).toArray()[0]?.content ?? ""
@@ -5198,13 +5207,19 @@ export class WorkstreamObjectProductService {
   async commitRuntimeMutation<T>(
     mutate: (sql: SqlStorage) => T,
     affectsDirectory: boolean,
+    /**
+     * People whose read state the mutation moved who need not be active
+     * participants (a viewer of a Sidekick's shared conversation), so their
+     * report reaches the parent with the rest.
+     */
+    alsoReporting: readonly string[] = [],
   ): Promise<T> {
     const committed = await this.objectStore.commitWithRegionalEffects(
       mutate,
       () => {
         if (!affectsDirectory) return [];
         const root = this.root();
-        const participantIds = this.activeParticipantIds();
+        const participantIds = [...new Set([...this.activeParticipantIds(), ...alsoReporting])];
         return [
           { partitionKey: "common", effect: this.commonEffect(root) },
           ...participantIds.map((userId) => ({

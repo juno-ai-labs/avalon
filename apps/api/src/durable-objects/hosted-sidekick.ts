@@ -1,5 +1,6 @@
 import { assertAudienceInOrganization, HostedConversation, type HostedConversationIdentity, type PriorChildProjection } from "./hosted-conversation";
 import { SIDEKICK_RUN_ROW_ALARM_KIND } from "./hosted-sidekick-schema";
+import { sidekickRowRunState } from "./sidekick-directory-sql";
 import { recordSidekickRunNotices } from "./workspace-notification-intent-storage";
 import { SidekickRunNotificationSchema, type SidekickRunNotification } from "@rally/contracts/push-notifications";
 import { enqueuePushDelivery } from "../services/push-delivery-service";
@@ -1736,8 +1737,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const live = !TERMINAL_RUN_STATES.has(next);
     // Read inside the same transaction as the update below: the state it
     // moves from is what says whether this projection is a transition.
-    const before = first(this.sql.exec<{ state: RunState }>(
-      `SELECT state FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, this.sidekickId, substreamId,
+    const before = first(this.sql.exec<{ state: RunState; summary: string | null }>(
+      `SELECT state, summary FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, this.sidekickId, substreamId,
     ));
     // One statement. An open run takes the new summary, and the new state when
     // it differs. A finished run is left alone unless it reopens: a live state
@@ -1758,9 +1759,14 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       (effect.reply ?? effect.preview) || null, now, next, live ? 1 : 0, this.sidekickId, substreamId, effect.state !== "idle" ? 1 : 0,
       JSON.stringify([...TERMINAL_RUN_STATES]), effect.stepCount ?? null,
     ));
-    // A run moving into or out of Needs input moves the Sidekick's sidebar
-    // row (`AUTOMATION_VIEWER_SQL` reads its runs), so the list is sent again.
-    if (moved && (before?.state === "needs_input") !== (next === "needs_input")) {
+    // A run moving into or out of Working or Needs input, or a waiting run's
+    // question arriving, moves the Sidekick's sidebar row
+    // (`AUTOMATION_VIEWER_SQL` and `AUTOMATION_RUN_STATE_SQL` read its runs),
+    // so the list is sent again. A working run's step and progress text do
+    // not: the row shows neither, and they move on every tool call.
+    const summary = (effect.reply ?? effect.preview) || null;
+    if (moved && (sidekickRowRunState(before?.state) !== sidekickRowRunState(next)
+      || (next === "needs_input" && before?.summary !== summary))) {
       this.host.noteDirectoryChanged(this.sidekickId, false, now);
     }
     if (!live && moved?.completed_at === now) {
@@ -1875,10 +1881,11 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
   private async projectRunRow(runId: string, replay: boolean): Promise<void> {
     const row = first(this.sql.exec<{
       workspace_id: string; region: string | null; title: string; trigger_json: string; state: RunState;
-      summary: string | null; step_count: number; created_at: number; updated_at: number;
+      summary: string | null; step_count: number; created_at: number; updated_at: number; requester_user_id: string | null;
     }>(
       `SELECT directory.workspace_id, directory.region, directory.title, run.trigger_json, run.state, run.summary,
-              run.step_count, run.created_at, run.updated_at
+              run.step_count, run.created_at, run.updated_at,
+              COALESCE(run.requester_user_id, json_extract(run.trigger_json, '$.requestedByUserId')) AS requester_user_id
          FROM sidekick_runs run JOIN automation_directory directory ON directory.automation_id = run.sidekick_id
         WHERE run.sidekick_id = ? AND run.run_id = ? AND directory.lifecycle <> 'deleted'`,
       this.sidekickId, runId,
@@ -1899,6 +1906,7 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       // is whatever it said most recently, which is progress, not a reply.
       reply: row.state === "pending" || row.state === "running" ? null : row.summary,
       version: row.updated_at,
+      requesterUserId: row.requester_user_id,
       replay,
     };
     const conversation = await durableObjectStubForWorkspace(this.env, this.env.SUBSTREAM_AGENTS, workspaceId,
@@ -2328,6 +2336,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       requesterUserId,
     ));
     if (!run) throw new Error("sidekick_occurrence_missing");
+    // A new run is the Sidekick's newest, Working or waiting: its row moves.
+    if (run.run_id === runId) this.host.noteDirectoryChanged(this.sidekickId, false, now);
     if (coordinatorUserId === null) this.noteDelegationAttention("no_eligible_delegate");
     else if (this.row()?.delegation_attention_code !== "event_no_eligible_delegate") this.noteDelegationAttention(null);
     if (run.state === "pending") this.armRunStart(run.run_id, now);
@@ -2364,6 +2374,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
         `UPDATE sidekick_runs SET state = 'stopped', completed_at = ?, updated_at = ? WHERE sidekick_id = ? AND run_id = ?`,
         now, now, this.sidekickId, runId,
       );
+      // No longer Working (`AUTOMATION_RUN_STATE_SQL`).
+      this.host.noteDirectoryChanged(this.sidekickId, false, now);
       return { progressed: true };
     }
     const coordinator = await this.runPrincipal(run);
