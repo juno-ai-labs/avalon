@@ -192,12 +192,17 @@ describe("sharing a Canvas by email address", () => {
   });
 
   it("indexes a share that was pending before lookup rows existed, on the object's own schedule", async () => {
-    // Such a share has no lookup row. Migration 93 arms one index alarm per
-    // parent with a pending share; the alarm writes the rows.
+    // Such a share has no lookup row. Migration 93 writes one index entry per
+    // parent with a pending share, and the constructor then arms the alarm for
+    // it; the alarm writes the rows.
     await share([NEWCOMER_EMAIL]);
     await env.DB.prepare("DELETE FROM scope_share_recipients WHERE workspace_id = ?").bind(WORKSPACE_ID).run();
-    await runInDurableObject(workspace(), (_instance, state) => {
+    await runInDurableObject(workspace(), async (instance, state) => {
       new ScheduledAlarmStore(state.storage.sql).schedule({ kind: SCOPE_INVITATION_INDEX_ALARM, key: CANVAS_ID, dueAt: Date.now() });
+      // Arm it as the constructor does after migrating. Without this the entry
+      // rides on the delivery alarm, and once that has run and cleared the
+      // alarm there is nothing for `runDurableObjectAlarm` to run.
+      await (instance as unknown as { armNextAlarm(): Promise<unknown> }).armNextAlarm();
     });
     // The share's own delivery alarm may be in flight already, and it runs
     // every due entry; whichever run takes the index entry, its write lands
