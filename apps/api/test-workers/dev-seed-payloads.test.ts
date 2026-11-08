@@ -45,6 +45,7 @@ describe("the seeded Launch plan artifact's versions", () => {
   const SAMANTHA = "00000000-0000-7000-8000-000000000003";
   /** The fixture's webhook connection. */
   const CONNECTION = "00000000-0000-7000-8000-000000000061";
+  const RUN = "00000000-0000-7000-8000-0000000000d1";
 
   /**
    * The fixture as the local-authority script posts it, with only Launch plan,
@@ -126,6 +127,23 @@ describe("the seeded Launch plan artifact's versions", () => {
     await seedProduct(TEST_ENV, launchPlanSeed());
     expect(await versions()).toEqual([
       { version: 2, mimeType: "text/markdown", sizeBytes: BODY_BYTES, contentAvailable: true, author: { kind: "system" } },
+      { version: 1, mimeType: "text/markdown", sizeBytes: BODY_BYTES, contentAvailable: true, author: { kind: "system" } },
+    ]);
+  });
+
+  it("leaves a version a run made after seeding alone on a re-run", async () => {
+    await prepare();
+    await seedProduct(TEST_ENV, launchPlanSeed());
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(workspaceDOName("global", asWorkspaceId(WORKSPACE_ID))));
+    // A run republishes the artifact as a table with its own body, as the Terminal's publish stages it.
+    await runInDurableObject(workspace, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE resources SET mime_type = 'text/csv', content_ref = ?, metadata_json = '{"size":11}',
+        revision_author_kind = 'agent', revision_author_run_id = ?, revision_cause = 'published' WHERE id = ?`,
+      `global/${WORKSPACE_ID}/resources/${ARTIFACT}/terminal/plan`, RUN, ARTIFACT);
+    });
+    await seedProduct(TEST_ENV, launchPlanSeed());
+    expect(await versions()).toEqual([
+      { version: 2, mimeType: "text/csv", sizeBytes: 11, contentAvailable: true, author: { kind: "agent", runId: RUN } },
       { version: 1, mimeType: "text/markdown", sizeBytes: BODY_BYTES, contentAvailable: true, author: { kind: "system" } },
     ]);
   });

@@ -743,9 +743,10 @@ export const ResourceRevisionSchema = z.object({
    * surfaces call it Rally) and for an identity that no longer resolves;
    * absent from a server older than it. Beside `author` rather than in it,
    * because the author variants are strict and an older client would reject
-   * the key there.
+   * the key there. Bounded at 180, a connection's `displayName` bound and an
+   * external actor's: the names this carries already have that ceiling.
    */
-  authorName: z.string().max(200).nullable().optional(),
+  authorName: z.string().max(180).nullable().optional(),
   /**
    * A cause this client does not know reads as none, so a later cause leaves
    * the history listable rather than failing the whole response, as

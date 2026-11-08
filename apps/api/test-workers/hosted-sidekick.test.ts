@@ -1567,7 +1567,7 @@ describe("a hosted Sidekick", () => {
 
   it("shows a Sidekick working while its newest run works, and sends the list again when it stops", async () => {
     await activeAutomation();
-    const { requested, scheduled } = await workingRuns("d");
+    const { scheduled } = await workingRuns("d");
     const row = async () => {
       const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
         .items.find((candidate) => candidate.id === AUTOMATION_ID);
@@ -1582,7 +1582,6 @@ describe("a hosted Sidekick", () => {
     const finished = await row();
     expect(finished.runState).toBeNull();
     expect(finished.waterline).toBeGreaterThan(working.waterline);
-    void requested;
   });
 
   it("lists what wakes a Sidekick in the run trigger vocabulary, each kind once, in the order its definition names them", async () => {

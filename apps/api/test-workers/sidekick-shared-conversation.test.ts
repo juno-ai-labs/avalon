@@ -683,6 +683,18 @@ describe("a Sidekick's shared conversation", () => {
     await rowReaches(started.runId, "running");
     await deliverChildEffects(TEST_ENV, conversationStub());
     expect({ author: await unread(AUTHOR_ID), member: await unread(MEMBER_ID) }).toEqual({ author: false, member: true });
+    // A teammate writes while the run works; the run's next step updates its
+    // row in place. The teammate's message stays unread to the author.
+    await say(MEMBER_ID, "I pushed a fix to the importer.", "requester-0002");
+    await deliverChildEffects(TEST_ENV, conversationStub());
+    const held = await runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{ source_version: number }>(
+      `SELECT source_version FROM sidekick_run_rows WHERE run_id = ?`, started.runId).one().source_version);
+    expect(await conversationStub().projectSidekickRunRow({
+      ...addressed(), runId: started.runId, automationName: "Release notes", triggerKind: "manual",
+      createdAt: held, state: "running", stepCount: 1, reply: null, version: held + 1, requesterUserId: AUTHOR_ID,
+    })).toEqual({ outcome: "updated", code: "sidekick_run_row_updated" });
+    await deliverChildEffects(TEST_ENV, conversationStub());
+    expect(await unread(AUTHOR_ID)).toBe(true);
   });
 
   it("shows a run working, then the question it waits on, on its row and on the Sidekick's list row", async () => {

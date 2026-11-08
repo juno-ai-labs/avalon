@@ -1127,9 +1127,11 @@ loaded into someone else's conversation, not a read of its own.
 - **Run state and the waiting question.** The sidebar row's `runState` is the
   newest run's live state: `working` while it is queued or running,
   `needs_input` while it waits, null once it finished or when there is no
-  run; `pendingQuestion` is the summary of the newest run waiting on input
-  (`AUTOMATION_RUN_STATE_SQL`, two probes walking `sidekick_runs_history_idx`
-  from the newest row). `nextRunAt` was already the next scheduled
+  run; `pendingQuestion` is that same run's summary while it waits, and null
+  otherwise (`AUTOMATION_RUN_STATE_SQL` over `AUTOMATION_RUN_STATE_JOINS`, one
+  probe of `sidekick_runs_history_idx` for the newest run), so the two never
+  describe different runs. An older run still waiting raises `needsInput`
+  alone; a newest run that finished while an older one works reads null. `nextRunAt` was already the next scheduled
   occurrence. Both are optional so a server that predates them still parses.
   The sidebar row's `lastRunAt` is when the newest run started, as the
   library read already said; the socket's list sent none, so a row waiting
@@ -1154,17 +1156,20 @@ loaded into someone else's conversation, not a read of its own.
   `external_event`. It reads the accepted definition, or a draft's newest
   submitted one, so the Sidekicks home can say "On alert", "On email" or "On
   request" where a schedule says when (design §3).
-- **The requester's own run is not news to them.** A run's row write moves
-  `"0"`'s latest attention ordinal, which read as unread to the person who
-  had just pressed Run now and was looking at the Sidekick. While the run is
-  queued or running, `projectSidekickRunRow` gives the person whose request
-  started it (`requester_user_id`, else a manual trigger's
-  `requestedByUserId`) that ordinal in the same write
-  (`startReadCursorAtLatest`, as a participant who seats themselves is
-  seated), and reports their read with the write even when they are not an
-  active participant (`commitRuntimeMutation`'s `alsoReporting`). A finished
-  or waiting run is news, and stays unread to them like any reply. The seat
-  drops a manual unread mark they had set, as seating does.
+- **The requester's own run is not news to them.** A run's row turn takes an
+  attention ordinal when it is appended, which read as unread to the person
+  who had just pressed Run now and was looking at the Sidekick. While the run
+  is queued or running, `projectSidekickRunRow` marks that turn read for the
+  person whose request started it (`requester_user_id`, else a manual
+  trigger's `requestedByUserId`) in the same write, and only when they had
+  read everything before it (`seatReadAtOwnTurn`: the cursor moves from the
+  turn's ordinal less one to the turn's, and from nowhere else; a person with
+  no cursor is seated at the turn). So a teammate's message before or after
+  the row stays unread to them, and a manual unread mark is never touched. A
+  row update moves no ordinal and seats the same turn. The read is reported
+  with the write even when they are not an active participant
+  (`commitRuntimeMutation`'s `alsoReporting`). A finished or waiting run is
+  news, and stays unread to them like any reply.
 
 ### Who a run acts as
 
