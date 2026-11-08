@@ -7,7 +7,7 @@
 > any other MCP client. Companions: [state.md](state.md) and
 > [design.md](design.md), which holds the full tool catalog, wire shapes and
 > errors. Builds on [the demo workspace PRD](../2026-09-04_demo-workspace/prd.md)
-> and the shipped machinery in [`demo-workspaces.md`](../../demo-workspaces.md).
+> and the shipped machinery in `demo-workspaces.md`.
 > Ships in two phases; [design.md](design.md#phases) says which tool is in which.
 > Modeled on [the engineering MCP](../../engineering-mcp.md). Standing
 > contract: [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
@@ -50,7 +50,7 @@ Changing a scenario costs a pull request and a deploy. The pack's content
 changed in four separate changes in its first month, the last of which
 replaced every earlier story (the 2026-09-09, 2026-09-10, 2026-09-15 and
 2026-09-23 entries in
-[`demo-workspaces.md`](../../demo-workspaces.md#changelog)). The people who
+`demo-workspaces.md`). The people who
 want scenarios do not write TypeScript, which is why the
 `/demo-scenario` skill exists:
 it turns a plain description into pack steps and opens the PR for them. That
@@ -241,7 +241,7 @@ their shapes and the common sequences are in
 
 **Ready can still be invisible to the presenter.** The account menu lists
 Organizations only while `multiple-workspaces-enabled` is on for that person
-([`demo-workspaces.md`](../../demo-workspaces.md#failure-modes-and-limits)).
+(`demo-workspaces.md`).
 When it is off, Ready carries a notice saying so and where to turn it on. The
 Demo MCP does not change flags itself; that stays with Ace and the engineering
 MCP.
@@ -297,7 +297,7 @@ changes, and a demo Organization is an ordinary Organization.
 
 This PRD does move two rules of the demo feature, which is internal:
 
-1. [`demo-workspaces.md`](../../demo-workspaces.md#security-and-trust-model)
+1. `demo-workspaces.md`
    says "Seed prose is pack data behind a schema, never a member's or a
    model's input." After this change, seed prose may come from an operator,
    who may have had a model write it. It still never comes from a Rally member

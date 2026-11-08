@@ -835,9 +835,10 @@ In D1, retirement writes no table of its own: the operator door sets
 every authority read already fences on, before any object is closed.
 
 The demo feature's three D1 tables (`demo_operations`, `demo_operation_phases`,
-`demo_seed_receipts`, from `0100_demo_workspaces.sql`) went with the feature on
-2026-11-08: `0126_drop_demo_tables.sql` drops them, and WorkspaceDO migration
-154 drops `sidekick_runs.seed_json`.
+`demo_seed_receipts`, from `0100_demo_workspaces.sql`) have had no reader or
+writer since 2026-11-08; D1 migration 0126, which drops them, follows in its
+own pull request (below). WorkspaceDO migration 154 drops
+`sidekick_runs.seed_json`.
 Retirement is not deletion. Every other row stays exactly where it is; the
 tombstone is what stops anything reading or draining them.
 
@@ -1087,13 +1088,14 @@ The dedicated stores are unchanged; no applied migration is rewritten.
 
 ## Changelog
 
-### 2026-11-08 — The demo tables are dropped
+### 2026-11-08 — The demo tables lose their last reader, and the seed column is dropped
 
-**What changed:** D1 migration `0126_drop_demo_tables.sql` drops
-`demo_seed_receipts`, `demo_operation_phases` and `demo_operations`, children
-first, and WorkspaceDO migration 154 drops `sidekick_runs.seed_json` with an
-in-place `DROP COLUMN`. The shipped migrations that made and rebuilt them
-(0100, 0102, 0103, 0106, 0108, 0125) are unchanged.
+**What changed:** Nothing reads or writes `demo_operations`,
+`demo_operation_phases` or `demo_seed_receipts` any more, and WorkspaceDO
+migration 154 drops `sidekick_runs.seed_json` with an in-place `DROP COLUMN`.
+The D1 tables themselves are dropped by `0126_drop_demo_tables.sql` (children
+first) in a follow-up pull request. The shipped migrations that made and
+rebuilt them (0100, 0102, 0103, 0106, 0108, 0125) are unchanged.
 
 **Why:** The owner's instruction of 2026-11-08: "remove the demo
 functionality completely". Nothing reads or writes these rows once the demo
@@ -1101,10 +1103,12 @@ code is gone, and an empty shell left in D1 would let a stale query succeed
 against nothing instead of failing, the reason 0090 gave for dropping the
 legacy product tables.
 
-**What a future change must respect:** 0126 ships in a deploy after the code
-that stops reading `demo_operations`: the deploy job applies migrations before
-it deploys the Worker, and the old Worker reads the table on every regional
-discovery. The persona `users` rows a demo minted (`@persona.invalid`, no
+**What a future change must respect:** 0126 is a Worker-first migration and
+ships in a separate pull request that adds `0126_drop_demo_tables.sql` together with its name in the Worker-first list in `scripts/classify-pending-d1-migrations.mjs`, merged only once 0125 has shipped and no other migration is pending in any region's ledger. The deploy job applies every pending D1 migration before it
+promotes the Worker unless the sole pending migration is on that list, and it
+fails closed when a listed one has a companion
+([`runbook.md`](runbook.md)); applied first, 0126 would break the previous
+Worker, which reads `demo_operations` on every regional discovery. The persona `users` rows a demo minted (`@persona.invalid`, no
 platform identity) are not deleted; they cannot sign in and the retired demos'
 history references them.
 
