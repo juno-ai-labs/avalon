@@ -618,6 +618,14 @@ namespace helper.
 - **A write on a conversation whose parent is archived** (the object answers
   409 `conversation_parent_archived` on the socket; the read side stays open).
 - **Disallowed origin** — 403 `socket_origin_forbidden`.
+- **What a client shows for any of these.** A browser hands a page no status
+  for a refused handshake, only a socket that fails before it opens, so the
+  workspace socket retries with backoff whatever the cause. A page waiting on
+  a list only the socket delivers (the Canvases home, the Sidekicks library)
+  shows `PushedListPending`: its opening state while the socket dials, and
+  "Rally can’t connect" with **Try again** (`retry()` on the socket context,
+  which dials at once) once a dial has failed. A list the device cache already
+  painted keeps showing it.
 - **Object refusal** — the object's own JSON status reaches the client unchanged:
   426, 400 `invalid_socket_identity`, 403 `forbidden`, 401
   `socket_ticket_replayed`, 409 `room_identity_mismatch`, 500
@@ -803,6 +811,23 @@ what that leaves exposed.
 Child archive admission uses the same `parent_archived` ticket field as parent archive; there is no per-command parent RPC. See [the conversation objects](workstream-durable-object.md) for lifecycle delivery.
 
 ## Changelog
+
+### 2026-11-08 — A page waiting on the workspace socket says when it cannot connect
+
+**What changed:** The workspace socket context gains `retry()`, and the
+Canvases home and the Sidekicks library draw `PushedListPending`, which turns
+their opening state into "Rally can’t connect" with Try again once a dial has
+failed.
+
+**Why:** The browser tester's shell sat on "Loading Canvases…" for good when
+the API refused the socket's origin: the provider retried with backoff, as it
+should, and no page read its state. Stopping the retries on a refusal was
+rejected: a browser cannot tell a 403 from a dropped connection, and the
+socket must keep recovering from the second.
+
+**What a future change must respect:** a page that reads a socket-owned list
+has to draw `PushedListPending` (or its own use of the socket's `state`) for
+the list's `undefined`, or a refused socket is invisible there again.
 
 ### 2026-11-08 — The workspace socket carries each person's Activity
 

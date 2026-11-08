@@ -8,10 +8,11 @@ import {
 } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { onlineManager, QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { StrictMode, useEffect, type JSX } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
+import { PushedListPending } from '../components/pushed-list-pending';
 import { clearAllLocalCache } from './local-cache';
 import { LOCAL_CACHE_WRITE_COALESCE_MS } from './local-cache-mirror';
 import { LocalCacheScopeProvider } from './local-cache-scope';
@@ -973,6 +974,34 @@ describe('WorkspaceSocketProvider', () => {
       }));
       await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
       expect(FakeWebSocket.instances).toHaveLength(2);
+    });
+
+    it('says a refused handshake failed while the list is pending, and dials again when asked', async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, 'random').mockReturnValue(0);
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <WorkspaceSocketProvider region="global"
+            api={{ getWorkspaceSocketTicket: vi.fn(async () => ticket) }}
+            workspaceId="00000000-0000-7000-8000-000000000001"
+          >
+            <PushedListPending label="Loading Canvases…" noun="Canvases" />
+          </WorkspaceSocketProvider>
+        </QueryClientProvider>,
+      );
+      await flushPromises();
+      expect(screen.getByText('Loading Canvases…')).toBeInTheDocument();
+      // A 403 at the handshake reaches a page as a socket that fails before it opens.
+      act(() => FakeWebSocket.instances[0]!.close(1006));
+      expect(screen.getByText('Rally can’t connect')).toBeInTheDocument();
+      expect(FakeWebSocket.instances).toHaveLength(1);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+      await flushPromises();
+      // At once, not at the next backoff step.
+      expect(FakeWebSocket.instances).toHaveLength(2);
+      act(() => FakeWebSocket.instances[1]!.open());
+      expect(screen.getByText('Loading Canvases…')).toBeInTheDocument();
     });
 
     it('does not give up on a socket that opened and synchronized', async () => {
