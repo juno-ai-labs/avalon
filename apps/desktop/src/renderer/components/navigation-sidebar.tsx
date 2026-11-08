@@ -174,6 +174,9 @@ export function NavigationSidebar({
         {SECTIONS.map((candidate) => <RailItem
           active={candidate.id === section}
           aria-current={candidate.id === section ? 'page' : undefined}
+          // The section first, then its count: read from the content the
+          // badge came first ("1 waiting Sidekicks").
+          {...(badges[candidate.id] > 0 ? { 'aria-label': `${candidate.label}, ${badgeLabel(candidate.id, badges[candidate.id])}` } : {})}
           badge={<RailBadge count={badges[candidate.id]} label={badgeLabel(candidate.id, badges[candidate.id])} />}
           icon={candidate.icon}
           key={candidate.id}
