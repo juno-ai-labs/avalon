@@ -4,8 +4,9 @@ Activity is one person's feed of what happened to them in Canvases and
 Sidekicks: somebody mentioned them in a Canvas's Chat or a Sidekick's
 conversation, somebody added them to a Canvas's conversation, a Sidekick run
 needs their input, a run they asked for finished, somebody else replied in
-a conversation they are in, or somebody published a new version in a Canvas
-they pinned. It is the third section of
+a conversation they are in, somebody published a new version in a Canvas
+they pinned, somebody asked to open a Canvas they decide on, or their own
+request to open one was approved. It is the third section of
 the rail, beside Canvases and Sidekicks, in the Mac app and the browser alike.
 
 The feed is the push's own source. Each event that records a push
@@ -64,6 +65,13 @@ way, one unseen row per Canvas per pinner: its `subject_id` is the artifact,
 which the page names as `artifact` (`resourceId` and its title now, from
 `resources`), and its actor whoever made the version.
 
+A request to open a Canvas writes one `access_request` row per decider and,
+when approved, an `access_granted` row for the requester
+([`canvas-access-requests.md`](canvas-access-requests.md)). The request's row
+is its actions: its `subject_id` is the request, and the page names where the
+request stands (`accessRequest`: `pending`, `approved` or `denied`, and who
+decided). Neither collapses.
+
 A row names its parent (`canvas` or `automation`) and its id, the
 conversation it happened in (`"0"`, or a run's id), the mentioning message or
 the run, who acted (a person for a mention or an add, the Sidekick for a run
@@ -81,7 +89,10 @@ row is recorded; it stays stored and lists once the person is let in. The
 page, its access filter and the unseen count are one statement: the count is
 a window over every listed row before the page's `LIMIT`, and the filter is
 the rule `canvasSidebarRows` and the Sidekick list
-(`SIDEBAR_SIDEKICK_LISTED_SQL`) already take, joined. Only a Canvas a
+(`SIDEBAR_SIDEKICK_LISTED_SQL`) already take, joined, with one more reach:
+an owner or administrator, who may open every Canvas, lists a row about any
+Canvas (a request they decide on, a mention in one they were never in),
+read from the relationship the object keeps (`workspace_member_status`). Only a Canvas a
 Sidekick writes, whose audience includes that Sidekick's, is decided in code
 (`writerSidekickAdmits`), asked once per Sidekick that writes a Canvas
 before the page is read, and passed into the statement.
@@ -119,6 +130,9 @@ At list time a row is seen when any of these holds:
 
 A reply clears as a mention does: its ordinal is its own message's, so the
 cursor reaching it is enough, with no condition on the read's time. A pinned
+request to open a Canvas stores no ordinal, so no read clears it: it is seen
+once the request is settled, by anyone, or by Mark all seen; its grant clears
+on a read of the Canvas as an add does. A pinned
 Canvas's new version clears on any read of the Chat accepted after it
 (`updated_at >= created_at`), the rule `canvasSidebarRows` takes for the
 Canvas row's artifact news.
@@ -340,7 +354,9 @@ that row, the row clears when the cursor passes the reply, and the next reply
 after that is a new row. `canvas-artifact-notices.test.ts` covers a pinned
 Canvas's new version: a row naming the artifact for the pinner who did not
 make it, collapsing while unseen, cleared by a read of the Chat, and a new
-row after.
+row after. `canvas-access-requests.test.ts` covers a request's rows on the
+creator's socket and the administrator's page, settled and seen for both by
+one approval, and the requester's grant row.
 
 The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 `navigation-sidebar.test.tsx` the rows, their links, the badge, the empty state and Mark all seen, and `rail-dock-badge.test.tsx` that the dock badge leaves Activity out.
@@ -351,6 +367,7 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 | --- | --- | --- |
 | `workspace_activity_items` | `item_id` (the intent's id; a collapsed row keeps its first intent's) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`, `new_message`, `artifact_updated`, `access_request`, `access_granted`; migration 150 widened it), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `message_sequence` (the mention's transcript sequence), `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms; a collapsed row's moves to its newest event), `subject_id` (what it is about beyond the parent: an artifact's resource id, an access request's id). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
 | `workspace_activity_seen` | `user_id` | `seen_through` (ms): Mark all seen. |
+| `canvas_access_requests` | `request_id` | Read for an `access_request` row's seen and its `accessRequest` ([`canvas-access-requests.md`](canvas-access-requests.md)). |
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
 
 ## Changelog
@@ -369,6 +386,13 @@ merge.]
 A new version in a Canvas the person pinned writes an `artifact_updated` row
 the same way, collapsing per Canvas, naming the artifact and clearing on a
 read of the Chat after it.
+
+A request to open a Canvas writes an `access_request` row per decider that
+reads as seen once settled and names who settled it, and an approval an
+`access_granted` row for the requester. An owner's or administrator's page
+lists rows about any Canvas, since they may open every one; before, a
+mention in a creator-only Canvas was pushed to an administrator and left
+out of their page.
 
 **Why (replies):** The owner asked on 2026-11-08 for human replies to produce
 Activity again. A row per message would bury the feed in a busy Chat;

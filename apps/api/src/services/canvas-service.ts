@@ -1,5 +1,5 @@
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
+import type { CanvasAccess, CanvasAccessDecision, CanvasAccessDecisionRequest, CanvasAccessRequest, CanvasAccessRequestResult, CanvasAudienceUpdate, CanvasDetail, CanvasSidebarRow, CreateCanvasRequest, CreatedCanvas } from "@rally/contracts/canvases";
 
 import { workspaceDOName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
@@ -120,6 +120,22 @@ export class CanvasService {
 
   async setAudience(canvasId: string, update: CanvasAudienceUpdate): Promise<CanvasDetail> {
     return (await this.workspace()).canvasSetAudience({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), update });
+  }
+
+  /** Whether this member may ask to open a Canvas they cannot; see `HostedCanvas.access`. */
+  async access(canvasId: string): Promise<CanvasAccess> {
+    return (await this.workspace()).canvasAccess({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor() });
+  }
+
+  /** Ask to open a Canvas; see `HostedCanvas.requestAccess`. */
+  async requestAccess(canvasId: string, request: CanvasAccessRequest): Promise<CanvasAccessRequestResult> {
+    return (await this.workspace()).canvasRequestAccess({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(), request });
+  }
+
+  /** Approve or deny a request to open a Canvas; see `HostedCanvas.decideAccess`. */
+  async decideAccess(canvasId: string, requesterUserId: string, decision: CanvasAccessDecisionRequest["decision"]): Promise<CanvasAccessDecision> {
+    return (await this.workspace()).canvasDecideAccess({ workspaceId: asWorkspaceId(this.auth.workspaceId), canvasId, actor: this.actor(),
+      requesterUserId: asUserId(requesterUserId), decision });
   }
 
   /** Order this viewer's Pinned group of Canvases or Sidekicks; see `WorkspacePinStorage.reorder`. */
