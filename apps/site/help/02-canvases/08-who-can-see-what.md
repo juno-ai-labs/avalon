@@ -18,12 +18,12 @@ A Canvas can be open to one of three groups:
 
 | Setting | Who can open it |
 | --- | --- |
-| **Only you** | The person who created it. This is where every new Canvas starts. |
-| **People you add** | The creator and everyone added as a participant, guests included. |
-| **Everyone in the Organization** | Every member of the Organization, plus any participants you added, including guests. |
+| **Only you** (**Only the creator**, to anyone else) | The person who created it. This is where every new Canvas starts. |
+| **Specific people** | The creator and the people chosen, guests among them. |
+| **Everyone in the Organization** | Every member of the Organization, and any guests you add. |
 
-To check, click **Share** at the top right of the Canvas. The top of the window
-says which setting applies, and the list below it names the participants.
+To check, click **Share** at the top right of the Canvas. The **Share Canvas**
+window shows which setting is chosen, and the people chosen below it.
 
 Whoever can open a Canvas can read all of it: the conversation, every version
 of what Rally made, and every comment. There is no way to show someone the
@@ -32,27 +32,52 @@ latest version but not the conversation behind it.
 ## Share a Canvas
 
 1. Click **Share** at the top right of the Canvas.
-2. To share with particular people, add them by name or email, as described in
+2. Choose **Only you**, **Specific people** or **Everyone in the
+   Organization**. For **Specific people**, tick who should be able to open
+   it, as described in
    [People in a Canvas](07-people-in-a-canvas.md#adding-and-removing-people).
-3. To open it to everyone, turn on **Everyone in the Organization**.
+3. Click **Save**. **Cancel** leaves everything as it was.
 
-Turning on **Everyone in the Organization** puts the Canvas in every member's
-Canvases list and makes it findable in search. Turning it off again takes it
-back to the creator and the participants.
+Choosing **Everyone in the Organization** puts the Canvas in every member's
+Canvases list and makes it findable in search. Members you had chosen by name
+are no longer listed separately, since everyone is in; guests you chose stay.
+Going back to **Specific people** means choosing people again.
 
 Guests are never included by the Organization-wide setting. A guest sees a
-Canvas only when someone adds them to it by name, as
+Canvas only when someone chooses them for it, or invites them by email, as
 [Sharing with people outside your Organization](09-sharing-with-guests.md)
 explains.
 
 ### Who can change the sharing
 
 The creator of a Canvas, and the Organization's owners and administrators,
-decide who can open it: they add and remove people, invite guests, and open it
-to the Organization or close it again. Everyone else in the Canvas, members and
-guests alike, reads it and takes part but does not change who can open it. If
-you want someone added, ask the creator. For a Canvas a Sidekick made, the
-Sidekick's managers take the creator's place.
+decide who can open it: they choose people, invite guests, open it to the
+Organization or close it again, and answer requests to open it. Everyone else
+in the Canvas, members and guests alike, reads it and takes part, and sees the
+**Share** window read-only, with a note saying who can change it. If you want
+someone added, ask the creator. For a Canvas a Sidekick made, the Sidekick's
+managers decide too.
+
+## Requests to open a Canvas
+
+A member who opens a link to a Canvas they cannot see is told **You don't have
+access to this Canvas**, without its name, and can click **Request access**,
+with an optional message. The people who decide on the Canvas each get an
+Activity row, such as **Theo asked to open Launch plan**, with **Approve** and
+**Deny** beside it, and a notification if they chose one for **Access
+requests** (see [Activity and notifications](../08-rally-everywhere/03-notifications.md)).
+The same request is listed under **Requests** at the top of the Canvas's
+**Share** window.
+
+- **Approve** adds the person to the Canvas. They get an Activity row saying
+  you let them in, and the Canvas opens for them, even if they are still
+  looking at the request page.
+- **Deny** turns it down. Nobody tells them, and they may ask again later.
+- Once someone has answered, every decider's row says who approved or denied
+  it.
+
+Guests cannot ask: to a guest, a Canvas that was not shared with them reads as
+one that does not exist.
 
 ## Canvases from a Sidekick
 
@@ -78,7 +103,7 @@ Who may change things depends on each person's role in the Organization.
 | --- | --- |
 | **Owner** | The person who created the Organization. Can do everything an administrator can. |
 | **Administrator** | Runs the Organization. Can change roles and change the sharing of any Canvas. |
-| **Member** | Can create Canvases and Sidekicks, share their Canvases, and add people to Canvases they are in. |
+| **Member** | Can create Canvases and Sidekicks, and decides who can open the Canvases they created. |
 | **Guest** | Someone from outside the Organization who was added to particular Canvases. Sees only those Canvases, and who is in the Organization. Can write in those Canvases. Cannot create Canvases or Sidekicks, and cannot change who can open anything. |
 
 Rally shows buttons according to your role and checks every change again when
@@ -96,16 +121,15 @@ to have it on screen.
   they had it open, it closes.
 - **A Canvas stops being open to the whole Organization.** Members who are not
   participants are cut off, and if they had it open, it closes.
-- **Someone opens a Canvas they have lost.** They see that it is unavailable.
-  Rally shows the same words whether the Canvas was deleted or they lost
-  access, on purpose, so the message gives nothing away.
+- **Someone opens a Canvas they have lost.** A member sees **You don't have
+  access to this Canvas**, without its name, and can ask to be let back in. A
+  guest sees that it does not exist.
 
 > [!IMPORTANT]
 > Taking away one route to a Canvas does not take away the other. Removing
-> someone from the participants does nothing while the Canvas is open to
-> everyone in the Organization: they can still read it. To shut someone out,
-> turn off **Everyone in the Organization** and make sure they are not a
-> participant.
+> someone does nothing while the Canvas is open to everyone in the
+> Organization: they can still read it. To shut someone out, choose **Specific
+> people** and leave them unticked.
 
 > [!WARNING]
 > Narrowing access stops people reading from now on. It cannot take back what

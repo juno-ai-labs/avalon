@@ -60,7 +60,7 @@ If nobody has invited you, Rally shows **Create your organization**, with the li
 
 The name needs at least two characters and can be up to 120. The button stays greyed out until the name is long enough. Pressing <kbd>Return</kbd> a few extra times out of impatience will not create a few extra Organizations.
 
-You become the Organization's owner. It starts empty, ready for your first Canvas. Choose the name with some care: the Organization settings in Rally show it but do not offer a way to change it. Its other settings are described in [Organization settings](../10-running-an-organization/03-organization-settings.md).
+You become the Organization's owner. It starts empty, ready for your first Canvas. If you change your mind about the name later, an owner or administrator can rename it in **Settings → Organization** by double-clicking it. Its other settings are described in [Organization settings](../10-running-an-organization/03-organization-settings.md).
 
 > [!NOTE]
 > Older screens and emails may call an Organization a **Workspace**. They are the same thing.

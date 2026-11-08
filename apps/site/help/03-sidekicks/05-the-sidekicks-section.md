@@ -12,17 +12,18 @@ to check on it, talk to it or change it.
 
 The sidebar has three groups:
 
-- **Needs input** holds the Sidekicks waiting for something only a person can
-  give them. Each row shows the question, such as **Which status page gets the
-  update?**. Click it to answer.
+- **Needs input** holds the Sidekicks with a run waiting for something only a
+  person can give it. Each row shows the question, such as **Which status page
+  gets the update?**. Click it to answer.
 - **Pinned** holds the Sidekicks you pinned. Drag a Sidekick in to pin it, or
   right-click a row and choose **Pin** or **Unpin**.
-- **All sidekicks** lists the rest, the most recently active first.
+- **All Sidekicks** lists the rest, the most recently active first. The
+  **Recent** menu beside the heading sorts them by **Name** instead.
 
-Each row shows the Sidekick's hexagon, its name and a line saying what it is
-doing: **Working · 4 tickets**, **Runs Friday 2:00 PM**, **No changes this
-week**, or **Paused by Theo**. A bold name and a red dot mean something new in
-its conversation since you last looked.
+Each row shows the Sidekick's hexagon, its name and a line saying where it
+stands: **Working**, **Runs Friday 2:00 PM**, **Last run** and how long ago,
+**Paused**, **Draft** or **Active**. A bold name and a red dot mean something
+new in its conversation since you last looked.
 
 ## The home page
 
@@ -36,9 +37,10 @@ The Sidekicks home page, headed **Sidekicks**, shows every Sidekick on one page.
 Below them is the list, titled **Your Sidekicks** (or **Search results**
 while you search) with a count. Each row shows the Sidekick's hexagon, its
 name, its description, its **Status** (such as **Active**, **Working**,
-**Needs input** or **Paused**), who it is **Shared with**, and when it wakes
-up **Next**: a time, or **On alert** or **On email** for one that waits for an
-event. Click a row to open the Sidekick.
+**Needs input**, **Paused** or **Draft**), who it is **Shared with** (**Only
+you**, **Named people** or **Organization**), and when it wakes up **Next**: a
+time, or **On alert** or **On email** for one that waits for an event. Click a
+row to open the Sidekick.
 
 If you have none yet, the list says **No Sidekicks yet**. If a search finds
 nothing, it says **No matching Sidekicks**; try a different word or filter.
@@ -47,32 +49,33 @@ nothing, it says **No matching Sidekicks**; try a different word or filter.
 
 Opening a Sidekick shows its shared conversation, covered in
 [Talking to a Sidekick](03-the-shared-conversation.md), beside a details
-column. The people the Sidekick is shared with show as faces at the top. When
-the window is narrow, Rally shows one side at a time; use the
-**Conversation** and **Details** switch at the top to flip between them.
+column. The pill at the top names the Sidekick; click it for **Pin**, **Run
+now** and **Copy link**. When the window is narrow, the details column folds
+away; the **Sidekick details** button on the pill brings it back.
 
 The details column shows:
 
 - the hexagon (click it to change the icon and colour);
-- the name and description;
-- a lifecycle badge: **Draft**, **Active** or **Paused**;
-- who it is shared with, such as **Shared · 3 people**, with **Share** to
-  change it;
-- the controls: **Pause** or **Resume**, always visible beside the **…** button
-  with the rest. Unavailable controls and menu items stay visible but disabled;
-  hover or focus them for an explanation. Drafts must finish setup in the
-  conversation first;
+- the name, a status pill (**Draft**, **Active** or **Paused**), who it is
+  shared with (**Only you**, such as **Shared · 3 people**, or
+  **Organization**), and its description;
+- **Pause** or **Resume**, beside a **…** button with **Run now**, **Run
+  history**, **Copy link** and **Archive Sidekick**. A draft has no Pause, and
+  its **…** sits beside its pills. Unavailable items stay visible but disabled;
+  hover or focus them for an explanation;
+- **Wakes on**: its triggers in plain words, and **Next** with how long until
+  the next scheduled run, when there is one;
+- **Uses**: the connections it uses, with a count;
+- **Writes to**: the Canvases it writes to, each of which opens the Canvas;
 - **Delegation allowed**, the people the Sidekick may act as (see
   [Tools and delegation](06-tools-and-delegation.md));
-- **When to expect it**, always visible: the triggers in plain words, and
-  **Next** with how long until the next scheduled run, when there is one.
-  With neither available, it says **No timing details yet.**
-- its tools, including any custom tools of its own;
-- the Canvases it writes to, each of which opens the Canvas;
 - **Email this Sidekick**, if it has an email address (see
-  [Triggers and schedules](04-triggers-and-schedules.md#email-a-sidekick)).
+  [Triggers and schedules](04-triggers-and-schedules.md#email-a-sidekick));
+- **Tools**, the custom tools of its own, if it has any, each with **Show
+  code**.
 
-If an action fails, the error appears under the description.
+A section with nothing in it yet says **Nothing yet**. If an action fails, the
+error appears under the description.
 
 ## Run now
 
@@ -99,7 +102,7 @@ Each row shows:
 
 - a status dot, coloured the same way as elsewhere in Rally (see
   [Status dots and badges](../02-canvases/10-status-dots-and-badges.md));
-- how the run started: **Manual**, **Scheduled**, **Event** or **Email**;
+- how the run started: **On request**, **Scheduled**, **Event** or **Email**;
 - a short summary of the result, or "Running" with how long it has been
   going, or when it finished;
 - a status badge, such as **Running**, **Needs input**, **Latest run
@@ -115,9 +118,10 @@ A run can wake up again. If someone replies to something a run posted, such as
 a Slack thread it started, the same run carries on, and it keeps one row in
 the history.
 
-Runs do not get rows of their own in the sidebar. A finished run marks the
-Sidekick as unread, and a run that needs input moves the Sidekick into
-**Needs input**. You see a run's work in the conversation, and anywhere else it
+Runs do not get rows of their own in the Sidekicks sidebar. A finished run
+marks the Sidekick as unread, and a run that needs input moves the Sidekick
+into **Needs input**. A run you asked for also gets a row in your Activity
+when it finishes. You see a run's work in the conversation, and anywhere else it
 posts it (see [Where a Sidekick's results go](07-where-results-go.md)).
 
 The **Run history** item is always visible. It is disabled until the Sidekick
@@ -138,8 +142,8 @@ It does not catch up on the runs it would have made while paused, and it
 ignores events that happened in the meantime. A Sidekick on holiday does not
 come back with a fortnight of postcards.
 
-A paused Sidekick shows **Paused by** whoever paused it in the sidebar, and
-**Paused** on the home page, until someone resumes it.
+A paused Sidekick shows **Paused** in the sidebar and on the home page until
+someone resumes it.
 
 ## Archive
 
@@ -160,8 +164,8 @@ address, that address is retired and will not be given to anyone else.
 
 ## Copy a link to a Sidekick
 
-To send a teammate straight to a Sidekick, click **…** → **Copy sidekick
-link** and paste the link wherever you like. Opening it in the Rally app
+To send a teammate straight to a Sidekick, click **…** → **Copy link**, or
+choose **Copy link** from its pill, and paste the link wherever you like. Opening it in the Rally app
 opens that Sidekick's page.
 
 The link only works for people in the same Organization who are allowed to

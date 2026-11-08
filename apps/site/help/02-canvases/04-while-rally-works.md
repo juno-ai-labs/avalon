@@ -33,16 +33,12 @@ There is one row for each tool Rally reaches for in each stretch of work, so a
 long run does not flood the screen. Your connected apps (Slack, GitHub, Google,
 Notion, Linear and so on) each get their own rows. Rally's own built-in tools
 are grouped under **Rally**, and work on its private computer is grouped under
-**Computer**.
+**Computer**. Work with Sidekicks is grouped under **Sidekicks**.
 
 When the answer arrives, all the work above it folds into one closed row, such
 as **Worked for 41m 17s**. Click it to open it again, and click any row inside
 to see what Rally sent to that tool and what came back. It is the receipt for
 what Rally did on your behalf.
-
-> [!NOTE]
-> Work done by or for a Sidekick may still be labelled **Automations** in these
-> rows. That is the old name for Sidekicks, and the label has not caught up yet.
 
 A time that is blank means Rally does not know how long that step took. It does
 not mean zero.
@@ -88,12 +84,9 @@ Some other things to know:
 ## Helpers working in the background
 
 For big jobs Rally sometimes hands parts of the work to helper agents that run
-side by side. When it does, a line above the message box counts them, such as
-**2 background agents running**, and rows in the conversation say when one
-starts, finishes or fails. The line disappears when the count drops to zero.
-
-The count is for helpers started from the conversation you are looking at.
-Helpers are explained
+side by side. When it does, rows grouped under **Background agents** in the
+conversation say when one starts, what messages pass between them, and when it
+finishes or fails. Helpers are explained
 properly in [Helpers, other conversations and receipts](../04-working-with-rally/06-helpers-and-receipts.md).
 
 ## When Rally asks you a question

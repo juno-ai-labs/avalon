@@ -76,8 +76,8 @@ to a teammate and it opens Rally at exactly that place.
 
 | To copy a link to | Do this |
 | --- | --- |
-| A Canvas | Click the Canvas's name in its header pill and choose **Copy link**. |
-| A Sidekick | Open the Sidekick, click **…** and choose **Copy sidekick link**. |
+| A Canvas | Click the Canvas's header pill, or right-click it in the sidebar, and choose **Copy link**. |
+| A Sidekick | Open the Sidekick, click **…** (or its header pill) and choose **Copy link**. |
 
 If the copy fails, Rally says so and you can try again.
 

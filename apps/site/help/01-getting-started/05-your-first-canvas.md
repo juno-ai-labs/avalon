@@ -45,7 +45,7 @@ You do not have to watch. Go and do something else. The Canvas's row in the side
 
 ## The thing Rally made
 
-When Rally has made something, a card for it appears in the conversation, and the thing itself opens in the panel on the right of the window. A document reads as a document, a spreadsheet as a table, an image as an image, and a website as a live page you can click through. Above it is its version, such as **version 1 · Rally**.
+When Rally has made something, a card for it appears in the conversation, and the thing itself opens in the panel on the right of the window. A document reads as a document, a spreadsheet as a table, an image as an image, and a website as a live page you can click through. Above it is its version and who made it, such as **version 1 · Rally**.
 
 Ask for a change in the conversation ("make the second section shorter", "add a column for annual pricing") and Rally publishes a new version. The panel moves to it, and the earlier ones are kept. [What a Canvas is](../02-canvases/01-what-a-canvas-is.md) explains versions, and [Things Rally makes](../06-things-rally-makes/index.md) covers every kind of thing Rally can make.
 
@@ -53,9 +53,9 @@ If you have an opinion about one particular sentence or cell, you do not have to
 
 ## Names
 
-You did not give your Canvas a name, and you do not need to. Rally names it for you from your opening request, a short name of two to four words in the language you wrote in. Until it arrives, a shimmering grey bar sits where the name will go. If no name arrives within about a minute, Rally uses the first line of your message.
+You did not give your Canvas a name, and you do not need to. Rally names it for you from your opening request: a short name of a few words, in the language you wrote in. Until it arrives, a shimmering grey bar sits where the name will go. If Rally cannot come up with one, the Canvas keeps the name **Untitled Canvas** until you give it one.
 
-Renaming a Canvas yourself settles the matter: Rally never overwrites a name a person chose. Click the name in the header pill to rename it.
+Renaming a Canvas yourself settles the matter: Rally never overwrites a name a person chose. Click the header pill and choose **Rename…**, or right-click the Canvas in the sidebar and choose **Rename…**, then type the new name and press <kbd>Return</kbd>.
 
 ## Where to go from here
 
