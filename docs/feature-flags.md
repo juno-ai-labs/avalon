@@ -319,7 +319,7 @@ A caller supplies only these, and only what it knows:
 | `appEnv` | `APP_ENV` |
 | `workspaceId` | Present wherever the caller knows it; the right key for percentage rollouts |
 | `workstreamId` | Present on conversation, subagent, and classifier evaluations |
-| `userId` | Present on meeting-notes and conversation naming evaluations |
+| `userId` | Present on conversation naming evaluations |
 
 Identity wins over attributes: the loaded facts are spread underneath these, so
 nothing read from D1 can redefine the id a percentage rollout buckets on.
@@ -724,8 +724,6 @@ correctly provisioned flag.
   failed read there is a real defect rather than the expected local state.
 - **A pin naming a retired model logs `workstream_model_override_unknown` and
   returns to the flag**, rather than failing the run.
-- **A clamped cadence logs `control_tower_refresh_flag_clamped`** rather than
-  passing quietly.
 - **`harness_runs.model` is an expectation, not a guarantee.** It records the model
   a scheduled run was expected to use, resolved at schedule time; a flag changed
   between scheduling and execution makes it wrong. The run host overwrites it at
@@ -756,7 +754,7 @@ correctly provisioned flag.
 | --- | --- |
 | `apps/api/test/agent-model-flags.test.ts` | Each resolver's failure direction, unresolved cases, and zod rejection. |
 | `apps/api/test/agent-model-override.test.ts` | Pin precedence, the closed id set validated on write and read, and the three run-creation paths that must copy the column. |
-| `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off, and that the cadence is clamped to `CONTROL_TOWER_REFRESH_SECONDS`. |
+| `apps/api/test/client-feature-flags.test.ts` | That everything but an explicit `true` resolves to off. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Initial private values and per-user live re-evaluation over a real hibernating WebSocket. |
 | `apps/ace/test` | Safe rule vocabulary and Flagship limits, signed-site failure behavior, key-only notification, and cross-region Queue fan-out. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx` | Initial and live full-contract replacement in the feature-flag cache. |

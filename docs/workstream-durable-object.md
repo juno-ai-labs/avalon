@@ -1834,6 +1834,7 @@ codes, `StoredRef` and the dead `session_import.*` kinds in
 `packages/contracts/src/desktop-actions.ts`; `requestDesktopAction`,
 `answerDesktopAction`, `answersDesktopActions` and `offerPendingDesktopActions`
 in `agent-loop-do.ts`; `desktopAction` in `runtime/local-authorities.ts`; the
+`desktop_action_phase` diagnostic (`common/desktop.ts`, `main/telemetry-intent.ts`); the
 browser tools in `services/desktop-actions/browser-plugin.ts`; and the desktop
 executor, page-script wrapper, store and outline in
 `apps/desktop/src/common/desktop-actions/`, which the equally unreached browser
