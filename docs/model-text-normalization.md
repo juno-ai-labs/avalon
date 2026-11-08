@@ -3,7 +3,7 @@
 Every model Rally routes to writes Markdown, and several of them reach for TeX
 when they want a symbol. `Backlog $\rightarrow$ In progress` is what a person
 sees, because nothing downstream renders TeX: not the desktop's Markdown
-renderer, not the digest email, not Slack. The delimiters and the command name
+renderer, not an email, not Slack. The delimiters and the command name
 are shown verbatim, and a reader has no way to tell them from something Rally
 meant to write.
 
@@ -31,7 +31,7 @@ The call sites, each on the path from stored text to a reader:
 | Surface | Call site | Entry point |
 | --- | --- | --- |
 | Markdown surfaces in the desktop client | `renderer/components/workstream-blocks.tsx` (`MarkdownBody`) | `normalizeModelMarkdown` |
-| Every Rally email's HTML body — the digest, an automation's result | `services/email-markdown.ts` (`markdownToEmailHtml`) | `normalizeModelMarkdown` |
+| Every Rally email's HTML body rendered from Markdown | `services/email-markdown.ts` (`markdownToEmailHtml`) | `normalizeModelMarkdown` |
 | Every Rally email's plain-text alternative and preheader | `services/email-markdown.ts` (`markdownToEmailText`, `markdownToEmailPreheader`) | `normalizeModelText` |
 | An elicitation's question, option labels and descriptions, and answered label | `renderer/components/workstream-blocks.tsx` (`ElicitationPanel`, `elicitationAnswerLabel`) | `normalizeModelText` |
 | A tool card's summary line | `renderer/components/workstream-blocks.tsx` | `normalizeModelText` |
@@ -149,7 +149,8 @@ It does not parse Markdown, style anything, or decide where text appears.
 
 - How that Markdown becomes DOM in the desktop client is
   [`markdown-rendering.md`](markdown-rendering.md).
-- How it becomes an email is `digests.md` (retired).
+- How it becomes an email is [`markdown-rendering.md`](markdown-rendering.md)'s
+  email converter (`email-markdown.ts`).
 - How it reaches Slack is [`slack-integration.md`](slack-integration.md). No
   Slack path calls this module today; the gap and its reason are recorded
   under [failure modes](#failure-modes-and-limits) so neither document assumes
@@ -257,6 +258,8 @@ a function that eats every dollar sign in the product.
 
 Both entry points are asserted against the same input where they differ, so the
 escaping rule is visible as a difference rather than stated only in prose.
+
+## Changelog
 
 ### 2026-08-28 — The code splitter moved out, and picked up indented blocks on the way
 

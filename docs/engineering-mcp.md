@@ -524,7 +524,7 @@ The MCP transport suite checks annotations, regional routing, ambiguous-target
 refusal, plain-text results, trusted operator forwarding and content-free logging.
 
 `apps/api/test-workers/engineering-inspection.test.ts` calls the inherited RPC
-on real WorkspaceDO and SubstreamAgent instances under workerd.
+on real WorkspaceDO and AgentLoopDO instances under workerd.
 It proves bound writes, reads, SQLite metadata, and BLOB serialization.
 
 `apps/api/test-workers/engineering-d1-inspection.test.ts` proves binding-selected
