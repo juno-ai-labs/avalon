@@ -101,6 +101,23 @@ describe('the Sidekicks home', () => {
     expect(screen.getByRole('link', { name: 'Revenue analyst' })).toBeInTheDocument();
   });
 
+  it('shows Working on the pill while any run works, beside the Needs input badge when another waits', async () => {
+    socket.mounted = true;
+    const client = new QueryClient();
+    applyVersionedSidebarList(client, 'automations', 1, [
+      { id: 'older', name: 'Weekly changelog', description: 'Every Friday.', scope: 'workspace', status: 'active', running: true, runState: null, updatedAt: '2026-11-07T09:00:00.000Z' },
+      { id: 'both', name: 'Incident triage', description: 'Watches alerts.', scope: 'workspace', status: 'active', running: true, runState: 'needs_input', needsInput: true, updatedAt: '2026-11-07T09:00:00.000Z' },
+      { id: 'idle', name: 'Revenue analyst', description: 'Keeps revenue current.', scope: 'workspace', status: 'active', running: false, runState: null, updatedAt: '2026-11-07T09:00:00.000Z' },
+    ] satisfies AutomationSummary[]);
+    render(<QueryClientProvider client={client}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);
+    const row = async (name: string) => (await screen.findByRole('link', { name })).closest('li')!;
+    expect((await row('Weekly changelog')).querySelector('.sidekick-status-pill')).toHaveTextContent('Working');
+    const both = await row('Incident triage');
+    expect(both.querySelector('.sidekick-status-pill')).toHaveTextContent('Working');
+    expect(within(both).getByText('Needs input')).toBeInTheDocument();
+    expect((await row('Revenue analyst')).querySelector('.sidekick-status-pill')).toHaveTextContent('Active');
+  });
+
   it('offers New Sidekick beside the empty copy when there are none', async () => {
     getSidekicks.mockResolvedValue([]);
     render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SidekicksLibraryScreen /></MemoryRouter></QueryClientProvider>);

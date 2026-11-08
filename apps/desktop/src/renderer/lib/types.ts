@@ -120,6 +120,8 @@ export interface AutomationSummary {
   audience?: SidekickAudience;
   /** Its newest run's live state, when one is live; absent from a server that predates it. */
   runState?: 'working' | 'needs_input' | null;
+  /** Any of its runs is working now, whichever is newest; absent from a server that predates it. */
+  running?: boolean;
   /** The question a run waiting on input asked; absent when none waits. */
   pendingQuestion?: string | null;
   /** What wakes it, each kind once in definition order; absent from a server that predates it. */

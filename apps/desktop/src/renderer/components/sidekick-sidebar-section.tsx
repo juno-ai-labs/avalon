@@ -4,7 +4,7 @@ import { matchPath, useLocation } from 'react-router-dom';
 
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
-import { formatNextRun, sidekickActivityAt, sidekickStatus } from '../lib/sidekick-status';
+import { formatNextRun, sidekickActivityAt, sidekickStatus, sidekickWorking } from '../lib/sidekick-status';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
 import type { AutomationSummary } from '../lib/types';
 import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, splitPinned, usePinWrite, useRowPinDrop, useSectionMotion } from './navigation-rows';
@@ -27,11 +27,11 @@ export function useSidekickList(): AutomationSummary[] | undefined {
 function sidekickRowState(row: AutomationSummary): React.ReactNode {
   switch (sidekickStatus(row)) {
     // The question comes from the newest waiting run, which need not be the
-    // newest run: one still asking while a later one works reads Working
-    // with that question, the dot from the newest run and the words from
-    // the waiting one.
+    // newest run: one still asking while another works reads Working with
+    // that question, the dot from any working run and the words from the
+    // waiting one.
     case 'needs_input': return <>
-      {row.runState === 'working' && <span aria-hidden="true" className="sidekick-working-dot" />}
+      {sidekickWorking(row) && <span aria-hidden="true" className="sidekick-working-dot" />}
       {row.pendingQuestion ?? 'Needs input'}
     </>;
     case 'working': return <><span aria-hidden="true" className="sidekick-working-dot" />Working</>;
