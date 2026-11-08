@@ -124,6 +124,8 @@ interface ComposerInputProps {
   autoFocus?: boolean;
   className?: string;
   error?: string;
+  /** The notice's title for `error`, when "Something went wrong" says less than what happened. */
+  errorTitle?: string | undefined;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   footerHint?: ReactNode;
   /** A line inside the composer, over its toolbar: what sending will do, for a host that sends somewhere unusual. */
@@ -287,6 +289,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
   autoFocus = false,
   className,
   error,
+  errorTitle,
   fileInputRef,
   footerHint,
   notice,
@@ -958,7 +961,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
         </div>
       </div>
       {(error || dictation.error) && (
-        <ErrorNotice>{error || dictation.error}</ErrorNotice>
+        <ErrorNotice title={error ? errorTitle : undefined}>{error || dictation.error}</ErrorNotice>
       )}
       {onAttach && <input
         className="sr-only"

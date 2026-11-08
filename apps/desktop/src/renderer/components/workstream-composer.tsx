@@ -136,6 +136,8 @@ interface WorkstreamComposerProps {
    */
   sendBlocked?: boolean;
   error?: string;
+  /** See `ComposerInput`'s `errorTitle`; it titles `error` only. */
+  errorTitle?: string | undefined;
   attachments: PendingAttachment[];
   onSend: (
     text: string,
@@ -200,6 +202,7 @@ export function WorkstreamComposer({
   uploading,
   sendBlocked = false,
   error,
+  errorTitle,
   attachments,
   onSend,
   onAttach,
@@ -595,6 +598,7 @@ export function WorkstreamComposer({
         autoFocus={autoFocus}
         {...(className ? { className } : {})}
         error={!annotationPayloadValid ? 'These pins are too large to send together.' : annotationAttachmentCount + attachments.length > MAX_ATTACHMENTS ? 'Send no more than 10 images and attachments together.' : error}
+        errorTitle={annotationPayloadValid && annotationAttachmentCount + attachments.length <= MAX_ATTACHMENTS ? errorTitle : undefined}
         {...(footerHint ? { footerHint } : {})}
         {...(notice ? { notice } : {})}
         {...(toolsAccessory ? { toolsAccessory } : {})}
