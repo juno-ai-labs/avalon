@@ -1736,14 +1736,16 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
     const next = RUN_STATE_FROM_CONVERSATION_STATE[effect.state] ?? null;
     if (next === null) return;
     const live = !TERMINAL_RUN_STATES.has(next);
-    // Whose Needs input row about this run clears if it stops waiting, read
-    // before the update below moves it.
-    const waiting = next === "needs_input" ? [] : waitingRunActivityRecipients(this.sql, this.sidekickId, substreamId);
     // Read inside the same transaction as the update below: the state it
     // moves from is what says whether this projection is a transition.
     const before = first(this.sql.exec<{ state: RunState; summary: string | null }>(
       `SELECT state, summary FROM sidekick_runs WHERE sidekick_id = ? AND run_id = ?`, this.sidekickId, substreamId,
     ));
+    // Whose Needs input row about this run clears if it stops waiting, read
+    // before the update below moves it, and only when it is leaving a wait:
+    // not on every working step.
+    const waiting = before?.state === "needs_input" && next !== "needs_input"
+      ? waitingRunActivityRecipients(this.sql, this.sidekickId, substreamId) : [];
     // One statement. An open run takes the new summary, and the new state when
     // it differs. A finished run is left alone unless it reopens: a live state
     // other than `idle`, while the Sidekick is active. `completed_at` is

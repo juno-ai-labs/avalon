@@ -697,6 +697,33 @@ describe("a Sidekick's shared conversation", () => {
     expect(await unread(AUTHOR_ID)).toBe(true);
   });
 
+  it("keeps a requester's manual unread mark when their own run's row lands", async () => {
+    await activeSidekick();
+    const unread = async (userId: string) => (await workspaceStub().listAutomationDirectory({
+      workspaceId: WORKSPACE_ID, userId })).items.find((item) => item.id === AUTOMATION_ID)?.unread;
+    const product = async (operation: string, input?: unknown) => {
+      const response = await conversationStub().fetch("https://object.test/internal/product", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation, parentKind: "automation", auth: auth(AUTHOR_ID), ...(input ? { input } : {}) }),
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      await deliverChildEffects(TEST_ENV, conversationStub());
+    };
+    await say(MEMBER_ID, "Morning, everyone.", "manual-0001");
+    await deliverChildEffects(TEST_ENV, conversationStub());
+    const latest = await runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{ latest: number }>(
+      `SELECT next_attention_ordinal - 1 AS latest FROM workstream WHERE id = 1`).one().latest);
+    await product("acknowledge_read", { readThroughSequenceNumber: latest, observedManualUnreadGeneration: 0 });
+    // The author marks the Sidekick unread to come back to, then presses Run now.
+    await product("mark_unread");
+    expect(await unread(AUTHOR_ID)).toBe(true);
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "manual-run-0001" });
+    expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
+    await rowReaches(started.runId, "running");
+    await deliverChildEffects(TEST_ENV, conversationStub());
+    expect(await unread(AUTHOR_ID)).toBe(true);
+  });
+
   it("shows a run working, then the question it waits on, on its row and on the Sidekick's list row", async () => {
     await activeSidekick();
     const question = "Which release should the notes cover?";
