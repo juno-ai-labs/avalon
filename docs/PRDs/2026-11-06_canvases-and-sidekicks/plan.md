@@ -179,7 +179,7 @@ Recorded as the build went, from the reviews of each step. None blocks the merge
 
 **Deploy order.**
 
-- `retire_threads` (and `dump_thread_transcripts` first) must have run in every Organization before this deploys: `receiveChildEffects` answers 409 `conversation_parent_kind_retired:<kind>` for any live Thread, and the Queue dead-letters those effects by design.
+- In every Organization, in this order, before this deploys: `dump_thread_transcripts`, then `convert_threads_to_canvases` (the 60 Threads with artifacts, counted on 2026-11-08 across 7 Organizations: Juno Labs 23, Forward Search 19, ThreadBury-Adam 8, KB QA 7, one each in conscious, demo and Kiki & Alex, become Canvases keeping their ids; workspace-retirement.md), then `retire_threads`. The retirement must have run everywhere: `receiveChildEffects` answers 409 `conversation_parent_kind_retired:<kind>` for any live Thread, and the Queue dead-letters those effects by design.
 - Ace deploys with or after the API: `WorkspaceRetirementResult.failed[].parentKind` admits `canvas` (6389dd2).
 - The subscribe answer keeps an empty `workstreams` page and `notes: []` for one release so pre-pivot desktops still parse it; remove once every desktop has updated (realtime-sockets.md).
 
