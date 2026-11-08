@@ -9,6 +9,7 @@ import { useShellCapabilities } from '../lib/collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list-store';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
+import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
 import type { AutomationSummary } from '../lib/types';
 
@@ -75,7 +76,7 @@ export function SidekicksLibraryScreen(): React.JSX.Element {
     </div>
     <section aria-labelledby="sidekick-results-title">
     <div className="sidekick-results-heading"><h2 id="sidekick-results-title">{search ? 'Search results' : 'Your Sidekicks'}</h2><span role="status" aria-label="Sidekick count">{query.isSuccess ? `${items.length} Sidekicks` : ''}</span></div>
-    {query.isLoading ? <OpeningState label="Loading Sidekicks…" /> : query.error ? <ErrorNotice occurrence={query.error}>{query.error.message}</ErrorNotice> : items.length === 0 ? <EmptyState action={query.data?.length ? undefined : newSidekick} title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
+    {query.isLoading ? (socket ? <PushedListPending label="Loading Sidekicks…" noun="Sidekicks" /> : <OpeningState label="Loading Sidekicks…" />) : query.error ? <ErrorNotice occurrence={query.error}>{query.error.message}</ErrorNotice> : items.length === 0 ? <EmptyState action={query.data?.length ? undefined : newSidekick} title={query.data?.length ? "No matching Sidekicks" : "No Sidekicks yet"} description={query.data?.length ? "Try a different search or ownership filter." : "Describe what you would like to delegate to create one."} /> :
       // The row's link is its title, stretched over the whole card in CSS.
       <ul className="sidekicks-library-list sidekicks-library-rows">{items.map((item) => <li key={item.id}>
         <span className="sidekick-list-glyph"><AutomationGlyph {...(item.appearance ? { appearance: item.appearance } : {})} id={item.id} /></span>

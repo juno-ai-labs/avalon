@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { CanvasMark } from '../components/canvas-mark';
-import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
+import { AvatarStack, Button, EmptyState, ErrorNotice } from '../components/primitives';
+import { PushedListPending } from '../components/pushed-list-pending';
 import { RelativeTime } from '../components/relative-time';
 import { SidebarSearch } from '../components/sidebar-search';
 import { canvasRoute, canvasRowDetail, othersPresent, useCanvasList, useCanvasNameSources, useCreateCanvas } from '../lib/canvases';
@@ -81,7 +82,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       <div className="sidekicks-library-actions window-no-drag">{newCanvas}</div>
     </header>
     {createError && <ErrorNotice occurrence={createError}>{createError.message}</ErrorNotice>}
-    {rows === undefined ? <OpeningState label="Loading Canvases…" />
+    {rows === undefined ? <PushedListPending label="Loading Canvases…" noun="Canvases" />
       : rows.length === 0 ? <CanvasesEmptyState creating={creating} guest={guest} onStart={start} />
         : <>
           <div className="sidekicks-library-controls">
