@@ -8211,8 +8211,12 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    open or hovered row rather than under it. */
 .activity-row-group { border-radius: 12px; }
 .activity-row-group > .activity-row { padding-bottom: 2px; }
+/* The link drops its own fill for the group's, and its tiles' ring takes the
+   group's layered colour, as a plain hovered or open row's does. */
 .activity-row-group > .activity-row:hover,
-.activity-row-group > .activity-row.is-active { --tile-ring: var(--av-cmp-sidebar-background-solid); background: transparent; }
+.activity-row-group > .activity-row.is-active { background: transparent; }
+.activity-row-group:hover > .activity-row { --tile-ring: linear-gradient(var(--av-sys-color-state-hover), var(--av-sys-color-state-hover)) var(--av-cmp-sidebar-background-solid); }
+.activity-row-group.is-active > .activity-row { --tile-ring: linear-gradient(var(--av-sys-color-surface-raised-hover), var(--av-sys-color-surface-raised-hover)) var(--av-cmp-sidebar-background-solid); }
 .activity-row-group:hover { background: var(--av-sys-color-state-hover); }
 .activity-row-group.is-active { background: var(--av-sys-color-surface-raised-hover); }
 /* Aligned with the row's text: its padding, its 36px tile and the gap after it. */
