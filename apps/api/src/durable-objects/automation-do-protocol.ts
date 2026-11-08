@@ -325,6 +325,14 @@ export const SidekickRunRowProjectionSchema = z.strictObject({
   reply: z.string().max(MESSAGE_MAX_CHARACTERS).nullable(),
   version: z.number().int().nonnegative(),
   /**
+   * The person whose own request started the run — Run now, or a message in
+   * the shared conversation — or null for a trigger's. While the run works,
+   * the row's write reads as seen by them: they are looking at what they
+   * asked for, so it is not news to them. Optional so a projection queued
+   * before the field still parses.
+   */
+  requesterUserId: IdSchema.nullable().optional(),
+  /**
    * Set by a replay: apply this projection even when the conversation holds a
    * newer version. Safe because the projection is the run read at delivery,
    * and it is how a row whose version ran ahead of its run is repaired.

@@ -657,6 +657,77 @@ describe("a Sidekick's shared conversation", () => {
     expect(await unread(MEMBER_ID)).toBe(false);
   });
 
+  it("keeps a Sidekick read for the person whose Run now is working, and marks it unread for its other readers", async () => {
+    await activeSidekick();
+    const unread = async (userId: string) => (await workspaceStub().listAutomationDirectory({
+      workspaceId: WORKSPACE_ID, userId })).items.find((item) => item.id === AUTOMATION_ID)?.unread;
+    const latest = () => runInDurableObject(conversationStub(), (_instance, state) => state.storage.sql.exec<{ latest: number }>(
+      `SELECT next_attention_ordinal - 1 AS latest FROM workstream WHERE id = 1`).one().latest);
+    const read = async (userId: string) => {
+      const response = await conversationStub().fetch("https://object.test/internal/product", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ operation: "acknowledge_read", parentKind: "automation", auth: auth(userId),
+          input: { readThroughSequenceNumber: await latest(), observedManualUnreadGeneration: 0 } }),
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      await deliverChildEffects(TEST_ENV, conversationStub());
+    };
+    await say(MEMBER_ID, "Morning, everyone.", "requester-0001");
+    await deliverChildEffects(TEST_ENV, conversationStub());
+    await read(AUTHOR_ID);
+    await read(MEMBER_ID);
+    expect([await unread(AUTHOR_ID), await unread(MEMBER_ID)]).toEqual([false, false]);
+    // The author asks; the run's row lands in the shared conversation while it works.
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "requester-run-0001" });
+    expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
+    await rowReaches(started.runId, "running");
+    await deliverChildEffects(TEST_ENV, conversationStub());
+    expect({ author: await unread(AUTHOR_ID), member: await unread(MEMBER_ID) }).toEqual({ author: false, member: true });
+  });
+
+  it("shows a run working, then the question it waits on, on its row and on the Sidekick's list row", async () => {
+    await activeSidekick();
+    const question = "Which release should the notes cover?";
+    script = [{
+      callTool: {
+        name: "request_elicitation",
+        arguments: {
+          prompt: question, responseType: "radio",
+          options: [{ value: "4.2", label: "4.2", description: null }, { value: "4.3", label: "4.3", description: null }],
+          minimumSelections: 1, maximumSelections: 1,
+        },
+      },
+    }];
+    const listed = async () => {
+      const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+        .items.find((candidate) => candidate.id === AUTOMATION_ID);
+      const waterline = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'automations'`).one().waterline);
+      return { row: { runState: item?.runState, pendingQuestion: item?.pendingQuestion, needsInput: item?.needsInput },
+        lastRunAt: item?.lastRunAt, waterline };
+    };
+    const idle = await listed();
+    expect(idle.row).toEqual({ runState: null, pendingQuestion: null, needsInput: false });
+    expect(idle.lastRunAt).toBeNull();
+    const before = Date.now();
+    const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "asking-run-0001" });
+    const working = await listed();
+    expect(working.row).toEqual({ runState: "working", pendingQuestion: null, needsInput: false });
+    // The row is dated by when the run started, while it works and while it waits.
+    expect(Date.parse(working.lastRunAt!)).toBeGreaterThanOrEqual(before);
+    // The list is sent again when the run starts working.
+    expect(working.waterline).toBeGreaterThan(idle.waterline);
+    expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
+    await runSettled(started.runId);
+    await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
+    const waiting = await rowReaches(started.runId, "needs_input");
+    expect(waiting.run?.reply).toBe(question);
+    const asking = await listed();
+    expect(asking.row).toEqual({ runState: "needs_input", pendingQuestion: question, needsInput: true });
+    expect(asking.lastRunAt).toBe(working.lastRunAt);
+    expect(asking.waterline).toBeGreaterThan(working.waterline);
+  });
+
   it("sends the Sidekick list with the saved name and state in the save that makes a draft active", async () => {
     const created = await createAutomation(TEST_ENV, { workspaceId: WORKSPACE_ID, authorUserId: AUTHOR_ID, scope: "workspace",
       automationId: AUTOMATION_ID });
