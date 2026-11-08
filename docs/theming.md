@@ -152,6 +152,12 @@ serves it through `rally-font://`.
   `palette-ink-dark` and the fills themselves live in `base.json`, where an
   appearance cannot move them, and the `--personal-ink-*` pair swaps which
   neutral it points at precisely so that it does not invert.
+- **A badge is not a danger fill.** A count, a Needs input badge and an unread
+  dot read `sys.color.badge.base` under `sys.color.badge.on`: design.html
+  draws them `#c3453f` with white digits in both appearances (4.82:1), so the
+  pair lives in `base.json`. `danger.base` lightens to `#cc7a6a` in dark, where
+  white over it is 3.12:1, and its dark `danger.on` would make a badge read as
+  a different object from the light one.
 - **A spacing token is re-fitted, never escaped per consumer.** When a shared
   value is wrong for one rule, the fix is the token or a decision written down
   beside the rule — not a literal on that one selector. Overriding each
@@ -248,9 +254,17 @@ serves only generated IDs and enforces the cache's size and integrity checks.
 **What changed:** Switching appearance, or the Mac switching it under System,
 repaints every Rally window's native background, not only the next one built.
 
+The badge token pair, `sys.color.badge.base` and `sys.color.badge.on`, now
+paints the rail and sidebar counts, the Sidekicks home's Needs input badge and
+the lists' unread dots; `cmp.feed.width-wide` is gone with the transcript
+column it sized.
+
 **Why:** The background was applied only in the constructors, so after Light
 to Dark the area a live resize exposes stayed `#fcfcfc` beside a `#070707`
-document (v3-G1); docs/e2e.md step 7 promises no flash of the other mode.
+document (v3-G1); docs/e2e.md step 7 promises no flash of the other mode. In
+dark the rail's badges drew white digits on the dark `danger.base` at 3.12:1
+while the Needs input badge used the dark `danger.on` beside them, two looks
+for one object, where design.html §5 keeps the light red with white (v3-R2-4).
 
 ### 2026-10-18 — A dark phone no longer opens the Home Screen app on white
 
