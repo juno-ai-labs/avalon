@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import { IdSchema, UserIdSchema, WorkspaceIdSchema, WorkstreamAppearancePatchSchema, WorkstreamAppearanceSchema, type WorkstreamAppearance } from "@rally/contracts";
+import { logWarn } from "../observability/logger";
+import { parsedAppearance } from "./sidekick-directory-sql";
 import {
   CanvasAccessDecisionRequestSchema,
   CanvasAccessDecisionSchema,
@@ -185,17 +187,28 @@ function notFound(): ApiError {
   return new ApiError(404, "canvas_not_found", "This Canvas does not exist");
 }
 
+/** Told of a Canvas whose stored appearance no longer parses, with the field and reason it failed on. */
+export type InvalidCanvasAppearanceReport = (canvasId: string, code: string) => void;
+
 /**
  * What somebody chose for the Canvas to look like; both fields null until
- * someone does, which the client draws as the default. A row read without the
- * column (a reader that names its columns) reads as unchosen.
+ * someone does, which the client draws as the default. A stored choice that no
+ * longer parses (a key a later catalog retired past what is storable) reads as
+ * unchosen and is reported by field (`canvas_appearance_invalid:icon:…`), so
+ * one bad row never fails a whole list, and the next choice repairs it.
  */
-export function canvasAppearance(row: CanvasRow): WorkstreamAppearance {
-  return row.appearance_json ? WorkstreamAppearanceSchema.parse(JSON.parse(row.appearance_json)) : { icon: null, color: null };
+export function canvasAppearance(row: CanvasRow, report: InvalidCanvasAppearanceReport): WorkstreamAppearance {
+  return parsedAppearance(row.appearance_json ?? null, "canvas_appearance", (code) => report(row.canvas_id, code))
+    ?? { icon: null, color: null };
+}
+
+/** The structured warning a reader of a Canvas row reports a stored appearance that no longer parses with. */
+export function canvasAppearanceReporter(env: Parameters<typeof logWarn>[0]): InvalidCanvasAppearanceReport {
+  return (canvasId, code) => logWarn(env, "canvas_directory_appearance_invalid", { canvas_id: canvasId, code });
 }
 
 /** The row's public shape. */
-export function canvasSummary(row: CanvasRow): CanvasSummary {
+export function canvasSummary(row: CanvasRow, report: InvalidCanvasAppearanceReport): CanvasSummary {
   return CanvasSummarySchema.parse({
     id: row.canvas_id,
     title: row.title,
@@ -206,7 +219,7 @@ export function canvasSummary(row: CanvasRow): CanvasSummary {
     writerSidekickId: row.writer_sidekick_id,
     visibility: row.visibility,
     titleStatus: row.title_status,
-    appearance: canvasAppearance(row),
+    appearance: canvasAppearance(row, report),
   });
 }
 
@@ -568,7 +581,7 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
     if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
     const canManage = this.manages(row, request.actor);
     return CanvasDetailSchema.parse({
-      ...canvasSummary(row),
+      ...canvasSummary(row, canvasAppearanceReporter(this.host.env)),
       participantUserIds: this.participantUserIds(),
       artifacts: this.artifacts(),
       canManage,
@@ -641,10 +654,14 @@ export class HostedCanvas extends HostedConversation<HostedCanvasHost> {
    */
   update(input: CanvasUpdateRequest): CanvasDetail {
     const request = parseRpcInput(CanvasUpdateRequestSchema, input, "canvas_update");
+    const appearanceFields = request.appearance === undefined ? 0 : Object.keys(request.appearance).length;
+    if (request.title === undefined && appearanceFields === 0) {
+      throw new ApiError(400, "canvas_update_empty", "Name a title, an icon or a colour to change");
+    }
     const row = this.assertCanvas(request.workspaceId, request.canvasId);
     if (!canvasReaderAllows(row, request.actor, this.sql)) throw notFound();
-    const appearance = request.appearance === undefined
-      ? null : WorkstreamAppearanceSchema.parse({ ...canvasAppearance(row), ...request.appearance });
+    const appearance = appearanceFields === 0
+      ? null : WorkstreamAppearanceSchema.parse({ ...canvasAppearance(row, canvasAppearanceReporter(this.host.env)), ...request.appearance });
     this.host.storage.transactionSync(() => {
       // A person's title settles it, so a naming pass still in flight leaves it alone.
       if (request.title !== undefined) {
@@ -794,6 +811,7 @@ export function canvasSidebarRows(
   viewer: { userId: string; member: boolean },
   present: ReadonlyMap<string, readonly string[]>,
   limit: number,
+  report: InvalidCanvasAppearanceReport,
 ): CanvasSidebarRow[] {
   const rows = sql.exec<CanvasRow & {
     participant: number; unread: number; pinned_position: number | null; artifact_type: string | null; artifact_mime: string | null;
@@ -850,7 +868,7 @@ export function canvasSidebarRows(
         && writerSidekickAdmits(sql, row.writer_sidekick_id, { userId: viewer.userId, actorRole: viewer.member ? "member" : null }),
     }, viewer.member)) continue;
     listed.push(CanvasSidebarRowSchema.parse({
-      ...canvasSummary(row),
+      ...canvasSummary(row, report),
       artifactKind: row.artifact_type === null ? null : canvasArtifactKind(row.artifact_type, row.artifact_mime),
       // A deleted Sidekick's run is no run to open.
       lastWrittenBy: row.written_run_id !== null && row.written_sidekick_name !== null && row.last_editor_id !== null
@@ -867,8 +885,13 @@ export function canvasSidebarRows(
 }
 
 /** The Canvases a Sidekick writes that this viewer may open, most recently active first: "the Canvases it writes to". */
-export function canvasesWrittenBy(sql: SqlStorage, sidekickId: string, actor: { userId: string; actorRole: CanvasActor["actorRole"] }): CanvasSummary[] {
+export function canvasesWrittenBy(
+  sql: SqlStorage,
+  sidekickId: string,
+  actor: { userId: string; actorRole: CanvasActor["actorRole"] },
+  report: InvalidCanvasAppearanceReport,
+): CanvasSummary[] {
   return sql.exec<CanvasRow>(
     `SELECT * FROM canvas_directory WHERE writer_sidekick_id = ? ORDER BY updated_at DESC, canvas_id`, sidekickId,
-  ).toArray().filter((row) => canvasReaderAllows(row, actor, sql)).map(canvasSummary);
+  ).toArray().filter((row) => canvasReaderAllows(row, actor, sql)).map((row) => canvasSummary(row, report));
 }

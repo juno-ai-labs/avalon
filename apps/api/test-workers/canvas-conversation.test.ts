@@ -418,6 +418,21 @@ describe("a Canvas's title and pin order", () => {
     creator.socket.close(1000, "done");
   });
 
+  it("reads a stored appearance that no longer parses as unchosen, without failing the list, and lets the next choice repair it", async () => {
+    const { canvasId } = await createCanvas(TEST_ENV, { workspaceId: WORKSPACE_ID, creatorUserId: CREATOR, title: "Launch plan" });
+    // A key no catalog stores, as a later catalog could leave behind.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(`UPDATE canvas_directory SET appearance_json = ? WHERE canvas_id = ?`,
+        JSON.stringify({ icon: "retired-glyph", color: "orange" }), canvasId);
+    });
+    const service = new CanvasService(TEST_ENV, auth(CREATOR));
+    expect((await service.detail(canvasId)).appearance).toEqual({ icon: null, color: null });
+    const rows = await service.list();
+    expect(rows.find((row) => row.id === canvasId)?.appearance).toEqual({ icon: null, color: null });
+    const repaired = await service.update(canvasId, { appearance: { color: "blue" } });
+    expect(repaired.appearance).toEqual({ icon: null, color: "blue" });
+  });
+
   it("ends a reply being streamed at its next chunk when a person stops it, as a stopped response", async () => {
     held.firstPartSent = false;
     held.released = false;
@@ -668,7 +683,7 @@ describe("a Canvas's artifacts", () => {
         CREATOR, resourceId);
     });
     const unread = (userId: string) => runInDurableObject(workspace(), (_instance, state) =>
-      canvasSidebarRows(state.storage.sql, { userId, member: true }, new Map(), 50).find((row) => row.id === canvasId)?.unread);
+      canvasSidebarRows(state.storage.sql, { userId, member: true }, new Map(), 50, () => undefined).find((row) => row.id === canvasId)?.unread);
     expect(await unread(MEMBER)).toBe(true);
     expect(await unread(CREATOR)).toBe(false);
   });
