@@ -14,8 +14,14 @@ import { SupportAccessSchema, type SupportAccess } from "@rally/contracts";
 import { UserTimezoneSchema, type UserTimezone } from "@rally/contracts";
 
 import {
+  CanvasAccessDecisionSchema,
+  CanvasAccessRequestResultSchema,
+  CanvasAccessSchema,
   CanvasDetailSchema,
   CreatedCanvasSchema,
+  type CanvasAccess,
+  type CanvasAccessDecision,
+  type CanvasAccessRequestResult,
   type CanvasAudienceUpdate,
   type CanvasDetail,
   type CreateCanvasRequest,
@@ -1201,6 +1207,30 @@ export class RallyApi {
   /** The Canvas as this person sees it: its row, who it is shared with, and its artifacts. */
   getCanvas(id: string, signal?: AbortSignal): Promise<CanvasDetail> {
     return this.request(`/canvases/${encodeURIComponent(id)}`, { schema: CanvasDetailSchema, signal });
+  }
+
+  /**
+   * Asked only after `getCanvas` answered not found: whether the Canvas exists
+   * in this person's Organization for them to ask into (`requestable`, never
+   * its title), and their own request if they made one. A Canvas that exists
+   * nowhere of theirs answers 404 `canvas_not_found`.
+   */
+  getCanvasAccess(id: string, signal?: AbortSignal): Promise<CanvasAccess> {
+    return this.request(`/canvases/${encodeURIComponent(id)}/access`, { schema: CanvasAccessSchema, signal });
+  }
+
+  /** Ask the Canvas's deciders to let this person in; a second ask while one is pending answers that one. */
+  requestCanvasAccess(id: string, message?: string): Promise<CanvasAccessRequestResult> {
+    return this.request(`/canvases/${encodeURIComponent(id)}/access-requests`, {
+      method: 'POST', body: message ? { message } : {}, schema: CanvasAccessRequestResultSchema,
+    });
+  }
+
+  /** A decider's Approve or Deny of one person's pending request, answering the request's state. */
+  decideCanvasAccess(id: string, userId: string, decision: 'approve' | 'deny'): Promise<CanvasAccessDecision> {
+    return this.request(`/canvases/${encodeURIComponent(id)}/access-requests/${encodeURIComponent(userId)}/decision`, {
+      method: 'POST', body: { decision }, schema: CanvasAccessDecisionSchema,
+    });
   }
 
   /** Retitle a Canvas; anyone the Canvas admits may. The server trims and bounds the title. */
