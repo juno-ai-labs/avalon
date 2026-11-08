@@ -429,8 +429,20 @@ describe('the Activity section', () => {
       expect(within(rows[0]!).queryByRole('button')).toBeNull();
       fireEvent.click(screen.getByRole('button', { name: 'Approve Avery' }));
       await waitFor(() => expect(api.decideCanvasAccess).toHaveBeenCalledWith(CANVAS, AVERY, 'approve'));
-      fireEvent.click(screen.getByRole('button', { name: 'Deny Avery' }));
-      await waitFor(() => expect(api.decideCanvasAccess).toHaveBeenLastCalledWith(CANVAS, AVERY, 'deny'));
+      // Answered: both stay held until the push settles the row, so a second
+      // press cannot meet this person's own answer as already settled.
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Approve Avery' })).toBeDisabled());
+      expect(screen.getByRole('button', { name: 'Deny Avery' })).toBeDisabled();
+      expect(api.decideCanvasAccess).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends Deny for the requester, and names the buttons for the request until the name is known', async () => {
+      api.getWorkspaceMembers.mockResolvedValue([] as never);
+      useUiStore.getState().setSidebarSection('activity');
+      renderSidebar(workspace, '/', { unseenCount: 1, items: [item({ id: 'r4', kind: 'access_request', accessRequest: { state: 'pending', decidedByName: null } })] });
+      fireEvent.click(await screen.findByRole('button', { name: 'Deny request' }));
+      await waitFor(() => expect(api.decideCanvasAccess).toHaveBeenCalledWith(CANVAS, AVERY, 'deny'));
+      expect(screen.queryByRole('button', { name: /Someone/u })).toBeNull();
     });
 
     it('reads a settled request as who decided, seen, with nothing left to press', async () => {

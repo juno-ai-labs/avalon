@@ -526,13 +526,13 @@ describe('CanvasScreen', () => {
 
   it('shows Deny and its refusal by name', async () => {
     getCanvas.mockResolvedValue(detail({ pendingAccessRequests: [{ userId: MAYA, name: 'Maya Lin', message: null, requestedAt: '2026-11-08T09:00:00.000Z' }] }));
-    decideCanvasAccess.mockRejectedValue(new ApiError('Someone already answered this request', 409, 'canvas_access_request_settled'));
+    decideCanvasAccess.mockRejectedValue(new ApiError('canvas_access_request_settled', 409, 'canvas_access_request_settled'));
     renderCanvas();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Share' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Share' }));
     fireEvent.click(within(await screen.findByRole('dialog', { name: 'Share Canvas' })).getByRole('button', { name: 'Deny Maya Lin' }));
     await waitFor(() => expect(decideCanvasAccess).toHaveBeenCalledWith(CANVAS, MAYA, 'deny'));
-    expect(await screen.findByRole('alertdialog', { name: 'The request could not be answered' })).toHaveTextContent('Someone already answered this request');
+    expect(await screen.findByRole('alertdialog', { name: 'The request could not be answered' })).toHaveTextContent('Someone already answered this request.');
   });
 
   it('offers only guests to pick once the whole Organization can open it, and never the viewer', async () => {

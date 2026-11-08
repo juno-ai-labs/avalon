@@ -63,6 +63,19 @@ export function canvasRenameRefusal(error: Error): string {
 }
 
 /**
+ * What a refused Approve or Deny says. The two refusals a decider can meet
+ * in the ordinary course are worded here: another decider answered first,
+ * or this person no longer manages the Canvas. Anything else is the server's
+ * own message.
+ */
+export function canvasAccessDecisionRefusal(error: Error): string {
+  const code = error instanceof ApiError ? error.code : undefined;
+  if (code === 'canvas_access_request_settled') return 'Someone already answered this request.';
+  if (code === 'canvas_access_decision_not_manager') return 'Only the Canvas’s creator and the Organization’s administrators can answer requests to open it.';
+  return error.message;
+}
+
+/**
  * Whether Rally is still choosing this Canvas's name from its opening message.
  * An older server sends no `titleStatus`, which is settled.
  */

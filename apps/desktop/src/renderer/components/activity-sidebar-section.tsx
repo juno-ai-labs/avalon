@@ -149,7 +149,7 @@ export function ActivitySection({ scroll }: { scroll: RefObject<HTMLElement | nu
           />
         </Link>
         {deciding && <div className="activity-row-actions">
-          <AccessDecisionActions canvasId={item.parentId} label={who(item)} userId={item.actor.id!} />
+          <AccessDecisionActions canvasId={item.parentId} label={membersById.get(item.actor.id!)?.name || undefined} userId={item.actor.id!} />
         </div>}
       </Fragment>;
     })}
