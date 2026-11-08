@@ -45,5 +45,11 @@ describe('the dock badge', () => {
 
     act(() => applyVersionedSidebarList(client, 'canvases', 2, [canvas('c1', false)]));
     await waitFor(() => expect(setDockBadgeCount.mock.calls.at(-1)).toEqual([2]));
+
+    // Activity's unseen count is the rail's third badge, never the dock's.
+    const calls = setDockBadgeCount.mock.calls.length;
+    act(() => applyVersionedSidebarList(client, 'activity', 1, { unseenCount: 5, items: [] }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(setDockBadgeCount.mock.calls.slice(calls).every((call) => (call as unknown[])[0] === 2)).toBe(true);
   });
 });

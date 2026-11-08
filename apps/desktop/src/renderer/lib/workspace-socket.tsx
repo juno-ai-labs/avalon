@@ -3,6 +3,7 @@ import {
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+  WorkspaceActivityListEventSchema,
   WorkspaceCanvasListEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceFeatureFlagsEventSchema,
@@ -145,6 +146,12 @@ interface WorkspaceSocketContextValue {
   setForegroundWorkstreamId(workstreamId: string | null): void;
   /** The last sidebar the server sent unasked, or null before the first one. */
   sidebarConnect: SidebarConnect | null;
+  /**
+   * Mark all seen: every Activity item recorded until now. Answered by the
+   * Activity push; sent only on a subscribed socket this window holds, and a
+   * no-op while it has none.
+   */
+  markAllActivitySeen(): void;
 }
 
 const WorkspaceSocketContext = createContext<WorkspaceSocketContextValue | null>(null);
@@ -244,11 +251,13 @@ export function WorkspaceSocketProvider({
   }, []);
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
+  const markAllActivitySeenRef = useRef<() => void>(() => undefined);
+  const markAllActivitySeen = useCallback((): void => markAllActivitySeenRef.current(), []);
 
   useEffect(() => {
     if (!ownSocket) return;
     const releaseData = retainQueryData(queryClient, [
-      SIDEBAR_LIST_QUERY_KEYS.automations, SIDEBAR_LIST_QUERY_KEYS.canvases,
+      SIDEBAR_LIST_QUERY_KEYS.automations, SIDEBAR_LIST_QUERY_KEYS.canvases, SIDEBAR_LIST_QUERY_KEYS.activity,
       CLIENT_FEATURE_FLAGS_QUERY_KEY,
     ]);
     let stopped = false;
@@ -318,6 +327,10 @@ export function WorkspaceSocketProvider({
       } satisfies WorkspaceSocketClientEvent));
     };
     reportPresenceRef.current = sendPresence;
+    markAllActivitySeenRef.current = () => {
+      if (!subscribed || socket?.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: 'activity_mark_all_seen' } satisfies WorkspaceSocketClientEvent));
+    };
     const bridge = desktopBridge();
     const publishTopics = (topics: WorkspaceSyncRelayTopic[], waterline: number): void => {
       if (relay === 'publish') publishToMain({ type: 'topics', region, workspaceId, waterline, topics });
@@ -395,6 +408,10 @@ export function WorkspaceSocketProvider({
         sidebar.automations.items.map(mapAutomationSummary),
       );
       if (sidebar.canvases) applyVersionedSidebarList(queryClient, 'canvases', sidebar.canvases.waterline, sidebar.canvases.items);
+      if (sidebar.activity) {
+        applyVersionedSidebarList(queryClient, 'activity', sidebar.activity.waterline,
+          { unseenCount: sidebar.activity.unseenCount, items: sidebar.activity.items });
+      }
       // The lists are the bound on the conversation cache: a conversation
       // stays on disk for as long as its Canvas or Sidekick is listed.
       if (localCacheScope !== null) {
@@ -621,6 +638,12 @@ export function WorkspaceSocketProvider({
             applyVersionedSidebarList(queryClient, 'canvases', canvasList.data.waterline, canvasList.data.items);
             return;
           }
+          const activityList = safeParseSocketEvent(WorkspaceActivityListEventSchema, decoded);
+          if (activityList.success) {
+            applyVersionedSidebarList(queryClient, 'activity', activityList.data.waterline,
+              { unseenCount: activityList.data.unseenCount, items: activityList.data.items });
+            return;
+          }
           const sidebarList = safeParseSocketEvent(WorkspaceSidebarListEventSchema, decoded);
           if (sidebarList.success) {
             // Through the shared receiver, not straight into the cache: the
@@ -688,6 +711,7 @@ export function WorkspaceSocketProvider({
               ['workspace_presence', 'presence', presence],
               ['workspace_feature_flags', 'feature flags', featureFlags],
               ['workspace_canvas_list', 'canvas list', canvasList],
+              ['workspace_activity_list', 'activity list', activityList],
               ['workspace_sidebar_list', 'sidebar list', sidebarList],
               ['workspace_resource_versions', 'resource versions', resourceVersions],
               ['workspace_usage', 'usage', usage],
@@ -822,6 +846,7 @@ export function WorkspaceSocketProvider({
       document.removeEventListener('visibilitychange', observeWindowFocus);
       stopApplicationFocus();
       reportPresenceRef.current = () => undefined;
+      markAllActivitySeenRef.current = () => undefined;
       clearReconnect();
       activeTicketAbort?.abort();
       activeTicketAbort = null;
@@ -985,8 +1010,10 @@ export function WorkspaceSocketProvider({
       setForegroundWorkstreamId,
       sidebarConnect,
       requestConversationView,
+      markAllActivitySeen,
     }),
     [
+      markAllActivitySeen,
       requestConversationView,
       presenceUserIdsByWorkstream,
       setForegroundWorkstreamId,

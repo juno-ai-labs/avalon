@@ -1,4 +1,4 @@
-import type { CanvasSidebarRow } from '@rally/contracts';
+import type { ActivityItem, CanvasSidebarRow } from '@rally/contracts';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import type { AutomationSummary } from './types';
@@ -19,13 +19,21 @@ import type { AutomationSummary } from './types';
  * route, and only the second of those two pushes carries a higher number.
  */
 
-export type SidebarList = 'automations' | 'canvases';
+export type SidebarList = 'automations' | 'canvases' | 'activity';
+
+/** One person's Activity as the socket keeps it: the newest page and how many of all of it are unseen. */
+export interface ActivityList {
+  unseenCount: number;
+  items: ActivityItem[];
+}
 
 /** The cache entries the shell reads these lists under. */
 export const SIDEBAR_LIST_QUERY_KEYS = {
   automations: ['automations'],
   /** This viewer's Canvases (`workspace_canvas_list`); see docs/canvases.md. */
   canvases: ['canvases'],
+  /** This viewer's Activity (`workspace_activity_list`); see docs/activity.md. */
+  activity: ['activity'],
 } as const satisfies Record<SidebarList, readonly unknown[]>;
 
 const SIDEBAR_LIST_WATERLINES_KEY = ['sidebar-list-waterlines'] as const;
@@ -54,6 +62,7 @@ function pinWaterlineLedger(queryClient: QueryClient): void {
 interface SidebarListItems {
   automations: AutomationSummary[];
   canvases: CanvasSidebarRow[];
+  activity: ActivityList;
 }
 
 /**

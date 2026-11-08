@@ -6,7 +6,7 @@ export type RailVariant = 'context' | 'browser';
  * cutover (`channels`, `threads`, `pinned`, `artifacts`, `activity`) reads as
  * the default, Canvases.
  */
-export type SidebarSection = 'canvases' | 'sidekicks';
+export type SidebarSection = 'canvases' | 'sidekicks' | 'activity';
 /** The panel occupying the right sidebar slot. */
 export interface RailInspector {
   type: 'resource' | 'connection' | 'task' | 'run';
@@ -126,7 +126,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
   sheetAfterNavigation: false,
   sidebarWidth: loadSidebarWidth(SIDEBAR_WIDTH_STORAGE_KEY, SINGLE_SIDEBAR_DEFAULT_WIDTH),
-  sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['canvases', 'sidekicks'], 'canvases'),
+  sidebarSection: loadPreference<SidebarSection>(SIDEBAR_SECTION_STORAGE_KEY, ['canvases', 'sidekicks', 'activity'], 'canvases'),
   railOpen: false,
   railExpanded: false,
   railVariant: 'context',
