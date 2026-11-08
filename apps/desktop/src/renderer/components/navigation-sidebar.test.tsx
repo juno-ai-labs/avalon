@@ -218,6 +218,23 @@ describe('the Canvases and Sidekicks sections', () => {
     expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
   });
 
+  it('at phone width, names the home the route lands on in the bar while Activity stays the stored section', () => {
+    useUiStore.getState().setSidebarSection('activity');
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('max-width'), media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    try {
+      renderSidebar(workspace, '/canvases');
+      expect(screen.getByRole('heading', { name: 'Canvases' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'New Canvas' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Mark all seen' })).toBeNull();
+      expect(useUiStore.getState().sidebarSection).toBe('activity');
+      // The sheet, once opened, is the list left open.
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('keeps the section left open across a launch the landing redirects to the Canvases home', () => {
     useUiStore.getState().setSidebarSection('sidekicks');
     renderSidebar(workspace, '/', undefined, true, true);

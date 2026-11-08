@@ -19,7 +19,7 @@ import { ErrorNotice, IconButton } from './primitives';
 import { RailItem } from './rail-item';
 import { SidekicksSection, useSidekickList } from './sidekick-sidebar-section';
 import { ResizableSidebar, SidebarFooterItems, SidebarScroll } from '@rally/ui/components/resizable-sidebar';
-import { PHONE_LAYOUT_MAX_WIDTH } from '@rally/ui/lib/phone-layout';
+import { PHONE_LAYOUT_MAX_WIDTH, usePhoneLayout } from '@rally/ui/lib/phone-layout';
 
 const NAVIGATION_SHEET_ID = 'rally-navigation-sheet';
 
@@ -168,7 +168,16 @@ export function NavigationSidebar({
   const scroll = useRef<HTMLElement | null>(null);
   const guest = workspace.currentUser.accessClass === 'guest';
   const badges = useSectionCounts().counts;
-  const title = SECTIONS.find((candidate) => candidate.id === section)?.label ?? 'Canvases';
+  // On a phone the shut sheet's bar is a section home's only header, so it
+  // names the home the route shows, whichever list was left open: a link or a
+  // restored route that lands on the Canvases home while Activity is the
+  // stored section read "Activity" over it. The list itself keeps the stored
+  // choice (desktop-shell.md, "landing on a section home keeps the stored
+  // choice"); only the bar, its title and its actions, follow the route.
+  const phone = usePhoneLayout();
+  const homeSection = routeNamesItem(pathname) ? null : sectionForPath(pathname);
+  const barSection = phone && !sidebarOpen && homeSection ? homeSection : section;
+  const title = SECTIONS.find((candidate) => candidate.id === barSection)?.label ?? 'Canvases';
   const createCanvas = useCreateCanvas();
   const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
   const navigate = useNavigate();
@@ -219,13 +228,13 @@ export function NavigationSidebar({
             {downloadedUpdate !== null && <IconButton className="navigation-update" label={`Restart to update to Rally ${downloadedUpdate}`} onClick={() => void desktopBridge().installDownloadedUpdate()}>
               <IconDeviceDesktopDown aria-hidden="true" size={17} stroke={1.8} />
             </IconButton>}
-            {section === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { setCreateCanvasError(null); void createCanvas().catch((cause: unknown) => setCreateCanvasError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))); }}>
+            {barSection === 'canvases' && !guest && <IconButton label="New Canvas" onClick={() => { setCreateCanvasError(null); void createCanvas().catch((cause: unknown) => setCreateCanvasError(cause instanceof Error ? cause : new Error('The Canvas could not be made.'))); }}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
-            {section === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
+            {barSection === 'sidekicks' && !guest && <IconButton label="New Sidekick" onClick={() => void navigate('/sidekicks/new')}>
               <IconPlus aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
-            {section === 'activity' && <IconButton disabled={badges.activity === 0 || !workspaceSocket} label="Mark all seen" onClick={() => workspaceSocket?.markAllActivitySeen()}>
+            {barSection === 'activity' && <IconButton disabled={badges.activity === 0 || !workspaceSocket} label="Mark all seen" onClick={() => workspaceSocket?.markAllActivitySeen()}>
               <IconChecks aria-hidden="true" size={18} stroke={1.8} />
             </IconButton>}
             <IconButton disabled={!onOpenSearch} label="Search organization" onClick={onOpenSearch}>

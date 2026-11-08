@@ -3,15 +3,24 @@ const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
 const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const shortTime = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 
+/**
+ * Whole units elapsed, counted down as `formatSidebarActivityTime` counts
+ * them: a run 4.9 hours old is "4 hours ago" beside the row's "4h", not
+ * "5 hours ago". Toward zero either side of now, so the future reads the same.
+ */
+function wholeUnits(delta: number, unit: number): number {
+  return Math.trunc(delta / unit) || 0;
+}
+
 export function formatRelative(value: string, now = new Date()): string {
   const date = new Date(value);
   const delta = date.getTime() - now.getTime();
   const absolute = Math.abs(delta);
   if (!Number.isFinite(delta)) return 'Unknown time';
   if (absolute < 60_000) return 'just now';
-  if (absolute < 3_600_000) return relativeTime.format(Math.round(delta / 60_000), 'minute');
-  if (absolute < 86_400_000) return relativeTime.format(Math.round(delta / 3_600_000), 'hour');
-  if (absolute < 604_800_000) return relativeTime.format(Math.round(delta / 86_400_000), 'day');
+  if (absolute < 3_600_000) return relativeTime.format(wholeUnits(delta, 60_000), 'minute');
+  if (absolute < 86_400_000) return relativeTime.format(wholeUnits(delta, 3_600_000), 'hour');
+  if (absolute < 604_800_000) return relativeTime.format(wholeUnits(delta, 86_400_000), 'day');
   return dateTime.format(date);
 }
 

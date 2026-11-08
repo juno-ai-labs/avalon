@@ -880,7 +880,10 @@ Sidekick's, which leads back. In the transcript, a colleague's turn sits on
 the leading edge as plain text under their avatar, Rally's turn carries an "R"
 avatar, and the reader's own bubble is their colour's pastel pair rather than
 the saturated hue. The transcript column is the composer's width, where it
-was up to 940px (v4-R2-2, v1-R2-2).
+was up to 940px (v4-R2-2, v1-R2-2). An open question's Submit names the
+platform's modifier (`primaryShortcutLabel`: ⌘↵ on a Mac, Ctrl+Enter
+elsewhere, v4-R2-13), and its "Other" field is the form-field well
+(v3-R2-7).
 
 **Why:** The PRD makes design.html the authority for every screen. Its §4
 draws a Sidekick like a Canvas: conversation as the hero, details on the
@@ -893,7 +896,10 @@ by place (v1-F9, v4-F8). The saturated bubble under white ink failed contrast
 on rose, 3.58:1, in both appearances (v3-G3), and the pastel pair is themed
 per appearance. With no panel open the transcript ran 876px under a 480px
 field, so a reply began 200px left of the field and the reader's question
-ended 200px right of it; the design draws both in one column.
+ended 200px right of it; the design draws both in one column. The browser
+serves Windows and Linux, where the hard-coded ⌘↵ named a key they do not
+have, and the "Other" field drew a raw ramp step, the brightest surface in
+the dark form with a 2.31:1 placeholder.
 
 **Considered and rejected:** Rendering the header inside the conversation, as
 a Canvas does: it would vanish with the conversation when the details take its
