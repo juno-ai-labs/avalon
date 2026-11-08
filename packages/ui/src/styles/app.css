@@ -8160,13 +8160,15 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 }
 .activity-row-text { color: var(--av-sys-color-text-subtle); font-weight: 400; }
 .activity-row-text strong { color: var(--av-sys-color-text-default); font-weight: 600; }
-/* Seen history recedes through text colours, not opacity: the title in
-   text-muted (5.12:1 light, 7.49:1 dark on the sidebar) and the second line in
-   text-disabled (3.02:1 and 4.22:1), each clear of its WCAG floor, where 45%
-   opacity left the preview at 1.9:1 in light and 2.45:1 in dark. */
+/* Seen history recedes through one text colour, not opacity: the title takes
+   text-muted (5.12:1 light, 7.49:1 dark on the sidebar), the token the second
+   line already has, so both lines are one token and the preview and the time
+   clear 4.5:1 at their 12-12.5px. Dimming the second line further to
+   text-disabled read 3.02:1 and 4.22:1, and 45% opacity before it 1.9:1 and
+   2.45:1. The weight still says seen: the title drops from 600 to 500, and
+   the unseen dot goes. The open row is never dimmed. */
 .activity-row.is-seen:not(.is-active) .activity-row-text,
 .activity-row.is-seen:not(.is-active) .activity-row-text strong { color: var(--av-sys-color-text-muted); font-weight: 500; }
-.activity-row.is-seen:not(.is-active) :is(.navigation-row-detail, .navigation-row-time) { color: var(--av-sys-color-text-disabled); }
 .activity-row.is-seen:not(.is-active) .activity-row-glyph { color: var(--av-sys-color-text-muted); }
 /* The rows the route has open are drawn open, at full contrast; a gap keeps
    two of them from merging into one block. Keyboard focus is a ring, not the
