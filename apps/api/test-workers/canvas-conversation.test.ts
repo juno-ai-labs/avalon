@@ -428,7 +428,8 @@ describe("a Canvas's title and pin order", () => {
       prompt: { text: "Plan the December pricing launch: owners, dates, and what gates the announcement.", clientMessageId: "canvas-name-1" },
     });
     const service = new CanvasService(TEST_ENV, auth(CREATOR));
-    expect(await service.detail(canvasId)).toMatchObject({ title: "Untitled Canvas", titleStatus: "naming" });
+    // Until its first message reaches the Canvas, it is untitled and settled, not naming.
+    expect(await service.detail(canvasId)).toMatchObject({ title: "Untitled Canvas", titleStatus: "settled" });
     // The Chat's first message reaches the Canvas's parent, which names it by an alarm of its own.
     await deliverChildEffects(TEST_ENV, env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       conversationObjectName("global", WORKSPACE_ID, canvasId))));
@@ -481,8 +482,19 @@ describe("a Canvas's title and pin order", () => {
         `SELECT 1 FROM _internal_durable_alarms WHERE kind = ? AND alarm_key = ?`, CANVAS_NAMING_ALARM_KIND, canvasId)
         .toArray().length), { timeout: 15_000 }).toBe(0);
     };
+    // An empty Canvas is untitled and settled, and an empty Chat is not activity.
+    const created = await service.detail(canvasId);
+    expect(created).toMatchObject({ title: "Untitled Canvas", titleStatus: "settled" });
+    await deliverChildEffects(TEST_ENV, chat);
+    expect((await service.detail(canvasId)).updatedAt).toBe(created.updatedAt);
     // The person's opening carried attachments and no text; Rally answered it.
     await say("human", "");
+    // Its first message starts naming it. A seeded turn writes no projection
+    // of its own, so the Chat sends the one a message's write would.
+    await runInDurableObject(chat, (instance) => (instance as unknown as {
+      product: { enqueueDirectorySnapshot(): Promise<void> } }).product.enqueueDirectorySnapshot());
+    await deliverChildEffects(TEST_ENV, chat);
+    expect(await service.detail(canvasId)).toMatchObject({ title: "Untitled Canvas", titleStatus: "naming" });
     await say("assistant", "Here is the plan.");
     await name();
     expect(await service.detail(canvasId)).toMatchObject({ title: "Untitled Canvas", titleStatus: "naming" });

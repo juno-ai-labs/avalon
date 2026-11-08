@@ -168,11 +168,17 @@ manage it); `POST /canvases/:id/audience` changes who can open it;
 `POST /canvases/:id/pin` and `POST /sidekicks/:id/pin` pin. The Chat is opened
 through the conversation routes like any conversation.
 
-A Canvas a person makes with no title starts as **Untitled Canvas** with
-`titleStatus: "naming"` (`canvas_directory.title_status`, migration 149). When
-the first projection of its Chat that carries a message reaches the parent
-(`onChildProjection`, `latestAttentionOrdinal` at least 1), the Canvas arms a
-`canvas_naming` alarm entry keyed by its id; the entry's handler,
+A Canvas a person makes with no title starts as **Untitled Canvas**, settled
+(`canvas_directory.title_status`, migration 149). When the first projection of
+its Chat that carries a message reaches the parent (`onChildProjection`,
+`latestAttentionOrdinal` moving from 0 to at least 1), the same write sets it
+`naming` — only while it is still settled as **Untitled Canvas** and no
+Sidekick run wrote it, so a person's retitle is never undone — and the Canvas
+arms a `canvas_naming` alarm entry keyed by its id. An empty Canvas therefore
+reads as its title, never as a naming skeleton waiting for a message that may
+not come; and the provisioning projection of an empty Chat (no ordinal before,
+0 now) is not activity, so it does not move the Canvas up the recency list.
+The entry's handler,
 `HostedCanvas.nameFromOpening`, reads the oldest text message a person sent
 in the Chat through the message port (`saidMessages`, `peopleOnly`), asks `canvasTitleFromOpening` (the `workstream_naming` role,
 reasoning off, metered as `channel_naming`) and writes the title in one
@@ -181,7 +187,7 @@ list and the detail move as a retitle moves them. A retitle settles the row
 first, so a person's title always wins over a pass still in flight; a model
 that fails or answers nothing settles the row as it is, logged
 `canvas_naming_failed` with its code. A Canvas a Sidekick run makes, or one
-made with a title, is `settled` from the start. A first message that carries
+made with a title, is never `naming`. A first message that carries
 only attachments has no text to read, so the Canvas stays `naming` until a
 person's text message arrives, which arms the entry again.
 
@@ -618,8 +624,9 @@ Canvas colour would replace `canvasHue`, not sit beside it.
 ### 2026-11-08 — A Canvas made with no title is titled from its first message, and a refused retitle names its field
 
 **What changed:** WorkspaceDO migration 149 adds `canvas_directory.title_status`.
-A Canvas a person makes with no title is `naming` until the first text message
-of its Chat reaches the parent, which arms a `canvas_naming` entry;
+A Canvas a person makes with no title is **Untitled Canvas**, settled, until
+the first message of its Chat reaches the parent, which sets it `naming` in
+the same write and arms a `canvas_naming` entry;
 `HostedCanvas.nameFromOpening` titles it on the `workstream_naming` role and
 settles it. A retitle settles the row. `PATCH /canvases/:id` and every Canvas
 route's id refuse by name (`canvas_rename_invalid:…`, `canvas_id_invalid:…`)
@@ -636,6 +643,11 @@ deleted Thread naming service ran: the title is the parent's row, and a pass in
 the parent writes it in the same statement a retitle uses. A lock or a version
 check against a concurrent retitle: the retitle settles the row, and the pass
 writes only while it is still `naming`, so a person's title wins without one.
+
+A Canvas created `naming` showed the naming skeleton for ever when nobody wrote
+in it, since only a message arms the pass, so the flip moved from creation to
+the first message; the same change stopped an empty Chat's provisioning
+projection from counting as activity.
 
 **What a future change must respect:** only a Canvas still `naming` may be
 titled automatically, and every person's retitle must settle it.
