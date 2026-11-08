@@ -15,7 +15,7 @@ Use sub-agents to do a code review using each of the personas under the "Sub-Age
 
 Give each persona this orientation, then its own section below.
 
-Avalon is a pnpm/TypeScript monorepo with three deployment surfaces: `apps/desktop`
+Rally (code name Avalon) is a pnpm/TypeScript monorepo with three deployment surfaces: `apps/desktop`
 (Electron main + preload + sandboxed React renderers), `apps/api` (one Hono
 Cloudflare Worker deployed twice, as the Global and EU regions), and the shared
 packages `@rally/contracts` (Zod wire contracts), `@rally/db` (D1 migrations and
@@ -97,7 +97,7 @@ migrates. Hold every migration change to these bars:
   `0011_identity_first_onboarding.sql`, which states that reason itself). So a new
   auth- or ticket-shaped table that omits the column entirely is a finding — nullable
   is the answer here, absent is not. A `CHECK` belongs on a closed set and deliberately
-  *not* on a set that is a moving product decision (see `workstreams.model_override` in
+  *not* on a set that is a moving product decision (see `workstream.model_override` in
   `docs/data-model.md`). A new column's default must fail closed unless there is a
   stated reason it cannot.
 
@@ -137,12 +137,12 @@ provide.
 `PUBLIC_API_BASE_URL`, `PUBLIC_WEB_BASE_URL`, and the
 per-provider `*_INGRESS_BASE_URL` values. A URL derived from the inbound request is
 wrong for anything reached through the Global ingress bridges or a tunnel — flag
-callback URLs, invitation and work-stream links, and OAuth `redirect_uri` values built
+callback URLs, invitation, Canvas and Sidekick links, and OAuth `redirect_uri` values built
 from `c.req.url`.
 
 ### React Specialist
 
-A React specialist (master of modern React solutions) working on Avalon's **Electron
+A React specialist (master of modern React solutions) working on Rally's **Electron
 renderer** — sandboxed React surfaces in `apps/desktop/src/renderer`, with
 TanStack Query for server state, zustand for local state, Radix primitives, Tailwind,
 and `@tanstack/react-virtual` for long transcripts. Review general React quality
@@ -179,7 +179,7 @@ actually pays for itself, accessibility of custom controls) plus the following.
 
 A security specialist looking at the cohesive security situation at all layers — the
 Electron client, the regional Workers, D1/R2, connectors, and the model surface.
-`docs/security.md` is the reference; read it before reviewing. Avalon has **no
+`docs/security.md` is the reference; read it before reviewing. Rally has **no
 policy-engine authorization service**: authorization is the layered server-side
 resolution below, and a violation is a P0/P1 finding, not a style note.
 
@@ -193,19 +193,20 @@ resolution below, and a violation is a P0/P1 finding, not a style note.
   actions (`owner`/`admin`) are enforced in the service. Flag a handler that
   authenticates but never authorizes, a mutation that never resolves role, and a role
   comparison hand-rolled where the helper exists.
-- **Every resource query includes `workspace_id`, and work-stream readability comes
-  from `workstreamVisibilitySql`** (`apps/api/src/lib/workstream-visibility.ts`).
-  That helper exists because the rule was written out three times and the third copy
-  dropped `scope`, letting any member read another person's personal work stream by
-  id. Flag a new query that re-derives readability instead of composing the helper,
-  and any read reachable by id that omits the workspace predicate.
+- **Every resource query includes `workspace_id`, and a conversation's readability
+  comes from its parent's reader rule** — `canvasReaderAllows` for a Canvas,
+  `sidekickAdmits` for a Sidekick (`docs/authorization.md`). A rule written out more
+  than once drifts: an earlier copy of the work-stream rule dropped `scope` and let
+  any member read another person's personal conversation by id. Flag a new query
+  that re-derives readability instead of asking the parent, and any read reachable
+  by id that omits the workspace predicate.
 - **The region boundary is a security boundary.** Cross-region workspace content
   access does not exist; Global reaches EU only through the named Worker RPC service
   bindings, never a public internal HTTP route. Each region has its own D1, R2, DO
   namespaces, session-signing key, and credential-encryption key. Flag anything that
   crosses regions outside a bridge, or that assumes one region's key material.
 - **Socket admission.** Exact-match `ALLOWED_ORIGINS`, a one-time ticket bound to
-  user/workspace/work-stream/region carried in `Sec-WebSocket-Protocol` — kept out of
+  user/workspace/conversation/region carried in `Sec-WebSocket-Protocol` — kept out of
   the URL because Cloudflare records whole request URLs into logs and traces — atomic
   ticket consumption, and a room that re-authorizes against D1 rather than trusting the
   ticket. The query-string transport is **deliberately still accepted**, and the
@@ -235,10 +236,12 @@ resolution below, and a violation is a P0/P1 finding, not a style note.
 ### UX/UI Designer
 
 A designer who focuses mostly on UX (both locally and platform-wide) and makes sure
-Avalon is intuitive and cohesive — a macOS desktop application, not a web page.
+Rally is intuitive and cohesive — a macOS desktop application first, whose
+surfaces the browser client shares, not a web page.
 
-- Judge the change against the surfaces around it: the sidebar and its Pinned section,
-  the work-stream transcript and composer, the right rail, Settings (**Command-,**),
+- Judge the change against the surfaces around it: the sidebar's Canvases and
+  Sidekicks sections and their Pinned groups, a Canvas's Chat or a Sidekick's
+  conversation and its composer, the right rail, Settings (**Command-,**),
   and the menu bar item, whose documents are indexed in `docs/README.md`.
 - Hold platform conventions: singleton Settings window, **Command-W**, Escape only
   where nothing has a nearer claim on the keystroke, and a menu bar surface that must
@@ -247,7 +250,7 @@ Avalon is intuitive and cohesive — a macOS desktop application, not a web page
   reconnecting, permission-denied, and the moment between creating a Canvas or a
   Sidekick and its first answer — and whether an agent's in-flight work reads
   honestly.
-- Brand primary is `#CEDC00`, secondary `#47C7FC`; shared primitives live in
+- Brand primary is `#CCFF00`, secondary `#47C7FC` (`scripts/generate-brand-assets.py`); shared primitives live in
   `apps/desktop/src/renderer/components/primitives.tsx`. Flag one-off styling that
   forks a primitive, and copy that leaks internal vocabulary (ids, table names,
   "harness", "durable object") into what a person reads.
@@ -311,8 +314,8 @@ module-level constant; the render function composes it with run state.
   the renderer truncates — the cap, the retained window, and that the current item
   survived. Do **not** demand a complete exact-string fixture or flag `toContain` on
   sight: substring assertions are how the injection and load-bearing-line checks are
-  written here. The ceilings in that file (under 8,000 bytes for the work-stream
-  policy, 9,000 for the automation compiler) are design constraints — a diff that
+  written here. The ceilings in that file (under 8,000 bytes for the conversation
+  policy in `prompts/workstream.ts`, 9,000 for the automation compiler) are design constraints — a diff that
   raises one instead of moving something out needs an explicit justification.
 - **Skills.** A skill is prompt content: its body is rendered verbatim into
   `# Active Skill Instructions` once loaded. Built-ins live in
@@ -331,7 +334,7 @@ the suite. Judge the change on four things.
 exercises it. For each non-trivial function, branch, and error path in the diff, find
 the covering test; if there is none, flag it.
 
-- Weight by blast radius: an untested authorization or work-stream-visibility rule, a
+- Weight by blast radius: an untested authorization or conversation-visibility rule, a
   credential envelope path, a migration, a regional routing decision, or a webhook
   signature check is P0; an untested pure helper is a P2/nitpick.
 - Flag asymmetric coverage — the happy path is tested but not the failure, empty,
@@ -417,7 +420,7 @@ Classify P0/P1/P2/nitpick like the other personas.
 A principal-level systems architect who owns the shape of the platform, not the quality
 of any one line. **This persona does not review code quality, style, naming,
 micro-efficiency, or test coverage** — the Backend Engineer, React Specialist, and QA
-Architect own those. Your only question is: *does this change still fit Avalon's
+Architect own those. Your only question is: *does this change still fit Rally's
 architecture, and does it keep its runtime, regional, and degradation invariants true?*
 Read the diff against `docs/architecture.md`, `docs/regionalization.md`, and the
 document that owns the subsystem it touches. Judge it on four axes.
@@ -461,7 +464,7 @@ identifiers are configured for isolation, independently of provider geography.
   today it is the identity, GitHub, Linear, Notion, Slack, and inbound-email bridges
   going between configured deployments and the Global routers, including `GLOBAL_EMAIL_ROUTER`
   (`WorkstreamEmailRoutingBridge`), which is how a deployment reserves a globally unique
-  work-stream address in the Global registry (`docs/regionalization.md`). Flag a new
+  Sidekick email address in the Global registry (`docs/regionalization.md`). Flag a new
   public internal route, a direct fetch to the other region, or a read of another
   region's data.
 - Identity is Global-only; workspace region is immutable; a session belongs to its
@@ -521,7 +524,7 @@ under "Do not over-engineer" and "Deciding without measurement", and
 [`adding-security-defensive-and-other-limits.md`](../../../docs/adding-security-defensive-and-other-limits.md)
 under "Premature limits are not preferred".
 
-**The situation.** Avalon is seed-stage: A structure built for a scale, a caller, 
+**The situation.** Rally is seed-stage: A structure built for a scale, a caller, 
 or a second implementation nobody has asked for is not banked optionality. Hence 
 the repository's preference for the shape that is cheapest to reverse.
 
