@@ -13,7 +13,7 @@ const KIND_ICON = { file: FileText, site: Globe, archive: Archive, chat: PanelsT
  */
 export function canvasHue(id: string): (typeof PALETTE_RING)[number] {
   const hash = [...id].reduce((total, character) => total + character.charCodeAt(0), 0);
-  return PALETTE_RING[hash % PALETTE_RING.length] ?? 'cyan';
+  return PALETTE_RING[hash % PALETTE_RING.length]!;
 }
 
 /**
