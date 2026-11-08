@@ -271,7 +271,7 @@ function callsThatSaw(marker: string) {
 interface RunRowView {
   turns: number;
   text: string;
-  run: { state: string; stepCount: number; reply: string | null } | undefined;
+  run: { state: string; stepCount: number; reply: string | null; requesterUserId?: string | null } | undefined;
   runId: string | undefined;
 }
 
@@ -505,7 +505,8 @@ describe("a Sidekick's shared conversation", () => {
     const started = await workspaceStub().sidekickRunNow({ ...addressed(), actor: actor(), idempotencyKey: "row-run-0001" });
     expect(await runSidekickAlarms(TEST_ENV, WORKSPACE_ID)).toEqual([started.runId]);
     const running = await rowReaches(started.runId, "running");
-    expect(running).toMatchObject({ turns: 1, runId: started.runId, text: "Working on it.", run: { stepCount: 0, reply: null } });
+    expect(running).toMatchObject({ turns: 1, runId: started.runId, text: "Working on it.",
+      run: { stepCount: 0, reply: null, requesterUserId: AUTHOR_ID } });
     await runSettled(started.runId);
     // The run's finish reaches the Sidekick through its effects; the row follows the run row.
     await deliverChildEffects(TEST_ENV, conversationStub(started.runId));
@@ -514,7 +515,8 @@ describe("a Sidekick's shared conversation", () => {
       turns: 1,
       runId: started.runId,
       text: "Version 4.2 shipped the new importer.",
-      run: { state: "completed", stepCount: 1, reply: "Version 4.2 shipped the new importer." },
+      // Who asked stays on the row once the run finishes.
+      run: { state: "completed", stepCount: 1, reply: "Version 4.2 shipped the new importer.", requesterUserId: AUTHOR_ID },
     });
     // The stored turn says the same, for every reader that reads it rather than the joined row.
     expect(await storedRowContent(started.runId)).toBe("Version 4.2 shipped the new importer.");
