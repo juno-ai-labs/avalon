@@ -48,9 +48,10 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
   const [invalidEmails, setInvalidEmails] = useState<{ emails: string } | null>(null);
   // Someone approved from the Requests section (or anywhere) while this form
   // is open joins the list as the detail is read again; they join the choice
-  // too, so Save does not take back the access just given. An approval on a
-  // creator-only Canvas also moves it to Specific people on the server, so a
-  // visibility the server changed replaces the form's: left at "Only you",
+  // too, so Save does not take back the access just given. Any visibility the
+  // server changes while the form is open replaces the form's, whoever
+  // changed it; the case that forced this is an approval on a creator-only
+  // Canvas, which the server moves to Specific people: left at "Only you",
   // Save would send `creator` and remove the person just let in.
   const seenParticipants = useRef(canvas.participantUserIds);
   const seenVisibility = useRef(canvas.visibility);
