@@ -142,6 +142,12 @@ longer exists.** A retired HTTPS link handed over as a universal link is not
 claimed (`httpsLinkDeepLink` takes only Canvas and Sidekick links), so the
 browser opens it and the handoff page says the same.
 
+A Canvas deep link that names an artifact navigates to
+`#/canvases/<canvas>?artifact=<artifact>` (`canvasArtifactRoute`), the hash
+the web app's `shellLocation` writes for the same link, so the Canvas screen
+opens the artifact from one query on both hosts rather than from route state
+on one and a query on the other.
+
 ### The web app
 
 `app.rallywith.ai` serves the same paths. `shellLocation` rewrites a Canvas
