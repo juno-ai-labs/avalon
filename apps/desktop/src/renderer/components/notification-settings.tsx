@@ -3,10 +3,9 @@ import {
   type NotificationChannel,
   type OfferedNotificationKind,
 } from '@rally/contracts';
-import { Bell, Mail, MessageCircle } from 'lucide-react';
+import { Bell, Mail } from 'lucide-react';
 
 import type { RallyApi } from '../lib/api';
-import { UNLINKED_DELIVERY_TARGETS, type AutomationDeliveryTargetType, type WorkstreamConnection } from '../lib/types';
 import { useMemberPreferences, useSaveMemberPreferences } from '../lib/use-member-preferences';
 import { settings, type SettingDefinition } from '../settings/registry';
 import { SettingCopy } from '../settings/setting-label';
@@ -14,25 +13,6 @@ import { ChannelPicker, type ChannelOption } from './channel-picker';
 import { ErrorNotice } from './primitives';
 
 const ICON_SIZE = 14;
-
-/** Each connection that can reach this person, once per surface: two Slack installations are one Slack. */
-function connectorSurfaces(connections: readonly WorkstreamConnection[]): WorkstreamConnection[] {
-  const seen = new Set<string>();
-  return connections.filter((connection) => {
-    if (!connection.userDelivery || seen.has(connection.userDelivery.targetType)) return false;
-    seen.add(connection.userDelivery.targetType);
-    return true;
-  });
-}
-
-function connectorOption(connection: WorkstreamConnection): ChannelOption {
-  return {
-    id: connection.userDelivery!.targetType,
-    label: connection.userDelivery!.label,
-    hint: connection.userDelivery!.description,
-    icon: <MessageCircle aria-hidden="true" size={ICON_SIZE} />,
-  };
-}
 
 /**
  * Each offered kind's copy. Which kinds, and their order, are the contract's
@@ -61,13 +41,12 @@ function midSentence(label: string): string {
 
 /**
  * Settings → Notifications → Notify me about: how each kind of Activity
- * reaches this person, on every device. Push and email always; every
- * connection that can message them adds its own surface.
+ * reaches this person, on every device: push and email, the same two for
+ * every kind.
  */
-export function NotificationChannelSettings({ api, workspaceId, connections, pushAvailable, email }: {
+export function NotificationChannelSettings({ api, workspaceId, pushAvailable, email }: {
   api: Pick<RallyApi, 'getMyPreferences' | 'updateMyPreferences'>;
   workspaceId: string;
-  connections: readonly WorkstreamConnection[];
   /** Push is offered only where this deployment can push. */
   pushAvailable: boolean;
   email: string | null;
@@ -75,37 +54,19 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
   const preferences = useMemberPreferences(api, workspaceId);
   const save = useSaveMemberPreferences(api, workspaceId);
   const notify = preferences.data.notify;
-  const offered: ChannelOption[] = [
+  const options: ChannelOption[] = [
     ...(pushAvailable ? [{ id: 'push', label: 'Push', hint: 'On every device signed in', icon: <Bell aria-hidden="true" size={ICON_SIZE} /> }] : []),
     { id: 'email', label: 'Email', hint: email ? `To ${email}` : 'To your account address', icon: <Mail aria-hidden="true" size={ICON_SIZE} /> },
-    ...connectorSurfaces(connections).map(connectorOption),
   ];
-  // A connector channel that is chosen and can still reach this person stays
-  // on screen so it can be turned off, though no connection offers it: Slack
-  // reaches someone who has not linked their account by their email address.
-  const options: ChannelOption[] = [
-    ...offered,
-    ...[...new Set(Object.values(notify).flat())].flatMap((channel) => {
-      const unlinked = UNLINKED_DELIVERY_TARGETS[channel as AutomationDeliveryTargetType];
-      if (!unlinked || offered.some((option) => option.id === channel)
-        || !connections.some((connection) => connection.connectorType === unlinked.connectorType && connection.status !== 'disabled')) return [];
-      return [{
-        id: channel,
-        label: unlinked.label,
-        hint: 'Found by your email address. Link your account in Connections.',
-        icon: <MessageCircle aria-hidden="true" size={ICON_SIZE} />,
-      }];
-    }),
-  ];
-  // A channel stored but not offered here, such as Slack once disconnected,
-  // stays in the list: only the one toggled is added or removed.
-  const toggle = (kind: OfferedNotificationKind, channel: string) => save.mutate({
-    notify: {
-      [kind]: (notify[kind] ?? []).includes(channel as NotificationChannel)
-        ? (notify[kind] ?? []).filter((candidate) => candidate !== channel)
-        : [...(notify[kind] ?? []), channel as NotificationChannel],
-    },
-  });
+  // Push stays chosen where this deployment cannot push, so a save keeps it
+  // though it is not drawn. A stored Slack choice never reaches here: the
+  // contract's channel list drops it on read, so a save does not send it back.
+  const toggle = (kind: OfferedNotificationKind, channel: NotificationChannel) => {
+    const chosen = notify[kind] ?? [];
+    save.mutate({
+      notify: { [kind]: chosen.includes(channel) ? chosen.filter((candidate) => candidate !== channel) : [...chosen, channel] },
+    });
+  };
   return (
     <section className="settings-pane">
       <div className="settings-pane-heading settings-pane-heading-spaced">
@@ -119,17 +80,14 @@ export function NotificationChannelSettings({ api, workspaceId, connections, pus
             <ChannelPicker
               label={`How to tell you about ${midSentence(setting.label)}`}
               none="Off"
-              onToggle={(channel) => toggle(kind, channel)}
+              onToggle={(channel) => toggle(kind, channel as NotificationChannel)}
               options={options}
               selected={notify[kind] ?? []}
             />
           </div>
         ))}
       </div>
-      <p className="settings-footnote">
-        None selected means you won't be told. Connected messaging apps
-        that can reach you show up here.
-      </p>
+      <p className="settings-footnote">None selected means you won't be told.</p>
       {save.error && <ErrorNotice occurrence={save.error}>{save.error.message}</ErrorNotice>}
     </section>
   );

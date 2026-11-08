@@ -775,14 +775,6 @@ export interface WorkstreamBoot extends WorkstreamDetail {
 
 /** Every run always lands in Rally; these are the extra frozen destinations. */
 export type AutomationDeliveryTargetType = 'slack_agent_dm' | 'email';
-/**
- * A connector delivery surface, named and tied to its connector for when no
- * connection offers it to this person (they have not linked their account).
- */
-export const UNLINKED_DELIVERY_TARGETS: Partial<Record<AutomationDeliveryTargetType, { label: string; connectorType: string }>> = {
-  slack_agent_dm: { label: 'Slack', connectorType: 'slack' },
-};
-
 export interface AutomationDetail extends AutomationSummary {
   lifecycle: AutomationLifecycleState;
   authorUserId: string;

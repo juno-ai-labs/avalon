@@ -17,13 +17,13 @@ describe('useSaveMemberPreferences', () => {
 
     act(() => {
       result.current.mutate({ notify: { mentions: ['push', 'email'] } });
-      result.current.mutate({ notify: { mentions: ['push', 'email', 'slack_agent_dm'] } });
+      result.current.mutate({ notify: { mentions: ['email'] } });
     });
     await waitFor(() => expect(updateMyPreferences).toHaveBeenCalledTimes(1));
     expect(updateMyPreferences).toHaveBeenLastCalledWith({ notify: { mentions: ['push', 'email'] } });
 
     await act(async () => answers[0]!(DEFAULT_MEMBER_PREFERENCES));
     await waitFor(() => expect(updateMyPreferences).toHaveBeenCalledTimes(2));
-    expect(updateMyPreferences).toHaveBeenLastCalledWith({ notify: { mentions: ['push', 'email', 'slack_agent_dm'] } });
+    expect(updateMyPreferences).toHaveBeenLastCalledWith({ notify: { mentions: ['email'] } });
   });
 });
