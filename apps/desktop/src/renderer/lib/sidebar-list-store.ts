@@ -14,9 +14,16 @@ import type { AutomationSummary } from './types';
  * write ends up overwriting the push that carried it.
  *
  * WorkspaceDO stamps a waterline per list, inside the transaction of the write
- * that earned it, so a strictly-greater test is a total order here. Equal is
- * not newer: a resumed automation writes its subscription and then its email
- * route, and only the second of those two pushes carries a higher number.
+ * that earned it, so a strictly-greater test is a total order for pushes.
+ * Equal is not newer: a resumed automation writes its subscription and then
+ * its email route, and only the second of those two pushes carries a higher
+ * number.
+ *
+ * The one exception is the answer to a socket's own `subscribe`, applied with
+ * `authoritative`: it is the object's state now, read after every push an
+ * earlier socket delivered, so it replaces the list and resets the ledger to
+ * its version even when that version is lower (an object whose counters went
+ * back). A push never moves the ledger backwards.
  */
 
 export type SidebarList = 'automations' | 'canvases' | 'activity';

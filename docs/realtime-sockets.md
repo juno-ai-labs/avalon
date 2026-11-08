@@ -855,6 +855,14 @@ else, because only a push invalidated the Sidekick page. And a window kept its
 ledgers and cursor across an object whose counters had gone back, dropping
 everything below them until a reload cleared them.
 
+The per-topic waterlines a surface keys on (`topicWaterlines`) are set by the
+answer the same way, not raised, so an effect such as the OAuth-attempt
+reconcile runs again after the object's log went back. The conversation
+sockets were checked and left alone: `use-workstream-socket.ts` reconnects on
+its own loop and resubscribes from its retained sequence, and the room replays
+what was missed, sends a snapshot, or asks for a resync from zero when it can
+do neither.
+
 **Considered and rejected:** Resetting the ledgers only on
 `history_unavailable`: a list's waterline and the sync log are separate
 counters, and the answer is already the newest state the socket can know, so
