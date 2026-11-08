@@ -8,7 +8,7 @@ the device remembers only the view the person chose.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/ui-store.ts` | The sidebar's width and open section. |
+| `apps/desktop/src/renderer/lib/ui-store.ts` | The sidebar's width and open section, and the right slot's state (`railOpen`, `railExpanded`, `railVariant`, `railWidth`, `inspector`). |
 | `apps/desktop/src/renderer/lib/rail-split.ts` | The even split an attachment or artifact panel opens or restores at. |
 | `apps/desktop/src/renderer/lib/desktop-layout.ts` | Scoped local keys and artifact panel selection. `useSemanticScroll` is still exported and tested, but nothing calls it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx`, `screens/landing.tsx`, `lib/landing.ts` | Last route save and startup restoration. |
