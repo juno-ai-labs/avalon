@@ -1,5 +1,6 @@
 import { asUserId, type CanvasDetail, type CanvasVisibility } from '@rally/contracts';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { IconChevronRight } from '@tabler/icons-react';
 import { useState } from 'react';
 
 import { canvasDetailQueryKey, useCanvasNameSources } from '../lib/canvases';
@@ -39,10 +40,13 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
   const [visibility, setVisibility] = useState<CanvasVisibility>(canvas.visibility);
   const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set(canvas.participantUserIds));
   const [search, setSearch] = useState('');
+  const isMember = (id: string): boolean => membersById.get(id)?.accessClass === 'member';
   const save = useMutation({
     mutationFn: async () => api!.setCanvasAudience(canvas.id, {
       visibility,
-      userIds: visibility === 'creator' ? [] : [...chosen].map(asUserId),
+      // Everyone in the Organization already includes its members, so only
+      // the guests chosen are sent with it.
+      userIds: visibility === 'creator' ? [] : [...chosen].filter((id) => visibility !== 'workspace' || !isMember(id)).map(asUserId),
     }),
     onSuccess: (updated) => {
       queryClient.setQueryData(canvasDetailQueryKey(canvas.id), updated);
@@ -58,14 +62,20 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
     </div>;
   }
   const needle = search.trim().toLocaleLowerCase();
+  // Nobody picks themselves or the creator, who can always open it; with the
+  // whole Organization in, only guests are left to choose ("the guests chosen
+  // below").
   const candidates = (members ?? []).filter((member) => member.id !== canvas.createdByUserId
+    && member.id !== session?.user.id
+    && (visibility !== 'workspace' || member.accessClass === 'guest')
     && (needle === '' || `${member.name} ${member.email}`.toLocaleLowerCase().includes(needle)));
+
   const missingPeople = visibility === 'participants' && chosen.size === 0;
   return <div className="canvas-share">
     <fieldset className="canvas-share-options">
       <legend className="sr-only">Who can open it</legend>
       {(['creator', 'participants', 'workspace'] as const).map((value) => <label className="canvas-share-option" key={value}>
-        <input checked={visibility === value} name="canvas-visibility" onChange={() => setVisibility(value)} type="radio" value={value} />
+        <input checked={visibility === value} className="choice-control" name="canvas-visibility" onChange={() => setVisibility(value)} type="radio" value={value} />
         <span><strong>{value === 'creator' && canvas.createdByUserId === session?.user.id ? 'Only you' : VISIBILITY_COPY[value].label}</strong><small>{VISIBILITY_COPY[value].description}</small></span>
       </label>)}
     </fieldset>
@@ -76,7 +86,7 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
           <Avatar member={member} size="medium" />
           <span><strong>{member.name}</strong><small>{member.email}</small></span>
           {member.accessClass === 'guest' && <Badge className="role-badge">Guest</Badge>}
-          <input aria-label={member.name} checked={chosen.has(member.id)} onChange={(event) => {
+          <input aria-label={member.name} checked={chosen.has(member.id)} className="choice-control" onChange={(event) => {
             const next = new Set(chosen);
             if (event.target.checked) next.add(member.id);
             else next.delete(member.id);
@@ -85,16 +95,17 @@ function CanvasShareForm({ canvas, onDone }: { canvas: CanvasDetail; onDone: () 
         </label>)}
       </div>
     </section>}
+    {api && session?.workspace && <details className="canvas-share-guests">
+      <summary><IconChevronRight aria-hidden="true" className="canvas-share-guests-chevron" size={14} stroke={2} />Invite a guest by email</summary>
+      <ScopeSharingPanel api={api} listsPending={false} parentId={canvas.id} substreamId="0" target="workstream" workspaceId={session.workspace.id} />
+    </details>}
     {save.error && <ErrorNotice occurrence={save.error}>{save.error.message}</ErrorNotice>}
     {missingPeople && <p className="canvas-share-note">Choose at least one person.</p>}
+    {/* The dialog's one set of actions, at its foot, below the guest invite. */}
     <div className="canvas-share-actions">
       <Button onClick={onDone}>Cancel</Button>
       <Button className="button-primary" disabled={save.isPending || missingPeople || !api} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save'}</Button>
     </div>
-    {api && session?.workspace && <details className="canvas-share-guests">
-      <summary>Invite a guest by email</summary>
-      <ScopeSharingPanel api={api} listsPending={false} parentId={canvas.id} substreamId="0" target="workstream" workspaceId={session.workspace.id} />
-    </details>}
   </div>;
 }
 
