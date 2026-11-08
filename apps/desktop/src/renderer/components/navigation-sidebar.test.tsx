@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -49,7 +50,7 @@ function Location(): React.JSX.Element {
   return <div data-testid="location">{useLocation().pathname}</div>;
 }
 
-function renderSidebar(person: Workspace = workspace, route = '/', activity?: ActivityList): void {
+function renderSidebar(person: Workspace = workspace, route = '/', activity?: ActivityList, strict = false): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (activity) applyVersionedSidebarList(client, 'activity', 1, activity);
   applyVersionedSidebarList(client, 'canvases', 1, [
@@ -61,7 +62,7 @@ function renderSidebar(person: Workspace = workspace, route = '/', activity?: Ac
     sidekick('changelog', 'Weekly changelog'),
     sidekick('revenue', 'Revenue analyst', { pinnedPosition: 0 }),
   ]);
-  render(<QueryClientProvider client={client}><Tooltip.Provider>
+  const tree = <QueryClientProvider client={client}><Tooltip.Provider>
     <CollaborationSessionProvider api={api as never} session={{ user: { id: ME } } as never}>
       <MemoryRouter initialEntries={[route]}>
         <NavigationSidebar
@@ -73,7 +74,9 @@ function renderSidebar(person: Workspace = workspace, route = '/', activity?: Ac
         <Routes><Route element={<Location />} path="*" /></Routes>
       </MemoryRouter>
     </CollaborationSessionProvider>
-  </Tooltip.Provider></QueryClientProvider>);
+  </Tooltip.Provider></QueryClientProvider>;
+  // StrictMode runs effects twice, as the app's development build does.
+  render(strict ? <StrictMode>{tree}</StrictMode> : tree);
 }
 
 beforeEach(() => {
@@ -183,6 +186,19 @@ describe('the Canvases and Sidekicks sections', () => {
     renderSidebar(workspace, '/sidekicks/triage');
     expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
     expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+  });
+
+  it('keeps the section left open when the window lands on a section home', () => {
+    useUiStore.getState().setSidebarSection('sidekicks');
+    renderSidebar(workspace, '/canvases', undefined, true);
+    expect(screen.getByRole('heading', { name: 'Sidekicks' })).toBeInTheDocument();
+    expect(useUiStore.getState().sidebarSection).toBe('sidekicks');
+  });
+
+  it('opens the section of a Canvas the window lands on', () => {
+    useUiStore.getState().setSidebarSection('sidekicks');
+    renderSidebar(workspace, '/canvases/00000000-0000-7000-8000-0000000000c1');
+    expect(useUiStore.getState().sidebarSection).toBe('canvases');
   });
 
   it('remembers either section across launches', async () => {
