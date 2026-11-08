@@ -439,7 +439,9 @@ the rail's first section and `/canvases` the landing route
   refresh: the screen refetches the detail when the Canvas joins this
   person's list, or when their `access_granted` Activity row for it arrives.
   An `already_participant` answer (added by other means meanwhile) refetches
-  at once.
+  at once, and so does an access read answering 409 `canvas_access_open`: the
+  detail's 404 was stale, as right after a grant, so the pane opens the
+  Canvas rather than drawing either state.
 - **No connection.** A conversation socket that cannot open without the
   server saying why is the PRD's offline state, "Live edits resume when Rally
   reconnects.", never "This Canvas is unavailable"; one the server refused

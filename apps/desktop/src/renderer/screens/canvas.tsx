@@ -73,6 +73,12 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   useEffect(() => {
     if (awaitingGrant && (listed || granted)) void refetchCanvas();
   }, [awaitingGrant, granted, listed, refetchCanvas]);
+  // The access read says the viewer can open it after all: the detail's 404
+  // was stale (a grant landing between the two reads), so read it again.
+  const alreadyOpen = access.error instanceof ApiError && access.error.code === 'canvas_access_open';
+  useEffect(() => {
+    if (alreadyOpen) void refetchCanvas();
+  }, [alreadyOpen, refetchCanvas]);
   const { membersById } = useCanvasNameSources(api);
   const [sharing, setSharing] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
@@ -178,7 +184,7 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
     // person offers Request access instead.
     if (unreachable) {
       if (access.data) return <CanvasAccessRequestPane access={access.data} canvasId={id} />;
-      if (!access.error) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
+      if (!access.error || alreadyOpen) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
       if (!isNotFoundError(access.error)) {
         return <PaneState action={<Button onClick={() => void access.refetch()}>Try again</Button>} description={access.error.message} title="This Canvas could not be opened." />;
       }
