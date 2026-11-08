@@ -816,7 +816,7 @@ optional, and the row's grid keeps its third column so the two kinds line up.
 This is the only capability the component lets a host withhold; the drag
 handlers are still required, because a row that cannot be arranged is a
 different component. The reasoning is in
-[`spaces.md`](spaces.md#changelog).
+`spaces.md` (retired; its record is in [`architecture.md`](architecture.md)).
 
 ### 2026-09-19 — Space presentation is shared; hosts keep routing and authority
 

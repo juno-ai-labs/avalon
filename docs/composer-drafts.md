@@ -231,7 +231,7 @@ own:
 | For | Read |
 | --- | --- |
 | The automation a New automation conversation belongs to | [`automation-lifecycle.md`](automation-lifecycle.md) |
-| The create path a submitted draft becomes | [`workstream-creation.md`](workstream-creation.md) |
+| The create path a submitted draft becomes | [`canvases.md`](canvases.md) |
 | Draft resources, their upload endpoint, and the 24-hour reaper | [`data-model.md`](data-model.md), [`architecture.md`](architecture.md) |
 | What may be written under `userData` at all | [`security.md`](security.md) |
 | The transcript and directory a screen paints from before its socket answers, which is a separate database with a separate lifetime | [`local-cache.md`](local-cache.md) |
