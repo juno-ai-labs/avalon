@@ -684,14 +684,16 @@ home card reads "<Sidekick> · run #N" and opens that run.
 §9's follow-up that "a Canvas card cannot sit at the run that made it until
 the summary carries `writerRunId`". `writer_run_id` was not that: it names
 the run that *created* the Canvas, and a Sidekick that writes one Canvas
-across runs never moves it. We rejected deriving the run at read time from
-the newest version's `author_run_id`. That column holds the harness run,
-mapping it back to a Sidekick run costs every list read a join across every
-artifact version, and the publish note already knew the run. The run number
-is computed at read time rather than stored, because a run's ordinal never
-changes and the run row already defines it.
+across runs never moves it. The run number is computed at read time rather
+than stored, because a run's ordinal never changes and the run row already
+defines it.
 
-**What a future change must respect:** the column follows the publish note,
+**Considered and rejected:** deriving the run at read time from the newest
+version's `author_run_id`. That column holds the harness run, mapping it back
+to a Sidekick run costs every list read a join across every artifact version,
+and the publish note already knew the run.
+
+**Consequences:** the column follows the publish note,
 not the resource versioning layer. A version made outside a publish (a
 person's rename, a connector refetch) does not move it, just as it does not
 move the last editor. Only a `sidekick` editor's note may name a run; the
