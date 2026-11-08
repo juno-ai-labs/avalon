@@ -72,7 +72,7 @@ bounded-evidence contract in [Sidekick lifecycle](automation-lifecycle.md#sideki
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
 | `apps/desktop/src/main/media-permission.ts` | Chromium media permission for the shared composer: audio-only capture from the main window. |
-| `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local browser in the right rail and the import window; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
+| `apps/desktop/src/main/embedded-browser.ts` | Isolated web contents for the local browser in the right rail; its lifecycle and command boundary are documented in [`embedded-browser.md`](embedded-browser.md). |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
 | `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the conversation-window socket IPC boundary. |
 | `apps/desktop/src/main/realtime-socket-broker.ts` | Route-confined Node socket transport, ordered system/PAC routing, OS trust roots, frame limits, and renderer-owner teardown. |
@@ -114,8 +114,8 @@ are canonical storage services, not authorization layers.
 - Every IPC argument is parsed before use.
 - Chromium media permission is a second grant on top of macOS System Settings,
   and it is per WebContents. `allowsTrustedAudioCapture` admits the main window
-  only, and only for audio: it hosts every composer. Settings, the import
-  window, the deep-link failure window, detached artifacts, and the embedded
+  only, and only for audio: it hosts every composer. Settings, the deep-link
+  failure window, detached artifacts, and the embedded
   browser are refused. Camera, display capture, and mixed audio+video stay
   denied. Computer-audio tap IPC remains main-window-only because the composer
   never requests it.
@@ -232,11 +232,12 @@ are canonical storage services, not authorization layers.
   nothing else. The menu itself holds no control for state the operating system
   owns independently — whether Rally opens at login is a Settings toggle, read
   back from macOS on every read rather than from Rally's preference file. Its
-  content requests reuse the stored access token and regional endpoint through the
-  same coalescing refresh as the feature-flag poll, add no credential storage, and
-  reach only `/workstreams` and `/work-opportunities`. The conversation titles they
-  return are workspace content held in main-process memory only, never written to
-  disk, and dropped on sign-out. Because Rally registers itself to open at login
+  content is the Canvas and Sidekick lists, read from a workspace socket that
+  the main process opens itself (`sidebar-lists-watch.ts`) with a ticket issued
+  against the stored access token and regional endpoint through the same
+  coalescing refresh as the feature-flag poll; it adds no credential storage.
+  The titles it holds are workspace content kept in main-process memory only,
+  never written to disk, and dropped on sign-out. Because Rally registers itself to open at login
   and starts hidden there, this runs with no window and no renderer;
   [`menu-bar.md`](menu-bar.md) owns the mechanism. Its preference shares
   `application-settings.json` with Lockdown mode and therefore the same shared
@@ -373,7 +374,7 @@ external link carries `(region, workspace_id)` as routing context. Those values
 are public identifiers, not bearer authority. Scoped invitation links follow the
 same rule: since shares are claimed by signing in with the shared-with address,
 the email links to the conversation's own addressed path, so a forwarded copy
-tells its reader the region, Organization and Channel ids while opening nothing
+tells its reader the region, Organization and conversation ids while opening nothing
 for them. Hiding those ids took an opaque token and a store behind it, and the
 token's only other job, the acceptance secret, went with the acceptance step.
 
@@ -431,7 +432,7 @@ that admitted them. Migration 0110 backfills existing sessions; insert and
 workspace-selection triggers bind newly selected memberships. Reassigning the
 same workspace ID does not rebind a session. Promotion preserves membership
 incarnation, while removal/rejoin creates a different one. HTTP authentication,
-refresh rotation, and the workspace, Channel control and `AgentLoopDO` socket
+refresh rotation, and the workspace and `AgentLoopDO` socket
 session checks require the stored and current incarnations to match. Refresh performs
 that check in the token-rotation update, so rejected old credentials do not
 rotate the session. Identity-only sessions remain valid for workspace selection.
@@ -486,10 +487,10 @@ admission path.
 
 Native renderer WebSockets may be constructed only from a URL returned by an
 authenticated ticket endpoint; ESLint enforces that provenance at each
-production constructor. Electron's Channel control and `AgentLoopDO` connections
-instead cross a typed preload bridge to the main-process broker. Main accepts
+production constructor. Electron's `AgentLoopDO` feed connections instead
+cross a typed preload bridge to the main-process broker. Main accepts
 that capability only from the primary application window, validates the URL
-against configured regional `ws`/`wss` origins and the declared control/feed
+against configured regional `ws`/`wss` origins and the declared feed
 route shape, rejects credentials and fragments, discards query configuration,
 requires the public
 ticket sentinel, and supplies the exact `app://rallywithai` Origin itself. The
@@ -497,7 +498,7 @@ renderer chooses only the validated ticket subprotocol offer that becomes
 `Sec-WebSocket-Protocol`; it cannot choose arbitrary headers or turn the broker
 into an arbitrary network client. Main tries only the ordered proxy directives
 Electron resolved, including `DIRECT` only when policy supplied it, and Node
-accepts no conversation control/feed frame over the shared 1 MB application
+accepts no conversation feed frame over the shared 1 MB application
 limit. Runtime URL schemas likewise name their
 accepted scheme contract explicitly — HTTP(S), HTTPS-only, `avalon:`, or the
 intentional HTTP(S)/Rally handoff union. Bare Zod URL validation is forbidden
@@ -956,7 +957,7 @@ bound it on the thing a placeholder cannot fake, and add the bound to
 - **A native WebSocket in the renderer is constructed only from a URL an
   authenticated ticket endpoint returned; Electron's conversation broker is
   narrower still.** Its typed IPC accepts only configured regional
-  Channel-control/`AgentLoopDO` paths from the main or import window, and main supplies the
+  `AgentLoopDO` feed paths from the main window, and main supplies the
   application Origin.
 
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL
@@ -1103,7 +1104,7 @@ no unit test standing in for them.
 
 | Suite | Covers |
 | --- | --- |
-| `apps/desktop/src/main/*.test.ts` | Session encryption and the envelope versions, Lockdown migration, the settings write queue, the developer-settings flag suppression, launch-at-login, the menu bar's content fetch. |
+| `apps/desktop/src/main/*.test.ts` | Session encryption and the envelope versions, Lockdown migration, the settings write queue, the developer-settings flag suppression, launch-at-login, the menu bar's socket-held lists. |
 | `apps/api/test/connector-credential-envelope.test.ts` | The AES-GCM envelope, its connection-bound additional authenticated data, and key-version rotation reads. |
 | `apps/api/test/auth-session-lifecycle.test.ts` | Session minting, revocation, and single-use consumption. |
 | `apps/api/test/auth-router.test.ts` | Root-mounted identity/workspace middleware reuse, standalone workspace-middleware authentication, and next-request revocation. |

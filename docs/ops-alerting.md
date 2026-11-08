@@ -158,10 +158,9 @@ Cloudflare administration credentials never become Worker variables
   thrown message that is not a code reaches the channel as the error's class,
   and a handler's own schema rejection reaches it naming the field and not
   the value.
-- `apps/api/test/slack-workspace-assignment.test.ts` (deleted in plan step C-2) ("Slack ingress jobs given
-  up on") — the exhausted-job notice is posted once at the ceiling, a Queue
-  redelivery of the dead job posts nothing, and a failure the queue will retry
-  posts nothing.
+- The exhausted-ingress-job notice in `processQueuedIngress` lost its test when
+  `apps/api/test/slack-workspace-assignment.test.ts` was deleted in plan step
+  C-2; nothing now proves it posts once at the ceiling and not on a redelivery.
 - Fixture token: `xoxb-ops-test`. Gitleaks runs its default Slack token rules,
   which want digit groups, over the commits a pull request adds; a
   realistic-looking token in a test trips the gate on the pull request that adds
@@ -183,6 +182,8 @@ pnpm exec dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler secret 
 ```bash
 pnpm exec dotenv -e .env.local -- pnpm --filter @rally/api exec wrangler secret put OPS_SLACK_CHANNEL_ID --config wrangler.global.jsonc
 ```
+
+## Changelog
 
 ### 2026-08-22 — Created
 

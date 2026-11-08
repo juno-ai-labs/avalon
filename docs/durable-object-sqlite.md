@@ -367,6 +367,8 @@ target. Route such a read through a typed WorkspaceDO method or
 or `localWorkspaceEnv`, because `withWorkspaceRuntimeDatabase` without the local
 executor calls the object back.
 
+## Changelog
+
 ### 2026-09-21 — A migration fingerprint cannot take an object offline
 
 **What changed:** A stored implementation hash that differs from the current
@@ -499,7 +501,7 @@ groups are the only resumable boundaries. A referenced-table rebuild must opt in
 must pass `foreign_key_check`, and must have a populated workerd upgrade test.
 
 Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
-the [ordered conversation transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
 
 ### 2026-08-27 — Promise-returning callbacks cannot cross synchronous transactions
 

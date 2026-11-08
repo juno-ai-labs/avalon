@@ -321,18 +321,132 @@ Start with `inference_lakehouse_stage_failed` for producer-side gaps and
 delivery alarm. `inference_lakehouse_delivered` includes only identifiers,
 source, event type, and whether the row used the oversized fallback.
 
+## Changelog
+
+### 2026-10-09 — A streaming request row carries one of two body shapes
+
+**What changed:** A streaming request row's `request` is a Responses body for
+OpenRouter and a Chat Completions body for Azure, and `metadata.api` says which.
+For a Responses body, `metadata.messageCount` counts `input` items.
+
+**Why:** OpenRouter agent turns moved to the Responses API; the archived body is
+the body sent, so its shape changed with it. The reasoning is in
+[`agent-harness.md`](agent-harness.md#changelog), 2026-10-09.
+
+**Considered and rejected:** Translating the Responses body back into a Chat
+body for the archive. It would archive a request nobody sent.
+
+**Consequences:** `messageCount` is not comparable across `api` values: a tool
+round trip is one assistant message plus one tool message in Chat, and a
+`function_call` plus a `function_call_output` item in Responses. A query over
+request bodies reads `request.input` or `request.messages` by `metadata.api`.
+
+Shipped in #1182.
+
+### 2026-10-01 — Count the provider's charge on a bring-your-own-key account
+
+**What changed:** Chat usage on OpenRouter records `usage.cost` plus
+`cost_details.upstream_inference_cost` (`openRouterCallCostUsd`).
+
+**Why:** Every model call made with a bring-your-own-key OpenRouter key
+recorded a cost of 0: OpenRouter reports its own fee, which is zero, in
+`usage.cost`, and the provider's charge in `upstream_inference_cost`, which the
+usage record dropped. Local development runs on such a key, so the column read
+zero for every model — the failure the paragraph above warns about, reached
+from a different direction.
+
+**Considered and rejected:** Reading `upstream_inference_cost` alone, which a
+key that is not bring-your-own also reports and would count twice.
+
+**Consequences:** Embeddings still record OpenRouter's fee alone, because the
+SDK's embeddings usage carries neither field; a bring-your-own-key account
+under-reports them.
+
+Shipped in #1058.
+
+### 2026-09-19 — Ask OpenRouter what a call cost, and record it for structured calls too
+
+**What changed:** Every OpenRouter chat request now carries `usage: { include:
+true }`, added in `serializeOpenRouterChatRequest` so both the streamed turn
+and the structured call get it, and mirrored into the recorded request payload
+in `bind-runtime.ts` for OpenRouter candidates only. `StructuredModelDiagnostic`
+gains `costCents`, read from the response usage the same way the token counts
+already were, and `captureStructuredInferenceDiagnostic` maps it to
+`cost_microusd`. A response that triggers repair, and one whose validation
+fails after it arrived, now emit a terminal diagnostic carrying those metrics
+as well.
+
+**Why:** `cost_microusd` was `0` on every OpenRouter row, which is most of
+Rally's spend, so the lakehouse could report load in tokens and not in money.
+Two independent causes. The request never opted into usage accounting, so
+`usage.cost` was absent and `costCents()` in `bind-runtime.ts` returned its `0`
+default — a structurally valid number that no schema, log, or query could tell
+from a genuinely free call. And structured calls carried no cost field at all
+from the harness onward, so every classifier, extraction, summary, and repair
+call was invisible to spend reporting however the request was formed. The
+Azure path was correct throughout and hid the gap: it computes cost from the
+rate card and writes it into `usage.cost` itself, so the column worked for the
+one provider that never asks the provider.
+
+**Considered and rejected:** Pricing OpenRouter calls from the endpoint-average
+KV the pricing Worker already maintains. It is the right input for *choosing* a
+route and the wrong one for billing a call: the average is hourly and the
+provider a route actually landed on is decided per request, so the number would
+disagree with the invoice and there would be no way to tell which was wrong.
+Asking OpenRouter costs one request field.
+
+**Also:** the streamed path read cost through a second implementation whose
+default was `0`, so an attempt the provider did not price wrote a structural
+zero next to real measurements — the same ambiguity, on the column this change
+exists to make trustworthy. The two readers are now one.
+
+**Consequences:** `cost_microusd` becomes comparable across providers and
+across streamed and structured calls, and any series spanning this change has
+a floor of zero before it that is an artifact, not a cost. A repaired
+structured call now writes two request/attempt pairs where it wrote one pair
+and one orphaned request, so structured attempt counts rise without the
+underlying call volume changing. A future provider adapter owes the same
+field: a `0` here is now a defect to fix rather than a value to read.
+
+### 2026-09-17 — Measure inference start without making observation part of it
+
+Streaming request rows now record the user journey's receipt and provider
+first-dispatch boundaries in `metadata`, while the regional logger emits the
+same content-free duration only for the first durable attempt. Later provider
+requests and recovered attempts omit the SLO duration. Streaming requests and
+attempts, standalone structured
+requests and responses, addressing diagnostics, and tool/run analytics register
+their observation through the shared Cloudflare lifecycle deferral instead of
+awaiting R2 and Queue staging on a product critical path. A production addressing
+trace showed archive staging consuming about 1.8 seconds before a roughly
+400-millisecond JEV call, which made observational persistence the dominant
+controlled latency. The operational log and durable inference ledger remain
+synchronous where they are authoritative. Dropping exact archives was rejected
+because they are the evidence used for evals and incident diagnosis; bare
+floating promises were rejected because Workers may end an invocation after its
+response. The shared deferral guards synchronous registration failure and
+observes promise rejection; it does not promise completion across deployment or
+runtime reset. Future inference callers must use that primitive rather than
+recreating either failure mode. The existing JSON column was used instead of
+changing the immutable Pipeline schema; `ttft_ms` remains the provider-side half
+of the latency.
+
 ### 2026-09-14 — Configurable deployment isolation
 
 Configured deployments share the existing inference archive policy. Records and queue pointers retain their deployment identity; provisioning still supplies each deployment’s bindings through Wrangler and the lakehouse manifest. No cross-deployment fallback is introduced.
+
+### 2026-09-14 — Fence retired meeting data before erasure
+
+The meeting-note retirement consumer recognizes the historical `meeting_notes` source, writes a content-free tombstone, and erases its raw payload before acknowledging a replay. It repeats deletion when the tombstone already exists so interruption between receipt and erasure cannot preserve the bytes. This fence prevents queued retired feature records from restoring catalog copies; ordinary inference remains unchanged. Catalog snapshots and provider-held copies require separate verification. See [meeting retirement](meeting-notes.md).
 
 ### 2026-09-04 — Structured child inference carries its full address
 
 **What changed:** The shared structured-inference gateway now accepts explicit
 substream and request identity. Substream context-summary records carry the
-workspace, conversation, nonzero child, and stable preparation-operation request ID
+workspace, work stream, nonzero child, and stable preparation-operation request ID
 through OpenRouter trace metadata, structured logs, and lakehouse capture.
 
-**Why:** Defaulting every structured conversation call to substream `0` makes a
+**Why:** Defaulting every structured work-stream call to substream `0` makes a
 child-summary request look like main-feed inference and breaks exact retry and
 incident correlation.
 
@@ -448,7 +562,7 @@ include returned router metadata. Provider `user` and trace `user_id` now use
 the workspace ID consistently, with any relevant person in `context_user_id`.
 `feature` records the exact Flagship model category/key while `source` records
 the inference surface. The provider trace groups a full harness loop, not an
-individual model turn; conversation `session_id` values are
+individual model turn; work-stream `session_id` values are
 `<workstream_id>-<substream_id>`. `intended_model` records the primary Rally
 route while `model` records the attempted candidate, so fallback requests
 remain explicit in provider-side analytics. Structured fallback and repair
@@ -463,7 +577,7 @@ query session uses the active substream rather than collapsing every
 conversation into main substream `"0"`.
 
 **Why:** Operators need to join OpenRouter's routing, timing, and pipeline view
-to Rally's workspace, conversation, substream, relevant person, request,
+to Rally's workspace, work stream, substream, relevant person, request,
 deployment, and turn evidence without reconstructing that ownership from
 prompt content. A workspace-stable identity also keeps system-initiated and
 person-initiated inference for one tenant together. The previous Workers AI
@@ -514,13 +628,13 @@ The lakehouse is now the sole hosted raw-inference capture path. Existing
 legacy R2 objects are left intact rather than erased by an infrastructure
 deployment.
 
-Schema version 1 includes optional typed column `substream_id`. Conversation
+Schema version 1 includes optional typed column `substream_id`. Work-stream
 inference defaults to the canonical main substream `"0"`; streaming root and
 inline-child calls propagate the workflow's actual substream ID, while
-inference outside a conversation leaves the field null. The production query
+inference outside a work stream leaves the field null. The production query
 recipe filters and displays the dimension.
 
-The production runbook turns a conversation URL into the correct regional R2 SQL
+The production runbook turns a work-stream URL into the correct regional R2 SQL
 API request, a bounded identifier query, the matching request/attempt pair, and
 an R2 Object API retrieval of the exact regional archive. It also covers
 at-least-once duplicates, five-minute sink visibility, delivery failures,
@@ -537,7 +651,7 @@ and duplicated sensitive request bodies without retaining the matching terminal
 provider envelope.
 
 `workstream_id` alone is unambiguous only while every run belongs to the main
-substream. Once one conversation contains multiple real product substreams, it
+substream. Once one work stream contains multiple real product substreams, it
 cannot identify which conversation produced a request.
 
 Naming the table and correlation keys was not enough for an incident responder
@@ -576,9 +690,9 @@ New inference analytics do not write D1. The operational `inference_attempts`
 rows remain object-local because run recovery depends on them, and a separate
 explicit decision is required before deleting historical legacy R2 objects.
 
-Current rows linked to conversations are explicitly queryable as substream
+Current rows linked to work streams are explicitly queryable as substream
 `"0"`, future substreams remain distinct without a second storage path, and
-incident responders must include `substream_id` when narrowing a conversation
+incident responders must include `substream_id` when narrowing a work-stream
 query. The field was added before the first deployment of this new immutable
 stream schema, so no stream replacement is needed.
 
@@ -586,118 +700,3 @@ Responders use the R2 SQL and R2 Object HTTP APIs, query only the owning region
 and incident window, and move raw JSON to a temporary local file only when the
 typed row is insufficient. The lakehouse remains analytical evidence and never
 becomes product-state repair authority.
-
-
-## Changelog
-
-### 2026-10-09 — A streaming request row carries one of two body shapes
-
-**What changed:** A streaming request row's `request` is a Responses body for
-OpenRouter and a Chat Completions body for Azure, and `metadata.api` says which.
-For a Responses body, `metadata.messageCount` counts `input` items.
-
-**Why:** OpenRouter agent turns moved to the Responses API; the archived body is
-the body sent, so its shape changed with it. The reasoning is in
-[`agent-harness.md`](agent-harness.md#changelog), 2026-10-09.
-
-**Considered and rejected:** Translating the Responses body back into a Chat
-body for the archive. It would archive a request nobody sent.
-
-**Consequences:** `messageCount` is not comparable across `api` values: a tool
-round trip is one assistant message plus one tool message in Chat, and a
-`function_call` plus a `function_call_output` item in Responses. A query over
-request bodies reads `request.input` or `request.messages` by `metadata.api`.
-
-Shipped in #1182.
-
-### 2026-10-01 — Count the provider's charge on a bring-your-own-key account
-
-**What changed:** Chat usage on OpenRouter records `usage.cost` plus
-`cost_details.upstream_inference_cost` (`openRouterCallCostUsd`).
-
-**Why:** Every model call made with a bring-your-own-key OpenRouter key
-recorded a cost of 0: OpenRouter reports its own fee, which is zero, in
-`usage.cost`, and the provider's charge in `upstream_inference_cost`, which the
-usage record dropped. Local development runs on such a key, so the column read
-zero for every model — the failure the paragraph above warns about, reached
-from a different direction.
-
-**Considered and rejected:** Reading `upstream_inference_cost` alone, which a
-key that is not bring-your-own also reports and would count twice.
-
-**Consequences:** Embeddings still record OpenRouter's fee alone, because the
-SDK's embeddings usage carries neither field; a bring-your-own-key account
-under-reports them.
-
-Shipped in #1058.
-
-### 2026-09-19 — Ask OpenRouter what a call cost, and record it for structured calls too
-
-**What changed:** Every OpenRouter chat request now carries `usage: { include:
-true }`, added in `serializeOpenRouterChatRequest` so both the streamed turn
-and the structured call get it, and mirrored into the recorded request payload
-in `bind-runtime.ts` for OpenRouter candidates only. `StructuredModelDiagnostic`
-gains `costCents`, read from the response usage the same way the token counts
-already were, and `captureStructuredInferenceDiagnostic` maps it to
-`cost_microusd`. A response that triggers repair, and one whose validation
-fails after it arrived, now emit a terminal diagnostic carrying those metrics
-as well.
-
-**Why:** `cost_microusd` was `0` on every OpenRouter row, which is most of
-Rally's spend, so the lakehouse could report load in tokens and not in money.
-Two independent causes. The request never opted into usage accounting, so
-`usage.cost` was absent and `costCents()` in `bind-runtime.ts` returned its `0`
-default — a structurally valid number that no schema, log, or query could tell
-from a genuinely free call. And structured calls carried no cost field at all
-from the harness onward, so every classifier, extraction, summary, and repair
-call was invisible to spend reporting however the request was formed. The
-Azure path was correct throughout and hid the gap: it computes cost from the
-rate card and writes it into `usage.cost` itself, so the column worked for the
-one provider that never asks the provider.
-
-**Considered and rejected:** Pricing OpenRouter calls from the endpoint-average
-KV the pricing Worker already maintains. It is the right input for *choosing* a
-route and the wrong one for billing a call: the average is hourly and the
-provider a route actually landed on is decided per request, so the number would
-disagree with the invoice and there would be no way to tell which was wrong.
-Asking OpenRouter costs one request field.
-
-**Also:** the streamed path read cost through a second implementation whose
-default was `0`, so an attempt the provider did not price wrote a structural
-zero next to real measurements — the same ambiguity, on the column this change
-exists to make trustworthy. The two readers are now one.
-
-**Consequences:** `cost_microusd` becomes comparable across providers and
-across streamed and structured calls, and any series spanning this change has
-a floor of zero before it that is an artifact, not a cost. A repaired
-structured call now writes two request/attempt pairs where it wrote one pair
-and one orphaned request, so structured attempt counts rise without the
-underlying call volume changing. A future provider adapter owes the same
-field: a `0` here is now a defect to fix rather than a value to read.
-
-### 2026-09-17 — Measure inference start without making observation part of it
-
-Streaming request rows now record the user journey's receipt and provider
-first-dispatch boundaries in `metadata`, while the regional logger emits the
-same content-free duration only for the first durable attempt. Later provider
-requests and recovered attempts omit the SLO duration. Streaming requests and
-attempts, standalone structured
-requests and responses, addressing diagnostics, and tool/run analytics register
-their observation through the shared Cloudflare lifecycle deferral instead of
-awaiting R2 and Queue staging on a product critical path. A production addressing
-trace showed archive staging consuming about 1.8 seconds before a roughly
-400-millisecond JEV call, which made observational persistence the dominant
-controlled latency. The operational log and durable inference ledger remain
-synchronous where they are authoritative. Dropping exact archives was rejected
-because they are the evidence used for evals and incident diagnosis; bare
-floating promises were rejected because Workers may end an invocation after its
-response. The shared deferral guards synchronous registration failure and
-observes promise rejection; it does not promise completion across deployment or
-runtime reset. Future inference callers must use that primitive rather than
-recreating either failure mode. The existing JSON column was used instead of
-changing the immutable Pipeline schema; `ttft_ms` remains the provider-side half
-of the latency.
-
-### 2026-09-14 — Fence retired meeting data before erasure
-
-The meeting-note retirement consumer recognizes the historical `meeting_notes` source, writes a content-free tombstone, and erases its raw payload before acknowledging a replay. It repeats deletion when the tombstone already exists so interruption between receipt and erasure cannot preserve the bytes. This fence prevents queued retired feature records from restoring catalog copies; ordinary inference remains unchanged. Catalog snapshots and provider-held copies require separate verification. See [meeting retirement](meeting-notes.md).

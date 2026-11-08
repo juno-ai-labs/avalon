@@ -144,7 +144,8 @@ see an ad-hoc conversation created by nobody for as long as the entry holds. A
 miss is deliberately not remembered; a premature hit is.
 
 **What would settle it.** First, whether any resolver reads in that window:
-`scheduledWorkstreamModel` is called from `sidekick-run-provisioning.ts:106` and
-from `workstream-service.ts`, and each call has to be placed against its
-object's bootstrap and product writes. If one does, the fix is to not cache an
+`scheduledWorkstreamModel` is called from `sidekick-run-provisioning.ts:106`
+(keyed by the Sidekick's id) and `scheduledWorkstreamModelForExisting` from
+`workstream-service.ts`, and each call has to be placed against its object's
+bootstrap and product writes. If one does, the fix is to not cache an
 identity whose product state has not landed, rather than to widen the window.
