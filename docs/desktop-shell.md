@@ -102,13 +102,16 @@ It holds two columns:
   as a mail client opens a folder's first message, and draws that row open:
   the rail's button pushes the row's route, so Back returns to what was open;
   a launch with Activity stored replaces the landing with it once the first
-  list arrives, so Back does not return to the Canvases home, unless the
-  window was opened onto a link (a landing on a Canvas or Sidekick without the
-  restored-route state) or something navigated first; a link that names
-  Activity (`rallywithai://activity`) selects the section, which then opens
-  the row the same way. The first list after entering decides: an empty feed
-  opens nothing, and rows arriving, Mark all seen and other clicks never move
-  the pane until the section is left and entered again. In the phone sheet the
+  list arrives, so Back does not return to the Canvases home, but only when
+  the landing is a section home: a Canvas or Sidekick the window lands on,
+  restored from this device or opened by a link, is kept, and so is anything
+  navigated to before the list arrived; a link that names Activity
+  (`rallywithai://activity`) selects the section, which then opens the row the
+  same way, after an Organization change from the Canvases home it gives the
+  pane in place of `/opening`. The first list after entering decides: an
+  empty feed opens nothing, a navigation made before it arrived stands, and
+  rows arriving, Mark all seen and other clicks never move the pane until the
+  section is left and entered again. In the phone sheet the
   sheet stays open over the row it opened (`sheetAfterNavigation`), since the
   list is what was picked.
   Each section carries a red count (`RailBadge`, 15px in the danger red
@@ -200,8 +203,9 @@ The removed surfaces' routes, `/channels/*`, `/spaces/*`, `/workstreams/*`,
 stored route, a bookmark or an old link opens the Canvases home rather than a
 dead screen. Activity has no route of its own: it is a rail section, and a deep
 link that names it opens that section, which opens its top row in the pane;
-a stored route on a launch with Activity stored gives way to the top row the
-same way (the rail section above).
+a launch with Activity stored that lands on the Canvases home gives way to
+the top row the same way, while a restored Canvas or Sidekick route is kept
+(the rail section above).
 `/opening` is inert: a deep link that changes organization parks the pane there
 while its destination resolves. Settings opens in its own window on the desktop
 and as `/settings` in the browser.
@@ -531,13 +535,19 @@ it. The owner, 2026-11-08: "When opening the first activity on top should be
 auto selected and that should be shown in the panels." and "Stay in activity
 sidebar." The rail's button pushes the row's route and a launch replaces the
 landing, so Back returns to what the person had open and never to the
-Canvases home a launch only passed through; a launch onto a link keeps the
-link, which is what was asked for. The first list after entering decides, so
+Canvases home a launch only passed through. Only that default landing gives
+way: a launch onto a Canvas or Sidekick, a link's or one this device restored
+because the person quit with it open, keeps it, since that is where they
+asked to be or were; this reading is the implementer's and open to the
+owner. The first list after entering decides, so
 a row arriving on top never pulls the pane away from what the person is
 reading. An audit of what moved the rail off Activity found two paths: closing
 the phone sheet without a navigation returned it to the route's section, and
 the `activity` deep link still set the Canvases section from when Activity was
-gone; both now keep or select Activity. Considered and rejected: re-opening
+gone; both now keep or select Activity. The link, after an Organization
+change, also lands the pane on the Canvases home rather than leaving it on
+`/opening`, so the remounted sidebar's launch replace has a landing to
+replace. Considered and rejected: re-opening
 the top row whenever it changes (it would move the pane under the reader), and
 waiting for the first non-empty list (the first row to arrive in an empty feed
 would then move a pane the person had already chosen).

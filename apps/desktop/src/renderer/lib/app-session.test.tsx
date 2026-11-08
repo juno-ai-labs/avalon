@@ -1405,8 +1405,12 @@ describe('single-platform desktop identity routing', () => {
     {
       name: 'Activity',
       url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/activity',
-      // Opens the section, whose top row the sidebar then opens.
-      assertDestination: async () => waitFor(() => expect(useUiStore.getState().sidebarSection).toBe('activity')),
+      // Opens the section on the landing a launch has, never left parked on
+      // `/opening`; the sidebar then replaces it with the top row.
+      assertDestination: async () => {
+        await waitFor(() => expect(window.location.hash).toBe('#/canvases'));
+        expect(useUiStore.getState().sidebarSection).toBe('activity');
+      },
     },
     {
       name: 'Sidekick',
