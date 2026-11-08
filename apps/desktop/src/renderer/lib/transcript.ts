@@ -315,6 +315,26 @@ export function upsertTranscriptMessage(messages: Message[] | undefined, message
 }
 
 /**
+ * What the snapshot's turns are, as one comparable key: the newest revision
+ * of each transcript sequence, counted and summed. A new turn or a revised one
+ * (a run's row updated in place) changes it; a re-delivery, a reconnect or a
+ * streaming overlay does not. Revisions only rise, so the sum cannot return to
+ * an earlier key.
+ */
+export function transcriptTurnsKey(snapshot: WorkstreamTranscriptSnapshot | undefined): string {
+  if (!snapshot) return '';
+  const revisions = new Map<number, number>();
+  const note = (turn: { transcriptSequence: number; revision: number }): void => {
+    revisions.set(turn.transcriptSequence, Math.max(revisions.get(turn.transcriptSequence) ?? 0, turn.revision));
+  };
+  for (const range of snapshot.ranges) range.turns.forEach(note);
+  snapshot.activeTurns.forEach(note);
+  let sum = 0;
+  for (const revision of revisions.values()) sum += revision;
+  return `${revisions.size}:${sum}`;
+}
+
+/**
  * Flatten ordered turn blocks only at the existing render boundary. Ordering
  * and lifecycle remain owned by the turn/block protocol; the automation wizard
  * continues to use its aggregate-message feed.
