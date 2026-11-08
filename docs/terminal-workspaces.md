@@ -2,7 +2,7 @@
 
 Terminal is Rally's deferred Bind plugin for bounded code execution, file
 mutation, resource exchange, and GitHub repository work. It gives a
-Thread, Breakout or Sidekick one private Daytona sandbox. A Sidekick shares
+Canvas's conversation, or a Sidekick, one private Daytona sandbox. A Sidekick shares
 its sandbox with its wizard, activations and background agents; ordinary
 conversations share theirs with the background agents they start. It is not an
 interactive coding harness: the model receives ten typed tools, not a PTY or a provider API, and a
@@ -21,7 +21,7 @@ sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/patch-format.ts`, `vendor/apply_patch.py` | The two patch texts `apply_patch` reads: the unified-diff and `*** Begin Patch` parsers that validate paths and shape the result, and OpenAI's reference applier for the second, vendored unmodified (MIT; provenance in `vendor/README.md`) and written into the sandbox beside a patch that needs it. |
 | `apps/api/src/services/terminal/resource-bridge.ts` | Authorized regional R2 import and generated-resource publication. |
 | `apps/api/src/services/terminal/instruction-files.ts`, `instructions.ts` | Discovery of a checkout's own `AGENTS.md` files: the candidate chain, the probe a sandbox command carries, and the glue that records what it found in the context-residency ledger ([`resident-context.md`](resident-context.md)). |
-| `apps/api/src/services/terminal/repository.ts`, `repository-selection.ts`, `workstream-state.ts` | Model-driven GitHub App repository selection, recovery backup, scoped credential bootstrap, prepared work-stream branch, optional typed publisher, and work-stream state API. |
+| `apps/api/src/services/terminal/repository.ts`, `repository-selection.ts`, `workstream-state.ts` | Model-driven GitHub App repository selection, recovery backup, scoped credential bootstrap, prepared conversation branch, optional typed publisher, and conversation state API. |
 | `apps/api/src/services/terminal/network-policy.ts`, `settings.ts` | Trusted-only policy compiler and preview/confirm workspace settings transition. |
 | `apps/api/src/services/terminal/lifecycle.ts`, `apps/api/src/services/workspace-schedule-execution.ts` | Stop, archive, expiry, final-diff preservation, claims, retries, and the `terminal` alarm target WorkspaceDO drains. |
 | `apps/api/src/services/terminal/snapshot-manifest.ts`, `apps/api/scripts/verify-terminal-provider.ts` | Executable snapshot contract and real-provider acceptance probe. |
@@ -29,8 +29,8 @@ sandbox is allocated only when one of those tools executes.
 | `apps/api/src/services/terminal/snapshot-manifest.ts` (`TERMINAL_SNAPSHOT_RESOURCES`) | The one source of how large every Terminal sandbox is. Checked in rather than configured, because the weekly rebuild builds from the repository — read the Operations section before moving it to a GitHub variable. |
 | `.github/workflows/rebuild-terminal-snapshot.yml` | The weekly rebuild that bounds how stale an owned snapshot may become against Daytona's managed base, proves each rebuild with the acceptance probe, and pushes the config bump to main. Owning a snapshot is only safe with this running. |
 | `apps/api/src/observability/terminal-platform-observability.ts`, `scripts/report-terminal-analytics.mjs` | Content-free Daytona phase measurements in Analytics Engine and their human-readable decision report. |
-| `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible work-stream state. The network policy is the whole of the **Security** page, a top-level entry in the settings navigation. |
-| `apps/api/src/durable-objects/workstream-object-schema.ts` | Authoritative per-work-stream Terminal tables. Migration `0075_terminal_workspaces.sql` is the frozen pre-cutover D1 source. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx`, `components/inspector-rail.tsx` | Workspace network and GitHub connector policy controls plus participant-visible conversation state. The network policy is the whole of the **Security** page, a top-level entry in the settings navigation. |
+| `apps/api/src/durable-objects/workstream-object-schema.ts` | Authoritative per-conversation Terminal tables. Migration `0075_terminal_workspaces.sql` is the frozen pre-cutover D1 source. |
 | `apps/api/src/durable-objects/workstream-terminal-storage.ts`, `workstream-terminal-protocol.ts` | The only reader and writer of those tables, and the operation contract derived from it. |
 | `apps/api/src/services/terminal/object-port.ts` | The Worker-side handle every Terminal service holds instead of a database. |
 
@@ -46,7 +46,7 @@ in flight rather than starting it, and it — not activation — is where a
 provider failure reaches the model, with the coordinator's own guidance. The
 acquisition asks `TerminalSandboxCoordinator` for the conversation's exclusive
 Terminal mutation lease. It creates, starts, or restores the stable private
-sandbox and records the provider result in the owning SubstreamAgent. That
+sandbox and records the provider result in the owning AgentLoopDO. That
 successful acquisition, authority/policy decision, and
 repository preparation are reused for later tools in the same harness run.
 
@@ -61,9 +61,9 @@ copy conversation context. Activation inventories supply their eligible-delegate
 snapshot to Terminal. Authoring connector inventories remain caller-only and
 supply no snapshot; Terminal then reads its own eligible-delegate view once
 at composition so an enrolled creator can use the shared files.
-Different Sidekicks and the Thread that requested one remain separate.
+Different Sidekicks, and a Canvas that asked one for work, remain separate.
 
-A work-stream background agent uses the sandbox of the conversation that
+A conversation background agent uses the sandbox of the conversation that
 started it, through further delegation to the first conversation nobody
 delegated. Each shared caller records its actual execution conversation on its
 mutation lease. That lets the sandbox owner check the holder's liveness in the
@@ -228,7 +228,7 @@ carries a `reconcileEffect` that reads the `resource_versions` ledger, and the
 host runs the executor only when that ledger proves the attempt is absent. Every
 remaining incomplete write keeps the harness's fail-closed ambiguity behaviour.
 [`agent-harness.md`](agent-harness.md) owns the repair walk itself. The model receives one final result; provider observation is never a
-tool. The SubstreamAgent stores the task, command hash,
+tool. The AgentLoopDO stores the task, command hash,
 deadline, exit, termination reason, output byte counts, and bounded head/tail.
 Output beyond the inline allowance is also published as a generated log
 resource, capped at 25 MB.
@@ -245,7 +245,7 @@ to preserve separate stdout and stderr through its named session. Cancellation
 of an accepted direct utility stops and restarts the sandbox before Rally lets
 the abandoned invocation return, establishing process quiescence without adding
 named-session setup to the success path. The trusted publisher uses the direct
-operation in the already-authorized full-access work-stream sandbox as well.
+operation in the already-authorized full-access conversation sandbox as well.
 
 Command results expose three deliberately different clocks. `durationMs` is
 the provider command interval derived from the durable task timestamps;
@@ -257,39 +257,41 @@ time from acquisition through durable settlement. Callers must not present
 ### Resources
 
 `import_resource` copies the original bytes of one currently authorized
-work-stream resource from regional R2 into the sandbox. With no destination it
+conversation resource from regional R2 into the sandbox. With no destination it
 uses deterministic placement beneath `.rally/resources/`; an explicit
 destination is create-only unless `overwrite` is true. The sandbox never
 receives R2 credentials or a signed R2 URL.
 
 `publish_resource` copies one stable nonempty regular file beneath
 `AVALON_RESOURCE_DIR` into regional R2, creates a normal generated `resources`
-row, attaches it to the work stream, and uses the existing cleanup outbox. The
+row, attaches it to the conversation, and uses the existing cleanup outbox. The
 published bytes do not enter model context. The resource inventory and existing
 attachment tools become the durable participant/model surface, and the desktop
 rail renders supported text and Markdown publications through the resource
 preview route.
 
-A published file's identity is the document's own coordinates — the work stream
+A published file's identity is the document's own coordinates — the conversation
 and the normalized published path, as `terminal:<workstream-id>:<path>` — so
 publishing the same path again updates the resource the first publish created
-instead of minting a sibling, and the same file name published from another work
-stream stays a different document. For a work-stream-scoped Sidekick the work
-stream in that identity is the **room that owns it**, not the automation's own
-conversation: its run executes under the automation, using the Sidekick's shared
-sandbox and its own transcript, but the documents it publishes are the room's, so "refresh the
-dashboard" lands on the dashboard the room already has. The sandbox belongs to the Sidekick's authoring
-conversation. Its wizard, activations and workers resolve and re-admit the
-home at each publication or recovery lookup. A refused home blocks publication,
-not commands or imports. Main retains `terminal:<thread>:<path>` identities;
-a Breakout uses `terminal:<thread>:substream:<breakout>:<path>` for files,
+instead of minting a sibling, and the same file name published from another
+conversation stays a different document. For a Sidekick run that writes a
+Canvas, the conversation in that identity is the **Canvas it publishes into**
+(`publicationHome`), not the run's own conversation: its run executes under the
+Sidekick, using the Sidekick's shared sandbox and its own transcript, but the
+documents it publishes are the Canvas's, so "refresh the dashboard" lands on
+the dashboard the Canvas already has. The sandbox belongs to the Sidekick's
+authoring conversation. Its wizard, activations and workers resolve and
+re-admit the home at each publication or recovery lookup. A refused home blocks
+publication, not commands or imports. A main conversation (substream `0`) keeps
+`terminal:<workstream>:<path>` identities; any other substream uses
+`terminal:<workstream>:substream:<substream>:<path>` for files,
 sites and reconciliation. Existing publications must be attached to that
 destination before reuse, except when repairing the exact receipt that created
 them before its attachment committed. If the home has no publication at the
 path, a visible legacy wizard publication under the Sidekick ID is updated in
 place, preserving its resource ID and URL, including during recovery.
 
-Imports use the [shared live resource scope](agent-attachments.md#authorized-work-stream-discovery-and-text-hydration),
+Imports use the [shared live resource scope](agent-attachments.md#authorized-conversation-discovery-and-text-hydration),
 also rechecked for import revocation; a publication target grants no read access.
 A Sidekick can import any known resource its execution user can read through
 canonical authorization, without attaching it first. Later sandbox acquisition
@@ -300,7 +302,7 @@ A known site ID missing from a list should
 still be tried with `import_resource`. The site skill
 backs up existing files and imports the current publication before each refresh
 so retained files cannot silently overwrite newer layout edits. Resource links
-and the artifact registry follow the publication identity, so the document appears in the owning room's
+and the artifact registry follow the publication identity, so the document appears in the owning Canvas's
 resource list rather than the automation's. An equal content hash returns the existing
 resource untouched, which covers both a crash-replay of a settled call and a
 republish that changed nothing; a different hash swaps the content in place
@@ -326,7 +328,7 @@ entry is `read_only` or `full_access`. Read-only is remote-only: local file edit
 and local commits remain allowed. Rally records the immutable GitHub repository
 ID, exact full name, default branch, base SHA, fixed
 `avalon/adjective-adjective-adjective-noun` head ref, and connection. The branch
-slug reuses Rally's existing work-stream address vocabulary and a previously
+slug reuses Rally's existing conversation address vocabulary and a previously
 stored valid branch remains stable. Before a different selection
 destroys an existing sandbox, the harness creates and verifies a compressed
 recovery resource containing source, untracked files, databases, and artifacts,
@@ -358,7 +360,7 @@ does not provide branch-scoped installation tokens, and Rally deliberately does
 not emulate one with a smart-HTTP proxy.
 
 Connector policy is revalidated before every bootstrap. Saving a policy clears
-the cached credential expiry for affected work streams, so the next tool rotates
+the cached credential expiry for affected conversations, so the next tool rotates
 the mounted token before any model command runs. The typed
 `publish_branch_and_pr` operation remains available as an optional convergent
 publisher, but it is not a gate around standard Git and GitHub CLI use.
@@ -419,24 +421,24 @@ nothing between two of its calls. Daytona's
 15-minute auto-stop is only a provider backstop. Due transitions use a bounded
 object-local claim that outlives the provider request limit and reconcile
 observed provider state after ambiguous calls. The workspace directory carries
-one Terminal deadline per work stream: the earliest across every conversation
-under it, which the Channel's parent in `WorkspaceDO` folds into the main
+one Terminal deadline per conversation: the earliest across every conversation
+under it, which the conversation's parent in `WorkspaceDO` folds into the main
 conversation's projection (see
 [`hosted-conversation-parents.md`](hosted-conversation-parents.md)). When that
-entry comes due the sweep asks the work stream's parent which
+entry comes due the sweep asks the conversation's parent which
 conversations are due (`childTerminalDeadlines`) and reconciles each one's
-sandbox on its own row; a work stream that lists none is treated as the main
-conversation's, as every work stream was before conversations reported their
+sandbox on its own row; a conversation that lists none is treated as the main
+conversation's, as every conversation was before conversations reported their
 own. A policy change enumerates the same way and always asks the main
 conversation whatever the parent lists, because the list is a projection that
-lands after a sandbox exists; a side thread's sandbox created inside that gap
+lands after a sandbox exists; a child conversation's sandbox created inside that gap
 is missed by the application and converges at its next claim, which finds the
 row's applied revision behind the workspace's and re-runs readiness against
 the new policy. A sandbox whose lease holder ran in another conversation is
 held while that conversation says the run is active.
 
-A row a side thread or background agent reserved before a sandbox belonged to
-a conversation names the main conversation's sandbox under the work stream's
+A row a child conversation or background agent reserved before a sandbox belonged to
+a conversation names the main conversation's sandbox under the conversation's
 one name. Readiness recognises such a row by its name, drops it without a
 provider call and reserves the conversation's own name; the sweep and the
 policy application, which now reach every conversation's row, refuse to act
@@ -560,33 +562,26 @@ and generation. Polling never takes a mutation lease or extends retention. A
 failed lookup preserves the last successful observation and records
 `provider_unavailable`; it does not record a lost sandbox.
 
-**The periodic check belongs to the conversation that owns the sandbox, not
-to the workspace sweep.** Each Channel conversation's object derives an alarm
-candidate from its own `terminal_provider_observation.next_observe_at` (a
-sandbox never observed is due at once) and, when it comes due, reserves the
-read, asks Daytona, and settles the answer — one provider call and no RPC.
-Reserving the read is what moves the deadline, so a failing provider waits a
-full interval rather than spinning the alarm; the failure is logged as
-`terminal_provider_observation_failed` with its code. The check does not delay
-the conversation's run lane: it starts beside it and is joined before the alarm
-re-arms. A Sidekick's conversation and an archived Channel are not observed,
-as before.
+**No periodic check runs now.** The per-conversation alarm that read
+`terminal_provider_observation.next_observe_at`, asked Daytona and settled the
+answer was part of the Thread host and was deleted with it (plan step C-2); a
+Canvas's or a Sidekick's conversation arms none. `next_observe_at` is still
+computed and stored when a read is reserved, and the state API still reports
+it. A sandbox's provider state is read back at acquisition and through
+Daytona's signed webhooks below (`refreshTerminalProviderObservation`).
 
 The observation deadline is **not** in the directory. The directory's Terminal
 deadline is the lifecycle one alone — warm stop, archive, expiry, a live claim —
 so a check, which moves only the observation deadline, publishes nothing, and
 neither reserving nor settling a read is a directory-affecting operation.
 
-A running sandbox (and one in any state other than stopped or archived) is
-checked every sixty seconds (`TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS`). A
-stopped or archived one is checked every ten minutes
-(`TERMINAL_STOPPED_SANDBOX_OBSERVATION_INTERVAL_MS`), a number the team set,
-recorded in the changelog; the interval is chosen from Rally's lifecycle intent when the read is reserved.
-Between checks, Daytona's signed webhooks below carry a state change as it
-happens, and each one resets the interval, so the poll only bounds how stale
-the view can get when a webhook is missed. This is an eventual view: provider
-latency, alarm retries and a missed webhook can add up to one interval of
-delay. The state API exposes `providerObservation` with `observedAt`,
+The interval written into `next_observe_at` is sixty seconds for a running
+sandbox (and one in any state other than stopped or archived,
+`TERMINAL_PROVIDER_OBSERVATION_INTERVAL_MS`) and ten minutes for a stopped or
+archived one (`TERMINAL_STOPPED_SANDBOX_OBSERVATION_INTERVAL_MS`, a number the
+team set, recorded in the changelog), chosen from Rally's lifecycle intent when
+the read is reserved. With nothing polling, a missed webhook leaves the view
+stale until the next acquisition or webhook rather than for one interval. The state API exposes `providerObservation` with `observedAt`,
 `nextObserveAt`, recovery verdict, and error code; its existing `state` field
 remains Rally's lifecycle intent. Callers must not present the intent as a
 fresh Daytona observation.
@@ -620,7 +615,7 @@ actual outcome.
 
 ### Product measurement
 
-Every authoritative Terminal lifecycle transition reports its work-stream UUID,
+Every authoritative Terminal lifecycle transition reports its conversation UUID,
 closed action/result, bounded duration, whether a repository was selected, the
 canonical connector class or `none`, and whether local files were retained. A
 durable network-policy change reports previous/applied mode, bounded custom-domain
@@ -657,8 +652,8 @@ personless; it is not duplicated into these product events.
   and repository changes still require replacement. The
   conversation is the one that owns the sandbox rows, which for a background
   agent is the conversation that started it, never the agent's own; two
-  conversations of one work stream never share a generation, and a run never
-  uses a sandbox under another work stream.
+  conversations under one parent (substreams of one `workstream` id) never
+  share a generation, and a run never uses a sandbox under another parent.
 - **A lease held by a run in another conversation is judged by that
   conversation, never by this object's own run table.** The row records which
   conversation the holder ran in; the claim SQL reads liveness from `runs` only
@@ -668,10 +663,10 @@ personless; it is not duplicated into these product events.
   object, such a holder is live while its lease is or while a command of its
   own on the generation is unsettled, since a command may outrun the lease and
   only the run that submitted it can settle it.
-- **A published document's identity is the owning work stream plus its
+- **A published document's identity is the owning conversation plus its
   normalized publish path, and that derivation is frozen once documents
-  exist.** "Owning" is the room for a work-stream-scoped Sidekick and the run's
-  own conversation for everything else. Changing
+  exist.** "Owning" is the Canvas a Sidekick run publishes into
+  (`publicationHome`) and the run's own conversation for everything else. Changing
   the normalization, or how `publish_resource` resolves a path against
   `AVALON_RESOURCE_DIR`, re-keys every published document: each one's next
   republish mints a sibling instead of updating it, silently and with no failing
@@ -739,7 +734,7 @@ personless; it is not duplicated into these product events.
   Rally branch without pretending GitHub supports branch-scoped tokens.
 - **Resources cross through authorized regional services.** Giving Daytona R2
   credentials or treating a resource ID as authorization would break workspace,
-  work-stream, principal, and residency boundaries.
+  conversation, principal, and residency boundaries.
 - **Network policy is host compiled, revision fenced, applied to a running
   sandbox only after it stops, and read back.** Letting the model edit egress or assuming a provider update
   succeeded would make Trusted only a UI label rather than an enforced state.
@@ -821,7 +816,7 @@ network proxy, or a general GitHub administration surface.
   acquisition abandoned when its run ends can leave a sandbox reserved before
   its provider id was recorded; the expiry sweep does not resolve such a row
   by stable name, so it cannot reclaim that sandbox, and the next acquisition
-  for the work stream adopts it by name instead. That is an accepted gap, not a
+  for the conversation adopts it by name instead. That is an accepted gap, not a
   design: the started/finished pair shows whether it happens, and a sweep by
   stable name is the fix if it does.
 - A lease release that fails twice leaves the lease with its run.
@@ -897,10 +892,6 @@ network proxy, or a general GitHub administration surface.
   same terminal status, summary, completion time, and member-safe error into
   the visible tool part. A stale write therefore becomes `ambiguous` rather
   than remaining `started` indefinitely.
-- The shared runtime-SQL receipt port uses the same commit boundary: a failed
-  transaction logs `workstream_runtime_sql_commit_failed` and returns only
-  `workstream_runtime_sql_not_committed`; alarm scheduling after a successful
-  receipt commit is diagnostic-only and cannot turn the receipt into a retry.
 
 ## Testing
 
@@ -937,7 +928,7 @@ these focused tests fail. On real workerd,
 that ran elsewhere, that a factory bound to the owner's conversation leaves
 the agent's object, and that a stop or archive claim and its failure leave the
 published deadline where it was; `test-workers/durable-object-runtime.test.ts`
-proves a Channel's parent forwards the earliest conversation deadline and lists
+proves a conversation parent forwards the earliest conversation deadline and lists
 the conversations that own one. The per-call lease is `terminal-runtime.test.ts`:
 one run's writes release between calls and re-run readiness when the row moved,
 and a read proceeds while another run's write holds the lease where a write
@@ -1001,7 +992,7 @@ the interval between those reviews.
 ## Data model
 
 Migration `0075_terminal_workspaces.sql` created the legacy D1 source. Serving
-contract 1 imports work-stream-owned rows into the main SubstreamAgent and
+contract 1 imports conversation-owned rows into the main AgentLoopDO and
 workspace policy into WorkspaceDO:
 
 - WorkspaceDO `workspace_sandbox_network_policies`, `_domains`, and `_mutations`
@@ -1011,7 +1002,7 @@ workspace policy into WorkspaceDO:
   `operation_run_substream_id`: the conversation the lease holder's run
   executes in when that is not this object's own, `NULL` otherwise;
 - `terminal_provider_observation` for generation-fenced provider readback, freshness,
-  errors, and the next observation deadline (SubstreamAgent schema 57);
+  errors, and the next observation deadline (AgentLoopDO schema 57);
 - `terminal_tasks` for durable command submission and one final result; since
   conversation schema 65 no longer keyed to this object's `runs` and
   `tool_effects`, with `run_substream_id` naming a holder from another
@@ -1026,10 +1017,10 @@ workspace policy into WorkspaceDO:
   optional typed publisher; and
 - `repository_publications` for convergent trusted-write reconciliation.
 
-The two object identities supply the workspace and work-stream tenant
+The two object identities supply the workspace and conversation tenant
 boundaries. WorkspaceDO is authoritative for workspace network policy, GitHub
 connection state, and resource metadata; those are read separately from the
-SubstreamAgent's repository/import/task rows and rechecked before local
+AgentLoopDO's repository/import/task rows and rechecked before local
 mutations. A multi-table SQL statement never pretends to join the two objects.
 Provider IDs are
 reconciliation facts and never authorize a request.
@@ -1056,7 +1047,7 @@ The Daytona project credential stays a Worker secret. GitHub installation tokens
 are minted just in time and narrowed to the selected repository and operation.
 Read credentials remain mounted through host-scoped Daytona placeholders and
 are rotated or removed on revocation/expiry. A full-access checkout establishes
-the same short-lived, single-repository write credential once in the work-stream
+the same short-lived, single-repository write credential once in the conversation
 sandbox; ordinary Git and the typed publisher share that already-authorized
 credential until the existing refresh boundary rotates it. The typed publisher
 still revalidates participant, grant, repository, branch, ancestry, expected
@@ -1068,7 +1059,7 @@ The account-level `avalon_terminal_operations` Analytics Engine dataset is even
 narrower: it contains operation, outcome, Rally region, configured snapshot,
 source lifecycle state, failed phase, release identity, phase durations, and the
 fixed names of compatibility tools installed. It contains no workspace,
-work-stream, run, user, provider-sandbox, command, path, resource, repository, or
+conversation, run, user, provider-sandbox, command, path, resource, repository, or
 credential identifier. It is sampled aggregate telemetry, never authority or a
 recovery ledger.
 
@@ -1097,12 +1088,9 @@ activation and recovery. Structured events are
 `terminal_plugin_activation_started` and `terminal_plugin_activation_finished`
 (a started row with no finished row for the same `tool_call_id` is an
 activation whose sandbox work was abandoned in flight), `terminal_tool_finished`,
-`terminal_sandbox_lifecycle_transition`, and `terminal_sandbox_lifecycle_failed`, plus
+`terminal_sandbox_lifecycle_transition`, plus
 `terminal_operation_commit_failed` and
 `terminal_operation_alarm_schedule_failed` for the typed object-port boundary,
-plus
-`workstream_runtime_sql_commit_failed` and
-`workstream_runtime_sql_alarm_schedule_failed` for its durable receipt port,
 plus
 `terminal_tool_receipt_recovered` or
 `terminal_tool_receipt_recovery_ambiguous` for interrupted commands and PR
@@ -1162,7 +1150,7 @@ does not call it. Builds request
 `TERMINAL_SNAPSHOT_RESOURCES` from `snapshot-manifest.ts`, 2 vCPU / 4 GiB / 8 GiB,
 and fail naming each field that came back short, because an under-sized image
 passes every capability probe the acceptance gate runs and surfaces only as a
-work stream the kernel killed. A field the provider rounds up is reported in the
+conversation the kernel killed. A field the provider rounds up is reported in the
 build log instead: it is Rally's size and more, and a cost nobody chose is worth
 seeing without taking the rebuild red. A rejected candidate is
 deleted before the build throws, so a run that keeps failing does not leave one
@@ -1208,16 +1196,16 @@ use Terminal, the median run does 16.5s of unrelated work between activation
 and its first Terminal tool, against an ~18s median cold start. A
 restored durable activation remains lazy so an unrelated later run does not
 allocate merely because an earlier run used Terminal. Reuse is scoped to one
-work stream. Five-minute warm stop reduces compute time, sixty-minute archive
+conversation. Five-minute warm stop reduces compute time, sixty-minute archive
 reduces retained live-disk cost, and thirty-day deletion bounds provider storage.
 
 Sandbox size multiplies both against the Daytona organization's quota. Memory is
 bounded by concurrency — 4 GiB each means the organization's memory limit divided
-by four the number of work streams that can hold a live sandbox at once, and
+by four the number of conversations that can hold a live sandbox at once, and
 exhausting it shows up as creation failing rather than as anything slower. Disk
 is not bounded that way: 8 GiB is held by every sandbox that exists, including
 stopped ones, until the thirty-day deletion reclaims it, so it accumulates with
-how many work streams have ever used Terminal rather than with how many are
+how many conversations have ever used Terminal rather than with how many are
 running now. That makes disk the size worth watching first as usage grows. Only user-visible generated files,
 complete eligible command logs, and the last bounded Git diff are copied to R2;
 Rally does not pay to maintain a second cold filesystem archive. Provider time
