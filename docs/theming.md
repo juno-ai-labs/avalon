@@ -120,7 +120,10 @@ serves it through `rally-font://`.
   gradient on nested panes creates seams when the sidebar and feed differ in
   size.
 - **The main-process window background matches the canvas token.** A mismatch
-  flashes the wrong colour before the renderer's first frame.
+  flashes the wrong colour before the renderer's first frame. It is set when a
+  window is built and again on every change of appearance, a choice made in
+  `theme:set-window` or the Mac's own under System (`repaintWindowBackgrounds`
+  in `apps/desktop/src/main/window-background.ts`).
 - **So do the root's own background and the `theme-color` meta.** iOS 26
   paints a Home Screen app's status bar from the page, the root's background
   or a fixed container at its top edge, and iOS 15 to 18 from the meta. A root
@@ -239,6 +242,15 @@ registration. Remote font URLs are not exposed directly to the renderer; main
 serves only generated IDs and enforces the cache's size and integrity checks.
 
 ## Changelog
+
+### 2026-11-08 — Every window's native background follows a change of appearance
+
+**What changed:** Switching appearance, or the Mac switching it under System,
+repaints every Rally window's native background, not only the next one built.
+
+**Why:** The background was applied only in the constructors, so after Light
+to Dark the area a live resize exposes stayed `#fcfcfc` beside a `#070707`
+document (v3-G1); docs/e2e.md step 7 promises no flash of the other mode.
 
 ### 2026-10-18 — A dark phone no longer opens the Home Screen app on white
 

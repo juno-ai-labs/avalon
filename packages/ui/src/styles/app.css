@@ -7884,6 +7884,10 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   width: var(--navigation-rail-width);
 }
 .navigation-rail-top { flex: none; height: 32px; margin-bottom: -10px; width: 100%; }
+/* A host with no window controls (the browser) draws no spacer; the rail keeps
+   the same clearance above its first tile and its badge (32px less the 10px
+   the spacer gives back). */
+.navigation-rail:not(:has(> .navigation-rail-top)) { padding-top: 22px; }
 .navigation-rail-button {
   align-items: center;
   background: transparent;
@@ -7911,6 +7915,10 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   width: 34px;
 }
 .navigation-rail-button:hover .navigation-rail-icon { background: var(--av-sys-color-state-hover); }
+/* Keyboard focus rings the tile, in its own radius, rather than the whole
+   76px button, whose box runs to the window's edge and clips a ring there. */
+.navigation-rail-button:focus-visible { outline: none; }
+.navigation-rail-button:focus-visible .navigation-rail-icon { box-shadow: var(--av-sys-focus-ring-default); }
 .navigation-rail-button.is-active { font-weight: 600; }
 /* A menu's trigger reads as selected while its menu is open. */
 .navigation-rail-button.is-active .navigation-rail-icon,
@@ -7920,13 +7928,15 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
    the phone row's More menu. */
 .navigation-rail-badge,
 .navigation-more-count {
-  background: var(--av-sys-color-workstream-news);
+  /* design.html §1's badge red, the danger base (#c3453f in light). */
+  background: var(--av-sys-color-danger-base);
   border-radius: 999px;
   color: var(--av-sys-color-palette-ink-light);
   font-size: 10px;
   font-weight: 700;
-  line-height: 12px;
-  min-width: 16px;
+  /* 15px across with its ring, as the design draws it. */
+  line-height: 11px;
+  min-width: 15px;
   padding: 0 3px;
   text-align: center;
 }
@@ -7945,7 +7955,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-more-label { flex: 1; }
 .navigation-more-check { color: var(--av-sys-color-accent-base); display: inline-flex; }
 .navigation-rail-spacer { flex: 1; }
-.navigation-rail-icon > .avatar { font-size: 10px; height: 22px; width: 22px; }
+/* The account's avatar fills the design's 28px circle. */
+.navigation-rail-icon > .avatar { font-size: 12px; height: 28px; width: 28px; }
 /* A support session: the staff member acting, over the corner of the person acted as. */
 .navigation-rail-impersonator { bottom: -4px; display: flex; position: absolute; right: -4px; }
 .navigation-rail-impersonator .avatar { border: 2px solid var(--av-cmp-sidebar-background-solid); height: 16px; width: 16px; }
@@ -8025,7 +8036,7 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 .navigation-row-line { align-items: center; display: flex; gap: 8px; min-width: 0; }
 .navigation-row-title { flex: 1; font-size: 14.5px; font-weight: 500; line-height: 19px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .navigation-row.is-unread .navigation-row-title { font-weight: 650; }
-.navigation-row-unread-dot { background: var(--av-sys-color-workstream-news); border-radius: 999px; flex: none; height: 8px; width: 8px; }
+.navigation-row-unread-dot { background: var(--av-sys-color-danger-base); border-radius: 999px; flex: none; height: 8px; width: 8px; }
 .navigation-sidekick-mark { display: inline-flex; flex: none; height: 36px; width: 36px; }
 .navigation-row-live-dot { background: var(--av-sys-color-success-base); border-radius: 999px; display: inline-block; height: 7px; margin-right: 6px; vertical-align: 1px; width: 7px; }
 .navigation-row-time { color: var(--av-sys-color-text-muted); flex: none; font-size: 12px; }

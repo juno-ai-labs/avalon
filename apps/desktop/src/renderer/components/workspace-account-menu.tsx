@@ -2,7 +2,7 @@ import { ErrorNotice } from './primitives';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { MenuActionItem } from '@rally/ui/components/menu-action-item';
-import { IconDeviceDesktopDown, IconHexagons, IconLogout, IconSettings, IconUserPlus, IconUsers } from '@tabler/icons-react';
+import { IconDeviceDesktopDown, IconHexagon, IconLogout, IconSettings, IconUserPlus, IconUsers } from '@tabler/icons-react';
 import { desktopBridge } from '../lib/platform';
 import { navigateAppRoute } from '../lib/app-navigation';
 import { useUiStore } from '../lib/ui-store';
@@ -295,7 +295,7 @@ export function WorkspaceAccountMenu({
                 </DropdownMenu.Item>
                 <MenuActionItem className="menu-item account-menu-item" disabled={guest}
                   disabledReason={SIDEKICKS_DISABLED_REASON} onSelect={openSidekicksHome} tooltipSide="right">
-                  <IconHexagons aria-hidden="true" />
+                  <IconHexagon aria-hidden="true" />
                   <span>Sidekicks</span>
                 </MenuActionItem>
                 <DropdownMenu.Item className="menu-item account-menu-item" onSelect={onOpenSettings}>

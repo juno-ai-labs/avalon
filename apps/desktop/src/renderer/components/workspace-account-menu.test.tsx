@@ -177,7 +177,7 @@ describe('organization account menu', () => {
     expect(items[1]).toHaveAccessibleName('Members');
     expect(items[1]!.querySelector('.tabler-icon-users')).toBeInTheDocument();
     expect(items[2]).toHaveAccessibleName('Sidekicks');
-    expect(items[2]!.querySelector('.tabler-icon-hexagons')).toBeInTheDocument();
+    expect(items[2]!.querySelector('.tabler-icon-hexagon')).toBeInTheDocument();
     expect(items[3]).toHaveAccessibleName('Settings');
     expect(items[3]!.querySelector('.tabler-icon-settings')).toBeInTheDocument();
     if (enabled) {
