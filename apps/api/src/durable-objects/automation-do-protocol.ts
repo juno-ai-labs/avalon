@@ -333,6 +333,11 @@ export const SidekickRunRowProjectionSchema = z.strictObject({
    */
   requesterUserId: IdSchema.nullable().optional(),
   /**
+   * The run's ordinal among its Sidekick's runs, oldest first, read with the
+   * run. Optional so a projection queued before the field still parses.
+   */
+  runNumber: z.number().int().positive().optional(),
+  /**
    * Set by a replay: apply this projection even when the conversation holds a
    * newer version. Safe because the projection is the run read at delivery,
    * and it is how a row whose version ran ahead of its run is repaired.

@@ -3840,14 +3840,19 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
   },
   {
     version: 87,
-    description: "name the person whose request started a Sidekick run on its row",
+    description: "name the person whose request started a Sidekick run, and the run's number, on its row",
     // The run's row carries who asked, so a reader can tell their own run's
     // row from news: the conversation seats that person at the row's turn
     // while the run works, and the client mirrors it rather than drawing an
     // Unread divider above the run they just started. Null for a trigger's
     // run and for rows written before the column; the next projection of the
-    // run fills it.
-    statements: [`ALTER TABLE sidekick_run_rows ADD COLUMN requester_user_id TEXT`],
+    // run fills it. `run_number` is the run's ordinal among its Sidekick's
+    // runs, which the row reads as "Run 412" (design §4); null until a
+    // projection carries it.
+    statements: [
+      `ALTER TABLE sidekick_run_rows ADD COLUMN requester_user_id TEXT`,
+      `ALTER TABLE sidekick_run_rows ADD COLUMN run_number INTEGER CHECK (run_number IS NULL OR run_number > 0)`,
+    ],
   },
 ];
 
