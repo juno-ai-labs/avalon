@@ -1036,6 +1036,13 @@ leaves the Sidekick rather than reopening the run. That view has no composer
 (`withoutComposer`): a message to the Sidekick goes in the shared
 conversation, where it starts the next run. A question the run asked keeps its
 answer form there, because answering it is how the waiting run continues.
+Once answered, the run's transcript still holds both: the question as the
+run's elicitation turn (its own status left `open`) and the answer as the
+person's turn after it, carrying the same elicitation id with `answered` and
+the answer (`sidekick-run-continuation.test.ts` reads both from the opening
+snapshot). The server removes and hides neither; a view that shows the answer
+with no question above it has merged the two by their shared id and drawn
+only the answer, and owes the question above it (design §4).
 
 A run waiting on input also shows its question on its row in the shared
 conversation, with the same answer form (`SidekickRunQuestion`): the row opens
@@ -1682,7 +1689,7 @@ instruction body.
 | `apps/desktop/src/renderer/components/workstream-glyph.test.tsx` | `pnpm --filter @rally/desktop test` | The play cut out of the hexagon with its own mask, its hover target, and the sentence it reports. |
 | `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event matched to every destination once, whatever the Queue redelivers; the occurrence a connector named; stale registration effects refused. |
 | `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, the connector vocabulary an authoring rule is held to — and the boundary between the two predicate spellings, which is where a change that let the model's `matching` reach a stored column would fail. |
-| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd with the effect queue held, so the run row still reads finished while the continuation runs: input to a completed run continuing it with `automationRun`, the run-as principal (changed since the run started) and the revision accepted since, with the continuation note last; paused, archived and unknown runs refused with their codes, both inputs landed, and the run continuing after a resume; two concurrent replies both reaching the model as the continued run; a finished row reopened only by a newer projection, a stale completion not closing it, repeated complete and reopen cycles, `idle` not reopening, and a paused Sidekick not reopening; an elicitation answer keeping the run's context. |
+| `apps/api/test-workers/sidekick-run-continuation.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd with the effect queue held, so the run row still reads finished while the continuation runs: input to a completed run continuing it with `automationRun`, the run-as principal (changed since the run started) and the revision accepted since, with the continuation note last; paused, archived and unknown runs refused with their codes, both inputs landed, and the run continuing after a resume; two concurrent replies both reaching the model as the continued run; a finished row reopened only by a newer projection, a stale completion not closing it, repeated complete and reopen cycles, `idle` not reopening, and a paused Sidekick not reopening; an elicitation answer keeping the run's context, and the run's transcript keeping the question turn with the answer turn after it. |
 | `apps/api/test/run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | A running run admitted, a paused or unknown one stopped, connector evidence not re-read after admission, and a run with no automation reference asking no automation; a continuation acting through a `completed` or `failed` row and a `stopped` one that stopped before the approval, and refused for a stop after it or a paused Sidekick. |
 | `apps/api/test/model-protocol-transcript.test.ts` | `pnpm --filter @rally/api test` | Among the transcript projection cases: a bound-thread reply in a run child rendered as labelled evidence and never as a member request, in the transcript and in the live admission projection, and the continuation note's wording. |
 | `apps/api/test/scoped-memory.test.ts` | `pnpm --filter @rally/api test` | A Sidekick's conversation resolving the workspace scope and its own `sidekick` scope. |
@@ -1904,10 +1911,16 @@ stale. The question was nowhere a list could read it: the run's summary was
 its last text turn, and the asking is an elicitation turn (v2-F2, v2-F6,
 v2-F8, v2-F10, v2-F25). v2-F11's stale time was the socket list sending no
 `lastRunAt` at all. The requester seat answers v2-F12: the row you have open
-turned unread for the run you just started. The facts were a fixed 398px
-grid hidden only in a window under 760px, so once the sidebar took 416px of
-every window they squeezed the name to one letter per line between the
-desktop's 860px minimum and about 1150px.
+turned unread for the run you just started. The question is read from the newest waiting run rather
+than the newest run (vis2-v2 R2-1): read from the newest run only, a waiting
+Sidekick fell back to "Needs input" after a reload, during a later run's
+Starting, and after a later run finished, while its question was still open. After an inline answer the run view showed the answer
+with no question above it (vis2-v2 R2-2); the run's transcript was found to
+keep both turns, now pinned by a test, so the fix is the client's. `scheduleTimeZone` answers vis2-v2 R2-7 and vis2-v4
+R2-15: the sidebar and the home formatted `nextRunAt` in the machine's zone
+while the details read the schedule's own summary, so one schedule showed two
+times eight hours apart; naming the zone on each screen instead was rejected
+because the design writes the time alone.
 
 **Considered and rejected:** Answering from the shared composer: a message
 there is routed to a new run by design, and teaching admission to guess which
