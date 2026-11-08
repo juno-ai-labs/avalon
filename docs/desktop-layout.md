@@ -40,13 +40,19 @@ the split is half of it, in the desktop app and a browser tab alike.
 layout (641px and up) the main pane gives up the panel's width and the panel
 sits beside it; there is no dimming layer to click away. The panel's width is
 capped by `--rail-max-slot`, which keeps `--conversation-min-width` for the
-conversation where the window allows. Where the pane cannot hold that minimum
-beside the narrowest panel, 424 + 280px (`railFillsPane` in `rail-split.ts`,
-which sets `rail-fills-pane` on the shell), the panel takes the whole pane and
-closing it is the way back. The app shell keeps its sidebar above phone width,
+conversation where the window allows. A panel opens at half the pane, so where
+the pane is narrower than two conversation minimums, 2 × 424 = 848px
+(`railFillsPane` in `rail-split.ts`, which sets `rail-fills-pane` on the
+shell), the even split would squeeze both the Chat and the panel, and the
+panel takes the whole pane instead; closing it is the way back. The rule reads
+the pane, the window less the sidebar (`mainPaneWidth`, which also follows the
+sidebar giving way in a narrow tab, [`desktop-shell.md`](desktop-shell.md#the-sidebar)),
 so at the default 416px sidebar (the 76px rail and the design's 340px list)
-this is any window or tab narrower than 1120px, and at the 476px maximum
-narrower than 1180px, the desktop app's 860px minimum included.
+this is any window or tab narrower than 1264px, and at the 476px maximum
+narrower than 1324px, the desktop app's 860px minimum included.
+A Canvas's "⋯" and pill menus offer **Open artifact** while it has one: it
+navigates onto the newest artifact as arriving does, beside the Chat, so a
+panel closed by the person comes back without leaving the Canvas.
 At phone width the panel is a full-width sheet.
 
 Switching items in a panel already open for the same conversation keeps the
@@ -126,14 +132,30 @@ windows, and checks that rail positions and panels return visibly.
 
 ## Changelog
 
-### 2026-11-08 — The panel takes the pane below 1120px, after the sidebar widened
+### 2026-11-08 — The panel takes a pane narrower than two conversation minimums, and a closed panel reopens from the Canvas's menus
 
-**What changed:** The width below which an open panel fills the pane moved
-from 1044px to 1120px with the default sidebar (1180px at its maximum).
+**What changed:** An open panel fills the pane where the pane, the window less
+the sidebar, is narrower than 848px (twice the conversation's 424px), not
+narrower than 424 + 280px: below 1264px with the default sidebar (1324px at
+its maximum), where it was 1120px. The pane is measured after the sidebar
+gives way in a narrow tab. A Canvas's "⋯" and pill menus gained **Open
+artifact**.
 
 **Why:** The sidebar's default became the rail plus design.html's 340px list,
-416px (desktop-shell.md); `railFillsPane` subtracts the sidebar, so the same
-424 + 280px rule now applies 76px sooner. Nothing in the rule changed.
+416px (desktop-shell.md), which first moved the old rule's crossing from
+1044px to 1120px. The second design inspection (v1-R2-3) then found 1180px
+still splitting a 764px pane into about 400px of Chat beside a 350px panel
+whose artifact pill was clipped at its left edge: the old rule asked only that
+the narrowest panel fit beside the Chat's minimum, but a panel opens at half
+the pane, so a pane that passed it still opened cramped. Keying on the split
+the panel actually opens at fixes that without a new number. v1-R2-4 found no
+way back to a panel once closed short of leaving the Canvas; the menu item
+reuses the arrival's navigation onto the newest artifact, which already opens
+again on each request.
+
+**What a future change must respect:** `railFillsPane` and the shell's
+`--av-cmp-sidebar-width` must agree on the pane; change how the sidebar gives
+way in one and the other moves with it.
 
 ### 2026-11-07 — The landing reopens a Canvas or Sidekick, or the Canvases home
 
