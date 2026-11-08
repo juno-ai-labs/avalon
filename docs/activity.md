@@ -51,8 +51,14 @@ notice), and a preview: the text the push's body carries, reduced the same way
 (`rewriteMessageAsPlainText`, then `PUSH_BODY_PREVIEW_CHARACTERS`). The title is
 not copied: `activityPage` reads it from `canvas_directory` or
 `automation_directory` at list time, and names it only when the recipient may
-still open the parent (`canvasVisible`, `sidekickListed`), so a rename after
-they were removed is never shown to them.
+still open the parent, so a rename after they were removed is never shown to
+them. The page, its title rule and the unseen count are one statement: the
+count is a window over every row before the page's `LIMIT`, and the title
+rule is the one `canvasSidebarRows` and the Sidekick list
+(`SIDEBAR_SIDEKICK_LISTED_SQL`) already take, joined. Only a Canvas a
+Sidekick writes, whose audience includes that Sidekick's, is decided in code
+(`writerSidekickAdmits`), once per writer and only for a title not already
+named.
 
 ### Seen is derived
 
@@ -62,7 +68,12 @@ mentioning message's own ordinal, which the conversation now carries on the
 name no message of their own, so they store the parent's shared
 conversation's latest attention ordinal when the row is written (the
 `latestAttentionOrdinal` of its `"0"` projection in
-`sidekick_child_projections`).
+`sidekick_child_projections`). A mention or an add in any conversation under
+the parent other than `"0"` — a Sidekick run's — stores none: its ordinal
+counts that conversation's messages, which the `"0"` cursor does not measure,
+and comparing the two would clear it the moment it was written. Such a row
+clears only by Mark all seen. A run notice keeps the `"0"` ordinal: the run's
+row is in the shared conversation.
 
 At list time a row is seen when either:
 
@@ -96,11 +107,16 @@ path) then calls `publishActivityList`, which reads each remembered person's
 page once and sends `workspace_activity_list` `{occurredAt, waterline,
 unseenCount, items}` to that person's subscribed sockets and nobody else's.
 
-A list moves when a row is written, when Mark all seen is chosen, and when the
-person's read of a Canvas or a Sidekick moves: the hook that marks a Canvas or
-Sidekick reader moved (`noteCanvasReadChanged`, `noteViewerReadChanged`) also
-calls `noteActivityReadMoved`, so one read write republishes both lists to
-that one person. A person with no Activity at all is skipped there.
+A list moves when a row is written, when Mark all seen is chosen, and when a
+read report for the person on a Canvas or a Sidekick is accepted:
+`HostedConversation.acceptViewerRead` calls the host's
+`noteActivityReadMoved` on every report it accepts, whether or not the cursor
+moved, because a non-mention row clears on a report's time as well as its
+cursor (a run's row is updated in place, so opening the Sidekick after it
+finished reports the same cursor). The host republishes only when the person
+has Activity about that parent (`hasActivityFor`, a seek on
+`(recipient_user_id, parent_id)`), so a read of anything else costs one
+lookup.
 
 The subscribe answer carries the page beside `automations` and `canvases`, so
 a reconnect is correct without replaying pushes; the client applies the page
@@ -179,10 +195,12 @@ them. The menu bar and the dock badge do not read it.
   fails is skipped; the next subscribe carries the page.
 - **A mention recorded from an effect emitted before `attentionOrdinal`
   existed** has no ordinal and clears only by Mark all seen.
-- **An add or a run notice whose conversation gains nothing newer** stays
-  unseen after an open that reports no new read (nothing to acknowledge); Mark
-  all seen clears it. Preferred to the alternative, a row that arrives already
-  seen.
+- **An open that sends no read report** (the client had nothing to
+  acknowledge and the conversation emitted no report) leaves an add or a run
+  notice unseen; Mark all seen clears it. Preferred to the alternative, a row
+  that arrives already seen.
+- **A mention or an add in a Sidekick run's own conversation** clears only by
+  Mark all seen: the shared conversation's cursor does not measure it.
 - **A read report delayed past a later row** can clear a non-mention row the
   person had not looked at. The window is the Queue's delivery delay.
 - **Mark all seen while the socket is down** is not sent; the button does
@@ -201,17 +219,20 @@ conversation's `acknowledge_read` operation clears it with no Activity
 command; an add delivered to `receiveChildEffects` produces one, and Mark all
 seen clears it; a Sidekick run reaching `needs_input` reaches the requester
 and the author, and a finished run the requester only, through the notice
-alarm, read from a socket's subscribe answer. The run cases poll: the notice is
-recorded by an alarm the object arms itself.
+alarm, read from a socket's subscribe answer; a finished run clears, and the
+list is sent again, on a read report at an unchanged cursor; a mention in a
+run's conversation stays unseen however far the shared conversation is read.
+The run cases poll: the notice is recorded by an alarm the object arms
+itself.
 
 The renderer's `workspace-socket.test.tsx` covers the page and the push, and
-`activity-sidebar-section.test.tsx` the rows, the badge and Mark all seen.
+`navigation-sidebar.test.tsx` the rows, their links, the badge, the empty state and Mark all seen, and `rail-dock-badge.test.tsx` that the dock badge leaves Activity out.
 
 ## Data model
 
 | Table | Key | Columns |
 | --- | --- | --- |
-| `workspace_activity_items` | `item_id` (the intent's id) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal`, `created_at` (ms). Index `(recipient_user_id, created_at DESC)`. |
+| `workspace_activity_items` | `item_id` (the intent's id) | `workspace_id`, `recipient_user_id`, `kind` (`mention`, `participant_added`, `needs_input`, `run_finished`), `parent_kind` (`canvas`, `automation`), `parent_id`, `substream_id`, `message_id`, `run_id`, `actor_kind` (`person`, `rally`, `sidekick`), `actor_id`, `preview`, `attention_ordinal` (null: clears only by Mark all seen), `created_at` (ms). Indexes `(recipient_user_id, created_at DESC)` for the page and `(recipient_user_id, parent_id)` for a read report. |
 | `workspace_activity_seen` | `user_id` | `seen_through` (ms): Mark all seen. |
 | `workspace_sidebar_list_state` | `list` | Row `activity`: the list's waterline. |
 

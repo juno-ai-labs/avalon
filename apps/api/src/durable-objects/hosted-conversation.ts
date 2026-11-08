@@ -76,6 +76,12 @@ export interface HostedConversationHost {
    * after the write (`docs/activity.md`).
    */
   noteActivityChanged(userId: string): void;
+  /**
+   * A read report for this person on this parent was accepted, inside its
+   * transaction, whether or not the cursor moved: Activity derives seen from
+   * the report's time as well as its cursor (`docs/activity.md`).
+   */
+  noteActivityReadMoved(userId: string, parentId: string): void;
 }
 
 type DirectoryUserEffect = Extract<ConversationEffectEnvelope["effect"], { kind: "directory_user" }>;
@@ -329,6 +335,7 @@ export abstract class HostedConversation<Host extends HostedConversationHost = H
     if (!existing || existing.seen_attention_ordinal !== seen || existing.manual_unread_from_ordinal !== manual) {
       this.onViewerReadChanged(effect.userId);
     }
+    this.host.noteActivityReadMoved(effect.userId, this.parentId);
   }
 
   /** Keep a child's newest common projection; `null` for one that is not newer. */
