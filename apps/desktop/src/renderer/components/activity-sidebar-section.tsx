@@ -8,11 +8,11 @@ import { canvasArtifactRoute, canvasRoute, canvasTurnRoute, useCanvasNameSources
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList, type ActivityList } from '../lib/sidebar-list-store';
+import { sidekickRunSearch } from '../lib/sidekick-status';
 import { AccessDecisionActions } from './canvas-access-request';
 import { RowLayout, SectionHeading, useSectionMotion } from './navigation-rows';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
-import { sidekickRunSearch } from './sidekick-run-row';
 
 /** This viewer's Activity as the workspace socket keeps it; `undefined` until it has said. */
 export function useActivityList(): ActivityList | undefined {

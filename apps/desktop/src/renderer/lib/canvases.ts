@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useOptionalCollaborationSession } from './collaboration-session';
 import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from './sidebar-list-store';
 import { ApiError, type RallyApi } from './api';
+import { sidekickRunSearch } from './sidekick-status';
 import type { AutomationSummary, WorkspaceMember } from './types';
 import { useWorkspaceMembers } from './workspace-members';
 
@@ -183,7 +184,7 @@ export function canvasWrittenByRun(
   const name = sidekicksById.get(run.sidekickId)?.name ?? run.sidekickName;
   return {
     label: `${name} · run #${run.runNumber}`,
-    to: `/sidekicks/${encodeURIComponent(run.sidekickId)}?${new URLSearchParams({ run: run.runId })}`,
+    to: `/sidekicks/${encodeURIComponent(run.sidekickId)}${sidekickRunSearch(run.runId)}`,
   };
 }
 
