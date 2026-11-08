@@ -55,6 +55,14 @@ export function canvasRenameRefusal(error: Error): string {
   return error.message;
 }
 
+/**
+ * Whether Rally is still choosing this Canvas's name from its opening message.
+ * An older server sends no `titleStatus`, which is settled.
+ */
+export function canvasNaming(canvas: { titleStatus?: 'naming' | 'settled' | undefined } | undefined): boolean {
+  return canvas?.titleStatus === 'naming';
+}
+
 /** The Canvas as `GET /canvases/:id` answers it for this reader. */
 export function canvasDetailQueryKey(canvasId: string): readonly unknown[] {
   return ['canvas', canvasId];

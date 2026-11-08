@@ -7,8 +7,8 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { CanvasMark } from '../components/canvas-mark';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
-import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
-import { canvasDetailQueryKey, canvasRenameRefusal, canvasRenameRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState, TitleSkeleton } from '../components/primitives';
+import { canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { copyLink } from '../lib/copy-link';
 import { sidebarListApplied } from '../lib/sidebar-list-store';
 import { useDocumentTitle } from '../lib/document-title';
@@ -86,16 +86,22 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   // refetch. Only a change, and only once the socket has applied the list:
   // the device cache seeds the list too, asynchronously and without the
   // ledger, and its row may be older than the detail the server just answered.
+  // The naming state moves with it: Rally's title for a Canvas made without
+  // one lands as exactly such a change.
   const rowTitle = row?.title;
+  const rowTitleStatus = row?.titleStatus;
   const seenRowTitle = useRef(rowTitle);
   useEffect(() => {
     if (seenRowTitle.current === rowTitle) return;
     seenRowTitle.current = rowTitle;
     if (rowTitle === undefined || !sidebarListApplied(queryClient, 'canvases')) return;
-    queryClient.setQueryData<CanvasDetail>(canvasDetailQueryKey(id), (cached) => cached && cached.title !== rowTitle ? { ...cached, title: rowTitle } : cached);
-  }, [id, queryClient, rowTitle]);
+    queryClient.setQueryData<CanvasDetail>(canvasDetailQueryKey(id), (cached) => cached && cached.title !== rowTitle
+      ? { ...cached, title: rowTitle, ...(rowTitleStatus ? { titleStatus: rowTitleStatus } : {}) }
+      : cached);
+  }, [id, queryClient, rowTitle, rowTitleStatus]);
   const title = canvas.data?.title ?? row?.title ?? '';
-  useDocumentTitle(title || undefined);
+  const naming = canvasNaming(canvas.data ?? row);
+  useDocumentTitle(naming ? undefined : title || undefined);
   const saveTitle = (next: string): void => {
     if (!api) return;
     setRenamePending(true);
@@ -148,8 +154,8 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   } : {
     key: `canvas:${id}`,
     icon: mark,
-    title,
-    label: `Canvas menu: ${title}`,
+    title: naming ? <TitleSkeleton className="title-skeleton-header" /> : title,
+    label: naming ? 'Canvas menu: Rally is choosing a name' : `Canvas menu: ${title}`,
     menu: <>
       <TitleMenuItem icon={pinned ? <IconPinnedOff aria-hidden="true" size={16} stroke={1.8} /> : <IconPin aria-hidden="true" size={16} stroke={1.8} />} onSelect={togglePin}>
         {pinned ? 'Unpin' : 'Pin'}
