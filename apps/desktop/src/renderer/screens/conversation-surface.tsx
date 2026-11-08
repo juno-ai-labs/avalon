@@ -70,6 +70,7 @@ import {
   removeTranscriptOverlay,
   transcriptCoverageAdvanced,
   transcriptOverlaysQueryKey,
+  transcriptTurnsKey,
   type TranscriptOverlay,
   upsertTranscriptOverlay,
   withoutAgentWork,
@@ -817,8 +818,10 @@ export function highestVisibleAttentionSequence(
  * clears a finished run's row, which is updated in place, on a report's time
  * as well as its cursor, so a person who had read the Sidekick before its run
  * finished would otherwise come back to a row nothing clears
- * (`docs/activity.md`). Once per open, not per scroll, so the read path costs
- * what it did.
+ * (`docs/activity.md`). For the same reason a new or revised turn while the
+ * conversation is open owes one more: a run's row finishing in place in front
+ * of its requester moves no cursor. Once per open and per change of its
+ * turns, never per scroll, so the read path costs what it did.
  *
  * `key` is the identity of the one request allowed in flight. It carries the
  * substream because the acknowledgement does: two children of one work stream
@@ -831,7 +834,7 @@ export function conversationReadAcknowledgement(input: {
   highestVisibleSequence: number;
   viewer: Pick<WorkstreamDetail,
     'readThroughSequenceNumber' | 'manualUnreadFromSequenceNumber' | 'manualUnreadGeneration'>;
-  /** Whether this open of the conversation has already sent a report. */
+  /** Whether this open of the conversation, at its current turns, has already sent a report. */
   reportedThisOpen: boolean;
 }): {
   parentId: string;
@@ -1086,7 +1089,6 @@ function ConversationSurfaceContent({
   const initialPositionedWorkstreamRef = useRef<string | null>(null);
   const readAckInFlightRef = useRef<string | null>(null);
   const conversationAddress = `${id}:${substreamId}`;
-  const openReadReport = useOpenReadReport(conversationAddress);
   const artifactPanelKey = layoutKey(session?.workspace?.id ?? 'unbound', session?.user.id ?? 'unbound', `artifact-panel:${conversationAddress}`);
   const restoredPanelKey = useRef<string | null>(null);
   const activeConversationAddressRef = useRef(conversationAddress);
@@ -1446,6 +1448,9 @@ function ConversationSurfaceContent({
   // Streaming reveal changes only presentation overlays, potentially once per
   // painted frame. Keep the canonical flatten/dedupe/sort outside that clock:
   // it changes only when the durable snapshot or author projection changes.
+  // Declared here, after the snapshot it is keyed by: a new or revised turn
+  // owes a fresh report at an unchanged cursor (`useOpenReadReport`).
+  const openReadReport = useOpenReadReport(conversationAddress, transcriptTurnsKey(orderedTranscript.data));
   const canonicalTranscript = useMemo(() => orderedTranscriptMessages(
     orderedTranscript.data,
     id,

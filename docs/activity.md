@@ -178,7 +178,12 @@ Sidekick opens its conversation, where a run's row is; a finished run's row
 opens it too, because a read of `"0"` is what clears that row and the run's own
 view reads the run. A run that needs input
 (`runId`) and a mention in one of its runs open that run (`?run=`), where the
-question and its answer form are. Opening the run does not read the shared
+question and its answer form are. An open conversation reports a read on
+open, when its cursor moves, and once more for each new or revised turn while
+it is open and visible (`useOpenReadReport`, keyed by `transcriptTurnsKey`):
+a run's row finishing in place in front of its requester moves no cursor, and
+without that report the finished row stayed unseen while they watched it.
+Opening the run does not read the shared
 conversation, so a needs-input row stays unseen until the shared conversation
 is read or Mark all seen, the same as a mention in a run. Opening a row keeps the
 Activity section open. The rail badge is `unseenCount` ("3 unseen"). The dock
@@ -297,7 +302,13 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 ### 2026-11-08 — A needs-input row opens the run that asked, and rows take the shared layout
 
 **What changed:** A `needs_input` row opens the run it is about (`?run=` from
-its `runId`) rather than the Sidekick's shared conversation.
+its `runId`) rather than the Sidekick's shared conversation, and
+`ACTIVITY_SEEN_SQL` counts a Needs input row as seen once its run has left
+`needs_input`; the recipients' Activity is sent again when a run stops
+waiting. Rows take the shared row layout, seen rows recede through text
+colour tokens rather than 45% opacity, and only the rows whose conversation
+and run the route has open are marked open. An open conversation reports a
+read again for each new or revised turn.
 
 **Why:** The run is where the question and its answer form are; the shared
 conversation's composer starts a new run, so a person sent there answered
@@ -310,7 +321,10 @@ probe rather than a per-row mark. The 45% opacity left a seen preview at
 1.9:1 in light and 2.45:1 in dark, and opening a Sidekick marked every row
 about it, which read as a multi-selection. A finished run's row still marked
 every finished row of its Sidekick open, because they all open the same shared
-conversation (round-2 review); it is now never marked open.
+conversation (round-2 review); it is now never marked open. A finished row
+stayed unseen while its requester watched the run finish with the
+conversation open: the row is updated in place, so the cursor did not move and
+the one report an open owes had already been made (round-2 review).
 
 **Considered and rejected:** Opening a finished run's row at its run
 (`?run=`), as a Needs input row opens: the highlight would then be one row,
