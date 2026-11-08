@@ -518,7 +518,10 @@ with `POST /canvases`; its Chat's publishes are its artifacts (recorded in
 it makes or one it writes. Rally in the Chat is told the Canvas's artifacts,
 and what it learns is the Canvas's memory.
 
-`PATCH /canvases/:id` retitles a Canvas for anyone it admits, and
+`PATCH /canvases/:id` retitles a Canvas for anyone it admits (a title that
+is empty, blank or over 300 characters is refused as
+`canvas_rename_invalid:title:<issue>`, and a malformed id on every Canvas
+route as `canvas_id_invalid:id:<issue>`, through `namedZValidator`), and
 `PUT /workspace/pinned-order` takes `{ kind, itemIds }` and orders the
 Canvases or Sidekicks Pinned group (`reorderSidebarPins`); the Space-era
 container order and the All Pinned order it replaced went with the Channel
