@@ -160,11 +160,21 @@ clears it.
 
 The section lists the page newest first, each row in the shared sidebar row
 layout (`RowLayout`, as Canvas and Sidekick rows are): a tile with the kind's
-glyph (an at sign, a person added, a question, a check); on the first line who
-(a person's name from the member directory, or the Sidekick's), what
-(mentioned you in, added you to, needs your input, finished a run) and the
-title, cut to one line, with the time at its end; on the second the preview,
-cut to one line, with the unseen dot. A seen row recedes through one text
+glyph (an at sign, a person added, a question, a check, a speech bubble for a
+reply, a pencilled file for a new version, a lock for an access request and an
+open lock for a grant); on the first line who (a person's name from the member
+directory, or the Sidekick's), what (mentioned you in, added you to, needs your
+input, finished a run, "in" for a reply, updated <artifact> in, asked to open,
+let you into) and the title, cut to one line, with the time at its end; on the
+second the preview, cut to one line, with the unseen dot. A settled access
+request's second line says who decided ("Maya approved", "Maya denied") in
+place of the message, and the row is seen. A pending one has Approve and Deny
+under it, beside the link rather than in it (a link holds no buttons), sending
+`POST /canvases/:id/access-requests/:userId/decision` for the row's Canvas
+(`parentId`) and requester (`actor.id`) through `AccessDecisionActions`, the
+component the Share panel's Requests section uses; the Activity push that the
+same write produces is what settles the row, and a refusal is the app's error
+notice. A seen row recedes through one text
 colour for both lines (`text-muted`, 5.12:1 in light and 7.49:1 in dark) and a
 lighter title weight, never through opacity, so every line of it clears 4.5:1. The rows the route has open (the same conversation, and the
 same run when one is open) are drawn open at full contrast; keyboard focus is
@@ -172,9 +182,13 @@ a ring, never the open fill. A finished run's row is never drawn open: it opens
 the shared conversation, which every finished row of that Sidekick shares, so
 marking it would mark them all. A Canvas Chat mention opens the Chat at its message
 (`canvasTurnRoute`, from the row's `messageId` and `messageSequence`, the
-mentioning turn's transcript sequence the effect carries); a mention recorded
-before the effect carried it, and an add, open the Canvas. A row about a
-Sidekick opens its conversation, where a run's row is; a finished run's row
+mentioning turn's transcript sequence the effect carries), and a reply's row
+(`new_message`) the same way; a mention recorded before the effect carried it,
+an add, an access request and a grant open the Canvas, and a pinned Canvas's
+new version (`artifact_updated`) opens it onto that artifact
+(`?artifact=<resourceId>`). A row about a
+Sidekick opens its conversation, where a run's row is, and a reply there opens
+the same conversation; a finished run's row
 opens it too, because a read of `"0"` is what clears that row and the run's own
 view reads the run. A run that needs input
 (`runId`) and a mention in one of its runs open that run (`?run=`), where the

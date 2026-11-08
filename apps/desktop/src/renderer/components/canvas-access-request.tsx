@@ -15,7 +15,7 @@ import { RelativeTime } from './relative-time';
  * without its title, and offers Request access, one dialog with an optional
  * message. While their request is pending the button stays disabled under
  * "Request sent · <when>"; a denied request reads as none, because a denial
- * tells the requester nothing (`docs/canvases.md#asking-to-open-a-canvas`).
+ * tells the requester nothing (`docs/canvases.md`, "A Canvas you cannot open").
  * The grant reopens the pane into the Canvas on its own: the screen refetches
  * the Canvas when it appears in the list or an `access_granted` row arrives.
  */
