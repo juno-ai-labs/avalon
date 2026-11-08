@@ -210,8 +210,9 @@ failures can reveal acknowledgement state during a provider outage. A future
 durable acknowledgement dispatcher can remove that distinction without silently
 losing retries.
 
-The [security audit](private-access-security-audit-2026-09-09.md) records unresolved
-launch controls. Do not treat the open guards or default Cloudflare DDoS protection
+The 2026-09-09 early-access security audit recorded unresolved launch controls;
+it is a historical record now, listed in [architecture.md's
+changelog](architecture.md#2026-11-08--retirement-records-spaces-space-access-sources-projects-the-implementation-plan-meeting-notes). Do not treat the open guards or default Cloudflare DDoS protection
 as a hardened acquisition system.
 
 ## Operations

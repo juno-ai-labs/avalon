@@ -6636,7 +6636,7 @@ making fifteen `executeToolReceiptOperation` RPCs to its own object id; from the
 fifteenth on, Cloudflare refused every further subrequest that invocation made.
 The next run in the same work stream, on the same deployed version, made none and
 completed. The full evidence is in
-[`durable-object-self-rpc-audit-2026-08-22.md`](durable-object-self-rpc-audit-2026-08-22.md).
+`durable-object-self-rpc-audit-2026-08-22.md` (retired).
 
 Recognition rested on a name, and a name is withheld until an object's durable
 facts are recorded — so there was a window where an object could not tell that a
@@ -8319,7 +8319,7 @@ placement-affinity read, and a round trip to reach storage the caller was alread
 holding, plus a second concurrent invocation of a single-threaded object, a
 statement that could not join the caller's `transactionSync`, and local invariant
 violations arriving as foreign-object errors. The report is
-[`durable-object-self-rpc-audit-2026-08-22.md`](durable-object-self-rpc-audit-2026-08-22.md).
+`durable-object-self-rpc-audit-2026-08-22.md` (retired).
 
 **How it is proved:** the routing decision in the Node suite, and the four
 registrations and name derivations against real objects in
@@ -8340,7 +8340,7 @@ open input gate means these complete: they do complete, and the only thing
 holding that up is that no self-call currently sits inside a
 `blockConcurrencyWhile` — an invariant nothing stated or tested, and the same
 shape as the alarm-joins-drain fault in
-[`terminal-production-qa-2026-08-21.md`](terminal-production-qa-2026-08-21.md).
+`terminal-production-qa-2026-08-21.md` (retired).
 
 **What a future change has to respect:** A new Durable Object class registers
 itself in its constructor, or it is exempt from this without anyone noticing. The
