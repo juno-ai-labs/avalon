@@ -1565,6 +1565,26 @@ describe("a hosted Sidekick", () => {
     expect(answered.waterline).toBeGreaterThan(asking.waterline);
   });
 
+  it("shows a Sidekick working while its newest run works, and sends the list again when it stops", async () => {
+    await activeAutomation();
+    const { requested, scheduled } = await workingRuns("d");
+    const row = async () => {
+      const item = (await workspaceStub().listAutomationDirectory({ workspaceId: WORKSPACE_ID, userId: AUTHOR_ID }))
+        .items.find((candidate) => candidate.id === AUTOMATION_ID);
+      const waterline = await runInDurableObject(workspaceStub(), (_instance, state) => state.storage.sql.exec<{ waterline: number }>(
+        `SELECT waterline FROM workspace_sidebar_list_state WHERE list = 'automations'`).one().waterline);
+      return { runState: item?.runState, waterline };
+    };
+    const working = await row();
+    expect(working.runState).toBe("working");
+    // The newest run finishes; the older one still works, but the row is the newest run's.
+    await finishRuns([scheduled], "completed");
+    const finished = await row();
+    expect(finished.runState).toBeNull();
+    expect(finished.waterline).toBeGreaterThan(working.waterline);
+    void requested;
+  });
+
   it("tells only the requester when a run finishes, and nobody when a scheduled run does", async () => {
     await activeAutomation();
     const { requested, scheduled } = await workingRuns("b");

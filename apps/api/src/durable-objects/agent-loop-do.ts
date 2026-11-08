@@ -1,4 +1,5 @@
 import { readCompletionVerificationSnapshot } from "./completion-verification-storage";
+import { startReadCursorAtLatest } from "./member-attention";
 import { projectConversationView } from "@rally/contracts/conversation-view";
 import { ConversationViewDeliverySchema, ConversationViewJobSchema, ConversationViewProjectionSchema, completeConversationViewDelivery, nextConversationViewAt, publishConversationViews } from "./conversation-view-projection";
 import { zodDiagnosticCode, describeZodIssues } from "@rally/contracts/zod-diagnostics";
@@ -2021,6 +2022,16 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
     // stored turn (conversation_read, gap-fill, a conversation as text) sees
     // what the row shows, not only the transcript that joins the row in.
     const content = existing ? await this.sidekickRunRowContent(existing.turn_id, text) : null;
+    // The row's write moves the conversation's latest attention ordinal. While
+    // the run works, the person whose request started it has that ordinal
+    // read, in the same write, so the Sidekick they are looking at does not
+    // turn unread for what they asked for. A finished or waiting run is news
+    // to them, and stays unread like any other reply.
+    const requester = request.requesterUserId && (request.state === "pending" || request.state === "running")
+      ? request.requesterUserId : null;
+    const seatRequester = (now: number) => {
+      if (requester) startReadCursorAtLatest(this.ctx.storage.sql, requester, now, false);
+    };
     const result = await this.product.commitRuntimeMutation(() => {
       const now = Date.now();
       const current = held();
@@ -2032,6 +2043,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
           request.runId, appended.messageId, request.state, request.stepCount, request.reply, request.version, now,
         );
+        seatRequester(now);
         return { outcome: "appended" as const, code: "sidekick_run_row_appended" };
       }
       if (current.source_version > request.version && !request.replay) return { outcome: "unchanged" as const, code: "sidekick_run_row_stale" };
@@ -2060,8 +2072,9 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         }
       }
       this.transcript.reviseParticipantTurnInTransaction(current.turn_id, now);
+      seatRequester(now);
       return { outcome: "updated" as const, code: "sidekick_run_row_updated" };
-    }, true);
+    }, true, requester ? [requester] : []);
     if (result.outcome === "appended" || result.outcome === "updated") await this.flushSemanticRealtimeOutboxBestEffort();
     return result;
   }
