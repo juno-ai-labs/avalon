@@ -168,6 +168,24 @@ manage it); `POST /canvases/:id/audience` changes who can open it;
 `POST /canvases/:id/pin` and `POST /sidekicks/:id/pin` pin. The Chat is opened
 through the conversation routes like any conversation.
 
+### A Canvas that was a Thread
+
+A Canvas may have been a Thread. `convert_threads_to_canvases`, an operator
+operation run once per Organization after the pivot, makes every Thread that
+made or linked an artifact a Canvas with the same id
+([`workspace-retirement.md`](workspace-retirement.md#converting-threads-that-have-artifacts)
+owns it). What it keeps: the id, so `artifact_registry`, search, the D1 anchor
+and the route already name the Canvas; the Thread's Main as the Chat, its
+conversation object's stored parent kind rewritten to `canvas`; its title, its
+creator (or its earliest viewer), its creation time and its last activity; its
+viewers as `added` participants; Organization visibility for a
+Workspace-scoped Thread and participants for a personal one; every artifact it
+made or linked, in `canvas_artifacts`; the memory facts learned in its Main,
+renamed to the Canvas's source; and a Sidekick's attachment to its Main. What
+it does not keep: its Breakouts, retired as `retire_threads` retires them, and
+its unread state, which starts empty. Such a Canvas has no writer Sidekick and
+no last editor until its Chat next publishes.
+
 ### Artifacts and versions
 
 A Canvas's artifacts are resources its conversation generated: Rally's
@@ -460,6 +478,24 @@ becomes ([`live-web-artifacts.md`](live-web-artifacts.md)).
 | `canvas_artifacts` | `(canvas_id, resource_id)` | Migration 142: the resources the Canvas's conversation generated, written by the publish that attached each (`noteArtifact`); ordered by the resource's own `updated_at`. Its own table because the Thread-era resource-link table's foreign key named a Thread's directory row, which a Canvas has none of. Indexed by resource. |
 
 ## Changelog
+
+### 2026-11-08 — A Thread that has artifacts can become a Canvas in place
+
+**What changed:** `HostedCanvas.createFromThread`, beside `create` and sharing
+its row insert, writes a Canvas's directory, participant and artifact rows from
+a Thread's, for the operator conversion `convert_threads_to_canvases`. The
+Canvas keeps the Thread's id.
+
+**Why:** The user decided on 2026-11-08 that Threads with artifacts become
+Canvases rather than being deleted. Keeping the id is what makes it cheap:
+every row keyed by it (`artifact_registry`, search, the D1 anchor) already
+names the Canvas, where a new Canvas with copied content would need each of
+them rewritten.
+
+**What a future change must respect:** a Canvas row can name an id that was a
+Thread's, with a creation time older than Canvases, participants with no
+`added_by_user_id`, and no writer. Nothing may assume a Canvas was made by
+`create`.
 
 ### 2026-11-07 — Document created: a Canvas is a hosted conversation with its own audience
 

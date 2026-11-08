@@ -38,6 +38,7 @@ that first needed it ships separately, calling what is here.
 | `apps/api/src/engineering-inspection-bridge.ts` | `retireOrg`, the engineering MCP's `retire_org`, which calls the same door ([`engineering-mcp.md`](engineering-mcp.md#retiring-an-organization)). |
 | `apps/api/src/services/thread-retirement-service.ts` | Retiring one Organization's Threads, Breakouts and Channels while the Organization stays open: the transcript dump to R2 and the retirement it unlocks (see [Retiring Threads, Breakouts and Channels](#retiring-threads-breakouts-and-channels)). |
 | `WorkspaceDO.threadRetirementInventory`, `WorkspaceDO.deleteRetiredThreadParent`, `AgentLoopDO.conversationTranscriptText` | What that walk visits, the rows it deletes once a parent's conversations are retired, and the whole transcript of one conversation as room-visible text. |
+| `apps/api/src/services/thread-conversion-service.ts`, `WorkspaceDO.threadConversionInventory`, `WorkspaceDO.convertThreadToCanvas`, `HostedCanvas.createFromThread`, `AgentLoopDO.convertParentKind` | Converting a Thread that has artifacts into a Canvas in place, before the retirement (see [Converting Threads that have artifacts](#converting-threads-that-have-artifacts)). |
 
 ### The gate
 
@@ -315,20 +316,23 @@ rows in one transaction:
   event, after the method returns, so it would fail the RPC rather than reach
   the service's per-parent catch;
 - a Thread's `channels`, `channel_viewers`, `breakouts` and `breakout_viewers`
-  rows, or a Channel's `spaces` and `space_viewers` rows. Nothing else
-  cascades from them since migration 147 dropped the pin, resource-link and
-  access tables that referenced them.
+  rows, its `workspace_workstream_resource_links` rows and a Sidekick's
+  attachment to any of its conversations, or a Channel's `spaces` and
+  `space_viewers` rows. Nothing else references them since migration 147
+  dropped the pin and access tables.
 
 What it leaves: the Organization object, untombstoned,
 Canvases, Sidekicks, resources, and memory. The other Thread- and
 Channel-keyed tables are gone already: WorkspaceDO migration 147
 (`THREAD_ERA_TABLES_DROP_MIGRATION` in `retired-workspace-schema.ts`) drops
 every Thread-era table nothing reads, and the Thread rows of the shared tables
-(memory digest holders, Sidekick attachments, Thread and artifact pins, room
-bindings). It deliberately keeps the tables this inventory reads — `channels`,
+(memory digest holders, Thread and artifact pins, room bindings). It
+deliberately keeps the tables this inventory reads — `channels`,
 `channel_viewers`, `breakouts`, `breakout_viewers`, `spaces`, `space_viewers`
 and the `parent_*` tables — so an Organization where these operations have not
-run yet still names every conversation object to dump and close. Those go in a
+run yet still names every conversation object to dump and close, and the two
+the conversion below reads: `workspace_workstream_resource_links` and a
+Sidekick's attachment to a Thread. Those go in a
 later migration, once the operator has run both operations everywhere. Nothing is
 published to the workspace socket: stopping its Thread topics is the other half
 of plan step B-7 and is not done here.
@@ -344,6 +348,82 @@ of plan step B-7 and is not done here.
   that still names one (a Sidekick's conversation attachment to a Thread, a
   queued effect) meets `workspace_retired`, which every background caller
   already treats as terminal.
+
+### Converting Threads that have artifacts
+
+A Thread whose conversations made or linked an artifact is not deleted: it
+becomes a Canvas in place, keeping its id, so its Main becomes the Canvas's
+Chat and its artifacts the Canvas's artifacts. The user decided this on
+2026-11-08, after the pivot landed. `convert_threads_to_canvases` is the
+operator call, per Organization, through the engineering MCP
+([`engineering-mcp.md`](engineering-mcp.md#retiring-threads)); the order is
+**dump, convert, retire**, so the retirement that follows finds only the
+Threads with nothing to keep.
+
+**Candidates.** `WorkspaceDO.threadConversionInventory` names every `channels`
+row whose id appears in `artifact_registry.workstream_id`, or which links a
+resource that is an artifact through `workspace_workstream_resource_links`.
+A Channel (`spaces`) is never one. Each comes with its artifact, linked
+artifact and viewer counts and its conversations, the same ones the
+retirement inventory names. An artifact whose `workstream_id` names no
+Thread, Canvas or Sidekick is left alone and counted
+(`artifactsWithoutThread`). A dry run, the default, answers that and writes
+nothing; it also reports, per Thread, how many conversations have no dump.
+
+**The guard** is the retirement's: an apply is refused with
+`thread_retirement_dump_incomplete`, before anything is touched, unless every
+conversation under every candidate (Main included) has its dump.
+
+**Per Thread, in an order a crash resumes from:**
+
+1. **The Canvas's rows** (`WorkspaceDO.convertThreadToCanvas`, through
+   `canvasWrite`, so the Canvas list's waterline moves and every socket learns
+   the Canvas). `HostedCanvas.createFromThread`, beside `create` and sharing
+   its row insert, writes `canvas_directory` (`canvas_id` = the Thread's id;
+   the title cut to 300; the creator from `channels`, else the earliest
+   viewer, else the Thread fails with `thread_conversion_no_creator`;
+   `created_at` = `source_created_at`; `updated_at` = `last_activity_at`;
+   Organization visibility for a Workspace-scoped Thread and participants for
+   a personal one; the Thread's authority generation, which its directory row
+   projected from the conversation, so the two agree), every viewer but the
+   creator as an `added` participant, and both artifact sources in
+   `canvas_artifacts`. An existing Canvas row is the resume marker and is left
+   as it is. In the same call, idempotently on every pass, what other tables
+   key on the Thread's Main is carried to the Canvas's names: memory facts
+   learned there (source `<id>`, which opens to nobody) become `canvas:<id>`,
+   with the sweep receipt the object's next sweep continues from, and every
+   digest copy is marked; the Main's `authorization_locations` rows take kind
+   `canvas`, which re-projects the resources' search audiences; and a
+   Sidekick's attachment to the Main becomes one to the Canvas's Chat.
+2. **The Main's parent kind** (`AgentLoopDO.convertParentKind`): the stored
+   `workstream` becomes `canvas`, and so does the envelope of every effect
+   still in its outbox, which would otherwise be refused by kind until it
+   dead-letters. The object then binds its loop as a hosted conversation does
+   on construction and arms its alarm, which the retired kind had cleared on
+   every firing. Already `canvas` is success; any other transition is refused
+   with `conversation_parent_kind_conversion_unsupported:<from>:<to>`.
+3. **Each Breakout's object retired** through `retireObject`, as
+   `retire_threads` retires it (reason `thread_conversion`).
+4. **The Thread's rows deleted** by `deleteRetiredThreadParent`.
+
+A Thread whose rows are gone is no longer a candidate, so a finished
+Organization reruns as a pass over nothing; one interrupted after its Canvas's
+rows is a candidate again and is reported `alreadyConverted` when the pass
+finishes it. A failed Thread is reported with the conversation it stopped at
+and its code, and the rest go on.
+
+**What needs nothing.** The D1 `workstreams` anchor and
+`workstream_authority_routes` row stay, and `artifact_registry.workstream_id`
+already names the Canvas. Search needs no reindex: a Thread's turns and links
+were indexed under `conversation:<id>/0`, the group a Canvas's Chat carries,
+which every person who can open the Canvas now holds; its Breakouts' groups
+stay unheld. The unread state of the Canvas list starts empty (the hosted
+parent has no reader rows until a reader's next read reports one), and its
+recency is the Thread's last activity. No pin survives migration 147, and the
+per-conversation `sidekick_attachments` table was dropped by the object's
+migration 86. A Canvas invitation made between steps 1 and 4 of an interrupted
+pass would be swept with the Thread's parent state, since both key it by the
+same id; the window is one pass.
 
 ## Boundary
 
@@ -684,6 +764,31 @@ Channel and Space tables and this recorder's `channels` and `spaces` reads be
 dropped.
 
 ### 2026-11-07 — Retire an Organization's Threads, Breakouts and Channels, after dumping their transcripts
+
+### 2026-11-08 — Convert a Thread that has artifacts into a Canvas in place
+
+**What changed:** `convert_threads_to_canvases`, an engineering MCP operator
+operation, makes every Thread of one Organization that made or linked an
+artifact a Canvas with the same id: the Canvas's rows from the Thread's
+(`HostedCanvas.createFromThread`), the Main's stored parent kind rewritten to
+`canvas` (`AgentLoopDO.convertParentKind`), the Breakouts retired and the
+Thread's rows deleted. It runs between the dump and the retirement, behind the
+same dump guard. Migration 147, not yet shipped, now keeps
+`workspace_workstream_resource_links` and Thread-kind Sidekick attachments for
+it; `deleteRetiredThreadParent` deletes both with the Thread.
+
+**Why:** The user decided on 2026-11-08 that Threads with artifacts become
+Canvases rather than being deleted: production held 60 such Threads in 7
+Organizations. Keeping the id means `artifact_registry`, the search index, the
+D1 anchor and route need no rewrite. The alternative, creating new Canvases
+and copying the conversation and artifacts into them, was rejected because
+every id-keyed table would need a rewrite.
+
+**What a future change must respect:** the order is dump, convert, retire. The
+conversion is the only path that changes a conversation's stored parent kind,
+and only from `workstream` to `canvas`. Anything new that keys on a Thread's
+Main by its Thread-era name (a source string, a parent kind) has to be carried
+in `convertThreadToCanvas`, or a converted Canvas loses it.
 
 ### 2026-11-07 — Retire an Organization's Threads after dumping them, close its Canvases with it, and drop the Thread-era tables nothing reads
 
