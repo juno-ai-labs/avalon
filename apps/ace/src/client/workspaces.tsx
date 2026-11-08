@@ -13,7 +13,7 @@ const RETIREMENT_PARENT_LABELS: Record<WorkspaceRetirementResult['failed'][numbe
 /**
  * The workspaces tab: find a workspace, and retire it.
  *
- * Retirement is irreversible and takes any workspace, demo or not; nothing
+ * Retirement is irreversible and takes any workspace; nothing
  * gates it but the operator's Access admission and the confirmation this page
  * asks for. So the confirmation is not a click beside a name: the operator
  * types or pastes the workspace id, and the button stays disabled until it
