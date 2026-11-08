@@ -63,13 +63,15 @@ export function CanvasesHomeScreen(): React.JSX.Element {
       const member = membersById.get(userId);
       return member ? [member] : [];
     });
-    return <li key={canvas.id}>
-      <span className="canvas-list-mark"><CanvasMark kind={canvas.artifactKind} size={44} /></span>
-      <div className="sidekick-list-copy">
-        <h3><Link className="sidekick-list-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
-        <small>{canvasRowDetail(canvas, membersById, sidekicksById, currentUserId)} · <RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
+    return <li className="canvas-card" key={canvas.id}>
+      <div aria-hidden="true" className="canvas-card-shot">
+        <div className="canvas-card-paper"><CanvasMark kind={canvas.artifactKind} size={44} /></div>
+        {present.length > 0 && <span className="canvas-card-live"><AvatarStack members={present} nameTooltip={false} showTooltip={false} />Live</span>}
       </div>
-      {present.length > 0 && <span className="canvas-list-present"><AvatarStack members={present} nameTooltip={false} showTooltip={false} /><span className="canvas-live-badge">Live</span></span>}
+      <div className="canvas-card-body">
+        <h3><Link className="sidekick-list-link" to={canvasRoute(canvas.id)}>{canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}</Link></h3>
+        <small><span>{canvasRowDetail(canvas, membersById, sidekicksById, currentUserId)}</span><RelativeTime format={formatSidebarActivityTime} value={canvas.updatedAt} /></small>
+      </div>
     </li>;
   };
   // A guest makes no Canvas (`canvas_create_member_required`), so is offered none.
@@ -78,7 +80,7 @@ export function CanvasesHomeScreen(): React.JSX.Element {
   </Button>;
   return <main className="sidekicks-library canvases-home">
     <header className="sidekicks-library-heading window-drag">
-      <div><h1>Canvases</h1><p>Pages your team and Rally make together.</p></div>
+      <div><h1>Canvases</h1><p>Live pages your team and Rally build together.</p></div>
       <div className="sidekicks-library-actions window-no-drag">{newCanvas}</div>
     </header>
     {createError && <ErrorNotice occurrence={createError}>{createError.message}</ErrorNotice>}
@@ -93,13 +95,13 @@ export function CanvasesHomeScreen(): React.JSX.Element {
           </div>
           {live.length > 0 && <section aria-labelledby="canvases-live-title" className="canvases-home-group">
             <div className="sidekick-results-heading"><h2 id="canvases-live-title">Live now</h2><span>{`${live.length} ${live.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
-            <ul className="sidekicks-library-list canvases-home-list">{live.map(row)}</ul>
+            <ul className="canvases-home-grid">{live.map(row)}</ul>
           </section>}
           <section aria-labelledby="canvases-recent-title" className="canvases-home-group">
             <div className="sidekick-results-heading"><h2 id="canvases-recent-title">{needle ? 'Search results' : 'Recent'}</h2><span>{`${recent.length} ${recent.length === 1 ? 'Canvas' : 'Canvases'}`}</span></div>
             {recent.length === 0
               ? <EmptyState description="Try a different search or filter." title={live.length > 0 ? 'Nothing else here' : 'No matching Canvases'} />
-              : <ul className="sidekicks-library-list canvases-home-list">{recent.map(row)}</ul>}
+              : <ul className="canvases-home-grid">{recent.map(row)}</ul>}
           </section>
         </>}
   </main>;

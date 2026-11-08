@@ -1,15 +1,20 @@
 import type { CanvasSidebarRow } from '@rally/contracts';
-import { useMemo, type RefObject } from 'react';
+import { useMemo, useState, type RefObject } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 
 import { canvasNaming, canvasRoute, canvasRowDetail, othersPresent, RENAME_CANVAS_STATE, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { CanvasMark } from './canvas-mark';
-import { ErrorNotice, TitleSkeleton } from './primitives';
+import { DropdownSelect, ErrorNotice, TitleSkeleton } from './primitives';
 import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, splitPinned, usePinWrite, useRowPinDrop, useSectionMotion } from './navigation-rows';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
+
+type CanvasOrder = 'recent' | 'name';
+
+/** design.html §1's "Recent ⇵": the list by recent activity (the server's order) or by name. */
+const CANVAS_ORDERS = [{ value: 'recent', label: 'Recent' }, { value: 'name', label: 'Name' }];
 
 /**
  * The Canvases section: a Pinned group, then every Canvas by recent activity.
@@ -28,6 +33,8 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
   const { error: pinError, setPinned } = usePinWrite(api ? (id, next) => api.setCanvasPinned(id, next) : undefined, 'Canvas');
   const { drop, sourceProps, targetProps } = useRowPinDrop(pinnedIds, (id) => setPinned(id, true));
   useSectionMotion(scroll, undefined);
+  const [order, setOrder] = useState<CanvasOrder>('recent');
+  const sorted = useMemo(() => order === 'name' ? [...rest].sort((a, b) => a.title.localeCompare(b.title)) : rest, [order, rest]);
   const navigate = useNavigate();
   const open = matchPath('/canvases/:id', useLocation().pathname)?.params.id;
   const row = (canvas: CanvasSidebarRow, position?: string): React.JSX.Element => {
@@ -64,11 +71,14 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
     >
       {pinned.map((canvas, index) => row(canvas, pinnedPosition(index, pinned.length)))}
     </PinnedSection>
-    <section aria-label="All Canvases" className="navigation-section">
-      <SectionHeading motionKey="canvases">All Canvases</SectionHeading>
+    <section aria-label="All canvases" className="navigation-section">
+      <SectionHeading
+        motionKey="canvases"
+        trailing={<DropdownSelect ariaLabel="Sort Canvases" onValueChange={(value) => setOrder(value === 'name' ? 'name' : 'recent')} options={CANVAS_ORDERS} value={order} variant="secondary" />}
+      >All canvases</SectionHeading>
       {rows === undefined && <SidebarSkeletonRows count={6} hint />}
       {rows !== undefined && rest.length === 0 && pinned.length === 0 && <p className="navigation-empty">No Canvases yet.</p>}
-      {rest.map((canvas) => row(canvas))}
+      {sorted.map((canvas) => row(canvas))}
     </section>
   </>;
 }

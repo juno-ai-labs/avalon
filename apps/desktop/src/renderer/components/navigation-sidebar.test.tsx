@@ -133,6 +133,23 @@ describe('the Canvases and Sidekicks sections', () => {
     expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
   });
 
+  it('at phone width, closing the sheet on another list returns its bar to the open screen\'s section', () => {
+    const width = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    try {
+      renderSidebar(workspace, '/canvases');
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      fireEvent.click(screen.getByRole('button', { name: /Sidekicks/ }));
+
+      fireEvent.keyDown(window, { key: 'Escape' });
+
+      expect(useUiStore.getState().sidebarSection).toBe('canvases');
+      expect(screen.getByRole('heading', { name: 'Canvases' })).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    }
+  });
+
   it('closes the phone sheet on Escape and hands focus back to its button', () => {
     renderSidebar();
     fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
@@ -149,7 +166,7 @@ describe('the Canvases and Sidekicks sections', () => {
     renderSidebar();
     expect(screen.getByRole('heading', { name: 'Canvases' })).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Pinned Canvases' })).getByRole('link', { name: /Launch plan/ })).toBeInTheDocument();
-    const unread = within(screen.getByRole('region', { name: 'All Canvases' })).getByRole('link', { name: /Q4 revenue review/ });
+    const unread = within(screen.getByRole('region', { name: 'All canvases' })).getByRole('link', { name: /Q4 revenue review/ });
     expect(within(unread).getByRole('img', { name: 'Unread' })).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Pinned Canvases' })).queryByRole('img', { name: 'Unread' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Search organization' })).toBeEnabled();

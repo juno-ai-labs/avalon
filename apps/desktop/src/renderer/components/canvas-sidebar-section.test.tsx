@@ -55,13 +55,28 @@ describe('CanvasesSection', () => {
     expect(await within(pinned).findByText('Maya is here')).toBeInTheDocument();
     expect(within(pinned).getByRole('img', { name: 'People are here' })).toBeInTheDocument();
     expect(within(pinned).getByText('Edited by Rally')).toBeInTheDocument();
-    const all = screen.getByRole('region', { name: 'All Canvases' });
+    const all = screen.getByRole('region', { name: 'All canvases' });
     const row = within(all).getByRole('link', { name: /Acme follow-up/ });
     expect(row).toHaveAttribute('href', '/canvases/00000000-0000-7000-8000-0000000000c1');
     expect(row).toHaveAttribute('aria-current', 'page');
     expect(row).toHaveClass('is-unread');
     expect(within(row).getByRole('img', { name: 'Unread' })).toBeInTheDocument();
     expect(within(row).getByText('Made by you')).toBeInTheDocument();
+  });
+
+  it('sorts All canvases by name when asked, and by recent activity otherwise', () => {
+    renderSection([
+      canvas('00000000-0000-7000-8000-0000000000c1', 'Q4 revenue review'),
+      canvas('00000000-0000-7000-8000-0000000000c2', 'Acme follow-up'),
+    ]);
+    const all = screen.getByRole('region', { name: 'All canvases' });
+    const titles = (): string[] => within(all).getAllByRole('link').map((link) => link.textContent ?? '');
+    expect(titles()).toEqual([expect.stringContaining('Q4 revenue review'), expect.stringContaining('Acme follow-up')]);
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Sort Canvases' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Name' }));
+
+    expect(titles()).toEqual([expect.stringContaining('Acme follow-up'), expect.stringContaining('Q4 revenue review')]);
   });
 
   it('pins a Canvas dragged into Pinned', async () => {
