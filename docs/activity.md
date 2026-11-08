@@ -257,7 +257,12 @@ adds turns, so it owes one report at an unchanged cursor.
 Opening the run does not read the shared
 conversation, so a needs-input row stays unseen until the shared conversation
 is read or Mark all seen, the same as a mention in a run. Opening a row keeps the
-Activity section open. The rail badge is `unseenCount` ("3 unseen"). The dock
+Activity section open, and so does anything else the pane opens: only a rail
+pick leaves it. Entering the section opens its top row in the pane, the row
+drawn open and its conversation reporting the read as a click would (pushed
+from the rail, replacing the landing at a launch with Activity stored;
+[`desktop-shell.md`](desktop-shell.md) has the navigation rule); an empty
+feed opens nothing, and nothing the feed does afterwards moves the pane. The rail badge is `unseenCount` ("3 unseen"). The dock
 badge and the menu bar stay Needs attention only
 ([`menu-bar.md`](menu-bar.md)); Activity does not join them.
 
@@ -391,7 +396,7 @@ in it, through `recordParentNotice` when the conversation's reply batch runs.
 The row collapses: one unseen row per conversation per recipient, brought up
 to the newest reply. It clears as a mention does. Migration 150 widens the
 row's kind to the four kinds a hosted parent records about itself and adds
-`subject_id`. Client: rows for `new_message` ("<author> in <place>", opens the message via `canvasTurnRoute` or the conversation), `artifact_updated` ("<author> updated <artifact> in <Canvas>", opens `?artifact=`), `access_request` ("<name> asked to open <Canvas>", Approve and Deny under the link in one group through `AccessDecisionActions`, held once answered, named for the requester and the Canvas; settled, "You approved" or "<decider> approved/denied" takes their place at their height, seen) and `access_granted` ("<decider> let you into <Canvas>"), each with its own glyph. The sentence wraps to two lines with its tooltip holding all of it, and a row with no preview keeps its dot on the first line. `ActivityItem.accessRequest` gains an optional `decidedByUserId`, read from `canvas_access_requests.decided_by_user_id`, so the decider is told "You" rather than their own name; optional so an older client parses the page, and the name stays the display for everyone else.
+`subject_id`. Client: rows for `new_message` ("<author> in <place>", opens the message via `canvasTurnRoute` or the conversation), `artifact_updated` ("<author> updated <artifact> in <Canvas>", opens `?artifact=`), `access_request` ("<name> asked to open <Canvas>", Approve and Deny under the link in one group through `AccessDecisionActions`, held once answered, named for the requester and the Canvas; settled, "You approved" or "<decider> approved/denied" takes their place at their height, seen) and `access_granted` ("<decider> let you into <Canvas>"), each with its own glyph. The sentence wraps to two lines with its tooltip holding all of it, and a row with no preview keeps its dot on the first line. `ActivityItem.accessRequest` gains an optional `decidedByUserId`, read from `canvas_access_requests.decided_by_user_id`, so the decider is told "You" rather than their own name; optional so an older client parses the page, and the name stays the display for everyone else. Entering the section opens its top row in the pane, and only a rail pick leaves it: the owner, 2026-11-08, "When opening the first activity on top should be auto selected and that should be shown in the panels." and "Stay in activity sidebar." Opening the row reports its read as a click does, so a top row about a message becomes seen when the cursor passes it; that is the existing read rule and is wanted. The first list after entering decides, so a row arriving later never moves the pane.
 
 A new version in a Canvas the person pinned writes an `artifact_updated` row
 the same way, collapsing per Canvas, naming the artifact and clearing on a

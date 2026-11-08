@@ -688,16 +688,17 @@ describe('single-platform desktop identity routing', () => {
     await waitFor(() => expect(bridge.openSettings).toHaveBeenCalledWith('workspace'));
   });
 
-  it('opens the Canvases section from Activity\'s old link', async () => {
+  it('opens the Activity section from its link, leaving the pane to the section', async () => {
     useUiStore.setState({ sidebarSection: 'sidekicks', sidebarOpen: false });
     bridge.getSession.mockResolvedValueOnce({ ...enterpriseSession, expiresAt: futureExpiry });
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
+    const before = window.location.hash;
 
     await dispatchDeepLink('rallywithai://activity');
 
-    await waitFor(() => expect(window.location.hash).toBe('#/canvases'));
-    expect(useUiStore.getState().sidebarSection).toBe('canvases');
+    await waitFor(() => expect(useUiStore.getState().sidebarSection).toBe('activity'));
+    expect(window.location.hash).toBe(before);
   });
 
   it('does not drain a cold-start OAuth callback until runtime endpoints are loaded', async () => {
@@ -1404,11 +1405,8 @@ describe('single-platform desktop identity routing', () => {
     {
       name: 'Activity',
       url: 'rallywithai://workspace/enterprise/00000000-0000-7000-8000-000000000030/activity',
-      // Activity is gone; its old link lands on the Canvases home.
-      assertDestination: async () => {
-        await waitFor(() => expect(window.location.hash).toBe('#/canvases'));
-        expect(useUiStore.getState().sidebarSection).toBe('canvases');
-      },
+      // Opens the section, whose top row the sidebar then opens.
+      assertDestination: async () => waitFor(() => expect(useUiStore.getState().sidebarSection).toBe('activity')),
     },
     {
       name: 'Sidekick',
@@ -1442,6 +1440,7 @@ describe('single-platform desktop identity routing', () => {
         role: 'member',
       },
     });
+    useUiStore.setState({ sidebarSection: 'canvases' });
     renderProvider();
     expect(await screen.findByText('global:signed-out')).toBeVisible();
 
@@ -1549,10 +1548,11 @@ describe('single-platform desktop identity routing', () => {
     renderProvider();
     expect(await screen.findByText('enterprise:European Research')).toBeVisible();
 
+    useUiStore.setState({ sidebarSection: 'canvases' });
     await dispatchDeepLink('rallywithai://settings/connections');
     await dispatchDeepLink('rallywithai://activity');
 
-    await waitFor(() => expect(window.location.hash).toBe('#/canvases'));
+    await waitFor(() => expect(useUiStore.getState().sidebarSection).toBe('activity'));
   });
 
   it('does not apply a connector result when its organization cannot be activated', async () => {

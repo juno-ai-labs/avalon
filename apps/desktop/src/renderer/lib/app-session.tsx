@@ -1073,16 +1073,16 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       if (intent.kind === 'activity') {
-        // Activity is gone (2026-11 cutover); what it listed is the Canvases
-        // section's unread dots, so a link that names it lands there.
-        const openCanvases = (): void => {
+        // A link that names Activity opens the section; entering it opens its
+        // top row in the pane (`navigation-sidebar.tsx`), and one already in
+        // Activity leaves the pane where it is.
+        const openActivity = (): void => {
           setDeepLinkError(null);
           markSurfaceEntrypoint(navigation.entrypoint);
-          useUiStore.getState().setSidebarSection('canvases');
-          navigateAppRoute('/canvases');
+          useUiStore.getState().setSidebarSection('activity');
         };
-        if (intent.target) await runInDeepLinkWorkspace(intent.target, openCanvases);
-        else if (requireActiveWorkspace('Sign in before opening Rally.')) openCanvases();
+        if (intent.target) await runInDeepLinkWorkspace(intent.target, openActivity);
+        else if (requireActiveWorkspace('Sign in before opening Rally.')) openActivity();
         return;
       }
       if (intent.kind === 'new-automation') {

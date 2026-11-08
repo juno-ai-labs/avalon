@@ -7,13 +7,14 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { canvasNeedsAttention, sidekickNeedsAttention } from '../../common/sidebar-attention';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { useCreateCanvas } from '../lib/canvases';
+import { isRestoredRoute } from '../lib/landing';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace } from '../lib/types';
 import { useUiStore, type SidebarSection } from '../lib/ui-store';
 import { useCanvasList } from '../lib/canvases';
 import { useDockBadge } from '../lib/dock-badge';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
-import { ActivitySection, useActivityList } from './activity-sidebar-section';
+import { ActivitySection, activityRoute, useActivityList } from './activity-sidebar-section';
 import { CanvasesSection } from './canvas-sidebar-section';
 import { ErrorNotice, IconButton } from './primitives';
 import { RailItem } from './rail-item';
@@ -90,7 +91,7 @@ export function NavigationSidebar({
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
   const menuToggle = useRef<HTMLButtonElement>(null);
-  const { pathname } = useLocation();
+  const { pathname, search, state: routeState } = useLocation();
   // The phone sheet. Escape closes it as it would any menu and hands focus
   // back to the button (the app shell then moves it on to a pane header's
   // menu mark, when that is what opened the sheet); widening past the phone
@@ -120,14 +121,15 @@ export function NavigationSidebar({
   // A shut sheet's bar is the top bar of a screen without a pane header, so it
   // names that screen's section: closing the sheet on a list the person only
   // looked at returns it to the section the route belongs to.
-  // Activity is the exception it is everywhere: opening one of its rows keeps
-  // it open, so a close that came with a navigation leaves it be.
+  // Activity is the exception it is everywhere: only a rail pick leaves it
+  // (the owner, 2026-11-08: "Stay in activity sidebar."), so closing the
+  // sheet over it, with or without a navigation, leaves it be.
   const sheetOpenedAt = useRef<string | null>(sidebarOpen ? pathname : null);
   useEffect(() => {
     const openedAt = sheetOpenedAt.current;
     sheetOpenedAt.current = sidebarOpen ? openedAt ?? pathname : null;
     if (sidebarOpen || openedAt === null || window.innerWidth > PHONE_LAYOUT_MAX_WIDTH) return;
-    if (openedAt !== pathname && useUiStore.getState().sidebarSection === 'activity') return;
+    if (useUiStore.getState().sidebarSection === 'activity') return;
     const owner = sectionForPath(pathname);
     if (owner) setSection(owner);
   }, [pathname, setSection, sidebarOpen]);
@@ -154,8 +156,15 @@ export function NavigationSidebar({
   // effect, which StrictMode runs twice.
   const landedOn = useRef<string | null>(null);
   const navigated = useRef(false);
+  // Whether the landing is somewhere Activity's top row may replace: a
+  // section home, or the route this device restored. A link the window was
+  // opened onto keeps its Canvas or Sidekick.
+  const landedOnDefault = useRef(false);
   if (landedOn.current === null) {
-    if (sectionForPath(pathname)) landedOn.current = pathname;
+    if (sectionForPath(pathname)) {
+      landedOn.current = pathname;
+      landedOnDefault.current = !routeNamesItem(pathname) || isRestoredRoute(routeState);
+    }
   } else if (pathname !== landedOn.current) navigated.current = true;
   useEffect(() => {
     const opened = sectionForPath(pathname);
@@ -182,6 +191,38 @@ export function NavigationSidebar({
   const [createCanvasError, setCreateCanvasError] = useState<Error | null>(null);
   const navigate = useNavigate();
   const workspaceSocket = useOptionalWorkspaceSocket();
+  // Entering Activity opens its top row, the way a mail client opens the
+  // first message of the folder it opens: the rail's button pushes, so Back
+  // returns to what was open, and a launch with Activity stored replaces the
+  // landing, so Back does not return to the Canvases home. The first list
+  // frame after entering decides; an empty one opens nothing, and nothing
+  // after it (rows arriving, Mark all seen, a click) moves the pane until the
+  // section is left and entered again. A launch waits for the landing and
+  // gives way to a link the window opened onto and to any navigation since
+  // the landing.
+  const activity = useActivityList();
+  const openTopRow = useRef<'push' | 'replace' | null>(section === 'activity' ? 'replace' : null);
+  const enteredFrom = useRef(section);
+  if (enteredFrom.current !== section) {
+    openTopRow.current = section === 'activity' ? 'push' : null;
+    enteredFrom.current = section;
+  }
+  useEffect(() => {
+    const mode = openTopRow.current;
+    if (mode === null || section !== 'activity' || activity === undefined) return;
+    if (mode === 'replace' && landedOn.current === null) return;
+    openTopRow.current = null;
+    const top = activity.items[0];
+    if (!top || (mode === 'replace' && (navigated.current || !landedOnDefault.current))) return;
+    const target = activityRoute(top);
+    if (target === `${pathname}${search}`) return;
+    // In the phone sheet the list is what was asked for: it stays open over
+    // the row it opened. Only a new pathname closes the sheet, so only one
+    // asks for it back.
+    const { sidebarOpen: sheetOpen, setSheetAfterNavigation } = useUiStore.getState();
+    if (sheetOpen && target.split('?')[0] !== pathname) setSheetAfterNavigation(true);
+    void navigate(target, { replace: mode === 'replace' });
+  }, [activity, navigate, pathname, search, section]);
   return <ResizableSidebar
     aria-label="Rally navigation"
     className={clsx('sidebar single-sidebar navigation-sidebar', sidebarOpen && 'is-mobile-open')}
