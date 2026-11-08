@@ -7,9 +7,12 @@ function readMessage(data) {
   try { return data ? data.json() : null; } catch { return null; }
 }
 
-// The payload carries the canonical Channel link; open it on this host, which
-// serves the same /app/... paths. Only the path and query are taken, set on
-// this origin, so no link (not even a path starting "//") leaves the host.
+// The payload carries the canonical Canvas or Sidekick link; open it on this
+// host, which serves the same /app/... paths. Only the path and query are
+// taken, set on this origin, so no link (not even a path starting "//")
+// leaves the host. The query is a mention's or a reply's message
+// (`?turn=<turn>&sequence=<n>`), which the shell turns into the Canvas route
+// that scrolls to it (`shellLocation` in src/session.ts).
 function localUrl(canonical) {
   const local = new URL(self.location.origin);
   try {
@@ -34,14 +37,17 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// The installed app's icon shows the push's count, as APNs sets the Mac and
-// iPhone badge. A browser without the Badging API, or a plain tab, skips it.
-// A focused Rally tab keeps its own count, as a Mac foreground alert leaves the
-// dock badge alone: the push may be for another Organization.
+// The installed app's icon shows the push's count, as APNs sets the Mac badge
+// while Rally is closed: the person's unseen Activity in the push's
+// Organization, after this notice was recorded. While any Rally tab is open
+// it owns the icon with its live count (the browser bridge's
+// `setDockBadgeCount`), so the push leaves it alone: the push may be for
+// another Organization, and the tab's own Activity update follows it. A
+// browser without the Badging API, or a plain tab, skips it.
 async function setBadge(count) {
   if (typeof count !== "number" || !("setAppBadge" in self.navigator)) return;
   const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-  if (windows.some((client) => client.focused)) return;
+  if (windows.some((client) => new URL(client.url).pathname.startsWith("/app/"))) return;
   try {
     await (count > 0 ? self.navigator.setAppBadge(count) : self.navigator.clearAppBadge());
   } catch {

@@ -917,9 +917,12 @@ export function OpeningState({ label }: { label: string }): React.JSX.Element {
   return <LoadingState label={label} orbSize={64} orbState="connecting" />;
 }
 
-/** What an activity count says to a screen reader, which hears it in place of the badge. */
+/**
+ * What an Organization's count says to a screen reader, which hears it in
+ * place of the badge: its unseen Activity (`readerAttentionCount`).
+ */
 export function activityCountLabel(count: number): string {
-  return `${count} conversation${count === 1 ? '' : 's'} with new activity`;
+  return `${count} new in Activity`;
 }
 
 /** An Organization's activity count, or nothing at zero; the row carries `activityCountLabel`. */

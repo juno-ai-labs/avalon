@@ -70,6 +70,7 @@ const bridge = vi.hoisted(() => ({
   declineInvitation: vi.fn(),
   exchangeDesktopTicket: vi.fn(),
   getOnboardingState: vi.fn(),
+  getWorkspaceAttention: vi.fn(),
   getAccountOnboarding: vi.fn(),
   updateAccountOnboarding: vi.fn(),
   getOrganizationNameSuggestion: vi.fn(),
