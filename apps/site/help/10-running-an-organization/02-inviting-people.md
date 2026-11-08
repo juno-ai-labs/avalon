@@ -37,7 +37,8 @@ link and pass it on yourself.
 ### Several at once
 
 For a handful of teammates, open the account menu (your avatar at the bottom
-of the rail) and choose **Add new member**. Type or paste addresses into
+of the rail) and choose **Add new member**. In the **Add new members** dialog,
+type or paste addresses into
 **Email addresses**, separated by spaces, commas or semicolons, and click
 **Invite 3 teammates** (the number counts the addresses). Everyone invited
 this way joins as a **Member**.
