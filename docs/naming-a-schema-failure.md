@@ -125,7 +125,7 @@ its own is a boundary that drifts.
 
 | Call site | Reports |
 | --- | --- |
-| `apps/api/src/durable-objects/agent-loop-do.ts` | Product RPC failures preserve schema field codes in the response and log, so demo preparation names a malformed participant field without including its rejected value |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | Product RPC failures preserve schema field codes in the response and log, so a caller across the hop names a malformed participant field without including its rejected value |
 | `apps/api/src/lib/rpc-input.ts` | `parseRpcInput` throws a message that survives an RPC hop |
 | `packages/connectors/src/observability.ts` | `connectorObservationErrorCode` names a provider-response mismatch |
 | `packages/connectors/src/observability.ts` | `healthCheck` logs a returned failure's own `reason_code`, never its `message` |
@@ -138,7 +138,6 @@ its own is a boundary that drifts.
 | `apps/api/src/services/connection-service.ts` | the managed repair on the Test path answers with its sentence only for an installation that stopped — `failed` or `action_required` — so one still in flight, whose health check passed, is not reported as needing attention |
 | `apps/api/src/services/connector-installation-service.ts`, `connector-maintenance-service.ts` | a step that failed logs `connector_installation_step_failed` with `diagnosticErrorCode`; a maintenance target that stopped logs `connector_maintenance_target_failed`, and its `reason` is the receipt's own sentence when the receipt has one |
 | `apps/api/src/durable-objects/workspace-do.ts` | `connector_event_authority_terminal` carries the settler's `error` as `error_code` when it is code-shaped |
-| `apps/api/src/services/demo-preparation.ts` | a phase stopped by a stored record that no longer parses names the field as its operator-facing code, where it said `demo_internal_error` |
 | `apps/ace/src/regional-api.ts`, `index.ts`, `private-access.ts` | a regional answer the contract refuses names the field in the message beside `regional_api_contract_mismatch`; the fallback handler logs `error_code`; a refused download grant says which field |
 | `apps/api/src/services/integrations.ts` | `dynamic_connector_tools_unavailable` carries `error_code` beside the class name, so a tool catalog that drifted out of `ToolDefinitionSchema` names its path on both the creator-catalog and initial-activation surfaces; `connector_plugin_reauthorization_failed` carries a schema rejection's paths as `code`, the way it already carried a connector's own |
 | `apps/api/src/durable-objects/scheduled-alarm-report.ts` | `scheduledAlarmErrorCode` names the field a handler's own `ZodError` rejected, as `handler_error:ZodError:<paths>`, and passes any code-shaped message through |

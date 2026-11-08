@@ -52,7 +52,7 @@ replaced every earlier story (the 2026-09-09, 2026-09-10, 2026-09-15 and
 2026-09-23 entries in
 [`demo-workspaces.md`](../../demo-workspaces.md#changelog)). The people who
 want scenarios do not write TypeScript, which is why the
-[`/demo-scenario`](../../../.agents/skills/demo-scenario/SKILL.md) skill exists:
+`/demo-scenario` skill exists:
 it turns a plain description into pack steps and opens the PR for them. That
 skill had already fallen behind the code it edits by the time this PRD was
 written: its cast labels and its "renewal room" no longer matched the shipped

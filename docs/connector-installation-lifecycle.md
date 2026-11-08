@@ -347,13 +347,13 @@ connections in that region. Subsequent commands take the returned operation ID.
 Administrative installation mutations, including the repair requested by Test,
 record the acting administrator in workspace-scoped regional audit records. Operator apply,
 resume and cancel requests record the current authenticated operator, action and
-operation ID through the same regional structured logger used by Ace demo and
-retirement operations. These are request audit records, not proof that every
+operation ID through the same regional structured logger used by Ace's retirement
+operations. These are request audit records, not proof that every
 target succeeded; frozen operation outcomes remain authoritative. Neither audit
 path includes credentials or provider content.
 
-`/internal/connector-maintenance` uses `requireDemoOperator` and the `demos`
-role. Read-only engineering MCP tools gain no maintenance authority. Deployment
+`/internal/connector-maintenance` uses `requireAceOperator` and
+`ACE_OPERATOR_ROLE` (stored as `demos`). Read-only engineering MCP tools gain no maintenance authority. Deployment
 and actual operator execution remain outside this implementation task.
 
 Only the reviewed version present in the deployed provider declaration is accepted.

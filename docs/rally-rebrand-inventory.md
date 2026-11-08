@@ -405,6 +405,7 @@ agents; this is the record of what each step left behind.
 | Channels | A **Work stream** became a **Channel**; a **Substream** became a **Breakout**. | `workstream`, `substream`. |
 | Navigation redesign ([PRD](PRDs/2026-10-10_channels-threads-navigation/prd.md)) | A **Space** became a **Channel**, and a **Channel** became a **Thread**. | `spaces` held Channels; `channels` and `workstream` held Threads. |
 | Canvases and Sidekicks ([PRD](PRDs/2026-11-06_canvases-and-sidekicks/prd.md)) | A **Thread**, a **Channel** and a **Breakout** became nothing: they were deleted, not renamed. The product is two sections, **Canvases** and **Sidekicks**. | A Canvas id is a `workstream` id (`WorkstreamId`, `artifact_registry.workstream_id`, `artifact_state.workstream_id`); a Canvas's Chat is substream `"0"`; a Sidekick is an `automation`; the conversation Durable Object, renamed from `SubstreamAgent` to `AgentLoopDO`, keeps its `SUBSTREAM_AGENTS` binding and `workstream:<parent>:substream:<id>:loop` object names, since those are identities. Client names such as `WorkstreamDetail`, `useWorkstreamSocket` and `WorkstreamComposer` stay. The `spaces`, `channels` and Thread tables stay in storage. A few readers left over from plan step C-2 still query `channels` and `spaces` or keep triggers on them (`memory-digest-sync.ts`, `workspace-conversation-view.ts`, `workspace-do.ts` and `workspace-memory-facts-storage.ts`); the tables are dropped once those readers go. |
+| Demo removal (2026-11-08) | Demo preparation was deleted, not renamed. Ace's operator credential, which it named, outlived it and now guards workspace retirement, access recovery and connector maintenance. | The Worker secret `DEMO_OPERATORS_JSON` and the operator role value `demos` in its map (and in each region's Ace token configuration). Code calls them `requireAceOperator` and `ACE_OPERATOR_ROLE`. **Later rename:** the secret and the role are a coordinated rotation — set the new secret beside the old in every region, move Ace's tokens, then drop the old — so they are listed here rather than renamed in passing. |
 
 ## What this inventory does not settle
 
@@ -418,6 +419,22 @@ agents; this is the record of what each step left behind.
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-11-08 — Ace's operator credential keeps the demo feature's names
+
+**What changed:** A row records that `DEMO_OPERATORS_JSON` and the role value
+`demos` survive the demo feature's removal, behind the code-facing names
+`requireAceOperator` and `ACE_OPERATOR_ROLE`, and lists the secret and role as
+a later rename.
+
+**Why:** The owner's instruction of 2026-11-08 was to "remove the demo
+functionality completely"; the credential is not demo functionality, but its
+stored names are, and renaming a Worker secret and the role in every region's
+map is deploy-affecting, so the coordinator's decision was to keep the stored
+names and record the mismatch here under the storage-name rule.
+
+**Consequences:** A reader meeting `demos` on an operator route reads it as
+Ace's role, not as a live demo surface.
 
 ### 2026-11-07 — The product-name renames are recorded beside the Avalon ones
 

@@ -8,7 +8,7 @@
 > This is the first surface of Rally's shared impersonation platform.
 > Companion state: [`state.md`](state.md). Standing contract:
 > [the Rally implementation brief](https://github.com/juno-ai-labs/avalon/blob/main/docs/PRDs/2026-08-05_avalon-implementation-brief/prd.md).
-> Read alongside [demo workspaces](https://github.com/juno-ai-labs/avalon/blob/main/docs/demo-workspaces.md),
+> Read alongside [demo workspaces](https://github.com/juno-ai-labs/avalon/blob/main/docs/architecture.md) (retired 2026-11-08; its record is in the architecture changelog),
 > [security](https://github.com/juno-ai-labs/avalon/blob/main/docs/security.md), and
 > [the agent harness](https://github.com/juno-ai-labs/avalon/blob/main/docs/agent-harness.md).
 

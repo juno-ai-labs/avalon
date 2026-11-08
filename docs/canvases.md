@@ -326,9 +326,7 @@ Both carry the `canvases` waterline (`workspace_sidebar_list_state`), which the
 desktop compares in the same ledger as the Sidekick list
 (`applyVersionedSidebarList`).
 
-`WorkspaceDO.canvasListFor` (`CanvasService.list`) answers the same rows with
-nobody present, for a caller with no workspace socket, such as the demo
-readiness barrier. A row (`canvasSidebarRows`) is the summary plus: `unread`, the Chat's read
+A row (`canvasSidebarRows`) is the summary plus: `unread`, the Chat's read
 state as `sidekick_viewer_reads` projects it against the Chat's latest
 attention ordinal (a Canvas never opened is unread to anyone but its creator);
 `presentUserIds`, the people whose foreground socket has the Canvas open now;

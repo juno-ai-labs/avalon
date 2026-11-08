@@ -298,10 +298,10 @@ are canonical storage services, not authorization layers.
   operator UUID and role with timing-safe token comparison — `support` and
   `security` from `TELEMETRY_OPERATORS_JSON`, `demos` from the separate
   `DEMO_OPERATORS_JSON`; every operator router names the roles it admits and
-  the secret it reads, so the `demos` role reaches only the demo preparation
-  and workspace retirement routes Ace calls
-  ([`demo-workspaces.md`](demo-workspaces.md#preparing-a-demo)), and neither
-  telemetry role reaches those. Ace holds one `demos` token per region, each
+  the secret it reads, so the `demos` role (Ace's operator role; the stored
+  name is the retired demo feature's) reaches only the workspace retirement,
+  access and connector-maintenance routes Ace calls, and neither telemetry
+  role reaches those. Ace holds one `demos` token per region, each
   known to that region alone. Raw access and replay derive audit identity from
   that principal; neither endpoint accepts an operator ID or role in its body.
 
@@ -452,11 +452,8 @@ membership role. A connector ingress may assert a member's own authority by
 marking its auth `principal: "connector"` — set only after verifying the account
 link on the delivered message, re-checked against current membership by the
 conversation object, and refused by every socket-ticket issuer (see
-[`workstream-durable-object.md`](workstream-durable-object.md#invariants)). The
-demo seeder asserts a cast member's authority the same way under
-`principal: "demo_seed"`, verified and refused identically; only server code
-constructs either value ([`demo-workspaces.md`](demo-workspaces.md#security-and-trust-model)).
-The resource-grant callback similarly uses the server-only
+[`workstream-durable-object.md`](workstream-durable-object.md#invariants)); only
+server code constructs it. The resource-grant callback similarly uses the server-only
 `principal: "resource_authorization"` after verifying OAuth state, connection
 authority, and current membership; ordinary participants cannot supply its
 reserved continuation-message ID.
@@ -1192,6 +1189,25 @@ receive no application bridge. See
 
 ## Changelog
 
+### 2026-11-08 — The `demo_seed` principal and the demo routes are gone
+
+**What changed:** `principal: "demo_seed"` leaves the auth context and the
+conversation object's RPC schema, `/internal/demos` and its Workflow are
+deleted, and with them the copying of a template's Google credentials into a
+new Organization. Ace's operator credential keeps its stored names
+(`DEMO_OPERATORS_JSON`, role `demos`) behind code-facing `requireAceOperator`
+and `ACE_OPERATOR_ROLE`, and still reaches only the routes Ace calls.
+
+**Why:** The owner's instruction of 2026-11-08: "remove the demo
+functionality completely". Each was a server-constructed authority that only
+demo preparation used; leaving one with no producer is a door nothing guards
+the use of.
+
+**What a future change must respect:** renaming the secret or the role is a
+rotation in every region and in Ace together, so it is listed as a later
+rename in [`rally-rebrand-inventory.md`](rally-rebrand-inventory.md) rather
+than done in passing.
+
 ### 2026-11-07 — Only the main window may capture audio, and the iOS client's boundary is gone
 
 **What changed:** `allowsTrustedAudioCapture` admits the main window alone,
@@ -1635,7 +1651,7 @@ credential nobody holds. A distinct principal value rather than a reuse of
 `connector` so a seeded run's authorization record says who acted. Google's
 disconnect is local (`connection-service.ts`, `mayRevokeRemotely`), which is
 the one property that makes a shared grant safe to hold in several
-workspaces. [`demo-workspaces.md`](demo-workspaces.md#security-and-trust-model)
+workspaces. `demo-workspaces.md`
 owns both.
 
 ### 2026-09-08 — The `demos` role moves to its own secret
