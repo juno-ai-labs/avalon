@@ -173,6 +173,12 @@
   --av-sys-color-danger-edge: #f2c9c6;
   --av-sys-color-danger-on: #ffffff;
 
+  /* A count, a Needs input badge or an unread dot: the red design.html draws
+   * them in, with white digits, in both appearances. Apart from `danger`,
+   * which dark lightens until white over it fails contrast. */
+  --av-sys-color-badge-base: #c3453f;
+  --av-sys-color-badge-on: #ffffff;
+
   /* The two inks a palette fill can carry, absolute in both appearances. A
    * fill does not change with the theme, so the ink over it must not either —
    * the neutral ramp inverts and is the wrong source here. Which one a given
@@ -672,6 +678,9 @@
   --av-sys-color-danger-wash: #1d100c;
   --av-sys-color-danger-edge: #3a201a;
   --av-sys-color-danger-on: #150b08;
+
+  --av-sys-color-badge-base: #c3453f;
+  --av-sys-color-badge-on: #ffffff;
 
   --av-sys-color-palette-ink-light: #fcfcfc;
   --av-sys-color-palette-ink-dark: #141414;
