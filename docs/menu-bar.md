@@ -273,9 +273,10 @@ destination, so the hidden state is not sticky.
 - **The socket exists only where a menu can be built.** Otherwise it is a
   standing connection and workspace titles held in memory for nobody — on every
   non-macOS install, and with the preference off.
-- **The status item is torn down on `will-quit`, never `before-quit`.** A meeting
-  window can veto a quit, and a teardown that has already run by then leaves
-  Rally alive with no window and no menu bar presence.
+- **The status item is torn down on `will-quit`, never `before-quit`.** A
+  `before-quit` can still be held (the shutdown-telemetry barrier prevents the
+  first one and resumes the quit later), and a teardown that has already run by
+  then leaves Rally alive with no window and no menu bar presence.
 - **The login item is read from macOS, never from a field.** It can be removed,
   added, or approved in System Settings while Rally runs, and nothing announces
   it; `enabled()` therefore re-reads on every call.
