@@ -2,11 +2,11 @@ import type { CanvasSidebarRow } from '@rally/contracts';
 import { useMemo, type RefObject } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 
-import { canvasRoute, canvasRowDetail, othersPresent, RENAME_CANVAS_STATE, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { canvasNaming, canvasRoute, canvasRowDetail, othersPresent, RENAME_CANVAS_STATE, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { formatSidebarActivityTime } from '../lib/format';
 import { CanvasMark } from './canvas-mark';
-import { ErrorNotice } from './primitives';
+import { ErrorNotice, TitleSkeleton } from './primitives';
 import { PinnableRow, PinnedSection, pinnedPosition, SectionHeading, splitPinned, usePinWrite, useRowPinDrop, useSectionMotion } from './navigation-rows';
 import { RelativeTime } from './relative-time';
 import { SidebarSkeletonRows } from './sidebar-skeleton';
@@ -46,7 +46,7 @@ export function CanvasesSection({ scroll }: { scroll: RefObject<HTMLElement | nu
       position={position}
       tile={<CanvasMark kind={canvas.artifactKind} />}
       time={<RelativeTime className="navigation-row-time" format={formatSidebarActivityTime} value={canvas.updatedAt} />}
-      title={canvas.title}
+      title={canvasNaming(canvas) ? <TitleSkeleton /> : canvas.title}
       to={canvasRoute(canvas.id)}
       unread={canvas.unread}
     />;

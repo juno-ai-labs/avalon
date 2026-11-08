@@ -1,5 +1,5 @@
 import { asUserId } from '@rally/contracts';
-import type { CanvasDetail } from '@rally/contracts';
+import type { CanvasDetail, CanvasSidebarRow } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -76,12 +76,12 @@ function renderCanvas(entry: string | { pathname: string; state: unknown } = `/c
 }
 
 /** A row of the socket's Canvas list, as `workspace_canvas_list` carries it. */
-function listRow(title: string) {
+function listRow(title: string, overrides: Partial<CanvasSidebarRow> = {}): CanvasSidebarRow {
   return {
     id: CANVAS, title, createdByUserId: ME, createdAt: '2026-11-07T09:00:00.000Z', updatedAt: '2026-11-07T09:30:00.000Z',
     lastEditor: null, writerSidekickId: null, visibility: 'creator', artifactKind: null, unread: false,
-    presentUserIds: [], pinnedPosition: null, sharedWithMe: false,
-  } as never;
+    presentUserIds: [], pinnedPosition: null, sharedWithMe: false, ...overrides,
+  } as CanvasSidebarRow;
 }
 
 async function openMenu(title: string): Promise<void> {
@@ -264,6 +264,18 @@ describe('CanvasScreen', () => {
     expect(screen.getByRole('button', { name: 'Canvas menu: Renamed while closed' })).toBeInTheDocument();
     act(() => { applyVersionedSidebarList(client, 'canvases', 1, [listRow('Renamed again')]); });
     expect(await screen.findByRole('button', { name: 'Canvas menu: Renamed again' })).toBeInTheDocument();
+  });
+
+  it('shows Rally naming a Canvas made without a title, then the title its push carries', async () => {
+    getCanvas.mockResolvedValue(detail({ title: 'Untitled Canvas', titleStatus: 'naming' }));
+    const client = renderCanvas();
+    const pill = await screen.findByRole('button', { name: 'Canvas menu: Rally is choosing a name' });
+    expect(pill.querySelector('.title-skeleton')).not.toBeNull();
+    expect(screen.queryByText('Untitled Canvas')).toBeNull();
+    expect(document.title).toBe('Rally');
+    act(() => { applyVersionedSidebarList(client, 'canvases', 1, [listRow('Lisbon tram routes', { titleStatus: 'settled' })]); });
+    expect(await screen.findByRole('button', { name: 'Canvas menu: Lisbon tram routes' })).toBeInTheDocument();
+    await waitFor(() => expect(document.title).toBe('Lisbon tram routes · Rally'));
   });
 
   it('names the window after the open Canvas, and gives the name back on leaving', async () => {

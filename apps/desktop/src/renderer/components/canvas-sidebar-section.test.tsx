@@ -102,6 +102,13 @@ describe('CanvasesSection', () => {
     await waitFor(() => expect(opened).toHaveBeenLastCalledWith('/canvases/00000000-0000-7000-8000-0000000000c1', true));
   });
 
+  it('draws a placeholder for the name of a Canvas Rally is still naming', () => {
+    renderSection([canvas('00000000-0000-7000-8000-0000000000c1', 'Untitled Canvas', { titleStatus: 'naming' })]);
+    const row = screen.getByRole('link', { name: /Rally is choosing a name/ });
+    expect(row.querySelector('.title-skeleton')).not.toBeNull();
+    expect(screen.queryByText('Untitled Canvas')).toBeNull();
+  });
+
   it('draws the sidebar skeleton until the list arrives', () => {
     renderSection(null);
     expect(screen.getByRole('region', { name: 'Pinned Canvases' })).toHaveAttribute('aria-busy', 'true');

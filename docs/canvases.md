@@ -366,6 +366,12 @@ the rail's first section and `/canvases` the landing route
   mounts its Chat only once the detail answers, so a link to one that does not
   exist raises no conversation socket failure over that state; one in the list
   opens at once, beside the detail read.
+- **Naming.** While a row or the detail says `titleStatus: 'naming'` (a
+  Canvas made with no title, waiting for the title its opening message gives
+  it), the pill, the sidebar row and the home card draw the `TitleSkeleton`
+  placeholder ("Rally is choosing a name" to a screen reader) and the window
+  stays "Rally"; the title then arrives through the list push the pill
+  already follows. A missing `titleStatus` (an older server) is settled.
 - **Renaming** is `PATCH /canvases/:id`, edited in the pill itself
   (`TitlePillTitleInput`): Rename… in the pill's menu, or in a sidebar row's
   context menu, which opens the Canvas with route state
@@ -532,7 +538,9 @@ pushed source of a Canvas's title; the detail only mirrors it. Only a change
 of the row's title is written through, and only once the socket has applied
 the list (`sidebarListApplied`): the device cache seeds the same list
 asynchronously, without the waterline ledger, and its row may be older than
-a detail the server just answered. The client does not validate
+a detail the server just answered. A Canvas Rally is still naming draws the
+skeleton a Thread being named drew, rather than "Untitled Canvas". The client
+does not validate
 a title; the server's refusal is what the person reads. The newest artifact
 a Canvas opens on arrival opens beside its Chat: it opened expanded, through
 the same request a deliberate artifact link makes, and on a first visit the
