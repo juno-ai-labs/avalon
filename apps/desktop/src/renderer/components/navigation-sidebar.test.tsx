@@ -2,13 +2,14 @@ import { StrictMode } from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import type { CanvasSidebarRow } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
-import { MemoryRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { act, fireEvent, render, screen, waitFor, within, cleanup } from '@testing-library/react';
+import { Link, MemoryRouter, Navigate, Route, Routes, useLocation, useNavigationType, type InitialEntry } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CollaborationSessionProvider } from '../lib/collaboration-session';
 import { applyVersionedSidebarList, type ActivityList } from '../lib/sidebar-list-store';
 import type { AutomationSummary, Workspace } from '../lib/types';
+import { RESTORED_ROUTE } from '../lib/landing';
 import { useUiStore } from '../lib/ui-store';
 import { NavigationSidebar } from './navigation-sidebar';
 
@@ -47,11 +48,17 @@ function sidekick(id: string, name: string, overrides: Partial<AutomationSummary
   return { id, name, description: '', scope: 'workspace', status: 'active', updatedAt: '2026-11-07T09:00:00.000Z', ...overrides };
 }
 
+/** The pane: where the route is, how it got there, and a link inside it, as a Canvas's own links are. */
 function Location(): React.JSX.Element {
-  return <div data-testid="location">{useLocation().pathname}</div>;
+  const { pathname, search } = useLocation();
+  return <div>
+    <div data-navigation={useNavigationType()} data-testid="location">{pathname}</div>
+    <div data-testid="address">{`${pathname}${search}`}</div>
+    <Link to="/sidekicks/triage">Open a Sidekick from the pane</Link>
+  </div>;
 }
 
-function renderSidebar(person: Workspace = workspace, route = '/', activity?: ActivityList, strict = false, landing = false): void {
+function renderSidebar(person: Workspace = workspace, route: InitialEntry = '/', activity?: ActivityList, strict = false, landing = false): QueryClient {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (activity) applyVersionedSidebarList(client, 'activity', 1, activity);
   applyVersionedSidebarList(client, 'canvases', 1, [
@@ -82,6 +89,7 @@ function renderSidebar(person: Workspace = workspace, route = '/', activity?: Ac
   </Tooltip.Provider></QueryClientProvider>;
   // StrictMode runs effects twice, as the app's development build does.
   render(strict ? <StrictMode>{tree}</StrictMode> : tree);
+  return client;
 }
 
 beforeEach(() => {
@@ -330,6 +338,107 @@ describe('the Activity section', () => {
     expect(screen.getByTestId('location')).toHaveTextContent(`/canvases/${CANVAS}`);
     expect(useUiStore.getState().sidebarSection).toBe('activity');
     expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
+  });
+
+  describe('entering it opens its top row', () => {
+    const TOP = `/sidekicks/${SIDEKICK}?run=${RUN}`;
+    const MENTION = `/canvases/${CANVAS}?turn=00000000-0000-7000-8000-0000000000e1&sequence=42`;
+    const rail = (): HTMLElement => screen.getByRole('navigation', { name: 'Sections' });
+    const pick = (name: RegExp): void => { fireEvent.click(within(rail()).getByRole('button', { name })); };
+    const rows = (): HTMLElement[] => within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link');
+
+    it('from the rail, pushes the top row into the pane and draws that row open', () => {
+      renderSidebar(workspace, '/canvases', page);
+      pick(/Activity/);
+      expect(screen.getByTestId('address')).toHaveTextContent(TOP);
+      expect(screen.getByTestId('location')).toHaveAttribute('data-navigation', 'PUSH');
+      expect(rows().map((row) => row.getAttribute('aria-current'))).toEqual(['page', null, null]);
+      expect(useUiStore.getState().sidebarSection).toBe('activity');
+    });
+
+    it('at launch with Activity stored, replaces the landing with the top row once the list arrives, and not before', async () => {
+      useUiStore.getState().setSidebarSection('activity');
+      const client = renderSidebar(workspace, '/', undefined, true, true);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
+      act(() => applyVersionedSidebarList(client, 'activity', 1, page));
+      await waitFor(() => expect(screen.getByTestId('address')).toHaveTextContent(TOP));
+      expect(screen.getByTestId('location')).toHaveAttribute('data-navigation', 'REPLACE');
+    });
+
+    it('at launch, replaces the route this device restored, but keeps a Canvas a link opened the window onto', () => {
+      useUiStore.getState().setSidebarSection('activity');
+      renderSidebar(workspace, { pathname: `/canvases/${CANVAS}`, state: RESTORED_ROUTE }, page);
+      expect(screen.getByTestId('address')).toHaveTextContent(TOP);
+      cleanup();
+      renderSidebar(workspace, `/canvases/${CANVAS}`, page);
+      expect(screen.getByTestId('address')).toHaveTextContent(new RegExp(`^/canvases/${CANVAS}$`, 'u'));
+    });
+
+    it('opens nothing for an empty feed, nor for the first row to arrive after it', () => {
+      const client = renderSidebar(workspace, '/canvases', { unseenCount: 0, items: [] });
+      pick(/Activity/);
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
+      act(() => applyVersionedSidebarList(client, 'activity', 2, page));
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
+    });
+
+    it('does not move the pane for a row arriving on top, or for Mark all seen, while Activity stays open', () => {
+      const client = renderSidebar(workspace, '/canvases', page);
+      pick(/Activity/);
+      fireEvent.click(rows()[1]!);
+      expect(screen.getByTestId('address')).toHaveTextContent(MENTION);
+      act(() => applyVersionedSidebarList(client, 'activity', 2, { unseenCount: 3, items: [
+        { ...page.items[1]!, id: 'a0', messageId: '00000000-0000-7000-8000-0000000000e9', messageSequence: 50, createdAt: '2026-11-08T10:00:00.000Z' },
+        ...page.items,
+      ] }));
+      fireEvent.click(screen.getByRole('button', { name: 'Mark all seen' }));
+      expect(screen.getByTestId('address')).toHaveTextContent(MENTION);
+    });
+
+    it('opens the top row again when Activity is left for another section and picked again', () => {
+      renderSidebar(workspace, '/canvases', page);
+      pick(/Activity/);
+      fireEvent.click(rows()[1]!);
+      pick(/Canvases/);
+      expect(screen.getByTestId('address')).toHaveTextContent(MENTION);
+      pick(/Activity/);
+      expect(screen.getByTestId('address')).toHaveTextContent(TOP);
+    });
+  });
+
+  describe('stays open until another section is picked', () => {
+    it('when one of its rows opens a Canvas', () => {
+      useUiStore.getState().setSidebarSection('activity');
+      renderSidebar(workspace, '/', page);
+      fireEvent.click(within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link')[1]!);
+      expect(screen.getByTestId('location')).toHaveTextContent(`/canvases/${CANVAS}`);
+      expect(useUiStore.getState().sidebarSection).toBe('activity');
+    });
+
+    it('when the pane opens a Sidekick of its own accord', () => {
+      useUiStore.getState().setSidebarSection('activity');
+      renderSidebar(workspace, `/canvases/${CANVAS}`, page);
+      fireEvent.click(screen.getByRole('link', { name: 'Open a Sidekick from the pane' }));
+      expect(screen.getByTestId('location')).toHaveTextContent('/sidekicks/triage');
+      expect(useUiStore.getState().sidebarSection).toBe('activity');
+      expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
+    });
+
+    it('at phone width, when its sheet is closed without opening anything', () => {
+      const width = window.innerWidth;
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+      try {
+        renderSidebar(workspace, '/canvases', { unseenCount: 0, items: [] });
+        fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+        fireEvent.click(within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Activity/ }));
+
+        fireEvent.keyDown(window, { key: 'Escape' });
+
+        expect(useUiStore.getState().sidebarSection).toBe('activity');
+      } finally {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      }
+    });
   });
 
   it('marks the rows about what the route has open, not the row last clicked', () => {

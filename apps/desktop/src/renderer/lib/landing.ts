@@ -30,7 +30,7 @@ export function restorableRoute(saved: string | null): string | null {
  */
 export const RESTORED_ROUTE = { restoredRoute: true } as const;
 
-function isRestoredRoute(state: unknown): boolean {
+export function isRestoredRoute(state: unknown): boolean {
   return typeof state === 'object' && state !== null && 'restoredRoute' in state && state.restoredRoute === true;
 }
 

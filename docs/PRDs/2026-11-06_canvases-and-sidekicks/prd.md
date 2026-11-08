@@ -398,6 +398,33 @@ text.
 **Changes:** `HostedCanvas.nameFromOpening`, `canvas-naming.ts`, WorkspaceDO
 migration 149 (`docs/canvases.md`).
 
+### 2026-11-08 — Opening Activity opens its top row, and only a rail pick leaves Activity
+
+**Decided:** Entering the Activity section selects its top row and opens that
+row's target in the pane, the way a mail client opens the first message of the
+folder it opens. Entering is the rail's Activity button (a push, so Back
+returns to what was open), a launch with Activity stored (a replace of the
+landing, so Back does not return to the Canvases home; a link the window was
+opened onto keeps its Canvas), and a link that names Activity. The first list
+after entering decides: an empty feed opens nothing, and rows arriving, Mark
+all seen or a click on another row never move the pane until Activity is left
+and entered again. Once in Activity, the rail and the list stay there whatever
+the pane opens, a row, an in-pane link, a push or a deep link; the person
+leaves only by picking another section. The product owner, 2026-11-08: "When
+opening the first activity on top should be auto selected and that should be
+shown in the panels." and "Stay in activity sidebar."
+
+**Why:** The owner's call. Before, entering Activity left the pane on the
+route it had, so the person saw a list beside whatever was open before and
+had to click to start reading; and two paths still moved the rail off
+Activity without a pick (closing the phone sheet without a navigation, and
+the Activity link, which still opened the Canvases section from when Activity
+was gone).
+
+**Changes:** Replaces "the pane kept its route" on entering Activity.
+`navigation-sidebar.tsx`, the Activity deep link in `app-session.tsx`;
+docs/desktop-shell.md, docs/activity.md.
+
 ### 2026-11-07 — Anyone a Canvas admits can retitle it
 
 **Decided:** Retitling a Canvas is open to anyone the Canvas admits, as

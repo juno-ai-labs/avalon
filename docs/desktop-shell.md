@@ -91,10 +91,26 @@ It holds two columns:
   (`rally.sidebar-section`, default `canvases`); a value stored before the
   cutover (`channels`, `threads`, `pinned`, `artifacts`) reads as the default,
   and `activity` opens Activity again. Arriving at a Canvas or a Sidekick moves
-  the rail to its section (Activity excepted). The window's landing is its
+  the rail to its section (Activity excepted: once open, only a rail pick
+  leaves it, whatever the pane opens and however, a row, a link inside the
+  pane, a push or a deep link, and closing the phone sheet over it keeps it).
+  The window's landing is its
   first route that belongs to a section, so a launch's redirect from `/` to
   `/canvases` is the landing and not a navigation; landing on a section home
   keeps the stored choice, and only a later navigation to a home moves it.
+  Entering Activity opens its top row (the first the list draws) in the pane,
+  as a mail client opens a folder's first message, and draws that row open:
+  the rail's button pushes the row's route, so Back returns to what was open;
+  a launch with Activity stored replaces the landing with it once the first
+  list arrives, so Back does not return to the Canvases home, unless the
+  window was opened onto a link (a landing on a Canvas or Sidekick without the
+  restored-route state) or something navigated first; a link that names
+  Activity (`rallywithai://activity`) selects the section, which then opens
+  the row the same way. The first list after entering decides: an empty feed
+  opens nothing, and rows arriving, Mark all seen and other clicks never move
+  the pane until the section is left and entered again. In the phone sheet the
+  sheet stays open over the row it opened (`sheetAfterNavigation`), since the
+  list is what was picked.
   Each section carries a red count (`RailBadge`, 15px in the danger red
   design.html draws; nothing at zero, `99+` past two digits), which the
   button's accessible name reads after the section ("Canvases, 10 unread"),
@@ -183,7 +199,9 @@ The removed surfaces' routes, `/channels/*`, `/spaces/*`, `/workstreams/*`,
 `/projects/*`, `/activity` and `/artifacts`, redirect to `/canvases`, so a
 stored route, a bookmark or an old link opens the Canvases home rather than a
 dead screen. Activity has no route of its own: it is a rail section, and a deep
-link that names it opens the Canvases section.
+link that names it opens that section, which opens its top row in the pane;
+a stored route on a launch with Activity stored gives way to the top row the
+same way (the rail section above).
 `/opening` is inert: a deep link that changes organization parks the pane there
 while its destination resolves. Settings opens in its own window on the desktop
 and as `/settings` in the browser.
@@ -507,6 +525,22 @@ platforms get it.
 Opening one of its rows keeps Activity open, unlike every other route, which
 moves the rail to the section the route belongs to: Activity is a list of
 things to go to, and switching away on each click would hide the next one.
+
+Entering Activity opens its top row in the pane, and only a rail pick leaves
+it. The owner, 2026-11-08: "When opening the first activity on top should be
+auto selected and that should be shown in the panels." and "Stay in activity
+sidebar." The rail's button pushes the row's route and a launch replaces the
+landing, so Back returns to what the person had open and never to the
+Canvases home a launch only passed through; a launch onto a link keeps the
+link, which is what was asked for. The first list after entering decides, so
+a row arriving on top never pulls the pane away from what the person is
+reading. An audit of what moved the rail off Activity found two paths: closing
+the phone sheet without a navigation returned it to the route's section, and
+the `activity` deep link still set the Canvases section from when Activity was
+gone; both now keep or select Activity. Considered and rejected: re-opening
+the top row whenever it changes (it would move the pane under the reader), and
+waiting for the first non-empty list (the first row to arrive in an empty feed
+would then move a pane the person had already chosen).
 
 **Considered and rejected:** Adding Activity to the dock badge. The dock badge
 and the menu bar count Needs attention, by the menu bar's 2026-11-07 decision;
