@@ -15,7 +15,7 @@ const row = (notify: Record<string, unknown>, push: Record<string, unknown> = {}
 describe("member notification kinds", () => {
   it("defaults the offered kinds, access requests among them, and leaves merges out", () => {
     expect(storedMemberPreferences(row({})).notify).toEqual({
-      mentions: ["push", "slack_agent_dm"], newMessages: ["push"], added: ["push", "slack_agent_dm"], runFinished: ["push"],
+      mentions: ["push"], newMessages: ["push"], added: ["push"], runFinished: ["push"],
       artifactUpdates: ["push"], accessRequests: ["push"], newThreads: ["push"], newBreakouts: ["push"],
     });
   });
@@ -33,5 +33,13 @@ describe("member notification kinds", () => {
     expect(notificationAllows(notify, "access_granted", "push")).toBe(true);
     expect(notificationAllows(notify, "new_message", "push")).toBe(true);
     expect(notificationAllows(notify, "artifact_updated", "push")).toBe(true);
+    expect(notificationAllows(notify, "access_denied", "push")).toBe(false);
+  });
+
+  it("reads a stored Slack choice as absent: it is neither in the record nor consulted", () => {
+    const notify = storedMemberPreferences(row({ mentions: ["slack_agent_dm", "email"], added: ["slack_agent_dm"] })).notify;
+    expect(notify).toMatchObject({ mentions: ["email"], added: [] });
+    expect(notificationAllows(notify, "mention", "email")).toBe(true);
+    expect(notificationAllows(notify, "participant_added", "push")).toBe(false);
   });
 });

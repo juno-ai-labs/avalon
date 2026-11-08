@@ -234,7 +234,8 @@ as waiting again, with live Approve and Deny, so each request is its own row
 and only the waiting one is unique. A socket command for the row's actions:
 the decision route already answers with a named code, and the Activity push
 follows from the write. Telling the requester of a denial: the old rule kept
-it quiet, and a later request is allowed. A cap on requests per person: a
+it quiet, and a later request is allowed (the owner reversed this the same
+day; see "A denial tells the requester" above). A cap on requests per person: a
 number the team has not set.
 
 **What a future change must respect:** every way a requester gets in settles

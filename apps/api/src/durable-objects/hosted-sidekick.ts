@@ -4,7 +4,8 @@ import { sidekickRowRunState } from "./sidekick-directory-sql";
 import { waitingRunActivityRecipients } from "./workspace-activity";
 import { recordSidekickRunNotices } from "./workspace-notification-intent-storage";
 import { SidekickRunNotificationSchema, type SidekickRunNotification } from "@rally/contracts/push-notifications";
-import { enqueuePushDelivery } from "../services/push-delivery-service";
+import { enqueueNotice } from "../services/push-delivery-service";
+import { chosenChannels } from "./member-preferences";
 import { workspaceRegionalDatabase } from "../services/workspace-runtime-database";
 import { conversationObjectName } from "./names";
 import {
@@ -1860,10 +1861,8 @@ export class HostedSidekick extends HostedConversation<HostedSidekickHost> {
       runId: notice.runId, reply: notice.reply,
     }, Date.now(), (userId) => this.host.noteActivityChanged(userId));
     for (const intent of intents) {
-      await enqueuePushDelivery(this.env, {
-        region: this.env.AVALON_REGION, workspaceId: row.workspace_id,
-        recipientUserId: intent.recipientUserId, intentId: intent.intentId,
-      });
+      await enqueueNotice(this.env, { workspaceId: row.workspace_id, recipientUserId: intent.recipientUserId, intentId: intent.intentId },
+        chosenChannels(this.host.storage.sql, intent.recipientUserId, notice.kind));
     }
     logInfo(this.env, "sidekick_run_notice_recorded", { ...this.logFields(), run_id: notice.runId, kind: notice.kind,
       recipients: intents.length });

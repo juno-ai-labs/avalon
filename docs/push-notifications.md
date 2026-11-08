@@ -9,16 +9,19 @@ Canvas's Chat or a Sidekick's conversation is recorded by its parent
 ([A mention or an add](hosted-conversation-parents.md#a-mention-or-an-add)),
 and a run notice by the Sidekick. Each device registers with one transport and
 is sent only that transport's payload. Push is enabled for everyone from launch through
-`push-notifications-enabled`. A mention and an add also go by email or Slack
-when the person chose that for them
-([What each person chooses](#what-each-person-chooses)); nothing falls back
+`push-notifications-enabled`. Every kind also goes by email when the person
+chose that for it ([Sinks](#sinks),
+[What each person chooses](#what-each-person-chooses)); nothing falls back
 from one channel to another.
 
 ## Where the code lives
 
 - `apps/api/src/services/push-device-service.ts`: regional D1 device/session registry.
 - `apps/api/src/services/push/`: provider authentication and payload rendering; `apns-transport.ts` for Apple, `web-push-transport.ts` for browsers.
-- `apps/api/src/queues/push-delivery-consumer.ts`: intent read, existing access check, send by transport, receipt; a retired Activity row message is acknowledged.
+- `apps/api/src/services/notification-notice.ts`: `renderNotice`, the one rendering of every kind into a channel-neutral `Notice`, with the access check.
+- `apps/api/src/queues/push-delivery-consumer.ts`: the queue consumer: render the notice, check the choice for its channel, hand it to the push sink (send by transport, receipt) or the email sink; a retired Activity row message is acknowledged.
+- `apps/api/src/services/notice-email.ts`: the email sink, one template for every kind, sent through `sendResendEmail`.
+- `apps/api/src/services/push-delivery-service.ts`: `enqueueNotice`, which queues one message per sink a producer's recipient chose.
 - `packages/contracts/src/push-notifications.ts`: the registration contract and the Web Push service host allowlist (`isWebPushServiceUrl`).
 - `apps/desktop/src/renderer/lib/web-push.ts` and `apps/browser/public/sw.js`: browser subscription and the service worker that shows the notification.
 - `apps/desktop/src/main/push-notifications.ts` and `apps/desktop/native/push-notifications/`: Mac registration and native response/permission callbacks.
@@ -282,14 +285,49 @@ no title (they were refused it), linking to the Canvas, and sent although
 they cannot list it. All three are recorded with their Activity rows by
 [`canvas-access-requests.md`](canvas-access-requests.md)'s settlement.
 
+## Sinks
+
+Every notification is rendered once into a **notice** (`Notice`, by
+`renderNotice`): its kind, title, plain-text body, who acted, the canonical
+link it opens, the Organization, and for a mention or an add the
+conversation's reply-to address. The rendering is where each kind's words
+live and where the recipient is checked (still a member, still able to open
+what it is about, the link still exists); nothing downstream knows kinds.
+
+A **sink** takes a notice and adds only its transport's form. There are two:
+
+- **Push** (`sendPushNotice`): the APNs and Web Push payloads, the badge, the
+  collapse id, one send per live device with a receipt.
+- **Email** (`sendNoticeEmail`): one template for all kinds. Its subject is
+  the notice's title, so each kind has its own subject line ("Avery mentioned
+  you in Launch plan", "Deploy watcher needs your input", "Ada declined your
+  request to open a Canvas"); its body greets the person, quotes the notice's
+  text (cut at 320 characters, the mention email's number), has one Open in
+  Rally button to the link, and names the Settings row that sent it. It goes
+  through `sendResendEmail` (production only), keyed on
+  `rally-notice/<organization>/<intent>`, so a retried message is one email.
+
+A producer that records an intent calls `enqueueNotice` with the channels its
+recipient chose for the kind (`chosenChannels`, read from the object's own
+`member_preferences` row): one queue message per sink, `channel` absent for
+push and `email` for email, each pointing at the intent. The mention and add
+processor does the same after its claim, keeping the intent's payload for
+the sinks to read. The consumer renders the message's intent and checks
+`notificationAllows` for its kind and channel again before handing it on, so
+a choice changed after queueing still holds. A new sink is a channel in
+`NotificationChannelSchema`, a function that takes a `Notice`, and one branch
+in the consumer.
+
+Slack is not a sink. The Slack DM sender for mentions and adds was deleted;
+a stored `slack_agent_dm` choice reads as no choice.
+
 ## What each person chooses
 
 Settings → Notifications → **Notify me about** holds, for each kind it offers
 — exactly the kinds a producer records: Mentions, New messages, Being added,
 Sidekick runs, Pinned Canvas updates, Access requests
-(`OFFERED_NOTIFICATION_KINDS`) — the channels it goes by: `push`, `email`, and
-any connector surface the person can be reached on (`userDelivery`, such as
-Slack). `newThreads`, `newBreakouts` and `merges` are accepted where stored
+(`OFFERED_NOTIFICATION_KINDS`) — the channels it goes by: `push` and `email`,
+each a [sink](#sinks). `newThreads`, `newBreakouts` and `merges` are accepted where stored
 but are never offered or consulted. How
 they are stored and how a save merges them is
 [`member-preferences.md`](member-preferences.md). They apply to every device;
@@ -298,8 +336,8 @@ means that kind is not sent at all.
 
 `notificationAllows` in `member-preferences.ts` is the one rule. The push
 consumer checks it before any push, so a choice changed after a message was
-queued still holds. The mention and add processor reads the same choice and
-sends only those channels.
+queued still holds, and for email the same way. Producers read the same choice
+to queue only the sinks chosen.
 
 The row of buttons in Settings is `ChannelPicker`: a button per channel while
 they all fit beside the row's words, one menu of checkboxes when they do not.
@@ -484,12 +522,19 @@ author's own pin gets nothing, the other pinner one intent and a row naming
 the artifact, the push "Avery updated Launch report in Launch" opening onto
 the artifact, Rally's next version moving that row, a read of the Chat
 clearing it, and the version after that a new row.
-`canvas-access-requests.test.ts` covers a request's push to its decider and an
-approval's push to the requester.
+`canvas-access-requests.test.ts` covers a request's push to its decider, an
+approval's push to the requester and a denial's.
+`notice-email-sink.test.ts` covers the sinks on real workerd: with email chosen
+for every offered kind, the email sink is handed one notice per kind (mention,
+add, reply, pinned version, request, grant, denial, run finished, needs input)
+with its title, body, actor and link; a kind left on push sends no email and a
+stored `slack_agent_dm` reads as no choice; and the real sink sends one Resend
+request whose subject is the title and whose idempotency key is the intent,
+with the template's literal text.
 `test/workspace-parent-notices-migration.test.ts` covers migration 150 over
-populated rows. `test/conversation-effect-service.test.ts` covers
-a mention whose conversation has no link: Slack and email log
-`conversation_not_linkable` with `parent_kind`, and the intent settles. The provider itself and macOS alert
+populated rows. `test/conversation-effect-service.test.ts` covers the
+mention processor queueing one message per chosen sink, the email one named,
+and keeping the payload for them. The provider itself and macOS alert
 presentation require a signed installed build.
 
 Local acceptance on 2026-09-14: lint/typecheck, scoped API and desktop tests,
@@ -501,6 +546,36 @@ checks, APNs disable handling and premature payload clearing. No deployment or
 signed-Mac APNs/universal-link acceptance is claimed.
 
 ## Changelog
+
+### 2026-11-08 — Every kind renders once into a notice, and push and email are its sinks
+
+**What changed:** `renderNotice` renders every kind into one channel-neutral
+`Notice`; the push sink and a new email sink each take it. Email now covers
+every offered kind through one template whose subject is the kind's title,
+queued per chosen sink by `enqueueNotice` from every producer and from the
+mention processor (which no longer sends email inline). The Slack DM sender
+for mentions and adds (`slack-notification-service.ts`) and the two
+per-kind email services (`mention-email-service.ts`,
+`participant-email-service.ts`) were deleted with their tests;
+`slack_agent_dm` is no longer a notification channel.
+
+**Why:** The owner's answer of 2026-11-08: "Remove Slack but email should
+support all notifications (this should be generic pathway, it's easy to hook
+notification sinks into)". Before it, email and Slack went out for mentions
+and adds alone, inline in the processor, while Settings offered all three
+channels for every kind.
+
+**Considered and rejected:** One queue message fanning out to every sink: a
+push retry would resend the email, or every sink would need its own receipt;
+one message per sink retries each on its own, and Resend's idempotency key
+makes an email retry one email. Rendering per sink: each sink would carry its
+own copy of each kind's words. Skipping demo personas' `.invalid` addresses
+in the email sink: the demo personas are being removed this round.
+
+**What a future change must respect:** a kind's words live in `renderNotice`
+only; a sink never branches on kind except for its own transport's needs
+(push's collapse id). The consumer checks `notificationAllows` for the
+message's own channel.
 
 ### 2026-11-08 — Every intent writes an Activity row, and replies notify again
 

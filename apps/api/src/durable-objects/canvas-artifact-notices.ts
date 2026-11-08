@@ -4,7 +4,8 @@ import { truncateUtf16Safe } from "@rally/contracts/text";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import { logInfo } from "../observability/logger";
-import { enqueuePushDelivery } from "../services/push-delivery-service";
+import { enqueueNotice } from "../services/push-delivery-service";
+import { chosenChannels } from "./member-preferences";
 import type { NoteActivity } from "./workspace-activity";
 import type { ParentNotice } from "./workspace-notification-intent-protocol";
 import { recordParentNotice } from "./workspace-notification-intent-storage";
@@ -101,9 +102,8 @@ export async function tellCanvasPinners(host: CanvasArtifactNoticeHost, input: {
   })));
   for (const intent of recorded) {
     if (!intent.push) continue;
-    await enqueuePushDelivery(host.env, {
-      region: host.env.AVALON_REGION, workspaceId: input.workspaceId, recipientUserId: intent.recipientUserId, intentId: intent.intentId,
-    });
+    await enqueueNotice(host.env, { workspaceId: input.workspaceId, recipientUserId: intent.recipientUserId, intentId: intent.intentId },
+      chosenChannels(host.storage.sql, intent.recipientUserId, "artifact_updated"));
   }
   logInfo(host.env, "canvas_artifact_notice_recorded", { canvas_id: input.canvasId, resource_id: input.resourceId,
     version: version.version, recipients: recorded.length });

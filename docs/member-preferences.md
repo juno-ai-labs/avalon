@@ -6,8 +6,8 @@ follow the member across devices. Two kinds today:
 - **Show agent work** (Settings → Account → Agent), which decides whether the
   transcript shows the agent's thinking and its tool and plugin calls.
 - **Channels per kind** (Settings → Notifications → Notify me about), which
-  decide how each kind of Activity row reaches this person: push, email, or a
-  connector surface such as Slack. How they are enforced is
+  decide how each kind of Activity row reaches this person: push or email.
+  How they are enforced is
   [`push-notifications.md`](push-notifications.md#what-each-person-chooses).
   The kinds offered are exactly those a producer records
   (`OFFERED_NOTIFICATION_KINDS`): **Mentions** (`mentions`), **New messages**
@@ -29,7 +29,11 @@ migration. `MemberPreferencesSchema` in `@rally/contracts` is the shape, and
    `notify_json` (migration 107), holding only the kinds the member has set; a
    kind not named reads from the push switch in `push_json` (migration 106)
    someone may have turned off before channels existed, then from
-   `DEFAULT_NOTIFICATION_CHANNELS` (`storedMemberPreferences`). `push` in the
+   `DEFAULT_NOTIFICATION_CHANNELS` (`storedMemberPreferences`), which is push
+   alone for every kind. A channel this build does not know is dropped from a
+   stored list as it is read; `slack_agent_dm`, no longer a channel, reads that
+   way, so a stored Slack choice is read as absent and never consulted (and a
+   save naming it is dropped the same way). `push` in the
    record is derived from the channels, for clients older than them. A kind
    newer than the push switches (`merges`) has no switch: it reads from its
    default until set, and `NotificationChannelsSchema` defaults it so a client
@@ -95,7 +99,9 @@ display preference is a column in `member_preferences`, a field in
 is a value in `NotificationKindSchema` and `OFFERED_NOTIFICATION_KINDS`
 with a default in `DEFAULT_NOTIFICATION_CHANNELS` and the push kinds that
 read it in `NOTIFICATION_KIND_FOR_PUSH`; it needs no migration. A push kind
-with no entry there is allowed on no channel. A new channel needs no change here at all.
+with no entry there is allowed on no channel. A new channel is a value in
+`NotificationChannelSchema` and a sink
+([`push-notifications.md`](push-notifications.md#sinks)); nothing here changes.
 
 ## Failure modes and limits
 
@@ -113,6 +119,27 @@ the previous release's schema.
 migrations 106 and 107 over populated rows.
 
 ## Changelog
+
+### 2026-11-08 — Slack is no longer a notification channel
+
+**What changed:** `NotificationChannelSchema` is `push` and `email`. A stored
+`slack_agent_dm` is dropped as the list is read, so it reads as absent and is
+never consulted; the mention and add defaults are push alone (they were push
+and Slack). `chosenChannels` reads a person's choice for a kind from the
+object's own row, for a producer queueing its notice. `access_denied` reads
+**Access requests**.
+
+**Why:** The owner's answer of 2026-11-08: "Remove Slack but email should
+support all notifications". Dropping an unknown channel on read was already
+the stored list's rule, so no migration rewrites stored rows, and a desktop of
+the previous release, whose list is lenient too, parses the record.
+
+**Considered and rejected:** Defaulting email on for mentions and adds in
+Slack's place: it would start mailing everyone who never chose it; that is a
+product call left to the owner.
+
+**What a future change must respect:** a channel removed from the schema is
+read as absent, never as an error.
 
 ### 2026-11-08 — Settings offers only kinds a producer records, and Access requests joins them
 

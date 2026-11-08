@@ -86,7 +86,11 @@ not copied: `activityPage` reads it from `canvas_directory` or
 A row lists only while the recipient may open its parent: a row about a
 Canvas or Sidekick they cannot open is left out of the page and the count
 whole, not sent with its title withheld, because its preview, message id and
-sequence are the parent's content. A confirmed mention in a creator-only
+sequence are the parent's content. One kind is exempt: a declined request
+(`access_denied`) lists while its Canvas exists, though its requester cannot
+open it — the owner asked on 2026-11-08 to "inform the person [of] a
+denial", and the row names no content of the Canvas (no title, preview,
+message or sequence; only its id and who declined). A confirmed mention in a creator-only
 Canvas seats nobody and its push is skipped `recipient_not_listable`, yet its
 row is recorded; it stays stored and lists once the person is let in. The
 page, its access filter and the unseen count are one statement: the count is
@@ -290,7 +294,9 @@ badge and the menu bar stay Needs attention only
 - **A list goes to its person's sockets only.** It names Canvases and
   Sidekicks the person was told about. Guard: the mention case asserts the
   author's socket received no Activity push.
-- **A row lists only while the person may open the parent.** Otherwise a
+- **A row lists only while the person may open the parent**, except a
+  declined request (`access_denied`), which carries nothing of the Canvas but
+  its id. Otherwise a
   mention in a Canvas they were never let into, or one they were removed
   from, would send them its preview and ids. Guard: the creator-only Canvas
   case asserts the subscribe answer holds no row and counts nothing, then
@@ -391,6 +397,29 @@ The renderer's `workspace-socket.test.tsx` covers the page and the push, and
 
 ## Changelog
 
+### 2026-11-08 — A declined request reaches its requester
+
+**What changed:** A new kind, `access_denied`, is written for the requester
+when a decider denies their request to open a Canvas. It is the one row the
+access filter lists although its person cannot open the parent: it lists
+while the Canvas exists, with `parentTitle` always null, no preview, and
+`accessRequest` naming who declined. It stores no ordinal, so no read clears
+it; it is seen once the requester asks again (a later request of theirs on
+that Canvas) or on Mark all seen. Migration 152 admits the kind
+(`docs/canvas-access-requests.md`).
+
+**Why:** The owner's answer of 2026-11-08: "inform the person [of] a
+denial". The row is the answer to their own request and names nothing of the
+Canvas they were refused, so listing it shows them no content.
+
+**Considered and rejected:** Clearing it on a read of the Chat: the requester
+cannot read it. Gating the new enum value by client contract: the Activity
+kinds this round's predecessors added were not gated either, and no released
+desktop parses Activity yet.
+
+**What a future change must respect:** the exemption is this kind alone, and
+its row must keep carrying nothing of the Canvas but its id.
+
 ### 2026-11-08 — A needs-input row opens the run that asked, clears when it is answered, rows take the shared layout, and replies return
 
 **What changed (replies):** A person's reply in a Canvas's Chat or a
@@ -487,6 +516,8 @@ for a read that came before it.
 
 **What a future change must respect:** the access filter and the page are one
 statement, and a read is dated by when the person read, never by delivery.
+(Later the same day the filter gained one exemption, `access_denied`; see
+the entry above.)
 
 ### 2026-11-08 — Activity returns as a per-person feed of the four push events
 
