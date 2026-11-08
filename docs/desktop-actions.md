@@ -4,25 +4,33 @@ A desktop action is work an agent loop on the API asks of the person's own
 Rally desktop: run script in a page of its browser, read the page's outline,
 look at it, give it input, load a file through it. The loop never holds a
 `WebContents` and never reaches the desktop any other way; it records a typed
-request, the conversation's room publishes it on the socket the desktop already
-holds, and the desktop answers it. The conversation import agent
-([session import](session-import.md)) is the first user. The transport — the
-durable record, the socket frames, the waiter — knows nothing about imports;
-the action union in `@rally/contracts` does carry the importer's
-`session_import.finish` / `session_import.fail` kinds and its stored-messages
-schema, handled by the import window's own handlers.
+request, the conversation's `AgentLoopDO` publishes it on the conversation
+socket, and the desktop answers it.
+
+**Today the protocol has no user.** Its one user was the conversation-import
+agent, the `session_import` agent profile, which went with Threads (plan step
+C-2; its retirement record is in
+[`workstream-durable-object.md`](workstream-durable-object.md#changelog)).
+`AGENT_PROFILES` in `apps/api/src/services/agent-profiles.ts` is empty, so
+nothing registers the browser tools (`createBrowserPlugin` has no production
+caller), and no desktop surface handles `desktop_action_requested`. The server
+half — the durable record, the socket frames, the waiter — is intact and
+described below, for the next feature that needs the person's own browser. The
+desktop half lives on as the native primitives the
+[browser script runtime](browser-script-runtime.md) drives locally.
 
 ## Where the code lives
 
 | File | Responsibility |
 | --- | --- |
-| `packages/contracts/src/desktop-actions.ts` | The action union, one result schema per kind, the failure codes, `StoredRef`, and the import's stored-messages schema. |
+| `packages/contracts/src/desktop-actions.ts` | The action union, one result schema per kind, the failure codes and `StoredRef`. It still carries the import's `session_import.finish` / `session_import.fail` kinds and stored-messages schema, which nothing sends. |
 | `packages/contracts/src/index.ts` | `desktop_action_requested` (server) and `answer_desktop_action` (client) in the conversation socket protocol. |
 | `apps/api/src/durable-objects/workstream-desktop-action-storage.ts` | The `desktop_actions` table: record, answer once, abandon, list pending. |
-| `apps/api/src/durable-objects/substream-agent.ts` | `requestDesktopAction` (the executor a run reaches), `answerDesktopAction`, and re-offering pending actions to a subscriber. |
-| `apps/api/src/runtime/local-authorities.ts` | `desktopAction`, the in-object authority a run's tools read. |
-| `apps/api/src/services/desktop-actions/browser-plugin.ts` | The browser tools and `runDesktopAction`, which turns an answer into a tool result or a typed error. |
-| `apps/desktop/src/common/desktop-actions/executor.ts` | The desktop side: parse, pin to one tab, run through the browser command path. |
+| `apps/api/src/durable-objects/agent-loop-do.ts` | `requestDesktopAction` (the executor a run reaches), `answerDesktopAction`, `answersDesktopActions` (the creator check), and `offerPendingDesktopActions`. |
+| `apps/api/src/runtime/local-authorities.ts` | `desktopAction`, the in-object authority a profiled run's tools are handed (`integrations.ts`). |
+| `apps/api/src/services/agent-profiles.ts` | `AGENT_PROFILES`, the only way a run is given a `desktopAction` executor; empty. |
+| `apps/api/src/services/desktop-actions/browser-plugin.ts` | The browser tools (`browser_js`, `browser_js_reset`) and `runDesktopAction`, which turns an answer into a tool result or a typed error. |
+| `apps/desktop/src/common/desktop-actions/executor.ts` | The desktop side: parse, pin to one tab, run through the browser command path. `browser-script-driver.ts` in main drives it for the browser script runtime. |
 | `apps/desktop/src/common/desktop-actions/page-script.ts` | The page-script wrapper and its `rally.store` helper. |
 | `apps/desktop/src/common/desktop-actions/page-text.ts` | Text normalization embedded in page script: citation marker replacement and Markdown-safe control removal. |
 | `apps/desktop/src/common/desktop-actions/store.ts` | What page script stored, by handle, and the per-file cap. |
@@ -31,7 +39,7 @@ schema, handled by the import window's own handlers.
 ## How it works
 
 1. **Ask.** A tool calls the run's `desktopAction` executor with its run id,
-   its durable tool call id and the action. The conversation's `SubstreamAgent`
+   its durable tool call id and the action. The conversation's `AgentLoopDO`
    inserts a `desktop_actions` row keyed by `(run_id, tool_call_id)` — or finds
    the row an earlier attempt of the same call wrote — and, if that row is
    already answered, returns the answer at once.
@@ -39,13 +47,13 @@ schema, handled by the import window's own handlers.
    action id and publishes `desktop_action_requested { id, action }` to the
    conversation's sockets. A socket that subscribes while the action is pending
    is sent it again, so a desktop that reconnects loses nothing.
-3. **Execute.** The desktop's executor parses the action, runs it on the one tab
-   the work is pinned to through `commandEmbeddedBrowser`, and answers with
-   `answer_desktop_action { actionId, outcome }`.
-4. **Answer.** The room accepts an answer only from the conversation's creator,
-   records it on the row (the first answer wins; later ones are no-ops), and
-   resolves the waiter. The tool returns the result, or throws a typed error
-   with the failure's code and the next step for the model.
+3. **Execute.** A desktop's executor parses the action, runs it on the one tab
+   the work is pinned to through the embedded browser's command path, and
+   answers with `answer_desktop_action { actionId, outcome }`.
+4. **Answer.** The object accepts an answer only from the conversation's
+   creator, records it on the row (the first answer wins; later ones are
+   no-ops), and resolves the waiter. The tool returns the result, or throws a
+   typed error with the failure's code and the next step for the model.
 
 The wait is in memory and the record is durable. If the object is evicted while
 a tool waits, the run's crash repair re-enters the tool (every browser tool is
@@ -53,18 +61,18 @@ a tool waits, the run's crash repair re-enters the tool (every browser tool is
 that arrived meanwhile or asks again. A run that stops or a tool that times out
 marks its pending action `abandoned`, which is no longer offered to subscribers.
 
-The model uses `browser_js` and `browser_js_reset`; the persistent handle API
-and isolated realm are owned by [browser script runtime](browser-script-runtime.md).
-`browser.script` carries one orchestration call; the older browser action kinds
-remain internal primitives. Their durable transport and receipts are unchanged.
+The model-facing tools are `browser_js` and `browser_js_reset`; the persistent
+handle API and isolated realm are owned by
+[browser script runtime](browser-script-runtime.md). `browser.script` carries one
+orchestration call; the older snapshot, click, scroll, type and key action kinds
+stay parseable for durable replay and are never advertised to a model.
 
 Page script runs as the body of an async function given `rally`.
 `await rally.store(value, { name, mimeType })` keeps a Blob, Response, string or JSON
 value with the desktop and resolves to `{ handle, kind, name, mimeType, size }`;
-the bytes travel back with the call's answer into the window's store, and only
-the description reaches the API and the model. A later action of the same work
-— the import's finish — reads them by handle. Screenshots are scaled to the
-page's size in DIPs, so a point read off the image is the point `click` sends.
+the bytes stay in the desktop's store and only the description reaches the API
+and the model. Screenshots are scaled to the page's size in DIPs, so a point
+read off the image is the point `click` sends.
 
 Reading a store Promise's reference fields without awaiting it throws a
 `script_error` naming the missing await; returning that Promise inside JSON
@@ -75,17 +83,7 @@ reference, so file reads cannot silently finish after the answer is serialized.
 `rally.normalizeText(text, [{ marker, text }])` replaces private-use citation
 markers with their written-out text. Ordinary provider-reference spaces and
 prose are ignored. It removes remaining private-use syntax and invalid controls,
-preserving tabs, newlines and carriage returns for Markdown. This is a generic
-page helper; provider document and writing-block conversion remains the agent's
-job.
-
-The importer emits the governed `desktop_action_phase` diagnostic with an action
-UUID and elapsed time from receipt: queue admission, browser-state reads,
-browser-command round trips, execution completion, answer send or defer, and a
-run ending while an action is pending. A re-offer is identified separately.
-Join the action UUID to `desktop_actions.created_at` and `answered_at` to
-separate server-to-desktop delivery from execution and answer delivery. No
-script, URL, title, tool output or file content enters these observations.
+preserving tabs, newlines and carriage returns for Markdown.
 
 `browser.network_list` and `browser.network_read` are the browser's network
 panel. The [embedded browser](embedded-browser.md) records every response a
@@ -98,17 +96,9 @@ size, type and top-level keys; with `length` it also returns that slice of the
 body's text, from `offset`. Nothing is redacted: the page already received the
 body, and the model reads it as it reads any page content.
 
-The older snapshot/click/scroll/type/key action schemas remain readable for
-durable replay of imports started before the script tool cutover. New model
-inventories expose only the script/reset tools; these legacy actions are not
-advertised to models.
-
-A desktop keeps every answer it computed. The room offers an unanswered action
-again to each new subscription, so a desktop that is offered an action it has
-already answered sends the same answer again rather than ignoring it: that is
-how an answer that met a socket between connections still arrives. A consumer
-that ends its work on an answer should wait for the tool's `tool_completed`
-frame — the room has the answer then — before it closes its socket.
+The governed `desktop_action_phase` diagnostic (`apps/desktop/src/common/desktop.ts`)
+records an action UUID and elapsed times from receipt to answer; no script, URL,
+title, tool output or file content enters it.
 
 ## Invariants
 
@@ -119,12 +109,12 @@ frame — the room has the answer then — before it closes its socket.
   `executor.test.ts`.
 - **Only the conversation's creator answers its actions.** An action runs in
   that person's browser session; an answer from anyone else is not theirs to
-  give. Guard: `session-import-run.test.ts` (Workers) admission, and
-  `answerDesktopAction`'s check.
+  give. Guard: `answersDesktopActions`; the Workers proof of it went with the
+  import suite and has not been replaced.
 - **An action is recorded before it is published, and answered at most once.**
   Otherwise an answer could arrive for an action the object cannot match, or a
-  repeated answer could change a result a tool already used. Guard: the
-  eviction test in `session-import-run.test.ts` (Workers).
+  repeated answer could change a result a tool already used. Guard:
+  `desktop-action-storage.test.ts` (Workers).
 - **Every answer is stored before it is used**, in the row of the action it
   answers, so one that would take the row past `DESKTOP_ACTION_MAX_ROW_BYTES`
   (the platform's 2 MB, less what the action itself holds) is recorded as
@@ -132,21 +122,20 @@ frame — the room has the answer then — before it closes its socket.
   no longer parse is left out of what a subscriber is offered, rather than
   failing every subscribe. Guard: `desktop-action-storage.test.ts` (Workers).
 - **Stored bytes stay on the desktop.** The model and the API see handles.
-  Otherwise a long conversation would be re-emitted as model output, slowly and
+  Otherwise a long page would be re-emitted as model output, slowly and
   possibly altered.
 
 ## Boundary
 
 This module owns the request/answer protocol, its durable record, the browser
 tools, and the desktop executor. It does not own the browser itself
-([embedded browser](embedded-browser.md)), which tools a run is given (its
-[agent profile](agent-harness.md)), or what any one user of the protocol does
-with an answer — the import's finish and fail actions are handled by
-[session import](session-import.md). Today only a run whose conversation's
-creator has that conversation's socket open in a desktop can be answered. The
-import window is the one non-conversation window the desktop's main process lets
-open a realtime socket, and it closes that socket when the window navigates,
-crashes or closes. Per Rally's policy, no action asks the person to confirm it.
+([embedded browser](embedded-browser.md)), the local script runtime that now
+drives the executor ([browser script runtime](browser-script-runtime.md)), or
+which tools a run is given ([agent harness](agent-harness.md)). A user of the
+protocol needs an agent profile that registers the browser tools and a desktop
+surface that answers `desktop_action_requested` on the conversation socket;
+neither exists today. Per Rally's policy, no action asks the person to confirm
+it.
 
 ## Failure modes and limits
 
@@ -158,22 +147,18 @@ crashes or closes. Per Rally's policy, no action asks the person to confirm it.
   limit) is refused with `file_too_large`.
 - Text in one tool result is capped by `BROWSER_TOOL_TEXT_MAX_CHARS`, written open
   (unbounded); the number is the team's to set.
-- An action has no reply deadline of its own. `import_finish` waits for its durable
-  receipt under the run lifecycle (`HarnessTool.deadline: "run"`), so a generic
-  tool timer cannot turn a committed import into an ambiguous failure. For other
-  tools, `TOOL_DEFAULT_TIMEOUT_MS` ends a wait. The person's Cancel stops the run.
-  A desktop that quits without
-  cancelling can therefore still leave its finish pending. Reconnect reoffers
-  the recorded action; this is not currently guaranteed to end within a finite time.
-- A dropped socket reconnects after a second and is offered every pending action
-  again.
+- An action has no reply deadline of its own: `TOOL_DEFAULT_TIMEOUT_MS` ends a
+  wait, and the person's Cancel stops the run. Reconnect reoffers the recorded
+  action.
+- A run whose stored profile no longer exists (a conversation provisioned as
+  `session_import`) is refused as `agent_profile_unknown` rather than run with
+  the full tool surface.
 
 ## Testing
 
-- `apps/api/test-workers/session-import-run.test.ts`: real objects, the provider
-  double as the model and the test as the desktop over the child's socket —
-  answers reach the tool, an answer survives a lost waiter, admission is the
-  creator's alone.
+- `apps/api/test-workers/desktop-action-storage.test.ts`: the record, the
+  single answer, the row-size refusal and the unparseable pending row, on real
+  workerd.
 - `apps/api/test/desktop-action-tools.test.ts`: tool → action mapping, the
   screenshot as an image part, failure codes with next steps, refused
   mismatched results.
