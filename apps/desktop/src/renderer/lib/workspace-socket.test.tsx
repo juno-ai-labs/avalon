@@ -1358,9 +1358,11 @@ describe('WorkspaceSocketProvider', () => {
       protocols: socketTicketProtocols('workspace-ticket'),
     }));
     // A conversation preview the window asked for and has not been answered.
+    let oauthWaterline: number | undefined;
     function Preview(): null {
-      const { requestConversationView } = useWorkspaceSocket();
+      const { requestConversationView, topicWaterlines } = useWorkspaceSocket();
       useEffect(() => requestConversationView(parentId, '0', () => undefined), [requestConversationView]);
+      oauthWaterline = topicWaterlines.connector_oauth_attempts;
       return null;
     }
     render(
@@ -1378,9 +1380,9 @@ describe('WorkspaceSocketProvider', () => {
       id: automationId, name, description: 'Every Monday', emailAddress: null, scope: 'workspace',
       status: 'active', nextRunAt: null, lastRunAt: null, updatedAt: '2026-08-17T19:00:00.000Z',
     });
-    const answer = (waterline: number, listWaterline: number, name: string, reason: string) => ({
+    const answer = (waterline: number, listWaterline: number, name: string, reason: string, topics: string[] = []) => ({
       type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000017', waterline,
-      occurredAt: '2026-08-17T20:00:00.000Z', topics: [], reason, conversationViews: true,
+      occurredAt: '2026-08-17T20:00:00.000Z', topics, reason, conversationViews: true,
       sidebar: {
         automations: { waterline: listWaterline, items: [sidekick(name)] },
         canvases: { waterline: listWaterline, items: [] },
@@ -1399,6 +1401,11 @@ describe('WorkspaceSocketProvider', () => {
     act(() => first.open());
     act(() => first.message(answer(40, 30, 'Monday brief', 'resume')));
     act(() => pushSidekicks(first, 31, 'Monday brief, renamed'));
+    act(() => first.message({
+      type: 'workspace_sync', eventId: '00000000-0000-7000-8000-000000000019', waterline: 41,
+      occurredAt: '2026-08-17T20:00:30.000Z', topics: ['connector_oauth_attempts'], reason: 'change',
+    }));
+    expect(oauthWaterline).toBe(41);
     expect(queryClient.getQueryData(['automations'])).toEqual([expect.objectContaining({ name: 'Monday brief, renamed' })]);
     expect(sentFrames(first).map((frame) => frame.type)).toEqual(['subscribe', 'set_presence', 'conversation_view']);
     // The page has read again since that push.
@@ -1411,14 +1418,17 @@ describe('WorkspaceSocketProvider', () => {
     await flushPromises();
     const second = FakeWebSocket.instances[1]!;
     act(() => second.open());
-    expect(sentFrames(second)).toEqual([expect.objectContaining({ type: 'subscribe', afterWaterline: 40 })]);
+    expect(sentFrames(second)).toEqual([expect.objectContaining({ type: 'subscribe', afterWaterline: 41 })]);
 
     // The object came back with its counters behind what this window holds,
     // as a local API restarted over rebuilt state does. Its answer is what
     // the object holds now, so it replaces the lists rather than losing to
     // the window's older ledger.
-    act(() => second.message(answer(3, 2, 'Rebuilt brief', 'history_unavailable')));
+    act(() => second.message(answer(3, 2, 'Rebuilt brief', 'history_unavailable', [...WORKSPACE_SYNC_TOPICS])));
     expect(queryClient.getQueryData(['automations'])).toEqual([expect.objectContaining({ name: 'Rebuilt brief' })]);
+    // The topic ledger is set to the object's position too, so a surface
+    // keyed on a topic's waterline runs again rather than waiting past 41.
+    expect(oauthWaterline).toBe(3);
     // Every subscription the window held is sent again on the new socket.
     expect(sentFrames(second).map((frame) => frame.type)).toEqual(['subscribe', 'set_presence', 'conversation_view']);
     expect(sentFrames(second).find((frame) => frame.type === 'conversation_view')).toMatchObject({ parentId, substreamId: '0' });
@@ -1427,7 +1437,7 @@ describe('WorkspaceSocketProvider', () => {
     expect(queryClient.getQueryState(['automation', automationId])?.isInvalidated).toBe(true);
 
     // And the live updates keep coming: a push below the old ledger's 31,
-    // and a topic below the old log's 40, each apply.
+    // and a topic below the old log's 41, each apply.
     act(() => pushSidekicks(second, 3, 'Live after the restart'));
     expect(queryClient.getQueryData(['automations'])).toEqual([expect.objectContaining({ name: 'Live after the restart' })]);
     queryClient.setQueryData(['workspace'], { id: 'workspace' });

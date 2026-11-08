@@ -192,13 +192,27 @@ function invalidateTopic(
   for (const queryKey of roots[topic]) void queryClient.invalidateQueries({ queryKey });
 }
 
-/** Merge one event's topics into the per-topic waterlines a surface observes. */
+/**
+ * Merge one event's topics into the per-topic waterlines a surface observes.
+ *
+ * With `authoritative`, for the answer to a socket's `subscribe`, the answer
+ * sets the ledger rather than raising it: no topic stays above the object's
+ * position now, and every topic it names takes that position. After an object
+ * whose log went back, a max would leave the ledger where it was, and a
+ * surface keyed on a topic's waterline would never run again for it.
+ */
 function withTopicWaterline(
   current: Partial<Record<WorkspaceSyncTopic, number>>,
   topics: readonly WorkspaceSyncTopic[],
   waterline: number,
+  { authoritative = false }: { authoritative?: boolean } = {},
 ): Partial<Record<WorkspaceSyncTopic, number>> {
   const next = { ...current };
+  if (authoritative) {
+    for (const topic of Object.keys(next) as WorkspaceSyncTopic[]) next[topic] = Math.min(next[topic] ?? 0, waterline);
+    for (const topic of topics) next[topic] = waterline;
+    return next;
+  }
   for (const topic of topics) next[topic] = Math.max(waterline, next[topic] ?? 0);
   return next;
 }
@@ -660,7 +674,8 @@ export function WorkspaceSocketProvider({
             const moved = sync.data.waterline !== lastWaterline;
             lastWaterline = sync.data.waterline;
             if (!moved && sync.data.topics.length === 0) return;
-            setTopicWaterlines((current) => withTopicWaterline(current, sync.data.topics, sync.data.waterline));
+            setTopicWaterlines((current) => withTopicWaterline(current, sync.data.topics, sync.data.waterline,
+              { authoritative: answersSubscribe }));
             // Every topic, `initial` and `history_unavailable` included: those
             // name everything because this socket cannot say what moved while
             // it was away, and neither can a window relying on it.
