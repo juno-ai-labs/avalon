@@ -10,7 +10,7 @@ import { SIDEBAR_LIST_QUERY_KEYS, useSocketOwnedList } from '../lib/sidebar-list
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { EmptyState, ErrorNotice, OpeningState } from '../components/primitives';
 import { PushedListPending } from '../components/pushed-list-pending';
-import { sidekickNext, sidekickStatus, type SidekickStatus } from '../lib/sidekick-status';
+import { sidekickNext, sidekickStatus, sidekickWorking, type SidekickStatus } from '../lib/sidekick-status';
 import type { AutomationSummary } from '../lib/types';
 import { useDocumentTitle } from '../lib/document-title';
 
@@ -47,8 +47,9 @@ const STATUS_PILL: Record<Exclude<SidekickStatus, 'needs_input'>, string> = {
 function StatusPill({ item }: { item: AutomationSummary }): React.JSX.Element {
   // Waiting on someone is the badge's to say; the pill keeps the run and the
   // lifecycle, so a paused Sidekick whose delegation needs attention reads
-  // Paused beside the badge.
-  const status = sidekickStatus({ status: item.status, runState: item.runState === 'working' ? 'working' : null });
+  // Paused beside the badge, and one with a run working and another waiting
+  // reads Working beside it: neither hides the other.
+  const status = sidekickStatus({ status: item.status, running: sidekickWorking(item) });
   const tone = status === 'needs_input' ? 'active' : status;
   return <span className={`sidekick-status-pill is-${tone}`}>
     {tone === 'working' && <span aria-hidden="true" className="sidekick-working-dot" />}

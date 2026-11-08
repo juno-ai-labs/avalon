@@ -517,6 +517,7 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.pinnedPosition === undefined ? {} : { pinnedPosition: automation.pinnedPosition }),
     ...(automation.audience === undefined ? {} : { audience: automation.audience }),
     ...(automation.runState === undefined ? {} : { runState: automation.runState }),
+    ...(automation.running === undefined ? {} : { running: automation.running }),
     ...(automation.pendingQuestion ? { pendingQuestion: automation.pendingQuestion } : {}),
     ...(automation.triggerKinds ? { triggerKinds: automation.triggerKinds } : {}),
     ...(automation.scheduleTimeZone ? { scheduleTimeZone: automation.scheduleTimeZone } : {}),
