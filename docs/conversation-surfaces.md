@@ -1,13 +1,13 @@
 # Shared conversation surfaces
 
-Rally has one conversation surface: the feed of a `SubstreamAgent`, under
+Rally has one conversation surface: the feed of an `AgentLoopDO`, under
 whichever kind of parent it has. A Canvas's Chat and a Sidekick's shared
 conversation are the same surface over the same wire, reached through
 `/conversations/:parentId` and `/socket/conversations/:parentId/:substreamId`
 with a Canvas id or an automation (Sidekick) id as the parent. The standalone
 automation draft wizard that used to be a second adapter over this family is
 gone, and so is the compiler it talked to; drafting an automation is a
-conversation in the automation's own substream `0`, with the drafting tools
+conversation in the Sidekick's own substream `0`, with the drafting tools
 loaded as a plugin, so there is one adapter and nothing to keep in step with
 it. The extracted pieces below are still worth their seams (they are what a
 feed is made of), but a change to them has one caller, and a second surface is
@@ -47,7 +47,7 @@ prompt it carries for the run.
 ## Sidekick navigation and attachments
 
 The main-window `/sidekicks` route renders the library on both hosts; there
-is no separate Sidekicks window (plan step B-2). The account menu's Sidekicks
+is no separate Sidekicks window. The account menu's Sidekicks
 item opens `/sidekicks` with the Sidekicks section selected, and a Settings
 memory row naming a Sidekick opens it in the main window through
 `openSidekick`. The sidebar recognizes both
@@ -62,8 +62,7 @@ and availability changes visible without navigation.
 
 A Sidekick's shared conversation uses this surface in the main window. Generated descriptions summarize instructions; ready submissions save immediately. The surface has no sidebar of its own: who is in a Canvas is the header's face pile, and a Sidekick's details are the column to the right of its conversation (`SidekickDetailLayout`).
 
-The composer shows no running count above the input; the indicators that did
-were fed only by Threads and Channels, and
+The composer shows no running count above the input;
 [`websocket-architecture.md`](websocket-architecture.md#sidekick-library-synchronization)
 records where a running signal would come from.
 Losing that socket or unmounting its owner resets both kinds of count to unknown;
@@ -143,8 +142,9 @@ arrive after reconnect.
   composition: `ConversationSurface({parentKind, parentId, substreamId,
   renderHeader})` owns the transcript, composer, attachments, and the socket
   hooks for one conversation, keyed by the parent id and substream. Its
-  composer draft is `workstreamDraftKey` over the parent id, whichever kind of
-  parent that is. `screens/canvas.tsx` renders it for a Canvas's Chat;
+  composer draft key comes from `conversationDraftKey`: `canvasDraftKey` for a
+  Canvas, `workstreamDraftKey` over the parent id otherwise
+  ([`composer-drafts.md`](composer-drafts.md)). `screens/canvas.tsx` renders it for a Canvas's Chat;
   `screens/automation.tsx` renders it with `parentKind: "automation"` and
   `substreamId: "0"` (or a run's id) through `SidekickDetailLayout`, which lays
   a Sidekick out as design §4 does and as a Canvas is: one `TitlePillHeader`
@@ -272,10 +272,7 @@ than a whole `WorkstreamDetail`. Wrapped
 text and staged attachments span the controls' own grid row, so the reserve at
 the foot of the field is what holds the two apart: the 28px control, the 7px of
 row padding under it, and 4px of air between the last line and the top of the
-plus. The
-retired Thread and Breakout launchers dressed their field differently, which
-made the element a person types their first message into the odd one out on a
-screen already showing the conversation it becomes.
+plus.
 
 `ComposerInput.renderSubmit` lets a host place its submit control outside the
 capsule while keeping the same stop-and-send finalization and disabled state.
@@ -485,10 +482,7 @@ row, a timing row, the work accordion, a system note, a status pill, the
 proposal card, an open elicitation, the oversized-message placeholder) is an
 event; index 0 owns no space, and a row after a stretch this client has not
 loaded takes the seam gap whatever its kind, because nothing else marks the
-seam. The two launch
-surfaces draw the same rows outside the feed wrapper and state the same gaps
-for themselves on `.launch-arrival` and the branch context, because a base
-rule gives a row no margin of its own. Five cases cover the feed: turn after turn takes
+seam. Five cases cover the feed: turn after turn takes
 `sys.space.stack.gap`, a turn beside an event in either direction takes
 `sys.space.block.gap`, event after event takes `sys.space.event.gap`,
 Rally's answer after the work that produced it also takes `sys.space.event.gap`,
@@ -656,14 +650,14 @@ Speak / Stop speaking toggle is on the message-text context menu of a
 and a row Speak cannot overlap. A human body's menu also offers Speak, named
 *Speak* rather than *Speak response*, because those words are not a Rally
 response.
-**New substream** closes that row, and every settled human turn — the reader's own and
-a colleague's alike — carries the same control alone in a row beneath its bubble,
-inset by the bubble's corner so it ends on the same vertical as the identity line
-above it. A settled turn carrying
-attachments and no prose still shows the row, holding the cutoff alone: copy,
-speech and the exports each act on the response text and are withheld when there
-is none. Both placements are described in
-`substream-creation.md` (retired). The row owns the hover fade —
+Every settled human turn — the reader's own and a colleague's alike — carries
+the same row beneath its bubble with its text actions off (`textActions={false}`),
+so it holds only **Oopsie**, inset by the bubble's corner so it ends on the same
+vertical as the identity line above it. The row is laid out always and painted
+on hover, so its slot, not a gap, keeps the next turn off the bubble. A turn
+with no prose withholds copy, speech and the exports, which each act on the
+response text. The **New substream** control that used to close both rows went
+with Breakouts. The row owns the hover fade —
 a control inside it must not carry its own — and both rows share one set of
 button metrics, because the same control appears in each. The corner is
 `--turn-bubble-radius`, set on the human turn and read by the bubble, the header
@@ -830,21 +824,18 @@ ends the attempt without sending, and the draft and the error stay on screen.
 Shared components have fixture-level component tests for settled, streaming,
 failed, elicitation, attachment, tool, follow, and paging states. Each screen
 adapter separately proves its controls and identity transition.
-`workstream.test.tsx` holds both the dock's stopping condition — a live run
-only, so neither a settled run's stale `stopRequested` nor an absent one
-acknowledges a wait that is over — and the feed slot's own order, compaction
-over the elapsed total, and neither once the ordered transcript draws the run's
-rows. Those are decisions in isolation, and a decision agreeing with itself is
-not the behaviour: `workstream-open.test.tsx` renders the whole screen over a
+The dock's stopping condition and the feed slot's order were proved by the
+Thread screen's `workstream.test.tsx` and `workstream-open.test.tsx`, which were
+deleted with that screen; nothing now renders `ConversationSurface` over a
 running, stop-requested detail and asserts the row is in `.composer-dock` and
-not in `.transcript-scroll`. Assert the box, not only the sentence — the text
-alone passes just as well in the scroller that hides it from a reader who has
-scrolled up, which is the defect that shipped to review. Any visible
+not in `.transcript-scroll`. A replacement should assert the box, not only the
+sentence: the text alone passes just as well in the scroller that hides it from
+a reader who has scrolled up, which is the defect that shipped to review. Any visible
 change also requires a real Electron-window check because DOM assertions cannot
 prove layout, focus, scroll position, or overlap.
-`query-client.test.ts` covers observers created before the first socket row,
-unmounted before a rerender, and revisited after the default cache lifetime.
-`workspace-socket.test.tsx` renders running labels through disconnect and
+`lib/query-client.ts`'s cache rules (observers created before the first socket row,
+unmounted before a rerender, and revisited after the default cache lifetime) are
+covered by `lib/retain-query-data.test.ts`. `workspace-socket.test.tsx` renders running labels through disconnect and
 reconnect and protects fresh activity from a retired owner's delayed close.
 
 ## Slow model notice
@@ -2295,7 +2286,7 @@ the launcher's placeholder ink, its hint ink, and its toolbar padding were each
 stated once and read nowhere else.
 
 **Consequences:** Project-owned creation loses the toolbar layout the
-2026-09-04 entry in `workstream-creation.md` (retired; its record is in [`workstream-durable-object.md`](workstream-durable-object.md)) gave it —
+2026-09-04 entry in [`workstream-creation.md`](hosted-conversation-parents.md#changelog) gave it —
 that entry's reasoning (the launcher should not look different from the
 conversation entry point) is the same reasoning applied to the surface it had
 left out. Its developer-only model override moves from the toolbar pill into the
