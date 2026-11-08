@@ -3072,6 +3072,7 @@ export class WorkstreamObjectProductService {
               workstreamTitleSnapshot: title,
               messageText: notificationMessageExcerpt(delivery.text),
               attentionOrdinal: delivery.attentionOrdinal,
+              transcriptSequence: delivery.transcriptSequence,
               occurredAt,
             },
           });
@@ -4430,6 +4431,7 @@ export class WorkstreamObjectProductService {
             workstreamTitleSnapshot: truncateUtf16Safe(current.title, 500),
             messageText: notificationMessageExcerpt(prepared.text),
             attentionOrdinal: write.attentionOrdinal,
+            transcriptSequence: write.sequenceNumber,
             occurredAt,
           },
         }));

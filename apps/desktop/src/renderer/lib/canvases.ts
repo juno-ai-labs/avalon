@@ -39,7 +39,7 @@ export function canvasDetailQueryKey(canvasId: string): readonly unknown[] {
 
 /** This viewer's Canvases, most recently active first; `undefined` until the socket (or the device cache) has said. */
 export function useCanvasList(): CanvasSidebarRow[] | undefined {
-  return useSocketOwnedList<CanvasSidebarRow>(SIDEBAR_LIST_QUERY_KEYS.canvases).data;
+  return useSocketOwnedList<CanvasSidebarRow[]>(SIDEBAR_LIST_QUERY_KEYS.canvases).data;
 }
 
 /** "Maya", "Maya and Theo", "Maya, Theo and Priya". */
@@ -123,7 +123,7 @@ export function useCanvasNameSources(api: Pick<RallyApi, 'getWorkspaceMembers'> 
   sidekicksById: ReadonlyMap<string, AutomationSummary>;
 } {
   const members = useWorkspaceMembers(api).data;
-  const sidekicks = useSocketOwnedList<AutomationSummary>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
+  const sidekicks = useSocketOwnedList<AutomationSummary[]>(SIDEBAR_LIST_QUERY_KEYS.automations).data;
   const membersById = useMemo(() => new Map((members ?? []).map((member) => [member.id, member])), [members]);
   const sidekicksById = useMemo(() => new Map((sidekicks ?? []).map((sidekick) => [sidekick.id, sidekick])), [sidekicks]);
   return { members, membersById, sidekicksById };

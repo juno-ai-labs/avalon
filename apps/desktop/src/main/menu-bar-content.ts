@@ -13,7 +13,8 @@ function label(title: string): string {
  * The menu's content, from the two lists the main process holds:
  *
  * - **Needs attention** is what the rail counts, by the rail's own predicates
- *   (`common/sidebar-attention.ts`), in the order the sidebar draws it: each
+ *   (`common/sidebar-attention.ts`), each kind in the server's list order (the
+ *   sidebar's Pinned group is not applied): each
  *   Sidekick that needs input, then each Sidekick and each Canvas holding
  *   something unread. Its length is the count beside the icon, so the menu,
  *   the rail and the dock never disagree.
