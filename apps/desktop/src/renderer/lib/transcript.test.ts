@@ -351,7 +351,7 @@ describe('transcript messages', () => {
     // silent {} on failure, so a field the API adds later would make every
     // Sidekick revert to the generic label while every block test stayed green
     // — the same trap the comment above records firing once already.
-    const activationSnapshot = (structuredContent: Record<string, unknown> | null) => ({
+    const activationSnapshot = (structuredContent: Record<string, unknown> | null, sidekickRun?: { requesterUserId: string | null; runNumber: number | null }) => ({
       snapshotId: 'snapshot-named-activation',
       snapshotThrough: 1,
       eventSequence: 1,
@@ -382,6 +382,7 @@ describe('transcript messages', () => {
             streaming: false,
             messageType: 'automation_activation' as const,
             structuredContent,
+            ...(sidekickRun ? { sidekickRun } : {}),
             mentions: [],
             attachments: [],
           }],
@@ -426,6 +427,13 @@ describe('transcript messages', () => {
       ...parsed, run: { state: 'needs_input', stepCount: 4, reply: 'Which status page gets the update?' },
     }), 'workstream-one')[0]?.automationActivation?.run).toEqual({
       state: 'needs_input', stepCount: 4, reply: 'Which status page gets the update?',
+    });
+
+    // Who asked for the run and its number ride beside the strict row, on the block.
+    expect(orderedTranscriptMessages(activationSnapshot({
+      ...parsed, run: { state: 'running', stepCount: 0, reply: null },
+    }, { requesterUserId: 'user-adam', runNumber: 412 }), 'workstream-one')[0]?.automationActivation).toMatchObject({
+      requesterUserId: 'user-adam', runNumber: 412, run: { state: 'running', stepCount: 0, reply: null },
     });
 
     // A row the schema refuses keeps the row rather than the identity: the

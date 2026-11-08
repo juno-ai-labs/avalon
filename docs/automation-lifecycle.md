@@ -1023,10 +1023,14 @@ and `run: {state, stepCount, reply}`. The row is a projection of the run's
 
 The client draws the row as a run, not as a message
 (`components/sidekick-run-row.tsx`, chosen in `MessageBlock` by
-`automationActivation.run`): collapsed to "Run · trigger · state · steps"
+`automationActivation.run`): collapsed to "Run N · trigger · state · steps"
 under the Sidekick's own mark (its `appearance`, from the Sidekick list),
-with the reply as a two-line preview. A manual run's trigger reads **On
-request**; each state reads as itself (Starting and Working with the working
+with the reply as a two-line preview. N is the block's `sidekickRun.runNumber`
+(plain "Run" before a projection numbers it, or from an older server), the
+trigger is its kind (the run holds no event text to quote), and the step count
+is left out until the first step. While the question form is drawn under the
+row, its disclosure points down. A manual run's trigger reads **On
+request**, here, in the home's Next and in the details' Wakes on; each state reads as itself (Starting and Working with the working
 dot in green, Needs input in the attention colour, Failed in the danger
 colour with its reply as the reason, Stopped receding, Done plain), expanding to the whole reply and **Open
 run**, which puts `?run=<runId>` on the Sidekick's route; the screen then shows
@@ -1931,7 +1935,10 @@ second line is the question, and reads "On alert", "On email" or "On request"
 in Next. The inspection found a person told a Sidekick needed them with no
 way to see what it asked short of finding the run view, while the natural
 reply, typed in the shared composer, starts a new run; the chosen answer was
-a slightly darker grey than the others (round 2, R2-14), and the run view's
+a slightly darker grey than the others (round 2, R2-14); the details' pills
+were 9 and 10.5px against the design's 13, a draft's ⋯ stood alone under 90px
+of empty space, "0 steps" read as noise, the same trigger was "Manual" in one
+place and "On request" in another (R2-9 to R2-12); and the run view's
 "Run" pill floated mid-header away from its Sidekick's (R2-15); a Sidekick that uses
 nothing could not be told from one whose block was hidden; and the plan's
 section 9 had recorded that "A 'Working' state on the Sidekicks home needs a

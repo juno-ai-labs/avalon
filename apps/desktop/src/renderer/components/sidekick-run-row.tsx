@@ -62,9 +62,14 @@ export function SidekickRunRow({ message }: { message: Message }): React.JSX.Ele
         <ChevronRight aria-hidden="true" className="disclosure-chevron" size={13} />
         <span className="sidekick-run-row-glyph"><AutomationGlyph {...(appearance ? { appearance } : {})} id={activation.automationId} /></span>
         <span className="sidekick-run-row-summary">
-          Run · {activation.trigger ? TRIGGER_LABEL[activation.trigger] : 'Run'} · <span className="sidekick-run-row-state">
+          {/* design §4: "Run 412 · <what woke it>". The run carries its
+              trigger's kind, not the event's text, so the kind is what it
+              says. A count of no steps says nothing yet, so it waits for the
+              first. */}
+          <span className="sidekick-run-row-name">{activation.runNumber ? `Run ${activation.runNumber}` : 'Run'}</span>
+          {activation.trigger && <> · {TRIGGER_LABEL[activation.trigger]}</>} · <span className="sidekick-run-row-state">
             {live && <span aria-hidden="true" className="sidekick-working-dot" />}{STATE_LABEL[run.state]}
-          </span> · {run.stepCount} {run.stepCount === 1 ? 'step' : 'steps'}
+          </span>{run.stepCount > 0 && <> · {run.stepCount} {run.stepCount === 1 ? 'step' : 'steps'}</>}
         </span>
         <RelativeTime className="sidekick-run-row-time" value={message.createdAt} />
       </summary>

@@ -58,6 +58,13 @@ describe('SidekicksSection', () => {
     expect(within(waiting).getByRole('link', { name: /Incident triage/ })).toHaveTextContent('Which status page gets the update?');
   });
 
+  it('keeps an older waiting run\'s question on the row while a newer run works', () => {
+    renderSection([sidekick('triage', 'Incident triage', { needsInput: true, runState: 'working', pendingQuestion: 'Which status page gets the update?' })]);
+    const row = within(screen.getByRole('region', { name: 'Needs input' })).getByRole('link', { name: /Incident triage/ });
+    expect(row).toHaveTextContent('Which status page gets the update?');
+    expect(row.querySelector('.sidekick-working-dot')).not.toBeNull();
+  });
+
   it('says a run is under way, and lists the rest by what they last did unless asked for names', async () => {
     renderSection([
       sidekick('alpha', 'Alpha', { lastRunAt: '2026-11-07T08:00:00.000Z' }),

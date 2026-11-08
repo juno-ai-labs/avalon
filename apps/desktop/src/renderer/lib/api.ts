@@ -459,7 +459,7 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
 
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
   switch (trigger.type) {
-    case 'manual': return 'Manual';
+    case 'manual': return 'On request';
     case 'inbound_email': return 'When an email arrives';
     case 'calendar': return trigger.summary;
     case 'interval': return trigger.summary;
