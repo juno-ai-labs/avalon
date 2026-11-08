@@ -255,9 +255,11 @@ destination, so the hidden state is not sticky.
   the bridge, because a toggle that succeeded and an item that exists are
   different claims and only the second one is what the person asked for.
 - **One count, one rule.** The number beside the icon is the Needs attention
-  rows, all of them, and those rows are what the rail counts. A row or a count
-  from anywhere else would disagree with the rail and the dock, which is the
-  mismatch this design exists to avoid. The rule is shared, not copied: both
+  rows, all of them, and those rows are what the rail's Canvases and
+  Sidekicks badges count. A row or a count from anywhere else would disagree
+  with the rail, which is the mismatch this design exists to avoid. The dock
+  badge is a different number, the unseen Activity count, because it matches
+  the push badge instead ([`desktop-shell.md`](desktop-shell.md)). The rule is shared, not copied: both
   call the predicates in `common/sidebar-attention.ts`, so a change to what
   counts is one edit there.
 - **A list is "none" only once it has arrived.** `null` is not yet heard and

@@ -334,7 +334,7 @@ and on the directory tables for titles. It does not decide who is told about
 an event — the push's recipient rules do ([`push-notifications.md`](push-notifications.md))
 — and it does not send anything off the workspace socket. Both tables are in
 `WORKSPACE_TYPED_RPC_ONLY_TABLES`, so the generic WorkspaceDO SQL port refuses
-them. The menu bar and the dock badge do not read it.
+them. The menu bar does not read it; the dock badge, and the push badge, count its unseen rows.
 
 ## Failure modes and limits
 
@@ -404,7 +404,7 @@ creator's socket and the administrator's page, settled and seen for both by
 one approval, and the requester's grant row.
 
 The renderer's `workspace-socket.test.tsx` covers the page and the push, and
-`navigation-sidebar.test.tsx` the rows, their links, the badge, the empty state and Mark all seen, and `rail-dock-badge.test.tsx` that the dock badge leaves Activity out.
+`navigation-sidebar.test.tsx` the rows, their links, the badge, the empty state and Mark all seen, and `rail-dock-badge.test.tsx` that the dock badge is Activity's unseen count, sent only once the list has arrived.
 
 ## Data model
 
