@@ -335,6 +335,25 @@ cannot misroute.
 affordance for managers). The wizard and run separation from the earlier
 entry stands.
 
+### 2026-11-08 — design.html is the authority over the documents
+
+**Decided:** Where a module document and this PRD's design.html disagreed on
+a screen, the design wins and the document is corrected to it, in the same
+change. Where the design is silent (Activity, the naming skeleton, the
+browser's development sign-in) the owning document is the authority.
+
+**Why:** The first visual inspection found the client had followed the
+written documents in several places where they had diverged from the design
+(the list width, grey Canvas marks, the home drawn as rows, the header pill
+centred, other people's messages drawn as the viewer's own, the Sidekick page
+laid out mirror-image). This PRD's Screens section says to see design.html
+for every screen, so the documents were the ones out of date.
+
+**Changes:** The design-conformance round (docs/desktop-shell.md,
+desktop-layout.md, canvases.md, automation-lifecycle.md, browser-client.md
+changelogs of 2026-11-08); the plan's section 9 records the decisions made as
+the implementer's reading and open to reversal.
+
 ### 2026-11-08 — Activity returns, and Threads with artifacts become Canvases
 
 **Decided:** The product gets a third rail section, Activity: each person's

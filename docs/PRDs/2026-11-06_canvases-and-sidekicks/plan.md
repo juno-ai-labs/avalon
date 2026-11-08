@@ -191,4 +191,40 @@ Recorded as the build went, from the reviews of each step. None blocks the merge
 
 **Code kept until a later pass.** The provider webhook service's `!WORKSPACE_DOS` legacy branch (its Node suite drives only that branch); the non-producer legacy route branches in connection-service.ts; `OPENROUTER_STRUCTURED_MODEL` has no reader (removing the Worker var is deploy-affecting); `substream-creation.ts`'s `SubstreamInitialContext` and the session-import desktop-action kinds (stored rows still parse); `ArtifactPinListSchema` and the empty `/artifact-pins` route; `membershipVersion` on socket tickets; `announceTo` on the review notice (write-only); `RetirementParentKindSchema`, `EffectParentKindSchema` and `StoredConversationParentKindSchema` as separate four-kind enums; stale code comments describing Threads, Channels, Spaces or Breakouts as live in about 85 files (none change behaviour; the largest are workspace-do.ts, workspace-memory-facts-storage.ts, workspace-pin-storage.ts, agent-loop-do.ts, workspace-memory-facts-protocol.ts).
 
+**Recorded after the end-to-end and visual passes (2026-11-08).** Four Sonnet
+testers (Electron Canvases; Electron Sidekicks and Activity; the browser at
+three widths; the API, sockets and operator tools), three rounds of Opus
+visual inspection against design.html, and three fix rounds landed between
+d13601f and 8d6f39b. The design is the authority where a document disagreed
+(desktop-shell.md, desktop-layout.md, canvases.md, automation-lifecycle.md,
+browser-client.md were corrected to it). Decisions made as the implementer's
+reading, open to the owner's reversal, each recorded in the owning document's
+changelog: a new Canvas is titled from its first message; Canvas marks take a
+stable hue per Canvas from its id; the home card's picture is a sketch by
+artifact kind (a mime-level sketch needs `artifactMime` on the row); the
+sidebar list is 340 px beside the 76 px rail, and the artifact panel fills a
+pane narrower than twice the conversation minimum; the viewer's own turn is a
+tint and ink pair, not a solid colour; Back/Forward keep the documented
+`MarkBridge` shape rather than design §2's segmented pill; "All Sidekicks"
+keeps product-noun case; a Needs input row keeps its dot even when read; New
+Sidekick reopens an existing draft; the Sidekick pill stays centred while the
+Canvas pill sits at the left, as each design section draws; a finished-run
+Activity row opens the shared conversation and is never marked open (opening
+the run instead needs run reads projected so the row can clear); the run row
+shows the trigger's kind, not the event's title (the title lives on the
+connector event); the dark dialog shadow and the connecting card overlay stay.
+
+Follow-ups found and not fixed: after a local API restart an open Electron
+window stopped receiving live Sidekick updates until reloaded (seen twice by
+agents, not reproduced in a test); a row arriving in a new sidebar section
+once drew over the next heading for a frame (vis3-e1-15, list-motion.md's
+family); a panel width stored from a narrow window comes back narrow on a wide
+one; the onboarding invite placeholder still uses the library grey; the
+narrow-tab sidebar at 641 px drops under its own 306 px minimum to keep the
+pane's 424; Activity rows have no retention rule and carry the push body's
+1,000-character preview inside the subscribe frame (both numbers are the
+team's); `runState` is null when the newest run finished while an older one
+still works; a run that asks twice makes two unseen Activity rows; the naming
+flip fires on any first turn, not only a person's.
+
 **Tests and lanes.** The e2e lane killed the local workerd in 2 of 8 full runs at the current chaos burst sizes (e2e.md records the sizes as the team's to set). No renderer test covers the Canvas restored-route fallback (checked in a real window). The prepareApply malformed-evaluator 422 case has no cheap fixture. `test/provider-webhooks.test.ts` must move onto WorkspaceDO before its legacy branch goes.
