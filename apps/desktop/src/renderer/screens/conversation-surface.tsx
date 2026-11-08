@@ -104,6 +104,7 @@ import type { AttachmentPreview } from '../components/attachments';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import { HumanMessageBody } from '../components/workstream-blocks';
 import { Button, EmptyState, IconButton, ErrorNotice, LoadingState, Modal } from '../components/primitives';
+import { PaneState } from '../components/pane-state';
 import { CopyButton } from '../components/copy-button';
 import { MessageFeed, useMessageFeedVirtualizer } from '../components/message-feed';
 import {
@@ -710,7 +711,8 @@ export function WorkstreamErrorState({
   parentNoun = 'Canvas',
   workstreamId,
 }: {
-  description: string;
+  /** What the server said when it refused, if it said anything. */
+  description: string | undefined;
   onRetry: () => void;
   /** What could not be opened, for the title. */
   parentNoun?: 'Sidekick' | 'Canvas';
@@ -723,29 +725,34 @@ export function WorkstreamErrorState({
       }))
       .catch(() => undefined);
   };
-  return (
-    <div className="screen-error-state screen-with-titlebar">
-      <div className="screen-drag-strip window-drag" />
-      <div className="screen-state-actions window-no-drag">
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild><IconButton label={`More ${parentNoun} actions`}><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
-              <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy {parentNoun} ID</DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu.Root>
-      </div>
-      <EmptyState
-        action={<div className="empty-state-actions">
-          <ErrorNotice detailsLabel="Connection details" title={`${parentNoun} could not be opened`}>{description}</ErrorNotice>
-          <Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>
-        </div>}
-        description="Try opening it again."
-        title={parentNoun}
-      />
-    </div>
-  );
+  const menu = <DropdownMenu.Root>
+    <DropdownMenu.Trigger asChild><IconButton label={`More ${parentNoun} actions`}><Ellipsis size={16} /></IconButton></DropdownMenu.Trigger>
+    <DropdownMenu.Portal>
+      <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
+        <DropdownMenu.Item className="menu-item" onSelect={copyWorkstreamId}><Info size={14} /> Copy {parentNoun} ID</DropdownMenu.Item>
+      </DropdownMenu.Content>
+    </DropdownMenu.Portal>
+  </DropdownMenu.Root>;
+  // A refusal the server explained names the conversation; a connection that
+  // could not be reached at all is the PRD's offline state, which blames
+  // nothing on the conversation. Either way it is the pane's one state, with
+  // Back and Forward, and never a dialog over it.
+  return description
+    ? <PaneState
+      action={<div className="empty-state-actions">
+        <ErrorNotice automatic={false} detailsLabel="Connection details" title={`${parentNoun} could not be opened`}>{description}</ErrorNotice>
+        <Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>
+      </div>}
+      description="Try opening it again."
+      title={`This ${parentNoun} could not be opened.`}
+      trailing={menu}
+    />
+    : <PaneState
+      action={<Button onClick={onRetry}><RefreshCcw size={14} /> Try again</Button>}
+      description="Live edits resume when Rally reconnects."
+      title="Rally can’t reach the server right now."
+      trailing={menu}
+    />;
 }
 
 export function initialTranscriptAnchorIndex(
@@ -2256,10 +2263,7 @@ function ConversationSurfaceContent({
     ) {
       const errorState = (
         <WorkstreamErrorState
-          description={socketConnection.openingError
-            ?? (socketConnection.state === 'reconnecting'
-              ? 'The live connection could not be opened. Try again while Rally reconnects.'
-              : `This ${parentNoun} is unavailable.`)}
+          description={socketConnection.openingError}
           onRetry={socketConnection.retryOpening}
           parentNoun={parentNoun}
           workstreamId={id}

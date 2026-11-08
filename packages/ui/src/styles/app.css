@@ -2024,6 +2024,12 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .screen-with-titlebar { height: 100%; position: relative; }
 .screen-drag-strip { height: var(--screen-drag-strip-height); left: 0; position: absolute; right: 0; top: 0; }
 .screen-error-state { align-items: center; display: flex; height: 100%; justify-content: center; }
+/* One in-pane state under a header holding the shell's Back and Forward
+   (`PaneState`): the header is the 64px row every pane's header takes. */
+.pane-state { display: grid; grid-template-rows: 64px minmax(0, 1fr); height: 100%; }
+.pane-state-header { align-items: center; display: flex; gap: 8px; padding: 0 16px; }
+.pane-state-trailing { margin-left: auto; }
+.pane-state-body { align-items: center; display: flex; justify-content: center; }
 .conversation-access-request {
   align-items: center;
   color: var(--av-sys-color-text-muted);
