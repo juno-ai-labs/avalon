@@ -10,7 +10,7 @@ import { classifyAttachmentKind } from '@rally/contracts';
 import { DetailActionMenu, DetailHeaderActionsHost, type DetailHeaderAction } from './detail-header-actions';
 import type { IconGroupAction } from '@rally/ui/components/icon-group';
 import { useEffect, useRef, useState } from 'react';
-import { formatDateTime, formatSparseRelativeDate } from '../lib/format';
+import { formatDateTime, formatDayLabel, formatSparseRelativeDate, formatTime } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreview, readResourcePreviewText } from '../lib/resource-preview';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type {
@@ -436,9 +436,10 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
 /**
  * Who a version row names, in the words the rail can actually show.
  *
- * A run and a connection are ids nothing in the rail resolves to a name, so
- * the agent reads as Rally and a connector as the provider the resource came
- * from. A version nothing attributed says so rather than picking someone.
+ * The server names a member or a connector (`authorName`) where it can; a
+ * run reads as Rally, and without a name a member falls back to the room's
+ * participants and a connector to the provider the resource came from. A
+ * version nothing attributed says so rather than picking someone.
  */
 function versionAuthorLabel(
   version: ResourceVersion,
@@ -451,12 +452,18 @@ function versionAuthorLabel(
     case 'system':
       return 'Rally';
     case 'member':
-      return participants.find((person) => person.id === author.userId)?.name ?? 'A teammate';
+      return version.authorName ?? participants.find((person) => person.id === author.userId)?.name ?? 'A teammate';
     case 'connector':
-      return resource.provider ?? 'Connector';
+      return version.authorName ?? resource.provider ?? 'Connector';
     default:
       return 'Unattributed';
   }
+}
+
+/** When an artifact last changed, as the design writes it: "today, 10:42", "Yesterday, 9:05", "Jul 31, 7:39 PM". */
+function updatedLabel(value: string): string {
+  const day = formatDayLabel(value);
+  return `${day === 'Today' ? 'today' : day}, ${formatTime(value)}`;
 }
 
 /**
@@ -631,11 +638,22 @@ function InspectorDetail({
   refreshingResourceId,
   siteArtifacts,
   artifactEditable,
+  participants,
+  versions,
 }: Pick<
   InspectorRailProps,
   'loadResourceContent' | 'onRefreshResource' | 'refreshingResourceId' | 'siteArtifacts'
-> & { resource: WorkstreamResource | undefined; settled: boolean; artifactEditable: boolean }): React.JSX.Element | null {
+> & {
+  resource: WorkstreamResource | undefined;
+  settled: boolean;
+  artifactEditable: boolean;
+  participants: WorkstreamDetail['participants'];
+  /** The resource's history, newest first, when it has arrived: the header names the current one. */
+  versions: ResourceVersion[] | undefined;
+}): React.JSX.Element | null {
   if (!resource && !settled) return null;
+  // design.html §2: "Last updated today, 10:42 · version 4 · Rally".
+  const current = resource ? versions?.find((version) => version.version === resource.currentVersion) ?? versions?.[0] : undefined;
 
   if (resource) {
     // A live artifact is a page people open, not a record to describe. Behind
@@ -668,7 +686,8 @@ function InspectorDetail({
       <div className="inspector-detail">
         {resource.updatedAt && (
           <p className="inspector-detail-updated">
-            Last updated <time dateTime={resource.updatedAt}>{formatDateTime(resource.updatedAt)}</time>
+            Last updated <time dateTime={resource.updatedAt} title={formatDateTime(resource.updatedAt)}>{updatedLabel(resource.updatedAt)}</time>
+            {current && <>{` · version ${current.version} · ${versionAuthorLabel(current, resource, participants)}`}</>}
           </p>
         )}
         {sourceActions && (
@@ -1015,9 +1034,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
             {...(props.loadResourceContent ? { loadResourceContent: props.loadResourceContent } : {})}
             onRefreshResource={props.onRefreshResource}
             refreshingResourceId={props.refreshingResourceId}
+            participants={props.workstream?.participants ?? []}
             resource={resource}
             settled={settled}
             {...(props.siteArtifacts ? { siteArtifacts: props.siteArtifacts } : {})}
+            versions={props.resourceVersions}
           />
         ) : (
           <ContextContent {...props} />

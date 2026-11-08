@@ -6918,12 +6918,32 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
    when. The shot is the paper the design draws, holding the Canvas's mark: the
    row carries no picture of its artifact. Three columns where the pane is wide
    enough for 240px cards, fewer below. */
-.canvases-home-grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); list-style: none; margin: 0; padding: 0; }
+/* Three columns, as design.html §1 draws them in its 1024px main pane, once the
+   pane is that wide: the query reads the page's content box, so 900px is that
+   pane less the page's two 48px margins and its stable scrollbar gutter
+   (919px at 1440). Two below it; one at phone width. */
+.canvases-home { container: canvases-home / inline-size; }
+.canvases-home-grid { display: grid; gap: 20px; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
+@container canvases-home (min-width: 900px) { .canvases-home-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .canvases-home-grid { grid-template-columns: minmax(0, 1fr); } }
 .canvas-card { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-default); border-radius: 14px; overflow: hidden; position: relative; }
 .canvas-card:hover { background-image: var(--hover-layer); }
 .canvas-card:has(.sidekick-list-link:focus-visible) { outline: 2px solid var(--av-sys-color-focus-default); outline-offset: 2px; }
 .canvas-card-shot { background: var(--av-sys-color-surface-sunken); border-bottom: 1px solid var(--av-sys-color-border-default); box-sizing: border-box; height: 150px; overflow: hidden; padding: 14px 18px 0; position: relative; }
-.canvas-card-paper { background: var(--av-sys-color-surface-raised); border-radius: 8px 8px 0 0; box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: grid; height: 100%; place-items: center; }
+/* The paper is the design's thumbnail tone: near white on the light sunken
+   shot, #111 on the dark one (surface-subtle). Its sketch is drawn in the
+   design's own strokes: lines, a frame, a board's columns. */
+.canvas-card-paper { background: var(--av-sys-color-surface-subtle); border-radius: 8px 8px 0 0; box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); box-sizing: border-box; height: 100%; padding: 12px; }
+.canvas-card-paper.is-mark { display: grid; place-items: center; }
+.canvas-card-paper i { background: var(--av-sys-color-border-default); border-radius: 3px; display: block; height: 6px; margin-bottom: 7px; }
+.canvas-card-paper i.is-heading { background: var(--av-sys-color-text-muted); height: 10px; margin-bottom: 10px; opacity: .75; width: 55%; }
+.canvas-card-paper i.is-short { width: 80%; }
+.canvas-card-paper i.is-shorter { width: 60%; }
+.canvas-card-paper.is-site i.is-bar { border-radius: 4px; height: 12px; margin-bottom: 10px; }
+.canvas-card-paper.is-site i.is-hero { background: var(--av-sys-color-surface-sunken); border-radius: 6px; height: 56px; }
+.canvas-card-paper.is-board { display: flex; gap: 8px; }
+.canvas-card-paper.is-board > span { background: var(--av-sys-color-surface-sunken); border-radius: 6px; flex: 1; padding: 6px; }
+.canvas-card-paper.is-board > span i { background: var(--av-sys-color-surface-raised); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); height: 18px; margin-bottom: 5px; }
 .canvas-card-live { align-items: center; background: var(--av-sys-color-surface-raised); border-radius: var(--av-sys-size-radius-pill); box-shadow: 0 0 0 1px var(--av-sys-color-border-subtle); display: inline-flex; font-size: 11.5px; font-weight: 600; gap: 6px; padding: 3px 8px 3px 4px; position: absolute; right: 26px; top: 22px; }
 .canvas-card-body { padding: 12px 14px 14px; }
 .canvas-card-body h3 { font-size: 15px; font-weight: 600; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -7947,9 +7967,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
   padding: 0 8px 0 12px;
 }
 .navigation-section-trailing { align-items: center; display: inline-flex; font-weight: 400; gap: 2px; }
-.navigation-section-heading > span:first-child { white-space: nowrap; }
-/* A sort control in a heading ("Recent ⇵", design §1 and §3) reads as the heading's own muted text, not a form field. */
-.navigation-section-trailing .dropdown-select-trigger { color: var(--av-sys-color-text-muted); font-size: inherit; gap: 2px; min-width: 0; padding: 2px 4px; }
+/* A sort in the heading ("Recent") reads as the heading does, muted and its size. */
+.navigation-section-trailing .dropdown-select-trigger { color: inherit; font-size: inherit; gap: 4px; min-width: 0; padding-block: 2px; }
 .navigation-section-mark { display: inline-flex; padding: 2px 4px; }
 .navigation-sort {
   align-items: center;

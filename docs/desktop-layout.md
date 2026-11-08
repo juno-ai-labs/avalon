@@ -44,8 +44,9 @@ conversation where the window allows. Where the pane cannot hold that minimum
 beside the narrowest panel, 424 + 280px (`railFillsPane` in `rail-split.ts`,
 which sets `rail-fills-pane` on the shell), the panel takes the whole pane and
 closing it is the way back. The app shell keeps its sidebar above phone width,
-so at the default 340px sidebar this is any window or tab narrower than
-1044px, the desktop app's 860px minimum included.
+so at the default 416px sidebar (the 76px rail and the design's 340px list)
+this is any window or tab narrower than 1120px, and at the 476px maximum
+narrower than 1180px, the desktop app's 860px minimum included.
 At phone width the panel is a full-width sheet.
 
 Switching items in a panel already open for the same conversation keeps the
@@ -124,6 +125,15 @@ The desktop acceptance check opens, moves, quits, and relaunches real Electron
 windows, and checks that rail positions and panels return visibly.
 
 ## Changelog
+
+### 2026-11-08 — The panel takes the pane below 1120px, after the sidebar widened
+
+**What changed:** The width below which an open panel fills the pane moved
+from 1044px to 1120px with the default sidebar (1180px at its maximum).
+
+**Why:** The sidebar's default became the rail plus design.html's 340px list,
+416px (desktop-shell.md); `railFillsPane` subtracts the sidebar, so the same
+424 + 280px rule now applies 76px sooner. Nothing in the rule changed.
 
 ### 2026-11-07 — The landing reopens a Canvas or Sidekick, or the Canvases home
 

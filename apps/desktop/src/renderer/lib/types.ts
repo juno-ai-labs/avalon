@@ -256,6 +256,8 @@ export interface ResourceVersion {
   version: number;
   capturedAt: string;
   author: ResourceVersionAuthor | null;
+  /** The name the server resolved for a member or a connector author, when it has one. */
+  authorName: string | null;
   cause: ResourceVersionCause | null;
   contentAvailable: boolean;
   /** The title and type this version held, which a later one may have changed. */

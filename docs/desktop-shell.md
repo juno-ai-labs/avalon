@@ -182,7 +182,9 @@ labelled Settings. While a visible pane header carries the menu button
 (`PHONE_NAVIGATION_CONTROL`), the shut sheet keeps no bar and is hidden whole;
 a screen without one keeps the sheet's header as its top bar, and closing the
 sheet returns that bar to the section the route belongs to, so a list the
-person only looked at does not title the screen behind it. Opening the sheet
+person only looked at does not title the screen behind it; Activity, which
+stays open after one of its rows is opened, stays when the sheet closed for
+that navigation. Opening the sheet
 from a pane header moves focus to its close button; closing hands focus back
 to the opener, or to the visible menu button when the opener is gone
 (`useSheetOpener`). Opening anything from it closes it, as do Escape and
