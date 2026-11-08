@@ -261,6 +261,25 @@ describe('the Activity section', () => {
     api.getWorkspaceMembers.mockResolvedValue([{ id: AVERY, name: 'Avery', email: 'avery@rally.test', timezone: 'UTC' }] as never);
   });
 
+  it('at phone width, keeps Activity open when its sheet closes for one of its rows', async () => {
+    const width = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    try {
+      renderSidebar(workspace, '/canvases', page);
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+      fireEvent.click(within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('button', { name: /Activity/ }));
+      const rows = within(screen.getByRole('region', { name: 'Activity' })).getAllByRole('link');
+      await waitFor(() => expect(rows[1]).toHaveTextContent('Avery mentioned you in Q4 revenue review'));
+
+      fireEvent.click(rows[1]!);
+
+      expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+      expect(useUiStore.getState().sidebarSection).toBe('activity');
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    }
+  });
+
   it('badges the rail with the unseen count and lists who did what where, newest first, opening each where it happened', async () => {
     renderSidebar(workspace, '/', page);
     const rail = screen.getByRole('navigation', { name: 'Sections' });

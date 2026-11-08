@@ -441,6 +441,8 @@ describe('MessageBlock human identity', () => {
     // answer included.
     expect(response.querySelector('.message-author')).toHaveTextContent('Adam');
     expect(response.querySelector('time')).toBeInTheDocument();
+    // The reader's own answer, like their own turn, carries no avatar and no dot.
+    expect(response.querySelector('.message-author-avatar, .message-author-dot')).toBeNull();
     // And it carries the accent its dot is drawn with. The dot's background
     // resolves through `--person-accent`; a row that does not state it paints a
     // transparent dot, which is half a byline.
@@ -491,8 +493,13 @@ describe('MessageBlock human identity', () => {
 
     render(<MessageBlock {...actions} currentUserId="user-adam" message={elicitationMessage} />);
 
-    expect(screen.getByLabelText('Response from Sam')).toHaveClass('coworker-message');
+    const response = screen.getByLabelText('Response from Sam');
+    expect(response).toHaveClass('coworker-message');
     expect(screen.getByText('Sam')).toBeInTheDocument();
+    // A colleague's answer reads as their turn does: name first, under their avatar.
+    const header = response.querySelector('header')!;
+    expect(header.firstElementChild).toHaveClass('message-author');
+    expect(header.querySelector('.message-author-avatar')).toHaveTextContent('S');
   });
 
   it('renders an in-flight turn as the bubble it is about to become', () => {

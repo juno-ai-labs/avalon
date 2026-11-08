@@ -13,6 +13,9 @@ import { applyVersionedSidebarList } from '../lib/sidebar-list-store';
 import type * as Platform from '../lib/platform';
 import { expandRequest, openResourceRequest } from '../lib/navigation-routes';
 import type { ConversationSurfaceProps } from './conversation-surface';
+import type * as ConversationSurfaceExports from './conversation-surface';
+
+type ConversationSurfaceModule = typeof ConversationSurfaceExports;
 import { CanvasScreen } from './canvas';
 
 const WORKSPACE = '00000000-0000-7000-8000-0000000000f1';
@@ -235,6 +238,18 @@ describe('CanvasScreen', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     // Its conversation never opened, so no socket failure is raised over it.
     expect(surfaces).toHaveLength(0);
+  });
+
+  it('says a conversation it cannot reach is offline, in the pane and not in a dialog, without blaming the Canvas', async () => {
+    const { WorkstreamErrorState } = await vi.importActual<ConversationSurfaceModule>('./conversation-surface');
+    const retry = vi.fn();
+    render(<Tooltip.Provider><MemoryRouter><WorkstreamErrorState description={undefined} onRetry={retry} workstreamId={CANVAS} /></MemoryRouter></Tooltip.Provider>);
+    expect(screen.getByText('Rally can’t reach the server right now.')).toBeInTheDocument();
+    expect(screen.getByText('Live edits resume when Rally reconnects.')).toBeInTheDocument();
+    expect(screen.queryByText(/unavailable/)).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(retry).toHaveBeenCalled();
   });
 
   it('opens a Canvas in the list at once, beside its detail read', async () => {
