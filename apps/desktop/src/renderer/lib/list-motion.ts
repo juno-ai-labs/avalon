@@ -89,30 +89,39 @@ export interface ListMotionPlan {
 
 /**
  * The positions (as indices into `sequence`) of one longest strictly
- * increasing subsequence. Patience sorting, O(n log n): a sidebar can hold a
- * few hundred rows, and this runs on every render that changed one.
+ * increasing subsequence of `sequence`, a permutation of `0..n-1` (ranks).
+ * With `weights`, of the heaviest one instead: each position counts its
+ * weight, so a caller that weighs every position above the total of any
+ * tie-break it adds gets a longest run that, among the longest, keeps the
+ * positions it prefers. A Fenwick tree over the ranks, O(n log n): a sidebar
+ * can hold a few hundred rows, and this runs on every render that changed one.
  */
-export function longestIncreasingRun(sequence: readonly number[]): number[] {
-  const tailIndexAtLength: number[] = [];
-  const predecessor = new Array<number>(sequence.length).fill(-1);
-  for (let index = 0; index < sequence.length; index += 1) {
-    const value = sequence[index]!;
-    let low = 0;
-    let high = tailIndexAtLength.length;
-    while (low < high) {
-      const middle = (low + high) >> 1;
-      if (sequence[tailIndexAtLength[middle]!]! < value) low = middle + 1;
-      else high = middle;
+export function longestIncreasingRun(sequence: readonly number[], weights?: readonly number[]): number[] {
+  const size = sequence.length;
+  // tree[i] holds the best (heaviest) run ending at a rank in its range: its
+  // weight and the position it ends at. A tie goes to the later position, as
+  // patience sorting's did, so the unweighted answer is the one it gave.
+  const treeWeight = new Array<number>(size + 1).fill(0);
+  const treeEnd = new Array<number>(size + 1).fill(-1);
+  const predecessor = new Array<number>(size).fill(-1);
+  const total = new Array<number>(size).fill(0);
+  let bestEnd = -1;
+  for (let index = 0; index < size; index += 1) {
+    const rank = sequence[index]!;
+    let weight = 0;
+    let end = -1;
+    for (let node = rank; node > 0; node -= node & -node) {
+      if (treeWeight[node]! > weight) { weight = treeWeight[node]!; end = treeEnd[node]!; }
     }
-    predecessor[index] = low > 0 ? tailIndexAtLength[low - 1]! : -1;
-    tailIndexAtLength[low] = index;
+    total[index] = weight + (weights?.[index] ?? 1);
+    predecessor[index] = end;
+    for (let node = rank + 1; node <= size; node += node & -node) {
+      if (total[index]! >= treeWeight[node]!) { treeWeight[node] = total[index]!; treeEnd[node] = index; }
+    }
+    if (bestEnd < 0 || total[index]! >= total[bestEnd]!) bestEnd = index;
   }
   const run: number[] = [];
-  let cursor = tailIndexAtLength.at(-1) ?? -1;
-  while (cursor >= 0) {
-    run.push(cursor);
-    cursor = predecessor[cursor]!;
-  }
+  for (let cursor = bestEnd; cursor >= 0; cursor = predecessor[cursor]!) run.push(cursor);
   return run.reverse();
 }
 
@@ -134,6 +143,12 @@ export function longestIncreasingRun(sequence: readonly number[]): number[] {
  * seen to leave. The ranking is per scope, so a block of rows moving as one —
  * a Space and its placements, reordered past another Space — shifts as one.
  *
+ * Where more than one longest run explains the change, the one kept is the one
+ * whose rows stayed in their group: a row that crossed a held row (a heading)
+ * is the one that moved. A Sidekick moving out of Needs input into the recent
+ * list past the row it now follows leaves and comes back; the row it passed,
+ * which never changed group, shifts.
+ *
  * Rows that were not there before are left alone: they have no old position to
  * leave from, and a page of them arriving at once is not a move. Rows that are
  * gone cannot be animated, since there is nothing left to animate.
@@ -153,13 +168,34 @@ export function planListMotion(
     const scope = entry.row.scope ?? '';
     scopes.set(scope, [...(scopes.get(scope) ?? []), entry]);
   }
+  // The held rows both renders have, per scope: a row whose count of them
+  // above it changed has crossed one, which in the sidebar is a heading, so it
+  // changed group.
+  const heldTops = new Map<string, Array<{ before: number; after: number }>>();
+  for (const { row, from } of shared) {
+    if (!row.hold) continue;
+    const scope = row.scope ?? '';
+    heldTops.set(scope, [...(heldTops.get(scope) ?? []), { before: from.top, after: row.top }]);
+  }
+  const crossedHeldRow = ({ row, from }: (typeof shared)[number]): boolean => {
+    const held = heldTops.get(row.scope ?? '') ?? [];
+    return held.filter((top) => top.before < from.top).length !== held.filter((top) => top.after < row.top).length;
+  };
   for (const ranked of scopes.values()) {
     const oldRank = new Map(
       [...ranked]
         .sort((left, right) => left.from.top - right.from.top)
         .map((entry, rank) => [entry.row.key, rank] as const),
     );
-    for (const index of longestIncreasingRun(ranked.map((entry) => oldRank.get(entry.row.key)!))) {
+    // Every row weighs more than all the tie-breaks together, so the run is
+    // still a longest one; among the longest, it keeps the rows that stayed
+    // in their group. When a row changes group and a row of the group it
+    // joins is passed on the way, the one that changed group is the one that
+    // leaves and comes back: kept instead, it would glide across the headings
+    // between its two slots, drawn over them, while the row it passed left
+    // the frame for no reason the reader could see.
+    const weights = ranked.map((entry) => ranked.length + 1 + (crossedHeldRow(entry) ? 0 : 1));
+    for (const index of longestIncreasingRun(ranked.map((entry) => oldRank.get(entry.row.key)!), weights)) {
       kept.add(ranked[index]!.row.key);
     }
   }

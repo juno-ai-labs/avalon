@@ -86,12 +86,18 @@ export function ghostProps(ghost: boolean): React.HTMLAttributes<HTMLElement> {
  * the rows under it when a section above appears or goes, rather than being
  * the thing seen to leave.
  */
-export function SectionHeading({ children, motionKey, trailing }: {
+export function SectionHeading({ children, comesAndGoes = false, motionKey, trailing }: {
   children: ReactNode;
+  /**
+   * The heading is drawn only while its section has rows (Needs input), so
+   * its arrival and departure are part of a row's move and slide like one
+   * (`data-motion-insert`, docs/list-motion.md) instead of blinking.
+   */
+  comesAndGoes?: boolean;
   motionKey: string;
   trailing?: ReactNode;
 }): React.JSX.Element {
-  return <div className="navigation-section-heading" data-motion-hold="" data-motion-key={`heading:${motionKey}`}>
+  return <div className="navigation-section-heading" data-motion-hold="" {...(comesAndGoes ? { 'data-motion-insert': '' } : {})} data-motion-key={`heading:${motionKey}`}>
     <span>{children}</span>
     {trailing && <span className="navigation-section-trailing">{trailing}</span>}
   </div>;
