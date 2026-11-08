@@ -456,7 +456,10 @@ The Sidekicks home (`/sidekicks`, in the main window on both hosts) lists all
 accessible personal and workspace entries, including drafts, as rows with
 their status (Needs input, Draft, Paused or Active), who they are shared with
 and when they next wake, filtered by Everyone, Only you, Organization or
-Paused. `GET /sidekicks` uses
+Paused. The row's facts give way on the pane's width, a container query on
+the page rather than a viewport rule: Shared with drops first, and in a narrow
+pane the status pill and Next sit under the description, so the name keeps
+its room at the desktop's 860px minimum beside the 416px sidebar. `GET /sidekicks` uses
 `WorkspaceDO.listSidekickDirectoryForAuthorizedMember`: the request's session
 authentication already joined the caller's active member row, so the object
 applies only the per-row scope filter and does not read `workspace_members`
@@ -1854,14 +1857,42 @@ instructions. See [Google connector guidance](connectors.md#google).
 shared conversation with the answer form (`SidekickRunQuestion`), which
 answers that run through the run's own conversation socket. The run view
 keeps its answer form and loses only its composer (`withoutComposer`, which
-replaced a `readOnly` flag that never stopped the form). The Needs input row
-in the sidebar reads the question (`AutomationSummary.pendingQuestion`), and
-`AutomationSummary` gains `runState`.
+replaced a `readOnly` flag that never stopped the form). `AutomationSummary`
+gains optional `runState`, `pendingQuestion` and `triggerKinds`
+(`AUTOMATION_RUN_STATE_SQL`, `AUTOMATION_TRIGGER_KINDS_SQL`), and the socket's
+Sidekick list carries `lastRunAt` (the newest run's start). A run's
+conversation sends a pending elicitation's prompt as its `preview` and
+`reply`, so the run's row, the Sidekick's sidebar row and the notice carry the
+question. The Sidekick list is sent again when a run is admitted, when a pause
+stops a pending run, and when a projection moves a run into or out of working
+or brings a waiting run's question. `SidekickRunRowProjection` gains optional
+`requesterUserId`, and the row's write marks its own turn read for that person
+while the run works, when they had read everything before it. The details
+column draws **Wakes on**, **Uses** and **Writes to** always, reading
+**Nothing yet** when empty; a draft shows neither Pause nor the delegation
+block; the home draws design §3's pills and Next column; the wizard's tool row
+says "Used Sidekicks"; the edit chip sits at the composer with a close; New
+Sidekick reopens an existing draft. The home's row facts collapse on the
+pane's width rather than the window's (v4-R2-1, v3-R2-3).
 
-**Why:** The design (§4, the PRD's authority for every screen) puts the
-question in the transcript. The inspection found a person told a Sidekick
-needed them with no way to see what it asked short of finding the run view,
-while the natural reply, typed in the shared composer, starts a new run.
+**Why:** The design (§3 and §4, the PRD's authority for every screen) puts
+the question in the transcript, draws "● Working" and a waiting row whose
+second line is the question, and reads "On alert", "On email" or "On request"
+in Next. The inspection found a person told a Sidekick needed them with no
+way to see what it asked short of finding the run view, while the natural
+reply, typed in the shared composer, starts a new run; a Sidekick that uses
+nothing could not be told from one whose block was hidden; and the plan's
+section 9 had recorded that "A 'Working' state on the Sidekicks home needs a
+running flag on the directory row". The flag is derived by a probe rather
+than stored, for the reason the Needs input probe is: no writer can leave it
+stale. The question was nowhere a list could read it: the run's summary was
+its last text turn, and the asking is an elicitation turn (v2-F2, v2-F6,
+v2-F8, v2-F10, v2-F25). v2-F11's stale time was the socket list sending no
+`lastRunAt` at all. The requester seat answers v2-F12: the row you have open
+turned unread for the run you just started. The facts were a fixed 398px
+grid hidden only in a window under 760px, so once the sidebar took 416px of
+every window they squeezed the name to one letter per line between the
+desktop's 860px minimum and about 1150px.
 
 **Considered and rejected:** Answering from the shared composer: a message
 there is routed to a new run by design, and teaching admission to guess which

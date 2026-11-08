@@ -326,7 +326,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   const shellStyle = {
     '--rail-width': `${railWidth}px`,
     '--conversation-min-width': `${SIDEBAR_CONTENT_MIN_WIDTH}px`,
-    '--av-cmp-sidebar-width': `${sidebarWidth}px`,
+    // Above phone width the sidebar gives way before the pane drops under the
+    // conversation's minimum, so a 641 to 840px tab keeps a readable pane.
+    '--av-cmp-sidebar-width': `min(${sidebarWidth}px, calc(100vw - ${SIDEBAR_CONTENT_MIN_WIDTH}px))`,
   } as CSSProperties;
 
   return (

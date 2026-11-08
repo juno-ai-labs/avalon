@@ -6909,6 +6909,28 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .sidekick-list-facts div { display: grid; gap: 2px; }
 .sidekick-list-facts dt { color: var(--av-sys-color-text-muted); font-size: 12px; }
 .sidekick-list-facts dd { font-size: 13px; margin: 0; white-space: nowrap; }
+/* The facts give way on the pane's width, not the window's: the sidebar takes
+   416px of any window, so a viewport rule let them squeeze the name to nothing
+   between the desktop's 860px minimum and about 1150px. The query reads the
+   page's content box, which is the row's inner width (the list's -12px margin
+   gives back the row's 12px padding). Beside the 56px glyph, the 18px chevron
+   and their three 16px gaps, the three facts (398px) leave the name 240px at
+   760px; Status and Next alone (244px) leave it 240px at 606px. Narrower, the
+   pill and Next sit under the description and keep their labels for a screen
+   reader only. */
+.sidekicks-library { container: sidekicks-library / inline-size; }
+@container sidekicks-library (width < 760px) {
+  .sidekick-list-facts { grid-template-columns: 110px 110px; }
+  .sidekick-list-facts .sidekick-list-shared { display: none; }
+}
+@container sidekicks-library (width < 606px) {
+  .sidekicks-library-rows li { column-gap: 16px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; row-gap: 8px; }
+  .sidekicks-library-rows .sidekick-list-glyph { grid-row: 1 / span 2; }
+  .sidekicks-library-rows .sidekick-list-chevron { grid-column: 3; grid-row: 1 / span 2; }
+  .sidekicks-library-rows .sidekick-list-facts { align-items: center; display: flex; gap: 12px; grid-column: 2; grid-row: 2; }
+  .sidekicks-library-rows .sidekick-list-facts dd { color: var(--av-sys-color-text-muted); }
+  .sidekicks-library-rows .sidekick-list-facts dt { clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+}
 /* design.html §3's status pills: green Active and Working (with its dot), amber
    Paused, a dashed Draft; and the red Needs input badge beside the name. */
 .sidekick-status-pill { align-items: center; border-radius: var(--av-sys-size-radius-pill); display: inline-flex; font-size: 13px; gap: 6px; padding: 3px 10px; }
@@ -6924,7 +6946,8 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
 .canvases-home-group + .canvases-home-group { margin-top: 32px; }
 /* At phone width the sheet's bar is this screen's header, holding its title,
    New Canvas and Search, so the page does not draw them a second time. */
-@media (max-width: 640px) { .canvases-home > .sidekicks-library-heading { display: none; } }
+/* Every section home, the Canvases and the Sidekicks homes alike. */
+@media (max-width: 640px) { .sidekicks-library > .sidekicks-library-heading { display: none; } }
 /* design.html §1's card: a 150px shot of the Canvas over its title and who and
    when. The shot is the paper the design draws, holding the Canvas's mark: the
    row carries no picture of its artifact. Three columns where the pane is wide
@@ -7047,7 +7070,6 @@ body:has(.attachment-lightbox) .tooltip { z-index: 1005; }
   .sidekicks-library { padding: 56px 24px 24px; }
   .sidekicks-library-heading { flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
   .sidekicks-library-list { grid-template-columns: minmax(0, 1fr); }
-  .sidekick-list-facts { display: none; }
   }
 /* On a phone the tab's close button sits where Settings puts its own: the top
    right corner, not beside New Sidekick. */
