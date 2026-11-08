@@ -43,10 +43,11 @@ and work with Rally as a member does.
 | Change who can open any Canvas | Yes | Yes | Only Canvases they created, or that a Sidekick they manage made | No |
 | Build Sidekicks | Yes | Yes | Yes | No |
 | Talk to Sidekicks shared with them | Yes | Yes | Yes | No |
-| See the members list | Yes | Yes | Yes | No |
+| See the members list | Yes | Yes | Yes | Yes |
 | Invite people and revoke invitations | Yes | Yes | No | No |
 | Make someone an administrator, or remove that | Yes | Yes | No | No |
 | Turn a guest into a member | Yes | Yes | No | No |
+| Suspend someone | Yes | Yes | No | No |
 | Change the Organization's default time zone | Yes | Yes | No | No |
 | Change the Terminal's internet access | Yes | Yes | No | No |
 | Add, refresh and delete Organization connections | Yes | Yes | No | No |
@@ -64,9 +65,10 @@ appear for them at all, and the time zone and internet access settings are
 shown read-only. If a teammate asks why they cannot find something, this is
 usually why.
 
-Guests see even less. Their Settings has only **Account** in a browser, plus
-**Application** in the Mac app. They never see the members list or any
-Organization setting. A guest cannot
+Guests see even less. Their Settings lists every section, but they can open
+only **Account**, **Members** and, in the Mac app, **Application**; the others
+are greyed out with **Only members of this organization can open this.** A
+guest cannot
 leave the Organization themselves; to end their access, see
 [Taking access back](../02-canvases/09-sharing-with-guests.md#taking-access-back).
 
@@ -78,9 +80,9 @@ leave the Organization themselves; to end their access, see
 
 ## The members list
 
-Open **Settings → Organization** and scroll to **Members**. Under the heading
-it says **People with access to** and your Organization's name, with a count of
-everyone on the list beside it.
+Open **Settings → Members**, under **Organization**, or choose **Members** in
+the account menu. Under the heading it says **People with access to** and your
+Organization's name.
 
 Each row shows:
 
@@ -89,27 +91,26 @@ Each row shows:
 - a badge with their role: **owner**, **admin** or **member**, or **Guest** for
   a guest.
 
-Everyone can see this list. Only owners and administrators see buttons on the
-rows.
+Everyone can see this list. Owners and administrators also see a **…** button
+on each row, with the actions below.
 
 ## Make someone an administrator
 
-1. Open **Settings → Organization** and find the person under **Members**.
-2. Click **Make administrator** on their row.
+1. Open **Settings → Members** and find the person.
+2. Click **…** on their row and choose **Make administrator**.
 
 Their badge changes to **admin**, and the change takes effect at once. Rally
 checks roles on every request, so they do not need to restart or sign in again.
 
-To take the role away, click **Remove administrator** on the same row. Their
+To take the role away, choose **Remove administrator** from the same menu. Their
 badge goes back to **member**.
 
-A few rows never show these buttons:
+A few rows never offer these:
 
-- **The owner.** Their role cannot be changed, so Rally shows no button rather
-  than one that could only fail.
+- **The owner.** Their role cannot be changed.
 - **People whose invitation is still pending.** They are not members yet. Set
   the role on the invitation instead (see [Inviting people](02-inviting-people.md)).
-- **Guests.** They get a different button, described next.
+- **Guests.** They get a different item, described next.
 
 Rally also refuses to remove the last administrator. In practice the owner
 always counts, so you will rarely meet this.
@@ -121,10 +122,9 @@ always counts, so you will rarely meet this.
 ## Turn a guest into a member
 
 When a client or contractor becomes part of the team, you do not need to
-re-invite them. Their row in **Members** shows a **Guest** badge and a **Make
-member** button.
+re-invite them. Their row in **Members** shows a **Guest** badge.
 
-1. Click **Make member** on the guest's row.
+1. Click **…** on the guest's row and choose **Make member**.
 2. A dialog titled **Make guest a member** explains that they will gain normal
    organization membership, and that their existing conversations and
    contributions stay with their account.
@@ -135,3 +135,13 @@ Nothing they wrote is lost and none of their windows are closed. You can make th
 administrator from there if you want to.
 
 There is no button to turn a member back into a guest.
+
+## Suspend someone
+
+To take someone out of the Organization, click **…** on their row in
+**Members** and choose **Suspend**. Rally asks **Suspend** *their name*?, and
+explains that they lose access to the Organization right away while their
+conversations and contributions stay. Click **Suspend** to confirm. A member
+you suspended can be invited back later. You cannot suspend yourself; to go,
+leave the Organization instead, as
+[Leaving, removing and closing](05-leaving-and-removing.md) explains.

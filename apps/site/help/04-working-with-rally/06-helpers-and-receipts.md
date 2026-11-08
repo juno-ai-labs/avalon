@@ -28,11 +28,6 @@ companies in parallel."
 
 ### Seeing them work
 
-While helpers are running, a quiet, shimmering line above the message box
-counts them, such as **2 background agents running**. It disappears when they
-are all done. (You met this line in
-[While Rally works](../02-canvases/04-while-rally-works.md).)
-
 In the conversation you see rows such as **Delegating to a background agent**,
 **Messaging a teammate** and **Stopping a background agent**. "Teammate" here
 means another agent, not one of your colleagues. Helpers do not get their own

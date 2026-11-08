@@ -49,7 +49,7 @@ Click **Sidekicks** and the sidebar lists the Sidekicks shared with you, in thre
 - **Pinned**, for the Sidekicks you pinned.
 - **All Sidekicks**, everything else, newest activity first.
 
-Each row shows the Sidekick's hexagon, its name and where it stands: **Working**, **Runs** and when it runs next, **Last run** and how long ago, **Paused** or **Draft**. [The Sidekicks section](../03-sidekicks/05-the-sidekicks-section.md) has more.
+Each row shows the Sidekick's hexagon, its name and where it stands: **Working**, **Runs** and when it runs next, **Last run** and how long ago, **Active**, **Paused** or **Draft**. [The Sidekicks section](../03-sidekicks/05-the-sidekicks-section.md) has more.
 
 > [!NOTE]
 > "Needs input" means a Sidekick is missing information. It never means a Sidekick is waiting for permission to use a tool. Rally does not ask anyone to approve its tool calls.
@@ -97,11 +97,11 @@ Your avatar at the bottom of the rail opens the account menu:
 
 If your account can belong to several Organizations, the menu also lists them under **Organizations**, with a check mark beside the one you are in, and any waiting **Invitations**. See [Belonging to several Organizations](../10-running-an-organization/04-several-organizations.md).
 
-For help, the **Help** menu in the Mac menu bar has a link to this manual, and [Contacting support](../12-help-and-glossary/03-contact-support.md) tells you how to reach a person.
+For help, **Help → Rally website** in the Mac menu bar opens rallywith.ai, whose **Help Center** link leads to this manual, and [Contacting support](../12-help-and-glossary/03-contact-support.md) tells you how to reach a person.
 
 ## Rally remembers where you were
 
-When you quit Rally and open it again, it returns to what you were last looking at, with your sidebar section and width, the panel you had open and your place in the conversation as you left them. The first time, or if that place has gone, it opens the Canvases home page.
+When you quit Rally and open it again, it returns to what you were last looking at, with your sidebar width, the panel you had open and your place in the conversation as you left them. The rail shows the section of the Canvas or Sidekick it reopens; if it reopens on a home page, it keeps the section you last picked. The first time, or if that place has gone, it opens the Canvases home page.
 
 This memory belongs to this Mac; your other devices keep their own.
 

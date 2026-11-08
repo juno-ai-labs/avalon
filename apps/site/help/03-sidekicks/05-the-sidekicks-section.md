@@ -60,12 +60,13 @@ The details column shows:
   shared with (**Only you**, such as **Shared · 3 people**, or
   **Organization**), and its description;
 - **Pause** or **Resume**, beside a **…** button with **Run now**, **Run
-  history**, **Copy link** and **Archive Sidekick**. A draft has no Pause, and
+  history**, **Copy link** and **Archive Sidekick** (**Archive draft** for a
+  draft). A draft has no Pause, and
   its **…** sits beside its pills. Unavailable items stay visible but disabled;
   hover or focus them for an explanation;
 - **Wakes on**: its triggers in plain words, and **Next** with how long until
   the next scheduled run, when there is one;
-- **Uses**: the connections it uses, with a count;
+- **Uses**: the connections it uses, with a count of its tools;
 - **Writes to**: the Canvases it writes to, each of which opens the Canvas;
 - **Delegation allowed**, the people the Sidekick may act as (see
   [Tools and delegation](06-tools-and-delegation.md));
@@ -100,13 +101,15 @@ dialog is subtitled "Technical details for troubleshooting this Sidekick."
 
 Each row shows:
 
-- a status dot, coloured the same way as elsewhere in Rally (see
-  [Status dots and badges](../02-canvases/10-status-dots-and-badges.md));
+- a status dot: blue and pulsing while it runs, amber for needs input, grey
+  when it completed, brown when stopped and red when it failed;
 - how the run started: **On request**, **Scheduled**, **Event** or **Email**;
 - a short summary of the result, or "Running" with how long it has been
   going, or when it finished;
-- a status badge, such as **Running**, **Needs input**, **Latest run
-  completed** or **Latest run stopped**.
+- a status badge: **Running**, **Needs input**, **Latest run completed**,
+  **Latest run stopped** or **Needs intervention**. These are older words than
+  the run rows in the conversation use; **Latest run completed** is a row's
+  **Done**, and **Needs intervention** its **Failed**.
 
 If there have been no runs yet the dialog says **No runs yet**. If it says
 **Could not load runs**, close it and try again in a moment.

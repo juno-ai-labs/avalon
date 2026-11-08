@@ -14,31 +14,30 @@ one to another. Rally shows you one Organization at a time.
 
 > [!NOTE]
 > Rally is turning on the Organization switcher gradually, so your account may
-> not have it yet. If the account menu shows only **Log out**, the switcher is
-> not on for you. Everything else in Rally
+> not have it yet. If the account menu has no **Organizations** section, the
+> switcher is not on for you. Everything else in Rally
 > works the same, and you can still accept invitations when you sign in, as
 > described in [Create or join an Organization](../01-getting-started/02-create-or-join-an-organization.md).
 
 ## The account menu
 
-Click your name or picture at the bottom-left of the window. When the switcher
+Click your avatar at the bottom of the rail. When the switcher
 is on, the menu has an **Organizations** section listing each Organization you
 belong to.
 
 - A **check mark** sits beside the one you are in now.
-- A **green dot** beside another one means something has happened there. Hover
-  over it for the details, such as how many mentions are waiting for you, or
-  how many Sidekicks are waiting for your input. **Unread activity** means there
-  is something new to look at, but nothing is waiting on you.
+- A number beside another one counts the conversations with something new
+  there. Hover over it for the details, such as how many mentions are waiting
+  for you, or how many conversations are waiting for your input.
 - If you belong to Organizations in different regions, each row also shows its
   region.
 
 If Rally could not fetch the latest counts, the menu says **Counts last
-updated** and how long ago, so you know the dots may be out of date.
+updated** and how long ago, so you know the numbers may be out of date.
 
 There is deliberately no combined inbox across Organizations. Each one keeps
-its own activity, and the dots are there to tell you when it is worth hopping
-over.
+its own activity, and the numbers are there to tell you when it is worth
+hopping over.
 
 ## Switch to another Organization
 

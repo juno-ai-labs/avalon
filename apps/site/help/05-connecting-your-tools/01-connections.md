@@ -14,7 +14,9 @@ Open Settings with <kbd>⌘</kbd> <kbd>,</kbd> (or **Rally → Settings…** in 
 
 You can manage connections in the Mac app or the browser version. The browser version can connect every tool except Canva, which you connect from the Mac app.
 
-The page is headed **Your connections**. It has two halves.
+The page is headed **Your connections**. It has two halves. Each connection
+you have also gets a page of its own, listed under **Connections** in the
+Settings sidebar, where you can look at it and change its settings.
 
 ## The two tables
 

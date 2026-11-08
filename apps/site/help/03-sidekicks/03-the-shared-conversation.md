@@ -85,7 +85,8 @@ rail counts it. Whoever asked for the run, and the Sidekick's managers, also
 get a **needs your input** row in Activity.
 
 Answer on the row, with the question's choices or in your own words under
-**Other**, and press **Submit**, or open the run and answer there. The run
+**Other**, and press **Submit**, or **Skip** to let the run carry on without
+you. You can also open the run and answer there. The run
 carries on, and the answer stays in the run's conversation, under the question.
 Anyone the Sidekick is shared with can answer, unless the Sidekick asked one
 person by name.

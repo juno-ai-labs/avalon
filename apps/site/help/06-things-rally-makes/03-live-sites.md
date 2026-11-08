@@ -39,7 +39,7 @@ Click the **Site** card to open the site view, which shows the live page itself.
 - **Copy public link**, which copies the site's address.
 - **Open in browser**, which opens the site in your usual web browser.
 
-You can also dock a site beside the conversation with **Open in a righthand sidebar**, the same way you dock a document.
+A site opens in the panel beside the conversation, the same way a document does.
 
 While the site loads you see **Opening…**. If it cannot load, Rally says **This site could not be opened**, with the reason underneath.
 
