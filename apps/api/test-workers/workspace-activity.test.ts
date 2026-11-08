@@ -346,6 +346,21 @@ describe("a person's Activity", () => {
     recipient.socket.close(1000, "done");
   });
 
+  it("keeps a finished run unseen for a requester whose report says they never read the shared conversation", async () => {
+    const automationId = await activeSidekick();
+    const finishing = "00000000-0000-7000-8000-0000000ac106";
+    await requestedRuns(automationId, [finishing]);
+    await finishRun(automationId, finishing, "completed");
+    await expect.poll(() => openedActivity(RECIPIENT), { timeout: RUN_SETTLE_TIMEOUT_MS })
+      .toMatchObject({ unseenCount: 1, items: [runItem(automationId, "run_finished", finishing)] });
+    // Somebody else's message moves the requester's projection; they have never read it.
+    await readSidekick(automationId, 1, 0, null);
+    expect(await openedActivity(RECIPIENT)).toMatchObject({ unseenCount: 1, items: [{ kind: "run_finished", seen: false }] });
+    // Their own read, at the same cursor, does clear it.
+    await readSidekick(automationId, 2, 0, new Date().toISOString());
+    expect(await openedActivity(RECIPIENT)).toMatchObject({ unseenCount: 0, items: [{ kind: "run_finished", seen: true }] });
+  });
+
   it("keeps a mention in a run's conversation unseen however far the shared conversation is read", async () => {
     const automationId = await activeSidekick();
     const runId = "00000000-0000-7000-8000-0000000ac104";
@@ -410,10 +425,11 @@ async function finishRun(automationId: string, runId: string, state: string): Pr
 }
 
 /** The recipient's read report on the Sidekick's shared conversation, as its conversation sends it. */
-async function readSidekick(automationId: string, sourceVersion: number, seenAttentionOrdinal: number): Promise<void> {
+async function readSidekick(automationId: string, sourceVersion: number, seenAttentionOrdinal: number,
+  lastReadAt?: string | null): Promise<void> {
   const effect = WorkstreamDirectoryUserEffectSchema.parse({
     kind: "directory_user", userId: RECIPIENT, isParticipant: true, unreadCount: 0, youAreMentioned: false, listable: true,
-    seenAttentionOrdinal,
+    seenAttentionOrdinal, ...(lastReadAt === undefined ? {} : { lastReadAt }),
   });
   await workspace().receiveChildEffects({ substreamId: asSubstreamId("0"), envelopes: [
     envelope("automation", automationId, "0", `read:${RECIPIENT}:${sourceVersion}`, effect, sourceVersion, null)] });
