@@ -8,7 +8,7 @@ the device remembers only the view the person chose.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/lib/ui-store.ts` | Rail widths and collapse preferences. |
+| `apps/desktop/src/renderer/lib/ui-store.ts` | The sidebar's width and open section. |
 | `apps/desktop/src/renderer/lib/rail-split.ts` | The even split an attachment or artifact panel opens or restores at. |
 | `apps/desktop/src/renderer/lib/desktop-layout.ts` | Scoped local keys and artifact panel selection. `useSemanticScroll` is still exported and tested, but nothing calls it. |
 | `apps/desktop/src/renderer/components/app-shell.tsx`, `screens/landing.tsx`, `lib/landing.ts` | Last route save and startup restoration. |
@@ -19,7 +19,7 @@ the device remembers only the view the person chose.
 ## How it works
 
 The renderer keeps the sidebar's width and its open section
-(`rally.sidebar-section`, `canvases` or `sidekicks`) in local storage. Keys
+(`rally.sidebar-section`: `canvases`, `sidekicks` or `activity`) in local storage. Keys
 written before the 2026-11 cutover are no longer read: the Threads and Channels
 sorts (`rally.sidebar-thread-sort`, `rally.sidebar-channel-sort`), the Space
 filter (`rally.sidebar-space-filter`), and the widths of a thread beside its
@@ -27,8 +27,8 @@ Channel (`thread-width`) and of a Breakout beside its thread
 (`breakout-width`). The sidebar no longer collapses, so there is no collapsed
 state to keep. **The sidebar's scroll position is not restored**: neither list
 calls `useSemanticScroll`, so each opens at its top. The selected artifact
-panel is scoped to a conversation (`artifact-panel:<conversation>`, a Canvas's
-Chat); its resource is looked up in the freshly loaded conversation before the
+panel is scoped to a conversation (`artifact-panel:<parent>:<substream>`, for
+a Canvas its Chat, `artifact-panel:<canvas>:0`); its resource is looked up in the freshly loaded conversation before the
 panel is drawn.
 
 Every attachment and artifact opens its panel at an even split with the
@@ -75,7 +75,8 @@ the conversation instead and covers the scrollbar's last few pixels.
 The shell records the Canvas and Sidekick routes (`/canvases`, `/canvases/:id`,
 `/sidekicks`, `/sidekicks/:id`) as `last-route`, without a query. The root
 landing reopens the saved route when it is one of those (`restorableRoute`); a
-Canvas or Sidekick that has gone shows its own unavailable state. Otherwise,
+Canvas or Sidekick that has gone falls back to its section home without a
+dialog ([`desktop-shell.md`](desktop-shell.md#the-landing-and-the-routes)). Otherwise,
 including a Channel or Thread route saved before the cutover, it opens
 `/canvases`.
 
