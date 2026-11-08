@@ -234,6 +234,7 @@ quoted values into SQL. Bindings may be strings, finite numbers, or `null`.
 | `retire_org` | `orgId` | Retires the Organization permanently through Ace's retirement door. There is no undo. If the receipt says `complete: false`, call again to resume. |
 | `dump_thread_transcripts` | `orgId`, `confirm` (the `orgId` again) | **Destructive standing**, as `run_workspace_sql` (annotated a non-destructive write: it only adds to R2, but it opens every conversation object). Writes every Thread, Breakout and Channel conversation of the Organization to R2 as text under `retired-conversations/<orgId>/<parentId>/<substreamId>.txt`, skipping any already written; Canvases and Sidekicks are never dumped. Reports dumped, skipped and failed counts. Run it, and see nothing failed, before `retire_threads`. |
 | `retire_threads` | `orgId`, `confirm` (the `orgId` again) | **Destructive.** Irreversibly deletes every Thread, Breakout and Channel of the Organization: retires each conversation object and deletes their rows. Canvases, Sidekicks, resources and memory stay. Refused until `dump_thread_transcripts` has written every conversation. Repeat to resume; a finished Organization reports zeros. |
+| `convert_threads_to_canvases` | `orgId`; optional `dryRun` (default `true`) and `confirm` (the `orgId` again, required when `dryRun` is `false`) | **Destructive** when applied. Makes every Thread that made or linked an artifact a Canvas with the same id: its conversation becomes the Canvas's Chat, its viewers participants, its artifacts the Canvas's; its Breakouts are retired. A dry run lists the candidates and changes nothing. Refused until `dump_thread_transcripts` has written every conversation of every candidate. Run it before `retire_threads`. Repeat to resume. |
 | `list_artifacts` | `workspaceId` | Reads the authoritative WorkspaceDO live web artifact registry. |
 | `run_workspace_sql` | `workspaceId`, `sql`, optional `bindings` | Runs arbitrary SQLite in WorkspaceDO, including a Canvas's parent state in `canvas_directory` and the `parent_*` tables. |
 | `run_canvas_sql` | `workspaceId`, `conversationId` (a Canvas or Sidekick ID), optional `substreamId`, `sql`, optional `bindings` | Runs arbitrary SQLite in the conversation object (AgentLoopDO), or in a registered child conversation. |
@@ -260,8 +261,8 @@ BLOB values are returned as `{ "type": "blob", "base64": "..." }`.
 `rowsWritten` is Cloudflare's physical SQLite write count, including index
 maintenance; it is not a domain-level count of changed records.
 
-- Never give this server to an agent-driven caller with `dump_thread_transcripts`
-  and `retire_threads` enabled. Their only gate is `confirm` naming the
+- Never give this server to an agent-driven caller with `dump_thread_transcripts`,
+  `convert_threads_to_canvases` and `retire_threads` enabled. Their only gate is `confirm` naming the
   Organization, which is a consistency check, not an approval
   ([`engineering-mcp.md`](engineering-mcp.md#retiring-threads)).
 

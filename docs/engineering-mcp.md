@@ -79,6 +79,7 @@ The regional bridge uses D1 only for identity and routing:
 | `retire_org` | Resolve the Organization in exactly one region | `retireWorkspaceForOperator`, Ace's retirement door: the D1 fence, then the graph walk over every object |
 | `dump_thread_transcripts` | Resolve the Organization in exactly one region | `thread-retirement-service.ts`: WorkspaceDO's Thread inventory, each conversation's AgentLoopDO, and R2 `PAYLOADS` |
 | `retire_threads` | Resolve the Organization in exactly one region | `thread-retirement-service.ts`: the dump receipts in R2, `retireObject` on each conversation's AgentLoopDO, and WorkspaceDO's row deletion |
+| `convert_threads_to_canvases` | Resolve the Organization in exactly one region | `thread-conversion-service.ts`: WorkspaceDO's conversion inventory and Canvas rows, the dump receipts in R2, `convertParentKind` on each Thread's Main and `retireObject` on its Breakouts, and WorkspaceDO's row deletion |
 | `read_canvas_chat`, `read_sidekick_conversation` | Resolve the Organization in exactly one region | ConversationService.authorizeViewer, a refusal when the parent is the other kind, and the conversation's authorized transcript range reader |
 | `list_workspaces` | Regional `workspaces` identity plus the open authority generation | D1 identity inventory from configured deployments |
 | `list_orgs`, `search_orgs` | None | D1 `workspaces` and `workspace_members` in every region, filtered there and ordered here |
@@ -270,7 +271,20 @@ Organization (`target_type = 'workspace'`). The walk, its receipts and its
 failure codes are
 [`workspace-retirement.md`](workspace-retirement.md#retiring-threads-breakouts-and-channels)'s.
 
-**Who may call them.** These two tools sit behind the `confirm === orgId` gate
+`convert_threads_to_canvases` runs between the two: every Thread that made or
+linked an artifact becomes a Canvas with the same id, its Main the Canvas's
+Chat, and its Breakouts are retired. It takes `orgId`, `dryRun` (default
+`true`: list the candidates, each with its artifact, linked-artifact,
+participant, conversation and undumped counts, and change nothing) and
+`confirm`, which must equal `orgId` when `dryRun` is `false`. An apply is
+refused with `thread_retirement_dump_incomplete` as the retirement is, and
+reports `converted`, `alreadyConverted` (finished from an interrupted pass),
+`failed` with a code per Thread, and `artifactsWithoutThread`. It is annotated
+destructive and writes its audit rows on the same path; a dry run writes none.
+[`workspace-retirement.md`](workspace-retirement.md#converting-threads-that-have-artifacts)
+owns the mechanism. The order for an Organization is dump, convert, retire.
+
+**Who may call them.** These three tools sit behind the `confirm === orgId` gate
 and nothing else, with the same standing as `run_workspace_sql`: this server
 has no roles, and every principal its Access application admits is an
 operator who could already delete the same rows by hand. The confirmation is a
@@ -658,6 +672,20 @@ Ace does, for the reason in [Retiring an Organization](#retiring-an-organization
 
 **Consequences:** Access membership now also grants permanent closure of any
 Organization. A change to the retirement door changes this tool with it.
+
+### 2026-11-08 — `convert_threads_to_canvases`
+
+**What changed:** A third operator operation beside the Thread dump and
+retirement, with the same principal, `confirm` gate and audit path, plus a
+dry run by default.
+
+**Why:** The user decided on 2026-11-08 that Threads with artifacts become
+Canvases in place rather than being deleted. A dry run is the default because
+the operator needs the candidate list, and each one's dump state, before
+committing an Organization.
+
+**What a future change must respect:** run it after the dump and before
+`retire_threads`; the retirement deletes every Thread it finds.
 
 ### 2026-11-07 — Canvas and Sidekick conversation tools replace the Thread ones
 
