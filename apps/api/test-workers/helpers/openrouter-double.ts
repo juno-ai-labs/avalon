@@ -49,6 +49,11 @@ export interface ProviderCall {
   readonly toolNames: readonly string[];
   /** The raw request payload, for anything the fields above do not model. */
   readonly body: Record<string, unknown>;
+  /**
+   * The request's abort signal. A `raw` reply streamed over time honours it
+   * as `fetch` honours it for a real body: aborting errors the stream.
+   */
+  readonly signal?: AbortSignal | undefined;
 }
 
 /**
@@ -224,6 +229,7 @@ export function useOpenRouterDouble(handler: ProviderHandler): OpenRouterDouble 
           })
           : [],
         body,
+        signal: init?.signal ?? (input instanceof Request ? input.signal : undefined),
       };
       calls.push(call);
 

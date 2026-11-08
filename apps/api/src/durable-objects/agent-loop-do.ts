@@ -5208,6 +5208,7 @@ export class AgentLoopDO extends ScheduledDurableObject<Env> {
         if (settled) await this.flushSemanticRealtimeOutboxBestEffort();
         return settled;
       },
+      stopRequested: () => this.loop.loop()?.stop_requested_at != null,
       settleStep: (step) => this.settlePersistentLoopStep(input, execution, step),
       heartbeat: () => {
         const current = fence();
