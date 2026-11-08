@@ -7,12 +7,12 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { canvasNeedsAttention, sidekickNeedsAttention } from '../../common/sidebar-attention';
 import { useShellCapabilities } from '../lib/collaboration-session';
 import { useCreateCanvas } from '../lib/canvases';
-import { isRestoredRoute } from '../lib/landing';
 import { desktopBridge } from '../lib/platform';
 import type { Workspace } from '../lib/types';
 import { useUiStore, type SidebarSection } from '../lib/ui-store';
 import { useCanvasList } from '../lib/canvases';
 import { useDockBadge } from '../lib/dock-badge';
+import type { ActivityList } from '../lib/sidebar-list-store';
 import { useOptionalWorkspaceSocket } from '../lib/workspace-socket';
 import { ActivitySection, activityRoute, useActivityList } from './activity-sidebar-section';
 import { CanvasesSection } from './canvas-sidebar-section';
@@ -45,7 +45,7 @@ const SECTIONS: ReadonlyArray<{ id: SidebarSection; label: string; icon: ReactNo
  * these; the dock badge adds up the first two only, as the menu bar does
  * (`docs/menu-bar.md`), so Activity never joins Needs attention.
  */
-export function useSectionCounts(): { counts: Record<SidebarSection, number>; complete: boolean } {
+export function useSectionCounts(): { counts: Record<SidebarSection, number>; complete: boolean; activity: ActivityList | undefined } {
   const canvases = useCanvasList();
   const sidekicks = useSidekickList();
   const activity = useActivityList();
@@ -56,6 +56,7 @@ export function useSectionCounts(): { counts: Record<SidebarSection, number>; co
       activity: activity?.unseenCount ?? 0,
     },
     complete: canvases !== undefined && sidekicks !== undefined,
+    activity,
   };
 }
 
@@ -91,7 +92,7 @@ export function NavigationSidebar({
   const sidebarWidth = useUiStore((state) => state.sidebarWidth);
   const setSidebarWidth = useUiStore((state) => state.setSidebarWidth);
   const menuToggle = useRef<HTMLButtonElement>(null);
-  const { pathname, search, state: routeState } = useLocation();
+  const { pathname, search } = useLocation();
   // The phone sheet. Escape closes it as it would any menu and hands focus
   // back to the button (the app shell then moves it on to a pane header's
   // menu mark, when that is what opened the sheet); widening past the phone
@@ -156,14 +157,14 @@ export function NavigationSidebar({
   // effect, which StrictMode runs twice.
   const landedOn = useRef<string | null>(null);
   const navigated = useRef(false);
-  // Whether the landing is somewhere Activity's top row may replace: a
-  // section home, or the route this device restored. A link the window was
-  // opened onto keeps its Canvas or Sidekick.
+  // Whether the landing is somewhere Activity's top row may replace: only a
+  // section home. A Canvas or Sidekick the window lands on, restored from
+  // this device or opened by a link, is where the person was or asked to be.
   const landedOnDefault = useRef(false);
   if (landedOn.current === null) {
     if (sectionForPath(pathname)) {
       landedOn.current = pathname;
-      landedOnDefault.current = !routeNamesItem(pathname) || isRestoredRoute(routeState);
+      landedOnDefault.current = !routeNamesItem(pathname);
     }
   } else if (pathname !== landedOn.current) navigated.current = true;
   useEffect(() => {
@@ -176,7 +177,7 @@ export function NavigationSidebar({
   const panel = useRef<HTMLElement>(null);
   const scroll = useRef<HTMLElement | null>(null);
   const guest = workspace.currentUser.accessClass === 'guest';
-  const badges = useSectionCounts().counts;
+  const { counts: badges, activity } = useSectionCounts();
   // On a phone the shut sheet's bar is a section home's only header, so it
   // names the home the route shows, whichever list was left open: a link or a
   // restored route that lands on the Canvases home while Activity is the
@@ -197,15 +198,19 @@ export function NavigationSidebar({
   // landing, so Back does not return to the Canvases home. The first list
   // frame after entering decides; an empty one opens nothing, and nothing
   // after it (rows arriving, Mark all seen, a click) moves the pane until the
-  // section is left and entered again. A launch waits for the landing and
-  // gives way to a link the window opened onto and to any navigation since
-  // the landing.
-  const activity = useActivityList();
+  // section is left and entered again. A launch waits for the landing,
+  // replaces only a section home (a restored or linked Canvas or Sidekick is
+  // kept), and gives way to any navigation since the landing; entering from
+  // the rail gives way to a navigation made before the list arrived.
   const openTopRow = useRef<'push' | 'replace' | null>(section === 'activity' ? 'replace' : null);
   const enteredFrom = useRef(section);
+  // The route the pane had when Activity was entered: a navigation before the
+  // first list arrives is the person's, and the top row gives way to it.
+  const enteredAt = useRef(`${pathname}${search}`);
   if (enteredFrom.current !== section) {
     openTopRow.current = section === 'activity' ? 'push' : null;
     enteredFrom.current = section;
+    enteredAt.current = `${pathname}${search}`;
   }
   useEffect(() => {
     const mode = openTopRow.current;
@@ -213,7 +218,9 @@ export function NavigationSidebar({
     if (mode === 'replace' && landedOn.current === null) return;
     openTopRow.current = null;
     const top = activity.items[0];
-    if (!top || (mode === 'replace' && (navigated.current || !landedOnDefault.current))) return;
+    if (!top) return;
+    if (mode === 'replace' && (navigated.current || !landedOnDefault.current)) return;
+    if (mode === 'push' && enteredAt.current !== `${pathname}${search}`) return;
     const target = activityRoute(top);
     if (target === `${pathname}${search}`) return;
     // In the phone sheet the list is what was asked for: it stays open over

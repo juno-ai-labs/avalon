@@ -260,7 +260,7 @@ is read or Mark all seen, the same as a mention in a run. Opening a row keeps th
 Activity section open, and so does anything else the pane opens: only a rail
 pick leaves it. Entering the section opens its top row in the pane, the row
 drawn open and its conversation reporting the read as a click would (pushed
-from the rail, replacing the landing at a launch with Activity stored;
+from the rail, replacing a Canvases-home landing at a launch with Activity stored;
 [`desktop-shell.md`](desktop-shell.md) has the navigation rule); an empty
 feed opens nothing, and nothing the feed does afterwards moves the pane. The rail badge is `unseenCount` ("3 unseen"). The dock
 badge and the menu bar stay Needs attention only

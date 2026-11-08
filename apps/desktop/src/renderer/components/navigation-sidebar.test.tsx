@@ -360,38 +360,52 @@ describe('the Activity section', () => {
       useUiStore.getState().setSidebarSection('activity');
       const client = renderSidebar(workspace, '/', undefined, true, true);
       expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
-      act(() => applyVersionedSidebarList(client, 'activity', 1, page));
+      await act(async () => { applyVersionedSidebarList(client, 'activity', 1, page); });
       await waitFor(() => expect(screen.getByTestId('address')).toHaveTextContent(TOP));
       expect(screen.getByTestId('location')).toHaveAttribute('data-navigation', 'REPLACE');
     });
 
-    it('at launch, replaces the route this device restored, but keeps a Canvas a link opened the window onto', () => {
+    it('at launch, keeps a Canvas the window lands on, restored by this device or opened by a link', () => {
       useUiStore.getState().setSidebarSection('activity');
       renderSidebar(workspace, { pathname: `/canvases/${CANVAS}`, state: RESTORED_ROUTE }, page);
-      expect(screen.getByTestId('address')).toHaveTextContent(TOP);
+      expect(screen.getByTestId('address')).toHaveTextContent(new RegExp(`^/canvases/${CANVAS}$`, 'u'));
       cleanup();
       renderSidebar(workspace, `/canvases/${CANVAS}`, page);
       expect(screen.getByTestId('address')).toHaveTextContent(new RegExp(`^/canvases/${CANVAS}$`, 'u'));
+      expect(useUiStore.getState().sidebarSection).toBe('activity');
     });
 
-    it('opens nothing for an empty feed, nor for the first row to arrive after it', () => {
+    it('from the rail, gives way to a navigation made before the list arrived', async () => {
+      const client = renderSidebar(workspace, '/canvases');
+      pick(/Activity/);
+      fireEvent.click(screen.getByRole('link', { name: 'Open a Sidekick from the pane' }));
+      await act(async () => { applyVersionedSidebarList(client, 'activity', 1, page); });
+      await waitFor(() => expect(rows()).toHaveLength(3));
+      await act(async () => {});
+      expect(screen.getByTestId('address')).toHaveTextContent(/^\/sidekicks\/triage$/u);
+    });
+
+    it('opens nothing for an empty feed, nor for the first row to arrive after it', async () => {
       const client = renderSidebar(workspace, '/canvases', { unseenCount: 0, items: [] });
       pick(/Activity/);
       expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
-      act(() => applyVersionedSidebarList(client, 'activity', 2, page));
+      await act(async () => { applyVersionedSidebarList(client, 'activity', 2, page); });
+      await waitFor(() => expect(rows()).toHaveLength(3));
+      await act(async () => {});
       expect(screen.getByTestId('address')).toHaveTextContent(/^\/canvases$/u);
     });
 
-    it('does not move the pane for a row arriving on top, or for Mark all seen, while Activity stays open', () => {
+    it('does not move the pane for a row arriving on top while Activity stays open', async () => {
       const client = renderSidebar(workspace, '/canvases', page);
       pick(/Activity/);
       fireEvent.click(rows()[1]!);
       expect(screen.getByTestId('address')).toHaveTextContent(MENTION);
-      act(() => applyVersionedSidebarList(client, 'activity', 2, { unseenCount: 3, items: [
+      await act(async () => { applyVersionedSidebarList(client, 'activity', 2, { unseenCount: 3, items: [
         { ...page.items[1]!, id: 'a0', messageId: '00000000-0000-7000-8000-0000000000e9', messageSequence: 50, createdAt: '2026-11-08T10:00:00.000Z' },
         ...page.items,
-      ] }));
-      fireEvent.click(screen.getByRole('button', { name: 'Mark all seen' }));
+      ] }); });
+      await waitFor(() => expect(rows()).toHaveLength(4));
+      await act(async () => {});
       expect(screen.getByTestId('address')).toHaveTextContent(MENTION);
     });
 
