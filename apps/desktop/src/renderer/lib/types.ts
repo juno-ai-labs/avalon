@@ -122,6 +122,8 @@ export interface AutomationSummary {
   runState?: 'working' | 'needs_input' | null;
   /** The question a run waiting on input asked; absent when none waits. */
   pendingQuestion?: string | null;
+  /** What wakes it, each kind once in definition order; absent from a server that predates it. */
+  triggerKinds?: Array<'manual' | 'schedule' | 'external_event' | 'inbound_email'>;
 }
 
 export interface WorkstreamSummary {

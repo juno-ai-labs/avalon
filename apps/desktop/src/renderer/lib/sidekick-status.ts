@@ -35,3 +35,18 @@ export function formatNextRun(value: string, weekday: 'short' | 'long' = 'short'
 export function sidekickActivityAt(row: Pick<AutomationSummary, 'lastRunAt' | 'updatedAt'>): string {
   return row.lastRunAt ?? row.updatedAt;
 }
+
+/**
+ * The home's Next column, as design.html §3 writes it: a schedule's next run
+ * ("Fri 2:00 PM"), else what wakes it ("On alert", "On email", "On request"),
+ * taking the first of those by that precedence when it has several.
+ */
+export function sidekickNext(row: Pick<AutomationSummary, 'nextRunAt' | 'status' | 'triggerKinds'>, now = new Date()): string {
+  if (row.status !== 'active') return '—';
+  const kinds = row.triggerKinds ?? [];
+  if (row.nextRunAt && (kinds.length === 0 || kinds.includes('schedule'))) return formatNextRun(row.nextRunAt, 'short', now);
+  if (kinds.includes('external_event')) return 'On alert';
+  if (kinds.includes('inbound_email')) return 'On email';
+  if (kinds.includes('manual')) return 'On request';
+  return '—';
+}
