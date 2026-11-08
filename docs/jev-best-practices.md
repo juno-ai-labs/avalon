@@ -562,12 +562,12 @@ Each is more attractive than it deserves to be.
 - **Per-instance digestibility.** "Would a person who was away for a day want
   this read back to them?" is a JEV question in the abstract, and it is answered
   by a static per-event-type declaration in each connector manifest
-  ([`connector-digestibility.md`](connector-digestibility.md)). The declaration
+  ([`connectors.md`](connectors.md#declaring-what-a-digest-may-read)). The declaration
   is a *contract*, not a cached judgment: it is reviewable in one place and is
   the reason a connector author has to think about volume before shipping an
   event type. The retired contextual-routing gate also showed that `digestible`
   encodes three different noes and only one of them is about relevance
-  ([its retirement record](connectors.md#2026-11-08--retirement-record-suggested-context)), so a per-instance
+  ([its retirement record](connectors.md#2026-11-08--retirement-records-suggested-context-connector-digestibility)), so a per-instance
   classifier would answer a different question from the field it replaced.
 - **Adding a confidence field to a generative call instead.** Asking an existing
   `runStructuredInference` call for a number alongside its answer and

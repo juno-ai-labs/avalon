@@ -90,7 +90,7 @@ The answer is one member of a closed set, which is the shape
 Choice is for. The deciding reason is the confidence: the threshold that decides
 whether to start somebody's automation is applied to a number the provider
 computed, not to one the model wrote about its own answer.
-[The Suggested context retirement record](connectors.md#2026-11-08--retirement-record-suggested-context)
+[The Suggested context retirement record](connectors.md#2026-11-08--retirement-records-suggested-context-connector-digestibility)
 records what the second kind cost the retired router — "a constant compared against a number the model made up
 about its own answer" — and rejected raising that constant for exactly this
 reason.
@@ -336,7 +336,7 @@ nothing.
 
 JEV rather than a generative call because the decision is one member of a closed
 set and the threshold has to be applied to a provider-computed confidence:
-[`contextual-routing.md`](connectors.md#2026-11-08--retirement-record-suggested-context)'s 2026-08-12 entry records the
+[`contextual-routing.md`](connectors.md#2026-11-08--retirement-records-suggested-context-connector-digestibility)'s 2026-08-12 entry records the
 retired router's only quality control as "a constant compared against a number
 the model made up about its own answer", and rejected raising that constant
 because it "still compares against a self-reported score".
