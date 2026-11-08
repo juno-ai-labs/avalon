@@ -75,6 +75,15 @@ export function canvasDetailQueryKey(canvasId: string): readonly unknown[] {
   return ['canvas', canvasId];
 }
 
+/**
+ * Whether a Canvas that did not open may be asked into, as `GET
+ * /canvases/:id/access` answers it. Outside the detail's key, so refetching
+ * the detail on a grant does not ask this again.
+ */
+export function canvasAccessQueryKey(canvasId: string): readonly unknown[] {
+  return ['canvas-access', canvasId];
+}
+
 /** This viewer's Canvases, most recently active first; `undefined` until the socket (or the device cache) has said. */
 export function useCanvasList(): CanvasSidebarRow[] | undefined {
   return useSocketOwnedList<CanvasSidebarRow[]>(SIDEBAR_LIST_QUERY_KEYS.canvases).data;

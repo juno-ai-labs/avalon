@@ -30,9 +30,11 @@ const setCanvasAudience = vi.hoisted(() => vi.fn());
 const renameCanvas = vi.hoisted(() => vi.fn());
 const getWorkspaceMembers = vi.hoisted(() => vi.fn());
 const createScopeInvitations = vi.hoisted(() => vi.fn());
+const getCanvasAccess = vi.hoisted(() => vi.fn());
+const requestCanvasAccess = vi.hoisted(() => vi.fn());
 vi.mock('../lib/collaboration-session', () => ({
   useCollaborationSession: () => ({
-    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, createScopeInvitations },
+    api: { getCanvas, setCanvasPinned, setCanvasAudience, getWorkspaceMembers, renameCanvas, createScopeInvitations, getCanvasAccess, requestCanvasAccess },
     session: { user: { id: ME }, workspace: { id: WORKSPACE, region: 'global', role: 'member' } },
   }),
   useOptionalCollaborationSession: () => null,
@@ -105,6 +107,8 @@ beforeEach(() => {
   setCanvasAudience.mockReset();
   renameCanvas.mockReset();
   createScopeInvitations.mockReset().mockResolvedValue({ status: 'created', invitations: [] });
+  getCanvasAccess.mockReset().mockRejectedValue(new ApiError('This Canvas does not exist', 404, 'canvas_not_found'));
+  requestCanvasAccess.mockReset().mockResolvedValue({ status: 'pending' });
   document.title = 'Rally';
   getWorkspaceMembers.mockReset().mockResolvedValue([
     { id: ME, name: 'Adam Jones', email: 'adam@example.test', timezone: 'UTC' },
@@ -294,6 +298,93 @@ describe('CanvasScreen', () => {
     // Its conversation never opened, so no socket failure is raised over it.
     expect(surfaces).toHaveLength(0);
     expect(document.title).toBe('Canvas not found · Rally');
+  });
+
+  describe('a Canvas that exists but does not admit the viewer', () => {
+    const notFound = (): ApiError => new ApiError('This Canvas does not exist', 404, 'canvas_not_found');
+    beforeEach(() => {
+      getCanvas.mockRejectedValue(notFound());
+      getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: null });
+    });
+
+    it('offers Request access with an optional message, then says when it was sent and holds the button', async () => {
+      renderCanvas();
+      expect(await screen.findByText("You don't have access to this Canvas")).toBeInTheDocument();
+      expect(getCanvasAccess).toHaveBeenCalledWith(CANVAS, expect.anything());
+      expect(screen.queryByText('This Canvas does not exist.')).toBeNull();
+      expect(surfaces).toHaveLength(0);
+      expect(document.title).toBe('Request access · Rally');
+
+      getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: { state: 'pending', requestedAt: new Date().toISOString() } });
+      fireEvent.click(screen.getByRole('button', { name: 'Request access' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Request access' });
+      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Message (optional)' }), { target: { value: '  For the board review  ' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Send request' }));
+
+      await waitFor(() => expect(requestCanvasAccess).toHaveBeenCalledWith(CANVAS, 'For the board review'));
+      expect(await screen.findByRole('status')).toHaveTextContent('Request sent · just now');
+      expect(screen.getByRole('button', { name: 'Request access' })).toBeDisabled();
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    it('sends no message when none is typed', async () => {
+      renderCanvas();
+      fireEvent.click(await screen.findByRole('button', { name: 'Request access' }));
+      fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Send request' }));
+      await waitFor(() => expect(requestCanvasAccess).toHaveBeenCalledWith(CANVAS, undefined));
+    });
+
+    it("reads the viewer's pending request back, and offers a new one after a denial", async () => {
+      getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: { state: 'pending', requestedAt: '2026-11-08T09:00:00.000Z' } });
+      renderCanvas();
+      expect(await screen.findByRole('status')).toHaveTextContent(/^Request sent · /u);
+      expect(screen.getByRole('button', { name: 'Request access' })).toBeDisabled();
+      cleanup();
+
+      getCanvasAccess.mockResolvedValue({ access: 'requestable', title: null, request: { state: 'denied', requestedAt: '2026-11-08T09:00:00.000Z' } });
+      renderCanvas();
+      expect(await screen.findByRole('button', { name: 'Request access' })).toBeEnabled();
+      expect(screen.queryByRole('status')).toBeNull();
+    });
+
+    it('shows the refusal in the dialog', async () => {
+      requestCanvasAccess.mockRejectedValue(new ApiError('Only members of this Organization can ask to open its Canvases', 403, 'canvas_access_request_not_member'));
+      renderCanvas();
+      fireEvent.click(await screen.findByRole('button', { name: 'Request access' }));
+      const dialog = await screen.findByRole('dialog');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Send request' }));
+      expect(await screen.findByRole('alertdialog', { name: 'The request could not be sent' })).toHaveTextContent('Only members of this Organization can ask to open its Canvases');
+    });
+
+    it('keeps a restored route on a requestable Canvas', async () => {
+      renderCanvas({ pathname: `/canvases/${CANVAS}`, state: { restoredRoute: true } });
+      expect(await screen.findByText("You don't have access to this Canvas")).toBeInTheDocument();
+    });
+
+    it('opens into the Canvas when it joins the list, without a refresh', async () => {
+      const client = renderCanvas();
+      await screen.findByText("You don't have access to this Canvas");
+      getCanvas.mockResolvedValue(detail());
+      act(() => { applyVersionedSidebarList(client, 'canvases', 1, [listRow('Q4 revenue review')]); });
+      await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+      expect(lastSurface().props).toMatchObject({ parentId: CANVAS, parentKind: 'canvas' });
+      expect(screen.queryByText("You don't have access to this Canvas")).toBeNull();
+    });
+
+    it('opens into the Canvas when its access_granted row arrives', async () => {
+      const client = renderCanvas();
+      await screen.findByText("You don't have access to this Canvas");
+      getCanvas.mockResolvedValue(detail());
+      act(() => {
+        applyVersionedSidebarList(client, 'activity', 1, { unseenCount: 1, items: [{
+          id: 'granted-1', kind: 'access_granted', parentKind: 'canvas', parentId: CANVAS, parentTitle: 'Q4 revenue review',
+          substreamId: null, messageId: null, messageSequence: null, runId: null, actor: { kind: 'person', id: MAYA },
+          preview: null, createdAt: '2026-11-08T09:00:00.000Z', seen: false,
+        }] });
+      });
+      await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+      expect(getCanvas).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('says a conversation it cannot reach is offline, in the pane and not in a dialog, without blaming the Canvas', async () => {

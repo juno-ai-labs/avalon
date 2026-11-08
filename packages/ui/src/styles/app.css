@@ -2030,6 +2030,9 @@ body:has(.dialog-content[role="alertdialog"]) .tooltip { z-index: 1008; }
 .pane-state-header { align-items: center; display: flex; gap: 8px; padding: 0 16px; }
 .pane-state-trailing { margin-left: auto; }
 .pane-state-body { align-items: center; display: flex; justify-content: center; }
+/* A Canvas the viewer may ask into: Request access, and under it when they asked. */
+.canvas-access-request-actions { display: grid; gap: 8px; justify-items: center; }
+.empty-state .canvas-access-request-sent { color: var(--av-sys-color-text-muted); font-size: 12px; margin: 0; }
 .conversation-access-request {
   align-items: center;
   color: var(--av-sys-color-text-muted);
@@ -8185,7 +8188,8 @@ button.decision-button:focus-visible { box-shadow: 0 0 0 2px var(--av-sys-color-
 /* Half a space unit: the least that shows two open rows as two fills rather than one block. */
 .activity-row + .activity-row { margin-top: calc(var(--av-ref-space-unit) / 2); }
 .activity-row:focus-visible { box-shadow: var(--av-sys-focus-ring-default); outline: none; }
-.navigation-row.is-unread:not(.navigation-channel-row) .navigation-row-time { color: var(--av-sys-color-workstream-news); }
+.access-decision-actions { display: flex; gap: 6px; }
+.access-decision-actions .button { min-height: 26px; padding: 2px 10px; }
 .navigation-row-lock { color: var(--av-sys-color-text-muted); flex: none; }
 .navigation-row-detail { color: var(--av-sys-color-text-muted); flex: 1; font-size: 12.5px; line-height: 17px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The sidebar's one red, the badge's and the unread dot's (design.html §1). */

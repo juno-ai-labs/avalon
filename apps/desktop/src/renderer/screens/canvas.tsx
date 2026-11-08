@@ -5,16 +5,19 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
+import { useActivityList } from '../components/activity-sidebar-section';
+import { CanvasAccessRequestPane } from '../components/canvas-access-request';
 import { CanvasMark } from '../components/canvas-mark';
 import { PaneState } from '../components/pane-state';
 import { CanvasShareDialog } from '../components/canvas-share-dialog';
 import { AvatarStack, Button, EmptyState, ErrorNotice, OpeningState, TitleSkeleton } from '../components/primitives';
-import { canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
+import { canvasAccessQueryKey, canvasDetailQueryKey, canvasNaming, canvasRenameRefusal, canvasRenameRequested, canvasShareRequested, useCanvasList, useCanvasNameSources } from '../lib/canvases';
 import { copyLink } from '../lib/copy-link';
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { sidebarListApplied } from '../lib/sidebar-list-store';
 import { useDocumentTitle } from '../lib/document-title';
+import { ApiError } from '../lib/api';
 import { isNotFoundError, useRestoredRouteFallback } from '../lib/landing';
 import { useCollaborationSession } from '../lib/collaboration-session';
 import { layoutKey, readArtifactPanel } from '../lib/desktop-layout';
@@ -48,7 +51,28 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   });
   // The list row paints the name before the detail answers.
   const row = useCanvasList()?.find((candidate) => candidate.id === id);
-  const leaving = useRestoredRouteFallback(canvas.error, '/canvases');
+  // A Canvas that answered not found may exist in the Organization without
+  // admitting this person; only then is its access asked, so opening one they
+  // are in costs nothing more. A malformed id names nothing to ask about.
+  const unreachable = !row && canvas.error instanceof ApiError && canvas.error.status === 404;
+  const access = useQuery({
+    queryKey: canvasAccessQueryKey(id),
+    queryFn: ({ signal }) => api!.getCanvasAccess(id, signal),
+    enabled: Boolean(api) && unreachable,
+    retry: false,
+  });
+  // Only a Canvas that exists nowhere leaves a restored route: a requestable
+  // one keeps it, since it may be granted later.
+  const leaving = useRestoredRouteFallback(unreachable ? access.error : canvas.error, '/canvases');
+  // The grant opens the Canvas without a refresh: it arrives as the Canvas
+  // joining this person's list, or as their `access_granted` row.
+  const granted = useActivityList()?.items.find((item) => item.kind === 'access_granted' && item.parentId === id)?.id;
+  const listed = Boolean(row);
+  const refetchCanvas = canvas.refetch;
+  const awaitingGrant = Boolean(canvas.error) && access.data !== undefined;
+  useEffect(() => {
+    if (awaitingGrant && (listed || granted)) void refetchCanvas();
+  }, [awaitingGrant, granted, listed, refetchCanvas]);
   const { membersById } = useCanvasNameSources(api);
   const [sharing, setSharing] = useState(false);
   const [pinError, setPinError] = useState<Error | null>(null);
@@ -122,8 +146,9 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   }, [id, queryClient, rowTitle, rowTitleStatus]);
   const title = canvas.data?.title ?? row?.title ?? '';
   const naming = canvasNaming(canvas.data ?? row);
-  const missing = Boolean(canvas.error && !row && isNotFoundError(canvas.error));
-  useDocumentTitle(missing ? 'Canvas not found' : naming ? undefined : title || undefined);
+  const missing = Boolean(canvas.error && !row && isNotFoundError(unreachable ? access.error : canvas.error));
+  const requestable = unreachable && access.data !== undefined;
+  useDocumentTitle(missing ? 'Canvas not found' : requestable ? 'Request access' : naming ? undefined : title || undefined);
   const saveTitle = (next: string): void => {
     if (!api) return;
     setRenamePending(true);
@@ -149,7 +174,15 @@ function CanvasConversation({ id }: { id: string }): React.JSX.Element {
   if (canvas.error && !row) {
     // One in-pane state, never a dialog over it (canvases.md). A malformed id
     // names nothing that could exist, so it reads as a missing one does, and
-    // there is nothing to try again.
+    // there is nothing to try again. One that exists but does not admit this
+    // person offers Request access instead.
+    if (unreachable) {
+      if (access.data) return <CanvasAccessRequestPane access={access.data} canvasId={id} />;
+      if (!access.error) return <ConversationOpeningSkeleton label="Opening Canvas…" parentKind="canvas" />;
+      if (!isNotFoundError(access.error)) {
+        return <PaneState action={<Button onClick={() => void access.refetch()}>Try again</Button>} description={access.error.message} title="This Canvas could not be opened." />;
+      }
+    }
     if (isNotFoundError(canvas.error)) {
       return <PaneState description="It may have been removed, or the link may be wrong." title="This Canvas does not exist." />;
     }
