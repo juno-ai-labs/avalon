@@ -264,6 +264,7 @@ describe('CanvasScreen', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     // Its conversation never opened, so no socket failure is raised over it.
     expect(surfaces).toHaveLength(0);
+    expect(document.title).toBe('Canvas not found · Rally');
   });
 
   it('says a conversation it cannot reach is offline, in the pane and not in a dialog, without blaming the Canvas', async () => {
@@ -276,6 +277,21 @@ describe('CanvasScreen', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(retry).toHaveBeenCalled();
+  });
+
+  it('keeps the Canvas header, with its pill and Share, over the offline state', async () => {
+    renderCanvas();
+    await screen.findByRole('button', { name: 'Canvas menu: Q4 revenue review' });
+    const stateHeader = lastSurface().props.stateHeader;
+    cleanup();
+    const { WorkstreamErrorState } = await vi.importActual<ConversationSurfaceModule>('./conversation-surface');
+    render(<Tooltip.Provider><MemoryRouter><WorkstreamErrorState description={undefined} header={stateHeader} onRetry={vi.fn()} workstreamId={CANVAS} /></MemoryRouter></Tooltip.Provider>);
+    expect(screen.getByRole('button', { name: 'Canvas menu: Q4 revenue review' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Share' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Canvas actions' })).toBeInTheDocument();
+    // The support menu belongs to the bare header the Canvas's replaces.
+    expect(screen.queryByRole('button', { name: 'More Canvas actions' })).toBeNull();
+    expect(screen.getByText('Rally can’t reach the server right now.')).toBeInTheDocument();
   });
 
   it('opens a Canvas in the list at once, beside its detail read', async () => {
